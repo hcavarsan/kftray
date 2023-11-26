@@ -1,16 +1,16 @@
 [
   {
-    "namespace": "thanos",
-    "deployment": "thanos-kube-prometheus-sta-operator",
-    "localPort": "9090",
-    "remotePort": "9090",
-    "kubeconfig": "/Users/Henrique/.kube/config"
+    "namespace": "namespace",
+    "deployment": "deploymentname",
+    "localPort": "8085",
+    "remotePort": "8085",
+    "kubeconfig": "path-to-kubeconfig"
   },
   {
-    "namespace": "thanos",
-    "deployment": "mysql",
-    "localPort": "3306",
-    "remotePort": "3306",
-    "kubeconfig": "/Users/Henrique/.kube/config"
+    "namespace": "namespace2",
+    "deployment": "deploymentname2",
+    "localPort": "8080",
+    "remotePort": "8080",
+    "kubeconfig": "path-to-kubeconfig"
   }
 ]
