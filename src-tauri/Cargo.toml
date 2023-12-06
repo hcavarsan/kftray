@@ -18,16 +18,12 @@ serde_json = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 tauri = { version = "1.5", features = [ "api-all", "macos-private-api", "system-tray"] }
 tauri-plugin-positioner = { version = "1.0.4", features = ["system-tray"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+tokio =
 lazy_static = "1.4.0"
+rusqlite = { version = "0.30.0", features = ["bundled"] }
 window-shadows = "0.2.2"
 dirs = "5.0.1"
 
-[
-dependencies.rusqlite
-]
-version = "0.30.0"
-features = ["bundled"]
 
 [features]
 # by default Tauri runs in production mode
@@ -39,3 +35,5 @@ custom-protocol = ["tauri/custom-protocol"]
 
 [dependencies.fix-path-env]
 git = "https://github.com/tauri-apps/fix-path-env-rs"
+
+
