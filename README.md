@@ -10,19 +10,19 @@
   </a>
 </p>
 
-
-
 <h1 align="center"> KFtray </h1>
 <h3 align="center">A tray application that manages port forwarding in Kubernetes.</h3>
 <p align="center">
 kftray is a tray application developed with Tauri, Rust, React, Vite, and Chakra UI. It is specifically designed for Kubernetes users to manage port forwarding directly from the system tray. The application simplifies the process of initiating and terminating multiple port forwarding configurations through a user-friendly interface.
 </br>
 </p>
+
 <p align="center">
 ! <img src="img/play.gif" alt="kftray logo" width="800"/>
 </p>
 
 <h5 align="center">
+ ·
   <a href="https://github.com/hcavarsan/kftray/releases/download/v0.1.7/kftray_0.0.0_x64.dmg">Download for macOS</a> ·
   <a href="https://github.com/hcavarsan/kftray/releases/download/v0.1.7/kftray_0.0.0_x64-setup.exe">Download for Windows</a> ·
   <a href="https://github.com/hcavarsan/kftray/releases/download/v0.1.7/kftray_0.0.0_amd64.AppImage">Download for Linux</a>
