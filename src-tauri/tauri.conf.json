@@ -61,10 +61,10 @@
 	  "windows": [
 		{
 		  "fullscreen": false,
-		  "height": 450,
+		  "height": 500,
 		  "resizable": false,
 		  "title": "menubar",
-		  "width": 500,
+		  "width": 600,
 		  "visible": false,
 		  "hiddenTitle": true,
 		  "decorations": false,

@@ -328,9 +328,9 @@ const App: React.FC = () => {
 				position="relative" // Changed from "absolute" to "relative" for alignment
 				width="95%"
 				height="95%"
-				maxWidth="500px"
+				maxWidth="700px"
 				maxHeight="500px" // Adjust this value to change the maximum height
-				p={2} // Add some padding
+				p={5} // Add some padding
 				bg={cardBg} // Add a background to the card for better visibility
 				borderRadius="md" // Optional: add slight rounding of corners
 				boxShadow="md" // Optional: some shadow for depth
@@ -446,8 +446,9 @@ const App: React.FC = () => {
 				<Table variant="simple" size="sm" align="center" marginTop={4}>
 					<Thead>
 						<Tr>
-							<Th>Service</Th>
+							<Th >Service</Th>
 							<Th>context</Th>
+							<Th>Namespace</Th>
 							<Th>Local Port</Th>
 							<Th>Status</Th>
 							<Th>Action</Th>
@@ -458,7 +459,9 @@ const App: React.FC = () => {
 							<Tr key={config.id}>
 								<Td color={textColor}>{config.service}</Td>
 								<Td color={textColor}>{config.context}</Td>
+								<Td color={textColor}>{config.namespace}</Td>
 								<Td color={textColor}>{config.local_port}</Td>
+
 								<Td
 									color={config.isRunning ? "green.100" : "red.100"}
 									p={1}
@@ -485,7 +488,7 @@ const App: React.FC = () => {
 					onClick={openModal}
 					colorScheme="facebook"
 					size="xs"
-					ml={350}
+					ml={450}
 				>
 					Add Config
 				</Button>
@@ -496,8 +499,8 @@ const App: React.FC = () => {
 				aria-label="Quit application"
 				variant="solid"
 				position="fixed"
-				top={8}
-				right={5}
+				top={7}
+				right={6}
 				onClick={quitApp}
 				isRound={false}
 				size="xs"
