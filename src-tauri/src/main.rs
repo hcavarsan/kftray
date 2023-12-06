@@ -260,7 +260,10 @@ fn main() {
         .setup(|app| {
             // Initialize the database.
             db::init();
-            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            #[cfg(target_os = "macos")]
+            {
+                app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            }
             Ok(())
         })
         .plugin(tauri_plugin_positioner::init())
