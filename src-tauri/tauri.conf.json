@@ -1,0 +1,83 @@
+{
+	"build": {
+	  "beforeDevCommand": "pnpm dev",
+	  "beforeBuildCommand": "pnpm build",
+	  "devPath": "http://localhost:1420",
+	  "distDir": "../dist",
+	  "withGlobalTauri": true
+	},
+	"package": {
+	  "productName": "kftray",
+	  "version": "0.0.0"
+	},
+	"tauri": {
+	  "allowlist": {
+		"all": true,
+		"shell": {
+		  "all": false,
+		  "open": true
+		}
+	  },
+	  "bundle": {
+		"active": true,
+		"category": "DeveloperTool",
+		"copyright": "",
+		"deb": {
+		  "depends": []
+		},
+		"externalBin": [],
+		"icon": [
+		  "icons/32x32.png",
+		  "icons/128x128.png",
+		  "icons/128x128@2x.png",
+		  "icons/icon.icns",
+		  "icons/icon.ico"
+		],
+		"identifier": "com.hcavarsan.kftray",
+		"longDescription": "",
+		"macOS": {
+		  "entitlements": null,
+		  "exceptionDomain": "",
+		  "frameworks": [],
+		  "providerShortName": null,
+		  "signingIdentity": null
+		},
+		"resources": [],
+		"shortDescription": "",
+		"targets": "all",
+		"windows": {
+		  "certificateThumbprint": null,
+		  "digestAlgorithm": "sha256",
+		  "timestampUrl": ""
+		}
+	  },
+	  "security": {
+		"csp": null
+	  },
+	  "updater": {
+		"active": false
+	  },
+	  "macOSPrivateApi": true,
+	  "windows": [
+		{
+		  "fullscreen": false,
+		  "height": 450,
+		  "resizable": false,
+		  "title": "menubar",
+		  "width": 500,
+		  "visible": false,
+		  "hiddenTitle": true,
+		  "decorations": false,
+		  "focus": false,
+		  "transparent": true,
+		  "skipTaskbar": true,
+		  "alwaysOnTop": false
+		}
+	  ],
+	  "systemTray": {
+		"iconPath": "icons/icon.ico",
+		"iconAsTemplate": true,
+		"menuOnLeftClick": false
+	  }
+	}
+  }
