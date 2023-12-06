@@ -1,0 +1,38 @@
+[package]
+name = "kftray"
+version = "0.0.0"
+description = "A Tauri App"
+authors = ["you"]
+license = ""
+repository = ""
+edition = "2021"
+rust-version = "1.57"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[build-dependencies]
+tauri-build = { version = "1.5", features = [] }
+
+[dependencies]
+serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+tauri = { version = "1.5", features = [ "api-all", "macos-private-api", "system-tray"] }
+tauri-plugin-positioner = { version = "1.0.4", features = ["system-tray"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+lazy_static = "1.4.0"
+rusqlite = "0.30.0"
+window-shadows = "0.2.2"
+dirs = "5.0.1"
+
+[features]
+# by default Tauri runs in production mode
+# when `tauri dev` runs it is executed with `cargo run --no-default-features` if `devPath` is an URL
+default = ["custom-protocol"]
+# this feature is used used for production builds where `devPath` points to the filesystem
+# DO NOT remove this
+custom-protocol = ["tauri/custom-protocol"]
+
+[dependencies.fix-path-env]
+git = "https://github.com/tauri-apps/fix-path-env-rs"
+
+
