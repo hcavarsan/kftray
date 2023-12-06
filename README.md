@@ -15,7 +15,7 @@
 <h1 align="center"> Kftray </h1>
 <h3 align="center">A tray application that manages port forwarding in Kubernetes.</h3>
 <p align="center">
-! <img src="img/play.gif" alt="kftray logo"width="600"/>
+! <img src="img/play.gif" alt="kftray logo" width="800"/>
 </p>
 
 <h4 align="center">
