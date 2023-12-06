@@ -29,7 +29,6 @@
 
 ---
 
-# kftray
 
 
 `kftray` is a tray application developed with Tauri, Rust, React, Vite, and Chakra UI. It is specifically designed for Kubernetes users to manage port forwarding directly from the system tray. The application simplifies the process of initiating and terminating multiple port forwarding configurations through a user-friendly interface.
