@@ -20,6 +20,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install dependencies (ubuntu only)
+        if: matrix.platform == 'ubuntu-20.04'
         # You can remove libayatana-appindicator3-dev if you don't use the system tray feature.
         run: |
           sudo apt-get update
@@ -67,6 +68,14 @@ jobs:
           vsversion: 2022
           arch: ${{ matrix.vcvars_arch }}
 
+      - name: Install packages (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          choco install make strawberryperl nsis nasm llvm openssl --no-progress --limit-output
+          echo "OPENSSL_SRC_PERL=C:\Strawberry\perl\bin\perl" >> $GITHUB_ENV
+          echo "OPENSSL_DIR=C:\Program Files\OpenSSL-Win64" >>$GITHUB_ENV
+          echo "C:\Program Files\NASM" >> $GITHUB_PATH
 
       - name: Add QT_HOST_PATH var (Windows MSVC arm64)
         if: matrix.platform == 'windows-latest'
