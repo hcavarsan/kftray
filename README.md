@@ -30,7 +30,6 @@ kftray is a tray application developed with Tauri, Rust, React, Vite, and Chakra
 </h4>
 
 
-
 ---
 
 
