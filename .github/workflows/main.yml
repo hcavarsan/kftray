@@ -68,12 +68,6 @@ jobs:
           vsversion: 2022
           arch: ${{ matrix.vcvars_arch }}
 
-      - name: Install openssl-sys with vendored feature
-        if: matrix.platform == 'windows-latest'
-        uses: actions-rs/cargo@v1
-        with:
-          command: install
-          args: --features vendored openssl-sys
 
       - name: Add QT_HOST_PATH var (Windows MSVC arm64)
         if: matrix.platform == 'windows-latest'
