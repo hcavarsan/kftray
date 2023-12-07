@@ -2,7 +2,7 @@ name: Release
 on:
   push:
     tags:
-      - 'v*'
+      - "v*"
   workflow_dispatch:
 
 jobs:
@@ -32,7 +32,7 @@ jobs:
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
-          workspaces: './src-tauri -> target'
+          workspaces: "./src-tauri -> target"
 
       - name: Install Node.js
         uses: actions/setup-node@v3
@@ -58,17 +58,15 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pnpm-store-
 
-      - name: Install MSVC
-        uses: TheMrMilchmann/setup-msvc-dev@v3
-        with:
-         arch: x64
-
-      - name: Configure environment for MSVC
-        if: matrix.platform == 'windows-latest'
-        uses: ilammy/msvc-dev-cmd@v1
-
       - name: Install dependencies
         run: pnpm install
+
+      - name: Install MSVC (Windows MSVC)
+        if: matrix.platform == 'windows-latest' # We want this for MinGW builds as well, as we need SignTool
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          vsversion: 2022
+          arch: ${{ matrix.vcvars_arch }}
 
       - name: Install openssl-sys with vendored feature
         if: matrix.platform == 'windows-latest'
@@ -77,13 +75,18 @@ jobs:
           command: install
           args: --features vendored openssl-sys
 
+      - name: Add QT_HOST_PATH var (Windows MSVC arm64)
+        if: matrix.platform == 'windows-latest'
+        run: |
+          echo "QT_HOST_PATH=${{ github.workspace }}\HostQt\Qt\${{ matrix.qt_version }}\msvc2019_64" >> $env:GITHUB_ENV
+
       - name: Build the app
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: ${{ github.ref_name }} # This only works if your workflow triggers on new tags.
-          releaseName: 'App Name v__VERSION__' # tauri-action replaces \_\_VERSION\_\_ with the app version.
-          releaseBody: 'See the assets to download and install this version.'
+          releaseName: "App Name v__VERSION__" # tauri-action replaces \_\_VERSION\_\_ with the app version.
+          releaseBody: "See the assets to download and install this version."
           releaseDraft: true
           prerelease: false
