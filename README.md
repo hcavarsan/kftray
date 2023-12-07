@@ -39,7 +39,6 @@ kftray is a tray application developed with Tauri, Rust, React, Vite, and Chakra
 
 ## Requirements
 To use `kftray`, ensure that the following requirements are met:
-- `kubectl` is installed and properly configured on your system.
 - Node.js and pnpm or yarn installed for building the frontend.
 - Rust is installed for backend development.
 
