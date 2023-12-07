@@ -17,25 +17,34 @@ use crate::{
 };
 use kube::{
     api::{Api, ListParams},
-    Client,
-	ResourceExt
+	ResourceExt,
+	Client
 };
 
-
 #[derive(Clone)]
+#[allow(dead_code)]
 pub struct PortForward {
     target: crate::Target,
     local_port: Option<u16>,
     pod_api: Api<Pod>,
     svc_api: Api<Service>,
+    context_name: Option<String>, // Optional field to store context name
 }
+
 
 impl PortForward {
     pub async fn new(
         target: crate::Target,
         local_port: impl Into<Option<u16>>,
+        context_name: Option<String>, // Add context_name parameter
     ) -> anyhow::Result<Self> {
-        let client = Client::try_default().await?;
+        // Check if context_name was provided and create a Kubernetes client
+        let client = if let Some(ref context_name) = context_name {
+            crate::kubecontext::create_client_with_specific_context(context_name).await?
+        } else {
+            // Use default context (or whatever client creation logic you prefer)
+            Client::try_default().await?
+        };
         let namespace = target.namespace.name_any();
 
         Ok(Self {
@@ -43,8 +52,11 @@ impl PortForward {
             local_port: local_port.into(),
             pod_api: Api::namespaced(client.clone(), &namespace),
             svc_api: Api::namespaced(client, &namespace),
+            context_name, // Store the context name if provided
         })
     }
+
+
 
 
     fn local_port(&self) -> u16 {
@@ -202,7 +214,7 @@ pub async fn start_port_forward(configs: Vec<Config>) -> Result<Vec<CustomRespon
     for config in configs {
 		let selector = crate::TargetSelector::ServiceName(config.service.clone());
         let remote_port = crate::Port::from(config.remote_port as i32);
-
+		let context_name = Some(config.context.clone());
         log::info!("Remote Port: {}", config.remote_port);
 		log::info!("Local Port: {}", config.remote_port);
 
@@ -210,7 +222,7 @@ pub async fn start_port_forward(configs: Vec<Config>) -> Result<Vec<CustomRespon
         let target = crate::Target::new(selector, remote_port, namespace);
 
         log::debug!("Attempting to forward to service: {}", &config.service);
-        let port_forward = PortForward::new(target, config.local_port).await.map_err(|e| {
+        let port_forward = PortForward::new(target, config.local_port, context_name).await.map_err(|e| {
             log::error!("Failed to create PortForward: {}", e);
             e.to_string()
         })?;

@@ -53,7 +53,7 @@ import logo from "./logo.png"
   }
 
   interface Config {
-	id: Option<i64>;
+	id: number;
 	service: string;
 	namespace: string;
 	local_port: number;
@@ -194,7 +194,7 @@ const App: React.FC = () => {
 		}
 	};
 
-	const handleDeleteConfig = async (id: number) => {
+	const handleDeleteConfig = async (id?: number) => {
 		console.log(`Attempting to invoke delete_config with id: ${id}`) // Check if `id` is undefined
 		if (id === undefined) {
 			sendNotification({
