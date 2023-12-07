@@ -58,12 +58,26 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-pnpm-store-
 
+      - name: Install MSVC
+        if: matrix.platform == 'windows-latest'
+        uses: microsoft/setup-msvc@v1
+
+      - name: Configure environment for MSVC
+        if: matrix.platform == 'windows-latest'
+        uses: ilammy/msvc-dev-cmd@v1
+
       - name: Install dependencies
         run: pnpm install
 
+      - name: Install openssl-sys with vendored feature
+        if: matrix.platform == 'windows-latest'
+        uses: actions-rs/cargo@v1
+        with:
+          command: install
+          args: --features vendored openssl-sys
+
       - name: Build the app
         uses: tauri-apps/tauri-action@v0
-
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
