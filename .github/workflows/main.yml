@@ -61,26 +61,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
-      - name: Install MSVC (Windows MSVC)
-        if: matrix.platform == 'windows-latest' # We want this for MinGW builds as well, as we need SignTool
-        uses: ilammy/msvc-dev-cmd@v1
-        with:
-          vsversion: 2022
-          arch: ${{ matrix.vcvars_arch }}
-
-      - name: Install packages (Windows)
-        if: matrix.platform == 'windows-latest'
-        shell: bash
-        run: |
-          choco install make strawberryperl nsis nasm llvm openssl --no-progress --limit-output
-          echo "OPENSSL_SRC_PERL=C:\Strawberry\perl\bin\perl" >> $GITHUB_ENV
-          echo "OPENSSL_DIR=C:\Program Files\OpenSSL-Win64" >>$GITHUB_ENV
-          echo "C:\Program Files\NASM" >> $GITHUB_PATH
-
-      - name: Add QT_HOST_PATH var (Windows MSVC arm64)
+      - name: install openssl (windows only)
         if: matrix.platform == 'windows-latest'
         run: |
-          echo "QT_HOST_PATH=${{ github.workspace }}\HostQt\Qt\${{ matrix.qt_version }}\msvc2019_64" >> $env:GITHUB_ENV
+          echo "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" | Out-File -FilePath $env:GITHUB_ENV -Append
+          vcpkg install openssl:x64-windows-static-md
 
       - name: Build the app
         uses: tauri-apps/tauri-action@v0
