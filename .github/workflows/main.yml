@@ -69,7 +69,7 @@ jobs:
           arch: ${{ matrix.vcvars_arch }}
 
       - name: Install packages (Windows)
-        if: matrix.os == 'windows-latest'
+        if: matrix.platform == 'windows-latest'
         shell: bash
         run: |
           choco install make strawberryperl nsis nasm llvm openssl --no-progress --limit-output
