@@ -1,6 +1,7 @@
 
 pub mod pod_selection;
 pub mod port_forward;
+pub mod kubecontext;
 
 
 pub(crate) use k8s_openapi::api::core::v1 as vx;
@@ -12,7 +13,7 @@ use vx::Pod;
 
 #[derive(Clone)]
 pub enum TargetSelector {
-	ServiceName(String),
+	ServiceName(String)
 }
 
 
