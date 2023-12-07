@@ -1,15 +1,11 @@
 // App.tsx
 import React, { useEffect, useState } from "react"
-import { ArrowRightIcon } from "@chakra-ui/icons"
 import {
-	Box,
 	Button,
 	Center,
-	Flex,
 	FormControl,
 	FormLabel,
 	Heading,
-	HStack,
 	Icon,
 	IconButton,
 	Image,
@@ -19,23 +15,19 @@ import {
 	ModalCloseButton,
 	ModalContent,
 	ModalFooter,
-	ModalHeader,
 	ModalOverlay,
 	Stack,
 	Table,
 	Tbody,
 	Td,
-	Text,
 	Th,
 	Thead,
 	Tr,
-	useColorMode,
 	useColorModeValue,
 	VStack,
 } from "@chakra-ui/react"
 import { sendNotification } from "@tauri-apps/api/notification"
 import { invoke } from "@tauri-apps/api/tauri"
-import { appWindow, LogicalSize } from "@tauri-apps/api/window"
 import { MdAdd, MdClose, MdDelete, MdRefresh } from "react-icons/md"
 
 import logo from "./logo.png"
@@ -97,11 +89,9 @@ const App: React.FC = () => {
 		setNewConfig((prev) => ({ ...prev, [name]: value }))
 	}
 
-	const { colorMode } = useColorMode()
 	const [isInitiating, setIsInitiating] = useState(false)
 	const [isStopping, setIsStopping] = useState(false)
 	const [isPortForwarding, setIsPortForwarding] = useState(false)
-	const [statuses, setStatuses] = useState<Status[]>([])
 	const [configs, setConfigs] = useState<Status[]>([]) // Add a useState to hold your configs
 
 	useEffect(() => {
@@ -145,7 +135,7 @@ const App: React.FC = () => {
 			setConfigs(updatedConfigs)
 
 			// Show a success notification to the user
-			sendNotification({
+			await sendNotification({
 				title: "Success",
 				body: "Configuration added successfully.",
 				icon: "success",
@@ -155,7 +145,7 @@ const App: React.FC = () => {
 		} catch (error) {
 			console.error("Failed to insert config:", error)
 			// Handle errors such as showing an error notification
-			sendNotification({
+			await sendNotification({
 				title: "Error",
 				body: `Failed to add configuration:", "unknown error"`,
 				icon: "error",
@@ -197,7 +187,7 @@ const App: React.FC = () => {
 	const handleDeleteConfig = async (id?: number) => {
 		console.log(`Attempting to invoke delete_config with id: ${id}`) // Check if `id` is undefined
 		if (id === undefined) {
-			sendNotification({
+			await sendNotification({
 				title: "Error",
 				body: "Configuration id is undefined.",
 				icon: "error",
@@ -210,14 +200,14 @@ const App: React.FC = () => {
 			const updatedConfigs: Status[] = await invoke("get_configs")
 			setConfigs(updatedConfigs)
 
-			sendNotification({
+			await sendNotification({
 				title: "Success",
 				body: "Configuration deleted successfully.",
 				icon: "success",
 			})
 		} catch (error) {
 			console.error("Failed to delete configuration:", error)
-			sendNotification({
+			await sendNotification({
 				title: "Error",
 				body: `Failed to delete configuration:", "unknown error"`,
 				icon: "error",
@@ -253,7 +243,7 @@ const stopPortForwarding = async () => {
 				.map(res => `${res.service}: ${res.stderr}`)
 				.join(", ");
 
-			await sendNotification({
+				await sendNotification({
 				title: "Error",
 				body: `Port forwarding failed for some configurations: ${errorMessages}`,
 				icon: "error",
@@ -286,7 +276,7 @@ const stopPortForwarding = async () => {
 				width="95%"
 				height="95%"
 				maxWidth="700px"
-				maxHeight="500px" // Adjust this value to change the maximum height
+				maxHeight="600px" // Adjust this value to change the maximum height
 				p={5} // Add some padding
 				bg={cardBg} // Add a background to the card for better visibility
 				borderRadius="md" // Optional: add slight rounding of corners
@@ -356,8 +346,8 @@ const stopPortForwarding = async () => {
 							</ModalBody>
 							<ModalFooter>
 								<Button
-									colorScheme="blue"
-									mt="10px"
+									colorScheme="ghost"
+									variant='outline'
 									size="sm"
 									mr={6}
 									onClick={closeModal}
@@ -365,10 +355,9 @@ const stopPortForwarding = async () => {
 									Close
 								</Button>
 								<Button
-									variant="ghost"
-									mt="10px"
+									colorScheme="facebook"
 									size="sm"
-									mr={6}
+									mr={1}
 									onClick={handleSubmit}
 								>
 									Add Config
