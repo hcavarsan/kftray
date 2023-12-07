@@ -82,7 +82,17 @@ const App: React.FC = () => {
 		remote_port: "",
 		namespace: "",
 	})
-	const openModal = () => setIsModalOpen(true)
+	const openModal = () => {
+		setNewConfig({
+		  id: 0,
+		  service: "",
+		  context: "",
+		  local_port: "",
+		  remote_port: "",
+		  namespace: "",
+		});
+		setIsModalOpen(true);
+	  }
 	const closeModal = () => setIsModalOpen(false)
 	const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
 		const { name, value } = e.target
