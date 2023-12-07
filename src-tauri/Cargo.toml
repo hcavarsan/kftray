@@ -27,6 +27,7 @@ kubeforward = { path = "./utils/kubeforward" }
 hyper = { version = "0.14.27", features = [ "client", "http1", "http2", "tcp", "stream" ] }
 log = "0.4"
 env_logger = "0.9"
+openssl-sys = "0.9.97"
 [features]
 # by default Tauri runs in production mode
 # when `tauri dev` runs it is executed with `cargo run --no-default-features` if `devPath` is an URL
