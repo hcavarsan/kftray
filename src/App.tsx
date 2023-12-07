@@ -40,17 +40,27 @@ import { MdAdd, MdClose, MdDelete, MdRefresh } from "react-icons/md"
 
 import logo from "./logo.png"
 
-interface Response {
-	id: number
-	service: string
-	context: string
-	local_port: string
-	status: number
-	namespace: string
-	remote_port: string
-	stdout: string
-	stderr: string
-}
+ interface Response {
+	id: number;
+	service: string;
+	context: string;
+	local_port: string;
+	status: number;
+	namespace: string;
+	remote_port: string;
+	stdout: string;
+	stderr: string;
+  }
+
+  interface Config {
+	id: Option<i64>;
+	service: string;
+	namespace: string;
+	local_port: number;
+	remote_port: number;
+	context: string;
+  }
+
 
 interface Status {
 	id: number
@@ -65,14 +75,11 @@ interface Status {
 const App: React.FC = () => {
 	const StatusIcon: React.FC<{ isRunning: boolean }> = ({ isRunning }) => {
 		return (
-			<Icon viewBox="0 0 200 200" color={isRunning ? "green.500" : "red.500"}>
-				<path
-					fill="currentColor"
-					d="M 100, 100 m -75, 0 a 75,75 0 1,0 150,0 a 75,75 0 1,0 -150,0"
-				/>
-			</Icon>
-		)
-	}
+		  <Icon viewBox="0 0 200 200" color={isRunning ? "green.500" : "red.500"}>
+			<path fill="currentColor" d="M 100, 100 m -75, 0 a 75,75 0 1,0 150,0 a 75,75 0 1,0 -150,0" />
+		  </Icon>
+		);
+	  };
 
 	const [isModalOpen, setIsModalOpen] = useState(false)
 	const [newConfig, setNewConfig] = useState({
@@ -157,72 +164,36 @@ const App: React.FC = () => {
 	}
 
 	const initiatePortForwarding = async () => {
-		setIsInitiating(true)
+		setIsInitiating(true);
 		try {
-			const responses: Response[] = await invoke("port_forward")
-			let allSuccess = true
-			let errorMessages: string[] = []
-			let successfulCommands: string[] = []
+			const configsToSend = configs.map(config => ({
+				// Remove the id property if it's not expected by your command
+				// Transform local_port and remote_port to the correct type if needed
+				...config,
+				local_port: parseInt(config.local_port, 10),
+				remote_port: parseInt(config.remote_port, 10),
+			}));
 
-			const newStatuses = responses.map((res) => {
-				// Log the response data:
-				console.log(
-					`Stdout: ${res.stdout}, Stderr: ${res.stderr}, Status: ${res.status}`
-				)
-				let isRunning = res.status === 0
-				if (!isRunning) {
-					allSuccess = false
-					errorMessages.push(res.stderr ?? "An unknown error occurred.")
-				} else {
-					successfulCommands.push(res.service)
-				}
+			const responses: Response[] = await invoke("start_port_forward", { configs: configsToSend });
+
+			// Update each config with its new running status, depending on the response status.
+			const updatedConfigs = configs.map(config => {
+				const relatedResponse = responses.find(res => res.id === config.id);
 				return {
-					id: res.id,
-					service: res.service,
-					context: res.context,
-					local_port: res.local_port,
-					remote_port: res.remote_port,
-					namespace: res.namespace,
-					isRunning,
-				}
-			})
+					...config,
+					isRunning: relatedResponse ? relatedResponse.status === 0 : false,
+				};
+			});
 
-			setStatuses(newStatuses)
-			setIsPortForwarding(allSuccess)
-			setConfigs(newStatuses)
-			if (!allSuccess) {
-				for (let command of successfulCommands) {
-					await invoke("stop_port_forward", { command })
-				}
-				await sendNotification({
-					title: "Error",
-					body: `Port forwarding failed for some configurations. Errors: ${errorMessages.join(
-						", "
-					)}`,
-					icon: "error",
-				})
-			} else {
-				await sendNotification({
-					title: "Success",
-					body: "Port forwarding initiated successfully for all configurations.",
-					icon: "success",
-				})
-			}
-
-			setIsPortForwarding(allSuccess)
+			setConfigs(updatedConfigs);
+			setIsPortForwarding(true);
 		} catch (error) {
-			let errorMessages = error ? [error] : ["An unknown error occurred."]
-			await sendNotification({
-				title: "Error",
-				body: `Port forwarding failed for some configurations. Errors: ${errorMessages.join(
-					", "
-				)}`,
-				icon: "error",
-			})
+			console.error("An error occurred while initiating port forwarding:", error);
 		} finally {
-			setIsInitiating(false) // Ensure the loading state is reset
+			setIsInitiating(false);
 		}
-	}
+	};
+
 	const handleDeleteConfig = async (id: number) => {
 		console.log(`Attempting to invoke delete_config with id: ${id}`) // Check if `id` is undefined
 		if (id === undefined) {
@@ -253,65 +224,51 @@ const App: React.FC = () => {
 			})
 		}
 	}
-	const stopPortForwarding = async () => {
-		setIsStopping(true)
-		try {
-			const responses: Response[] = await invoke("stop_port_forward")
-			let allStopped = true
-			let errorMessages: string[] = []
 
-			const newStatuses = responses.map((res) => {
-				// Log the response data:
-				console.log(
-					`Stdout: ${res.stdout}, Stderr: ${res.stderr}, Status: ${res.status}`
-				)
-				let isRunning = res.status !== 0
-				if (isRunning) {
-					allStopped = false
-					errorMessages.push(res.stderr ?? "An unknown error occurred.")
-				}
-				return {
-					id: res.id,
-					service: res.service,
-					context: res.context,
-					local_port: res.local_port,
-					remote_port: res.remote_port,
-					namespace: res.namespace,
-					isRunning,
-				}
-			})
+const stopPortForwarding = async () => {
+	setIsStopping(true);
+	try {
+		const responses: Response[] = await invoke("stop_port_forward");
 
-			setIsPortForwarding(!allStopped)
-			setStatuses(newStatuses)
-			setConfigs(newStatuses)
-			if (!allStopped) {
-				await sendNotification({
-					title: "Error",
-					body: `Port forwarding failed for some configurations. Errors: ${errorMessages.join(
-						", "
-					)}`,
-					icon: "error",
-				})
-			} else {
-				await sendNotification({
-					title: "Success",
-					body: "Port forwarding stopped successfully for all configurations.",
-					icon: "success",
-				})
-			}
-		} catch (error) {
-			let errorMessages = error ? [error] : ["An unknown error occurred."]
+		// Determine if all configs were successfully stopped
+		const allStopped = responses.every(res => res.status === 0);
+
+		if (allStopped) {
+			const updatedConfigs = configs.map(config => ({
+				...config,
+				isRunning: false, // Set isRunning to false for all configs
+			}));
+
+			setConfigs(updatedConfigs);
+			setIsPortForwarding(false);
+			await sendNotification({
+				title: "Success",
+				body: "Port forwarding stopped successfully for all configurations.",
+				icon: "success",
+			});
+		} else {
+			// Handle the case where some configs failed to stop
+			const errorMessages = responses
+				.filter(res => res.status !== 0)
+				.map(res => `${res.service}: ${res.stderr}`)
+				.join(", ");
+
 			await sendNotification({
 				title: "Error",
-				body: `Port forwarding failed for some configurations. Errors: ${errorMessages.join(
-					", "
-				)}`,
+				body: `Port forwarding failed for some configurations: ${errorMessages}`,
 				icon: "error",
-			})
-		} finally {
-			setIsStopping(false) // Ensure the loading state is reset
+			});
 		}
+	} catch (error) {
+		console.error("An error occurred while stopping port forwarding:", error);
+		await sendNotification({
+			title: "Error",
+			body: `An error occurred while stopping port forwarding: ${error}`,
+			icon: "error",
+		});
 	}
+	setIsStopping(false);
+};
 	const quitApp = () => {
 		invoke("quit_app")
 	}
