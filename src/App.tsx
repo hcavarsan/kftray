@@ -106,7 +106,7 @@ const App: React.FC = () => {
     const { name, value } = e.target
     setNewConfig((prev) => ({ ...prev, [name]: value }))
   }
-
+  const cancelRef = React.useRef();
   const [isInitiating, setIsInitiating] = useState(false)
   const [isStopping, setIsStopping] = useState(false)
   const [isPortForwarding, setIsPortForwarding] = useState(false)
@@ -439,6 +439,7 @@ const App: React.FC = () => {
                   <AlertDialog
                     isOpen={isAlertOpen}
                     onClose={() => setIsAlertOpen(false)}
+					leastDestructiveRef={cancelRef}
                   >
                       <AlertDialogContent>
                         <AlertDialogHeader fontSize="md" fontWeight="bold">
