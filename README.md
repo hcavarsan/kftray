@@ -18,7 +18,7 @@ kftray is a tray application developed with Tauri, Rust, React, Vite, and Chakra
 </p>
 
 <p align="center">
-! <img src="img/play2.gif" alt="kftray logo" width="800"/>
+! <img src="img/play3.gif" alt="kftray logo" width="800"/>
 </p>
 
 <h5 align="center">

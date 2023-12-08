@@ -277,22 +277,24 @@ const stopPortForwarding = async () => {
 	const textColor = useColorModeValue("gray.100", "gray.100")
 
 	return (
-		<Center h="100vh" bg="dark.700" margin="0">
+		<Center h="90vh" margin="0" borderRadius="20px" >
 			{" "}
 			{/* Setting the height to 100vh ensures it takes the full viewport height */}
 			<VStack
-				spacing={2}
-				position="relative" // Changed from "absolute" to "relative" for alignment
+			p={4}
+			    shadow='md'
+			    margin="0"
+				position="absolute" // Changed from "absolute" to "relative" for alignment
 				width="95%"
 				height="95%"
-				maxWidth="700px"
-				maxHeight="600px" // Adjust this value to change the maximum height
-				p={5} // Add some padding
+				maxWidth="600px"
+				maxHeight="500px" // Adjust this value to change the maximum height
 				bg={cardBg} // Add a background to the card for better visibility
-				borderRadius="md" // Optional: add slight rounding of corners
-				boxShadow="md" // Optional: some shadow for depth
+				borderRadius="20px" // Optional: add slight rounding of corners
+				mb={10}
+
 			>
-				<Heading as="h1" size="lg" color="white" mb={2} marginTop={2}>
+				<Heading as="h1" size="lg" color="white" mb={1} marginTop={2}>
 					<Image borderRadius="full" boxSize="100px" src={logo} />
 				</Heading>
 				<Center>
@@ -455,8 +457,8 @@ const stopPortForwarding = async () => {
 				aria-label="Quit application"
 				variant="solid"
 				position="fixed"
-				top={7}
-				right={6}
+				top={5}
+				right={7}
 				onClick={quitApp}
 				isRound={false}
 				size="xs"
