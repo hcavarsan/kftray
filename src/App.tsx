@@ -303,12 +303,9 @@ const stopPortForwarding = async () => {
 						onClose={closeModal}
 						size="sm"
 					>
-						<ModalOverlay />
 						<ModalContent
-							mt="10px"
-							maxWidth="500px"
+							mt="40px"
 							width="fit-content"
-							maxHeight="420px"
 						>
 							{" "}
 							{/* Adjusts the top margin and centers horizontally */}
