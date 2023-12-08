@@ -29,36 +29,36 @@ fn main() {
         })
         .plugin(tauri_plugin_positioner::init())
         .system_tray(SystemTray::new().with_menu(system_tray_menu))
-        .on_system_tray_event(|app, event| {
+		.on_system_tray_event(|app, event| {
             tauri_plugin_positioner::on_tray_event(app, &event);
             match event {
-                SystemTrayEvent::LeftClick { .. } => {
-                    if let Some(window) = app.get_window("main") {
-                        let _ = window.move_window(Position::TrayCenter);
-                        match window.is_visible() {
-                            Ok(true) => {
-                                if let Err(e) = window.hide() {
-                                    println!("Failed to hide window: {}", e);
-                                }
-                            }
-                            Ok(false) => {
-                                if let Err(e) = window.show() {
-                                    println!("Failed to show window: {}", e);
-                                }
-                                if let Err(e) = window.set_focus() {
-                                    println!("Failed to set focus: {}", e);
-                                }
-                            }
-                            Err(e) => {
-                                println!("Failed to check window visibility: {}", e);
-                            }
-                        }
+                SystemTrayEvent::LeftClick {
+                    position: _,
+                    size: _,
+                    ..
+                } => {
+                    let window = app.get_window("main").unwrap();
+                    let _ = window.move_window(Position::TrayCenter);
+
+                    if window.is_visible().unwrap() {
+                        window.hide().unwrap();
+                    } else {
+                        window.show().unwrap();
+                        window.set_focus().unwrap();
                     }
                 }
-                SystemTrayEvent::RightClick { .. } => {
+                SystemTrayEvent::RightClick {
+                    position: _,
+                    size: _,
+                    ..
+                } => {
                     println!("system tray received a right click");
                 }
-                SystemTrayEvent::DoubleClick { .. } => {
+                SystemTrayEvent::DoubleClick {
+                    position: _,
+                    size: _,
+                    ..
+                } => {
                     println!("system tray received a double click");
                 }
                 SystemTrayEvent::MenuItemClick { id, .. } => match id.as_str() {
@@ -66,22 +66,22 @@ fn main() {
                         std::process::exit(0);
                     }
                     "hide" => {
-                        if let Some(window) = app.get_window("main") {
-                            let _ = window.hide();
-                        }
+                        let window = app.get_window("main").unwrap();
+                        window.hide().unwrap();
                     }
                     _ => {}
                 },
                 _ => {}
             }
         })
-        .on_window_event(|event| {
-            if let tauri::WindowEvent::Focused(is_focused) = event.event() {
+        .on_window_event(|event| match event.event() {
+            tauri::WindowEvent::Focused(is_focused) => {
                 // detect click outside of the focused window and hide the app
                 if !is_focused {
-                    let _ = event.window().hide();
+                    event.window().hide().unwrap();
                 }
             }
+            _ => {}
         })
         .invoke_handler(tauri::generate_handler![
 			kubeforward::port_forward::start_port_forward,
