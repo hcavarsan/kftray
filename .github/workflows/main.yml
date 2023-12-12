@@ -62,10 +62,11 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
+
       - name: Build Tauri App
         uses: tauri-apps/tauri-action@v0
         with:
-          tagName: app
+          tagName: ${{ github.ref_name }}
           releaseName: 'Kftray IDE v__VERSION__'
           releaseBody: 'See the assets to download this version and install.'
           releaseDraft: true
