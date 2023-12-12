@@ -33,11 +33,6 @@ jobs:
       - name: Rust setup
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Set OPENSSL_DIR for macOS
-        if: matrix.platform == 'macos-latest'
-        run: |
-          echo "OPENSSL_DIR=$(brew --prefix openssl)" >> $GITHUB_ENV
-
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
@@ -67,23 +62,6 @@ jobs:
       - name: Install dependencies
         run: pnpm install
 
-      - name: install openssl (windows only)
-        if: matrix.platform == 'windows-latest'
-        run: |
-          echo "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" | Out-File -FilePath $env:GITHUB_ENV -Append
-          vcpkg install openssl:x64-windows-static-md
-
-      - name: Tauri Build and Release (Non MacOS)
-        uses: tauri-apps/tauri-action@v0
-        if: matrix.platform != 'macos-latest'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tagName: v__VERSION__
-          releaseName: "Kftray v__VERSION__"
-          releaseBody: "See the assets to download this version and install."
-          releaseDraft: true
-          prerelease: false
 
       - name: Build Tauri App
         uses: tauri-apps/tauri-action@v0
