@@ -26,7 +26,7 @@ kftray is a tray application developed with Tauri, Rust, React, Vite, and Chakra
 
 <h5 align="center">
  ·
-  <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.0.0_x64.dmg">Download for macOS</a> ·
+  <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.0.0_universal.dmg">Download for macOS</a> ·
   <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.0.0_x64-setup.exe">Download for Windows</a> ·
   <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.0.0_amd64.AppImage">Download for Linux</a>
   ·
