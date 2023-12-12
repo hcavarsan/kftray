@@ -18,6 +18,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin
+        if: matrix.platform == 'macos-latest'
+
+      - uses: dtolnay/rust-toolchain@stable
+        if: matrix.platform != 'macos-latest'
+
       - name: Install dependencies (ubuntu only)
         if: matrix.platform == 'ubuntu-20.04'
         run: |
@@ -74,19 +82,16 @@ jobs:
           releaseDraft: true
           prerelease: false
 
-      - name: Add Mac Universal Target
-        if: matrix.platform == 'macos-latest'
-        run: rustup target add aarch64-apple-darwin
-
-      - name: Tauri Build and Release (MacOS Universal Build)
+      - name: Build Tauri App
         uses: tauri-apps/tauri-action@v0
-        if: matrix.platform == 'macos-latest'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           tagName: v__VERSION__
-          releaseName: "Kftray v__VERSION__"
-          args: "--target universal-apple-darwin"
-          releaseBody: "See the assets to download this version and install."
+          releaseName: 'Kftray IDE v__VERSION__'
+          releaseBody: 'See the assets to download this version and install.'
           releaseDraft: true
           prerelease: false
+          updaterJsonKeepUniversal: true
+          args: ${{ matrix.platform == 'macos-latest' && ' --target universal-apple-darwin --verbose' || '--verbose' }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_OPTIONS: --max-old-space-size=6000
