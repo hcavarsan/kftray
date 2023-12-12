@@ -9,6 +9,10 @@
     <img src="https://img.shields.io/badge/React-v18.2.0-brightgreen.svg" alt="react version">
   </a>
 </p>
+  <a href="https://www.rust-lang.org/">
+    <img src="https://img.shields.io/badge/Rust-v1.74.0-brightgreen.svg" alt="rust version">
+  </a>
+</p>
 
 <h1 align="center"> KFtray </h1>
 <h3 align="center">A tray application that manages port forwarding in Kubernetes.</h3>
