@@ -33,6 +33,11 @@ jobs:
       - name: Rust setup
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Set OPENSSL_DIR for macOS
+        if: matrix.platform == 'macos-latest'
+        run: |
+          echo "OPENSSL_DIR=$(brew --prefix openssl)" >> $GITHUB_ENV
+
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
