@@ -1,8 +1,9 @@
-name: "build"
+name: Release
 on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
 
 jobs:
   release:
@@ -11,20 +12,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [ubuntu-20.04, windows-latest, macos-latest]
-
+        platform: [macos-latest, ubuntu-20.04, windows-latest]
     runs-on: ${{ matrix.platform }}
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - name: install Rust stable
+        uses: dtolnay/rust-toolchain@stable
         with:
           targets: aarch64-apple-darwin
-        if: matrix.platform == 'macos-latest'
-
-      - uses: dtolnay/rust-toolchain@stable
-        if: matrix.platform != 'macos-latest'
 
       - name: Install dependencies (ubuntu only)
         if: matrix.platform == 'ubuntu-20.04'
