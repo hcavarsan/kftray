@@ -27,7 +27,6 @@ kubeforward = { path = "./utils/kubeforward" }
 hyper = { version = "0.14.27", features = [ "client", "http1", "http2", "tcp", "stream" ] }
 log = "0.4"
 env_logger = "0.10.1"
-openssl-sys = "0.9.97"
 wasmedge_quickjs = "0.2.0"
 [features]
 # by default Tauri runs in production mode

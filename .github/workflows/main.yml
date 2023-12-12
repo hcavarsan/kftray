@@ -1,9 +1,8 @@
-name: Release
+name: "build"
 on:
   push:
     tags:
       - "v*"
-  workflow_dispatch:
 
 jobs:
   release:
@@ -12,16 +11,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [macos-latest, ubuntu-20.04, windows-latest]
-    runs-on: ${{ matrix.platform }}
+        platform: [ubuntu-20.04, windows-latest, macos-latest]
 
+    runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Install dependencies (ubuntu only)
         if: matrix.platform == 'ubuntu-20.04'
-        # You can remove libayatana-appindicator3-dev if you don't use the system tray feature.
         run: |
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev
@@ -50,13 +48,10 @@ jobs:
         run: |
           echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
 
-      - uses: actions/cache@v3
-        name: Setup pnpm cache
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
         with:
-          path: ${{ env.STORE_PATH }}
-          key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-store-
+          workspaces: './src-tauri -> target'
 
       - name: Install dependencies
         run: pnpm install
@@ -67,13 +62,31 @@ jobs:
           echo "VCPKG_ROOT=$env:VCPKG_INSTALLATION_ROOT" | Out-File -FilePath $env:GITHUB_ENV -Append
           vcpkg install openssl:x64-windows-static-md
 
-      - name: Build the app
+      - name: Tauri Build and Release (Non MacOS)
         uses: tauri-apps/tauri-action@v0
+        if: matrix.platform != 'macos-latest'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tagName: ${{ github.ref_name }} # This only works if your workflow triggers on new tags.
-          releaseName: "App Name v__VERSION__" # tauri-action replaces \_\_VERSION\_\_ with the app version.
-          releaseBody: "See the assets to download and install this version."
+          tagName: v__VERSION__
+          releaseName: "Kftray v__VERSION__"
+          releaseBody: "See the assets to download this version and install."
+          releaseDraft: true
+          prerelease: false
+
+      - name: Add Mac Universal Target
+        if: matrix.platform == 'macos-latest'
+        run: rustup target add aarch64-apple-darwin
+
+      - name: Tauri Build and Release (MacOS Universal Build)
+        uses: tauri-apps/tauri-action@v0
+        if: matrix.platform == 'macos-latest'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: v__VERSION__
+          releaseName: "Kftray v__VERSION__"
+          args: "--target universal-apple-darwin"
+          releaseBody: "See the assets to download this version and install."
           releaseDraft: true
           prerelease: false
