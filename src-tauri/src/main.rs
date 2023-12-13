@@ -89,7 +89,9 @@ fn main() {
             kubeforward::port_forward::quit_app,
             config::get_configs,
             config::insert_config,
-            config::delete_config
+            config::delete_config,
+			config::get_config,
+			config::update_config,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
