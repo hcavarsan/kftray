@@ -61,7 +61,7 @@
 	  "windows": [
 		{
 		  "fullscreen": false,
-		  "height": 600,
+		  "height": 900,
 		  "resizable": false,
 		  "title": "menubar",
 		  "width": 600,

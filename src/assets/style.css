@@ -2,7 +2,7 @@ body {
 	margin: 0;
   }
 
-.arrow {
+  .arrow {
 	position: relative;
 	padding: 12px 0;
   }
@@ -13,10 +13,44 @@ body {
 	width: 0;
 	border-width: 0 8px 12px 8px;
 	border-style: solid;
-	border-color: transparent transparent #1A202C transparent;
+	border-color: transparent transparent rgba(45, 57, 81, 0.8) transparent; /* Dark gray with transparency */
 	position: absolute;
 	top: 0px;
 	left: 50%;
 	transform: translateX(-50%);
+	/* Apply outer shadow to the arrow */
+	box-shadow: 0 -2px 4px rgba(0, 0, 0, 0.1);
   }
 
+/* The scrollbar track (background) */
+/* The scrollbar track (background) */
+::-webkit-scrollbar {
+	width: 12px; /* width of the entire scrollbar */
+  }
+
+  /* Handle on hover */
+  ::-webkit-scrollbar-thumb:hover {
+	background: #555; /* color of the scrollbar thumb on hover */
+  }
+
+  /* The scrollbar thumb (movable part) */
+  ::-webkit-scrollbar-thumb {
+	background: #888; /* color of the scrollbar thumb */
+	border-radius: 6px; /* roundness of the scrollbar thumb */
+	border: 3px solid transparent; /* creates padding around the thumb */
+	background-clip: content-box; /* ensures the border doesn't occupy space */
+  }
+
+  /* The scrollbar button (arrow buttons) - for some older browsers */
+  ::-webkit-scrollbar-button {
+	display: none; /* hides the buttons */
+  }
+
+  /* The scrollbar corner (where horizontal and vertical scrollbars meet) */
+  ::-webkit-scrollbar-corner {
+	background: transparent; /* Optional: style for the scrollbar corner */
+  }
+  .VStackClass {
+	background: transparent; /* Optional: style for the scrollbar corner */
+	scrollbar-gutter: stable;
+  }
