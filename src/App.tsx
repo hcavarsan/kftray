@@ -12,6 +12,7 @@ import {
   FormControl,
   FormLabel,
   Heading,
+  HStack,
   Icon,
   IconButton,
   Image,
@@ -21,7 +22,6 @@ import {
   ModalCloseButton,
   ModalContent,
   ModalFooter,
-  ModalOverlay,
   Stack,
   Table,
   Tbody,
@@ -34,7 +34,7 @@ import {
 } from "@chakra-ui/react"
 import { sendNotification } from "@tauri-apps/api/notification"
 import { invoke } from "@tauri-apps/api/tauri"
-import { MdAdd, MdClose, MdDelete, MdRefresh } from "react-icons/md"
+import { MdAdd, MdClose, MdDelete, MdEdit, MdRefresh } from "react-icons/md"
 
 import logo from "./logo.png"
 
@@ -82,6 +82,7 @@ const App: React.FC = () => {
   }
 
   const [isModalOpen, setIsModalOpen] = useState(false)
+  const [isEdit, setIsEdit] = useState(false)
   const [newConfig, setNewConfig] = useState({
     id: 0,
     service: "",
@@ -99,14 +100,18 @@ const App: React.FC = () => {
       remote_port: "",
       namespace: "",
     })
+    setIsEdit(false) // Reset the isEdit state for a new configuration
     setIsModalOpen(true)
   }
-  const closeModal = () => setIsModalOpen(false)
+  const closeModal = () => {
+    setIsModalOpen(false)
+    setIsEdit(false) // Reset isEdit when the modal is closed
+  }
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target
     setNewConfig((prev) => ({ ...prev, [name]: value }))
   }
-  const cancelRef = React.useRef<HTMLElement>(null);
+  const cancelRef = React.useRef<HTMLElement>(null)
   const [isInitiating, setIsInitiating] = useState(false)
   const [isStopping, setIsStopping] = useState(false)
   const [isPortForwarding, setIsPortForwarding] = useState(false)
@@ -136,40 +141,155 @@ const App: React.FC = () => {
     fetchConfigs()
     // You might want to set the initial window size here as well
   }, [])
-
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleEditConfig = async (id: number) => {
+    try {
+      const configToEdit: Config = await invoke("get_config", { id })
+      setNewConfig({
+        // populate the state with the fetched config
+        id: configToEdit.id,
+        service: configToEdit.service,
+        namespace: configToEdit.namespace,
+        local_port: configToEdit.local_port.toString(),
+        remote_port: configToEdit.remote_port.toString(),
+        context: configToEdit.context,
+      })
+      setIsEdit(true) // Set isEdit to true because we are editing
+      setIsModalOpen(true)
+    } catch (error) {
+      console.error(
+        `Failed to fetch the config for editing with id ${id}:`,
+        error
+      )
+      // Handle the error...
+    }
+  }
+  const handleEditSubmit = async (e: React.FormEvent) => {
     e.preventDefault() // Prevent the default form submit action
 
+    // Check if the port numbers are within the correct range
+    const local_port_number = parseInt(newConfig.local_port, 10)
+    const remote_port_number = parseInt(newConfig.remote_port, 10)
+
+    if (local_port_number < 0 || local_port_number > 65535) {
+      // Handle error: local port number is out of range for a u16
+      return
+    }
+
+    if (remote_port_number < 0 || remote_port_number > 65535) {
+      // Handle error: remote port number is out of range for a u16
+      return
+    }
     try {
-      const configToInsert = {
+      // Construct the edited config object
+      const editedConfig = {
+        id: newConfig.id, // Include the id for updating the existing record
         service: newConfig.service,
         context: newConfig.context,
-        local_port: parseInt(newConfig.local_port, 10), // Ensure you parse the string to a number
-        remote_port: parseInt(newConfig.remote_port, 10), // Same here
+        local_port: local_port_number,
+        remote_port: remote_port_number,
         namespace: newConfig.namespace,
       }
 
-      await invoke("insert_config", { config: configToInsert })
+      await invoke("update_config", { config: editedConfig })
 
-      // Assuming the `get_configs` function can return the updated list
-      // including the newly inserted configuration, we then refetch the configurations.
+      // Fetch the updated configurations
+      const updatedConfigs: Status[] = await invoke("get_configs")
+      setConfigs(updatedConfigs)
+
+      // Show success notification
+      await sendNotification({
+        title: "Success",
+        body: "Configuration updated successfully.",
+        icon: "success",
+      })
+
+      closeModal() // Close the modal after successful update
+    } catch (error) {
+      console.error("Failed to update config:", error)
+      // Handle errors
+      await sendNotification({
+        title: "Error",
+        body: "Failed to update configuration.",
+        icon: "error",
+      })
+    }
+  }
+  const handleSaveConfig = async (e: React.FormEvent) => {
+    e.preventDefault() // Prevent the default form submit action
+
+    // Parse and validate port numbers
+    const local_port_number = parseInt(newConfig.local_port, 10)
+    const remote_port_number = parseInt(newConfig.remote_port, 10)
+
+    if (
+      isNaN(local_port_number) ||
+      local_port_number < 0 ||
+      local_port_number > 65535
+    ) {
+      await sendNotification({
+        title: "Error",
+        body: "Local port number is out of range for a u16.",
+        icon: "error",
+      })
+      return
+    }
+
+    if (
+      isNaN(remote_port_number) ||
+      remote_port_number < 0 ||
+      remote_port_number > 65535
+    ) {
+      await sendNotification({
+        title: "Error",
+        body: "Remote port number is out of range for a u16.",
+        icon: "error",
+      })
+      return
+    }
+
+    // Prepare the config object for saving
+    const configToSave = {
+      // Include ID only for updates, not for new config
+      id: isEdit ? newConfig.id : undefined,
+      service: newConfig.service,
+      context: newConfig.context,
+      local_port: local_port_number,
+      remote_port: remote_port_number,
+      namespace: newConfig.namespace,
+    }
+
+    try {
+      // Check if we're adding a new config or updating an existing one
+      if (isEdit) {
+        // Update existing config
+        await invoke("update_config", { config: configToSave })
+      } else {
+        // Insert new config
+        await invoke("insert_config", { config: configToSave })
+      }
+
+      // Fetch and update the list of configurations
       const updatedConfigs: Status[] = await invoke("get_configs")
       setConfigs(updatedConfigs)
 
       // Show a success notification to the user
       await sendNotification({
         title: "Success",
-        body: "Configuration added successfully.",
+        body: `Configuration ${isEdit ? "updated" : "added"} successfully.`,
         icon: "success",
       })
 
-      closeModal() // Close the modal after successful insert
+      // Close the modal after successful insert/update
+      closeModal()
     } catch (error) {
-      console.error("Failed to insert config:", error)
-      // Handle errors such as showing an error notification
+      console.error(`Failed to ${isEdit ? "update" : "insert"} config:`, error)
+
+      // Handle errors, such as showing an error notification
       await sendNotification({
         title: "Error",
-        body: `Failed to add configuration:", "unknown error"`,
+        body: `Failed to ${
+          isEdit ? "update" : "add"
+        } configuration. Error: ${error}`,
         icon: "error",
       })
     }
@@ -374,14 +494,25 @@ const App: React.FC = () => {
                 >
                   Close
                 </Button>
-                <Button
-                  colorScheme="facebook"
-                  size="sm"
-                  mr={1}
-                  onClick={handleSubmit}
-                >
-                  Add Config
-                </Button>
+                {isEdit ? (
+                  <Button
+                    colorScheme="blue"
+                    size="sm"
+                    mr={1}
+                    onClick={handleSaveConfig}
+                  >
+                    Save Changes
+                  </Button>
+                ) : (
+                  <Button
+                    colorScheme="facebook"
+                    size="sm"
+                    mr={1}
+                    onClick={handleSaveConfig}
+                  >
+                    Add Config
+                  </Button>
+                )}
               </ModalFooter>
             </ModalContent>
           </Modal>
@@ -436,42 +567,52 @@ const App: React.FC = () => {
                   <StatusIcon isRunning={config.isRunning} />
                 </Td>
                 <Td>
+                  <HStack spacing="0.1">
+                    <IconButton
+                      aria-label="Edit config"
+                      icon={<MdEdit />}
+                      size="sm"
+                      colorScheme="blue"
+                      onClick={() => handleEditConfig(config.id)}
+                      variant="ghost"
+                    />
+                    <IconButton
+                      aria-label="Delete config"
+                      icon={<MdDelete />}
+                      size="sm"
+                      colorScheme="red"
+                      onClick={() => handleDeleteConfig(config.id)}
+                      variant="ghost"
+                    />
+                  </HStack>
                   <AlertDialog
                     isOpen={isAlertOpen}
                     onClose={() => setIsAlertOpen(false)}
-					leastDestructiveRef={cancelRef}
+                    leastDestructiveRef={cancelRef}
                   >
-                      <AlertDialogContent>
-                        <AlertDialogHeader fontSize="md" fontWeight="bold">
-                          Delete Configuration
-                        </AlertDialogHeader>
+                    <AlertDialogContent>
+                      <AlertDialogHeader fontSize="md" fontWeight="bold">
+                        Delete Configuration
+                      </AlertDialogHeader>
 
-                        <AlertDialogBody>
-                          Are you sure? This action cannot be undone.
-                        </AlertDialogBody>
+                      <AlertDialogBody>
+                        Are you sure? This action cannot be undone.
+                      </AlertDialogBody>
 
-                        <AlertDialogFooter>
-                          <Button onClick={() => setIsAlertOpen(false)}>
-                            Cancel
-                          </Button>
-                          <Button
-                            colorScheme="red"
-                            onClick={confirmDeleteConfig}
-                            ml={3}
-                          >
-                            Yes
-                          </Button>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
+                      <AlertDialogFooter>
+                        <Button onClick={() => setIsAlertOpen(false)}>
+                          Cancel
+                        </Button>
+                        <Button
+                          colorScheme="red"
+                          onClick={confirmDeleteConfig}
+                          ml={3}
+                        >
+                          Yes
+                        </Button>
+                      </AlertDialogFooter>
+                    </AlertDialogContent>
                   </AlertDialog>
-                  <IconButton
-                    aria-label="Delete config"
-                    icon={<MdDelete />}
-                    size="sm"
-                    colorScheme="red"
-                    onClick={() => handleDeleteConfig(config.id)}
-                    variant="ghost"
-                  />
                 </Td>
               </Tr>
             ))}

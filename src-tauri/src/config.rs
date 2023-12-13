@@ -85,3 +85,47 @@ pub async fn get_configs() -> Result<Vec<Config>, String> {
     println!("{:?}", configs);
     return Ok(configs);
 }
+
+#[tauri::command]
+pub async fn get_config(id: i64) -> Result<Config, String> {
+    println!("get_config called with id: {}", id);
+    let home_dir = dirs::home_dir().ok_or("Unable to determine home directory")?;
+    let db_dir = format!("{}/.kftray/configs.db", home_dir.to_string_lossy());
+    let conn = Connection::open(db_dir).map_err(|e| e.to_string())?;
+
+    let mut stmt = conn.prepare("SELECT id, data FROM configs WHERE id = ?1").map_err(|e| e.to_string())?;
+    let mut rows = stmt.query_map(params![id], |row| {
+        // For `row.get`, we directly use `rusqlite::Result` with `?`.
+        let id: i64 = row.get(0)?;
+        let data: String = row.get(1)?;
+        // The error from `serde_json` is converted to a `rusqlite::Error` before using `?`.
+        let config: Config = serde_json::from_str(&data).map_err(|e| {
+            rusqlite::Error::ExecuteReturnedResults
+        })?;
+        Ok(config)
+    }).map_err(|e| e.to_string())?;
+
+    match rows.next() {
+        Some(row_result) => {
+            let mut config = row_result.map_err(|e| e.to_string())?;
+            config.id = Some(id);
+            println!("{:?}", config);
+            Ok(config)
+        },
+        None => Err(format!("No config found with id: {}", id)),
+    }
+}
+
+#[tauri::command]
+pub fn update_config(config: Config) -> Result<(), String> {
+    let home_dir = dirs::home_dir().unwrap();
+    let db_dir = home_dir.to_str().unwrap().to_string() + "/.kftray/configs.db";
+
+    let conn = Connection::open(db_dir).map_err(|e| e.to_string())?;
+
+    let data = json!(config).to_string();
+    conn.execute("UPDATE configs SET data = ?1 WHERE id = ?2", params![data, config.id.unwrap()])
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
