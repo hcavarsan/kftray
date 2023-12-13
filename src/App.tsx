@@ -432,10 +432,11 @@ const App: React.FC = () => {
     borderRadius="20px"
     bg={cardBg}
     boxShadow={`
-      /* Outer shadow for subtle depth */
-      0 2px 4px rgba(0, 0, 0, 0.1),
-      /* Inset shadow for an inner border effect using dark gray */
-      inset 0 0 0 4px rgba(45, 57, 81, 0.8)
+      /* Inset shadow for top & bottom inner border effect using dark gray */
+      inset 0 2px 4px rgba(0, 0, 0, 0.3),
+      inset 0 -2px 4px rgba(0, 0, 0, 0.3),
+      /* Inset shadow for an inner border all around using dark gray */
+      inset 0 0 0 4px rgba(45, 57, 81, 0.9)
     `}
   >
     {/* Scrollable VStack inside the wrapper */}
@@ -651,7 +652,6 @@ const App: React.FC = () => {
       variant="solid"
       size="xs"
       colorScheme="facebook"
-	  align="right"
       onClick={openModal}
 	  ml="480px"
     > Add
