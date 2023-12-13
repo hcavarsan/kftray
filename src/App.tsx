@@ -6,7 +6,7 @@ import {
   AlertDialogContent,
   AlertDialogFooter,
   AlertDialogHeader,
-  AlertDialogOverlay,
+  Box,
   Button,
   Center,
   FormControl,
@@ -31,6 +31,7 @@ import {
   Tr,
   useColorModeValue,
   VStack,
+  Spacer
 } from "@chakra-ui/react"
 import { sendNotification } from "@tauri-apps/api/notification"
 import { invoke } from "@tauri-apps/api/tauri"
@@ -420,24 +421,47 @@ const App: React.FC = () => {
   const textColor = useColorModeValue("gray.100", "gray.100")
 
   return (
-    <Center h="90vh" margin="0" borderRadius="20px">
-      {" "}
-      {/* Setting the height to 100vh ensures it takes the full viewport height */}
-      <VStack
-        p={4}
-        shadow="md"
-        margin="0"
-        position="absolute" // Changed from "absolute" to "relative" for alignment
-        width="95%"
-        height="95%"
-        maxWidth="600px"
-        maxHeight="500px" // Adjust this value to change the maximum height
-        bg={cardBg} // Add a background to the card for better visibility
-        borderRadius="20px" // Optional: add slight rounding of corners
-        mb={10}
-      >
-        <Heading as="h1" size="lg" color="white" mb={1} marginTop={2}>
-          <Image borderRadius="full" boxSize="100px" src={logo} />
+<Center h="100%" w="100%" overflow="hidden" margin="0">
+  {/* Wrapper to maintain borderRadius, with overflow hidden */}
+  <Box
+    width="100%"
+    height="60vh"
+    maxH="95vh"
+    maxW="600px"
+    overflow="hidden"
+    borderRadius="20px"
+    bg={cardBg}
+    boxShadow={`
+      /* Outer shadow for subtle depth */
+      0 2px 4px rgba(0, 0, 0, 0.1),
+      /* Inset shadow for an inner border effect using dark gray */
+      inset 0 0 0 4px rgba(45, 57, 81, 0.8)
+    `}
+  >
+    {/* Scrollable VStack inside the wrapper */}
+    <VStack
+      css={{
+        '&::-webkit-scrollbar': {
+          width: '5px',
+          background: 'transparent',
+        },
+        '&::-webkit-scrollbar-thumb': {
+          background: '#555',
+        },
+        '&::-webkit-scrollbar-thumb:hover': {
+          background: '#666',
+        }
+      }}
+      h="100%"
+      w="100%"
+      maxW="100%"
+      overflowY="auto"
+      padding="20px" // Adjust padding to prevent content from touching the edges
+	  mt="5px"
+
+    >
+        <Heading as="h1" size="lg" color="white" mb={1} marginTop={-2} background="transparent">
+          <Image boxSize="100px" src={logo} />
         </Heading>
         <Center>
           <Modal isOpen={isModalOpen} onClose={closeModal} size="sm">
@@ -517,7 +541,7 @@ const App: React.FC = () => {
             </ModalContent>
           </Modal>
         </Center>
-        <Stack direction="row" spacing={4} align="center" marginTop={2} mb={2}>
+        <Stack direction="row" spacing={4} align="center" marginTop={2} mb={0}>
           <Button
             leftIcon={<MdRefresh />}
             colorScheme="facebook"
@@ -540,7 +564,7 @@ const App: React.FC = () => {
           </Button>
         </Stack>
         {/* Your table UI */}
-        <Table variant="simple" size="sm" align="center" marginTop={4}>
+        <Table variant="simple" size="sm" align="center" marginTop={5}>
           <Thead>
             <Tr>
               <Th>Service</Th>
@@ -616,31 +640,41 @@ const App: React.FC = () => {
                 </Td>
               </Tr>
             ))}
+
           </Tbody>
+
         </Table>
-        <Button
-          leftIcon={<MdAdd />}
-          onClick={openModal}
-          colorScheme="facebook"
-          size="xs"
-          ml={450}
-        >
-          Add Config
-        </Button>
+		<Stack position="relative"  bottom={0} left={0} >
+    <Button
+      leftIcon={<MdAdd />}
+      aria-label="Add configuration"
+      variant="solid"
+      size="xs"
+      colorScheme="facebook"
+	  align="right"
+      onClick={openModal}
+	  ml="480px"
+    > Add
+	</Button>
+
+        </Stack>
+
+
       </VStack>
-      {/* Quit IconButton */}
-      <IconButton
+	  <IconButton
         icon={<MdClose />}
         aria-label="Quit application"
         variant="solid"
         position="fixed"
-        top={5}
-        right={7}
+        top={7}
+        right={4}
         onClick={quitApp}
         isRound={false}
         size="xs"
         colorScheme="facebook"
       />
+	  </Box>
+
     </Center>
   )
 }
