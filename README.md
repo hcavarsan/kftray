@@ -62,14 +62,13 @@ To build `kftray` from source, follow these steps:
    ```bash
    cd kftray
    ```
-3. Install Typescript dependencies and build the React application:
+3. Install dependencies
    ```bash
-   pnpm install # or yarn install
-   pnpm run build # or yarn build
+   pnpm install
    ```
-4. Build the Tauri application:
+4. Run the application in development mode:
    ```bash
-   pnpm run tauri build
+   pnpm run tauri dev
    ```
 
 ## Usage
