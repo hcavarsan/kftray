@@ -22,7 +22,7 @@
 </p>
 
 <p align="center">
-  <img src="img/ss_app.png" alt="kftray demo" width="600" />
+  <img src="img/demo.png" alt="kftray demo" width="600" />
 </p>
 
 <h4 align="center">
