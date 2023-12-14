@@ -4,6 +4,8 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Deserialize, PartialEq, Serialize, Debug)]
 pub struct Config {
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     id: Option<i64>,
     service: String,
     namespace: String,
@@ -129,3 +131,24 @@ pub fn update_config(config: Config) -> Result<(), String> {
 
     Ok(())
 }
+
+
+#[tauri::command]
+pub async fn export_configs() -> Result<String, String> {
+    let mut configs = read_configs().map_err(|e| e.to_string())?;
+    for config in &mut configs {
+        config.id = None; // Ensure that the id is None before exporting
+    }
+    let json = serde_json::to_string(&configs).map_err(|e| e.to_string())?;
+    Ok(json)
+}
+
+#[tauri::command]
+pub async fn import_configs(json: String) -> Result<(), String> {
+    let configs: Vec<Config> = serde_json::from_str(&json).map_err(|e| e.to_string())?;
+    for config in configs {
+        insert_config(config)?;
+    }
+    Ok(())
+}
+
