@@ -31,11 +31,15 @@ import {
   Tr,
   useColorModeValue,
   VStack,
-  Spacer
 } from "@chakra-ui/react"
 import { sendNotification } from "@tauri-apps/api/notification"
 import { invoke } from "@tauri-apps/api/tauri"
 import { MdAdd, MdClose, MdDelete, MdEdit, MdRefresh } from "react-icons/md"
+import { readTextFile } from "@tauri-apps/api/fs";
+import { writeTextFile, createDir } from '@tauri-apps/api/fs';
+import { save } from '@tauri-apps/api/dialog';
+import { MdFileDownload, MdFileUpload } from 'react-icons/md';
+
 
 import logo from "./logo.png"
 
@@ -69,6 +73,8 @@ interface Status {
   namespace: string
   remote_port: string
 }
+
+
 
 const App: React.FC = () => {
   const StatusIcon: React.FC<{ isRunning: boolean }> = ({ isRunning }) => {
@@ -142,6 +148,103 @@ const App: React.FC = () => {
     fetchConfigs()
     // You might want to set the initial window size here as well
   }, [])
+
+async function saveFile(data: string, filename: string) {
+  try {
+	const path = await save({
+		defaultPath: filename,
+		filters: [{ name: 'JSON', extensions: ['json'] }],
+	  });
+
+
+    if (path) {
+      await writeTextFile(path, data);
+    }
+  } catch (error) {
+    console.error('Error in saveFile:', error);
+  }
+}
+
+const handleExportConfigs = async () => {
+	try {
+	  // Inform backend that save dialog is about to open
+	  await invoke('open_save_dialog');
+
+	  const json = await invoke("export_configs");
+	  if (typeof json !== 'string') {
+		throw new Error('The exported config is not a string');
+	  }
+
+	  const filePath = await save({
+		defaultPath: 'configs.json',
+		filters: [{ name: 'JSON', extensions: ['json'] }],
+	  });
+
+	  // Inform backend that save dialog has closed
+	  await invoke('close_save_dialog');
+
+	  if (filePath) {
+		await writeTextFile(filePath, json);
+		await sendNotification({
+		  title: "Success",
+		  body: "Configuration exported successfully.",
+		  icon: "success",
+		});
+	  }
+	} catch (error) {
+	  console.error("Failed to export configs:", error);
+	  await sendNotification({
+		title: "Error",
+		body: "Failed to export configs.",
+		icon: "error",
+	  });
+	}
+  };
+  const handleImportConfigs = async () => {
+	try {
+		await invoke('open_save_dialog');
+	  const { open } = await import('@tauri-apps/api/dialog');
+	  const { readTextFile } = await import('@tauri-apps/api/fs');
+
+	  const selected = await open({
+		filters: [
+		  {
+			name: "JSON",
+			extensions: ["json"],
+		  },
+		],
+		multiple: false,
+	  });
+	  await invoke('close_save_dialog');
+	  if (typeof selected === "string") {
+		// A file was selected, handle the file content
+		const jsonContent = await readTextFile(selected);
+		await invoke("import_configs", { json: jsonContent });
+
+		// Fetch and update the list of configurations
+		const updatedConfigs: Status[] = await invoke("get_configs");
+		setConfigs(updatedConfigs);
+
+		// Show a success notification to the user
+		await sendNotification({
+		  title: "Success",
+		  body: "Configurations imported successfully.",
+		  icon: "success",
+		});
+	  } else {
+		// File dialog was cancelled
+		console.log("No file was selected or the dialog was cancelled.");
+	  }
+	} catch (error) {
+	  // Log any errors that arise
+	  console.error("Error during import:", error);
+	  await sendNotification({
+		title: "Error",
+		body: "Failed to import configurations.",
+		icon: "error",
+	  });
+	}
+  };
   const handleEditConfig = async (id: number) => {
     try {
       const configToEdit: Config = await invoke("get_config", { id })
@@ -421,260 +524,290 @@ const App: React.FC = () => {
   const textColor = useColorModeValue("gray.100", "gray.100")
 
   return (
-<Center h="100%" w="100%" overflow="hidden" margin="0">
-  {/* Wrapper to maintain borderRadius, with overflow hidden */}
-  <Box
-    width="100%"
-    height="60vh"
-    maxH="95vh"
-    maxW="600px"
-    overflow="hidden"
-    borderRadius="20px"
-    bg={cardBg}
-    boxShadow={`
+    <Center h="100%" w="100%" overflow="hidden" margin="0">
+      {/* Wrapper to maintain borderRadius, with overflow hidden */}
+      <Box
+        width="100%"
+        height="60vh"
+        maxH="95vh"
+        maxW="600px"
+        overflow="hidden"
+        borderRadius="20px"
+        bg={cardBg}
+        boxShadow={`
       /* Inset shadow for top & bottom inner border effect using dark gray */
       inset 0 2px 4px rgba(0, 0, 0, 0.3),
       inset 0 -2px 4px rgba(0, 0, 0, 0.3),
       /* Inset shadow for an inner border all around using dark gray */
       inset 0 0 0 4px rgba(45, 57, 81, 0.9)
     `}
-  >
-    {/* Scrollable VStack inside the wrapper */}
-    <VStack
-      css={{
-        '&::-webkit-scrollbar': {
-          width: '5px',
-          background: 'transparent',
-        },
-        '&::-webkit-scrollbar-thumb': {
-          background: '#555',
-        },
-        '&::-webkit-scrollbar-thumb:hover': {
-          background: '#666',
-        }
-      }}
-      h="100%"
-      w="100%"
-      maxW="100%"
-      overflowY="auto"
-      padding="20px" // Adjust padding to prevent content from touching the edges
-	  mt="5px"
-
-    >
-        <Heading as="h1" size="lg" color="white" mb={1} marginTop={-2} background="transparent">
-          <Image boxSize="100px" src={logo} />
-        </Heading>
-        <Center>
-          <Modal isOpen={isModalOpen} onClose={closeModal} size="sm">
-            <ModalContent mt="40px" width="fit-content">
-              {" "}
-              {/* Adjusts the top margin and centers horizontally */}
-              <ModalCloseButton />
-              <ModalBody mt="10px " width="fit-content" pb={2}>
-                <FormControl>
-                  <FormLabel>Context</FormLabel>
-                  <Input
-                    value={newConfig.context}
-                    name="context"
-                    onChange={handleInputChange}
-                    size="sm"
-                  />
-                  <FormLabel>Namespace</FormLabel>
-                  <Input
-                    value={newConfig.namespace}
-                    name="namespace"
-                    onChange={handleInputChange}
-                    size="sm"
-                  />
-                  <FormLabel>Service</FormLabel>
-                  <Input
-                    value={newConfig.service}
-                    name="service"
-                    onChange={handleInputChange}
-                    size="sm"
-                  />
-                  <FormLabel>Local Port</FormLabel>
-                  <Input
-                    value={newConfig.local_port}
-                    name="local_port"
-                    onChange={handleInputChange}
-                    size="sm"
-                  />
-                  <FormLabel>Remote Port</FormLabel>
-                  <Input
-                    value={newConfig.remote_port}
-                    name="remote_port"
-                    onChange={handleInputChange}
-                    size="sm"
-                  />
-                </FormControl>
-              </ModalBody>
-              <ModalFooter>
-                <Button
-                  colorScheme="ghost"
-                  variant="outline"
-                  size="sm"
-                  mr={6}
-                  onClick={closeModal}
-                >
-                  Close
-                </Button>
-                {isEdit ? (
-                  <Button
-                    colorScheme="blue"
-                    size="sm"
-                    mr={1}
-                    onClick={handleSaveConfig}
-                  >
-                    Save Changes
-                  </Button>
-                ) : (
-                  <Button
-                    colorScheme="facebook"
-                    size="sm"
-                    mr={1}
-                    onClick={handleSaveConfig}
-                  >
-                    Add Config
-                  </Button>
-                )}
-              </ModalFooter>
-            </ModalContent>
-          </Modal>
-        </Center>
-        <Stack direction="row" spacing={4} align="center" marginTop={2} mb={0}>
-          <Button
-            leftIcon={<MdRefresh />}
-            colorScheme="facebook"
-            isLoading={isInitiating}
-            loadingText="Starting..."
-            onClick={initiatePortForwarding}
-            isDisabled={isPortForwarding}
+      >
+        {/* Scrollable VStack inside the wrapper */}
+        <VStack
+          css={{
+            "&::-webkit-scrollbar": {
+              width: "5px",
+              background: "transparent",
+            },
+            "&::-webkit-scrollbar-thumb": {
+              background: "#555",
+            },
+            "&::-webkit-scrollbar-thumb:hover": {
+              background: "#666",
+            },
+          }}
+          h="100%"
+          w="100%"
+          maxW="100%"
+          overflowY="auto"
+          padding="20px" // Adjust padding to prevent content from touching the edges
+          mt="5px"
+        >
+          <Heading
+            as="h1"
+            size="lg"
+            color="white"
+            mb={1}
+            marginTop={-2}
+            background="transparent"
           >
-            Start Forward
-          </Button>
-          <Button
-            leftIcon={<MdClose />}
-            colorScheme="facebook"
-            isLoading={isStopping}
-            loadingText="Stopping..."
-            onClick={stopPortForwarding}
-            isDisabled={!isPortForwarding}
-          >
-            Stop Forward
-          </Button>
-        </Stack>
-        {/* Your table UI */}
-        <Table variant="simple" size="sm" align="center" marginTop={5}>
-          <Thead>
-            <Tr>
-              <Th>Service</Th>
-              <Th>context</Th>
-              <Th>Namespace</Th>
-              <Th>Local Port</Th>
-              <Th>Status</Th>
-              <Th>Action</Th>
-            </Tr>
-          </Thead>
-          <Tbody>
-            {configs.map((config) => (
-              <Tr key={config.id}>
-                <Td color={textColor}>{config.service}</Td>
-                <Td color={textColor}>{config.context}</Td>
-                <Td color={textColor}>{config.namespace}</Td>
-                <Td color={textColor}>{config.local_port}</Td>
-
-                <Td
-                  color={config.isRunning ? "green.100" : "red.100"}
-                  p={1}
-                  textAlign="center"
-                >
-                  <StatusIcon isRunning={config.isRunning} />
-                </Td>
-                <Td>
-                  <HStack spacing="0.1">
-                    <IconButton
-                      aria-label="Edit config"
-                      icon={<MdEdit />}
+            <Image boxSize="100px" src={logo} />
+          </Heading>
+          <Center>
+            <Modal isOpen={isModalOpen} onClose={closeModal} size="sm">
+              <ModalContent mt="40px" width="fit-content">
+                {" "}
+                {/* Adjusts the top margin and centers horizontally */}
+                <ModalCloseButton />
+                <ModalBody mt="10px " width="fit-content" pb={2}>
+                  <FormControl>
+                    <FormLabel>Context</FormLabel>
+                    <Input
+                      value={newConfig.context}
+                      name="context"
+                      onChange={handleInputChange}
                       size="sm"
+                    />
+                    <FormLabel>Namespace</FormLabel>
+                    <Input
+                      value={newConfig.namespace}
+                      name="namespace"
+                      onChange={handleInputChange}
+                      size="sm"
+                    />
+                    <FormLabel>Service</FormLabel>
+                    <Input
+                      value={newConfig.service}
+                      name="service"
+                      onChange={handleInputChange}
+                      size="sm"
+                    />
+                    <FormLabel>Local Port</FormLabel>
+                    <Input
+                      value={newConfig.local_port}
+                      name="local_port"
+                      onChange={handleInputChange}
+                      size="sm"
+                    />
+                    <FormLabel>Remote Port</FormLabel>
+                    <Input
+                      value={newConfig.remote_port}
+                      name="remote_port"
+                      onChange={handleInputChange}
+                      size="sm"
+                    />
+                  </FormControl>
+                </ModalBody>
+                <ModalFooter>
+                  <Button
+                    colorScheme="ghost"
+                    variant="outline"
+                    size="sm"
+                    mr={6}
+                    onClick={closeModal}
+                  >
+                    Close
+                  </Button>
+                  {isEdit ? (
+                    <Button
                       colorScheme="blue"
-                      onClick={() => handleEditConfig(config.id)}
-                      variant="ghost"
-                    />
-                    <IconButton
-                      aria-label="Delete config"
-                      icon={<MdDelete />}
                       size="sm"
-                      colorScheme="red"
-                      onClick={() => handleDeleteConfig(config.id)}
-                      variant="ghost"
-                    />
-                  </HStack>
-                  <AlertDialog
-                    isOpen={isAlertOpen}
-                    onClose={() => setIsAlertOpen(false)}
-                    leastDestructiveRef={cancelRef}
-                  >
-                    <AlertDialogContent>
-                      <AlertDialogHeader fontSize="md" fontWeight="bold">
-                        Delete Configuration
-                      </AlertDialogHeader>
-
-                      <AlertDialogBody>
-                        Are you sure? This action cannot be undone.
-                      </AlertDialogBody>
-
-                      <AlertDialogFooter>
-                        <Button onClick={() => setIsAlertOpen(false)}>
-                          Cancel
-                        </Button>
-                        <Button
-                          colorScheme="red"
-                          onClick={confirmDeleteConfig}
-                          ml={3}
-                        >
-                          Yes
-                        </Button>
-                      </AlertDialogFooter>
-                    </AlertDialogContent>
-                  </AlertDialog>
-                </Td>
+                      mr={1}
+                      onClick={handleSaveConfig}
+                    >
+                      Save Changes
+                    </Button>
+                  ) : (
+                    <Button
+                      colorScheme="facebook"
+                      size="sm"
+                      mr={1}
+                      onClick={handleSaveConfig}
+                    >
+                      Add Config
+                    </Button>
+                  )}
+                </ModalFooter>
+              </ModalContent>
+            </Modal>
+          </Center>
+          <Stack
+            direction="row"
+            spacing={4}
+            align="center"
+            marginTop={2}
+            mb={0}
+          >
+            <Button
+              leftIcon={<MdRefresh />}
+              colorScheme="facebook"
+              isLoading={isInitiating}
+              loadingText="Starting..."
+              onClick={initiatePortForwarding}
+              isDisabled={isPortForwarding}
+            >
+              Start Forward
+            </Button>
+            <Button
+              leftIcon={<MdClose />}
+              colorScheme="facebook"
+              isLoading={isStopping}
+              loadingText="Stopping..."
+              onClick={stopPortForwarding}
+              isDisabled={!isPortForwarding}
+            >
+              Stop Forward
+            </Button>
+          </Stack>
+          {/* Your table UI */}
+          <Table variant="simple" size="sm" align="center" marginTop={5}>
+            <Thead>
+              <Tr>
+                <Th>Service</Th>
+                <Th>context</Th>
+                <Th>Namespace</Th>
+                <Th>Local Port</Th>
+                <Th>Status</Th>
+                <Th>Action</Th>
               </Tr>
-            ))}
+            </Thead>
+            <Tbody>
+              {configs.map((config) => (
+                <Tr key={config.id}>
+                  <Td color={textColor}>{config.service}</Td>
+                  <Td color={textColor}>{config.context}</Td>
+                  <Td color={textColor}>{config.namespace}</Td>
+                  <Td color={textColor}>{config.local_port}</Td>
 
-          </Tbody>
+                  <Td
+                    color={config.isRunning ? "green.100" : "red.100"}
+                    p={1}
+                    textAlign="center"
+                  >
+                    <StatusIcon isRunning={config.isRunning} />
+                  </Td>
+                  <Td>
+                    <HStack spacing="0.1">
+                      <IconButton
+                        aria-label="Edit config"
+                        icon={<MdEdit />}
+                        size="sm"
+                        colorScheme="blue"
+                        onClick={() => handleEditConfig(config.id)}
+                        variant="ghost"
+                      />
+                      <IconButton
+                        aria-label="Delete config"
+                        icon={<MdDelete />}
+                        size="sm"
+                        colorScheme="red"
+                        onClick={() => handleDeleteConfig(config.id)}
+                        variant="ghost"
+                      />
+                    </HStack>
+                    <AlertDialog
+                      isOpen={isAlertOpen}
+                      onClose={() => setIsAlertOpen(false)}
+                      leastDestructiveRef={cancelRef}
+                    >
+                      <AlertDialogContent>
+                        <AlertDialogHeader fontSize="md" fontWeight="bold">
+                          Delete Configuration
+                        </AlertDialogHeader>
 
-        </Table>
-		<Stack position="relative"  bottom={0} left={0} >
-    <Button
-      leftIcon={<MdAdd />}
-      aria-label="Add configuration"
-      variant="solid"
-      size="xs"
-      colorScheme="facebook"
-      onClick={openModal}
-	  ml="480px"
-    > Add
-	</Button>
+                        <AlertDialogBody>
+                          Are you sure? This action cannot be undone.
+                        </AlertDialogBody>
 
-        </Stack>
+                        <AlertDialogFooter>
+                          <Button onClick={() => setIsAlertOpen(false)}>
+                            Cancel
+                          </Button>
+                          <Button
+                            colorScheme="red"
+                            onClick={confirmDeleteConfig}
+                            ml={3}
+                          >
+                            Yes
+                          </Button>
+                        </AlertDialogFooter>
+                      </AlertDialogContent>
+                    </AlertDialog>
+                  </Td>
+                </Tr>
+              ))}
+            </Tbody>
+          </Table>
+          <Stack direction='column' mt="15px" width="60%">
 
+		  <Button
+              leftIcon={<MdAdd />}
+              variant="solid"
+              size="xs"
+              colorScheme="facebook"
+              onClick={openModal}
+            >
+              Add New Config
+            </Button>
+			<Stack direction='row' >
+		  <Button
+			onClick={handleExportConfigs}
+			leftIcon={<MdFileUpload />}
+			size="xs"
+			variant="solid"
+			width="50%"
+			colorScheme="facebook"
+			>
+              Export Configs
+            </Button>
 
-      </VStack>
-	  <IconButton
-        icon={<MdClose />}
-        aria-label="Quit application"
-        variant="solid"
-        position="fixed"
-        top={7}
-        right={4}
-        onClick={quitApp}
-        isRound={false}
-        size="xs"
-        colorScheme="facebook"
-      />
-	  </Box>
+            <Button
+			onClick={handleImportConfigs}
+			leftIcon={<MdFileDownload />}
+			size="xs"
+			variant="solid"
+			width="50%"
+			colorScheme="facebook"
+			>
+              Import Configs
+            </Button>
+ </Stack>
+			</Stack>
 
+        </VStack>
+        <IconButton
+          icon={<MdClose />}
+          aria-label="Quit application"
+          variant="solid"
+          position="fixed"
+          top={7}
+          right={4}
+          onClick={quitApp}
+          isRound={false}
+          size="xs"
+          colorScheme="facebook"
+        />
+      </Box>
     </Center>
   )
 }
