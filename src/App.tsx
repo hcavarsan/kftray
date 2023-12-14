@@ -9,6 +9,7 @@ import {
   Box,
   Button,
   Center,
+  Flex,
   FormControl,
   FormLabel,
   Heading,
@@ -32,14 +33,19 @@ import {
   useColorModeValue,
   VStack,
 } from "@chakra-ui/react"
+import { save } from "@tauri-apps/api/dialog"
+import { createDir, readTextFile, writeTextFile } from "@tauri-apps/api/fs"
 import { sendNotification } from "@tauri-apps/api/notification"
 import { invoke } from "@tauri-apps/api/tauri"
-import { MdAdd, MdClose, MdDelete, MdEdit, MdRefresh } from "react-icons/md"
-import { readTextFile } from "@tauri-apps/api/fs";
-import { writeTextFile, createDir } from '@tauri-apps/api/fs';
-import { save } from '@tauri-apps/api/dialog';
-import { MdFileDownload, MdFileUpload } from 'react-icons/md';
-
+import {
+  MdAdd,
+  MdClose,
+  MdDelete,
+  MdEdit,
+  MdFileDownload,
+  MdFileUpload,
+  MdRefresh,
+} from "react-icons/md"
 
 import logo from "./logo.png"
 
@@ -73,8 +79,6 @@ interface Status {
   namespace: string
   remote_port: string
 }
-
-
 
 const App: React.FC = () => {
   const StatusIcon: React.FC<{ isRunning: boolean }> = ({ isRunning }) => {
@@ -149,102 +153,101 @@ const App: React.FC = () => {
     // You might want to set the initial window size here as well
   }, [])
 
-async function saveFile(data: string, filename: string) {
-  try {
-	const path = await save({
-		defaultPath: filename,
-		filters: [{ name: 'JSON', extensions: ['json'] }],
-	  });
+  async function saveFile(data: string, filename: string) {
+    try {
+      const path = await save({
+        defaultPath: filename,
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      })
 
-
-    if (path) {
-      await writeTextFile(path, data);
+      if (path) {
+        await writeTextFile(path, data)
+      }
+    } catch (error) {
+      console.error("Error in saveFile:", error)
     }
-  } catch (error) {
-    console.error('Error in saveFile:', error);
   }
-}
 
-const handleExportConfigs = async () => {
-	try {
-	  // Inform backend that save dialog is about to open
-	  await invoke('open_save_dialog');
+  const handleExportConfigs = async () => {
+    try {
+      // Inform backend that save dialog is about to open
+      await invoke("open_save_dialog")
 
-	  const json = await invoke("export_configs");
-	  if (typeof json !== 'string') {
-		throw new Error('The exported config is not a string');
-	  }
+      const json = await invoke("export_configs")
+      if (typeof json !== "string") {
+        throw new Error("The exported config is not a string")
+      }
 
-	  const filePath = await save({
-		defaultPath: 'configs.json',
-		filters: [{ name: 'JSON', extensions: ['json'] }],
-	  });
+      const filePath = await save({
+        defaultPath: "configs.json",
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      })
 
-	  // Inform backend that save dialog has closed
-	  await invoke('close_save_dialog');
+      // Inform backend that save dialog has closed
+      await invoke("close_save_dialog")
 
-	  if (filePath) {
-		await writeTextFile(filePath, json);
-		await sendNotification({
-		  title: "Success",
-		  body: "Configuration exported successfully.",
-		  icon: "success",
-		});
-	  }
-	} catch (error) {
-	  console.error("Failed to export configs:", error);
-	  await sendNotification({
-		title: "Error",
-		body: "Failed to export configs.",
-		icon: "error",
-	  });
-	}
-  };
+      if (filePath) {
+        await writeTextFile(filePath, json)
+        await sendNotification({
+          title: "Success",
+          body: "Configuration exported successfully.",
+          icon: "success",
+        })
+      }
+    } catch (error) {
+      console.error("Failed to export configs:", error)
+      await sendNotification({
+        title: "Error",
+        body: "Failed to export configs.",
+        icon: "error",
+      })
+    }
+  }
   const handleImportConfigs = async () => {
-	try {
-		await invoke('open_save_dialog');
-	  const { open } = await import('@tauri-apps/api/dialog');
-	  const { readTextFile } = await import('@tauri-apps/api/fs');
+    try {
+      await invoke("open_save_dialog")
+      const { open } = await import("@tauri-apps/api/dialog")
+      const { readTextFile } = await import("@tauri-apps/api/fs")
 
-	  const selected = await open({
-		filters: [
-		  {
-			name: "JSON",
-			extensions: ["json"],
-		  },
-		],
-		multiple: false,
-	  });
-	  await invoke('close_save_dialog');
-	  if (typeof selected === "string") {
-		// A file was selected, handle the file content
-		const jsonContent = await readTextFile(selected);
-		await invoke("import_configs", { json: jsonContent });
+      const selected = await open({
+        filters: [
+          {
+            name: "JSON",
+            extensions: ["json"],
+          },
+        ],
+        multiple: false,
+      })
+      await invoke("close_save_dialog")
+      if (typeof selected === "string") {
+        // A file was selected, handle the file content
+        const jsonContent = await readTextFile(selected)
+        await invoke("import_configs", { json: jsonContent })
 
-		// Fetch and update the list of configurations
-		const updatedConfigs: Status[] = await invoke("get_configs");
-		setConfigs(updatedConfigs);
+        // Fetch and update the list of configurations
+        const updatedConfigs: Status[] = await invoke("get_configs")
+        setConfigs(updatedConfigs)
 
-		// Show a success notification to the user
-		await sendNotification({
-		  title: "Success",
-		  body: "Configurations imported successfully.",
-		  icon: "success",
-		});
-	  } else {
-		// File dialog was cancelled
-		console.log("No file was selected or the dialog was cancelled.");
-	  }
-	} catch (error) {
-	  // Log any errors that arise
-	  console.error("Error during import:", error);
-	  await sendNotification({
-		title: "Error",
-		body: "Failed to import configurations.",
-		icon: "error",
-	  });
-	}
-  };
+        // Show a success notification to the user
+        await sendNotification({
+          title: "Success",
+          body: "Configurations imported successfully.",
+          icon: "success",
+        })
+      } else {
+        // File dialog was cancelled
+        console.log("No file was selected or the dialog was cancelled.")
+      }
+    } catch (error) {
+      // Log any errors that arise
+      console.error("Error during import:", error)
+      await sendNotification({
+        title: "Error",
+        body: "Failed to import configurations.",
+        icon: "error",
+      })
+    }
+  }
   const handleEditConfig = async (id: number) => {
     try {
       const configToEdit: Config = await invoke("get_config", { id })
@@ -571,7 +574,7 @@ const handleExportConfigs = async () => {
             marginTop={-2}
             background="transparent"
           >
-            <Image boxSize="100px" src={logo} />
+            <Image boxSize="50px" src={logo} />
           </Heading>
           <Center>
             <Modal isOpen={isModalOpen} onClose={closeModal} size="sm">
@@ -654,9 +657,9 @@ const handleExportConfigs = async () => {
           <Stack
             direction="row"
             spacing={4}
-            align="center"
+            justify="center"
             marginTop={2}
-            mb={0}
+            mb={5}
           >
             <Button
               leftIcon={<MdRefresh />}
@@ -679,121 +682,159 @@ const handleExportConfigs = async () => {
               Stop Forward
             </Button>
           </Stack>
-          {/* Your table UI */}
-          <Table variant="simple" size="sm" align="center" marginTop={5}>
-            <Thead>
-              <Tr>
-                <Th>Service</Th>
-                <Th>context</Th>
-                <Th>Namespace</Th>
-                <Th>Local Port</Th>
-                <Th>Status</Th>
-                <Th>Action</Th>
-              </Tr>
-            </Thead>
-            <Tbody>
-              {configs.map((config) => (
-                <Tr key={config.id}>
-                  <Td color={textColor}>{config.service}</Td>
-                  <Td color={textColor}>{config.context}</Td>
-                  <Td color={textColor}>{config.namespace}</Td>
-                  <Td color={textColor}>{config.local_port}</Td>
 
-                  <Td
-                    color={config.isRunning ? "green.100" : "red.100"}
-                    p={1}
-                    textAlign="center"
-                  >
-                    <StatusIcon isRunning={config.isRunning} />
-                  </Td>
-                  <Td>
-                    <HStack spacing="0.1">
-                      <IconButton
-                        aria-label="Edit config"
-                        icon={<MdEdit />}
-                        size="sm"
-                        colorScheme="blue"
-                        onClick={() => handleEditConfig(config.id)}
-                        variant="ghost"
-                      />
-                      <IconButton
-                        aria-label="Delete config"
-                        icon={<MdDelete />}
-                        size="sm"
-                        colorScheme="red"
-                        onClick={() => handleDeleteConfig(config.id)}
-                        variant="ghost"
-                      />
-                    </HStack>
-                    <AlertDialog
-                      isOpen={isAlertOpen}
-                      onClose={() => setIsAlertOpen(false)}
-                      leastDestructiveRef={cancelRef}
-                    >
-                      <AlertDialogContent>
-                        <AlertDialogHeader fontSize="md" fontWeight="bold">
-                          Delete Configuration
-                        </AlertDialogHeader>
-
-                        <AlertDialogBody>
-                          Are you sure? This action cannot be undone.
-                        </AlertDialogBody>
-
-                        <AlertDialogFooter>
-                          <Button onClick={() => setIsAlertOpen(false)}>
-                            Cancel
-                          </Button>
-                          <Button
-                            colorScheme="red"
-                            onClick={confirmDeleteConfig}
-                            ml={3}
-                          >
-                            Yes
-                          </Button>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
-                  </Td>
+          {/* Set the Table head outside of the scrollable body */}
+          <Box width="100%" mt={0} p={0} borderRadius="10px">
+            <Table variant="simple" size="sm">
+              <Thead>
+                <Tr>
+                  <Th width="20%">Service</Th>
+                  <Th width="20%">Context</Th>
+                  <Th width="25%">Namespace</Th>
+                  <Th width="15%">Local Port</Th>
+                  <Th width="5%">Status</Th>
+                  <Th width="5%">Action</Th>
                 </Tr>
-              ))}
-            </Tbody>
-          </Table>
-          <Stack direction='column' mt="15px" width="60%">
+              </Thead>
+            </Table>
+          </Box>
 
-		  <Button
+          <Box
+            width="100%"
+            height="100%"
+            overflowX="hidden"
+            overflowY="auto"
+            borderRadius="10px"
+            boxShadow={`
+      /* Inset shadow for top & bottom inner border effect using dark gray */
+      inset 0 2px 4px rgba(0, 0, 0, 0.3),
+      inset 0 -2px 4px rgba(0, 0, 0, 0.3),
+      /* Inset shadow for an inner border all around using dark gray */
+      inset 0 0 0 4px rgba(45, 57, 81, 0.9)
+    `}
+          >
+            <Table variant="simple" size="sm">
+              <Tbody>
+                {configs.map((config) => (
+                  <Tr key={config.id}>
+                    <Td width="20%" color={textColor}>
+                      {config.service}
+                    </Td>
+                    <Td width="20%" color={textColor}>
+                      {config.context}
+                    </Td>
+                    <Td width="20%" color={textColor}>
+                      {config.namespace}
+                    </Td>
+                    <Td width="20%" color={textColor}>
+                      {config.local_port}
+                    </Td>
+                    <Td
+
+                      width="5%"
+                      color={config.isRunning ? "green.100" : "red.100"}
+                    >
+                      <StatusIcon isRunning={config.isRunning} />
+                    </Td>
+                    <Td width="10%">
+                      <HStack spacing="0" mr="-10px">
+                        <IconButton
+                          aria-label="Edit config"
+                          icon={<MdEdit />}
+                          size="sm"
+                          colorScheme="blue"
+                          onClick={() => handleEditConfig(config.id)}
+                          variant="ghost"
+                        />
+                        <IconButton
+                          aria-label="Delete config"
+                          icon={<MdDelete />}
+                          size="sm"
+                          colorScheme="red"
+                          onClick={() => handleDeleteConfig(config.id)}
+                          variant="ghost"
+                        />
+                      </HStack>
+                      <AlertDialog
+                        isOpen={isAlertOpen}
+                        onClose={() => setIsAlertOpen(false)}
+                        leastDestructiveRef={cancelRef}
+                      >
+                        <AlertDialogContent>
+                          <AlertDialogHeader fontSize="md" fontWeight="bold">
+                            Delete Configuration
+                          </AlertDialogHeader>
+
+                          <AlertDialogBody>
+                            Are you sure? This action cannot be undone.
+                          </AlertDialogBody>
+
+                          <AlertDialogFooter>
+                            <Button onClick={() => setIsAlertOpen(false)}>
+                              Cancel
+                            </Button>
+                            <Button
+                              colorScheme="red"
+                              onClick={confirmDeleteConfig}
+                              ml={3}
+                            >
+                              Yes
+                            </Button>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    </Td>
+                  </Tr>
+                ))}
+              </Tbody>
+            </Table>
+          </Box>
+          <Flex
+            direction="column"
+            align="center"
+            mt="20px"
+            width="100%"
+            mb="10px"
+          >
+            <Button
               leftIcon={<MdAdd />}
               variant="solid"
               size="xs"
               colorScheme="facebook"
               onClick={openModal}
+              width="80%" // Set a consistent width for the button
             >
               Add New Config
             </Button>
-			<Stack direction='row' >
-		  <Button
-			onClick={handleExportConfigs}
-			leftIcon={<MdFileUpload />}
-			size="xs"
-			variant="solid"
-			width="50%"
-			colorScheme="facebook"
-			>
-              Export Configs
-            </Button>
+            <Flex
+              direction="row"
+              justify="space-between"
+              mt={2}
+              width="80%"
+            >
+              <Button
+                onClick={handleExportConfigs}
+                leftIcon={<MdFileUpload />}
+                size="xs"
+                variant="solid"
+                width="48%" // Setting width to less than half allows for space between buttons
+                colorScheme="facebook"
+              >
+                Export Configs
+              </Button>
 
-            <Button
-			onClick={handleImportConfigs}
-			leftIcon={<MdFileDownload />}
-			size="xs"
-			variant="solid"
-			width="50%"
-			colorScheme="facebook"
-			>
-              Import Configs
-            </Button>
- </Stack>
-			</Stack>
-
+              <Button
+                onClick={handleImportConfigs}
+                leftIcon={<MdFileDownload />}
+                size="xs"
+                variant="solid"
+                width="48%" // Same width as the previous button
+                colorScheme="facebook"
+              >
+                Import Configs
+              </Button>
+            </Flex>
+          </Flex>
         </VStack>
         <IconButton
           icon={<MdClose />}
