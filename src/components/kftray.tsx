@@ -1,18 +1,11 @@
 import React, { useEffect, useState } from "react"
 import {
-    AlertDialog,
-    AlertDialogBody,
-    AlertDialogContent,
-    AlertDialogFooter,
-    AlertDialogHeader,
     Box,
     Button,
     Center,
     Flex,
     FormControl,
     FormLabel,
-    HStack,
-    Icon,
     IconButton,
     Input,
     Modal,
@@ -23,15 +16,12 @@ import {
     Stack,
     Table,
     Tbody,
-    Td,
     Th,
     Thead,
     Tr,
     useColorModeValue,
     VStack,
   } from "@chakra-ui/react"
-  import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-  import { faTrash, faPen } from "@fortawesome/free-solid-svg-icons"
   import { save } from "@tauri-apps/api/dialog"
   import { writeTextFile } from "@tauri-apps/api/fs"
   import { sendNotification } from "@tauri-apps/api/notification"
@@ -44,19 +34,9 @@ import {
     MdRefresh,
 } from "react-icons/md"
 import { Header } from "./header"
+import { PortFoward } from "./portforward"
 
 const KFTray = () => {
-    
-  const StatusIcon: React.FC<{ isRunning: boolean }> = ({ isRunning }) => {
-    return (
-      <Icon viewBox="0 0 200 200" color={isRunning ? "green.500" : "red.500"}>
-        <path
-          fill="currentColor"
-          d="M 100, 100 m -75, 0 a 75,75 0 1,0 150,0 a 75,75 0 1,0 -150,0"
-        />
-      </Icon>
-    )
-  }
 
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [isEdit, setIsEdit] = useState(false)
@@ -490,7 +470,6 @@ const KFTray = () => {
   }
 
   const cardBg = useColorModeValue("gray.800", "gray.800")
-  const textColor = useColorModeValue("gray.100", "gray.100")
 
   return (
     <Center h="100%" w="100%" overflow="hidden" margin="0">
@@ -666,72 +645,15 @@ const KFTray = () => {
             <Table variant="simple" size="sm" colorScheme="gray">
               <Tbody>
                 {configs.map((config) => (
-                  <Tr key={config.id}>
-                    <Td width="20%" color={textColor}>
-                      {config.service}
-                    </Td>
-                    <Td width="20%" color={textColor}>
-                      {config.context}
-                    </Td>
-                    <Td width="20%" color={textColor}>
-                      {config.namespace}
-                    </Td>
-                    <Td width="20%" color={textColor}>
-                      {config.local_port}
-                    </Td>
-                    <Td
-                      width="5%"
-                      color={config.isRunning ? "green.100" : "red.100"}
-                    >
-                      <StatusIcon isRunning={config.isRunning} />
-                    </Td>
-                    <Td width="10%">
-                      <HStack spacing="-1" mr="-10px" ml="15px">
-                        <IconButton
-                          aria-label="Edit config"
-                          icon={<FontAwesomeIcon icon={faPen} />}
-                          size="sm"
-                          onClick={() => handleEditConfig(config.id)}
-                          variant="ghost"
-                        />
-                        <IconButton
-                          aria-label="Delete config"
-                          size="sm"
-						  icon={<FontAwesomeIcon icon={faTrash} />}
-                          onClick={() => handleDeleteConfig(config.id)}
-                          variant="ghost"
-                        />
-                      </HStack>
-                      <AlertDialog
-                        isOpen={isAlertOpen}
-                        onClose={() => setIsAlertOpen(false)}
-                        leastDestructiveRef={cancelRef}
-                      >
-                        <AlertDialogContent>
-                          <AlertDialogHeader fontSize="md" fontWeight="bold">
-                            Delete Configuration
-                          </AlertDialogHeader>
-
-                          <AlertDialogBody>
-                            Are you sure? This action cannot be undone.
-                          </AlertDialogBody>
-
-                          <AlertDialogFooter>
-                            <Button onClick={() => setIsAlertOpen(false)}>
-                              Cancel
-                            </Button>
-                            <Button
-                              colorScheme="red"
-                              onClick={confirmDeleteConfig}
-                              ml={3}
-                            >
-                              Yes
-                            </Button>
-                          </AlertDialogFooter>
-                        </AlertDialogContent>
-                      </AlertDialog>
-                    </Td>
-                  </Tr>
+                  <PortFoward
+                    key={config.id}
+                    config={config}
+                    confirmDeleteConfig={confirmDeleteConfig}
+                    handleDeleteConfig={handleDeleteConfig}
+                    handleEditConfig={handleEditConfig}
+                    isAlertOpen={isAlertOpen}
+                    setIsAlertOpen={setIsAlertOpen}
+                    />
                 ))}
               </Tbody>
             </Table>
