@@ -33,6 +33,8 @@ import {
   useColorModeValue,
   VStack,
 } from "@chakra-ui/react"
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { faTrash, faPen } from "@fortawesome/free-solid-svg-icons"
 import { save } from "@tauri-apps/api/dialog"
 import { createDir, readTextFile, writeTextFile } from "@tauri-apps/api/fs"
 import { sendNotification } from "@tauri-apps/api/notification"
@@ -40,7 +42,6 @@ import { invoke } from "@tauri-apps/api/tauri"
 import {
   MdAdd,
   MdClose,
-  MdDelete,
   MdEdit,
   MdFileDownload,
   MdFileUpload,
@@ -684,33 +685,27 @@ const App: React.FC = () => {
           </Stack>
 
           {/* Set the Table head outside of the scrollable body */}
-		  <Box width="100%" mt={0} p={0} borderRadius="10px" >
-<Table variant="simple" size="sm">
-  <Thead>
-	<Tr>
-	  <Th width="20%">Service</Th>
-	  <Th width="25%">Context</Th>
-	  <Th width="25%">Namespace</Th>
-	  <Th width="20%">Local Port</Th>
-	  <Th width="5%">Status</Th>
-	  <Th width="5%" >Action</Th>
-	</Tr>
-  </Thead>
-</Table>
-</Box>
+          <Box width="100%" mt={0} p={0} borderRadius="10px">
+            <Table variant="simple" size="sm">
+              <Thead>
+                <Tr>
+                  <Th width="20%">Service</Th>
+                  <Th width="25%">Context</Th>
+                  <Th width="25%">Namespace</Th>
+                  <Th width="20%">Local Port</Th>
+                  <Th width="5%">Status</Th>
+                  <Th width="5%">Action</Th>
+                </Tr>
+              </Thead>
+            </Table>
+          </Box>
           <Box
             width="100%"
             height="100%"
             overflowX="hidden"
             overflowY="auto"
             borderRadius="10px"
-            boxShadow={`
-      /* Inset shadow for top & bottom inner border effect using dark gray */
-      inset 0 2px 4px rgba(0, 0, 0, 0.3),
-      inset 0 -2px 4px rgba(0, 0, 0, 0.3),
-      /* Inset shadow for an inner border all around using dark gray */
-      inset 0 0 0 4px rgba(45, 57, 81, 0.9)
-    `}
+
           >
             <Table variant="simple" size="sm" colorScheme="gray">
               <Tbody>
@@ -729,7 +724,6 @@ const App: React.FC = () => {
                       {config.local_port}
                     </Td>
                     <Td
-
                       width="5%"
                       color={config.isRunning ? "green.100" : "red.100"}
                     >
@@ -739,17 +733,15 @@ const App: React.FC = () => {
                       <HStack spacing="-1" mr="-10px" ml="15px">
                         <IconButton
                           aria-label="Edit config"
-                          icon={<MdEdit />}
+                          icon={<FontAwesomeIcon icon={faPen} />}
                           size="sm"
-                          colorScheme="blue"
                           onClick={() => handleEditConfig(config.id)}
                           variant="ghost"
                         />
                         <IconButton
                           aria-label="Delete config"
-                          icon={<MdDelete />}
                           size="sm"
-                          colorScheme="red"
+						  icon={<FontAwesomeIcon icon={faTrash} />}
                           onClick={() => handleDeleteConfig(config.id)}
                           variant="ghost"
                         />
@@ -805,12 +797,7 @@ const App: React.FC = () => {
             >
               Add New Config
             </Button>
-            <Flex
-              direction="row"
-              justify="space-between"
-              mt={2}
-              width="80%"
-            >
+            <Flex direction="row" justify="space-between" mt={2} width="80%">
               <Button
                 onClick={handleExportConfigs}
                 leftIcon={<MdFileUpload />}
