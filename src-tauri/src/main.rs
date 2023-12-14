@@ -11,15 +11,38 @@ use tauri_plugin_positioner::{Position, WindowExt};
 use std::env;
 use kubeforward;
 
+use tauri::State;
+use std::sync::atomic::{AtomicBool, Ordering};
 
+struct SaveDialogState {
+    pub is_open: AtomicBool,
+}
+
+impl Default for SaveDialogState {
+    fn default() -> Self {
+        SaveDialogState {
+            is_open: AtomicBool::new(false),
+        }
+    }
+}
+
+#[tauri::command]
+fn open_save_dialog(state: State<SaveDialogState>) {
+    state.is_open.store(true, Ordering::SeqCst);
+}
+
+#[tauri::command]
+fn close_save_dialog(state: State<SaveDialogState>) {
+    state.is_open.store(false, Ordering::SeqCst);
+}
 fn main() {
 	env_logger::init();
     let _ = fix_path_env::fix();
     let quit = CustomMenuItem::new("quit".to_string(), "Quit").accelerator("Cmd+Q");
     let system_tray_menu = SystemTrayMenu::new().add_item(quit);
     tauri::Builder::default()
+	    .manage(SaveDialogState::default())
         .setup(|app| {
-            // Initialize the database.
             db::init();
             #[cfg(target_os = "macos")]
             {
@@ -74,15 +97,18 @@ fn main() {
                 _ => {}
             }
         })
-        .on_window_event(|event| match event.event() {
-            tauri::WindowEvent::Focused(is_focused) => {
-                // detect click outside of the focused window and hide the app
-                if !is_focused {
-                    event.window().hide().unwrap();
-                }
-            }
-            _ => {}
-        })
+		.on_window_event(|event| {
+			if let tauri::WindowEvent::Focused(is_focused) = event.event() {
+				if !is_focused {
+					let app_handle = event.window().app_handle();
+					if let Some(state) = app_handle.try_state::<SaveDialogState>() {
+						if !state.is_open.load(Ordering::SeqCst) {
+							event.window().hide().unwrap();
+						}
+					}
+				}
+			}
+		})
         .invoke_handler(tauri::generate_handler![
 			kubeforward::port_forward::start_port_forward,
             kubeforward::port_forward::stop_port_forward,
@@ -92,6 +118,10 @@ fn main() {
             config::delete_config,
 			config::get_config,
 			config::update_config,
+			config::export_configs,
+			config::import_configs,
+			open_save_dialog,
+			close_save_dialog,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
