@@ -684,21 +684,20 @@ const App: React.FC = () => {
           </Stack>
 
           {/* Set the Table head outside of the scrollable body */}
-          <Box width="100%" mt={0} p={0} borderRadius="10px">
-            <Table variant="simple" size="sm">
-              <Thead>
-                <Tr>
-                  <Th width="15%">Service</Th>
-                  <Th width="15%">Context</Th>
-                  <Th width="15%">Namespace</Th>
-                  <Th width="15%">Local Port</Th>
-                  <Th width="5%">Status</Th>
-                  <Th width="5%">Action</Th>
-                </Tr>
-              </Thead>
-            </Table>
-          </Box>
-
+		  <Box width="100%" mt={0} p={0} borderRadius="10px" >
+<Table variant="simple" size="sm">
+  <Thead>
+	<Tr>
+	  <Th width="20%">Service</Th>
+	  <Th width="25%">Context</Th>
+	  <Th width="25%">Namespace</Th>
+	  <Th width="20%">Local Port</Th>
+	  <Th width="5%">Status</Th>
+	  <Th width="5%" >Action</Th>
+	</Tr>
+  </Thead>
+</Table>
+</Box>
           <Box
             width="100%"
             height="100%"
@@ -737,7 +736,7 @@ const App: React.FC = () => {
                       <StatusIcon isRunning={config.isRunning} />
                     </Td>
                     <Td width="10%">
-                      <HStack spacing="-1" mr="-15px" ml="10px">
+                      <HStack spacing="-1" mr="-10px" ml="15px">
                         <IconButton
                           aria-label="Edit config"
                           icon={<MdEdit />}
