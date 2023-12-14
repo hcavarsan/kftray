@@ -531,7 +531,7 @@ const App: React.FC = () => {
       {/* Wrapper to maintain borderRadius, with overflow hidden */}
       <Box
         width="100%"
-        height="60vh"
+        height="75vh"
         maxH="95vh"
         maxW="600px"
         overflow="hidden"
@@ -792,9 +792,9 @@ const App: React.FC = () => {
           <Flex
             direction="column"
             align="center"
-            mt="20px"
+            mt="30px"
             width="100%"
-            mb="10px"
+            mb="30px"
           >
             <Button
               leftIcon={<MdAdd />}
