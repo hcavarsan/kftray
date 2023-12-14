@@ -570,11 +570,11 @@ const App: React.FC = () => {
             as="h1"
             size="lg"
             color="white"
-            mb={1}
+            mb={0}
             marginTop={-2}
             background="transparent"
           >
-            <Image boxSize="50px" src={logo} />
+            <Image boxSize="80px" src={logo} />
           </Heading>
           <Center>
             <Modal isOpen={isModalOpen} onClose={closeModal} size="sm">
@@ -658,8 +658,8 @@ const App: React.FC = () => {
             direction="row"
             spacing={4}
             justify="center"
-            marginTop={2}
-            mb={5}
+            marginTop={0}
+            mb={4}
           >
             <Button
               leftIcon={<MdRefresh />}
