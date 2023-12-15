@@ -4,15 +4,7 @@ import {
     Button,
     Center,
     Flex,
-    FormControl,
-    FormLabel,
     IconButton,
-    Input,
-    Modal,
-    ModalBody,
-    ModalCloseButton,
-    ModalContent,
-    ModalFooter,
     Stack,
     Table,
     Tbody,
@@ -35,6 +27,7 @@ import {
 } from "react-icons/md"
 import { Header } from "./header"
 import { PortFoward } from "./portforward"
+import { AddConfigModal } from "./add-config"
 
 const KFTray = () => {
 
@@ -512,84 +505,16 @@ const KFTray = () => {
           mt="5px"
         >
           <Header />
-          <Center>
-            <Modal isOpen={isModalOpen} onClose={closeModal} size="sm">
-              <ModalContent mt="40px" width="fit-content">
-                {" "}
-                {/* Adjusts the top margin and centers horizontally */}
-                <ModalCloseButton />
-                <ModalBody mt="10px " width="fit-content" pb={2}>
-                  <FormControl>
-                    <FormLabel>Context</FormLabel>
-                    <Input
-                      value={newConfig.context}
-                      name="context"
-                      onChange={handleInputChange}
-                      size="sm"
-                    />
-                    <FormLabel>Namespace</FormLabel>
-                    <Input
-                      value={newConfig.namespace}
-                      name="namespace"
-                      onChange={handleInputChange}
-                      size="sm"
-                    />
-                    <FormLabel>Service</FormLabel>
-                    <Input
-                      value={newConfig.service}
-                      name="service"
-                      onChange={handleInputChange}
-                      size="sm"
-                    />
-                    <FormLabel>Local Port</FormLabel>
-                    <Input
-                      value={newConfig.local_port}
-                      name="local_port"
-                      onChange={handleInputChange}
-                      size="sm"
-                    />
-                    <FormLabel>Remote Port</FormLabel>
-                    <Input
-                      value={newConfig.remote_port}
-                      name="remote_port"
-                      onChange={handleInputChange}
-                      size="sm"
-                    />
-                  </FormControl>
-                </ModalBody>
-                <ModalFooter>
-                  <Button
-                    colorScheme="ghost"
-                    variant="outline"
-                    size="sm"
-                    mr={6}
-                    onClick={closeModal}
-                  >
-                    Close
-                  </Button>
-                  {isEdit ? (
-                    <Button
-                      colorScheme="blue"
-                      size="sm"
-                      mr={1}
-                      onClick={handleSaveConfig}
-                    >
-                      Save Changes
-                    </Button>
-                  ) : (
-                    <Button
-                      colorScheme="facebook"
-                      size="sm"
-                      mr={1}
-                      onClick={handleSaveConfig}
-                    >
-                      Add Config
-                    </Button>
-                  )}
-                </ModalFooter>
-              </ModalContent>
-            </Modal>
-          </Center>
+          <AddConfigModal
+            isModalOpen={isModalOpen}
+            closeModal={closeModal}
+            newConfig={newConfig}
+            handleInputChange={handleInputChange}
+            handleSaveConfig={handleSaveConfig}
+            isEdit={isEdit}
+            handleEditSubmit={handleEditSubmit}
+            cancelRef={cancelRef}
+          />
           <Stack
             direction="row"
             spacing={4}
