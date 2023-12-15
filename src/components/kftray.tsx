@@ -1,15 +1,8 @@
 import React, { useEffect, useState } from "react"
 import {
     Box,
-    Button,
     Center,
     IconButton,
-    Stack,
-    Table,
-    Tbody,
-    Th,
-    Thead,
-    Tr,
     useColorModeValue,
     VStack,
   } from "@chakra-ui/react"
@@ -19,12 +12,11 @@ import {
   import { invoke } from "@tauri-apps/api/tauri"
   import {
     MdClose,
-    MdRefresh,
 } from "react-icons/md"
 import { Header } from "./header"
-import { PortFoward } from "./portforward"
 import { AddConfigModal } from "./add-config"
 import { Footer } from "./footer"
+import { PortForwardTable } from "./portforward-table"
 
 const KFTray = () => {
 
@@ -502,6 +494,7 @@ const KFTray = () => {
           mt="5px"
         >
           <Header />
+
           <AddConfigModal
             isModalOpen={isModalOpen}
             closeModal={closeModal}
@@ -512,79 +505,25 @@ const KFTray = () => {
             handleEditSubmit={handleEditSubmit}
             cancelRef={cancelRef}
           />
-          <Stack
-            direction="row"
-            spacing={4}
-            justify="center"
-            marginTop={0}
-            mb={4}
-          >
-            <Button
-              leftIcon={<MdRefresh />}
-              colorScheme="facebook"
-              isLoading={isInitiating}
-              loadingText="Starting..."
-              onClick={initiatePortForwarding}
-              isDisabled={isPortForwarding}
-            >
-              Start Forward
-            </Button>
-            <Button
-              leftIcon={<MdClose />}
-              colorScheme="facebook"
-              isLoading={isStopping}
-              loadingText="Stopping..."
-              onClick={stopPortForwarding}
-              isDisabled={!isPortForwarding}
-            >
-              Stop Forward
-            </Button>
-          </Stack>
 
-          {/* Set the Table head outside of the scrollable body */}
-          <Box width="100%" mt={0} p={0} borderRadius="10px">
-            <Table variant="simple" size="sm">
-              <Thead>
-                <Tr>
-                  <Th width="20%">Service</Th>
-                  <Th width="25%">Context</Th>
-                  <Th width="25%">Namespace</Th>
-                  <Th width="20%">Local Port</Th>
-                  <Th width="5%">Status</Th>
-                  <Th width="5%">Action</Th>
-                </Tr>
-              </Thead>
-            </Table>
-          </Box>
-          <Box
-            width="100%"
-            height="100%"
-            overflowX="hidden"
-            overflowY="auto"
-            borderRadius="10px"
+          <PortForwardTable
+            configs={configs}
+            initiatePortForwarding={initiatePortForwarding}
+            isInitiating={isInitiating}
+            isPortForwarding={isPortForwarding}
+            stopPortForwarding={stopPortForwarding}
+            handleDeleteConfig={handleDeleteConfig}
+            confirmDeleteConfig={confirmDeleteConfig}
+            isAlertOpen={isAlertOpen}
+            setIsAlertOpen={setIsAlertOpen}
+          />
 
-          >
-            <Table variant="simple" size="sm" colorScheme="gray">
-              <Tbody>
-                {configs.map((config) => (
-                  <PortFoward
-                    key={config.id}
-                    config={config}
-                    confirmDeleteConfig={confirmDeleteConfig}
-                    handleDeleteConfig={handleDeleteConfig}
-                    handleEditConfig={handleEditConfig}
-                    isAlertOpen={isAlertOpen}
-                    setIsAlertOpen={setIsAlertOpen}
-                    />
-                ))}
-              </Tbody>
-            </Table>
-          </Box>
-        <Footer
-          openModal={openModal}
-          handleExportConfigs={handleExportConfigs}
-          handleImportConfigs={handleImportConfigs}
-        />
+          <Footer
+            openModal={openModal}
+            handleExportConfigs={handleExportConfigs}
+            handleImportConfigs={handleImportConfigs}
+          />
+
         </VStack>
         <IconButton
           icon={<MdClose />}
