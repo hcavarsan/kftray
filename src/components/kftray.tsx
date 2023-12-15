@@ -3,7 +3,6 @@ import {
     Box,
     Button,
     Center,
-    Flex,
     IconButton,
     Stack,
     Table,
@@ -19,15 +18,13 @@ import {
   import { sendNotification } from "@tauri-apps/api/notification"
   import { invoke } from "@tauri-apps/api/tauri"
   import {
-    MdAdd,
     MdClose,
-    MdFileDownload,
-    MdFileUpload,
     MdRefresh,
 } from "react-icons/md"
 import { Header } from "./header"
 import { PortFoward } from "./portforward"
 import { AddConfigModal } from "./add-config"
+import { Footer } from "./footer"
 
 const KFTray = () => {
 
@@ -583,47 +580,11 @@ const KFTray = () => {
               </Tbody>
             </Table>
           </Box>
-          <Flex
-            direction="column"
-            align="center"
-            mt="30px"
-            width="100%"
-            mb="30px"
-          >
-            <Button
-              leftIcon={<MdAdd />}
-              variant="solid"
-              size="xs"
-              colorScheme="facebook"
-              onClick={openModal}
-              width="80%" // Set a consistent width for the button
-            >
-              Add New Config
-            </Button>
-            <Flex direction="row" justify="space-between" mt={2} width="80%">
-              <Button
-                onClick={handleExportConfigs}
-                leftIcon={<MdFileUpload />}
-                size="xs"
-                variant="solid"
-                width="48%" // Setting width to less than half allows for space between buttons
-                colorScheme="facebook"
-              >
-                Export Configs
-              </Button>
-
-              <Button
-                onClick={handleImportConfigs}
-                leftIcon={<MdFileDownload />}
-                size="xs"
-                variant="solid"
-                width="48%" // Same width as the previous button
-                colorScheme="facebook"
-              >
-                Import Configs
-              </Button>
-            </Flex>
-          </Flex>
+        <Footer
+          openModal={openModal}
+          handleExportConfigs={handleExportConfigs}
+          handleImportConfigs={handleImportConfigs}
+        />
         </VStack>
         <IconButton
           icon={<MdClose />}
