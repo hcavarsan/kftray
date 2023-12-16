@@ -1,10 +1,11 @@
-import { Box, Button, Stack, Table, Tbody, Th, Thead, Tr } from "@chakra-ui/react"
+import { Box, Button, Flex, Stack, Table, TableContainer, Tbody, Th, Thead, Tr } from "@chakra-ui/react"
 import { PortFoward } from "./portforward"
 import { MdClose, MdRefresh } from "react-icons/md"
 
 const PortForwardTable = (props) => {
 
     const {
+        headerColor,
         configs,
         isInitiating,
         isStopping,
@@ -22,10 +23,10 @@ const PortForwardTable = (props) => {
         <>
         <Stack
             direction="row"
-            spacing={4}
+            spacing={2}
             justify="center"
             marginTop={0}
-            mb={4}
+            marginBottom={4}
           >
             <Button
               leftIcon={<MdRefresh />}
@@ -48,31 +49,27 @@ const PortForwardTable = (props) => {
               Stop Forward
             </Button>
           </Stack>
+            <TableContainer
+              width="62vh"
+              height="100%"
+              maxHeight="400px"
+              
+              overflowY="auto"
+              overflowX="hidden"
+              display="block"
 
-          {/* Set the Table head outside of the scrollable body */}
-          <Box width="100%" mt={0} p={0} borderRadius="10px">
-            <Table variant="simple" size="sm">
-              <Thead>
+            >
+            <Table variant="simple" size="sm" className="table-tiny">
+              <Thead position="sticky" top={0} bgColor={headerColor} zIndex={99}>
                 <Tr>
-                  <Th width="20%">Service</Th>
-                  <Th width="25%">Context</Th>
-                  <Th width="25%">Namespace</Th>
-                  <Th width="20%">Local Port</Th>
-                  <Th width="5%">Status</Th>
-                  <Th width="5%">Action</Th>
+                  <Th>Service</Th>
+                  <Th>Context</Th>
+                  <Th>Namespace</Th>
+                  <Th>Local Port</Th>
+                  <Th>Status</Th>
+                  <Th>Action</Th>
                 </Tr>
               </Thead>
-            </Table>
-          </Box>
-          <Box
-            width="100%"
-            height="100%"
-            overflowX="hidden"
-            overflowY="auto"
-            borderRadius="10px"
-
-          >
-            <Table variant="simple" size="sm" colorScheme="gray">
               <Tbody>
                 {configs.map((config) => (
                   <PortFoward
@@ -87,7 +84,7 @@ const PortForwardTable = (props) => {
                 ))}
               </Tbody>
             </Table>
-          </Box>
+            </TableContainer>
           </>
     )
 }

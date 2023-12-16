@@ -54,3 +54,9 @@ body {
 	background: transparent; /* Optional: style for the scrollbar corner */
 	scrollbar-gutter: stable;
   }
+
+.table-tiny th,
+.table-tiny td {
+  align-content: center;
+  padding-right: 4px;
+}

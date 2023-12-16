@@ -4,7 +4,8 @@ import {
     AlertDialogContent,
     AlertDialogFooter,
     AlertDialogHeader,
-    Button
+    Button,
+    Flex
 } from "@chakra-ui/react"
 
 import {
@@ -78,27 +79,16 @@ const PortFoward = (props) => {
 
     return (
         <>
-        <Tr key={config.id}>
-            <Td width="20%" color={textColor}>
-                {config.service}
-            </Td>
-            <Td width="20%" color={textColor}>
-                {config.context}
-            </Td>
-            <Td width="20%" color={textColor}>
-                {config.namespace}
-            </Td>
-            <Td width="20%" color={textColor}>
-                {config.local_port}
-            </Td>
-            <Td
-                width="5%"
-                color={config.isRunning ? "green.100" : "red.100"}
-            >
+        <Tr key={config.id} color={textColor}>
+            <Td>{config.service}</Td>
+            <Td>{config.context}</Td>
+            <Td>{config.namespace}</Td>
+            <Td>{config.local_port}</Td>
+            <Td color={config.isRunning ? "green.100" : "red.100"}>
                 <StatusIcon isRunning={config.isRunning} />
             </Td>
-            <Td width="10%">
-                <HStack spacing="-1" mr="-10px" ml="15px">
+            <Td>
+                <Flex direction="row">
                 <IconButton
                     aria-label="Edit config"
                     icon={<FontAwesomeIcon icon={faPen} />}
@@ -119,7 +109,7 @@ const PortFoward = (props) => {
                     cancelRef={config.cancelRef}
                     confirmDeleteConfig={confirmDeleteConfig}
                 />
-                </HStack>
+                </Flex>
             </Td>
             </Tr>
         </>

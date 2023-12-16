@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react"
 import {
     Box,
     Center,
+    Flex,
     IconButton,
     useColorModeValue,
     VStack,
@@ -454,14 +455,12 @@ const KFTray = () => {
   const cardBg = useColorModeValue("gray.800", "gray.800")
 
   return (
-    <Center h="100%" w="100%" overflow="hidden" margin="0">
+    <Center>
       {/* Wrapper to maintain borderRadius, with overflow hidden */}
-      <Box
+      <Flex
         width="100%"
         height="75vh"
         maxH="95vh"
-        maxW="600px"
-        overflow="hidden"
         borderRadius="20px"
         bg={cardBg}
         boxShadow={`
@@ -474,24 +473,8 @@ const KFTray = () => {
       >
         {/* Scrollable VStack inside the wrapper */}
         <VStack
-          css={{
-            "&::-webkit-scrollbar": {
-              width: "5px",
-              background: "transparent",
-            },
-            "&::-webkit-scrollbar-thumb": {
-              background: "#555",
-            },
-            "&::-webkit-scrollbar-thumb:hover": {
-              background: "#666",
-            },
-          }}
-          h="100%"
-          w="100%"
-          maxW="100%"
-          overflowY="auto"
           padding="20px" // Adjust padding to prevent content from touching the edges
-          mt="5px"
+          marginTop="5px"
         >
           <Header />
 
@@ -507,6 +490,7 @@ const KFTray = () => {
           />
 
           <PortForwardTable
+            headerColor={cardBg}
             configs={configs}
             initiatePortForwarding={initiatePortForwarding}
             isInitiating={isInitiating}
@@ -537,7 +521,7 @@ const KFTray = () => {
           size="xs"
           colorScheme="facebook"
         />
-      </Box>
+      </Flex>
     </Center>
   )
 }
