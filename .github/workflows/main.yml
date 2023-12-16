@@ -2,7 +2,7 @@ name: Release
 on:
   push:
     tags:
-      - "v*"
+      - 'v*'
   workflow_dispatch:
 
 jobs:
@@ -36,7 +36,7 @@ jobs:
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
-          workspaces: "./src-tauri -> target"
+          workspaces: './src-tauri -> target'
 
       - name: Install Node.js
         uses: actions/setup-node@v3
@@ -61,7 +61,6 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install
-
 
       - name: Build Tauri App
         uses: tauri-apps/tauri-action@v0

@@ -1,10 +1,10 @@
 // theme.tsx
-import { extendTheme, ThemeConfig } from "@chakra-ui/react";
+import { extendTheme, ThemeConfig } from '@chakra-ui/react'
 
 const config: ThemeConfig = {
   initialColorMode: 'dark',
   useSystemColorMode: false,
-};
+}
 
 const theme = extendTheme({
   config,
@@ -12,10 +12,10 @@ const theme = extendTheme({
     global: {
       body: {
         margin: 0,
-        backgroundColor: "transparent",
+        backgroundColor: 'transparent',
       },
     },
   },
-});
+})
 
-export default theme;
+export default theme
