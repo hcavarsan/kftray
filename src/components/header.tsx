@@ -1,24 +1,19 @@
-import {
-    Heading,
-    Image,
-  } from "@chakra-ui/react"
+import { Heading, Image } from "@chakra-ui/react"
 import logo from "./../logo.png"
 
 const Header = () => {
-return (
+  return (
     <Heading
-            as="h1"
-            size="lg"
-            color="white"
-            mb={0}
-            marginTop={-2}
-            background="transparent"
-          >
-            <Image boxSize="80px" src={logo} />
+      as='h1'
+      size='lg'
+      color='white'
+      mb={0}
+      marginTop={-2}
+      background='transparent'
+    >
+      <Image boxSize='80px' src={logo} />
     </Heading>
-    );
+  )
 }
 
-export {
-    Header
-}
+export { Header }

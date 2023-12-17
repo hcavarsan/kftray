@@ -1,33 +1,63 @@
 import React, { useEffect, useState } from "react"
 import {
-    Box,
-    Center,
-    IconButton,
-    useColorModeValue,
-    VStack,
-  } from "@chakra-ui/react"
-  import { save } from "@tauri-apps/api/dialog"
-  import { writeTextFile } from "@tauri-apps/api/fs"
-  import { sendNotification } from "@tauri-apps/api/notification"
-  import { invoke } from "@tauri-apps/api/tauri"
-  import {
-    MdClose,
-} from "react-icons/md"
+  Box,
+  Center,
+  IconButton,
+  useColorModeValue,
+  VStack,
+} from "@chakra-ui/react"
+import { save } from "@tauri-apps/api/dialog"
+import { sendNotification } from "@tauri-apps/api/notification"
+import { invoke } from "@tauri-apps/api/tauri"
+import { MdClose } from "react-icons/md"
 import { Header } from "./header"
 import { AddConfigModal } from "./add-config"
 import { Footer } from "./footer"
 import { PortForwardTable } from "./portforward-table"
+import { open } from "@tauri-apps/api/dialog"
+import { readTextFile, writeTextFile } from "@tauri-apps/api/fs"
+
+interface Response {
+  id: number
+  service: string
+  context: string
+  local_port: number
+  status: number
+  namespace: string
+  remote_port: number
+  stdout: string
+  stderr: string
+}
+
+interface Config {
+  id: number
+  service: string
+  namespace: string
+  local_port: number
+  remote_port: number
+  context: string
+}
+
+interface Status {
+  id: number
+  service: string
+  context: string
+  local_port: number
+  isRunning: boolean
+  namespace: string
+  remote_port: number
+  cancelRef: React.RefObject<HTMLButtonElement>
+}
 
 const KFTray = () => {
-
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [isEdit, setIsEdit] = useState(false)
   const [newConfig, setNewConfig] = useState({
     id: 0,
     service: "",
     context: "",
-    local_port: "",
-    remote_port: "",
+    local_port: 0,
+    remote_port: 0,
     namespace: "",
   })
   const openModal = () => {
@@ -35,8 +65,8 @@ const KFTray = () => {
       id: 0,
       service: "",
       context: "",
-      local_port: "",
-      remote_port: "",
+      local_port: 0,
+      remote_port: 0,
       namespace: "",
     })
     setIsEdit(false) // Reset the isEdit state for a new configuration
@@ -48,7 +78,9 @@ const KFTray = () => {
   }
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target
-    setNewConfig((prev) => ({ ...prev, [name]: value }))
+    const updatedValue =
+      name === "local_port" || name === "remote_port" ? parseInt(value) : value
+    setNewConfig(prev => ({ ...prev, [name]: updatedValue }))
   }
   const cancelRef = React.useRef<HTMLElement>(null)
   const [isInitiating, setIsInitiating] = useState(false)
@@ -57,19 +89,20 @@ const KFTray = () => {
   const [configs, setConfigs] = useState<Status[]>([])
   const [isAlertOpen, setIsAlertOpen] = useState(false)
   const [configToDelete, setConfigToDelete] = useState<number | undefined>(
-    undefined
+    undefined,
   )
 
   useEffect(() => {
     const fetchConfigs = async () => {
       try {
-        const configsResponse: Status[] = await invoke("get_configs")
+        const configsResponse = await invoke<Status[]>("get_configs")
+
         setConfigs(
-          configsResponse.map((config) => ({
+          configsResponse.map(config => ({
             ...config,
             // Since we don't know if they are running initially, set them all to false
             isRunning: false,
-          }))
+          })),
         )
       } catch (error) {
         console.error("Failed to fetch configs:", error)
@@ -80,21 +113,6 @@ const KFTray = () => {
     fetchConfigs()
     // You might want to set the initial window size here as well
   }, [])
-
-  async function saveFile(data: string, filename: string) {
-    try {
-      const path = await save({
-        defaultPath: filename,
-        filters: [{ name: "JSON", extensions: ["json"] }],
-      })
-
-      if (path) {
-        await writeTextFile(path, data)
-      }
-    } catch (error) {
-      console.error("Error in saveFile:", error)
-    }
-  }
 
   const handleExportConfigs = async () => {
     try {
@@ -134,8 +152,6 @@ const KFTray = () => {
   const handleImportConfigs = async () => {
     try {
       await invoke("open_save_dialog")
-      const { open } = await import("@tauri-apps/api/dialog")
-      const { readTextFile } = await import("@tauri-apps/api/fs")
 
       const selected = await open({
         filters: [
@@ -153,7 +169,7 @@ const KFTray = () => {
         await invoke("import_configs", { json: jsonContent })
 
         // Fetch and update the list of configurations
-        const updatedConfigs: Status[] = await invoke("get_configs")
+        const updatedConfigs = await invoke<Status[]>("get_configs")
         setConfigs(updatedConfigs)
 
         // Show a success notification to the user
@@ -178,14 +194,14 @@ const KFTray = () => {
   }
   const handleEditConfig = async (id: number) => {
     try {
-      const configToEdit: Config = await invoke("get_config", { id })
+      const configToEdit = await invoke<Config>("get_config", { id })
       setNewConfig({
         // populate the state with the fetched config
         id: configToEdit.id,
         service: configToEdit.service,
         namespace: configToEdit.namespace,
-        local_port: configToEdit.local_port.toString(),
-        remote_port: configToEdit.remote_port.toString(),
+        local_port: configToEdit.local_port,
+        remote_port: configToEdit.remote_port,
         context: configToEdit.context,
       })
       setIsEdit(true) // Set isEdit to true because we are editing
@@ -193,7 +209,7 @@ const KFTray = () => {
     } catch (error) {
       console.error(
         `Failed to fetch the config for editing with id ${id}:`,
-        error
+        error,
       )
       // Handle the error...
     }
@@ -202,33 +218,22 @@ const KFTray = () => {
     e.preventDefault() // Prevent the default form submit action
 
     // Check if the port numbers are within the correct range
-    const local_port_number = parseInt(newConfig.local_port, 10)
-    const remote_port_number = parseInt(newConfig.remote_port, 10)
 
-    if (local_port_number < 0 || local_port_number > 65535) {
-      // Handle error: local port number is out of range for a u16
-      return
-    }
-
-    if (remote_port_number < 0 || remote_port_number > 65535) {
-      // Handle error: remote port number is out of range for a u16
-      return
-    }
     try {
       // Construct the edited config object
       const editedConfig = {
         id: newConfig.id, // Include the id for updating the existing record
         service: newConfig.service,
         context: newConfig.context,
-        local_port: local_port_number,
-        remote_port: remote_port_number,
+        local_port: newConfig.local_port,
+        remote_port: newConfig.remote_port,
         namespace: newConfig.namespace,
       }
 
       await invoke("update_config", { config: editedConfig })
 
       // Fetch the updated configurations
-      const updatedConfigs: Status[] = await invoke("get_configs")
+      const updatedConfigs = await invoke<Status[]>("get_configs")
       setConfigs(updatedConfigs)
 
       // Show success notification
@@ -252,44 +257,12 @@ const KFTray = () => {
   const handleSaveConfig = async (e: React.FormEvent) => {
     e.preventDefault() // Prevent the default form submit action
 
-    // Parse and validate port numbers
-    const local_port_number = parseInt(newConfig.local_port, 10)
-    const remote_port_number = parseInt(newConfig.remote_port, 10)
-
-    if (
-      isNaN(local_port_number) ||
-      local_port_number < 0 ||
-      local_port_number > 65535
-    ) {
-      await sendNotification({
-        title: "Error",
-        body: "Local port number is out of range for a u16.",
-        icon: "error",
-      })
-      return
-    }
-
-    if (
-      isNaN(remote_port_number) ||
-      remote_port_number < 0 ||
-      remote_port_number > 65535
-    ) {
-      await sendNotification({
-        title: "Error",
-        body: "Remote port number is out of range for a u16.",
-        icon: "error",
-      })
-      return
-    }
-
-    // Prepare the config object for saving
     const configToSave = {
-      // Include ID only for updates, not for new config
       id: isEdit ? newConfig.id : undefined,
       service: newConfig.service,
       context: newConfig.context,
-      local_port: local_port_number,
-      remote_port: remote_port_number,
+      local_port: newConfig.local_port,
+      remote_port: newConfig.remote_port,
       namespace: newConfig.namespace,
     }
 
@@ -304,7 +277,7 @@ const KFTray = () => {
       }
 
       // Fetch and update the list of configurations
-      const updatedConfigs: Status[] = await invoke("get_configs")
+      const updatedConfigs = await invoke<Status[]>("get_configs")
       setConfigs(updatedConfigs)
 
       // Show a success notification to the user
@@ -333,21 +306,21 @@ const KFTray = () => {
   const initiatePortForwarding = async () => {
     setIsInitiating(true)
     try {
-      const configsToSend = configs.map((config) => ({
+      const configsToSend = configs.map(config => ({
         // Remove the id property if it's not expected by your command
         // Transform local_port and remote_port to the correct type if needed
         ...config,
-        local_port: parseInt(config.local_port, 10),
-        remote_port: parseInt(config.remote_port, 10),
+        local_port: config.local_port,
+        remote_port: config.remote_port,
       }))
 
-      const responses: Response[] = await invoke("start_port_forward", {
+      const responses = await invoke<Response[]>("start_port_forward", {
         configs: configsToSend,
       })
 
       // Update each config with its new running status, depending on the response status.
-      const updatedConfigs = configs.map((config) => {
-        const relatedResponse = responses.find((res) => res.id === config.id)
+      const updatedConfigs = configs.map(config => {
+        const relatedResponse = responses.find(res => res.id === config.id)
         return {
           ...config,
           isRunning: relatedResponse ? relatedResponse.status === 0 : false,
@@ -359,7 +332,7 @@ const KFTray = () => {
     } catch (error) {
       console.error(
         "An error occurred while initiating port forwarding:",
-        error
+        error,
       )
     } finally {
       setIsInitiating(false)
@@ -382,7 +355,7 @@ const KFTray = () => {
 
     try {
       await invoke("delete_config", { id: configToDelete })
-      const updatedConfigs: Status[] = await invoke("get_configs")
+      const updatedConfigs = await invoke<Status[]>("get_configs")
       setConfigs(updatedConfigs)
 
       await sendNotification({
@@ -406,13 +379,13 @@ const KFTray = () => {
   const stopPortForwarding = async () => {
     setIsStopping(true)
     try {
-      const responses: Response[] = await invoke("stop_port_forward")
+      const responses = await invoke<Response[]>("stop_port_forward")
 
       // Determine if all configs were successfully stopped
-      const allStopped = responses.every((res) => res.status === 0)
+      const allStopped = responses.every(res => res.status === 0)
 
       if (allStopped) {
-        const updatedConfigs = configs.map((config) => ({
+        const updatedConfigs = configs.map(config => ({
           ...config,
           isRunning: false, // Set isRunning to false for all configs
         }))
@@ -427,8 +400,8 @@ const KFTray = () => {
       } else {
         // Handle the case where some configs failed to stop
         const errorMessages = responses
-          .filter((res) => res.status !== 0)
-          .map((res) => `${res.service}: ${res.stderr}`)
+          .filter(res => res.status !== 0)
+          .map(res => `${res.service}: ${res.stderr}`)
           .join(", ")
 
         await sendNotification({
@@ -454,15 +427,15 @@ const KFTray = () => {
   const cardBg = useColorModeValue("gray.800", "gray.800")
 
   return (
-    <Center h="100%" w="100%" overflow="hidden" margin="0">
+    <Center h='100%' w='100%' overflow='hidden' margin='0'>
       {/* Wrapper to maintain borderRadius, with overflow hidden */}
       <Box
-        width="100%"
-        height="75vh"
-        maxH="95vh"
-        maxW="600px"
-        overflow="hidden"
-        borderRadius="20px"
+        width='100%'
+        height='75vh'
+        maxH='95vh'
+        maxW='600px'
+        overflow='hidden'
+        borderRadius='20px'
         bg={cardBg}
         boxShadow={`
       /* Inset shadow for top & bottom inner border effect using dark gray */
@@ -486,12 +459,12 @@ const KFTray = () => {
               background: "#666",
             },
           }}
-          h="100%"
-          w="100%"
-          maxW="100%"
-          overflowY="auto"
-          padding="20px" // Adjust padding to prevent content from touching the edges
-          mt="5px"
+          h='100%'
+          w='100%'
+          maxW='100%'
+          overflowY='auto'
+          padding='20px' // Adjust padding to prevent content from touching the edges
+          mt='5px'
         >
           <Header />
 
@@ -510,7 +483,9 @@ const KFTray = () => {
             configs={configs}
             initiatePortForwarding={initiatePortForwarding}
             isInitiating={isInitiating}
+            isStopping={isStopping}
             isPortForwarding={isPortForwarding}
+            handleEditConfig={handleEditConfig}
             stopPortForwarding={stopPortForwarding}
             handleDeleteConfig={handleDeleteConfig}
             confirmDeleteConfig={confirmDeleteConfig}
@@ -523,19 +498,18 @@ const KFTray = () => {
             handleExportConfigs={handleExportConfigs}
             handleImportConfigs={handleImportConfigs}
           />
-
         </VStack>
         <IconButton
           icon={<MdClose />}
-          aria-label="Quit application"
-          variant="solid"
-          position="fixed"
+          aria-label='Quit application'
+          variant='solid'
+          position='fixed'
           top={7}
           right={4}
           onClick={quitApp}
           isRound={false}
-          size="xs"
-          colorScheme="facebook"
+          size='xs'
+          colorScheme='facebook'
         />
       </Box>
     </Center>
