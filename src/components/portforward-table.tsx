@@ -7,11 +7,34 @@ import {
   Th,
   Thead,
   Tr,
-} from '@chakra-ui/react'
-import { PortFoward } from './portforward'
-import { MdClose, MdRefresh } from 'react-icons/md'
+} from "@chakra-ui/react"
+import { PortFoward } from "./portforward"
+import { MdClose, MdRefresh } from "react-icons/md"
+import { RefObject } from "react"
 
-const PortForwardTable = props => {
+interface PortForwardTableProps {
+  configs: {
+    id: number
+    service: string
+    context: string
+    namespace: string
+    local_port: number
+    isRunning: boolean
+    cancelRef: RefObject<HTMLButtonElement>
+  }[]
+  isInitiating: boolean
+  isStopping: boolean
+  isPortForwarding: boolean
+  initiatePortForwarding: () => void
+  stopPortForwarding: () => void
+  confirmDeleteConfig: () => void
+  handleDeleteConfig: (id: number) => void
+  handleEditConfig: (id: number) => void
+  isAlertOpen: boolean
+  setIsAlertOpen: (isOpen: boolean) => void
+}
+
+const PortForwardTable: React.FC<PortForwardTableProps> = props => {
   const {
     configs,
     isInitiating,

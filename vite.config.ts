@@ -1,12 +1,12 @@
-import react from '@vitejs/plugin-react-swc'
-import { defineConfig } from 'vite'
-import path from 'path'
+import react from "@vitejs/plugin-react-swc"
+import { defineConfig } from "vite"
+import path from "path"
 
 // https://vitejs.dev/config/
 export default defineConfig({
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, 'src'),
+      "@": path.resolve(__dirname, "src"),
     },
   },
   plugins: [react()],
@@ -20,17 +20,18 @@ export default defineConfig({
   },
   // to make use of `TAURI_DEBUG` and other env variables
   // https://tauri.studio/v1/api/config#buildconfig.beforedevcommand
-  envPrefix: ['VITE_', 'TAURI_'],
+  envPrefix: ["VITE_", "TAURI_"],
   build: {
+    chunkSizeWarningLimit: 600,
     // Tauri supports es2021
-    target: process.env.TAURI_PLATFORM == 'windows' ? 'chrome105' : 'safari13',
+    target: process.env.TAURI_PLATFORM == "windows" ? "chrome105" : "safari13",
     // don't minify for debug builds
-    minify: !process.env.TAURI_DEBUG ? 'esbuild' : false,
+    minify: !process.env.TAURI_DEBUG ? "esbuild" : false,
     // produce sourcemaps for debug builds
     sourcemap: !!process.env.TAURI_DEBUG,
   },
   test: {
     globals: true,
-    environment: 'jsdom',
+    environment: "jsdom",
   },
 })
