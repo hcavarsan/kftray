@@ -57,18 +57,17 @@ jobs:
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
-          workspaces: './src-tauri -> target'
+          workspaces: "./src-tauri -> target"
 
       - name: Install dependencies
         run: pnpm install
-
 
       - name: Build Tauri App
         uses: tauri-apps/tauri-action@v0
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: 'KFtray - v${{ github.ref_name }}'
-          releaseBody: 'See the assets to download this version and install.'
+          releaseName: "KFtray - v${{ github.ref_name }}"
+          releaseBody: "See the assets to download this version and install."
           releaseDraft: true
           prerelease: false
           updaterJsonKeepUniversal: true

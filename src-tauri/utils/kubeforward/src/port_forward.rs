@@ -1,15 +1,13 @@
-
-
 use anyhow::Context;
 use futures::TryStreamExt;
-use std::net::SocketAddr;
-use tokio::net::TcpListener;
-use tokio_stream::wrappers::TcpListenerStream;
 use lazy_static::lazy_static;
-use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::net::SocketAddr;
+use std::sync::{Arc, Mutex};
+use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
+use tokio_stream::wrappers::TcpListenerStream;
 
 use crate::{
     pod_selection::{AnyReady, PodSelection},
@@ -17,8 +15,7 @@ use crate::{
 };
 use kube::{
     api::{Api, ListParams},
-	ResourceExt,
-	Client
+    Client, ResourceExt,
 };
 
 #[derive(Clone)]
@@ -30,7 +27,6 @@ pub struct PortForward {
     svc_api: Api<Service>,
     context_name: Option<String>, // Optional field to store context name
 }
-
 
 impl PortForward {
     pub async fn new(
@@ -56,9 +52,6 @@ impl PortForward {
         })
     }
 
-
-
-
     fn local_port(&self) -> u16 {
         self.local_port.unwrap_or(0)
     }
@@ -71,28 +64,27 @@ impl PortForward {
         let port = bind.local_addr()?.port();
         tracing::trace!(port, "Bound to local port");
 
-        let server = TcpListenerStream::new(bind)
-            .try_for_each(move |client_conn| {
-                let pf = self.clone();
+        let server = TcpListenerStream::new(bind).try_for_each(move |client_conn| {
+            let pf = self.clone();
 
-                async {
-                    let client_conn = client_conn;
-                    if let Ok(peer_addr) = client_conn.peer_addr() {
-                        tracing::trace!(%peer_addr, "new connection");
-                    }
-
-                    tokio::spawn(async move {
-                        if let Err(e) = pf.forward_connection(client_conn).await {
-                            tracing::error!(
-                                error = e.as_ref() as &dyn std::error::Error,
-                                "failed to forward connection"
-                            );
-                        }
-                    });
-
-                    Ok(())
+            async {
+                let client_conn = client_conn;
+                if let Ok(peer_addr) = client_conn.peer_addr() {
+                    tracing::trace!(%peer_addr, "new connection");
                 }
-            });
+
+                tokio::spawn(async move {
+                    if let Err(e) = pf.forward_connection(client_conn).await {
+                        tracing::error!(
+                            error = e.as_ref() as &dyn std::error::Error,
+                            "failed to forward connection"
+                        );
+                    }
+                });
+
+                Ok(())
+            }
+        });
 
         Ok((
             port,
@@ -151,33 +143,37 @@ impl<'a> TargetPodFinder<'a> {
         let ready_pod = AnyReady {};
 
         match &target.selector {
-			crate::TargetSelector::ServiceName(name) => {
-				let services = svc_api.list(&ListParams::default()).await?;
-				let service = services
-					.items
-					.into_iter()
-					.find(|s| s.name_any() == *name)
-					.ok_or(anyhow::anyhow!("Service '{}' not found", name))?;
+            crate::TargetSelector::ServiceName(name) => {
+                let services = svc_api.list(&ListParams::default()).await?;
+                let service = services
+                    .items
+                    .into_iter()
+                    .find(|s| s.name_any() == *name)
+                    .ok_or(anyhow::anyhow!("Service '{}' not found", name))?;
 
-				if let Some(selector) = &service.spec.as_ref().and_then(|spec| spec.selector.clone()) {
-					// Convert the service's selector map into a comma-separated string of "key=value" pairs
-					let label_selector_str = selector.iter()
-						.map(|(key, value)| format!("{}={}", key, value))
-						.collect::<Vec<_>>()
-						.join(",");
+                if let Some(selector) =
+                    &service.spec.as_ref().and_then(|spec| spec.selector.clone())
+                {
+                    // Convert the service's selector map into a comma-separated string of "key=value" pairs
+                    let label_selector_str = selector
+                        .iter()
+                        .map(|(key, value)| format!("{}={}", key, value))
+                        .collect::<Vec<_>>()
+                        .join(",");
 
-					let pods = pod_api.list(&ListParams::default().labels(&label_selector_str)).await?;
-					let pod = ready_pod.select(&pods.items, &label_selector_str)?;
+                    let pods = pod_api
+                        .list(&ListParams::default().labels(&label_selector_str))
+                        .await?;
+                    let pod = ready_pod.select(&pods.items, &label_selector_str)?;
 
-					target.find(pod, None)
-				} else {
-					Err(anyhow::anyhow!("No selector found for service '{}'", name))
-				}
-			}
+                    target.find(pod, None)
+                } else {
+                    Err(anyhow::anyhow!("No selector found for service '{}'", name))
+                }
+            }
         }
     }
 }
-
 
 lazy_static! {
     static ref CHILD_PROCESSES: Arc<Mutex<HashMap<String, JoinHandle<()>>>> =
@@ -212,20 +208,22 @@ pub async fn start_port_forward(configs: Vec<Config>) -> Result<Vec<CustomRespon
     let mut responses = Vec::new();
 
     for config in configs {
-		let selector = crate::TargetSelector::ServiceName(config.service.clone());
+        let selector = crate::TargetSelector::ServiceName(config.service.clone());
         let remote_port = crate::Port::from(config.remote_port as i32);
-		let context_name = Some(config.context.clone());
+        let context_name = Some(config.context.clone());
         log::info!("Remote Port: {}", config.remote_port);
-		log::info!("Local Port: {}", config.remote_port);
+        log::info!("Local Port: {}", config.remote_port);
 
         let namespace = config.namespace.clone();
         let target = crate::Target::new(selector, remote_port, namespace);
 
         log::debug!("Attempting to forward to service: {}", &config.service);
-        let port_forward = PortForward::new(target, config.local_port, context_name).await.map_err(|e| {
-            log::error!("Failed to create PortForward: {}", e);
-            e.to_string()
-        })?;
+        let port_forward = PortForward::new(target, config.local_port, context_name)
+            .await
+            .map_err(|e| {
+                log::error!("Failed to create PortForward: {}", e);
+                e.to_string()
+            })?;
 
         let (actual_local_port, handle) = port_forward.port_forward().await.map_err(|e| {
             log::error!("Failed to start port forwarding: {}", e);
@@ -239,7 +237,10 @@ pub async fn start_port_forward(configs: Vec<Config>) -> Result<Vec<CustomRespon
         );
 
         // Store the JoinHandle to the global child processes map.
-        CHILD_PROCESSES.lock().unwrap().insert(config.service.clone(), handle);
+        CHILD_PROCESSES
+            .lock()
+            .unwrap()
+            .insert(config.service.clone(), handle);
 
         // Append a new CustomResponse to responses collection.
         responses.push(CustomResponse {
@@ -280,9 +281,9 @@ pub async fn stop_port_forward() -> Result<Vec<CustomResponse>, String> {
             id: None, // id is not applicable here since we're stopping services
             service,
             namespace: String::new(), // Namespace information is not available here
-            local_port: 0, // Local port information is not available here
-            remote_port: 0, // Remote port information is not available here
-            context: String::new(), // Context information is not available here
+            local_port: 0,            // Local port information is not available here
+            remote_port: 0,           // Remote port information is not available here
+            context: String::new(),   // Context information is not available here
             stdout: String::from("Port forwarding has been stopped"), // Indicate that forwarding was stopped
             stderr: String::new(), // No error message since we're stopping the service
             status: 0, // A simple status code, you might want to include more detail based on your application logic
@@ -307,4 +308,3 @@ pub fn quit_app(window: tauri::Window) {
     window.close().unwrap();
     let _ = kill_all_processes();
 }
-
