@@ -1,8 +1,6 @@
-
+pub mod kubecontext;
 pub mod pod_selection;
 pub mod port_forward;
-pub mod kubecontext;
-
 
 pub(crate) use k8s_openapi::api::core::v1 as vx;
 
@@ -13,9 +11,8 @@ use vx::Pod;
 
 #[derive(Clone)]
 pub enum TargetSelector {
-	ServiceName(String)
+    ServiceName(String),
 }
-
 
 #[derive(Clone)]
 pub enum Port {
@@ -42,14 +39,12 @@ impl From<IntOrString> for Port {
     }
 }
 
-
 #[derive(Clone)]
 pub struct Target {
     selector: TargetSelector,
     port: Port,
     namespace: NameSpace,
 }
-
 
 #[derive(Clone)]
 pub(crate) struct NameSpace(Option<String>);
@@ -60,7 +55,6 @@ impl NameSpace {
         self.0.clone().unwrap_or(default)
     }
 }
-
 
 #[derive(Clone)]
 pub(crate) struct TargetPod {

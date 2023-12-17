@@ -1,6 +1,6 @@
 use rusqlite::{params, Connection, Result};
-use serde_json::json;
 use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 #[derive(Clone, Deserialize, PartialEq, Serialize, Debug)]
 pub struct Config {
@@ -16,7 +16,6 @@ pub struct Config {
 
 #[tauri::command]
 pub async fn delete_config(id: i64) -> Result<(), String> {
-
     println!("Deleting config with id: {}", id);
     let home_dir = dirs::home_dir().unwrap();
     let db_dir = home_dir.to_str().unwrap().to_string() + "/.kftray/configs.db";
@@ -77,15 +76,12 @@ fn read_configs() -> Result<Vec<Config>, rusqlite::Error> {
     Ok(configs)
 }
 
-
-
-
 #[tauri::command]
 pub async fn get_configs() -> Result<Vec<Config>, String> {
     println!("get_configs called");
     let configs = read_configs().map_err(|e| e.to_string())?;
     println!("{:?}", configs);
-    return Ok(configs);
+    Ok(configs)
 }
 
 #[tauri::command]
@@ -95,17 +91,20 @@ pub async fn get_config(id: i64) -> Result<Config, String> {
     let db_dir = format!("{}/.kftray/configs.db", home_dir.to_string_lossy());
     let conn = Connection::open(db_dir).map_err(|e| e.to_string())?;
 
-    let mut stmt = conn.prepare("SELECT id, data FROM configs WHERE id = ?1").map_err(|e| e.to_string())?;
-    let mut rows = stmt.query_map(params![id], |row| {
-        // For `row.get`, we directly use `rusqlite::Result` with `?`.
-        let _id: i64 = row.get(0)?;
-        let data: String = row.get(1)?;
-        // The error from `serde_json` is converted to a `rusqlite::Error` before using `?`.
-        let config: Config = serde_json::from_str(&data).map_err(|_e| {
-            rusqlite::Error::ExecuteReturnedResults
-        })?;
-        Ok(config)
-    }).map_err(|e| e.to_string())?;
+    let mut stmt = conn
+        .prepare("SELECT id, data FROM configs WHERE id = ?1")
+        .map_err(|e| e.to_string())?;
+    let mut rows = stmt
+        .query_map(params![id], |row| {
+            // For `row.get`, we directly use `rusqlite::Result` with `?`.
+            let _id: i64 = row.get(0)?;
+            let data: String = row.get(1)?;
+            // The error from `serde_json` is converted to a `rusqlite::Error` before using `?`.
+            let config: Config = serde_json::from_str(&data)
+                .map_err(|_e| rusqlite::Error::ExecuteReturnedResults)?;
+            Ok(config)
+        })
+        .map_err(|e| e.to_string())?;
 
     match rows.next() {
         Some(row_result) => {
@@ -113,7 +112,7 @@ pub async fn get_config(id: i64) -> Result<Config, String> {
             config.id = Some(id);
             println!("{:?}", config);
             Ok(config)
-        },
+        }
         None => Err(format!("No config found with id: {}", id)),
     }
 }
@@ -126,12 +125,14 @@ pub fn update_config(config: Config) -> Result<(), String> {
     let conn = Connection::open(db_dir).map_err(|e| e.to_string())?;
 
     let data = json!(config).to_string();
-    conn.execute("UPDATE configs SET data = ?1 WHERE id = ?2", params![data, config.id.unwrap()])
-        .map_err(|e| e.to_string())?;
+    conn.execute(
+        "UPDATE configs SET data = ?1 WHERE id = ?2",
+        params![data, config.id.unwrap()],
+    )
+    .map_err(|e| e.to_string())?;
 
     Ok(())
 }
-
 
 #[tauri::command]
 pub async fn export_configs() -> Result<String, String> {
@@ -151,4 +152,3 @@ pub async fn import_configs(json: String) -> Result<(), String> {
     }
     Ok(())
 }
-
