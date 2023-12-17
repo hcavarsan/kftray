@@ -41,11 +41,11 @@ fn main() {
     let system_tray_menu = SystemTrayMenu::new().add_item(quit);
     tauri::Builder::default()
         .manage(SaveDialogState::default())
-        .setup(|app| {
+        .setup(|_app| {
             db::init();
             #[cfg(target_os = "macos")]
             {
-                app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+                _app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             }
             Ok(())
         })
