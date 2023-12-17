@@ -79,7 +79,7 @@ jobs:
           components: rustfmt
 
       - name: Run rustfmt
-        run: cargo fmt --all -- --check
+        run: cargo fmt --manifest-path ./src-tauri/Cargo.toml --all -- --check
 
   clippy_check:
     name: Clippy
@@ -113,4 +113,4 @@ jobs:
         uses: actions-rs/clippy-check@v1
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
-          args: --all-features --release
+          args: --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
