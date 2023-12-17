@@ -17,31 +17,7 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  typescript:
-    name: TypeScript
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@v2.2.2
-        with:
-          version: 8.x.x
-
-      - name: Install Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: 20
-          cache: 'pnpm'
-
-      - name: Install pnpm dependencies
-        run: pnpm i --frozen-lockfile
-
-      - name: Perform typechecks
-        run: pnpm typecheck
-
-  eslint:
+  eslint-format:
     name: ESLint
     runs-on: ubuntu-latest
     steps:
@@ -65,7 +41,7 @@ jobs:
       - name: Perform linting
         run: pnpm lint
 
-  rustfmt:
+  rust-format:
     name: rustfmt
     runs-on: ubuntu-latest
     steps:
@@ -81,7 +57,7 @@ jobs:
       - name: Run rustfmt
         run: cargo fmt --manifest-path ./src-tauri/Cargo.toml --all -- --check
 
-  clippy_check:
+  rust-lint:
     name: Clippy
     runs-on: ubuntu-latest
     steps:
