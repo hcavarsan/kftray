@@ -47,6 +47,7 @@
     "jsdom": "^23.0.1",
     "prettier": "^3.1.1",
     "taze": "^0.13.0",
+    "typecheck": "^0.1.2",
     "typescript": "^5.3.3",
     "vite": "^5.0.10",
     "vitest": "^1.0.4"
