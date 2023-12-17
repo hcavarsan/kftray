@@ -1,3 +1,6 @@
+import { RefObject } from 'react'
+import { MdClose, MdRefresh } from 'react-icons/md'
+
 import {
   Box,
   Button,
@@ -7,10 +10,9 @@ import {
   Th,
   Thead,
   Tr,
-} from "@chakra-ui/react"
-import { PortFoward } from "./portforward"
-import { MdClose, MdRefresh } from "react-icons/md"
-import { RefObject } from "react"
+} from '@chakra-ui/react'
+
+import { PortFoward } from './portforward'
 
 interface PortForwardTableProps {
   configs: {

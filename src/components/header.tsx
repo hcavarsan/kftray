@@ -1,5 +1,6 @@
-import { Heading, Image } from "@chakra-ui/react"
-import logo from "./../logo.png"
+import { Heading, Image } from '@chakra-ui/react'
+
+import logo from './../logo.png'
 
 const Header = () => {
   return (
