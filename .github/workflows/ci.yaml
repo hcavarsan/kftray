@@ -78,9 +78,6 @@ jobs:
           toolchain: stable
           components: rustfmt
 
-      - name: Generate Prisma client
-        uses: ./.github/actions/generate-prisma-client
-
       - name: Run rustfmt
         run: cargo fmt --all -- --check
 
@@ -111,11 +108,6 @@ jobs:
           version: 8
           run_install: false
 
-      - name: Run 'setup-system.sh' script
-        run: ./.github/scripts/setup-system.sh
-
-      - name: Generate Prisma client
-        uses: ./.github/actions/generate-prisma-client
 
       - name: Run Clippy
         uses: actions-rs/clippy-check@v1
