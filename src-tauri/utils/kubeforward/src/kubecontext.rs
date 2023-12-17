@@ -1,9 +1,12 @@
 use anyhow::Result;
-use kube::{config::{KubeConfigOptions, Config}, Client};
+use kube::{
+    config::{Config, KubeConfigOptions},
+    Client,
+};
 
 pub async fn create_client_with_specific_context(context_name: &str) -> Result<Client> {
     let config_options = KubeConfigOptions {
-        context: Some(context_name.to_owned()),  // Add the context name to the options
+        context: Some(context_name.to_owned()), // Add the context name to the options
         ..Default::default()
     };
 

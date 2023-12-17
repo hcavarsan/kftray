@@ -51,7 +51,9 @@ Stay tuned for more features as we continue to enhance `kftray` for an even bett
 - Rust for backend development.
 
 ## Installation
+
 ### Building from Source
+
 To build `kftray` from source, follow these steps:
 
 1. Clone the repository:
@@ -72,16 +74,20 @@ To build `kftray` from source, follow these steps:
    ```
 
 ## Usage
+
 After building the application, use the following steps to run the application:
+
 1. Navigate to the `src-tauri/target/release/` directory.
 2. Execute the binary for your platform (`kftray.exe` on Windows, `./kftray` on macOS and Linux).
 3. The application will appear in the system tray.
 4. Click the tray icon to open the UI for starting or stopping Kubernetes port forwarding based on your configurations.
 
 ## Configuration
+
 The UI allows you to add, remove, and edit port-forwarding settings with ease. Configurations are saved at $HOME/.kftray/configs.db by default.
 
 ## Contributing
+
 Contributions are welcome! Feel free to submit pull requests, create issues, or offer suggestions to improve kftray.
 
 ## License
