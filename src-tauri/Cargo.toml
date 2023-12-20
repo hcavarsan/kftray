@@ -43,8 +43,3 @@ custom-protocol = ["tauri/custom-protocol"]
 
 [dependencies.fix-path-env]
 git = "https://github.com/tauri-apps/fix-path-env-rs"
-
-
-[[test]]
-name = "db_tests"
-path = "src/tests/db_tests.rs"
