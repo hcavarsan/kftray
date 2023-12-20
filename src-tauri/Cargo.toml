@@ -30,6 +30,9 @@ env_logger = "0.10.1"
 wasmedge_quickjs = "0.2.0"
 openssl = { version = "0.10.35", features = ["vendored"] }
 
+[dev-dependencies]
+tempfile = "3.0"
+
 [features]
 # by default Tauri runs in production mode
 # when `tauri dev` runs it is executed with `cargo run --no-default-features` if `devPath` is an URL
@@ -40,5 +43,3 @@ custom-protocol = ["tauri/custom-protocol"]
 
 [dependencies.fix-path-env]
 git = "https://github.com/tauri-apps/fix-path-env-rs"
-
-

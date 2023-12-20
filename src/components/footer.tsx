@@ -1,5 +1,6 @@
-import { Button, Flex } from "@chakra-ui/react"
-import { MdAdd, MdFileDownload, MdFileUpload } from "react-icons/md"
+import { MdAdd, MdFileDownload, MdFileUpload } from 'react-icons/md'
+
+import { Button, Flex } from '@chakra-ui/react'
 
 interface FooterProps {
   openModal: () => void
@@ -9,6 +10,9 @@ interface FooterProps {
 
 const Footer: React.FC<FooterProps> = props => {
   const { openModal, handleExportConfigs, handleImportConfigs } = props
+
+
+  
   return (
     <Flex direction='column' align='center' mt='30px' width='100%' mb='30px'>
       <Button
