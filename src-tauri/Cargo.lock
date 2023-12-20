@@ -2215,6 +2215,7 @@ dependencies = [
  "tauri",
  "tauri-build",
  "tauri-plugin-positioner",
+ "tempfile",
  "tokio",
  "wasmedge_quickjs",
  "window-shadows",

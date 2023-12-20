@@ -8,11 +8,12 @@ const Header = () => {
       as='h1'
       size='lg'
       color='white'
-      mb={0}
+      mb={5}
+	  mt={10}
       marginTop={-2}
       background='transparent'
     >
-      <Image boxSize='80px' src={logo} />
+      <Image boxSize='96px' src={logo} />
     </Heading>
   )
 }
