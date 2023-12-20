@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 use tempfile::{tempdir, NamedTempFile};
 
-use crate::db::{init, db_file_exists, create_db_file, get_db_path};
+use crate::db::{create_db_file, db_file_exists, get_db_path, init};
 #[test]
 fn test_get_db_path() {
     let expected_end = "/.kftray/configs.db";
@@ -34,6 +34,3 @@ fn test_init() {
     init();
     assert_eq!(Path::new(&db_path).exists(), true);
 }
-
-
-
