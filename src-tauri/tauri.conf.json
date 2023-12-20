@@ -55,8 +55,14 @@
 		"csp": null
 	  },
 	  "updater": {
-		"active": false
-	  },
+		"active": true,
+		"endpoints": [
+		  "https://github.com/hcavarsan/kftray/releases/latest/download/latest.json"
+		],
+		"dialog": true,
+		"pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDZEMEYxNzA4ODFFNjA3RTgKUldUb0IrYUJDQmNQYmRrZFFUTUN0T3lseStZVmc5YlR4YmxtaHBoanJYeGxSMWFQbjhtTFpERGsK"
+	},
+
 	  "macOSPrivateApi": true,
 	  "windows": [
 		{
