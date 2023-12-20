@@ -9,7 +9,7 @@ import {
   ModalCloseButton,
   ModalContent,
   ModalFooter,
-} from "@chakra-ui/react"
+} from '@chakra-ui/react'
 
 interface AddConfigModalProps {
   isModalOpen: boolean
@@ -43,7 +43,7 @@ const AddConfigModal: React.FC<AddConfigModalProps> = props => {
     <Center>
       <Modal isOpen={isModalOpen} onClose={closeModal} size='sm'>
         <ModalContent mt='40px' width='fit-content'>
-          {" "}
+          {' '}
           {/* Adjusts the top margin and centers horizontally */}
           <ModalCloseButton />
           <ModalBody mt='10px ' width='fit-content' pb={2}>

@@ -1,3 +1,5 @@
+import React, { RefObject } from 'react'
+
 import {
   AlertDialog,
   AlertDialogBody,
@@ -5,24 +7,18 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   Button,
-} from "@chakra-ui/react"
-
-import {
-  Tr,
-  Td,
   HStack,
   Icon,
   IconButton,
-  useColorModeValue,
-} from "@chakra-ui/react"
-
-import { FontAwesomeIcon } from "@fortawesome/react-fontawesome"
-import { faTrash, faPen } from "@fortawesome/free-solid-svg-icons"
-import React, { RefObject } from "react"
+  Td,
+  Tr,
+  useColorModeValue } from '@chakra-ui/react'
+import { faPen, faTrash } from '@fortawesome/free-solid-svg-icons'
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 
 const StatusIcon: React.FC<{ isRunning: boolean }> = ({ isRunning }) => {
   return (
-    <Icon viewBox='0 0 200 200' color={isRunning ? "green.500" : "red.500"}>
+    <Icon viewBox='0 0 200 200' color={isRunning ? 'green.500' : 'red.500'}>
       <path
         fill='currentColor'
         d='M 100, 100 m -75, 0 a 75,75 0 1,0 150,0 a 75,75 0 1,0 -150,0'
@@ -30,6 +26,8 @@ const StatusIcon: React.FC<{ isRunning: boolean }> = ({ isRunning }) => {
     </Icon>
   )
 }
+
+
 interface DeleteConfirmationProps {
   isAlertOpen: boolean
   setIsAlertOpen: (isOpen: boolean) => void
@@ -93,7 +91,7 @@ const PortFoward: React.FC<PortFowardProps> = props => {
     setIsAlertOpen,
   } = props
 
-  const textColor = useColorModeValue("gray.100", "gray.100")
+  const textColor = useColorModeValue('gray.100', 'gray.100')
 
   return (
     <>
@@ -110,7 +108,7 @@ const PortFoward: React.FC<PortFowardProps> = props => {
         <Td width='20%' color={textColor}>
           {config.local_port}
         </Td>
-        <Td width='5%' color={config.isRunning ? "green.100" : "red.100"}>
+        <Td width='5%' color={config.isRunning ? 'green.100' : 'red.100'}>
           <StatusIcon isRunning={config.isRunning} />
         </Td>
         <Td width='10%'>
