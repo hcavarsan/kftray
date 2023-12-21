@@ -75,7 +75,7 @@ jobs:
           releaseDraft: true
           prerelease: false
           updaterJsonKeepUniversal: true
-          args: ${{ matrix.platform == 'macos-latest' && ' --target universal-apple-darwin -b dmg --verbose' || '--verbose' }}
+          args: ${{ matrix.platform == 'macos-latest' && ' --target universal-apple-darwin --verbose' || '--verbose' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NODE_OPTIONS: --max-old-space-size=6000
