@@ -41,16 +41,25 @@ body {
   background-clip: content-box; /* ensures the border doesn't occupy space */
 }
 
-/* The scrollbar button (arrow buttons) - for some older browsers */
 ::-webkit-scrollbar-button {
-  display: none; /* hides the buttons */
+  display: none;
 }
 
-/* The scrollbar corner (where horizontal and vertical scrollbars meet) */
 ::-webkit-scrollbar-corner {
-  background: transparent; /* Optional: style for the scrollbar corner */
+  background: transparent;
 }
 .VStackClass {
-  background: transparent; /* Optional: style for the scrollbar corner */
+  background: transparent;
   scrollbar-gutter: stable;
+}
+
+.iconButton {
+  font-size: 18px;
+  height: 24px;
+  width: 24px;
+}
+
+.iconButton svg {
+  width: 1rem;
+  height: 1rem;
 }

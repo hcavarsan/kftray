@@ -1,49 +1,42 @@
+import React from 'react'
 import { MdAdd, MdFileDownload, MdFileUpload } from 'react-icons/md'
 
 import { Button, Flex } from '@chakra-ui/react'
 
-interface FooterProps {
-  openModal: () => void
-  handleExportConfigs: () => void
-  handleImportConfigs: () => void
-}
+import { FooterProps } from '../../types'
 
-const Footer: React.FC<FooterProps> = props => {
-  const { openModal, handleExportConfigs, handleImportConfigs } = props
-
-
-  
+const Footer: React.FC<FooterProps> = ({
+  openModal,
+  handleExportConfigs,
+  handleImportConfigs,
+}) => {
   return (
     <Flex direction='column' align='center' mt='30px' width='100%' mb='30px'>
       <Button
         leftIcon={<MdAdd />}
-        variant='solid'
-        size='xs'
         colorScheme='facebook'
         onClick={openModal}
-        width='80%' // Set a consistent width for the button
+        width='80%'
+        size='sm'
       >
         Add New Config
       </Button>
       <Flex direction='row' justify='space-between' mt={2} width='80%'>
         <Button
-          onClick={handleExportConfigs}
           leftIcon={<MdFileUpload />}
-          size='xs'
-          variant='solid'
-          width='48%' // Setting width to less than half allows for space between buttons
           colorScheme='facebook'
+          onClick={handleExportConfigs}
+          width='48%'
+          size='sm'
         >
           Export Configs
         </Button>
-
         <Button
-          onClick={handleImportConfigs}
           leftIcon={<MdFileDownload />}
-          size='xs'
-          variant='solid'
-          width='48%' // Same width as the previous button
           colorScheme='facebook'
+          onClick={handleImportConfigs}
+          width='48%'
+          size='sm'
         >
           Import Configs
         </Button>
@@ -52,4 +45,4 @@ const Footer: React.FC<FooterProps> = props => {
   )
 }
 
-export { Footer }
+export default Footer

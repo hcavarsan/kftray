@@ -13,42 +13,11 @@ import { readTextFile, writeTextFile } from '@tauri-apps/api/fs'
 import { sendNotification } from '@tauri-apps/api/notification'
 import { invoke } from '@tauri-apps/api/tauri'
 
-import { AddConfigModal } from './add-config'
-import { Footer } from './footer'
-import { Header } from './header'
-import { PortForwardTable } from './portforward-table'
-
-interface Response {
-  id: number
-  service: string
-  context: string
-  local_port: number
-  status: number
-  namespace: string
-  remote_port: number
-  stdout: string
-  stderr: string
-}
-
-interface Config {
-  id: number
-  service: string
-  namespace: string
-  local_port: number
-  remote_port: number
-  context: string
-}
-
-interface Status {
-  id: number
-  service: string
-  context: string
-  local_port: number
-  isRunning: boolean
-  namespace: string
-  remote_port: number
-  cancelRef: React.RefObject<HTMLButtonElement>
-}
+import { Config, Status } from '../../types'
+import AddConfigModal from '../AddConfigModal'
+import Footer from '../Footer'
+import Header from '../Header'
+import PortForwardTable from '../PortForwardTable'
 
 const initalRemotePort = 0
 const initialLocalPort = 0
@@ -56,14 +25,17 @@ const initialId = 0
 const initialStatus = 0
 
 const KFTray = () => {
+  const [configs, setConfigs] = useState<Status[]>([])
   const [isModalOpen, setIsModalOpen] = useState(false)
+
   const [isEdit, setIsEdit] = useState(false)
-  const [newConfig, setNewConfig] = useState({
-    id: initialId,
+
+  const [newConfig, setNewConfig] = useState<Config>({
+    id: 0,
     service: '',
     context: '',
-    local_port: initialLocalPort,
-    remote_port: initalRemotePort,
+    local_port: 0,
+    remote_port: 0,
     namespace: '',
   })
   const openModal = () => {
@@ -75,30 +47,33 @@ const KFTray = () => {
       remote_port: initalRemotePort,
       namespace: '',
     })
-    setIsEdit(false) // Reset the isEdit state for a new configuration
+    setIsEdit(false)
     setIsModalOpen(true)
   }
   const closeModal = () => {
     setIsModalOpen(false)
-    setIsEdit(false) // Reset isEdit when the modal is closed
+    setIsEdit(false)
   }
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target
     const updatedValue =
-      name === 'local_port' || name === 'remote_port' ? parseInt(value) : value
+      name === 'local_port' || name === 'remote_port'
+        ? value === ''
+          ? ''
+          : Number(value)
+        : value
 
-
-    setNewConfig(prev => ({ ...prev, [name]: updatedValue }))
+    setNewConfig(prev => ({
+      ...prev,
+      [name]: updatedValue,
+    }))
   }
   const cancelRef = React.useRef<HTMLElement>(null)
   const [isInitiating, setIsInitiating] = useState(false)
   const [isStopping, setIsStopping] = useState(false)
   const [isPortForwarding, setIsPortForwarding] = useState(false)
-  const [configs, setConfigs] = useState<Status[]>([])
   const [isAlertOpen, setIsAlertOpen] = useState(false)
-  const [configToDelete, setConfigToDelete] = useState<number | undefined>(
-    undefined,
-  )
+  const [configToDelete, setConfigToDelete] = useState<number | undefined>()
 
   useEffect(() => {
     const fetchConfigs = async () => {
@@ -108,27 +83,22 @@ const KFTray = () => {
         setConfigs(
           configsResponse.map(config => ({
             ...config,
-            // Since we don't know if they are running initially, set them all to false
             isRunning: false,
           })),
         )
       } catch (error) {
         console.error('Failed to fetch configs:', error)
-        // Handle error appropriately
       }
     }
 
     fetchConfigs()
-    // You might want to set the initial window size here as well
   }, [])
 
   const handleExportConfigs = async () => {
     try {
-      // Inform backend that save dialog is about to open
       await invoke('open_save_dialog')
 
       const json = await invoke('export_configs')
-
 
       if (typeof json !== 'string') {
         throw new Error('The exported config is not a string')
@@ -139,7 +109,6 @@ const KFTray = () => {
         filters: [{ name: 'JSON', extensions: ['json'] }],
       })
 
-      // Inform backend that save dialog has closed
       await invoke('close_save_dialog')
 
       if (filePath) {
@@ -173,33 +142,24 @@ const KFTray = () => {
         multiple: false,
       })
 
-
       await invoke('close_save_dialog')
       if (typeof selected === 'string') {
-        // A file was selected, handle the file content
         const jsonContent = await readTextFile(selected)
 
-
         await invoke('import_configs', { json: jsonContent })
-
-        // Fetch and update the list of configurations
         const updatedConfigs = await invoke<Status[]>('get_configs')
-
 
         setConfigs(updatedConfigs)
 
-        // Show a success notification to the user
         await sendNotification({
           title: 'Success',
           body: 'Configurations imported successfully.',
           icon: 'success',
         })
       } else {
-        // File dialog was cancelled
         console.log('No file was selected or the dialog was cancelled.')
       }
     } catch (error) {
-      // Log any errors that arise
       console.error('Error during import:', error)
       await sendNotification({
         title: 'Error',
@@ -212,9 +172,7 @@ const KFTray = () => {
     try {
       const configToEdit = await invoke<Config>('get_config', { id })
 
-
       setNewConfig({
-        // populate the state with the fetched config
         id: configToEdit.id,
         service: configToEdit.service,
         namespace: configToEdit.namespace,
@@ -222,25 +180,21 @@ const KFTray = () => {
         remote_port: configToEdit.remote_port,
         context: configToEdit.context,
       })
-      setIsEdit(true) // Set isEdit to true because we are editing
+      setIsEdit(true)
       setIsModalOpen(true)
     } catch (error) {
       console.error(
         `Failed to fetch the config for editing with id ${id}:`,
         error,
       )
-      // Handle the error...
     }
   }
   const handleEditSubmit = async (e: React.FormEvent) => {
-    e.preventDefault() // Prevent the default form submit action
-
-    // Check if the port numbers are within the correct range
+    e.preventDefault()
 
     try {
-      // Construct the edited config object
       const editedConfig = {
-        id: newConfig.id, // Include the id for updating the existing record
+        id: newConfig.id,
         service: newConfig.service,
         context: newConfig.context,
         local_port: newConfig.local_port,
@@ -250,23 +204,19 @@ const KFTray = () => {
 
       await invoke('update_config', { config: editedConfig })
 
-      // Fetch the updated configurations
       const updatedConfigs = await invoke<Status[]>('get_configs')
-
 
       setConfigs(updatedConfigs)
 
-      // Show success notification
       await sendNotification({
         title: 'Success',
         body: 'Configuration updated successfully.',
         icon: 'success',
       })
 
-      closeModal() // Close the modal after successful update
+      closeModal()
     } catch (error) {
       console.error('Failed to update config:', error)
-      // Handle errors
       await sendNotification({
         title: 'Error',
         body: 'Failed to update configuration.',
@@ -275,7 +225,7 @@ const KFTray = () => {
     }
   }
   const handleSaveConfig = async (e: React.FormEvent) => {
-    e.preventDefault() // Prevent the default form submit action
+    e.preventDefault()
 
     const configToSave = {
       id: isEdit ? newConfig.id : undefined,
@@ -287,7 +237,6 @@ const KFTray = () => {
     }
 
     try {
-      // Check if we're adding a new config or updating an existing one
       if (isEdit) {
         // Update existing config
         await invoke('update_config', { config: configToSave })
@@ -296,25 +245,20 @@ const KFTray = () => {
         await invoke('insert_config', { config: configToSave })
       }
 
-      // Fetch and update the list of configurations
       const updatedConfigs = await invoke<Status[]>('get_configs')
-
 
       setConfigs(updatedConfigs)
 
-      // Show a success notification to the user
       await sendNotification({
         title: 'Success',
         body: `Configuration ${isEdit ? 'updated' : 'added'} successfully.`,
         icon: 'success',
       })
 
-      // Close the modal after successful insert/update
       closeModal()
     } catch (error) {
       console.error(`Failed to ${isEdit ? 'update' : 'insert'} config:`, error)
 
-      // Handle errors, such as showing an error notification
       await sendNotification({
         title: 'Error',
         body: `Failed to ${
@@ -329,8 +273,6 @@ const KFTray = () => {
     setIsInitiating(true)
     try {
       const configsToSend = configs.map(config => ({
-        // Remove the id property if it's not expected by your command
-        // Transform local_port and remote_port to the correct type if needed
         ...config,
         local_port: config.local_port,
         remote_port: config.remote_port,
@@ -340,15 +282,14 @@ const KFTray = () => {
         configs: configsToSend,
       })
 
-      // Update each config with its new running status, depending on the response status.
       const updatedConfigs = configs.map(config => {
         const relatedResponse = responses.find(res => res.id === config.id)
 
-
-
         return {
           ...config,
-          isRunning: relatedResponse ? relatedResponse.status === initialStatus : false,
+          isRunning: relatedResponse
+            ? relatedResponse.status === initialStatus
+            : false,
         }
       })
 
@@ -364,12 +305,13 @@ const KFTray = () => {
     }
   }
 
-  const handleDeleteConfig = (id?: number) => {
+  const handleDeleteConfig = (id: number) => {
     setConfigToDelete(id)
     setIsAlertOpen(true)
   }
+
   const confirmDeleteConfig = async () => {
-    if (configToDelete === undefined) {
+    if (typeof configToDelete !== 'number') {
       await sendNotification({
         title: 'Error',
         body: 'Configuration id is undefined.',
@@ -382,7 +324,6 @@ const KFTray = () => {
     try {
       await invoke('delete_config', { id: configToDelete })
       const updatedConfigs = await invoke<Status[]>('get_configs')
-
 
       setConfigs(updatedConfigs)
 
@@ -400,7 +341,6 @@ const KFTray = () => {
       })
     }
 
-    // Close the alert dialog
     setIsAlertOpen(false)
   }
 
@@ -409,13 +349,12 @@ const KFTray = () => {
     try {
       const responses = await invoke<Response[]>('stop_port_forward')
 
-      // Determine if all configs were successfully stopped
       const allStopped = responses.every(res => res.status === initialStatus)
 
       if (allStopped) {
         const updatedConfigs = configs.map(config => ({
           ...config,
-          isRunning: false, // Set isRunning to false for all configs
+          isRunning: false,
         }))
 
         setConfigs(updatedConfigs)
@@ -426,11 +365,10 @@ const KFTray = () => {
           icon: 'success',
         })
       } else {
-        // Handle the case where some configs failed to stop
         const errorMessages = responses
-        .filter(res => res.status !== initialStatus)
-        .map(res => `${res.service}: ${res.stderr}`)
-        .join(', ')
+          .filter(res => res.status !== initialStatus)
+          .map(res => `${res.service}: ${res.stderr}`)
+          .join(', ')
 
         await sendNotification({
           title: 'Error',
@@ -456,7 +394,6 @@ const KFTray = () => {
 
   return (
     <Center h='100%' w='100%' overflow='hidden' margin='0'>
-      {/* Wrapper to maintain borderRadius, with overflow hidden */}
       <Box
         width='100%'
         height='75vh'
@@ -473,7 +410,6 @@ const KFTray = () => {
       inset 0 0 0 4px rgba(45, 57, 81, 0.9)
     `}
       >
-        {/* Scrollable VStack inside the wrapper */}
         <VStack
           css={{
             '&::-webkit-scrollbar': {
@@ -491,7 +427,7 @@ const KFTray = () => {
           w='100%'
           maxW='100%'
           overflowY='auto'
-          padding='20px' // Adjust padding to prevent content from touching the edges
+          padding='20px'
           mt='5px'
         >
           <Header />
