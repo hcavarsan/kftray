@@ -366,9 +366,9 @@ const KFTray = () => {
         })
       } else {
         const errorMessages = responses
-          .filter(res => res.status !== initialStatus)
-          .map(res => `${res.service}: ${res.stderr}`)
-          .join(', ')
+        .filter(res => res.status !== initialStatus)
+        .map(res => `${res.service}: ${res.stderr}`)
+        .join(', ')
 
         await sendNotification({
           title: 'Error',
