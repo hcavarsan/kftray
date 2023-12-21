@@ -13,7 +13,7 @@ import { readTextFile, writeTextFile } from '@tauri-apps/api/fs'
 import { sendNotification } from '@tauri-apps/api/notification'
 import { invoke } from '@tauri-apps/api/tauri'
 
-import { Config, Status } from '../../types'
+import { Config, Response, Status } from '../../types'
 import AddConfigModal from '../AddConfigModal'
 import Footer from '../Footer'
 import Header from '../Header'
@@ -23,7 +23,6 @@ const initalRemotePort = 0
 const initialLocalPort = 0
 const initialId = 0
 const initialStatus = 0
-
 const KFTray = () => {
   const [configs, setConfigs] = useState<Status[]>([])
   const [isModalOpen, setIsModalOpen] = useState(false)
@@ -278,18 +277,18 @@ const KFTray = () => {
         remote_port: config.remote_port,
       }))
 
-      const responses = await invoke<Response[]>('start_port_forward', {
+	  const responses = await invoke<Response[]>('start_port_forward', {
         configs: configsToSend,
-      })
+	  })
 
       const updatedConfigs = configs.map(config => {
         const relatedResponse = responses.find(res => res.id === config.id)
 
+
+
         return {
           ...config,
-          isRunning: relatedResponse
-            ? relatedResponse.status === initialStatus
-            : false,
+          isRunning: relatedResponse ? relatedResponse.status === initialStatus : false,
         }
       })
 
@@ -347,7 +346,8 @@ const KFTray = () => {
   const stopPortForwarding = async () => {
     setIsStopping(true)
     try {
-      const responses = await invoke<Response[]>('stop_port_forward')
+	  const responses = await invoke<Response[]>('stop_port_forward')
+
 
       const allStopped = responses.every(res => res.status === initialStatus)
 

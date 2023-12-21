@@ -42,7 +42,10 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
 }) => {
   const { isOpen, onOpen, onClose } = useDisclosure()
   const textColor = useColorModeValue('gray.100', 'gray.100')
+  const cancelRef = React.useRef<HTMLElement>(null)
 
+
+  
   return (
     <>
       <Tr key={config.id}>
@@ -87,7 +90,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
       {isAlertOpen && (
         <AlertDialog
           isOpen={isOpen}
-          leastDestructiveRef={undefined}
+          leastDestructiveRef={cancelRef}
           onClose={onClose}
         >
           <AlertDialogOverlay bg='transparent'>

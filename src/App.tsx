@@ -3,7 +3,7 @@ import React from 'react'
 import { ChakraProvider } from '@chakra-ui/react'
 
 import theme from './assets/theme'
-import KFTray from './components/KFTray'
+import KFTray from './components/KFtray'
 
 import './assets/style.css'
 

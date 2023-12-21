@@ -21,15 +21,15 @@ export interface Config {
 }
 
 export interface Response {
-  id: number
-  service: string
-  context: string
-  local_port: number
-  status: number
-  namespace: string
-  remote_port: number
-  stdout: string
-  stderr: string
+	id: number
+	service: string
+	context: string
+	local_port: number
+	status: number
+	namespace: string
+	remote_port: number
+	stdout: string
+	stderr: string
 }
 
 export interface ConfigProps {
