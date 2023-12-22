@@ -100,8 +100,8 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
               icon={<FontAwesomeIcon icon={faTrash} />}
               onClick={() => {
                 setIsAlertOpen(true),
-                  handleDeleteClick(),
-                  handleDeleteConfig(config.id)
+                handleDeleteClick(),
+                handleDeleteConfig(config.id)
               }}
               variant='ghost'
             />
@@ -120,7 +120,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
                 Delete Configuration
               </AlertDialogHeader>
               <AlertDialogBody>
-                {"Are you sure? You can't undo this action afterwards."}
+                {'Are you sure? You can\'t undo this action afterwards.'}
               </AlertDialogBody>
               <AlertDialogFooter>
                 <Button ref={cancelRef} onClick={onClose}>

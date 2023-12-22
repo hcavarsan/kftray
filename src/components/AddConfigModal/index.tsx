@@ -27,9 +27,9 @@ const AddConfigModal: React.FC<ConfigProps> = ({
   const onSubmit = isEdit
     ? handleSaveConfig
     : (event: React.FormEvent<Element>) => {
-        event.preventDefault()
-        handleSaveConfig(event)
-      }
+      event.preventDefault()
+      handleSaveConfig(event)
+    }
 
   return (
     <Center>

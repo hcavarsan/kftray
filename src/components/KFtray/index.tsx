@@ -322,8 +322,8 @@ const KFTray = () => {
 
     if (errors.length > 0) {
       const errorMessage = errors
-        .map(e => `Service: ${e.service}: ${e.error}`)
-        .join(', ')
+      .map(e => `Service: ${e.service}: ${e.error}`)
+      .join(', ')
 
       await sendNotification({
         title: 'Error Starting Port Forwarding',
@@ -396,9 +396,9 @@ const KFTray = () => {
         })
       } else {
         const errorMessages = responses
-          .filter(res => res.status !== initialStatus)
-          .map(res => `${res.service}: ${res.stderr}`)
-          .join(', ')
+        .filter(res => res.status !== initialStatus)
+        .map(res => `${res.service}: ${res.stderr}`)
+        .join(', ')
 
         await sendNotification({
           title: 'Error',
