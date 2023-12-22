@@ -23,7 +23,7 @@ vi.mock('@tauri-apps/api/tauri', () => ({
     if (cmd === 'get_configs') {
       return Promise.resolve(mockConfigsResponse)
     }
-    
+
     return Promise.resolve()
   }),
 }))
