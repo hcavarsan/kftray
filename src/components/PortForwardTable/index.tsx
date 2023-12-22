@@ -1,4 +1,5 @@
-import { RefObject } from 'react'
+// components/PortForwardTable/index.tsx
+import React from 'react'
 import { MdClose, MdRefresh } from 'react-icons/md'
 
 import {
@@ -12,45 +13,22 @@ import {
   Tr,
 } from '@chakra-ui/react'
 
-import { PortFoward } from './portforward'
+import { TableProps } from '../../types'
+import PortForwardRow from '../PortForwardRow'
 
-interface PortForwardTableProps {
-  configs: {
-    id: number
-    service: string
-    context: string
-    namespace: string
-    local_port: number
-    isRunning: boolean
-    cancelRef: RefObject<HTMLButtonElement>
-  }[]
-  isInitiating: boolean
-  isStopping: boolean
-  isPortForwarding: boolean
-  initiatePortForwarding: () => void
-  stopPortForwarding: () => void
-  confirmDeleteConfig: () => void
-  handleDeleteConfig: (id: number) => void
-  handleEditConfig: (id: number) => void
-  isAlertOpen: boolean
-  setIsAlertOpen: (isOpen: boolean) => void
-}
-
-const PortForwardTable: React.FC<PortForwardTableProps> = props => {
-  const {
-    configs,
-    isInitiating,
-    isStopping,
-    isPortForwarding,
-    initiatePortForwarding,
-    stopPortForwarding,
-    confirmDeleteConfig,
-    handleDeleteConfig,
-    handleEditConfig,
-    isAlertOpen,
-    setIsAlertOpen,
-  } = props
-
+const PortForwardTable: React.FC<TableProps> = ({
+  configs,
+  isInitiating,
+  isStopping,
+  isPortForwarding,
+  initiatePortForwarding,
+  stopPortForwarding,
+  confirmDeleteConfig,
+  handleEditConfig,
+  handleDeleteConfig,
+  isAlertOpen,
+  setIsAlertOpen,
+}) => {
   return (
     <>
       <Stack direction='row' spacing={4} justify='center' marginTop={0} mb={4}>
@@ -69,39 +47,31 @@ const PortForwardTable: React.FC<PortForwardTableProps> = props => {
           colorScheme='facebook'
           isLoading={isStopping}
           loadingText='Stopping...'
-          onClick={stopPortForwarding}
+          onClick={stopPortForwarding} // Ensure this is correctly referencing the stopPortForwarding function
           isDisabled={!isPortForwarding}
         >
           Stop Forward
         </Button>
       </Stack>
-
-      {/* Set the Table head outside of the scrollable body */}
       <Box width='100%' mt={0} p={0} borderRadius='10px'>
         <Table variant='simple' size='sm'>
           <Thead>
             <Tr>
-              <Th width='20%'>Service</Th>
-              <Th width='25%'>Context</Th>
-              <Th width='25%'>Namespace</Th>
-              <Th width='20%'>Local Port</Th>
-              <Th width='5%'>Status</Th>
-              <Th width='5%'>Action</Th>
+              <Th>Service</Th>
+              <Th>Context</Th>
+              <Th>Namespace</Th>
+              <Th>Local Port</Th>
+              <Th>Status</Th>
+              <Th>Action</Th>
             </Tr>
           </Thead>
         </Table>
       </Box>
-      <Box
-        width='100%'
-        height='100%'
-        overflowX='hidden'
-        overflowY='auto'
-        borderRadius='10px'
-      >
+      <Box width='100%' height='100%' overflowY='auto' borderRadius='10px'>
         <Table variant='simple' size='sm' colorScheme='gray'>
           <Tbody>
             {configs.map(config => (
-              <PortFoward
+              <PortForwardRow
                 key={config.id}
                 config={config}
                 confirmDeleteConfig={confirmDeleteConfig}
@@ -118,4 +88,4 @@ const PortForwardTable: React.FC<PortForwardTableProps> = props => {
   )
 }
 
-export { PortForwardTable }
+export default PortForwardTable
