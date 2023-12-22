@@ -1,4 +1,6 @@
-import React from 'react';
+import React from 'react'
+import { MdClose, MdRefresh } from 'react-icons/md'
+
 import {
   Accordion,
   AccordionButton,
@@ -7,18 +9,18 @@ import {
   AccordionPanel,
   Box,
   Button,
+  Flex,
   Stack,
   Table,
   Tbody,
+  Td,
   Th,
   Thead,
   Tr,
-  Flex
-} from '@chakra-ui/react';
-import { MdClose, MdRefresh } from 'react-icons/md';
+} from '@chakra-ui/react'
 
-import { TableProps } from '../../types';
-import PortForwardRow from '../PortForwardRow';
+import { TableProps } from '../../types'
+import PortForwardRow from '../PortForwardRow'
 
 const PortForwardTable: React.FC<TableProps> = ({
   configs,
@@ -34,43 +36,52 @@ const PortForwardTable: React.FC<TableProps> = ({
   updateConfigRunningState,
 }) => {
   const startAllPortForwarding = () => {
-    const stoppedConfigs = configs.filter((config) => !config.isRunning);
-    initiatePortForwarding(stoppedConfigs);
-  };
+    const stoppedConfigs = configs.filter(config => !config.isRunning)
+
+
+    initiatePortForwarding(stoppedConfigs)
+  }
 
   const stopAllPortForwarding = () => {
-    const runningConfigs = configs.filter((config) => config.isRunning);
-    stopPortForwarding(runningConfigs);
-  };
+    const runningConfigs = configs.filter(config => config.isRunning)
 
-  const groupByContext = (configs) =>
+
+    stopPortForwarding(runningConfigs)
+  }
+
+  const groupByContext = configs =>
     configs.reduce((group, config) => {
-      const { context } = config;
-      group[context] = [...(group[context] || []), config];
-      return group;
-    }, {});
+      const { context } = config
 
-  const configsByContext = groupByContext(configs);
+
+      group[context] = [...(group[context] || []), config]
+
+      return group
+    }, {})
+
+  const configsByContext = groupByContext(configs)
 
   return (
     <Flex
-      direction="column"
-      height="450px"
-	  maxHeight="450px"
-      pb="90px"
-      flex="1"
-      overflowY="scroll" // Apply overflow to the Flex container
-	  width="100%"
-
+      direction='column'
+      height='450px'
+      maxHeight='450px'
+      pb='90px'
+      flex='1'
+      overflowY='scroll' // Apply overflow to the Flex container
+      width='100%'
+      scrollbarGutter='stable both-edges'
     >
-      <Stack direction='row' spacing={4} justify='center' marginBottom={4}  borderRadius="md" boxShadow="0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06)" width="100%">
+      <Stack direction='row' spacing={4} justify='center' marginBottom={4}>
         <Button
           leftIcon={<MdRefresh />}
           colorScheme='facebook'
           isLoading={isInitiating}
           loadingText='Starting...'
           onClick={startAllPortForwarding}
-          isDisabled={isInitiating || !configs.some((config) => !config.isRunning)}
+          isDisabled={
+            isInitiating || !configs.some(config => !config.isRunning)
+          }
         >
           Start All
         </Button>
@@ -80,76 +91,88 @@ const PortForwardTable: React.FC<TableProps> = ({
           isLoading={isStopping}
           loadingText='Stopping...'
           onClick={stopAllPortForwarding}
-          isDisabled={isStopping || !configs.some((config) => config.isRunning)}
+          isDisabled={isStopping || !configs.some(config => config.isRunning)}
         >
           Stop All
         </Button>
       </Stack>
-	  <Box position="relative" flex="1" overflowY="auto" maxHeight="450px" mt="10px" width="100%">
-      <Accordion allowMultiple reduceMotion >
-        {Object.entries(configsByContext).map(([context, contextConfigs]) => (
-          <AccordionItem key={context} border="none" width="100%">
-            <AccordionButton
-			  position="relative"
-              border="1px"
-              borderColor="gray.700"
-              borderRadius="md"
-              p={2}
-              boxShadow="0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06)"
-              _expanded={{
-                bg: 'gray.800',
-                borderColor: 'gray.700',
-              }}
-              _hover={{
-                bg: 'gray.600',
-              }}
-            >
-              <Box flex='1' textAlign='left' fontSize='sm' >
-                cluster: {context}
-              </Box>
-              <AccordionIcon />
-            </AccordionButton>
-            <AccordionPanel pb={4} width="100%">
-              <Table variant='simple' size='sm' border="1px" borderColor="gray.700" borderRadius="md" boxShadow="0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06)" p={2} width="100%">
-                <Thead width="100%" borderColor="gray.700" borderRadius="md" boxShadow="0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06)" p={2} width="100%">
-                  <Tr width="100%">
-                    <Th width='20%'>Service</Th>
-                    <Th width='20%'>Namespace</Th>
-                    <Th width='20%'>Local Port</Th>
-                    <Th width='20%'>Status</Th>
-                    <Th width='20%'>Action</Th>
-                  </Tr>
-                </Thead>
-                <Tbody borderColor="gray.700" borderRadius="md" boxShadow="0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06)" p={2} width="100%">
-                  {contextConfigs.length > 0 ? (
-                    contextConfigs.map((config) => (
-                      <PortForwardRow
-                        key={config.id}
-                        config={config}
-                        handleDeleteConfig={handleDeleteConfig}
-                        confirmDeleteConfig={confirmDeleteConfig}
-                        handleEditConfig={handleEditConfig}
-                        isAlertOpen={isAlertOpen}
-                        setIsAlertOpen={setIsAlertOpen}
-                        updateConfigRunningState={updateConfigRunningState}
-                      />
-                    ))
-                  ) : (
+      <Box
+        position='relative'
+        flex='1'
+        overflowY='auto'
+        maxHeight='450px'
+        mt='10px'
+      >
+        <Accordion allowMultiple reduceMotion>
+          {Object.entries(configsByContext).map(([context, contextConfigs]) => (
+            <AccordionItem key={context} border='none'>
+              <AccordionButton
+                position='relative'
+                border='1px'
+                borderColor='gray.700'
+                borderRadius='md'
+                p={2}
+                boxShadow='0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06)'
+                _expanded={{
+                  bg: 'gray.800',
+                  borderColor: 'gray.700',
+                }}
+                _hover={{
+                  bg: 'gray.600',
+                }}
+              >
+                <Box flex='1' textAlign='left' fontSize='sm'>
+                  cluster: {context}
+                </Box>
+                <AccordionIcon />
+              </AccordionButton>
+              <AccordionPanel pb={4}>
+                <Table
+                  variant='simple'
+                  size='sm'
+                  border='1px'
+                  borderColor='gray.700'
+                  borderRadius='md'
+                >
+                  <Thead>
                     <Tr>
-                      <Td colSpan={5} textAlign='center'>
-                        No Configurations Found for {context}
-                      </Td>
+                      <Th width='20%'>Service</Th>
+                      <Th width='20%'>Namespace</Th>
+                      <Th width='20%'>Local Port</Th>
+                      <Th width='20%'>Status</Th>
+                      <Th width='20%'>Action</Th>
                     </Tr>
-                  )}
-                </Tbody>
-              </Table>
-            </AccordionPanel>
-          </AccordionItem>
-        ))}
-      </Accordion>
-	  </Box>
+                  </Thead>
+                  <Tbody>
+                    {contextConfigs.length > 0 ? (
+                      contextConfigs.map(config => (
+                        <PortForwardRow
+                          key={config.id}
+                          config={config}
+                          handleDeleteConfig={handleDeleteConfig}
+                          confirmDeleteConfig={confirmDeleteConfig}
+                          handleEditConfig={handleEditConfig}
+                          isAlertOpen={isAlertOpen}
+                          setIsAlertOpen={setIsAlertOpen}
+                          updateConfigRunningState={updateConfigRunningState}
+                        />
+                      ))
+                    ) : (
+                      <Tr>
+                        <Td colSpan={5} textAlign='center'>
+                          No Configurations Found for {context}
+                        </Td>
+                      </Tr>
+                    )}
+                  </Tbody>
+                </Table>
+              </AccordionPanel>
+            </AccordionItem>
+          ))}
+        </Accordion>
+      </Box>
     </Flex>
-  );
-};
+  )
+}
 
-export default PortForwardTable;
+export default PortForwardTable
