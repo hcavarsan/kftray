@@ -10,7 +10,8 @@ import {
   Td,
   Th,
   Thead,
-  Tr } from '@chakra-ui/react'
+  Tr,
+} from '@chakra-ui/react'
 
 import { TableProps } from '../../types'
 import PortForwardRow from '../PortForwardRow'
@@ -27,19 +28,15 @@ const PortForwardTable: React.FC<TableProps> = ({
   isAlertOpen,
   setIsAlertOpen,
   updateConfigRunningState,
-
 }) => {
-
   const startFilteredPortForwarding = () => {
     const stoppedConfigs = configs.filter(config => !config.isRunning)
-
 
     initiatePortForwarding(stoppedConfigs)
   }
 
   const stopFilteredPortForwarding = () => {
     const runningConfigs = configs.filter(config => config)
-
 
     stopPortForwarding(runningConfigs)
   }
@@ -71,11 +68,13 @@ const PortForwardTable: React.FC<TableProps> = ({
           Stop Forward
         </Button>
       </Stack>
-      <Box width='100%'
+      <Box
+        width='100%'
         height='100%'
         overflowX='hidden'
         overflowY='auto'
-        borderRadius='10px'>
+        borderRadius='10px'
+      >
         <Table variant='simple' size='sm'>
           <Thead>
             <Tr>
@@ -94,7 +93,7 @@ const PortForwardTable: React.FC<TableProps> = ({
                   key={config.id}
                   config={config}
                   handleDeleteConfig={handleDeleteConfig}
-				  confirmDeleteConfig={confirmDeleteConfig}
+                  confirmDeleteConfig={confirmDeleteConfig}
                   handleEditConfig={handleEditConfig}
                   isAlertOpen={isAlertOpen}
                   setIsAlertOpen={setIsAlertOpen}
@@ -103,7 +102,7 @@ const PortForwardTable: React.FC<TableProps> = ({
               ))
             ) : (
               <Tr>
-                <Td colSpan={6} textAlign="center">
+                <Td colSpan={6} textAlign='center'>
                   No Configurations Found
                 </Td>
               </Tr>

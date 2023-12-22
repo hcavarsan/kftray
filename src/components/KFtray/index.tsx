@@ -7,7 +7,8 @@ import {
   IconButton,
   useColorModeValue,
   useDisclosure,
-  VStack } from '@chakra-ui/react'
+  VStack,
+} from '@chakra-ui/react'
 import { open, save } from '@tauri-apps/api/dialog'
 import { readTextFile, writeTextFile } from '@tauri-apps/api/fs'
 import { sendNotification } from '@tauri-apps/api/notification'
@@ -40,9 +41,11 @@ const KFTray = () => {
   })
 
   const updateConfigRunningState = (id: number, isRunning: boolean) => {
-    setConfigs(currentConfigs => currentConfigs.map(config => {
-	  return config.id === id ? { ...config, isRunning } : config
-    }))
+    setConfigs(currentConfigs =>
+      currentConfigs.map(config => {
+        return config.id === id ? { ...config, isRunning } : config
+      }),
+    )
   }
 
   const openModal = () => {
@@ -290,38 +293,43 @@ const KFTray = () => {
     const errors = []
 
     for (const config of configsToStart) {
-	  try {
+      try {
         // Wrap the single config object in an array
         await invoke<Response>('start_port_forward', {
-		  configs: [{
-            local_port: config.local_port,
-            remote_port: config.remote_port,
-            service: config.service,
-            namespace: config.namespace,
-            context: config.context,
-		  }]
+          configs: [
+            {
+              local_port: config.local_port,
+              remote_port: config.remote_port,
+              service: config.service,
+              namespace: config.namespace,
+              context: config.context,
+            },
+          ],
         })
         updateConfigRunningState(config.id, true)
         console.log('errors', errors)
-	  } catch (error) {
-
-        console.error(`Error starting port forward for config id ${config.service}:`, error)
-		if (error instanceof Error) {
-			errors.push({ service: config.service, error: error.toString() }) // Include error details
-		  }
+      } catch (error) {
+        console.error(
+          `Error starting port forward for config id ${config.service}:`,
+          error,
+        )
+        if (error instanceof Error) {
+          errors.push({ service: config.service, error: error.toString() }) // Include error details
+        }
         updateConfigRunningState(config.id, false)
-	  }
+      }
     }
 
     if (errors.length > 0) {
+      const errorMessage = errors
+        .map(e => `Service: ${e.service}: ${e.error}`)
+        .join(', ')
 
-	  const errorMessage = errors.map(e => `Service: ${e.service}: ${e.error}`).join(', ')
-
-	  await sendNotification({
+      await sendNotification({
         title: 'Error Starting Port Forwarding',
         body: `Some configs failed: ${errorMessage}`,
         icon: 'error',
-	  })
+      })
     }
 
     setIsInitiating(false)
@@ -331,7 +339,6 @@ const KFTray = () => {
     setConfigToDelete(id)
     setIsAlertOpen(true)
   }
-
 
   const confirmDeleteConfig = async () => {
     if (typeof configToDelete !== 'number') {
@@ -367,12 +374,10 @@ const KFTray = () => {
     setIsAlertOpen(false)
   }
 
-
   const stopPortForwarding = async () => {
     setIsStopping(true)
     try {
-	  const responses = await invoke<Response[]>('stop_all_port_forward')
-
+      const responses = await invoke<Response[]>('stop_all_port_forward')
 
       const allStopped = responses.every(res => res.status === initialStatus)
 
@@ -391,9 +396,9 @@ const KFTray = () => {
         })
       } else {
         const errorMessages = responses
-        .filter(res => res.status !== initialStatus)
-        .map(res => `${res.service}: ${res.stderr}`)
-        .join(', ')
+          .filter(res => res.status !== initialStatus)
+          .map(res => `${res.service}: ${res.stderr}`)
+          .join(', ')
 
         await sendNotification({
           title: 'Error',
@@ -480,7 +485,7 @@ const KFTray = () => {
             isAlertOpen={isAlertOpen}
             setIsAlertOpen={setIsAlertOpen}
             updateConfigRunningState={updateConfigRunningState}
-			isPortForwarding={isPortForwarding}
+            isPortForwarding={isPortForwarding}
           />
 
           <Footer

@@ -35,28 +35,26 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
 }) => {
   const { isOpen, onOpen, onClose } = useDisclosure()
   const textColor = useColorModeValue('gray.100', 'gray.100')
-  const cancelRef = React.useRef<HTMLButtonElement>(null);
+  const cancelRef = React.useRef<HTMLButtonElement>(null)
   const [isToggling, setIsToggling] = useBoolean(false)
 
   const togglePortForwarding = async (isChecked: boolean) => {
     setIsToggling.on()
     try {
-	  if (isChecked) {
+      if (isChecked) {
         await invoke('start_port_forward', { configs: [config] })
         updateConfigRunningState(config.id, true)
-	  } else {
+      } else {
         await invoke('stop_port_forward', { serviceName: config.service })
         updateConfigRunningState(config.id, false)
-	  }
+      }
     } catch (error) {
-	  console.error('Error toggling port-forwarding:', error)
-	  updateConfigRunningState(config.id, false)
+      console.error('Error toggling port-forwarding:', error)
+      updateConfigRunningState(config.id, false)
     } finally {
-	  setIsToggling.off()
+      setIsToggling.off()
     }
   }
-
-
 
   const handleDeleteClick = () => {
     onOpen()
@@ -71,19 +69,19 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
         <Td width='20%' color={textColor}>
           {config.context}
         </Td>
-        <Td width='30%' ml="5px" color={textColor}>
+        <Td width='30%' ml='5px' color={textColor}>
           {config.namespace}
         </Td>
         <Td width='20%' color={textColor}>
           {config.local_port}
         </Td>
         <Td width='5%' color={config.isRunning ? 'green.500' : 'red.500'}>
-          <HStack position='relative' spacing='1' ml="5px">
+          <HStack position='relative' spacing='1' ml='5px'>
             <Switch
               isChecked={config.isRunning}
               colorScheme='facebook'
               size='md'
-              onChange={(e) => togglePortForwarding(e.target.checked)}
+              onChange={e => togglePortForwarding(e.target.checked)}
             />
           </HStack>
         </Td>
@@ -102,8 +100,8 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
               icon={<FontAwesomeIcon icon={faTrash} />}
               onClick={() => {
                 setIsAlertOpen(true),
-                handleDeleteClick(),
-                handleDeleteConfig(config.id)
+                  handleDeleteClick(),
+                  handleDeleteConfig(config.id)
               }}
               variant='ghost'
             />
@@ -111,35 +109,33 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
         </Td>
       </Tr>
       {isAlertOpen && (
-	  <AlertDialog
+        <AlertDialog
           isOpen={isOpen}
           leastDestructiveRef={cancelRef}
           onClose={onClose}
-	  >
+        >
           <AlertDialogOverlay bg='transparent'>
-		  <AlertDialogContent>
+            <AlertDialogContent>
               <AlertDialogHeader fontSize='lg' fontWeight='bold'>
-			  Delete Configuration
+                Delete Configuration
               </AlertDialogHeader>
               <AlertDialogBody>
-			  {'Are you sure? You can\'t undo this action afterwards.'}
+                {"Are you sure? You can't undo this action afterwards."}
               </AlertDialogBody>
               <AlertDialogFooter>
-			  <Button ref={cancelRef} onClick={onClose}>
-				Cancel
-			  </Button>
-			  <Button colorScheme='red' onClick={confirmDeleteConfig} ml={3}>
-				Delete
-			  </Button>
+                <Button ref={cancelRef} onClick={onClose}>
+                  Cancel
+                </Button>
+                <Button colorScheme='red' onClick={confirmDeleteConfig} ml={3}>
+                  Delete
+                </Button>
               </AlertDialogFooter>
-		  </AlertDialogContent>
+            </AlertDialogContent>
           </AlertDialogOverlay>
-	  </AlertDialog>
+        </AlertDialog>
       )}
     </>
   )
 }
 
 export default PortForwardRow
-
-
