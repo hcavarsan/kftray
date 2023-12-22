@@ -45,7 +45,6 @@ const PortForwardTable: React.FC<TableProps> = ({
   const stopAllPortForwarding = () => {
     const runningConfigs = configs.filter(config => config.isRunning)
 
-
     stopPortForwarding(runningConfigs)
   }
 
@@ -60,7 +59,6 @@ const PortForwardTable: React.FC<TableProps> = ({
     }, {})
 
   const configsByContext = groupByContext(configs)
-
   return (
     <Flex
       direction='column'
@@ -92,11 +90,6 @@ const PortForwardTable: React.FC<TableProps> = ({
           loadingText='Stopping...'
           onClick={stopAllPortForwarding}
           isDisabled={isStopping || !configs.some(config => config.isRunning)}
-        >
-          Stop All
-        </Button>
-      </Stack>
-      <Box
         position='relative'
         flex='1'
         overflowY='auto'
