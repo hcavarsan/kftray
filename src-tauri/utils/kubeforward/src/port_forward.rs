@@ -274,7 +274,6 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
     for (service, handle) in child_processes {
         handle.abort(); // Stop the port forwarding task
 
-
         responses.push(CustomResponse {
             id: None,
             service,
