@@ -1,16 +1,17 @@
+import React from 'react'
+
 import { Heading, Image } from '@chakra-ui/react'
 
-import logo from './../logo.png'
+import logo from '../../assets/logo.png'
 
-const Header = () => {
+const Header: React.FC = () => {
   return (
     <Heading
       as='h1'
       size='lg'
       color='white'
       mb={5}
-	  mt={10}
-      marginTop={-2}
+      mt={5}
       background='transparent'
     >
       <Image boxSize='96px' src={logo} />
@@ -18,4 +19,4 @@ const Header = () => {
   )
 }
 
-export { Header }
+export default Header

@@ -76,8 +76,8 @@ module.exports = {
     {
       files: ['**/*.js', '**/*.ts', '**/*.tsx'],
       rules: {
-		"react/prop-types": "off",
-		"max-lines-per-function": "off",
+        'react/prop-types': 'off',
+        'max-lines-per-function': 'off',
         'simple-import-sort/imports': [
           'error',
           {
