@@ -11,7 +11,7 @@ const Header: React.FC = () => {
       size='lg'
       color='white'
       mb={5}
-      mt={1}
+      mt={5}
       background='transparent'
     >
       <Image boxSize='96px' src={logo} />

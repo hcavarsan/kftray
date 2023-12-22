@@ -67,16 +67,13 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
           {config.service}
         </Td>
         <Td width='20%' color={textColor}>
-          {config.context}
-        </Td>
-        <Td width='30%' ml='5px' color={textColor}>
           {config.namespace}
         </Td>
         <Td width='20%' color={textColor}>
           {config.local_port}
         </Td>
-        <Td width='5%' color={config.isRunning ? 'green.500' : 'red.500'}>
-          <HStack position='relative' spacing='1' ml='5px'>
+        <Td width='20%' color={config.isRunning ? 'green.500' : 'red.500'}>
+          <HStack position='relative' ml='5px'>
             <Switch
               isChecked={config.isRunning}
               colorScheme='facebook'
@@ -85,7 +82,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
             />
           </HStack>
         </Td>
-        <Td width='5%'>
+        <Td width='20%'>
           <HStack spacing='-1' mr='10px'>
             <IconButton
               size='sm'
