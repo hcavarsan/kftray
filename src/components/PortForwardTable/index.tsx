@@ -1,4 +1,3 @@
-// components/PortForwardTable/index.tsx
 import React from 'react'
 import { MdClose, MdRefresh } from 'react-icons/md'
 
@@ -8,10 +7,10 @@ import {
   Stack,
   Table,
   Tbody,
+  Td,
   Th,
   Thead,
-  Tr,
-} from '@chakra-ui/react'
+  Tr } from '@chakra-ui/react'
 
 import { TableProps } from '../../types'
 import PortForwardRow from '../PortForwardRow'
@@ -20,15 +19,34 @@ const PortForwardTable: React.FC<TableProps> = ({
   configs,
   isInitiating,
   isStopping,
-  isPortForwarding,
   initiatePortForwarding,
   stopPortForwarding,
-  confirmDeleteConfig,
   handleEditConfig,
   handleDeleteConfig,
+  confirmDeleteConfig,
   isAlertOpen,
   setIsAlertOpen,
+  updateConfigRunningState,
+
 }) => {
+
+  const startFilteredPortForwarding = () => {
+    const stoppedConfigs = configs.filter(config => !config.isRunning)
+
+
+    initiatePortForwarding(stoppedConfigs)
+  }
+
+  const stopFilteredPortForwarding = () => {
+    const runningConfigs = configs.filter(config => config)
+
+
+    stopPortForwarding(runningConfigs)
+  }
+
+  const hasRunningConfigs = configs.some(config => config.isRunning)
+  const hasStoppedConfigs = configs.some(config => !config.isRunning)
+
   return (
     <>
       <Stack direction='row' spacing={4} justify='center' marginTop={0} mb={4}>
@@ -37,8 +55,8 @@ const PortForwardTable: React.FC<TableProps> = ({
           colorScheme='facebook'
           isLoading={isInitiating}
           loadingText='Starting...'
-          onClick={initiatePortForwarding}
-          isDisabled={isPortForwarding}
+          onClick={startFilteredPortForwarding}
+          isDisabled={isInitiating || !hasStoppedConfigs}
         >
           Start Forward
         </Button>
@@ -47,13 +65,17 @@ const PortForwardTable: React.FC<TableProps> = ({
           colorScheme='facebook'
           isLoading={isStopping}
           loadingText='Stopping...'
-          onClick={stopPortForwarding} // Ensure this is correctly referencing the stopPortForwarding function
-          isDisabled={!isPortForwarding}
+          onClick={stopFilteredPortForwarding}
+          isDisabled={isStopping || !hasRunningConfigs}
         >
           Stop Forward
         </Button>
       </Stack>
-      <Box width='100%' mt={0} p={0} borderRadius='10px'>
+      <Box width='100%'
+        height='100%'
+        overflowX='hidden'
+        overflowY='auto'
+        borderRadius='10px'>
         <Table variant='simple' size='sm'>
           <Thead>
             <Tr>
@@ -65,22 +87,27 @@ const PortForwardTable: React.FC<TableProps> = ({
               <Th>Action</Th>
             </Tr>
           </Thead>
-        </Table>
-      </Box>
-      <Box width='100%' height='100%' overflowY='auto' borderRadius='10px'>
-        <Table variant='simple' size='sm' colorScheme='gray'>
           <Tbody>
-            {configs.map(config => (
-              <PortForwardRow
-                key={config.id}
-                config={config}
-                confirmDeleteConfig={confirmDeleteConfig}
-                handleDeleteConfig={handleDeleteConfig}
-                handleEditConfig={handleEditConfig}
-                isAlertOpen={isAlertOpen}
-                setIsAlertOpen={setIsAlertOpen}
-              />
-            ))}
+            {configs.length > 0 ? (
+              configs.map(config => (
+                <PortForwardRow
+                  key={config.id}
+                  config={config}
+                  handleDeleteConfig={handleDeleteConfig}
+				  confirmDeleteConfig={confirmDeleteConfig}
+                  handleEditConfig={handleEditConfig}
+                  isAlertOpen={isAlertOpen}
+                  setIsAlertOpen={setIsAlertOpen}
+                  updateConfigRunningState={updateConfigRunningState}
+                />
+              ))
+            ) : (
+              <Tr>
+                <Td colSpan={6} textAlign="center">
+                  No Configurations Found
+                </Td>
+              </Tr>
+            )}
           </Tbody>
         </Table>
       </Box>

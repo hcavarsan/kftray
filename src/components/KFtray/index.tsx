@@ -6,8 +6,8 @@ import {
   Center,
   IconButton,
   useColorModeValue,
-  VStack,
-} from '@chakra-ui/react'
+  useDisclosure,
+  VStack } from '@chakra-ui/react'
 import { open, save } from '@tauri-apps/api/dialog'
 import { readTextFile, writeTextFile } from '@tauri-apps/api/fs'
 import { sendNotification } from '@tauri-apps/api/notification'
@@ -24,6 +24,7 @@ const initialLocalPort = 0
 const initialId = 0
 const initialStatus = 0
 const KFTray = () => {
+  const { isOpen, onOpen, onClose } = useDisclosure()
   const [configs, setConfigs] = useState<Status[]>([])
   const [isModalOpen, setIsModalOpen] = useState(false)
 
@@ -37,6 +38,13 @@ const KFTray = () => {
     remote_port: 0,
     namespace: '',
   })
+
+  const updateConfigRunningState = (id: number, isRunning: boolean) => {
+    setConfigs(currentConfigs => currentConfigs.map(config => {
+	  return config.id === id ? { ...config, isRunning } : config
+    }))
+  }
+
   const openModal = () => {
     setNewConfig({
       id: initialId,
@@ -67,12 +75,22 @@ const KFTray = () => {
       [name]: updatedValue,
     }))
   }
+
+  const [hasRunningConfigs, setHasRunningConfigs] = useState(false)
+  const [hasStoppedConfigs, setHasStoppedConfigs] = useState(false)
+
+  useEffect(() => {
+    setHasRunningConfigs(configs.some(config => config.isRunning))
+    setHasStoppedConfigs(configs.some(config => !config.isRunning))
+  }, [configs])
+
   const cancelRef = React.useRef<HTMLElement>(null)
   const [isInitiating, setIsInitiating] = useState(false)
   const [isStopping, setIsStopping] = useState(false)
   const [isPortForwarding, setIsPortForwarding] = useState(false)
   const [isAlertOpen, setIsAlertOpen] = useState(false)
   const [configToDelete, setConfigToDelete] = useState<number | undefined>()
+  const [selectedConfigId, setSelectedConfigId] = useState(null)
 
   useEffect(() => {
     const fetchConfigs = async () => {
@@ -267,47 +285,53 @@ const KFTray = () => {
       })
     }
   }
-
-  const initiatePortForwarding = async () => {
+  const initiatePortForwarding = async (configsToStart: Status[]) => {
     setIsInitiating(true)
-    try {
-      const configsToSend = configs.map(config => ({
-        ...config,
-        local_port: config.local_port,
-        remote_port: config.remote_port,
-      }))
+    const errors = []
 
-	  const responses = await invoke<Response[]>('start_port_forward', {
-        configs: configsToSend,
-	  })
+    for (const config of configsToStart) {
+	  try {
+        // Wrap the single config object in an array
+        await invoke<Response>('start_port_forward', {
+		  configs: [{
+            local_port: config.local_port,
+            remote_port: config.remote_port,
+            service: config.service,
+            namespace: config.namespace,
+            context: config.context,
+		  }]
+        })
+        updateConfigRunningState(config.id, true)
+        console.log('errors', errors)
+	  } catch (error) {
 
-      const updatedConfigs = configs.map(config => {
-        const relatedResponse = responses.find(res => res.id === config.id)
-
-
-
-        return {
-          ...config,
-          isRunning: relatedResponse ? relatedResponse.status === initialStatus : false,
-        }
-      })
-
-      setConfigs(updatedConfigs)
-      setIsPortForwarding(true)
-    } catch (error) {
-      console.error(
-        'An error occurred while initiating port forwarding:',
-        error,
-      )
-    } finally {
-      setIsInitiating(false)
+        console.error(`Error starting port forward for config id ${config.service}:`, error)
+		if (error instanceof Error) {
+			errors.push({ service: config.service, error: error.toString() }) // Include error details
+		  }
+        updateConfigRunningState(config.id, false)
+	  }
     }
+
+    if (errors.length > 0) {
+
+	  const errorMessage = errors.map(e => `Service: ${e.service}: ${e.error}`).join(', ')
+
+	  await sendNotification({
+        title: 'Error Starting Port Forwarding',
+        body: `Some configs failed: ${errorMessage}`,
+        icon: 'error',
+	  })
+    }
+
+    setIsInitiating(false)
   }
 
   const handleDeleteConfig = (id: number) => {
     setConfigToDelete(id)
     setIsAlertOpen(true)
   }
+
 
   const confirmDeleteConfig = async () => {
     if (typeof configToDelete !== 'number') {
@@ -343,10 +367,11 @@ const KFTray = () => {
     setIsAlertOpen(false)
   }
 
+
   const stopPortForwarding = async () => {
     setIsStopping(true)
     try {
-	  const responses = await invoke<Response[]>('stop_port_forward')
+	  const responses = await invoke<Response[]>('stop_all_port_forward')
 
 
       const allStopped = responses.every(res => res.status === initialStatus)
@@ -448,13 +473,14 @@ const KFTray = () => {
             initiatePortForwarding={initiatePortForwarding}
             isInitiating={isInitiating}
             isStopping={isStopping}
-            isPortForwarding={isPortForwarding}
             handleEditConfig={handleEditConfig}
             stopPortForwarding={stopPortForwarding}
             handleDeleteConfig={handleDeleteConfig}
             confirmDeleteConfig={confirmDeleteConfig}
             isAlertOpen={isAlertOpen}
             setIsAlertOpen={setIsAlertOpen}
+            updateConfigRunningState={updateConfigRunningState}
+			isPortForwarding={isPortForwarding}
           />
 
           <Footer

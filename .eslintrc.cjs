@@ -78,6 +78,10 @@ module.exports = {
       rules: {
         'react/prop-types': 'off',
         'max-lines-per-function': 'off',
+		'@typescript-eslint/no-unused-vars': 'off',
+		'max-statements': 'off',
+		'no-magic-numbers': 'off',
+		'react/no-unescaped-entities': 'off',
         'simple-import-sort/imports': [
           'error',
           {

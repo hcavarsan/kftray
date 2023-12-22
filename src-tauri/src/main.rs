@@ -111,6 +111,7 @@ fn main() {
         .invoke_handler(tauri::generate_handler![
             kubeforward::port_forward::start_port_forward,
             kubeforward::port_forward::stop_port_forward,
+			kubeforward::port_forward::stop_all_port_forward,
             kubeforward::port_forward::quit_app,
             config::get_configs,
             config::insert_config,
