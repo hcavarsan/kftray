@@ -55,7 +55,7 @@ const PortForwardTable: React.FC<TableProps> = ({
           onClick={startFilteredPortForwarding}
           isDisabled={isInitiating || !hasStoppedConfigs}
         >
-          Start Forward
+          Start All
         </Button>
         <Button
           leftIcon={<MdClose />}
@@ -65,7 +65,7 @@ const PortForwardTable: React.FC<TableProps> = ({
           onClick={stopFilteredPortForwarding}
           isDisabled={isStopping || !hasRunningConfigs}
         >
-          Stop Forward
+          Stop All
         </Button>
       </Stack>
       <Box
