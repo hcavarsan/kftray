@@ -267,26 +267,23 @@ pub async fn start_port_forward(configs: Vec<Config>) -> Result<Vec<CustomRespon
 }
 
 #[tauri::command]
-pub async fn stop_port_forward() -> Result<Vec<CustomResponse>, String> {
+pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
     let mut responses = Vec::new();
-    // Acquire the lock and retrieve all child processes handles
     let child_processes = std::mem::take(&mut *CHILD_PROCESSES.lock().unwrap());
 
-    // Iterate through all child process handles and abort them
     for (service, handle) in child_processes {
         handle.abort(); // Stop the port forwarding task
 
-        // Create a response object for each service that was stopped
         responses.push(CustomResponse {
-            id: None, // id is not applicable here since we're stopping services
+            id: None,
             service,
-            namespace: String::new(), // Namespace information is not available here
-            local_port: 0,            // Local port information is not available here
-            remote_port: 0,           // Remote port information is not available here
-            context: String::new(),   // Context information is not available here
-            stdout: String::from("Port forwarding has been stopped"), // Indicate that forwarding was stopped
-            stderr: String::new(), // No error message since we're stopping the service
-            status: 0, // A simple status code, you might want to include more detail based on your application logic
+            namespace: String::new(),
+            local_port: 0,
+            remote_port: 0,
+            context: String::new(),
+            stdout: String::from("Port forwarding has been stopped"),
+            stderr: String::new(),
+            status: 0,
         });
     }
 
@@ -307,4 +304,30 @@ pub fn quit_app(window: tauri::Window) {
     println!("quit_app called");
     window.close().unwrap();
     let _ = kill_all_processes();
+}
+
+#[tauri::command]
+pub async fn stop_port_forward(service_name: String) -> Result<CustomResponse, String> {
+    let mut child_processes = CHILD_PROCESSES.lock().unwrap();
+
+    if let Some(handle) = child_processes.remove(&service_name) {
+        handle.abort();
+
+        Ok(CustomResponse {
+            id: None,
+            service: service_name,
+            namespace: String::new(),
+            local_port: 0,
+            remote_port: 0,
+            context: String::new(),
+            stdout: String::from("Service port forwarding has been stopped"),
+            stderr: String::new(),
+            status: 0,
+        })
+    } else {
+        Err(format!(
+            "No port forwarding process found for service '{}'",
+            service_name
+        ))
+    }
 }

@@ -21,15 +21,15 @@ export interface Config {
 }
 
 export interface Response {
-	id: number
-	service: string
-	context: string
-	local_port: number
-	status: number
-	namespace: string
-	remote_port: number
-	stdout: string
-	stderr: string
+  id: number
+  service: string
+  context: string
+  local_port: number
+  status: number
+  namespace: string
+  remote_port: number
+  stdout: string
+  stderr: string
 }
 
 export interface ConfigProps {
@@ -48,13 +48,14 @@ export interface TableProps {
   isInitiating: boolean
   isStopping: boolean
   isPortForwarding: boolean
-  initiatePortForwarding: () => void
-  stopPortForwarding: () => void
+  initiatePortForwarding: (configs: Status[]) => Promise<void>
+  stopPortForwarding: (configs: Status[]) => Promise<void>
   confirmDeleteConfig: () => void
   handleDeleteConfig: (id: number) => void
   handleEditConfig: (id: number) => void
   isAlertOpen: boolean
   setIsAlertOpen: (isOpen: boolean) => void
+  updateConfigRunningState: (id: number, isRunning: boolean) => void
 }
 
 export interface PortForwardRowProps {
@@ -64,6 +65,7 @@ export interface PortForwardRowProps {
   handleEditConfig: (id: number) => void
   isAlertOpen: boolean
   setIsAlertOpen: (isOpen: boolean) => void
+  updateConfigRunningState: (id: number, isRunning: boolean) => void
 }
 
 export interface FooterProps {
