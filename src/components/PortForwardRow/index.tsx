@@ -9,43 +9,57 @@ import {
   AlertDialogOverlay,
   Button,
   HStack,
-  Icon,
   IconButton,
+  Portal,
+  Switch,
   Td,
   Tr,
+  useBoolean,
   useColorModeValue,
   useDisclosure,
 } from '@chakra-ui/react'
 import { faPen, faTrash } from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { invoke } from '@tauri-apps/api/tauri'
 
-import { PortForwardRowProps } from '../../types'
-
-const StatusIcon: React.FC<{ isRunning: boolean }> = ({ isRunning }) => {
-  return (
-    <Icon viewBox='0 0 200 200' color={isRunning ? 'green.500' : 'red.500'}>
-      <path
-        fill='currentColor'
-        d='M 100, 100 m -75, 0 a 75,75 0 1,0 150,0 a 75,75 0 1,0 -150,0'
-      />
-    </Icon>
-  )
-}
+import { PortForwardRowProps, Status } from '../../types'
 
 const PortForwardRow: React.FC<PortForwardRowProps> = ({
   config,
   confirmDeleteConfig,
   handleDeleteConfig,
   handleEditConfig,
-  isAlertOpen,
   setIsAlertOpen,
+  isAlertOpen,
+  updateConfigRunningState,
 }) => {
   const { isOpen, onOpen, onClose } = useDisclosure()
   const textColor = useColorModeValue('gray.100', 'gray.100')
-  const cancelRef = React.useRef<HTMLElement>(null)
+  const cancelRef = React.useRef<HTMLButtonElement>(null)
+  const [isToggling, setIsToggling] = useBoolean(false)
 
+  const togglePortForwarding = async (isChecked: boolean) => {
+    setIsToggling.on()
+    try {
+      if (isChecked) {
+        await invoke('start_port_forward', { configs: [config] })
+        updateConfigRunningState(config.id, true)
+      } else {
+        await invoke('stop_port_forward', { serviceName: config.service })
+        updateConfigRunningState(config.id, false)
+      }
+    } catch (error) {
+      console.error('Error toggling port-forwarding:', error)
+      updateConfigRunningState(config.id, false)
+    } finally {
+      setIsToggling.off()
+    }
+  }
 
-  
+  const handleDeleteClick = () => {
+    onOpen()
+  }
+
   return (
     <>
       <Tr key={config.id}>
@@ -55,17 +69,24 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
         <Td width='20%' color={textColor}>
           {config.context}
         </Td>
-        <Td width='20%' color={textColor}>
+        <Td width='30%' ml='5px' color={textColor}>
           {config.namespace}
         </Td>
         <Td width='20%' color={textColor}>
           {config.local_port}
         </Td>
         <Td width='5%' color={config.isRunning ? 'green.500' : 'red.500'}>
-          <StatusIcon isRunning={config.isRunning} />
+          <HStack position='relative' spacing='1' ml='5px'>
+            <Switch
+              isChecked={config.isRunning}
+              colorScheme='facebook'
+              size='md'
+              onChange={e => togglePortForwarding(e.target.checked)}
+            />
+          </HStack>
         </Td>
-        <Td width='10%'>
-          <HStack spacing='-1' mr='-10px' ml='15px'>
+        <Td width='5%'>
+          <HStack spacing='-1' mr='10px'>
             <IconButton
               size='sm'
               aria-label='Edit configuration'
@@ -78,8 +99,8 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
               aria-label='Delete configuration'
               icon={<FontAwesomeIcon icon={faTrash} />}
               onClick={() => {
-                setIsAlertOpen(true)
-                onOpen()
+                setIsAlertOpen(true),
+                handleDeleteClick(),
                 handleDeleteConfig(config.id)
               }}
               variant='ghost'
@@ -102,7 +123,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
                 {'Are you sure? You can\'t undo this action afterwards.'}
               </AlertDialogBody>
               <AlertDialogFooter>
-                <Button ref={undefined} onClick={onClose}>
+                <Button ref={cancelRef} onClick={onClose}>
                   Cancel
                 </Button>
                 <Button colorScheme='red' onClick={confirmDeleteConfig} ml={3}>
