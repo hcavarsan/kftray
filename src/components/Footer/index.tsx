@@ -11,13 +11,26 @@ const Footer: React.FC<FooterProps> = ({
   handleImportConfigs,
 }) => {
   return (
-    <Flex direction='column' align='center' mt='30px' width='100%' mb='30px'>
+    <Flex
+      as='footer'
+      direction='column'
+      align='center'
+      width='100%'
+      p='30px'
+      position='absolute'
+      left='0'
+      bottom='1'
+      boxShadow='0 -2px 10px 0 rgba(0,0,0,0.05)' // Optional: adds a shadow for better separation
+      zIndex='sticky'
+      mt={2}
+      mb={5}
+    >
       <Button
         leftIcon={<MdAdd />}
         colorScheme='facebook'
         onClick={openModal}
         width='80%'
-        size='sm'
+        size='xs'
       >
         Add New Config
       </Button>
@@ -27,7 +40,7 @@ const Footer: React.FC<FooterProps> = ({
           colorScheme='facebook'
           onClick={handleExportConfigs}
           width='48%'
-          size='sm'
+          size='xs'
         >
           Export Configs
         </Button>
@@ -36,7 +49,7 @@ const Footer: React.FC<FooterProps> = ({
           colorScheme='facebook'
           onClick={handleImportConfigs}
           width='48%'
-          size='sm'
+          size='xs'
         >
           Import Configs
         </Button>

@@ -6,15 +6,8 @@ import logo from '../../assets/logo.png'
 
 const Header: React.FC = () => {
   return (
-    <Heading
-      as='h1'
-      size='lg'
-      color='white'
-      mb={5}
-      mt={1}
-      background='transparent'
-    >
-      <Image boxSize='96px' src={logo} />
+    <Heading as='h1' size='sm' color='white' background='transparent'>
+      <Image boxSize='72px' src={logo} />
     </Heading>
   )
 }
