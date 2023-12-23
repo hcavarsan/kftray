@@ -18,6 +18,7 @@ import { Config, Response, Status } from '../../types'
 import AddConfigModal from '../AddConfigModal'
 import Footer from '../Footer'
 import Header from '../Header'
+import PortForwardSearchTable from '../PortForwardSearchTable'
 import PortForwardTable from '../PortForwardTable'
 
 const initalRemotePort = 0
