@@ -25,7 +25,7 @@ body {
 /* The scrollbar track (background) */
 /* The scrollbar track (background) */
 ::-webkit-scrollbar {
-  width: 12px; /* width of the entire scrollbar */
+  width: 8px; /* width of the entire scrollbar */
 }
 
 /* Handle on hover */
@@ -37,7 +37,7 @@ body {
 ::-webkit-scrollbar-thumb {
   background: #888; /* color of the scrollbar thumb */
   border-radius: 6px; /* roundness of the scrollbar thumb */
-  border: 3px solid transparent; /* creates padding around the thumb */
+  border: 2px solid transparent; /* creates padding around the thumb */
   background-clip: content-box; /* ensures the border doesn't occupy space */
 }
 
@@ -50,7 +50,6 @@ body {
 }
 .VStackClass {
   background: transparent;
-  scrollbar-gutter: stable;
 }
 
 .iconButton {
