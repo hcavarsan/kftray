@@ -1,6 +1,7 @@
-import React from 'react'
-import { MdClose, MdRefresh } from 'react-icons/md'
+import React, { useMemo, useState } from 'react'
+import { MdAdd, MdClose, MdRefresh } from 'react-icons/md'
 
+import { SearchIcon } from '@chakra-ui/icons'
 import {
   Accordion,
   AccordionButton,
@@ -9,18 +10,25 @@ import {
   AccordionPanel,
   Box,
   Button,
+  ButtonGroup,
   Flex,
-  Stack,
+  Input,
+  InputGroup,
+  InputLeftElement,
   Table,
   Tbody,
   Td,
+  Text,
   Th,
   Thead,
   Tr,
+  useColorModeValue,
+  VStack,
 } from '@chakra-ui/react'
 
-import { TableProps } from '../../types'
+import { Status, TableProps } from '../../types'
 import PortForwardRow from '../PortForwardRow'
+import PortForwardSearchTable from '../PortForwardSearchTable'
 
 const PortForwardTable: React.FC<TableProps> = ({
   configs,
@@ -35,9 +43,29 @@ const PortForwardTable: React.FC<TableProps> = ({
   setIsAlertOpen,
   updateConfigRunningState,
 }) => {
+  const [search, setSearch] = useState('')
+  const [expandedIndices, setExpandedIndices] = useState<number[]>([])
+
+  const filteredConfigs = useMemo(() => {
+    return search
+      ? configs.filter(config =>
+        config.service.toLowerCase().includes(search.toLowerCase()),
+      )
+      : configs
+  }, [configs, search])
+
+  const toggleExpandAll = () => {
+    const allIndices = Object.keys(configsByContext).map((_, index) => index)
+
+    if (expandedIndices.length === allIndices.length) {
+      setExpandedIndices([])
+    } else {
+      setExpandedIndices(allIndices)
+    }
+  }
+
   const startAllPortForwarding = () => {
     const stoppedConfigs = configs.filter(config => !config.isRunning)
-
 
     initiatePortForwarding(stoppedConfigs)
   }
@@ -45,132 +73,231 @@ const PortForwardTable: React.FC<TableProps> = ({
   const stopAllPortForwarding = () => {
     const runningConfigs = configs.filter(config => config.isRunning)
 
-
     stopPortForwarding(runningConfigs)
   }
 
-  const groupByContext = configs =>
-    configs.reduce((group, config) => {
+  const groupByContext = (configs: Status[]) =>
+    configs.reduce((group: Record<string, Status[]>, config: Status) => {
       const { context } = config
-
 
       group[context] = [...(group[context] || []), config]
 
       return group
     }, {})
 
+  // Calculate the count of configs and the count of configs running
+  const configsCount = configs.length
+  const runningConfigsCount = configs.filter(config => config.isRunning).length
+
   const configsByContext = groupByContext(configs)
+
+  const bg = useColorModeValue('gray.50', 'gray.700')
+  const accordionBg = useColorModeValue('gray.100', 'gray.800')
+  const border = useColorModeValue('gray.200', 'gray.600')
+  const borderColor = useColorModeValue('gray.200', 'gray.600')
+  const textColor = useColorModeValue('gray.800', 'white')
+  const boxShadow = useColorModeValue('base', 'md')
+  const fontFamily = '\'Inter\', sans-serif'
+
+  const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    setSearch(event.target.value)
+  }
+  const handleChange = (expandedIndex: number | number[]) => {
+    setExpandedIndices(expandedIndex as number[])
+  }
 
   return (
     <Flex
       direction='column'
       height='450px'
       maxHeight='450px'
-      pb='90px'
       flex='1'
-      overflowY='scroll' // Apply overflow to the Flex container
       width='100%'
-      scrollbarGutter='stable both-edges'
+      borderColor={borderColor}
     >
-      <Stack direction='row' spacing={4} justify='center' marginBottom={4}>
+      <Flex justify='center' mb={5} mt={2}>
+        <ButtonGroup variant='outline' spacing={2}>
+          <Button
+            leftIcon={<MdRefresh />}
+            colorScheme='facebook'
+            isLoading={isInitiating}
+            loadingText='Starting...'
+            onClick={startAllPortForwarding}
+            isDisabled={
+              isInitiating || !configs.some(config => !config.isRunning)
+            }
+            mr={1}
+          >
+            Start All
+          </Button>
+          <Button
+            leftIcon={<MdClose />}
+            colorScheme='facebook'
+            isLoading={isStopping}
+            loadingText='Stopping...'
+            onClick={stopAllPortForwarding}
+            isDisabled={isStopping || !configs.some(config => config.isRunning)}
+          >
+            Stop All
+          </Button>
+        </ButtonGroup>
+      </Flex>
+
+      <Flex justifyContent='space-between' mt='1' borderRadius='md' mb='2'>
         <Button
-          leftIcon={<MdRefresh />}
+          onClick={toggleExpandAll}
+          size='xs'
           colorScheme='facebook'
-          isLoading={isInitiating}
-          loadingText='Starting...'
-          onClick={startAllPortForwarding}
-          isDisabled={
-            isInitiating || !configs.some(config => !config.isRunning)
+          variant='outline'
+          leftIcon={
+            expandedIndices.length === Object.keys(configsByContext).length ? (
+              <MdClose />
+            ) : (
+              <MdAdd />
+            )
           }
         >
-          Start All
+          {expandedIndices.length === Object.keys(configsByContext).length
+            ? 'Minimize All'
+            : 'Expand All'}
         </Button>
-        <Button
-          leftIcon={<MdClose />}
-          colorScheme='facebook'
-          isLoading={isStopping}
-          loadingText='Stopping...'
-          onClick={stopAllPortForwarding}
-          isDisabled={isStopping || !configs.some(config => config.isRunning)}
+        <Box
+          bg={accordionBg}
+          borderRadius='md'
+          boxShadow='base'
+          width='20%'
+          mr={2}
         >
-          Stop All
-        </Button>
-      </Stack>
-      <Box
-        position='relative'
-        flex='1'
-        overflowY='auto'
-        maxHeight='450px'
-        mt='10px'
-      >
-        <Accordion allowMultiple reduceMotion>
-          {Object.entries(configsByContext).map(([context, contextConfigs]) => (
-            <AccordionItem key={context} border='none'>
-              <AccordionButton
-                position='relative'
-                border='1px'
-                borderColor='gray.700'
-                borderRadius='md'
-                p={2}
-                boxShadow='0 1px 3px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.06)'
-                _expanded={{
-                  bg: 'gray.800',
-                  borderColor: 'gray.700',
-                }}
-                _hover={{
-                  bg: 'gray.600',
-                }}
-              >
-                <Box flex='1' textAlign='left' fontSize='sm'>
-                  cluster: {context}
-                </Box>
-                <AccordionIcon />
-              </AccordionButton>
-              <AccordionPanel pb={4}>
-                <Table
-                  variant='simple'
-                  size='sm'
-                  border='1px'
-                  borderColor='gray.700'
-                  borderRadius='md'
-                >
-                  <Thead>
-                    <Tr>
-                      <Th width='20%'>Service</Th>
-                      <Th width='20%'>Namespace</Th>
-                      <Th width='20%'>Local Port</Th>
-                      <Th width='20%'>Status</Th>
-                      <Th width='20%'>Action</Th>
-                    </Tr>
-                  </Thead>
-                  <Tbody>
+          <InputGroup size='xs'>
+            <InputLeftElement pointerEvents='none'>
+              <SearchIcon color='gray.300' />
+            </InputLeftElement>
+            <Input
+              type='text'
+              placeholder='Search'
+              onChange={handleSearchChange}
+              borderRadius='md'
+              size='xs'
+            />
+          </InputGroup>
+        </Box>
+      </Flex>
+      {search.trim() ? (
+        <PortForwardSearchTable
+          configs={filteredConfigs}
+          handleEditConfig={handleEditConfig}
+          handleDeleteConfig={handleDeleteConfig}
+          confirmDeleteConfig={confirmDeleteConfig}
+          updateConfigRunningState={updateConfigRunningState}
+          isAlertOpen={isAlertOpen}
+          setIsAlertOpen={setIsAlertOpen}
+        />
+      ) : (
+        <Flex
+          direction='column'
+          height='450px'
+          maxHeight='450px'
+          pb='90px'
+          flex='1'
+          overflowY='scroll'
+          width='100%'
+          borderBottom='2px solid'
+          borderColor={borderColor}
+        >
+          <Accordion
+            allowMultiple
+            index={expandedIndices}
+            onChange={handleChange}
+            borderTop='2px solid'
+            borderColor={borderColor}
+          >
+            {Object.entries(configsByContext).map(
+              ([context, contextConfigs]) => (
+                <AccordionItem key={context} border='none'>
+                  <AccordionButton
+                    bg={accordionBg}
+                    mt={2}
+                    borderRadius='lg'
+                    border='1px'
+                    borderColor={borderColor}
+                    boxShadow='lg'
+                    _hover={{ bg: bg }}
+                    _expanded={{ bg: accordionBg, boxShadow: 'lg' }}
+                  >
+                    <Box
+                      flex='1'
+                      textAlign='left'
+                      fontSize='sm'
+                      color={textColor}
+                    >
+                      cluster: {context}
+                    </Box>
+                    <Box
+                      flex='1'
+                      textAlign='right'
+                      fontSize='sm'
+                      color={textColor}
+                    >
+                      ({contextConfigs.filter(c => c.isRunning).length}/
+                      {contextConfigs.length})
+                    </Box>
+                    <AccordionIcon color={textColor} />
+                  </AccordionButton>
+                  <AccordionPanel
+                    pb={4}
+                    borderColor={borderColor}
+                    fontFamily={fontFamily}
+                  >
                     {contextConfigs.length > 0 ? (
-                      contextConfigs.map(config => (
-                        <PortForwardRow
-                          key={config.id}
-                          config={config}
-                          handleDeleteConfig={handleDeleteConfig}
-                          confirmDeleteConfig={confirmDeleteConfig}
-                          handleEditConfig={handleEditConfig}
-                          isAlertOpen={isAlertOpen}
-                          setIsAlertOpen={setIsAlertOpen}
-                          updateConfigRunningState={updateConfigRunningState}
-                        />
-                      ))
+                      <VStack spacing={2} align='center'>
+                        <Table variant='simple' size='sm' border='none'>
+                          <Thead fontFamily={fontFamily}>
+                            <Tr boxShadow={boxShadow}>
+                              <Th fontFamily={fontFamily}>Service</Th>
+                              <Th fontFamily={fontFamily}>Namespace</Th>
+                              <Th fontFamily={fontFamily}>Port</Th>
+                              <Th fontFamily={fontFamily}>Status</Th>
+                              <Th fontFamily={fontFamily}>Action</Th>
+                            </Tr>
+                          </Thead>
+                        </Table>
+                        <Box>
+                          <Table
+                            size='sm'
+                            border='none'
+                            style={{ tableLayout: 'fixed' }}
+                          >
+                            <Tbody>
+                              {contextConfigs.map(config => (
+                                <PortForwardRow
+                                  key={config.id}
+                                  config={config}
+                                  handleDeleteConfig={handleDeleteConfig}
+                                  confirmDeleteConfig={confirmDeleteConfig}
+                                  handleEditConfig={handleEditConfig}
+                                  isAlertOpen={isAlertOpen}
+                                  setIsAlertOpen={setIsAlertOpen}
+                                  updateConfigRunningState={
+                                    updateConfigRunningState
+                                  }
+                                />
+                              ))}
+                            </Tbody>
+                          </Table>
+                        </Box>
+                      </VStack>
                     ) : (
-                      <Tr>
-                        <Td colSpan={5} textAlign='center'>
-                          No Configurations Found for {context}
-                        </Td>
-                      </Tr>
+                      <Flex justify='center' p={6}>
+                        <Text>No Configurations Found for {context}</Text>
+                      </Flex>
                     )}
-                  </Tbody>
-                </Table>
-              </AccordionPanel>
-            </AccordionItem>
-          ))}
-        </Accordion>
-      </Box>
+                  </AccordionPanel>
+                </AccordionItem>
+              ),
+            )}
+          </Accordion>
+        </Flex>
+      )}
     </Flex>
   )
 }

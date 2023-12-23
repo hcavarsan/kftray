@@ -59,31 +59,32 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   const handleDeleteClick = () => {
     onOpen()
   }
+  const fontFamily = '\'Inter\', sans-serif'
 
   return (
     <>
       <Tr key={config.id}>
-        <Td width='20%' color={textColor}>
+        <Td width='20%' color={textColor} fontFamily={fontFamily}>
           {config.service}
         </Td>
-        <Td width='20%' color={textColor}>
+        <Td width='20%' color={textColor} fontFamily={fontFamily}>
           {config.namespace}
         </Td>
-        <Td width='20%' color={textColor}>
+        <Td width='20%' color={textColor} fontFamily={fontFamily}>
           {config.local_port}
         </Td>
         <Td width='20%' color={config.isRunning ? 'green.500' : 'red.500'}>
-          <HStack position='relative' ml='5px'>
+          <HStack position='relative' ml='5px' fontFamily={fontFamily}>
             <Switch
               isChecked={config.isRunning}
               colorScheme='facebook'
-              size='md'
+              size='sm'
               onChange={e => togglePortForwarding(e.target.checked)}
             />
           </HStack>
         </Td>
         <Td width='20%'>
-          <HStack spacing='-1' mr='10px'>
+          <HStack spacing='-1' mr='10px' fontFamily={fontFamily}>
             <IconButton
               size='sm'
               aria-label='Edit configuration'
