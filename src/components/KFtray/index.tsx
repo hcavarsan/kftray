@@ -495,7 +495,7 @@ const KFTray = () => {
         <IconButton
           icon={<MdClose />}
           aria-label='Quit application'
-          variant='solid'
+          variant='outline'
           position='fixed'
           top={7}
           right={4}
