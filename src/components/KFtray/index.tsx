@@ -16,7 +16,7 @@ import { invoke } from '@tauri-apps/api/tauri'
 
 import { Config, Response, Status } from '../../types'
 import AddConfigModal from '../AddConfigModal'
-import Footer from '../Footer'
+import AppFooter from '../AppFooter'
 import Header from '../Header'
 import PortForwardSearchTable from '../PortForwardSearchTable'
 import PortForwardTable from '../PortForwardTable'
@@ -473,7 +473,6 @@ const KFTray = () => {
             handleEditSubmit={handleEditSubmit}
             cancelRef={cancelRef}
           />
-
           <PortForwardTable
             configs={configs}
             initiatePortForwarding={initiatePortForwarding}
@@ -486,14 +485,12 @@ const KFTray = () => {
             isAlertOpen={isAlertOpen}
             setIsAlertOpen={setIsAlertOpen}
             updateConfigRunningState={updateConfigRunningState}
-            isPortForwarding={isPortForwarding}
-          />
-
-          <Footer
             openModal={openModal}
             handleExportConfigs={handleExportConfigs}
             handleImportConfigs={handleImportConfigs}
+            isPortForwarding={isPortForwarding}
           />
+          <AppFooter />
         </VStack>
         <IconButton
           icon={<MdClose />}

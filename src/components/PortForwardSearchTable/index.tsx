@@ -1,6 +1,20 @@
+// components/PortForwardSearchTable/index.tsx
 import React from 'react'
 
-import { Box, Flex, Table, Tbody, Th, Thead, Tr } from '@chakra-ui/react'
+import {
+  Box,
+  IconButton,
+  Switch,
+  Table,
+  Tbody,
+  Td,
+  Th,
+  Thead,
+  Tr,
+  useColorModeValue,
+} from '@chakra-ui/react'
+import { faPen, faTrash } from '@fortawesome/free-solid-svg-icons'
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 
 import { Status } from '../../types'
 import PortForwardRow from '../PortForwardRow'
@@ -24,23 +38,63 @@ const PortForwardSearchTable: React.FC<PortForwardSearchTableProps> = ({
   isAlertOpen,
   setIsAlertOpen,
 }) => {
+  const textColor = useColorModeValue('gray.100', 'gray.100')
+  const boxShadow = useColorModeValue('base', 'md')
+  const fontFamily = '\'Inter\', sans-serif'
+
   return (
-    <Flex
-      direction='column'
-      height='350px'
-      maxHeight='350px'
-      flex='1'
-      overflowY='auto'
-      width='100%'
-    >
-      <Table variant='simple'>
+    <Box overflowY='auto' width='100%'>
+      <Table variant='simple' size='sm' style={{ tableLayout: 'fixed' }} mt='5'>
         <Thead>
-          <Tr>
-            <Th>Service</Th>
-            <Th>Namespace</Th>
-            <Th>Port</Th>
-            <Th>Status</Th>
-            <Th>Actions</Th>
+          <Tr boxShadow={boxShadow} fontSize='10px'>
+            <Th
+              fontFamily={fontFamily}
+              fontSize='10px'
+              width='20%'
+              color={textColor}
+            >
+              Context
+            </Th>
+            <Th
+              fontFamily={fontFamily}
+              fontSize='10px'
+              width='20%'
+              color={textColor}
+            >
+              Service
+            </Th>
+            <Th
+              fontFamily={fontFamily}
+              fontSize='10px'
+              width='20%'
+              color={textColor}
+            >
+              Namespace
+            </Th>
+            <Th
+              fontFamily={fontFamily}
+              fontSize='10px'
+              width='20%'
+              color={textColor}
+            >
+              Port
+            </Th>
+            <Th
+              fontFamily={fontFamily}
+              fontSize='10px'
+              width='20%'
+              color={textColor}
+            >
+              Status
+            </Th>
+            <Th
+              fontFamily={fontFamily}
+              fontSize='10px'
+              width='20%'
+              color={textColor}
+            >
+              Actions
+            </Th>
           </Tr>
         </Thead>
         <Tbody>
@@ -48,17 +102,23 @@ const PortForwardSearchTable: React.FC<PortForwardSearchTableProps> = ({
             <PortForwardRow
               key={config.id}
               config={config}
-              handleDeleteConfig={handleDeleteConfig}
               confirmDeleteConfig={confirmDeleteConfig}
+              handleDeleteConfig={handleDeleteConfig}
               handleEditConfig={handleEditConfig}
               isAlertOpen={isAlertOpen}
               setIsAlertOpen={setIsAlertOpen}
               updateConfigRunningState={updateConfigRunningState}
+              showContext={true}
             />
           ))}
         </Tbody>
       </Table>
-    </Flex>
+      {configs.length === 0 && (
+        <Box textAlign='center' py='5'>
+          No configurations found.
+        </Box>
+      )}
+    </Box>
   )
 }
 
