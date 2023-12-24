@@ -66,7 +66,7 @@ const PortForwardSearchTable: React.FC<PortForwardSearchTableProps> = ({
             <Th
               fontFamily={fontFamily}
               fontSize='10px'
-              width='20%'
+              width='25%'
               color={textColor}
             >
               Namespace
