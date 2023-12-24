@@ -32,6 +32,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   setIsAlertOpen,
   isAlertOpen,
   updateConfigRunningState,
+  showContext = false,
 }) => {
   const { isOpen, onOpen, onClose } = useDisclosure()
   const textColor = useColorModeValue('gray.100', 'gray.100')
@@ -64,6 +65,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   return (
     <>
       <Tr key={config.id}>
+        {showContext && <Td width='20%'>{config.context}</Td>}
         <Td width='20%' color={textColor} fontFamily={fontFamily}>
           {config.service}
         </Td>
@@ -74,36 +76,32 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
           {config.local_port}
         </Td>
         <Td width='20%' color={config.isRunning ? 'green.500' : 'red.500'}>
-          <HStack position='relative' ml='5px' fontFamily={fontFamily}>
-            <Switch
-              isChecked={config.isRunning}
-              colorScheme='facebook'
-              size='sm'
-              onChange={e => togglePortForwarding(e.target.checked)}
-            />
-          </HStack>
+          <Switch
+            isChecked={config.isRunning}
+            colorScheme='facebook'
+            size='sm'
+            onChange={e => togglePortForwarding(e.target.checked)}
+          />
         </Td>
         <Td width='20%'>
-          <HStack spacing='-1' mr='10px' fontFamily={fontFamily}>
-            <IconButton
-              size='sm'
-              aria-label='Edit configuration'
-              icon={<FontAwesomeIcon icon={faPen} />}
-              onClick={() => handleEditConfig(config.id)}
-              variant='ghost'
-            />
-            <IconButton
-              size='sm'
-              aria-label='Delete configuration'
-              icon={<FontAwesomeIcon icon={faTrash} />}
-              onClick={() => {
-                setIsAlertOpen(true),
-                handleDeleteClick(),
-                handleDeleteConfig(config.id)
-              }}
-              variant='ghost'
-            />
-          </HStack>
+          <IconButton
+            size='xs'
+            aria-label='Edit configuration'
+            icon={<FontAwesomeIcon icon={faPen} />}
+            onClick={() => handleEditConfig(config.id)}
+            variant='ghost'
+          />
+          <IconButton
+            size='xs'
+            aria-label='Delete configuration'
+            icon={<FontAwesomeIcon icon={faTrash} />}
+            onClick={() => {
+              setIsAlertOpen(true),
+              handleDeleteClick(),
+              handleDeleteConfig(config.id)
+            }}
+            variant='ghost'
+          />
         </Td>
       </Tr>
       {isAlertOpen && (

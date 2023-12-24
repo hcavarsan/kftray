@@ -1,5 +1,12 @@
 import React, { useMemo, useState } from 'react'
-import { MdAdd, MdClose, MdRefresh } from 'react-icons/md'
+import {
+  MdAdd,
+  MdClose,
+  MdFileDownload,
+  MdFileUpload,
+  MdMoreVert,
+  MdRefresh,
+} from 'react-icons/md'
 
 import { SearchIcon } from '@chakra-ui/icons'
 import {
@@ -12,18 +19,21 @@ import {
   Button,
   ButtonGroup,
   Flex,
+  IconButton,
   Input,
   InputGroup,
   InputLeftElement,
+  Menu,
+  MenuButton,
+  MenuItem,
+  MenuList,
   Table,
   Tbody,
-  Td,
   Text,
   Th,
   Thead,
   Tr,
   useColorModeValue,
-  VStack,
 } from '@chakra-ui/react'
 
 import { Status, TableProps } from '../../types'
@@ -42,6 +52,9 @@ const PortForwardTable: React.FC<TableProps> = ({
   isAlertOpen,
   setIsAlertOpen,
   updateConfigRunningState,
+  openModal,
+  handleExportConfigs,
+  handleImportConfigs,
 }) => {
   const [search, setSearch] = useState('')
   const [expandedIndices, setExpandedIndices] = useState<number[]>([])
@@ -98,6 +111,7 @@ const PortForwardTable: React.FC<TableProps> = ({
   const textColor = useColorModeValue('gray.800', 'white')
   const boxShadow = useColorModeValue('base', 'md')
   const fontFamily = '\'Inter\', sans-serif'
+  const accentColor = useColorModeValue('gray.100', 'gray.600') // use accent color for delineation
 
   const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     setSearch(event.target.value)
@@ -109,8 +123,8 @@ const PortForwardTable: React.FC<TableProps> = ({
   return (
     <Flex
       direction='column'
-      height='450px'
-      maxHeight='450px'
+      height='500px'
+      maxHeight='500px'
       flex='1'
       width='100%'
       borderColor={borderColor}
@@ -143,44 +157,62 @@ const PortForwardTable: React.FC<TableProps> = ({
         </ButtonGroup>
       </Flex>
 
-      <Flex justifyContent='space-between' mt='1' borderRadius='md' mb='2'>
-        <Button
-          onClick={toggleExpandAll}
-          size='xs'
-          colorScheme='facebook'
-          variant='outline'
-          leftIcon={
-            expandedIndices.length === Object.keys(configsByContext).length ? (
-              <MdClose />
-            ) : (
-              <MdAdd />
-            )
-          }
-        >
-          {expandedIndices.length === Object.keys(configsByContext).length
-            ? 'Minimize All'
-            : 'Expand All'}
-        </Button>
-        <Box
-          bg={accordionBg}
-          borderRadius='md'
-          boxShadow='base'
-          width='20%'
-          mr={2}
-        >
-          <InputGroup size='xs'>
-            <InputLeftElement pointerEvents='none'>
-              <SearchIcon color='gray.300' />
-            </InputLeftElement>
-            <Input
-              type='text'
-              placeholder='Search'
-              onChange={handleSearchChange}
-              borderRadius='md'
+      <Flex justifyContent='space-between' mt='1' borderRadius='md'>
+        <InputGroup size='xs' maxWidth='150px'>
+          <InputLeftElement pointerEvents='none'>
+            <SearchIcon color='gray.300' />
+          </InputLeftElement>
+          <Input
+            type='text'
+            placeholder='Search'
+            onChange={handleSearchChange}
+            borderRadius='md'
+            size='xs'
+            mr='2'
+          />
+        </InputGroup>
+        <Flex mr='3'>
+          <Button
+            onClick={toggleExpandAll}
+            size='xs'
+            colorScheme='facebook'
+            variant='outline'
+            leftIcon={
+              expandedIndices.length ===
+              Object.keys(configsByContext).length ? (
+                  <MdClose />
+                ) : (
+                  <MdAdd />
+                )
+            }
+          >
+            {expandedIndices.length === Object.keys(configsByContext).length
+              ? 'Minimize All'
+              : 'Expand All'}
+          </Button>
+          <Menu>
+            <MenuButton
+              as={IconButton}
+              aria-label='Options'
+              icon={<MdMoreVert />}
               size='xs'
+              colorScheme='facebook'
+              variant='outline'
+              ml={2}
             />
-          </InputGroup>
-        </Box>
+            <MenuList>
+              <MenuItem icon={<MdAdd />} onClick={openModal}>
+                Add New Config
+              </MenuItem>
+              <MenuItem icon={<MdFileUpload />} onClick={handleExportConfigs}>
+                Export Configs
+              </MenuItem>
+              <MenuItem icon={<MdFileDownload />} onClick={handleImportConfigs}>
+                Import Configs
+              </MenuItem>
+            </MenuList>
+          </Menu>
+        </Flex>
       </Flex>
       {search.trim() ? (
         <PortForwardSearchTable
@@ -195,20 +227,23 @@ const PortForwardTable: React.FC<TableProps> = ({
       ) : (
         <Flex
           direction='column'
-          height='450px'
-          maxHeight='450px'
+          height='500px'
+          maxHeight='500px'
           pb='90px'
           flex='1'
+          mt='4'
           overflowY='scroll'
           width='100%'
-          borderBottom='2px solid'
-          borderColor={borderColor}
+          borderBottom='none'
+          borderRadius='lg'
+          background='gray.1000'
+          boxShadow='0 0 1px rgba(20, 20, 20, 0.50)'
+          marginTop='1'
         >
           <Accordion
             allowMultiple
             index={expandedIndices}
             onChange={handleChange}
-            borderTop='2px solid'
             borderColor={borderColor}
           >
             {Object.entries(configsByContext).map(
@@ -249,15 +284,55 @@ const PortForwardTable: React.FC<TableProps> = ({
                     fontFamily={fontFamily}
                   >
                     {contextConfigs.length > 0 ? (
-                      <VStack spacing={2} align='center'>
-                        <Table variant='simple' size='sm' border='none'>
-                          <Thead fontFamily={fontFamily}>
-                            <Tr boxShadow={boxShadow}>
-                              <Th fontFamily={fontFamily}>Service</Th>
-                              <Th fontFamily={fontFamily}>Namespace</Th>
-                              <Th fontFamily={fontFamily}>Port</Th>
-                              <Th fontFamily={fontFamily}>Status</Th>
-                              <Th fontFamily={fontFamily}>Action</Th>
+                      <Flex direction='column' width='100%' mt={0} p={0}>
+                        <Table
+                          variant='simple'
+                          size='sm'
+                          border='none'
+                          style={{ tableLayout: 'fixed' }}
+                        >
+                          <Thead
+                            position='sticky'
+                            top='0'
+                            zIndex='sticky'
+                            fontFamily={fontFamily}
+                          >
+                            <Tr boxShadow={boxShadow} fontSize='10px'>
+                              <Th
+                                fontFamily={fontFamily}
+                                fontSize='10px'
+                                width='20%'
+                              >
+                                Service
+                              </Th>
+                              <Th
+                                fontFamily={fontFamily}
+                                fontSize='10px'
+                                width='20%'
+                              >
+                                Namespace
+                              </Th>
+                              <Th
+                                fontFamily={fontFamily}
+                                fontSize='10px'
+                                width='20%'
+                              >
+                                Port
+                              </Th>
+                              <Th
+                                fontFamily={fontFamily}
+                                fontSize='10px'
+                                width='20%'
+                              >
+                                Status
+                              </Th>
+                              <Th
+                                fontFamily={fontFamily}
+                                fontSize='10px'
+                                width='20%'
+                              >
+                                Action
+                              </Th>
                             </Tr>
                           </Thead>
                         </Table>
@@ -267,7 +342,12 @@ const PortForwardTable: React.FC<TableProps> = ({
                             border='none'
                             style={{ tableLayout: 'fixed' }}
                           >
-                            <Tbody>
+                            <Tbody
+                              width='full'
+                              position='sticky'
+                              top='0'
+                              zIndex='sticky'
+                            >
                               {contextConfigs.map(config => (
                                 <PortForwardRow
                                   key={config.id}
@@ -285,7 +365,7 @@ const PortForwardTable: React.FC<TableProps> = ({
                             </Tbody>
                           </Table>
                         </Box>
-                      </VStack>
+                      </Flex>
                     ) : (
                       <Flex justify='center' p={6}>
                         <Text>No Configurations Found for {context}</Text>
