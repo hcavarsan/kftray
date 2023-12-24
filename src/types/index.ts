@@ -56,6 +56,9 @@ export interface TableProps {
   isAlertOpen: boolean
   setIsAlertOpen: (isOpen: boolean) => void
   updateConfigRunningState: (id: number, isRunning: boolean) => void
+  openModal: () => void
+  handleExportConfigs: () => void
+  handleImportConfigs: () => void
 }
 
 export interface PortForwardRowProps {
@@ -66,10 +69,5 @@ export interface PortForwardRowProps {
   isAlertOpen: boolean
   setIsAlertOpen: (isOpen: boolean) => void
   updateConfigRunningState: (id: number, isRunning: boolean) => void
-}
-
-export interface FooterProps {
-  openModal: () => void
-  handleExportConfigs: () => void
-  handleImportConfigs: () => void
+  showContext?: boolean
 }
