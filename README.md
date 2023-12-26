@@ -22,13 +22,13 @@
 </p>
 
 <p align="center">
-  <img src="img/ss.png" alt="kftray demo" width="600" />
+  <img src="img/demo.gif" alt="kftray demo" width="600" />
 </p>
 
 <h4 align="center">
-  <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.2.13_universal.dmg">Download for macOS</a> ·
-  <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.2.13_x64-setup.exe">Download for Windows</a> ·
-  <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.2.13_amd64.AppImage">Download for Linux</a>
+  <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.3.0_universal.dmg">Download for macOS</a> ·
+  <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.3.0_x64-setup.exe">Download for Windows</a> ·
+  <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.3.0_amd64.AppImage">Download for Linux</a>
 </h4>
 
 ---
