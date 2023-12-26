@@ -38,7 +38,7 @@ const PortForwardSearchTable: React.FC<PortForwardSearchTableProps> = ({
   isAlertOpen,
   setIsAlertOpen,
 }) => {
-  const textColor = useColorModeValue('gray.100', 'gray.100')
+  const textColor = useColorModeValue('gray.400', 'gray.400')
   const boxShadow = useColorModeValue('base', 'md')
   const fontFamily = '\'Inter\', sans-serif'
 
@@ -53,7 +53,7 @@ const PortForwardSearchTable: React.FC<PortForwardSearchTableProps> = ({
               width='20%'
               color={textColor}
             >
-              Context
+              Ctx
             </Th>
             <Th
               fontFamily={fontFamily}
@@ -61,15 +61,15 @@ const PortForwardSearchTable: React.FC<PortForwardSearchTableProps> = ({
               width='20%'
               color={textColor}
             >
-              Service
+              Svc
             </Th>
             <Th
               fontFamily={fontFamily}
               fontSize='10px'
-              width='25%'
+              width='20%'
               color={textColor}
             >
-              Namespace
+              NS
             </Th>
             <Th
               fontFamily={fontFamily}

@@ -65,7 +65,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   return (
     <>
       <Tr key={config.id}>
-        {showContext && <Td width='20%'>{config.context}</Td>}
+        {showContext && <Td width='15%'>{config.context}</Td>}
         <Td width='20%' color={textColor} fontFamily={fontFamily}>
           {config.service}
         </Td>
@@ -75,10 +75,10 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
         <Td width='20%' color={textColor} fontFamily={fontFamily}>
           {config.local_port}
         </Td>
-        <Td width='20%' color={config.isRunning ? 'green.500' : 'red.500'}>
+        <Td width='15%'>
           <Switch
+            colorScheme='green'
             isChecked={config.isRunning}
-            colorScheme='facebook'
             size='sm'
             onChange={e => togglePortForwarding(e.target.checked)}
           />

@@ -67,10 +67,10 @@
 	  "windows": [
 		{
 		  "fullscreen": false,
-		  "height": 900,
+		  "height": 700,
 		  "resizable": false,
 		  "title": "menubar",
-		  "width": 600,
+		  "width": 550,
 		  "visible": false,
 		  "hiddenTitle": true,
 		  "decorations": false,
