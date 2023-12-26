@@ -16,8 +16,6 @@ import { invoke } from '@tauri-apps/api/tauri'
 
 import { Config, Response, Status } from '../../types'
 import AddConfigModal from '../AddConfigModal'
-import AppFooter from '../AppFooter'
-import Header from '../Header'
 import PortForwardSearchTable from '../PortForwardSearchTable'
 import PortForwardTable from '../PortForwardTable'
 
@@ -458,11 +456,9 @@ const KFTray = () => {
           w='100%'
           maxW='100%'
           overflowY='auto'
-          padding='20px'
-          mt='5px'
+          padding='15px'
+          mt='2px'
         >
-          <Header />
-
           <AddConfigModal
             isModalOpen={isModalOpen}
             closeModal={closeModal}
@@ -490,20 +486,7 @@ const KFTray = () => {
             handleImportConfigs={handleImportConfigs}
             isPortForwarding={isPortForwarding}
           />
-          <AppFooter />
         </VStack>
-        <IconButton
-          icon={<MdClose />}
-          aria-label='Quit application'
-          variant='outline'
-          position='fixed'
-          top={7}
-          right={4}
-          onClick={quitApp}
-          isRound={false}
-          size='xs'
-          colorScheme='facebook'
-        />
       </Box>
     </Center>
   )
