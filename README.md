@@ -58,8 +58,16 @@ Stay tuned for more features as we continue to enhance `kftray` for an even bett
 
 kftray can be easily installed using Homebrew. First, tap into the custom repository:
 
+Linux:
 ```bash
-curl https://sh.rustup.rs -sSf | sh
+sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev
+
+brew tap hcavarsan/kftray
+brew install --HEAD kftray
+```
+
+Mac:
+```bash
 
 brew tap hcavarsan/kftray
 brew install --HEAD kftray
