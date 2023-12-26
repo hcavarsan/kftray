@@ -3,11 +3,13 @@ import React from 'react'
 
 import {
   Box,
+  Flex,
   IconButton,
   Switch,
   Table,
   Tbody,
   Td,
+  Text,
   Th,
   Thead,
   Tr,
@@ -92,32 +94,36 @@ const PortForwardSearchTable: React.FC<PortForwardSearchTableProps> = ({
               fontSize='10px'
               width='20%'
               color={textColor}
+              textAlign='center'
             >
-              Actions
+              Edit
             </Th>
           </Tr>
         </Thead>
         <Tbody>
-          {configs.map(config => (
-            <PortForwardRow
-              key={config.id}
-              config={config}
-              confirmDeleteConfig={confirmDeleteConfig}
-              handleDeleteConfig={handleDeleteConfig}
-              handleEditConfig={handleEditConfig}
-              isAlertOpen={isAlertOpen}
-              setIsAlertOpen={setIsAlertOpen}
-              updateConfigRunningState={updateConfigRunningState}
-              showContext={true}
-            />
-          ))}
+          {configs.length > 0 ? (
+            configs.map(config => (
+              <PortForwardRow
+                key={config.id}
+                config={config}
+                confirmDeleteConfig={confirmDeleteConfig}
+                handleDeleteConfig={handleDeleteConfig}
+                handleEditConfig={handleEditConfig}
+                isAlertOpen={isAlertOpen}
+                setIsAlertOpen={setIsAlertOpen}
+                updateConfigRunningState={updateConfigRunningState}
+                showContext={true}
+              />
+            ))
+          ) : (
+            <Tr>
+              <Td colSpan={6} style={{ textAlign: 'center' }}>
+                No Configurations Found
+              </Td>
+            </Tr>
+          )}
         </Tbody>
       </Table>
-      {configs.length === 0 && (
-        <Box textAlign='center' py='5'>
-          No configurations found.
-        </Box>
-      )}
     </Box>
   )
 }
