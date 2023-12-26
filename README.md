@@ -60,7 +60,7 @@ kftray can be easily installed using Homebrew. First, tap into the custom reposi
 
 Linux:
 ```bash
-sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev
+sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev libgobject2.0-dev
 
 brew tap hcavarsan/kftray
 brew install --HEAD kftray
