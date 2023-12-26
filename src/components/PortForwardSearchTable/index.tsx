@@ -3,11 +3,13 @@ import React from 'react'
 
 import {
   Box,
+  Flex,
   IconButton,
   Switch,
   Table,
   Tbody,
   Td,
+  Text,
   Th,
   Thead,
   Tr,
@@ -38,7 +40,7 @@ const PortForwardSearchTable: React.FC<PortForwardSearchTableProps> = ({
   isAlertOpen,
   setIsAlertOpen,
 }) => {
-  const textColor = useColorModeValue('gray.100', 'gray.100')
+  const textColor = useColorModeValue('gray.400', 'gray.400')
   const boxShadow = useColorModeValue('base', 'md')
   const fontFamily = '\'Inter\', sans-serif'
 
@@ -53,7 +55,7 @@ const PortForwardSearchTable: React.FC<PortForwardSearchTableProps> = ({
               width='20%'
               color={textColor}
             >
-              Context
+              Ctx
             </Th>
             <Th
               fontFamily={fontFamily}
@@ -61,15 +63,15 @@ const PortForwardSearchTable: React.FC<PortForwardSearchTableProps> = ({
               width='20%'
               color={textColor}
             >
-              Service
+              Svc
             </Th>
             <Th
               fontFamily={fontFamily}
               fontSize='10px'
-              width='25%'
+              width='20%'
               color={textColor}
             >
-              Namespace
+              NS
             </Th>
             <Th
               fontFamily={fontFamily}
@@ -92,32 +94,36 @@ const PortForwardSearchTable: React.FC<PortForwardSearchTableProps> = ({
               fontSize='10px'
               width='20%'
               color={textColor}
+              textAlign='center'
             >
-              Actions
+              Edit
             </Th>
           </Tr>
         </Thead>
         <Tbody>
-          {configs.map(config => (
-            <PortForwardRow
-              key={config.id}
-              config={config}
-              confirmDeleteConfig={confirmDeleteConfig}
-              handleDeleteConfig={handleDeleteConfig}
-              handleEditConfig={handleEditConfig}
-              isAlertOpen={isAlertOpen}
-              setIsAlertOpen={setIsAlertOpen}
-              updateConfigRunningState={updateConfigRunningState}
-              showContext={true}
-            />
-          ))}
+          {configs.length > 0 ? (
+            configs.map(config => (
+              <PortForwardRow
+                key={config.id}
+                config={config}
+                confirmDeleteConfig={confirmDeleteConfig}
+                handleDeleteConfig={handleDeleteConfig}
+                handleEditConfig={handleEditConfig}
+                isAlertOpen={isAlertOpen}
+                setIsAlertOpen={setIsAlertOpen}
+                updateConfigRunningState={updateConfigRunningState}
+                showContext={true}
+              />
+            ))
+          ) : (
+            <Tr>
+              <Td colSpan={6} style={{ textAlign: 'center' }}>
+                No Configurations Found
+              </Td>
+            </Tr>
+          )}
         </Tbody>
       </Table>
-      {configs.length === 0 && (
-        <Box textAlign='center' py='5'>
-          No configurations found.
-        </Box>
-      )}
     </Box>
   )
 }

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import {
   MdAdd,
   MdClose,
@@ -8,7 +8,7 @@ import {
   MdRefresh,
 } from 'react-icons/md'
 
-import { SearchIcon } from '@chakra-ui/icons'
+import { ChevronDownIcon, ChevronUpIcon, SearchIcon } from '@chakra-ui/icons'
 import {
   Accordion,
   AccordionButton,
@@ -20,6 +20,7 @@ import {
   ButtonGroup,
   Flex,
   IconButton,
+  Image,
   Input,
   InputGroup,
   InputLeftElement,
@@ -27,15 +28,19 @@ import {
   MenuButton,
   MenuItem,
   MenuList,
+  Select,
   Table,
   Tbody,
   Text,
   Th,
   Thead,
+  Tooltip,
   Tr,
   useColorModeValue,
 } from '@chakra-ui/react'
+import { app } from '@tauri-apps/api'
 
+import logo from '../../assets/logo.png'
 import { Status, TableProps } from '../../types'
 import PortForwardRow from '../PortForwardRow'
 import PortForwardSearchTable from '../PortForwardSearchTable'
@@ -58,6 +63,20 @@ const PortForwardTable: React.FC<TableProps> = ({
 }) => {
   const [search, setSearch] = useState('')
   const [expandedIndices, setExpandedIndices] = useState<number[]>([])
+  const [version, setVersion] = useState('')
+
+  useEffect(() => {
+    app.getVersion().then(setVersion)
+  }, [])
+
+  const groupByOptions = useMemo(
+    () => [
+      { value: 'none', label: 'None' },
+      { value: 'context', label: 'Cluster' },
+      // additional group by options can be added here
+    ],
+    [],
+  )
 
   const filteredConfigs = useMemo(() => {
     return search
@@ -66,6 +85,15 @@ const PortForwardTable: React.FC<TableProps> = ({
       )
       : configs
   }, [configs, search])
+  const [groupBy, setGroupBy] = useState('none')
+
+  const handleGroupByChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
+    if (event.target.value === 'none') {
+      setExpandedIndices([])
+    }
+
+    setGroupBy(event.target.value)
+  }
 
   const toggleExpandAll = () => {
     const allIndices = Object.keys(configsByContext).map((_, index) => index)
@@ -109,7 +137,7 @@ const PortForwardTable: React.FC<TableProps> = ({
   const border = useColorModeValue('gray.200', 'gray.600')
   const borderColor = useColorModeValue('gray.200', 'gray.600')
   const textColor = useColorModeValue('gray.800', 'white')
-  const boxShadow = useColorModeValue('base', 'md')
+  const boxShadow = useColorModeValue('base', 'lg')
   const fontFamily = '\'Inter\', sans-serif'
   const accentColor = useColorModeValue('gray.100', 'gray.600') // use accent color for delineation
 
@@ -120,45 +148,32 @@ const PortForwardTable: React.FC<TableProps> = ({
     setExpandedIndices(expandedIndex as number[])
   }
 
+  const isAllExpanded =
+    expandedIndices.length === Object.keys(configsByContext).length
+
   return (
     <Flex
       direction='column'
       height='500px'
       maxHeight='500px'
-      flex='1'
+      overflow='hidden'
       width='100%'
       borderColor={borderColor}
     >
-      <Flex justify='center' mb={5} mt={2}>
-        <ButtonGroup variant='outline' spacing={2}>
-          <Button
-            leftIcon={<MdRefresh />}
-            colorScheme='facebook'
-            isLoading={isInitiating}
-            loadingText='Starting...'
-            onClick={startAllPortForwarding}
-            isDisabled={
-              isInitiating || !configs.some(config => !config.isRunning)
-            }
-            mr={1}
-          >
-            Start All
-          </Button>
-          <Button
-            leftIcon={<MdClose />}
-            colorScheme='facebook'
-            isLoading={isStopping}
-            loadingText='Stopping...'
-            onClick={stopAllPortForwarding}
-            isDisabled={isStopping || !configs.some(config => config.isRunning)}
-          >
-            Stop All
-          </Button>
-        </ButtonGroup>
+      <Flex justifyContent='center' mb='5' mt='0'>
+        <Image boxSize='52px' src={logo} borderRadius='full' />
       </Flex>
-
-      <Flex justifyContent='space-between' mt='1' borderRadius='md'>
-        <InputGroup size='xs' maxWidth='150px'>
+      <Flex
+        direction='row'
+        alignItems='center'
+        bg={accordionBg}
+        p='1'
+        borderRadius='lg'
+        width='98%'
+        borderColor={borderColor}
+        justifyContent='space-between'
+      >
+        <InputGroup size='xs' maxWidth='200px'>
           <InputLeftElement pointerEvents='none'>
             <SearchIcon color='gray.300' />
           </InputLeftElement>
@@ -168,62 +183,101 @@ const PortForwardTable: React.FC<TableProps> = ({
             onChange={handleSearchChange}
             borderRadius='md'
             size='xs'
-            mr='2'
           />
         </InputGroup>
-        <Flex mr='3'>
+      </Flex>
+      <Flex
+        direction='row'
+        alignItems='center'
+        mt='2'
+        justifyContent='space-between'
+        position='sticky'
+        top='0'
+        bg='gray.900'
+        p='2'
+        boxShadow={boxShadow}
+        borderRadius='lg'
+        border='1px'
+        width='98.4%'
+        borderColor={borderColor}
+      >
+        <Flex direction='row' justifyContent='center'>
+          <ButtonGroup variant='outline'>
+            <Button
+              leftIcon={<MdRefresh />}
+              colorScheme='facebook'
+              isLoading={isInitiating}
+              loadingText='Starting...'
+              onClick={startAllPortForwarding}
+              isDisabled={
+                isInitiating || !configs.some(config => !config.isRunning)
+              }
+              size='xs'
+            >
+              Start All
+            </Button>
+            <Button
+              leftIcon={<MdClose />}
+              colorScheme='facebook'
+              isLoading={isStopping}
+              loadingText='Stopping...'
+              onClick={stopAllPortForwarding}
+              isDisabled={
+                isStopping || !configs.some(config => config.isRunning)
+              }
+              size='xs'
+            >
+              Stop All
+            </Button>
+          </ButtonGroup>
+        </Flex>
+        <Flex justifyContent='flex-end'>
           <Button
             onClick={toggleExpandAll}
             size='xs'
             colorScheme='facebook'
             variant='outline'
-            leftIcon={
+            rightIcon={
               expandedIndices.length ===
               Object.keys(configsByContext).length ? (
-                  <MdClose />
+                  <ChevronUpIcon />
                 ) : (
-                  <MdAdd />
+                  <ChevronDownIcon />
                 )
             }
           >
             {expandedIndices.length === Object.keys(configsByContext).length
-              ? 'Minimize All'
+              ? 'Collapse All'
               : 'Expand All'}
           </Button>
-          <Menu>
-            <MenuButton
-              as={IconButton}
-              aria-label='Options'
-              icon={<MdMoreVert />}
-              size='xs'
-              colorScheme='facebook'
-              variant='outline'
-              ml={2}
-            />
-            <MenuList>
-              <MenuItem icon={<MdAdd />} onClick={openModal}>
-                Add New Config
-              </MenuItem>
-              <MenuItem icon={<MdFileUpload />} onClick={handleExportConfigs}>
-                Export Configs
-              </MenuItem>
-              <MenuItem icon={<MdFileDownload />} onClick={handleImportConfigs}>
-                Import Configs
-              </MenuItem>
-            </MenuList>
-          </Menu>
         </Flex>
       </Flex>
       {search.trim() ? (
-        <PortForwardSearchTable
-          configs={filteredConfigs}
-          handleEditConfig={handleEditConfig}
-          handleDeleteConfig={handleDeleteConfig}
-          confirmDeleteConfig={confirmDeleteConfig}
-          updateConfigRunningState={updateConfigRunningState}
-          isAlertOpen={isAlertOpen}
-          setIsAlertOpen={setIsAlertOpen}
-        />
+        <Flex
+          direction='column'
+          height='500px'
+          maxHeight='500px'
+          pb='30px'
+          flex='1'
+          width='100%'
+          mt='4'
+          overflowY='scroll'
+          borderBottom='none'
+          borderRadius='lg'
+          background='gray.1000'
+          boxShadow='0 0 1px rgba(20, 20, 20, 0.50)'
+          marginTop='1'
+        >
+          <PortForwardSearchTable
+            configs={filteredConfigs}
+            handleEditConfig={handleEditConfig}
+            handleDeleteConfig={handleDeleteConfig}
+            confirmDeleteConfig={confirmDeleteConfig}
+            updateConfigRunningState={updateConfigRunningState}
+            isAlertOpen={isAlertOpen}
+            setIsAlertOpen={setIsAlertOpen}
+          />
+        </Flex>
       ) : (
         <Flex
           direction='column'
@@ -274,7 +328,7 @@ const PortForwardTable: React.FC<TableProps> = ({
                       color={textColor}
                     >
                       ({contextConfigs.filter(c => c.isRunning).length}/
-                      {contextConfigs.length})
+                      {contextConfigs.length}) running
                     </Box>
                     <AccordionIcon color={textColor} />
                   </AccordionButton>
@@ -308,7 +362,7 @@ const PortForwardTable: React.FC<TableProps> = ({
                               <Th
                                 fontFamily={fontFamily}
                                 fontSize='10px'
-                                width='20%'
+                                width='25%'
                               >
                                 Namespace
                               </Th>
@@ -378,6 +432,40 @@ const PortForwardTable: React.FC<TableProps> = ({
           </Accordion>
         </Flex>
       )}
+      <Flex
+        justifyContent='space-between'
+        align='center'
+        mt='3'
+        alignItems='center'
+        maxWidth='100%'
+      >
+        <Menu>
+          <MenuButton
+            as={Button}
+            rightIcon={<MdMoreVert />}
+            size='xs'
+            colorScheme='facebook'
+            variant='outline'
+            borderRadius='md'
+            width='85px'
+          >
+            Options
+          </MenuButton>
+
+          <MenuList>
+            <MenuItem icon={<MdAdd />} onClick={openModal}>
+              Add New Config
+            </MenuItem>
+            <MenuItem icon={<MdFileUpload />} onClick={handleExportConfigs}>
+              Export Configs
+            </MenuItem>
+            <MenuItem icon={<MdFileDownload />} onClick={handleImportConfigs}>
+              Import Configs
+            </MenuItem>
+          </MenuList>
+        </Menu>
+        <Text fontSize='xs'>{version}</Text>
+      </Flex>
     </Flex>
   )
 }

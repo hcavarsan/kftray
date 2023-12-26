@@ -8,7 +8,7 @@
 	},
 	"package": {
 	  "productName": "kftray",
-	  "version": "0.2.13"
+	  "version": "0.3.0"
 	},
 	"tauri": {
 	  "allowlist": {
@@ -67,10 +67,10 @@
 	  "windows": [
 		{
 		  "fullscreen": false,
-		  "height": 900,
+		  "height": 700,
 		  "resizable": false,
 		  "title": "menubar",
-		  "width": 600,
+		  "width": 500,
 		  "visible": false,
 		  "hiddenTitle": true,
 		  "decorations": false,
