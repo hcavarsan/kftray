@@ -7,7 +7,9 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogOverlay,
+  Box,
   Button,
+  Flex,
   HStack,
   IconButton,
   Portal,
@@ -65,43 +67,49 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   return (
     <>
       <Tr key={config.id}>
-        {showContext && <Td width='20%'>{config.context}</Td>}
+        {showContext && <Td width='10%'>{config.context}</Td>}
         <Td width='20%' color={textColor} fontFamily={fontFamily}>
           {config.service}
         </Td>
         <Td width='20%' color={textColor} fontFamily={fontFamily}>
           {config.namespace}
         </Td>
-        <Td width='20%' color={textColor} fontFamily={fontFamily}>
+        <Td width='15%' color={textColor} fontFamily={fontFamily}>
           {config.local_port}
         </Td>
-        <Td width='20%' color={config.isRunning ? 'green.500' : 'red.500'}>
+        <Td width='15%'>
           <Switch
+            colorScheme='green'
             isChecked={config.isRunning}
-            colorScheme='facebook'
             size='sm'
             onChange={e => togglePortForwarding(e.target.checked)}
           />
         </Td>
-        <Td width='20%'>
-          <IconButton
-            size='xs'
-            aria-label='Edit configuration'
-            icon={<FontAwesomeIcon icon={faPen} />}
-            onClick={() => handleEditConfig(config.id)}
-            variant='ghost'
-          />
-          <IconButton
-            size='xs'
-            aria-label='Delete configuration'
-            icon={<FontAwesomeIcon icon={faTrash} />}
-            onClick={() => {
-              setIsAlertOpen(true),
-              handleDeleteClick(),
-              handleDeleteConfig(config.id)
-            }}
-            variant='ghost'
-          />
+        <Td textAlign='center' width='20%'>
+          <Flex justifyContent='center'>
+            <IconButton
+              size='xs'
+              aria-label='Edit configuration'
+              icon={
+                <FontAwesomeIcon icon={faPen} style={{ fontSize: '10px' }} />
+              }
+              onClick={() => handleEditConfig(config.id)}
+              variant='ghost'
+            />
+            <IconButton
+              size='xs'
+              aria-label='Delete configuration'
+              icon={
+                <FontAwesomeIcon icon={faTrash} style={{ fontSize: '10px' }} />
+              }
+              onClick={() => {
+                setIsAlertOpen(true),
+                handleDeleteClick(),
+                handleDeleteConfig(config.id)
+              }}
+              variant='ghost'
+            />
+          </Flex>
         </Td>
       </Tr>
       {isAlertOpen && (
