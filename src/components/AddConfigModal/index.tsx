@@ -331,9 +331,15 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
 
   return (
     <Center>
-      <Modal isOpen={isModalOpen} onClose={handleCancel} size='xs'>
+      <Modal
+        isOpen={isModalOpen}
+        onClose={handleCancel}
+        size='xs'
+        maxH='300px'
+        h='auto'
+      >
         <ModalOverlay bg='transparent' />
-        <ModalContent width='50%' mx={5} my={5} mt={8}>
+        <ModalContent mx={5} my={5} mt={8} w='auto' h='auto'>
           <ModalCloseButton />
           <ModalBody p={2} mt={3}>
             <form onSubmit={handleSave}>
@@ -402,7 +408,9 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                   options={portData
                   .filter(port => port.port !== undefined)
                   .map(port => ({
-                    label: port.port ? port.port.toString() : '',
+                    label: port.port
+                      ? port.port.toString() + ' - ' + port.name
+                      : '',
                     value: port.port,
                   }))}
                   value={selectedPort}
