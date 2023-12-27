@@ -439,7 +439,7 @@ const PortForwardTable: React.FC<TableProps> = ({
         alignItems='center'
         maxWidth='100%'
       >
-        <Menu>
+        <Menu placement='top'>
           <MenuButton
             as={Button}
             rightIcon={<MdMoreVert />}
