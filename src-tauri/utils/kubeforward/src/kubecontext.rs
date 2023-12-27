@@ -1,5 +1,8 @@
 use anyhow::Result;
-use k8s_openapi::api::core::v1::{Namespace, Service};
+use k8s_openapi::{
+    api::core::v1::{Namespace, Service},
+    apimachinery::pkg::util::intstr::IntOrString,
+};
 use kube::{
     api::{Api, ListParams},
     config::{Config, KubeConfigOptions, Kubeconfig},
@@ -37,7 +40,7 @@ pub struct KubeServiceInfo {
 #[derive(Serialize)]
 pub struct KubeServicePortInfo {
     pub name: Option<String>,
-    pub port: u16,
+    pub port: Option<IntOrString>,
 }
 
 #[tauri::command]
@@ -126,7 +129,7 @@ pub async fn list_service_ports(
             .into_iter()
             .map(|p| KubeServicePortInfo {
                 name: p.name,
-                port: p.port as u16,
+                port: p.target_port as Option<IntOrString>,
             })
             .collect()
     });
