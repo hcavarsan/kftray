@@ -3,6 +3,9 @@ use k8s_openapi::{
     api::core::v1::{Namespace, Service},
     apimachinery::pkg::util::intstr::IntOrString,
 };
+
+use crate::vx::Pod;
+
 use kube::{
     api::{Api, ListParams},
     config::{Config, KubeConfigOptions, Kubeconfig},
@@ -121,18 +124,68 @@ pub async fn list_service_ports(
             )
         })?;
 
-    let api: Api<Service> = Api::namespaced(client, namespace);
-    let svc = api.get(service_name).await.map_err(|e| e.to_string())?;
-    let service_ports = svc.spec.map_or(vec![], |spec| {
-        spec.ports
-            .unwrap_or_default()
-            .into_iter()
-            .map(|p| KubeServicePortInfo {
-                name: p.name,
-                port: p.target_port as Option<IntOrString>,
-            })
-            .collect()
-    });
+    let api_svc: Api<Service> = Api::namespaced(client.clone(), namespace);
+    let service = api_svc.get(service_name).await.map_err(|e| e.to_string())?;
 
-    Ok(service_ports)
+    let api_pod: Api<Pod> = Api::namespaced(client, namespace);
+
+    let mut service_port_infos = Vec::new();
+
+    if let Some(spec) = service.spec {
+        if let Some(service_ports) = spec.ports {
+            for sp in service_ports {
+                if let Some(IntOrString::String(ref name)) = sp.target_port {
+                    let selector_string = spec.selector.as_ref().map_or_else(
+                        || String::new(),
+                        |s| {
+                            s.iter()
+                                .map(|(key, value)| format!("{}={}", key, value))
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        },
+                    );
+
+                    let pods = api_pod
+                        .list(&ListParams::default().labels(&selector_string))
+                        .await
+                        .map_err(|e| format!("Failed to list pods: {}", e))?;
+
+                    'port_search: for pod in pods {
+                        if let Some(spec) = &pod.spec {
+                            for container in &spec.containers {
+                                if let Some(ports) = &container.ports {
+                                    for cp in ports {
+                                        // Match the port name
+                                        if cp.name.as_deref() == Some(name) {
+                                            service_port_infos.push(KubeServicePortInfo {
+                                                name: cp.name.clone(),
+                                                port: Some(IntOrString::Int(
+                                                    cp.container_port as i32,
+                                                )),
+                                            });
+                                            break 'port_search;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else if let Some(IntOrString::Int(port)) = sp.target_port {
+                    service_port_infos.push(KubeServicePortInfo {
+                        name: sp.name,
+                        port: Some(IntOrString::Int(port)),
+                    });
+                }
+            }
+        }
+    }
+
+    if service_port_infos.is_empty() {
+        return Err(format!(
+            "No ports found for service '{}' in namespace '{}'",
+            service_name, namespace
+        ));
+    }
+
+    Ok(service_port_infos)
 }
