@@ -331,11 +331,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
 
   return (
     <Center>
-      <Modal
-        isOpen={isModalOpen}
-        onClose={handleCancel}
-        size='xs'
-      >
+      <Modal isOpen={isModalOpen} onClose={handleCancel} size='xs'>
         <ModalOverlay bg='transparent' />
         <ModalContent mx={5} my={5} mt={8} w='auto' h='auto'>
           <ModalCloseButton />
