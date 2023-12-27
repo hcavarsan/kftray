@@ -335,8 +335,6 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
         isOpen={isModalOpen}
         onClose={handleCancel}
         size='xs'
-        maxH='300px'
-        h='auto'
       >
         <ModalOverlay bg='transparent' />
         <ModalContent mx={5} my={5} mt={8} w='auto' h='auto'>
