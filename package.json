@@ -1,6 +1,6 @@
 {
   "name": "kftray",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -28,6 +28,7 @@
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
     "react-icons": "^4.12.0",
+    "react-select": "^5.8.0",
     "tauri-plugin-log-api": "github:tauri-apps/tauri-plugin-log#v1"
   },
   "devDependencies": {
@@ -51,6 +52,7 @@
     "eslint-plugin-simple-import-sort": "^10.0.0",
     "jsdom": "^23.0.1",
     "prettier": "^3.1.1",
+    "react-query": "^3.39.3",
     "taze": "^0.13.0",
     "typecheck": "^0.1.2",
     "typescript": "^5.3.3",
