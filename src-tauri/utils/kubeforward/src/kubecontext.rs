@@ -1,30 +1,45 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use k8s_openapi::{
     api::core::v1::{Namespace, Service},
     apimachinery::pkg::util::intstr::IntOrString,
 };
 
 use crate::vx::Pod;
+use tower::ServiceBuilder;
 
 use kube::{
     api::{Api, ListParams},
+    client::ConfigExt,
     config::{Config, KubeConfigOptions, Kubeconfig},
     Client, ResourceExt,
 };
 use serde::Serialize;
 
 pub async fn create_client_with_specific_context(context_name: &str) -> Result<Client> {
-    let config_options = KubeConfigOptions {
-        context: Some(context_name.to_owned()), // Add the context name to the options
-        ..Default::default()
-    };
+    let kubeconfig = Kubeconfig::read().context("Failed to read kubeconfig")?;
 
-    // Here is where you need to make the change
-    let config = Config::from_kubeconfig(&config_options).await?;
-    let client = Client::try_from(config)?; // use try_from instead of from
+    let config = Config::from_custom_kubeconfig(
+        kubeconfig,
+        &KubeConfigOptions {
+            context: Some(context_name.to_owned()),
+            ..Default::default()
+        },
+    )
+    .await
+    .context("Failed to create configuration from kubeconfig")?;
+
+    let https_connector = config
+        .rustls_https_connector()
+        .context("Failed to create Rustls HTTPS connector")?;
+    let service = ServiceBuilder::new()
+        .layer(config.base_uri_layer())
+        .option_layer(config.auth_layer()?)
+        .service(hyper::Client::builder().build(https_connector));
+
+    let client = Client::new(service, config.default_namespace);
+
     Ok(client)
 }
-
 #[derive(Serialize)]
 pub struct KubeContextInfo {
     pub name: String,
