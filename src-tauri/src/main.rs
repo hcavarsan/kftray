@@ -117,6 +117,7 @@ fn main() {
             kubeforward::kubecontext::list_namespaces,
             kubeforward::kubecontext::list_services,
             kubeforward::kubecontext::list_service_ports,
+			kubeforward::proxy::deploy_and_forward_pod,
             config::get_configs,
             config::insert_config,
             config::delete_config,

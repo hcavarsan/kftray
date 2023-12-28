@@ -3,12 +3,11 @@ import { MdClose } from 'react-icons/md'
 
 import {
   Box,
-  Center,
+  Button, Center,
   IconButton,
   useColorModeValue,
   useDisclosure,
-  VStack,
-} from '@chakra-ui/react'
+  VStack } from '@chakra-ui/react'
 import { open, save } from '@tauri-apps/api/dialog'
 import { readTextFile, writeTextFile } from '@tauri-apps/api/fs'
 import { sendNotification } from '@tauri-apps/api/notification'
@@ -24,6 +23,25 @@ const initialLocalPort = 0
 const initialId = 0
 const initialStatus = 0
 const KFTray = () => {
+  const fixedParameters = {
+    contextName: context,
+    namespace: 'default',
+    localPort: 6379,
+    remotePort: 6379,
+    remoteAddress: 'redis-local.gcp.com',
+    protocol: 'tcp',
+  }
+
+  const handleDeployAndForwardClick = async () => {
+    try {
+      const response = await invoke('deploy_and_forward_pod', fixedParameters)
+
+
+      console.log('Deploy and Forward successful:', response)
+    } catch (error) {
+      console.error('Error deploying and forwarding:', error)
+    }
+  }
   const { isOpen, onOpen, onClose } = useDisclosure()
   const [configs, setConfigs] = useState<Status[]>([])
   const [isModalOpen, setIsModalOpen] = useState(false)
@@ -459,6 +477,13 @@ const KFTray = () => {
           padding='15px'
           mt='2px'
         >
+          <Button
+            colorScheme='blue'
+            onClick={handleDeployAndForwardClick}
+            m={4}
+          >
+            Deploy and Forward
+          </Button>
           <AddConfigModal
             isModalOpen={isModalOpen}
             closeModal={closeModal}

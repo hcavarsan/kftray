@@ -1,7 +1,7 @@
 pub mod kubecontext;
 pub mod pod_selection;
 pub mod port_forward;
-
+pub mod proxy;
 pub(crate) use k8s_openapi::api::core::v1 as vx;
 
 use anyhow::Context;
