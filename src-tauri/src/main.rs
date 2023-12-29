@@ -6,7 +6,10 @@
 mod config;
 mod db;
 
+use log::LevelFilter;
 use std::env;
+use std::fs::OpenOptions;
+use std::path::PathBuf;
 use tauri::{CustomMenuItem, Manager, SystemTray, SystemTrayEvent, SystemTrayMenu};
 use tauri_plugin_positioner::{Position, WindowExt};
 
@@ -34,8 +37,45 @@ fn open_save_dialog(state: State<SaveDialogState>) {
 fn close_save_dialog(state: State<SaveDialogState>) {
     state.is_open.store(false, Ordering::SeqCst);
 }
+
+fn get_log_path() -> PathBuf {
+    let home_dir = dirs::home_dir().expect("Could not find the home directory");
+    home_dir.join(".kftray").join("app.log")
+}
+
+fn setup_logging() {
+    let log_filter = match env::var("RUST_LOG") {
+        Ok(filter) => filter.parse().unwrap_or(LevelFilter::Info),
+        Err(_) => LevelFilter::Off,
+    };
+
+    if env::var("KFTRAY_DEBUG").is_ok() {
+        let log_path = get_log_path();
+        let log_dir = log_path.parent().expect("Could not find the log directory");
+        std::fs::create_dir_all(log_dir).expect("Could not create log directory");
+
+        let log_file = OpenOptions::new()
+            .create(true)
+            .write(true)
+            .append(true)
+            .open(log_path)
+            .expect("Could not open log file");
+
+        env_logger::Builder::from_default_env()
+            .filter_level(log_filter)
+            .format_timestamp_secs()
+            .target(env_logger::Target::Pipe(Box::new(log_file)))
+            .init();
+    } else {
+        env_logger::Builder::new()
+            .filter_level(log_filter)
+            .format_timestamp_secs()
+            .init();
+    }
+}
+
 fn main() {
-    env_logger::init();
+    setup_logging();
     let _ = fix_path_env::fix();
     let quit = CustomMenuItem::new("quit".to_string(), "Quit").accelerator("Cmd+Q");
     let system_tray_menu = SystemTrayMenu::new().add_item(quit);
