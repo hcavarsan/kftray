@@ -938,6 +938,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "directories-next"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "339ee130d97a610ea5a5872d2bbb130fdf68884ff09d3028b81bec8a1ac23bbc"
+dependencies = [
+ "cfg-if",
+ "dirs-sys-next",
+]
+
+[[package]]
 name = "dirs"
 version = "5.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2274,6 +2284,7 @@ dependencies = [
 name = "kftray"
 version = "0.0.0"
 dependencies = [
+ "directories-next",
  "dirs",
  "env_logger 0.10.1",
  "fix-path-env",
