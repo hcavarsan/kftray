@@ -1,77 +1,137 @@
-use crate::{Target, TargetSelector, Port};
-use crate::port_forward::PortForward;
 use crate::kubecontext::create_client_with_specific_context;
 use k8s_openapi::api::core::v1::Pod;
+use kube::api::{DeleteParams, ListParams};
 use kube::{api::Api, Client};
-use serde_json::json;
 use kube_runtime::wait::conditions;
-use std::time::{SystemTime, UNIX_EPOCH};
 use rand::{distributions::Alphanumeric, Rng};
+use serde_json::json;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+use crate::port_forward::{start_port_forward, stop_port_forward, Config, CustomResponse};
 
 #[tauri::command]
-pub async fn deploy_and_forward_pod(
-    context_name: Option<String>,
-    namespace: &str,
-    local_port: u16,
-    remote_port: u16,
-    remote_address: &str,
-    protocol: &str,
-) -> Result<(), String> {
-    let timestamp = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|e| e.to_string())?.as_secs();
+pub async fn deploy_and_forward_pod(configs: Vec<Config>) -> Result<Vec<CustomResponse>, String> {
+    let mut responses: Vec<CustomResponse> = Vec::new();
 
-	let random_string: String = rand::thread_rng()
-    .sample_iter(&Alphanumeric)
-    .take(6)
-    .map(|b| char::from(b).to_ascii_lowercase())
-    .collect();
+    for mut config in configs {
+        let client = if !config.context.is_empty() {
+            create_client_with_specific_context(&config.context)
+                .await
+                .map_err(|e| e.to_string())?
+        } else {
+            Client::try_default().await.map_err(|e| e.to_string())?
+        };
 
-    let hashed_name = format!("kftray-forward-{}-{}", timestamp, random_string);
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_err(|e| e.to_string())?
+            .as_secs();
 
-    let client = match &context_name {
-        Some(ref context) => create_client_with_specific_context(context).await.map_err(|e| e.to_string())?,
-        None => Client::try_default().await.map_err(|e| e.to_string())?,
-    };
-    let pod_manifest = json!({
-        "apiVersion": "v1",
-        "kind": "Pod",
-        "metadata": {
-            "name": hashed_name,
-            "labels": {
-                "app": hashed_name,
-            }
-        },
-        "spec": {
-            "containers": [{
+        let random_string: String = rand::thread_rng()
+            .sample_iter(&Alphanumeric)
+            .take(6)
+            .map(|b| char::from(b).to_ascii_lowercase())
+            .collect();
+
+        let hashed_name = format!("kftray-forward-{}-{}", timestamp, random_string);
+
+        let config_id_str = config
+            .id
+            .map_or_else(|| "default".into(), |id| id.to_string());
+
+        let pod_manifest = json!({
+            "apiVersion": "v1",
+            "kind": "Pod",
+            "metadata": {
                 "name": hashed_name,
-                "image": "ghcr.io/dlemel8/tunneler-server:main",
-                "env": [
-                    {"name": "LOCAL_PORT", "value": local_port.to_string()},
-                    {"name": "REMOTE_PORT", "value": remote_port.to_string()},
-                    {"name": "REMOTE_ADDRESS", "value": remote_address},
-                    {"name": "TUNNELED_TYPE", "value": protocol}
-                ],
-                "args": [protocol],
-            }],
+                "labels": {
+                    "app": hashed_name,
+                    "config_id": config_id_str
+                }
+            },
+            "spec": {
+                "containers": [{
+                    "name": hashed_name,
+                    "image": "ghcr.io/dlemel8/tunneler-server:main",
+                    "env": [
+                        {"name": "LOCAL_PORT", "value": config.local_port.to_string()},
+                        {"name": "REMOTE_PORT", "value": config.remote_port.to_string()},
+                        {"name": "REMOTE_ADDRESS", "value": config.remote_address},
+                        {"name": "TUNNELED_TYPE", "value": "tcp"}
+                    ],
+                    "args": ["tcp"],
+                }],
+            }
+        });
+        let pod: Pod = serde_json::from_value(pod_manifest).map_err(|e| e.to_string())?;
+        let pods: Api<Pod> = Api::namespaced(client.clone(), &config.namespace);
+
+        pods.create(&kube::api::PostParams::default(), &pod)
+            .await
+            .map_err(|e| e.to_string())?;
+        kube_runtime::wait::await_condition(
+            pods.clone(),
+            &hashed_name,
+            conditions::is_pod_running(),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+
+        config.service = hashed_name;
+
+        let start_response = start_port_forward(vec![config.clone()]).await;
+        match start_response {
+            Ok(mut port_forward_responses) => {
+                let response = port_forward_responses
+                    .pop()
+                    .ok_or("No response received from port forwarding")?;
+                responses.push(response);
+            }
+            Err(e) => {
+                return Err(format!(
+                    "Failed to start port forwarding for {}: {}",
+                    config.service, e
+                ));
+            }
         }
-    });
+    }
 
+    Ok(responses)
+}
 
-    let pod: Pod = serde_json::from_value(pod_manifest).map_err(|e| e.to_string())?;
-    let pods: Api<Pod> = Api::namespaced(client.clone(), namespace);
-    pods.create(&kube::api::PostParams::default(), &pod).await.map_err(|e| e.to_string())?;
-    kube_runtime::wait::await_condition(pods.clone(), &hashed_name, conditions::is_pod_running()).await.map_err(|e| e.to_string())?;
+#[tauri::command]
+pub async fn stop_proxy_forward(
+    config_id: String,
+    namespace: &str,
+    service_name: String,
+) -> Result<CustomResponse, String> {
+    let client = Client::try_default().await.map_err(|e| e.to_string())?;
+    let pods: Api<Pod> = Api::namespaced(client, namespace);
 
+    let lp = ListParams::default().labels(&format!("config_id={}", config_id));
+    let pod_list = pods.list(&lp).await.map_err(|e| e.to_string())?;
 
-	let target = Target::new(
-		TargetSelector::ServiceName(hashed_name.clone()),
-		Port::Number(remote_port as i32),
-		namespace.to_owned(),
-	);
+    if let Some(pod) = pod_list.items.into_iter().next() {
+        let pod_name = pod.metadata.name.unwrap();
 
+        let delete_options = DeleteParams {
+            grace_period_seconds: Some(0),
+            propagation_policy: Some(kube::api::PropagationPolicy::Background),
+            ..Default::default()
+        };
 
-    let port_forward = PortForward::new(target, Some(local_port), context_name.clone()).await.map_err(|e| e.to_string())?;
-    port_forward.port_forward().await.map_err(|e| e.to_string())?;
+        pods.delete(&pod_name, &delete_options)
+            .await
+            .map_err(|e| e.to_string())?;
+    }
 
+    let service_clone = service_name.clone();
+    let stop_result = stop_port_forward(service_clone, config_id.clone()).await;
 
-    Ok(())
+    stop_result.map_err(|e| {
+        format!(
+            "Failed to stop port forwarding process for service '{}': {}",
+            service_name, e
+        )
+    })
 }

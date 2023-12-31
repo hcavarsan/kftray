@@ -86,6 +86,11 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     value: string | number
     label: string
   } | null>(null)
+  const [selectedWorkloadType, setSelectedWorkloadType] = useState<{
+    name?: string
+    value: string | number
+    label: string
+  } | null>(null)
 
   const queryClient = useQueryClient()
   const customStyles: StylesConfig = {
@@ -193,6 +198,11 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
 
   useEffect(() => {
     if (isEdit && isModalOpen) {
+      setSelectedWorkloadType(
+        newConfig.workload_type
+          ? { label: newConfig.workload_type, value: newConfig.workload_type }
+          : null,
+      )
       setSelectedContext(
         newConfig.context
           ? { label: newConfig.context, value: newConfig.context }
@@ -224,6 +234,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     newConfig.namespace,
     newConfig.service,
     newConfig.remote_port,
+    newConfig.workload_type,
   ])
 
   useEffect(() => {
@@ -238,6 +249,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     setSelectedService(null)
     setSelectedPort(null)
     setPortData([])
+    setSelectedWorkloadType(null) // Make sure to reset this state as well
   }
 
   const handleSelectChange = (
@@ -299,6 +311,9 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     case 'remote_port':
       setSelectedPort(selectedOption)
       break
+    case 'workload_type':
+      setSelectedWorkloadType(selectedOption)
+      break
     }
 
     handleInputChange({
@@ -338,6 +353,25 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
           <ModalBody p={2} mt={3}>
             <form onSubmit={handleSave}>
               <FormControl>
+                <FormLabel htmlFor='workload_type'>Workload Type</FormLabel>
+                <ReactSelect
+                  styles={customStyles}
+                  name='workload_type'
+                  options={[
+                    { label: 'Service', value: 'service' },
+                    { label: 'Proxy', value: 'proxy' },
+                  ]}
+                  value={selectedWorkloadType}
+                  onChange={selectedOption =>
+                    handleSelectChange(
+                      selectedOption as Option,
+                      { name: 'workload_type' } as ActionMeta<Option>,
+                    )
+                  }
+                />
+              </FormControl>
+
+              <FormControl>
                 <FormLabel htmlFor='context'>Context</FormLabel>
                 <ReactSelect
                   styles={customStyles}
@@ -375,48 +409,95 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                 />
               </FormControl>
 
-              <FormControl mt={4}>
-                <FormLabel htmlFor='service'>Service</FormLabel>
-                <ReactSelect
-                  styles={customStyles}
-                  name='service'
-                  options={serviceQuery.data?.map(service => ({
-                    label: service.name,
-                    value: service.name,
-                  }))}
-                  value={selectedService}
-                  onChange={selectedOption =>
-                    handleSelectChange(
-                      selectedOption as Option,
-                      { name: 'service' } as ActionMeta<Option>,
-                    )
-                  }
-                />
-              </FormControl>
-
-              <FormControl mt={4}>
-                <FormLabel htmlFor='remote_port'>Target Port</FormLabel>
-                <ReactSelect
-                  styles={customStyles}
-                  name='remote_port'
-                  options={portData
-                  .filter(port => port.port !== undefined)
-                  .map(port => ({
-                    label: port.port
-                      ? port.port.toString() + ' - ' + port.name
-                      : '',
-                    value: port.port,
-                  }))}
-                  value={selectedPort}
-                  onChange={selectedOption =>
-                    handleSelectChange(
-                      selectedOption as Option,
-                      { name: 'remote_port' } as ActionMeta<Option>,
-                    )
-                  }
-                />
-              </FormControl>
-
+              {newConfig.workload_type === 'proxy' ? (
+                <>
+                  <FormControl mt={4}>
+                    <FormLabel htmlFor='remote_address'>
+                      Remote Address
+                    </FormLabel>
+                    <Input
+                      id='remote_address'
+                      type='text'
+                      value={newConfig.remote_address || ''}
+                      name='remote_address'
+                      onChange={handleInputChange}
+                      size='sm'
+                      bg={theme.colors.gray[800]}
+                      borderColor={theme.colors.gray[700]}
+                      _hover={{
+                        borderColor: theme.colors.gray[600],
+                      }}
+                      _placeholder={{
+                        color: theme.colors.gray[500],
+                      }}
+                      color={theme.colors.gray[300]}
+                    />
+                  </FormControl>
+                  <FormControl mt={4}>
+                    <FormLabel htmlFor='remote_port'>Remote Port</FormLabel>
+                    <Input
+                      id='remote_port'
+                      type='number'
+                      value={newConfig.remote_port || ''}
+                      name='remote_port'
+                      onChange={handleInputChange}
+                      size='sm'
+                      bg={theme.colors.gray[800]}
+                      borderColor={theme.colors.gray[700]}
+                      _hover={{
+                        borderColor: theme.colors.gray[600],
+                      }}
+                      _placeholder={{
+                        color: theme.colors.gray[500],
+                      }}
+                      color={theme.colors.gray[300]}
+                    />
+                  </FormControl>
+                </>
+              ) : (
+                <>
+                  <FormControl mt={4}>
+                    <FormLabel htmlFor='service'>Service</FormLabel>
+                    <ReactSelect
+                      styles={customStyles}
+                      name='service'
+                      options={serviceQuery.data?.map(service => ({
+                        label: service.name,
+                        value: service.name,
+                      }))}
+                      value={selectedService}
+                      onChange={selectedOption =>
+                        handleSelectChange(
+                          selectedOption as Option,
+                          { name: 'service' } as ActionMeta<Option>,
+                        )
+                      }
+                    />
+                  </FormControl>
+                  <FormControl mt={4}>
+                    <FormLabel htmlFor='remote_port'>Target Port</FormLabel>
+                    <ReactSelect
+                      styles={customStyles}
+                      name='remote_port'
+                      options={portData
+                      .filter(port => port.port !== undefined)
+                      .map(port => ({
+                        label: port.port
+                          ? port.port.toString() + ' - ' + port.name
+                          : '',
+                        value: port.port,
+                      }))}
+                      value={selectedPort}
+                      onChange={selectedOption =>
+                        handleSelectChange(
+                          selectedOption as Option,
+                          { name: 'remote_port' } as ActionMeta<Option>,
+                        )
+                      }
+                    />
+                  </FormControl>
+                </>
+              )}
               <FormControl mt={2}>
                 <FormLabel htmlFor='local_port'>Local Port</FormLabel>
                 <Input

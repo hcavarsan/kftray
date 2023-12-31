@@ -12,6 +12,7 @@ use std::fs::OpenOptions;
 use std::path::PathBuf;
 use tauri::{CustomMenuItem, Manager, SystemTray, SystemTrayEvent, SystemTrayMenu};
 use tauri_plugin_positioner::{Position, WindowExt};
+use tokio::runtime::Runtime;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::State;
@@ -125,6 +126,19 @@ fn main() {
                 }
                 SystemTrayEvent::MenuItemClick { id, .. } => match id.as_str() {
                     "quit" => {
+                        let runtime = Runtime::new().expect("Failed to create a Tokio runtime");
+
+                        runtime.block_on(async {
+                            match kubeforward::port_forward::stop_all_port_forward().await {
+                                Ok(_) => {
+                                    println!("Successfully stopped all port forwards.");
+                                }
+                                Err(err) => {
+                                    eprintln!("Failed to stop port forwards: {}", err);
+                                }
+                            }
+                        });
+
                         std::process::exit(0);
                     }
                     "hide" => {
@@ -157,7 +171,8 @@ fn main() {
             kubeforward::kubecontext::list_namespaces,
             kubeforward::kubecontext::list_services,
             kubeforward::kubecontext::list_service_ports,
-			kubeforward::proxy::deploy_and_forward_pod,
+            kubeforward::proxy::deploy_and_forward_pod,
+            kubeforward::proxy::stop_proxy_forward,
             config::get_configs,
             config::insert_config,
             config::delete_config,

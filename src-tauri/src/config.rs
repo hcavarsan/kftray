@@ -7,11 +7,13 @@ pub struct Config {
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     id: Option<i64>,
-    service: String,
+    service: Option<String>,
     namespace: String,
     local_port: u16,
     remote_port: u16,
     context: String,
+    workload_type: String,
+    remote_address: Option<String>,
 }
 
 #[tauri::command]

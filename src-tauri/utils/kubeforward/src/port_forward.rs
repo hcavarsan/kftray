@@ -6,7 +6,9 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 use tokio::net::TcpListener;
+use tokio::runtime::Runtime;
 use tokio::task::JoinHandle;
+
 use tokio_stream::wrappers::TcpListenerStream;
 
 use crate::{
@@ -14,7 +16,7 @@ use crate::{
     vx::{Pod, Service},
 };
 use kube::{
-    api::{Api, ListParams},
+    api::{Api, DeleteParams, ListParams},
     Client,
 };
 
@@ -140,44 +142,48 @@ impl<'a> TargetPodFinder<'a> {
     pub(crate) async fn find(&self, target: &crate::Target) -> anyhow::Result<crate::TargetPod> {
         let ready_pod = AnyReady {};
         match &target.selector {
-            crate::TargetSelector::ServiceName(name) => {
-                match self.svc_api.get(name).await {
-                    Ok(service) => {
-                        if let Some(selector) = service.spec.and_then(|spec| spec.selector) {
-                            let label_selector_str = selector
-                                .iter()
-                                .map(|(key, value)| format!("{}={}", key, value))
-                                .collect::<Vec<_>>()
-                                .join(",");
+            crate::TargetSelector::ServiceName(name) => match self.svc_api.get(name).await {
+                Ok(service) => {
+                    if let Some(selector) = service.spec.and_then(|spec| spec.selector) {
+                        let label_selector_str = selector
+                            .iter()
+                            .map(|(key, value)| format!("{}={}", key, value))
+                            .collect::<Vec<_>>()
+                            .join(",");
 
-                            let pods = self.pod_api.list(&ListParams::default().labels(&label_selector_str)).await?;
-                            let pod = ready_pod.select(&pods.items, &label_selector_str)?;
-                            target.find(pod, None)
-                        } else {
-                            Err(anyhow::anyhow!("No selector found for service '{}'", name))
-                        }
-                    },
-                    Err(kube::Error::Api(kube::error::ErrorResponse { code: 404, .. })) => {
-                        let label_selector_str = format!("app={}", name);
-                        let pods = self.pod_api.list(&ListParams::default().labels(&label_selector_str)).await?;
+                        let pods = self
+                            .pod_api
+                            .list(&ListParams::default().labels(&label_selector_str))
+                            .await?;
                         let pod = ready_pod.select(&pods.items, &label_selector_str)?;
                         target.find(pod, None)
-                    },
-                    Err(e) => Err(anyhow::anyhow!("Error finding service '{}': {}", name, e))
+                    } else {
+                        Err(anyhow::anyhow!("No selector found for service '{}'", name))
+                    }
                 }
-            }
+                Err(kube::Error::Api(kube::error::ErrorResponse { code: 404, .. })) => {
+                    let label_selector_str = format!("app={}", name);
+                    let pods = self
+                        .pod_api
+                        .list(&ListParams::default().labels(&label_selector_str))
+                        .await?;
+                    let pod = ready_pod.select(&pods.items, &label_selector_str)?;
+                    target.find(pod, None)
+                }
+                Err(e) => Err(anyhow::anyhow!("Error finding service '{}': {}", name, e)),
+            },
         }
     }
 }
 
-
 lazy_static! {
-    static ref CHILD_PROCESSES: Arc<Mutex<HashMap<String, JoinHandle<()>>>> =
+    pub static ref CHILD_PROCESSES: Arc<Mutex<HashMap<String, JoinHandle<()>>>> =
         Arc::new(Mutex::new(HashMap::new()));
 }
 
 #[derive(serde::Serialize)]
 pub struct CustomResponse {
+    // You may also consider making these fields public if needed elsewhere.
     id: Option<i64>,
     service: String,
     namespace: String,
@@ -189,14 +195,43 @@ pub struct CustomResponse {
     status: i32,
 }
 
+impl CustomResponse {
+    // Public constructor method to create a new instance of CustomResponse.
+    pub fn new(
+        id: Option<i64>,
+        service: String,
+        namespace: String,
+        local_port: u16,
+        remote_port: u16,
+        context: String,
+        stdout: String,
+        stderr: String,
+        status: i32,
+    ) -> Self {
+        CustomResponse {
+            id,
+            service,
+            namespace,
+            local_port,
+            remote_port,
+            context,
+            stdout,
+            stderr,
+            status,
+        }
+    }
+}
+
 #[derive(Clone, Deserialize, PartialEq, Serialize, Debug)]
 pub struct Config {
-    id: Option<i64>,
-    service: String,
-    namespace: String,
-    local_port: u16,
-    remote_port: u16,
-    context: String,
+    pub id: Option<i64>,
+    pub service: String,
+    pub namespace: String,
+    pub local_port: u16,
+    pub remote_port: u16,
+    pub context: String,
+    pub workload_type: String,
+    pub remote_address: Option<String>,
 }
 
 #[tauri::command]
@@ -231,12 +266,17 @@ pub async fn start_port_forward(configs: Vec<Config>) -> Result<Vec<CustomRespon
             actual_local_port,
             &config.service
         );
-
+        println!(
+            "Port forwarding is set up on local port: {} for service: {} for config_id: {}",
+            actual_local_port,
+            &config.service,
+            config.id.unwrap()
+        );
         // Store the JoinHandle to the global child processes map.
         CHILD_PROCESSES
             .lock()
             .unwrap()
-            .insert(config.service.clone(), handle);
+            .insert(config.id.unwrap().to_string(), handle);
 
         // Append a new CustomResponse to responses collection.
         responses.push(CustomResponse {
@@ -265,48 +305,109 @@ pub async fn start_port_forward(configs: Vec<Config>) -> Result<Vec<CustomRespon
 #[tauri::command]
 pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
     let mut responses = Vec::new();
-    let child_processes = std::mem::take(&mut *CHILD_PROCESSES.lock().unwrap());
+    let client = Client::try_default().await.map_err(|e| e.to_string())?;
 
-    for (service, handle) in child_processes {
+    let handle_map: HashMap<String, tokio::task::JoinHandle<()>> =
+        { CHILD_PROCESSES.lock().unwrap().drain().collect() };
+
+    for handle in handle_map.values() {
         handle.abort(); // Stop the port forwarding task
+    }
 
-        responses.push(CustomResponse {
-            id: None,
-            service,
-            namespace: String::new(),
-            local_port: 0,
-            remote_port: 0,
-            context: String::new(),
-            stdout: String::from("Port forwarding has been stopped"),
-            stderr: String::new(),
-            status: 0,
-        });
+    let pods: Api<Pod> = Api::all(client.clone());
+    for config_id in handle_map.keys() {
+        let lp = ListParams::default().labels(&format!("config_id={}", config_id));
+        let pod_list = match pods.list(&lp).await {
+            Ok(pods) => pods,
+            Err(e) => {
+                eprintln!("Error fetching pods for config_id {}: {}", config_id, e);
+                continue;
+            }
+        };
+
+        for pod in pod_list.items {
+            if let Some(pod_name) = pod.metadata.name.clone() {
+                if !pod_name.starts_with("kftray-forward-") {
+                    continue;
+                }
+
+                let namespace = pod
+                    .metadata
+                    .namespace
+                    .as_ref()
+                    .map(|s| s.as_str())
+                    .unwrap_or_default();
+                let namespaced_pods: Api<Pod> = Api::namespaced(client.clone(), namespace);
+                let dp = DeleteParams {
+                    grace_period_seconds: Some(0),
+                    propagation_policy: Some(kube::api::PropagationPolicy::Background),
+                    ..Default::default()
+                };
+
+                if let Err(e) = namespaced_pods.delete(&pod_name, &dp).await {
+                    responses.push(CustomResponse {
+                        id: config_id.parse().ok(),
+                        service: pod_name.clone(),
+                        namespace: namespace.to_string(),
+                        local_port: 0,
+                        remote_port: 0,
+                        context: String::new(),
+                        stdout: format!("Failed to delete pod {}", pod_name),
+                        stderr: e.to_string(),
+                        status: 1,
+                    });
+                } else {
+                    responses.push(CustomResponse {
+                        id: config_id.parse().ok(),
+                        service: pod_name.clone(),
+                        namespace: namespace.to_string(),
+                        local_port: 0,
+                        remote_port: 0,
+                        context: String::new(),
+                        stdout: format!("Deleted pod {}", pod_name),
+                        stderr: String::new(),
+                        status: 0,
+                    });
+                }
+            }
+        }
     }
 
     Ok(responses)
 }
 
 #[tauri::command]
-pub fn kill_all_processes() -> Result<(), String> {
-    let mut child_processes = CHILD_PROCESSES.lock().unwrap();
-    for (_, handle) in child_processes.drain() {
-        handle.abort(); // Use abort() to cancel the running async task
-    }
-    Ok(())
-}
-
-#[tauri::command]
 pub fn quit_app(window: tauri::Window) {
-    println!("quit_app called");
+    println!("quit_app called.");
+
+    // Create a new tokio runtime
+    let rt = Runtime::new().unwrap();
+
+    // Block on the async code
+    rt.block_on(async {
+        match stop_all_port_forward().await {
+            Ok(_) => println!("Successfully stopped all port forwarding."),
+            Err(err) => eprintln!("Error when stopping port forwarding: {}", err),
+        }
+    });
+
     window.close().unwrap();
-    let _ = kill_all_processes();
+    println!("Application window closed.");
+
+    // Runtime is dropped here, and its shutdown will await all tasks to complete.
 }
 
 #[tauri::command]
-pub async fn stop_port_forward(service_name: String) -> Result<CustomResponse, String> {
+pub async fn stop_port_forward(
+    service_name: String,
+    config_id: String,
+) -> Result<CustomResponse, String> {
     let mut child_processes = CHILD_PROCESSES.lock().unwrap();
-
-    if let Some(handle) = child_processes.remove(&service_name) {
+    println!(
+        "Attempting to stop port forwarding for service: {} and config_id: {}",
+        service_name, config_id
+    );
+    if let Some(handle) = child_processes.remove(&config_id) {
         handle.abort();
 
         Ok(CustomResponse {

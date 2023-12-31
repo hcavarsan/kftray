@@ -45,10 +45,33 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
     setIsToggling.on()
     try {
       if (isChecked) {
-        await invoke('start_port_forward', { configs: [config] })
+        if (config.workload_type === 'service') {
+          await invoke('start_port_forward', { configs: [config] })
+        } else if (config.workload_type === 'proxy') {
+          await invoke('deploy_and_forward_pod', { configs: [config] })
+        } else {
+          throw new Error(`Unsupported workload type: ${config.workload_type}`)
+        }
         updateConfigRunningState(config.id, true)
       } else {
-        await invoke('stop_port_forward', { serviceName: config.service })
+        // Stopping port forwarding logic
+        if (config.workload_type === 'service') {
+          await invoke('stop_port_forward', {
+            serviceName: config.service,
+            configId: config.id.toString(),
+          })
+        } else if (config.workload_type === 'proxy') {
+          await invoke('stop_proxy_forward', {
+            configId: config.id.toString(),
+            namespace: config.namespace,
+            serviceName: config.service,
+            localPort: config.local_port,
+            remoteAddress: config.remote_address,
+            protocol: 'tcp',
+          })
+        } else {
+          throw new Error(`Unsupported workload type: ${config.workload_type}`)
+        }
         updateConfigRunningState(config.id, false)
       }
     } catch (error) {
@@ -69,7 +92,9 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
       <Tr key={config.id}>
         {showContext && <Td width='10%'>{config.context}</Td>}
         <Td width='20%' color={textColor} fontFamily={fontFamily}>
-          {config.service}
+          {config.workload_type === 'proxy'
+            ? config.remote_address
+            : config.service}
         </Td>
         <Td width='20%' color={textColor} fontFamily={fontFamily}>
           {config.namespace}

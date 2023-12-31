@@ -3,11 +3,13 @@ import { MdClose } from 'react-icons/md'
 
 import {
   Box,
-  Button, Center,
+  Button,
+  Center,
   IconButton,
   useColorModeValue,
   useDisclosure,
-  VStack } from '@chakra-ui/react'
+  VStack,
+} from '@chakra-ui/react'
 import { open, save } from '@tauri-apps/api/dialog'
 import { readTextFile, writeTextFile } from '@tauri-apps/api/fs'
 import { sendNotification } from '@tauri-apps/api/notification'
@@ -23,25 +25,6 @@ const initialLocalPort = 0
 const initialId = 0
 const initialStatus = 0
 const KFTray = () => {
-  const fixedParameters = {
-    contextName: context,
-    namespace: 'default',
-    localPort: 6379,
-    remotePort: 6379,
-    remoteAddress: 'redis-local.gcp.com',
-    protocol: 'tcp',
-  }
-
-  const handleDeployAndForwardClick = async () => {
-    try {
-      const response = await invoke('deploy_and_forward_pod', fixedParameters)
-
-
-      console.log('Deploy and Forward successful:', response)
-    } catch (error) {
-      console.error('Error deploying and forwarding:', error)
-    }
-  }
   const { isOpen, onOpen, onClose } = useDisclosure()
   const [configs, setConfigs] = useState<Status[]>([])
   const [isModalOpen, setIsModalOpen] = useState(false)
@@ -55,6 +38,8 @@ const KFTray = () => {
     local_port: 0,
     remote_port: 0,
     namespace: '',
+    workload_type: '',
+    remote_address: '',
   })
 
   const updateConfigRunningState = (id: number, isRunning: boolean) => {
@@ -73,6 +58,8 @@ const KFTray = () => {
       local_port: initialLocalPort,
       remote_port: initalRemotePort,
       namespace: '',
+      workload_type: '',
+      remote_address: '',
     })
     setIsEdit(false)
     setIsModalOpen(true)
@@ -216,6 +203,8 @@ const KFTray = () => {
         local_port: configToEdit.local_port,
         remote_port: configToEdit.remote_port,
         context: configToEdit.context,
+        workload_type: configToEdit.workload_type,
+        remote_address: configToEdit.remote_address,
       })
       setIsEdit(true)
       setIsModalOpen(true)
@@ -271,6 +260,8 @@ const KFTray = () => {
       local_port: newConfig.local_port,
       remote_port: newConfig.remote_port,
       namespace: newConfig.namespace,
+      workload_type: newConfig.workload_type,
+      remote_address: newConfig.remote_address,
     }
 
     try {
@@ -309,37 +300,44 @@ const KFTray = () => {
     setIsInitiating(true)
     const errors = []
 
+    console.log('Starting port forwarding for configs:', configsToStart)
     for (const config of configsToStart) {
       try {
-        // Wrap the single config object in an array
-        await invoke<Response>('start_port_forward', {
-          configs: [
-            {
-              local_port: config.local_port,
-              remote_port: config.remote_port,
-              service: config.service,
-              namespace: config.namespace,
-              context: config.context,
-            },
-          ],
-        })
+        // Determine action based on the workload_type
+        let response
+
+        if (config.workload_type === 'service') {
+          // Existing logic for initiating port forwarding with 'service' workload
+          response = await invoke<Response>('start_port_forward', {
+            configs: [config],
+          })
+        } else if (config.workload_type === 'proxy') {
+          // Logic for initiating port forwarding with 'proxy' workload (new function invoked)
+          response = await invoke<Response>('deploy_and_forward_pod', {
+            configs: [config],
+          })
+        } else {
+          throw new Error(`Unsupported workload type: ${config.workload_type}`)
+        }
         updateConfigRunningState(config.id, true)
-        console.log('errors', errors)
+        console.log(
+          'Port forwarding initiated for config:',
+          config.id,
+          response,
+        )
       } catch (error) {
         console.error(
-          `Error starting port forward for config id ${config.service}:`,
+          `Error starting port forward for config id ${config.id}:`,
           error,
         )
-        if (error instanceof Error) {
-          errors.push({ service: config.service, error: error.toString() }) // Include error details
-        }
+        errors.push({ id: config.id, error })
         updateConfigRunningState(config.id, false)
       }
     }
 
     if (errors.length > 0) {
       const errorMessage = errors
-      .map(e => `Service: ${e.service}: ${e.error}`)
+      .map(e => `Config ID: ${e.id}, Error: ${e.error}`)
       .join(', ')
 
       await sendNotification({
@@ -477,13 +475,6 @@ const KFTray = () => {
           padding='15px'
           mt='2px'
         >
-          <Button
-            colorScheme='blue'
-            onClick={handleDeployAndForwardClick}
-            m={4}
-          >
-            Deploy and Forward
-          </Button>
           <AddConfigModal
             isModalOpen={isModalOpen}
             closeModal={closeModal}
