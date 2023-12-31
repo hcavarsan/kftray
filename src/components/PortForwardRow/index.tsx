@@ -55,9 +55,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
         ' ' +
         config.local_port +
         ' ' +
-        config.remote_address +
-        ' ' +
-        config.protocol,
+        config.remote_address,
     )
     try {
       if (isChecked) {
