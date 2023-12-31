@@ -23,9 +23,11 @@ rusqlite = { version = "0.30.0", features = ["bundled"] }
 window-shadows = "0.2.2"
 dirs = "5.0.1"
 kubeforward = { path = "./utils/kubeforward" }
+openssl-probe = "0.1.5"
 
 hyper = { version = "0.14.27", features = [ "client", "http1", "http2", "tcp", "stream" ] }
 log = "0.4"
+directories-next = "2.0"
 env_logger = "0.10.1"
 wasmedge_quickjs = "0.2.0"
 openssl = { version = "0.10.35", features = ["vendored"] }
