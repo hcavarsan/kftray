@@ -43,6 +43,22 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
 
   const togglePortForwarding = async (isChecked: boolean) => {
     setIsToggling.on()
+    console.log(
+      'togglePortForwarding' +
+        config.workload_type +
+        ' ' +
+        config.service +
+        ' ' +
+        config.id.toString() +
+        ' ' +
+        config.namespace +
+        ' ' +
+        config.local_port +
+        ' ' +
+        config.remote_address +
+        ' ' +
+        config.protocol,
+    )
     try {
       if (isChecked) {
         if (config.workload_type === 'service') {

@@ -452,7 +452,7 @@ const PortForwardTable: React.FC<TableProps> = ({
             Options
           </MenuButton>
 
-          <MenuList>
+          <MenuList zIndex='popover'>
             <MenuItem icon={<MdAdd />} onClick={openModal}>
               Add New Config
             </MenuItem>

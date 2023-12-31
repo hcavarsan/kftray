@@ -25,6 +25,7 @@ env_logger = "0.9"
 rand = "0.8.4"
 kube-runtime = "0.85.0"
 tower = "0.4.11"
+whoami = "1.4.1"
 
 hyper-rustls = { version = "0.24", features = ["webpki-roots"] }
 

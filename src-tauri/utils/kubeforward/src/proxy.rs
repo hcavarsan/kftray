@@ -32,8 +32,11 @@ pub async fn deploy_and_forward_pod(configs: Vec<Config>) -> Result<Vec<CustomRe
             .take(6)
             .map(|b| char::from(b).to_ascii_lowercase())
             .collect();
-
-        let hashed_name = format!("kftray-forward-{}-{}", timestamp, random_string);
+        let username = whoami::username();
+        let hashed_name = format!(
+            "kftray-forward-{}-{}-{}",
+            username, timestamp, random_string
+        );
 
         let config_id_str = config
             .id
@@ -105,33 +108,62 @@ pub async fn stop_proxy_forward(
     namespace: &str,
     service_name: String,
 ) -> Result<CustomResponse, String> {
-    let client = Client::try_default().await.map_err(|e| e.to_string())?;
+    log::info!(
+        "Attempting to stop proxy forward for service: {}",
+        service_name
+    );
+
+    let client = Client::try_default().await.map_err(|e| {
+        log::error!("Failed to create Kubernetes client: {}", e);
+        e.to_string()
+    })?;
     let pods: Api<Pod> = Api::namespaced(client, namespace);
 
     let lp = ListParams::default().labels(&format!("config_id={}", config_id));
-    let pod_list = pods.list(&lp).await.map_err(|e| e.to_string())?;
+    let pod_list = pods.list(&lp).await.map_err(|e| {
+        log::error!("Error listing pods: {}", e);
+        e.to_string()
+    })?;
 
-    if let Some(pod) = pod_list.items.into_iter().next() {
-        let pod_name = pod.metadata.name.unwrap();
+    let username = whoami::username();
+    let pod_prefix = format!("kftray-forward-{}", username);
+    log::info!("Looking for pods with prefix: {}", pod_prefix);
 
-        let delete_options = DeleteParams {
-            grace_period_seconds: Some(0),
-            propagation_policy: Some(kube::api::PropagationPolicy::Background),
-            ..Default::default()
-        };
-
-        pods.delete(&pod_name, &delete_options)
-            .await
-            .map_err(|e| e.to_string())?;
+    for pod in pod_list.items {
+        if let Some(pod_name) = pod.metadata.name {
+            if pod_name.starts_with(&pod_prefix) {
+                log::info!("Found pod to stop: {}", pod_name);
+                let delete_options = DeleteParams {
+                    grace_period_seconds: Some(0),
+                    propagation_policy: Some(kube::api::PropagationPolicy::Background),
+                    ..Default::default()
+                };
+                match pods.delete(&pod_name, &delete_options).await {
+                    Ok(_) => log::info!("Successfully deleted pod: {}", pod_name),
+                    Err(e) => {
+                        log::error!("Failed to delete pod: {} with error: {}", pod_name, e);
+                        return Err(e.to_string());
+                    }
+                }
+                break;
+            } else {
+                log::info!("Pod {} does not match prefix, skipping", pod_name);
+            }
+        }
     }
 
-    let service_clone = service_name.clone();
-    let stop_result = stop_port_forward(service_clone, config_id.clone()).await;
+    log::info!("Stopping port forward for service: {}", service_name);
+    let stop_result = stop_port_forward(service_name.clone(), config_id)
+        .await
+        .map_err(|e| {
+            log::error!(
+                "Failed to stop port forwarding for service '{}': {}",
+                service_name,
+                e
+            );
+            e
+        })?;
 
-    stop_result.map_err(|e| {
-        format!(
-            "Failed to stop port forwarding process for service '{}': {}",
-            service_name, e
-        )
-    })
+    log::info!("Proxy forward stopped for service: {}", service_name);
+    Ok(stop_result)
 }

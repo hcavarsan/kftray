@@ -301,75 +301,96 @@ pub async fn start_port_forward(configs: Vec<Config>) -> Result<Vec<CustomRespon
 
 #[tauri::command]
 pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
+    log::info!("Attempting to stop all port forwards");
     let mut responses = Vec::new();
-    let client = Client::try_default().await.map_err(|e| e.to_string())?;
+    let client = Client::try_default().await.map_err(|e| {
+        log::error!("Failed to create Kubernetes client: {}", e);
+        e.to_string()
+    })?;
 
     let handle_map: HashMap<String, tokio::task::JoinHandle<()>> =
         { CHILD_PROCESSES.lock().unwrap().drain().collect() };
 
-    for handle in handle_map.values() {
+    for (config_id, handle) in handle_map.iter() {
+        log::info!("Aborting port forwarding task for config_id: {}", config_id);
         handle.abort();
     }
 
     let pods: Api<Pod> = Api::all(client.clone());
     for config_id in handle_map.keys() {
+        log::info!("Fetching pods for config_id: {}", config_id);
         let lp = ListParams::default().labels(&format!("config_id={}", config_id));
         let pod_list = match pods.list(&lp).await {
             Ok(pods) => pods,
             Err(e) => {
-                eprintln!("Error fetching pods for config_id {}: {}", config_id, e);
+                log::error!("Error fetching pods for config_id {}: {}", config_id, e);
                 continue;
             }
         };
 
+        log::info!(
+            "Found {} pods for config_id: {}",
+            pod_list.items.len(),
+            config_id
+        );
+        let username = whoami::username();
         for pod in pod_list.items {
             if let Some(pod_name) = pod.metadata.name.clone() {
-                if !pod_name.starts_with("kftray-forward-") {
-                    continue;
-                }
+                if pod_name.starts_with(&format!("kftray-forward-{}", username)) {
+                    log::info!("Deleting pod: {}", pod_name);
+                    let namespace = pod.metadata.namespace.as_deref().unwrap_or_default();
+                    let namespaced_pods: Api<Pod> = Api::namespaced(client.clone(), namespace);
 
-                let namespace = pod
-                    .metadata
-                    .namespace
-                    .as_ref()
-                    .map(|s| s.as_str())
-                    .unwrap_or_default();
-                let namespaced_pods: Api<Pod> = Api::namespaced(client.clone(), namespace);
-                let dp = DeleteParams {
-                    grace_period_seconds: Some(0),
-                    propagation_policy: Some(kube::api::PropagationPolicy::Background),
-                    ..Default::default()
-                };
+                    let dp = DeleteParams {
+                        grace_period_seconds: Some(0),
+                        propagation_policy: Some(kube::api::PropagationPolicy::Background),
+                        ..Default::default()
+                    };
 
-                if let Err(e) = namespaced_pods.delete(&pod_name, &dp).await {
-                    responses.push(CustomResponse {
-                        id: config_id.parse().ok(),
-                        service: pod_name.clone(),
-                        namespace: namespace.to_string(),
-                        local_port: 0,
-                        remote_port: 0,
-                        context: String::new(),
-                        stdout: format!("Failed to delete pod {}", pod_name),
-                        stderr: e.to_string(),
-                        status: 1,
-                    });
+                    match namespaced_pods.delete(&pod_name, &dp).await {
+                        Ok(_) => {
+                            log::info!("Successfully deleted pod: {}", pod_name);
+                            responses.push(CustomResponse::new(
+                                config_id.parse().ok(),
+                                pod_name.clone(),
+                                namespace.to_string(),
+                                0,
+                                0,
+                                String::new(),
+                                format!("Deleted pod {}", pod_name),
+                                String::new(),
+                                0,
+                            ));
+                        }
+                        Err(e) => {
+                            log::error!("Failed to delete pod {}: {}", pod_name, e);
+                            responses.push(CustomResponse::new(
+                                config_id.parse().ok(),
+                                pod_name.clone(),
+                                namespace.to_string(),
+                                0,
+                                0,
+                                String::new(),
+                                format!("Failed to delete pod {}", pod_name),
+                                e.to_string(),
+                                1,
+                            ));
+                        }
+                    }
                 } else {
-                    responses.push(CustomResponse {
-                        id: config_id.parse().ok(),
-                        service: pod_name.clone(),
-                        namespace: namespace.to_string(),
-                        local_port: 0,
-                        remote_port: 0,
-                        context: String::new(),
-                        stdout: format!("Deleted pod {}", pod_name),
-                        stderr: String::new(),
-                        status: 0,
-                    });
+                    log::info!(
+                        "Pod {} does not match the username prefix, skipping",
+                        pod_name
+                    );
                 }
             }
         }
     }
 
+    log::info!(
+        "Port forward stopping process completed with {} responses",
+        responses.len()
+    );
     Ok(responses)
 }
 
