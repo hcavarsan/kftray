@@ -26,9 +26,9 @@
 </p>
 
 <h4 align="center">
-  <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.3.3_universal.dmg">Download for macOS</a> ·
-  <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.3.3_x64-setup.exe">Download for Windows</a> ·
-  <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.3.3_amd64.AppImage">Download for Linux</a>
+  <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.4.0_universal.dmg">Download for macOS</a> ·
+  <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.4.0_x64-setup.exe">Download for Windows</a> ·
+  <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.4.0_amd64.AppImage">Download for Linux</a>
 </h4>
 
 ---
