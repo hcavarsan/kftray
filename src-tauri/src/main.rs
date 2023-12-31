@@ -166,7 +166,6 @@ fn main() {
             kubeforward::port_forward::start_port_forward,
             kubeforward::port_forward::stop_port_forward,
             kubeforward::port_forward::stop_all_port_forward,
-            kubeforward::port_forward::quit_app,
             kubeforward::kubecontext::list_kube_contexts,
             kubeforward::kubecontext::list_namespaces,
             kubeforward::kubecontext::list_services,

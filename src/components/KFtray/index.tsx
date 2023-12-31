@@ -431,9 +431,6 @@ const KFTray = () => {
     }
     setIsStopping(false)
   }
-  const quitApp = () => {
-    invoke('quit_app')
-  }
 
   const cardBg = useColorModeValue('gray.800', 'gray.800')
 

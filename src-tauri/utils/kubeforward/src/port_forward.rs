@@ -183,7 +183,6 @@ lazy_static! {
 
 #[derive(serde::Serialize)]
 pub struct CustomResponse {
-    // You may also consider making these fields public if needed elsewhere.
     id: Option<i64>,
     service: String,
     namespace: String,
@@ -196,7 +195,6 @@ pub struct CustomResponse {
 }
 
 impl CustomResponse {
-    // Public constructor method to create a new instance of CustomResponse.
     pub fn new(
         id: Option<i64>,
         service: String,
@@ -311,7 +309,7 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
         { CHILD_PROCESSES.lock().unwrap().drain().collect() };
 
     for handle in handle_map.values() {
-        handle.abort(); // Stop the port forwarding task
+        handle.abort();
     }
 
     let pods: Api<Pod> = Api::all(client.clone());
@@ -376,26 +374,6 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
     Ok(responses)
 }
 
-#[tauri::command]
-pub fn quit_app(window: tauri::Window) {
-    println!("quit_app called.");
-
-    // Create a new tokio runtime
-    let rt = Runtime::new().unwrap();
-
-    // Block on the async code
-    rt.block_on(async {
-        match stop_all_port_forward().await {
-            Ok(_) => println!("Successfully stopped all port forwarding."),
-            Err(err) => eprintln!("Error when stopping port forwarding: {}", err),
-        }
-    });
-
-    window.close().unwrap();
-    println!("Application window closed.");
-
-    // Runtime is dropped here, and its shutdown will await all tasks to complete.
-}
 
 #[tauri::command]
 pub async fn stop_port_forward(
