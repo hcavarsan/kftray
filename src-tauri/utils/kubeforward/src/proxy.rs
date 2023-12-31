@@ -54,7 +54,7 @@ pub async fn deploy_and_forward_pod(configs: Vec<Config>) -> Result<Vec<CustomRe
                     "name": hashed_name,
                     "image": "ghcr.io/dlemel8/tunneler-server:main",
                     "env": [
-                        {"name": "LOCAL_PORT", "value": config.local_port.to_string()},
+                        {"name": "LOCAL_PORT", "value": config.remote_port.to_string()},
                         {"name": "REMOTE_PORT", "value": config.remote_port.to_string()},
                         {"name": "REMOTE_ADDRESS", "value": config.remote_address},
                         {"name": "TUNNELED_TYPE", "value": "tcp"}
