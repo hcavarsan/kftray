@@ -9,6 +9,7 @@ export interface Status {
   namespace: string
   remote_port: number
   workload_type: string
+  alias: string
   remote_address: string
   cancelRef?: RefObject<HTMLButtonElement>
 }
@@ -20,6 +21,7 @@ export interface Config {
   local_port: number
   remote_port: number
   context: string
+  alias: string
   remote_address: string
   workload_type: string
 }
@@ -32,6 +34,7 @@ export interface Response {
   status: number
   namespace: string
   remote_port: number
+  alias: string
   workload_type: string
   remote_address: string
   stdout: string

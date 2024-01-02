@@ -40,6 +40,7 @@ const KFTray = () => {
     namespace: '',
     workload_type: '',
     remote_address: '',
+    alias: '',
   })
 
   const updateConfigRunningState = (id: number, isRunning: boolean) => {
@@ -60,6 +61,7 @@ const KFTray = () => {
       namespace: '',
       workload_type: '',
       remote_address: '',
+      alias: '',
     })
     setIsEdit(false)
     setIsModalOpen(true)
@@ -205,6 +207,7 @@ const KFTray = () => {
         context: configToEdit.context,
         workload_type: configToEdit.workload_type,
         remote_address: configToEdit.remote_address,
+        alias: configToEdit.alias,
       })
       setIsEdit(true)
       setIsModalOpen(true)
@@ -226,6 +229,9 @@ const KFTray = () => {
         local_port: newConfig.local_port,
         remote_port: newConfig.remote_port,
         namespace: newConfig.namespace,
+        workload_type: newConfig.workload_type,
+        remote_address: newConfig.remote_address,
+        alias: newConfig.alias,
       }
 
       await invoke('update_config', { config: editedConfig })
@@ -262,6 +268,7 @@ const KFTray = () => {
       namespace: newConfig.namespace,
       workload_type: newConfig.workload_type,
       remote_address: newConfig.remote_address,
+      alias: newConfig.alias,
     }
 
     try {

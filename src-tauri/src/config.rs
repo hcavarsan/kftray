@@ -14,6 +14,7 @@ pub struct Config {
     context: String,
     workload_type: String,
     remote_address: Option<String>,
+    alias: Option<String>,
 }
 
 #[tauri::command]

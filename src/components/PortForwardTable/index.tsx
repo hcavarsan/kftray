@@ -79,12 +79,20 @@ const PortForwardTable: React.FC<TableProps> = ({
   )
 
   const filteredConfigs = useMemo(() => {
-    return search
+    const searchFiltered = search
       ? configs.filter(config =>
-        config.service.toLowerCase().includes(search.toLowerCase()),
+        config.alias.toLowerCase().includes(search.toLowerCase()),
       )
       : configs
+
+    // Sort by alias in ascending order
+    const sortedByAliasAsc = searchFiltered.sort((a, b) =>
+      a.alias.localeCompare(b.alias),
+    )
+
+    return sortedByAliasAsc
   }, [configs, search])
+
   const [groupBy, setGroupBy] = useState('none')
 
   const handleGroupByChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
@@ -351,40 +359,21 @@ const PortForwardTable: React.FC<TableProps> = ({
                             zIndex='sticky'
                             fontFamily={fontFamily}
                           >
-                            <Tr boxShadow={boxShadow} fontSize='10px'>
+                            <Tr boxShadow={boxShadow}>
                               <Th
                                 fontFamily={fontFamily}
                                 fontSize='10px'
-                                width='20%'
+                                width='40%'
                               >
-                                Service
+                                Alias
                               </Th>
-                              <Th
-                                fontFamily={fontFamily}
-                                fontSize='10px'
-                                width='25%'
-                              >
-                                Namespace
-                              </Th>
-                              <Th
-                                fontFamily={fontFamily}
-                                fontSize='10px'
-                                width='20%'
-                              >
+                              <Th fontFamily={fontFamily} fontSize='10px'>
                                 Port
                               </Th>
-                              <Th
-                                fontFamily={fontFamily}
-                                fontSize='10px'
-                                width='20%'
-                              >
+                              <Th fontFamily={fontFamily} fontSize='10px'>
                                 Status
                               </Th>
-                              <Th
-                                fontFamily={fontFamily}
-                                fontSize='10px'
-                                width='20%'
-                              >
+                              <Th fontFamily={fontFamily} fontSize='10px'>
                                 Action
                               </Th>
                             </Tr>

@@ -49,54 +49,20 @@ const PortForwardSearchTable: React.FC<PortForwardSearchTableProps> = ({
       <Table variant='simple' size='sm' style={{ tableLayout: 'fixed' }} mt='5'>
         <Thead>
           <Tr boxShadow={boxShadow} fontSize='10px'>
-            <Th
-              fontFamily={fontFamily}
-              fontSize='10px'
-              width='20%'
-              color={textColor}
-            >
+            <Th fontFamily={fontFamily} fontSize='10px' color={textColor}>
               Ctx
             </Th>
-            <Th
-              fontFamily={fontFamily}
-              fontSize='10px'
-              width='20%'
-              color={textColor}
-            >
-              Svc
+            <Th fontFamily={fontFamily} fontSize='10px' color={textColor}>
+              Alias
             </Th>
-            <Th
-              fontFamily={fontFamily}
-              fontSize='10px'
-              width='20%'
-              color={textColor}
-            >
-              NS
-            </Th>
-            <Th
-              fontFamily={fontFamily}
-              fontSize='10px'
-              width='20%'
-              color={textColor}
-            >
+            <Th fontFamily={fontFamily} fontSize='10px' color={textColor}>
               Port
             </Th>
-            <Th
-              fontFamily={fontFamily}
-              fontSize='10px'
-              width='20%'
-              color={textColor}
-            >
+            <Th fontFamily={fontFamily} fontSize='10px' color={textColor}>
               Status
             </Th>
-            <Th
-              fontFamily={fontFamily}
-              fontSize='10px'
-              width='20%'
-              color={textColor}
-              textAlign='center'
-            >
-              Edit
+            <Th fontFamily={fontFamily} fontSize='10px' color={textColor}>
+              Action
             </Th>
           </Tr>
         </Thead>

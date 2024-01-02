@@ -229,6 +229,7 @@ pub struct Config {
     pub context: String,
     pub workload_type: String,
     pub remote_address: Option<String>,
+    pub alias: Option<String>,
 }
 
 #[tauri::command]

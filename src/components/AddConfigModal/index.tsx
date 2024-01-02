@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from 'react-query'
 import ReactSelect, { ActionMeta, StylesConfig } from 'react-select'
 
 import {
+  Box,
   Button,
   Center,
   FormControl,
@@ -91,6 +92,34 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     value: string | number
     label: string
   } | null>(null)
+
+  useEffect(() => {
+    const isValid = [
+      selectedContext,
+      selectedNamespace,
+      selectedService || newConfig.remote_address,
+      selectedPort || newConfig.remote_port,
+      selectedWorkloadType,
+      newConfig.alias,
+      newConfig.local_port,
+      ,
+    ].every(field => field !== null && field !== '')
+
+    setIsFormValid(isValid)
+  }, [
+    selectedContext,
+    selectedNamespace,
+    selectedService,
+    selectedPort,
+    selectedWorkloadType,
+    newConfig.alias,
+    newConfig.remote_address,
+    newConfig.remote_port,
+    newConfig.local_port,
+    newConfig.workload_type,
+  ])
+
+  const [isFormValid, setIsFormValid] = useState(false)
 
   const queryClient = useQueryClient()
   const customStyles: StylesConfig = {
@@ -346,178 +375,264 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
 
   return (
     <Center>
-      <Modal isOpen={isModalOpen} onClose={handleCancel} size='xs'>
+      <Modal isOpen={isModalOpen} onClose={handleCancel} size='xl'>
         <ModalOverlay bg='transparent' />
-        <ModalContent mx={5} my={5} mt={8} w='auto' h='auto'>
+        <ModalContent mx={5} my={5} mt={8}>
           <ModalCloseButton />
           <ModalBody p={2} mt={3}>
             <form onSubmit={handleSave}>
-              <FormControl>
-                <FormLabel htmlFor='workload_type'>Workload Type</FormLabel>
-                <ReactSelect
-                  styles={customStyles}
-                  name='workload_type'
-                  options={[
-                    { label: 'Service', value: 'service' },
-                    { label: 'Proxy', value: 'proxy' },
-                  ]}
-                  value={selectedWorkloadType}
-                  onChange={selectedOption =>
-                    handleSelectChange(
-                      selectedOption as Option,
-                      { name: 'workload_type' } as ActionMeta<Option>,
-                    )
-                  }
-                />
+              <FormControl
+                display='flex'
+                alignItems='center'
+                flexWrap='wrap'
+                p={2}
+              >
+                <Box width={{ base: '100%', sm: '50%' }} pl={2}>
+                  <FormLabel htmlFor='workload_type'>Workload Type</FormLabel>
+                  <ReactSelect
+                    styles={customStyles}
+                    name='workload_type'
+                    options={[
+                      { label: 'Service', value: 'service' },
+                      { label: 'Proxy', value: 'proxy' },
+                    ]}
+                    value={selectedWorkloadType}
+                    onChange={selectedOption =>
+                      handleSelectChange(
+                        selectedOption as Option,
+                        { name: 'workload_type' } as ActionMeta<Option>,
+                      )
+                    }
+                  />
+                </Box>
+                <Box width={{ base: '100%', sm: '50%' }} pl={2}>
+                  <FormLabel htmlFor='alias'>Alias</FormLabel>
+                  <Input
+                    id='alias'
+                    type='string'
+                    value={newConfig.alias || ''}
+                    name='alias'
+                    onChange={handleInputChange}
+                    size='sm'
+                    height='36px'
+                    bg={theme.colors.gray[800]}
+                    borderColor={theme.colors.gray[700]}
+                    _hover={{
+                      borderColor: theme.colors.gray[600],
+                    }}
+                    _placeholder={{
+                      color: theme.colors.gray[500],
+                    }}
+                    color={theme.colors.gray[300]}
+                  />
+                </Box>
               </FormControl>
 
-              <FormControl>
-                <FormLabel htmlFor='context'>Context</FormLabel>
-                <ReactSelect
-                  styles={customStyles}
-                  name='context'
-                  options={contextQuery.data?.map(context => ({
-                    label: context.name,
-                    value: context.name,
-                  }))}
-                  value={selectedContext}
-                  onChange={selectedOption =>
-                    handleSelectChange(
-                      selectedOption as Option,
-                      { name: 'context' } as ActionMeta<Option>,
-                    )
-                  }
-                />
-              </FormControl>
-
-              <FormControl mt={4}>
-                <FormLabel htmlFor='namespace'>Namespace</FormLabel>
-                <ReactSelect
-                  styles={customStyles}
-                  name='namespace'
-                  options={namespaceQuery.data?.map(namespace => ({
-                    label: namespace.name,
-                    value: namespace.name,
-                  }))}
-                  value={selectedNamespace}
-                  onChange={selectedOption =>
-                    handleSelectChange(
-                      selectedOption as Option,
-                      { name: 'namespace' } as ActionMeta<Option>,
-                    )
-                  }
-                />
+              <FormControl
+                display='flex'
+                alignItems='center'
+                flexWrap='wrap'
+                p={2}
+              >
+                <Box width={{ base: '100%', sm: '50%' }} pl={2}>
+                  <FormLabel htmlFor='namespace'>Namespace</FormLabel>
+                  <ReactSelect
+                    styles={customStyles}
+                    name='namespace'
+                    options={namespaceQuery.data?.map(namespace => ({
+                      label: namespace.name,
+                      value: namespace.name,
+                    }))}
+                    value={selectedNamespace}
+                    onChange={selectedOption =>
+                      handleSelectChange(
+                        selectedOption as Option,
+                        { name: 'namespace' } as ActionMeta<Option>,
+                      )
+                    }
+                  />
+                </Box>
+                <Box width={{ base: '100%', sm: '50%' }} pl={2}>
+                  <FormLabel htmlFor='context'>Context</FormLabel>
+                  <ReactSelect
+                    styles={customStyles}
+                    name='context'
+                    options={contextQuery.data?.map(context => ({
+                      label: context.name,
+                      value: context.name,
+                    }))}
+                    value={selectedContext}
+                    onChange={selectedOption =>
+                      handleSelectChange(
+                        selectedOption as Option,
+                        { name: 'context' } as ActionMeta<Option>,
+                      )
+                    }
+                  />
+                </Box>
               </FormControl>
 
               {newConfig.workload_type === 'proxy' ? (
                 <>
-                  <FormControl mt={4}>
-                    <FormLabel htmlFor='remote_address'>
-                      Remote Address
-                    </FormLabel>
-                    <Input
-                      id='remote_address'
-                      type='text'
-                      value={newConfig.remote_address || ''}
-                      name='remote_address'
-                      onChange={handleInputChange}
-                      size='sm'
-                      bg={theme.colors.gray[800]}
-                      borderColor={theme.colors.gray[700]}
-                      _hover={{
-                        borderColor: theme.colors.gray[600],
-                      }}
-                      _placeholder={{
-                        color: theme.colors.gray[500],
-                      }}
-                      color={theme.colors.gray[300]}
-                    />
+                  <FormControl
+                    display='flex'
+                    alignItems='center'
+                    flexWrap='wrap'
+                    p={2}
+                  >
+                    <Box width={{ base: '100%', sm: '100%' }} pl={2}>
+                      <FormLabel htmlFor='remote_address'>
+                        Remote Address
+                      </FormLabel>
+                      <Input
+                        id='remote_address'
+                        type='text'
+                        height='36px'
+                        value={newConfig.remote_address || ''}
+                        name='remote_address'
+                        onChange={handleInputChange}
+                        size='sm'
+                        bg={theme.colors.gray[800]}
+                        borderColor={theme.colors.gray[700]}
+                        _hover={{
+                          borderColor: theme.colors.gray[600],
+                        }}
+                        _placeholder={{
+                          color: theme.colors.gray[500],
+                        }}
+                        color={theme.colors.gray[300]}
+                      />
+                    </Box>
                   </FormControl>
-                  <FormControl mt={4}>
-                    <FormLabel htmlFor='remote_port'>Remote Port</FormLabel>
-                    <Input
-                      id='remote_port'
-                      type='number'
-                      value={newConfig.remote_port || ''}
-                      name='remote_port'
-                      onChange={handleInputChange}
-                      size='sm'
-                      bg={theme.colors.gray[800]}
-                      borderColor={theme.colors.gray[700]}
-                      _hover={{
-                        borderColor: theme.colors.gray[600],
-                      }}
-                      _placeholder={{
-                        color: theme.colors.gray[500],
-                      }}
-                      color={theme.colors.gray[300]}
-                    />
+                  <FormControl
+                    display='flex'
+                    alignItems='center'
+                    flexWrap='wrap'
+                    p={2}
+                  >
+                    <Box width={{ base: '100%', sm: '50%' }} pl={2}>
+                      <FormLabel htmlFor='remote_port'>Target Port</FormLabel>
+                      <Input
+                        id='remote_port'
+                        type='number'
+                        height='36px'
+                        value={newConfig.remote_port || ''}
+                        name='remote_port'
+                        onChange={handleInputChange}
+                        size='sm'
+                        bg={theme.colors.gray[800]}
+                        borderColor={theme.colors.gray[700]}
+                        _hover={{
+                          borderColor: theme.colors.gray[600],
+                        }}
+                        _placeholder={{
+                          color: theme.colors.gray[500],
+                        }}
+                        color={theme.colors.gray[300]}
+                      />
+                    </Box>
+                    <Box width={{ base: '100%', sm: '50%' }} pl={2}>
+                      <FormLabel htmlFor='local_port'>Local Port</FormLabel>
+                      <Input
+                        id='local_port'
+                        type='number'
+                        value={newConfig.local_port || ''}
+                        name='local_port'
+                        height='36px'
+                        onChange={handleInputChange}
+                        size='sm'
+                        bg={theme.colors.gray[800]}
+                        borderColor={theme.colors.gray[700]}
+                        _hover={{
+                          borderColor: theme.colors.gray[600],
+                        }}
+                        _placeholder={{
+                          color: theme.colors.gray[500],
+                        }}
+                        color={theme.colors.gray[300]}
+                      />
+                    </Box>
                   </FormControl>
                 </>
               ) : (
                 <>
-                  <FormControl mt={4}>
-                    <FormLabel htmlFor='service'>Service</FormLabel>
-                    <ReactSelect
-                      styles={customStyles}
-                      name='service'
-                      options={serviceQuery.data?.map(service => ({
-                        label: service.name,
-                        value: service.name,
-                      }))}
-                      value={selectedService}
-                      onChange={selectedOption =>
-                        handleSelectChange(
-                          selectedOption as Option,
-                          { name: 'service' } as ActionMeta<Option>,
-                        )
-                      }
-                    />
+                  <FormControl
+                    display='flex'
+                    alignItems='center'
+                    flexWrap='wrap'
+                    p={2}
+                  >
+                    <Box width={{ base: '100%', sm: '100%' }} pl={2}>
+                      <FormLabel htmlFor='service'>Service</FormLabel>
+                      <ReactSelect
+                        styles={customStyles}
+                        name='service'
+                        options={serviceQuery.data?.map(service => ({
+                          label: service.name,
+                          value: service.name,
+                        }))}
+                        value={selectedService}
+                        onChange={selectedOption =>
+                          handleSelectChange(
+                            selectedOption as Option,
+                            { name: 'service' } as ActionMeta<Option>,
+                          )
+                        }
+                      />
+                    </Box>
                   </FormControl>
-                  <FormControl mt={4}>
-                    <FormLabel htmlFor='remote_port'>Target Port</FormLabel>
-                    <ReactSelect
-                      styles={customStyles}
-                      name='remote_port'
-                      options={portData
-                      .filter(port => port.port !== undefined)
-                      .map(port => ({
-                        label: port.port
-                          ? port.port.toString() + ' - ' + port.name
-                          : '',
-                        value: port.port,
-                      }))}
-                      value={selectedPort}
-                      onChange={selectedOption =>
-                        handleSelectChange(
-                          selectedOption as Option,
-                          { name: 'remote_port' } as ActionMeta<Option>,
-                        )
-                      }
-                    />
+                  <FormControl
+                    display='flex'
+                    alignItems='center'
+                    flexWrap='wrap'
+                    p={2}
+                  >
+                    <Box width={{ base: '100%', sm: '50%' }} pl={2}>
+                      <FormLabel htmlFor='remote_port'>Target Port</FormLabel>
+                      <ReactSelect
+                        styles={customStyles}
+                        name='remote_port'
+                        options={portData
+                        .filter(port => port.port !== undefined)
+                        .map(port => ({
+                          label: port.port
+                            ? port.port.toString() + ' - ' + port.name
+                            : '',
+                          value: port.port,
+                        }))}
+                        value={selectedPort}
+                        onChange={selectedOption =>
+                          handleSelectChange(
+                            selectedOption as Option,
+                            { name: 'remote_port' } as ActionMeta<Option>,
+                          )
+                        }
+                      />
+                    </Box>
+                    <Box width={{ base: '100%', sm: '50%' }} pl={2}>
+                      <FormLabel htmlFor='local_port'>Local Port</FormLabel>
+                      <Input
+                        id='local_port'
+                        type='number'
+                        height='36px'
+                        value={newConfig.local_port || ''}
+                        name='local_port'
+                        onChange={handleInputChange}
+                        size='sm'
+                        bg={theme.colors.gray[800]}
+                        borderColor={theme.colors.gray[700]}
+                        _hover={{
+                          borderColor: theme.colors.gray[600],
+                        }}
+                        _placeholder={{
+                          color: theme.colors.gray[500],
+                        }}
+                        color={theme.colors.gray[300]}
+                      />
+                    </Box>
                   </FormControl>
                 </>
               )}
-              <FormControl mt={2}>
-                <FormLabel htmlFor='local_port'>Local Port</FormLabel>
-                <Input
-                  id='local_port'
-                  type='number'
-                  value={newConfig.local_port || ''}
-                  name='local_port'
-                  onChange={handleInputChange}
-                  size='sm'
-                  bg={theme.colors.gray[800]}
-                  borderColor={theme.colors.gray[700]}
-                  _hover={{
-                    borderColor: theme.colors.gray[600],
-                  }}
-                  _placeholder={{
-                    color: theme.colors.gray[500],
-                  }}
-                  color={theme.colors.gray[300]}
-                />
-              </FormControl>
 
               <ModalFooter justifyContent='flex-end' p={2} mt={5}>
                 <Button variant='outline' onClick={handleCancel} size='xs'>
@@ -529,6 +644,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                   size='xs'
                   ml={3}
                   onClick={handleSave}
+                  isDisabled={!isFormValid} // Disable the button when the form is not valid
                 >
                   {isEdit ? 'Save Changes' : 'Add Config'}
                 </Button>
