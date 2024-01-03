@@ -1,0 +1,13 @@
+[package]
+name = "kftray-server"
+version = "0.0.0"
+description = "Tcp proxy"
+authors = ["henrique cavarsan"]
+license = ""
+repository = ""
+edition = "2021"
+rust-version = "1.57"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+
