@@ -228,7 +228,7 @@ fn merge_json_values(default: JsonValue, mut config: JsonValue) -> JsonValue {
     match (&default, &mut config) {
         (JsonValue::Object(default_map), JsonValue::Object(config_map)) => {
             for (key, default_value) in default_map {
-				#[allow(clippy::redundant_pattern_matching)]
+                #[allow(clippy::redundant_pattern_matching)]
                 let should_replace = matches!(config_map.get(key), None);
                 if should_replace {
                     config_map.insert(key.clone(), default_value.clone());
