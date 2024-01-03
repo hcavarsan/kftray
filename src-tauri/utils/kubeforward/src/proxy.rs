@@ -55,7 +55,7 @@ pub async fn deploy_and_forward_pod(configs: Vec<Config>) -> Result<Vec<CustomRe
             "spec": {
                 "containers": [{
                     "name": hashed_name,
-                    "image": "ghcr.io/dlemel8/tunneler-server:main",
+                    "image": "docker.io/hcavarsan/kftray-server:v0.0.1",
                     "env": [
                         {"name": "LOCAL_PORT", "value": config.remote_port.to_string()},
                         {"name": "REMOTE_PORT", "value": config.remote_port.to_string()},
