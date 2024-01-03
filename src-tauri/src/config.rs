@@ -1,20 +1,38 @@
+use kubeforward::port_forward::Config;
+use rusqlite::types::ToSql;
 use rusqlite::{params, Connection, Result};
-use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::to_value;
+use serde_json::{json, Value as JsonValue};
 
-#[derive(Clone, Deserialize, PartialEq, Serialize, Debug)]
-pub struct Config {
-    #[serde(default)]
-    #[serde(skip_serializing_if = "Option::is_none")]
-    id: Option<i64>,
-    service: Option<String>,
-    namespace: String,
-    local_port: u16,
-    remote_port: u16,
-    context: String,
-    workload_type: String,
-    remote_address: Option<String>,
-    alias: Option<String>,
+fn is_value_blank(value: &JsonValue) -> bool {
+    match value {
+        JsonValue::String(s) => s.trim().is_empty(),
+        _ => false,
+    }
+}
+
+fn remove_blank_fields(value: &mut JsonValue) {
+    match value {
+        JsonValue::Object(map) => {
+            let keys_to_remove: Vec<String> = map
+                .iter()
+                .filter(|(_, v)| is_value_blank(v))
+                .map(|(k, _)| k.clone())
+                .collect();
+            for key in keys_to_remove {
+                map.remove(&key);
+            }
+            for value in map.values_mut() {
+                remove_blank_fields(value);
+            }
+        }
+        JsonValue::Array(arr) => {
+            for value in arr {
+                remove_blank_fields(value);
+            }
+        }
+        _ => (),
+    }
 }
 
 #[tauri::command]
@@ -32,6 +50,7 @@ pub async fn delete_config(id: i64) -> Result<(), String> {
         Err(e) => Err(format!("Failed to delete config: {}", e)),
     }
 }
+
 #[tauri::command]
 pub fn insert_config(config: Config) -> Result<(), String> {
     let home_dir = dirs::home_dir().unwrap();
@@ -143,7 +162,11 @@ pub async fn export_configs() -> Result<String, String> {
     for config in &mut configs {
         config.id = None; // Ensure that the id is None before exporting
     }
-    let json = serde_json::to_string(&configs).map_err(|e| e.to_string())?;
+
+    let mut json_config = to_value(configs).map_err(|e| e.to_string())?;
+    remove_blank_fields(&mut json_config);
+    let json = serde_json::to_string(&json_config).map_err(|e| e.to_string())?;
+
     Ok(json)
 }
 
@@ -154,4 +177,70 @@ pub async fn import_configs(json: String) -> Result<(), String> {
         insert_config(config)?;
     }
     Ok(())
+}
+
+pub fn migrate_configs() -> Result<(), String> {
+    let home_dir =
+        dirs::home_dir().ok_or_else(|| "Unable to determine home directory".to_owned())?;
+    let db_dir = format!("{}/.kftray/configs.db", home_dir.to_string_lossy());
+
+    let mut conn = Connection::open(db_dir).map_err(|e| e.to_string())?;
+    let transaction = conn.transaction().map_err(|e| e.to_string())?;
+
+    {
+        let mut stmt = transaction
+            .prepare("SELECT id, data FROM configs")
+            .map_err(|e| e.to_string())?;
+
+        let rows = stmt
+            .query_map([], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+            })
+            .map_err(|e| e.to_string())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| e.to_string())?;
+
+        for (id, data) in rows {
+            let config_json: JsonValue = serde_json::from_str(&data).map_err(|e| e.to_string())?;
+            let default_config_json =
+                serde_json::to_value(Config::default()).map_err(|e| e.to_string())?;
+
+            let merged_config_json = merge_json_values(default_config_json, config_json);
+
+            let updated_data =
+                serde_json::to_string(&merged_config_json).map_err(|e| e.to_string())?;
+
+            transaction
+                .execute(
+                    "UPDATE configs SET data = ?1 WHERE id = ?2",
+                    [&updated_data as &dyn ToSql, &id],
+                )
+                .map_err(|e| e.to_string())?;
+        }
+    }
+
+    transaction.commit().map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+fn merge_json_values(default: JsonValue, mut config: JsonValue) -> JsonValue {
+    match (&default, &mut config) {
+        (JsonValue::Object(default_map), JsonValue::Object(config_map)) => {
+            for (key, default_value) in default_map {
+				#[allow(clippy::redundant_pattern_matching)]
+                let should_replace = matches!(config_map.get(key), None);
+                if should_replace {
+                    config_map.insert(key.clone(), default_value.clone());
+                    continue;
+                }
+                config_map
+                    .entry(key.clone())
+                    .and_modify(|e| *e = merge_json_values(default_value.clone(), e.clone()));
+            }
+        }
+        (JsonValue::Null, _) => return default,
+        _ => (),
+    }
+    config
 }

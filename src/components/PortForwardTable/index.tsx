@@ -80,14 +80,22 @@ const PortForwardTable: React.FC<TableProps> = ({
 
   const filteredConfigs = useMemo(() => {
     const searchFiltered = search
-      ? configs.filter(config =>
-        config.alias.toLowerCase().includes(search.toLowerCase()),
+      ? configs.filter(
+        config =>
+          config.alias.toLowerCase().includes(search.toLowerCase()) ||
+            config.context.toLowerCase().includes(search.toLowerCase()) ||
+            config.remote_address
+            .toLowerCase()
+            .includes(search.toLowerCase()) ||
+            config.local_port.toString().includes(search.toLowerCase()),
       )
       : configs
 
+    const alias = searchFiltered.map(config => config.alias) ?? []
     // Sort by alias in ascending order
-    const sortedByAliasAsc = searchFiltered.sort((a, b) =>
-      a.alias.localeCompare(b.alias),
+    const sortedByAliasAsc = searchFiltered.sort(
+      (a, b) =>
+        a.alias.localeCompare(b.alias) || a.context.localeCompare(b.context),
     )
 
     return sortedByAliasAsc

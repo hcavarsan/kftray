@@ -84,6 +84,10 @@ fn main() {
         .manage(SaveDialogState::default())
         .setup(|_app| {
             db::init();
+            if let Err(e) = config::migrate_configs() {
+                eprintln!("Failed to migrate configs: {}", e);
+            }
+
             #[cfg(target_os = "macos")]
             {
                 _app.set_activation_policy(tauri::ActivationPolicy::Accessory);

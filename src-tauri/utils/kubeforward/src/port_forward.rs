@@ -180,7 +180,7 @@ lazy_static! {
         Arc::new(Mutex::new(HashMap::new()));
 }
 
-#[derive(serde::Serialize)]
+#[derive(serde::Serialize, serde::Deserialize, Debug)]
 pub struct CustomResponse {
     id: Option<i64>,
     service: String,
@@ -221,15 +221,36 @@ impl CustomResponse {
 
 #[derive(Clone, Deserialize, PartialEq, Serialize, Debug)]
 pub struct Config {
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<i64>,
-    pub service: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service: Option<String>,
     pub namespace: String,
     pub local_port: u16,
     pub remote_port: u16,
     pub context: String,
     pub workload_type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub remote_address: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub alias: Option<String>,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Config {
+            id: None,
+            service: Some("default-service".to_string()),
+            namespace: "default-namespace".to_string(),
+            local_port: 1234,
+            remote_port: 5678,
+            context: "default-context".to_string(),
+            workload_type: "default-workload".to_string(),
+            remote_address: Some("default-remote-address".to_string()),
+            alias: Some("default-alias".to_string()),
+        }
+    }
 }
 
 #[tauri::command]
@@ -237,7 +258,7 @@ pub async fn start_port_forward(configs: Vec<Config>) -> Result<Vec<CustomRespon
     let mut responses = Vec::new();
 
     for config in configs {
-        let selector = crate::TargetSelector::ServiceName(config.service.clone());
+        let selector = crate::TargetSelector::ServiceName(config.service.clone().unwrap());
         let remote_port = crate::Port::from(config.remote_port as i32);
         let context_name = Some(config.context.clone());
         log::info!("Remote Port: {}", config.remote_port);
@@ -246,30 +267,25 @@ pub async fn start_port_forward(configs: Vec<Config>) -> Result<Vec<CustomRespon
         let namespace = config.namespace.clone();
         let target = crate::Target::new(selector, remote_port, namespace);
 
-        log::debug!("Attempting to forward to service: {}", &config.service);
+        log::debug!("Attempting to forward to service: {:?}", &config.service);
         let port_forward = PortForward::new(target, config.local_port, context_name)
             .await
             .map_err(|e| {
-                log::error!("Failed to create PortForward: {}", e);
+                log::error!("Failed to create PortForward: {:?}", e);
                 e.to_string()
             })?;
 
         let (actual_local_port, handle) = port_forward.port_forward().await.map_err(|e| {
-            log::error!("Failed to start port forwarding: {}", e);
+            log::error!("Failed to start port forwarding: {:?}", e);
             e.to_string()
         })?;
 
         log::info!(
-            "Port forwarding is set up on local port: {} for service: {}",
+            "Port forwarding is set up on local port: {:?} for service: {:?}",
             actual_local_port,
             &config.service
         );
-        println!(
-            "Port forwarding is set up on local port: {} for service: {} for config_id: {}",
-            actual_local_port,
-            &config.service,
-            config.id.unwrap()
-        );
+
         // Store the JoinHandle to the global child processes map.
         CHILD_PROCESSES
             .lock()
@@ -279,14 +295,16 @@ pub async fn start_port_forward(configs: Vec<Config>) -> Result<Vec<CustomRespon
         // Append a new CustomResponse to responses collection.
         responses.push(CustomResponse {
             id: config.id,
-            service: config.service.clone(),
-            namespace: config.namespace, // Safe to use here as we cloned before
+            service: config.service.clone().unwrap(),
+            namespace: config.namespace,
             local_port: actual_local_port,
             remote_port: config.remote_port,
             context: config.context.clone(),
             stdout: format!(
                 "Forwarding from 127.0.0.1:{} -> {}:{}",
-                actual_local_port, config.remote_port, config.service
+                actual_local_port,
+                config.remote_port,
+                config.service.unwrap()
             ),
             stderr: String::new(),
             status: 0,

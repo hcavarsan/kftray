@@ -80,7 +80,7 @@ pub async fn deploy_and_forward_pod(configs: Vec<Config>) -> Result<Vec<CustomRe
         .await
         .map_err(|e| e.to_string())?;
 
-        config.service = hashed_name;
+        config.service = Some(hashed_name);
 
         let start_response = start_port_forward(vec![config.clone()]).await;
         match start_response {
@@ -93,7 +93,8 @@ pub async fn deploy_and_forward_pod(configs: Vec<Config>) -> Result<Vec<CustomRe
             Err(e) => {
                 return Err(format!(
                     "Failed to start port forwarding for {}: {}",
-                    config.service, e
+                    config.service.unwrap(),
+                    e
                 ));
             }
         }
