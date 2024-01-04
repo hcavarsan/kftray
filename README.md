@@ -69,6 +69,8 @@ Below is an illustrated basic guide for KFTRay.
 
 Easily create new port forwarding configurations through the UI by specifying the necessary fields. Each configuration requires the following fields:
 
+![Create Service Configuration](img/createservice.png)
+
 - **Workload Type:** The Workload type is Proxy (upstream) or Service (kubernetes local service).
 - **Alias:** A unique identifier for the configuration.
 - **Context:** The Kubernetes context is a list of contexts configured in the default KUBE_CONFIG.
@@ -79,20 +81,23 @@ Easily create new port forwarding configurations through the UI by specifying th
 - **Local Port:** The local machine port that will listen for traffic.
 - **Remote Port:** The port on the Kubernetes resource that will receive the forwarded traffic.
 
-##### Add Config Modal:
-![Create Service Configuration](img/createservice.png)
+
+
 
 #### Start a Single Configuration
 
-Initiate port forwarding for a single configuration with just one click. A green indicator signifies an active connection.
-
 ![Start Single Config](img/single.png)
 
+Initiate port forwarding for a single configuration with just one click. A green indicator signifies an active connection.
+
+
+
 #### Start All Configurations
+![Start All Configs](img/multi.png)
 
 Launch all your saved configurations simultaneously. This is highly efficient when working with multiple services.
 
-![Start All Configs](img/multi.png)
+
 
 #### Export Configurations
 
