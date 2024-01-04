@@ -60,6 +60,32 @@ brew install --HEAD kftray
 ```
 
 Please refer to the caveats section for instructions on creating a global app in SO after installation.
+### Building from Source
+
+#### Requirements
+
+- Node.js and pnpm or yarn for building the frontend.
+- Rust for backend development.
+
+To build `kftray` from source, follow these steps:
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/hcavarsan/kftray.git
+   ```
+2. Navigate to the cloned directory:
+   ```bash
+   cd kftray
+   ```
+3. Install dependencies
+   ```bash
+   pnpm install
+   ```
+4. Run the application in development mode:
+   ```bash
+   pnpm run tauri dev
+   ```
+
 
 ### Usage
 
@@ -194,31 +220,6 @@ sequenceDiagram
 
 These flows are particularly useful in scenarios where direct communication between the application and the upstream service is not possible or desirable, and a relay is needed to facilitate the communication.
 
-### Building from Source
-
-#### Requirements
-
-- Node.js and pnpm or yarn for building the frontend.
-- Rust for backend development.
-
-To build `kftray` from source, follow these steps:
-
-1. Clone the repository:
-   ```bash
-   git clone https://github.com/hcavarsan/kftray.git
-   ```
-2. Navigate to the cloned directory:
-   ```bash
-   cd kftray
-   ```
-3. Install dependencies
-   ```bash
-   pnpm install
-   ```
-4. Run the application in development mode:
-   ```bash
-   pnpm run tauri dev
-   ```
 
 ## Contributing
 
