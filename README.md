@@ -22,7 +22,7 @@
 </p>
 
 <p align="center">
-  <img src="img/demotray.gif"  width="600px" width="600px" alt="kftray demo"/>
+  <img src="img/demotray.gif"  width="300px" width="300px" alt="kftray demo"/>
 </p>
 
 <h4 align="center">
