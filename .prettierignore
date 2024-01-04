@@ -1,2 +1,3 @@
 # .prettierignore
 src-tauri/
+kftray-server/

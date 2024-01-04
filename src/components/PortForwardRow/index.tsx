@@ -57,25 +57,31 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
         config.local_port +
         ' ' +
         config.remote_address,
+      ' ' + config.protocol,
     )
     try {
       if (isChecked) {
-        if (config.workload_type === 'service') {
+        if (config.workload_type === 'service' && config.protocol === 'tcp') {
           await invoke('start_port_forward', { configs: [config] })
-        } else if (config.workload_type === 'proxy') {
+        } else if (
+          config.workload_type.startsWith('proxy') ||
+          (config.workload_type === 'service' && config.protocol === 'udp')
+        ) {
           await invoke('deploy_and_forward_pod', { configs: [config] })
         } else {
           throw new Error(`Unsupported workload type: ${config.workload_type}`)
         }
         updateConfigRunningState(config.id, true)
       } else {
-        // Stopping port forwarding logic
-        if (config.workload_type === 'service') {
+        if (config.workload_type === 'service' && config.protocol === 'tcp') {
           await invoke('stop_port_forward', {
             serviceName: config.service,
             configId: config.id.toString(),
           })
-        } else if (config.workload_type === 'proxy') {
+        } else if (
+          config.workload_type.startsWith('proxy') ||
+          (config.workload_type === 'service' && config.protocol === 'udp')
+        ) {
           await invoke('stop_proxy_forward', {
             configId: config.id.toString(),
             namespace: config.namespace,
@@ -110,12 +116,16 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
       <Box as='span' fontWeight='semibold'>
         Workload Type:
       </Box>{' '}
-      {config.workload_type === 'proxy' ? 'Proxy' : 'Service'}
+      {config.workload_type.startsWith('proxy')
+        ? config.workload_type
+        : 'Service'}
       <br />
       <Box as='span' fontWeight='semibold'>
-        {config.workload_type === 'proxy' ? 'Remote Address:' : 'Service:'}
+        {config.workload_type.startsWith('proxy')
+          ? 'Remote Address:'
+          : 'Service:'}
       </Box>{' '}
-      {config.workload_type === 'proxy'
+      {config.workload_type.startsWith('proxy')
         ? config.remote_address
         : config.service}
       <br />
@@ -138,6 +148,12 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
         Local Port:
       </Box>{' '}
       {config.local_port}
+      <br />
+      <Box as='span' fontWeight='semibold'>
+        Protocol:
+      </Box>{' '}
+      {config.protocol}
+      <br />
     </>
   )
 

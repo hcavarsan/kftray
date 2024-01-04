@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
+use tokio::net::UdpSocket as TokioUdpSocket;
 use tokio::task::JoinHandle;
 
 use tokio_stream::wrappers::TcpListenerStream;
@@ -124,11 +126,122 @@ impl PortForward {
         tracing::debug!(local_port, pod_port, pod_name, "connection closed");
         Ok(())
     }
+
     fn finder(&self) -> TargetPodFinder {
         TargetPodFinder {
             pod_api: &self.pod_api,
             svc_api: &self.svc_api,
         }
+    }
+
+    pub async fn port_forward_udp(self) -> anyhow::Result<(u16, JoinHandle<()>)> {
+        let local_udp_addr = format!("127.0.0.1:{}", self.local_port());
+        let local_udp_socket = Arc::new(
+            TokioUdpSocket::bind(&local_udp_addr)
+                .await
+                .context("Failed to bind local UDP socket")?,
+        );
+
+        let local_port = local_udp_socket.local_addr()?.port();
+        tracing::info!("Local UDP socket bound to {}", local_udp_addr);
+
+        let target = self.finder().find(&self.target).await?;
+        let (pod_name, pod_port) = target.into_parts();
+
+        // Start port forwarding to the pod via TCP
+        let mut port_forwarder = self
+            .pod_api
+            .portforward(&pod_name, &[pod_port])
+            .await
+            .context("Failed to start port forwarding to pod")?;
+
+        let (mut tcp_read, mut tcp_write) = tokio::io::split(
+            port_forwarder
+                .take_stream(pod_port)
+                .context("port not found in forwarder")?,
+        );
+
+        let local_udp_socket_read = local_udp_socket.clone();
+        let local_udp_socket_write = local_udp_socket;
+
+        let handle = tokio::spawn(async move {
+            let mut udp_buffer = [0u8; 65535]; // Maximum UDP packet size
+            let mut peer: Option<std::net::SocketAddr> = None;
+
+            loop {
+                tokio::select! {
+                    // Handle incoming UDP packets and forward them to the pod via TCP
+                    result = local_udp_socket_read.recv_from(&mut udp_buffer) => {
+                        match result {
+                            Ok((len, src)) => {
+                                peer = Some(src); // Store the peer address
+
+                                // Encapsulate the UDP packet in a custom protocol for sending over TCP
+                                let packet_len = (len as u32).to_be_bytes();
+                                if let Err(e) = tcp_write.write_all(&packet_len).await {
+                                    tracing::error!("Failed to write packet length to TCP stream: {:?}", e);
+                                    break;
+                                }
+                                if let Err(e) = tcp_write.write_all(&udp_buffer[..len]).await {
+                                    tracing::error!("Failed to write UDP packet to TCP stream: {:?}", e);
+                                    break;
+                                }
+                                if let Err(e) = tcp_write.flush().await {
+                                    tracing::error!("Failed to flush TCP stream: {:?}", e);
+                                    break;
+                                }
+                            },
+                            Err(e) => {
+                                tracing::error!("Failed to receive from UDP socket: {:?}", e);
+                                break;
+                            }
+                        }
+                    },
+
+                    result = Self::read_tcp_length_and_packet(&mut tcp_read) => {
+                        match result {
+                            Ok(Some(packet)) => {
+                                if let Some(peer) = peer {
+                                    if let Err(e) = local_udp_socket_write.send_to(&packet, &peer).await {
+                                        tracing::error!("Failed to send UDP packet to peer: {:?}", e);
+                                        break;
+                                    }
+                                } else {
+                                    tracing::error!("No UDP peer to send to");
+                                    break;
+                                }
+                            },
+                            Ok(None) => {
+                                break;
+                            }
+                            Err(e) => {
+                                tracing::error!("Failed to read from TCP stream or send to UDP socket: {:?}", e);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        Ok((local_port, handle))
+    }
+    pub async fn read_tcp_length_and_packet(
+        tcp_read: &mut (impl AsyncReadExt + Unpin),
+    ) -> anyhow::Result<Option<Vec<u8>>> {
+        let mut len_bytes = [0u8; 4];
+        if tcp_read.read_exact(&mut len_bytes).await.is_err() {
+            // If there's an error reading (which includes EOF), return None
+            return Ok(None);
+        }
+        let len = u32::from_be_bytes(len_bytes) as usize;
+
+        let mut packet = vec![0u8; len];
+        if tcp_read.read_exact(&mut packet).await.is_err() {
+            // If there's an error reading the packet (which includes EOF), return None
+            return Ok(None);
+        }
+        Ok(Some(packet))
     }
 }
 
@@ -191,6 +304,7 @@ pub struct CustomResponse {
     stdout: String,
     stderr: String,
     status: i32,
+    protocol: String,
 }
 
 impl CustomResponse {
@@ -204,6 +318,7 @@ impl CustomResponse {
         stdout: String,
         stderr: String,
         status: i32,
+        protocol: String,
     ) -> Self {
         CustomResponse {
             id,
@@ -215,6 +330,7 @@ impl CustomResponse {
             stdout,
             stderr,
             status,
+            protocol,
         }
     }
 }
@@ -231,6 +347,7 @@ pub struct Config {
     pub remote_port: u16,
     pub context: String,
     pub workload_type: String,
+    pub protocol: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remote_address: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -247,10 +364,77 @@ impl Default for Config {
             remote_port: 5678,
             context: "default-context".to_string(),
             workload_type: "default-workload".to_string(),
+            protocol: "tcp".to_string(),
             remote_address: Some("default-remote-address".to_string()),
             alias: Some("default-alias".to_string()),
         }
     }
+}
+
+#[tauri::command]
+pub async fn start_port_udp_forward(configs: Vec<Config>) -> Result<Vec<CustomResponse>, String> {
+    let mut responses = Vec::new();
+
+    for config in configs {
+        let selector = crate::TargetSelector::ServiceName(config.service.clone().unwrap());
+        let remote_port = crate::Port::from(config.remote_port as i32);
+        let context_name = Some(config.context.clone());
+        log::info!("Remote Port: {}", config.remote_port);
+        log::info!("Local Port: {}", config.local_port);
+
+        let namespace = config.namespace.clone();
+        let target = crate::Target::new(selector, remote_port, namespace);
+
+        log::debug!("Attempting to forward to service: {:?}", &config.service);
+        let port_forward = PortForward::new(target, config.local_port, context_name)
+            .await
+            .map_err(|e| {
+                log::error!("Failed to create PortForward: {:?}", e);
+                e.to_string()
+            })?;
+
+        let (actual_local_port, handle) = port_forward.port_forward_udp().await.map_err(|e| {
+            log::error!("Failed to start UDP port forwarding: {:?}", e);
+            e.to_string()
+        })?;
+
+        log::info!(
+            "UDP port forwarding is set up on local port: {:?} for service: {:?}",
+            actual_local_port,
+            &config.service
+        );
+
+        // Store the JoinHandle to the global child processes map.
+        CHILD_PROCESSES
+            .lock()
+            .unwrap()
+            .insert(config.id.unwrap().to_string(), handle);
+
+        // Append a new CustomResponse to responses collection.
+        responses.push(CustomResponse {
+            id: config.id,
+            service: config.service.clone().unwrap(),
+            namespace: config.namespace,
+            local_port: actual_local_port,
+            remote_port: config.remote_port,
+            context: config.context.clone(),
+            protocol: config.protocol.clone(),
+            stdout: format!(
+                "UDP forwarding from 127.0.0.1:{} -> {}:{}",
+                actual_local_port,
+                config.remote_port,
+                config.service.unwrap()
+            ),
+            stderr: String::new(),
+            status: 0,
+        });
+    }
+
+    if !responses.is_empty() {
+        log::info!("UDP port forwarding responses generated successfully.");
+    }
+
+    Ok(responses)
 }
 
 #[tauri::command]
@@ -300,6 +484,7 @@ pub async fn start_port_forward(configs: Vec<Config>) -> Result<Vec<CustomRespon
             local_port: actual_local_port,
             remote_port: config.remote_port,
             context: config.context.clone(),
+            protocol: config.protocol.clone(),
             stdout: format!(
                 "Forwarding from 127.0.0.1:{} -> {}:{}",
                 actual_local_port,
@@ -379,6 +564,7 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
                                 format!("Deleted pod {}", pod_name),
                                 String::new(),
                                 0,
+                                String::new(),
                             ));
                         }
                         Err(e) => {
@@ -393,6 +579,7 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
                                 format!("Failed to delete pod {}", pod_name),
                                 e.to_string(),
                                 1,
+                                String::new(),
                             ));
                         }
                     }
@@ -436,6 +623,7 @@ pub async fn stop_port_forward(
             stdout: String::from("Service port forwarding has been stopped"),
             stderr: String::new(),
             status: 0,
+            protocol: String::new(),
         })
     } else {
         Err(format!(

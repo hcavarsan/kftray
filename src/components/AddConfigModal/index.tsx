@@ -92,6 +92,11 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     value: string | number
     label: string
   } | null>(null)
+  const [selectedProtocol, setSelectedProtocol] = useState<{
+    name?: string
+    value: string | number
+    label: string
+  } | null>(null)
 
   useEffect(() => {
     const isValid = [
@@ -100,6 +105,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
       selectedService || newConfig.remote_address,
       selectedPort || newConfig.remote_port,
       selectedWorkloadType,
+      selectedProtocol,
       newConfig.alias,
       newConfig.local_port,
       ,
@@ -112,6 +118,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     selectedService,
     selectedPort,
     selectedWorkloadType,
+    selectedProtocol,
     newConfig.alias,
     newConfig.remote_address,
     newConfig.remote_port,
@@ -232,6 +239,11 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
           ? { label: newConfig.workload_type, value: newConfig.workload_type }
           : null,
       )
+      setSelectedProtocol(
+        newConfig.protocol
+          ? { label: newConfig.protocol, value: newConfig.protocol }
+          : null,
+      )
       setSelectedContext(
         newConfig.context
           ? { label: newConfig.context, value: newConfig.context }
@@ -262,6 +274,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     newConfig.context,
     newConfig.namespace,
     newConfig.service,
+    newConfig.protocol,
     newConfig.remote_port,
     newConfig.workload_type,
   ])
@@ -278,7 +291,8 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     setSelectedService(null)
     setSelectedPort(null)
     setPortData([])
-    setSelectedWorkloadType(null) // Make sure to reset this state as well
+    setSelectedWorkloadType(null)
+    setSelectedProtocol(null)
   }
 
   const handleSelectChange = (
@@ -343,6 +357,9 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     case 'workload_type':
       setSelectedWorkloadType(selectedOption)
       break
+    case 'protocol':
+      setSelectedProtocol(selectedOption)
+      break
     }
 
     handleInputChange({
@@ -393,8 +410,8 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                     styles={customStyles}
                     name='workload_type'
                     options={[
-                      { label: 'Service', value: 'service' },
-                      { label: 'Proxy', value: 'proxy' },
+                      { label: 'service', value: 'service' },
+                      { label: 'proxy', value: 'proxy' },
                     ]}
                     value={selectedWorkloadType}
                     onChange={selectedOption =>
@@ -435,24 +452,6 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                 p={2}
               >
                 <Box width={{ base: '100%', sm: '50%' }} pl={2}>
-                  <FormLabel htmlFor='namespace'>Namespace</FormLabel>
-                  <ReactSelect
-                    styles={customStyles}
-                    name='namespace'
-                    options={namespaceQuery.data?.map(namespace => ({
-                      label: namespace.name,
-                      value: namespace.name,
-                    }))}
-                    value={selectedNamespace}
-                    onChange={selectedOption =>
-                      handleSelectChange(
-                        selectedOption as Option,
-                        { name: 'namespace' } as ActionMeta<Option>,
-                      )
-                    }
-                  />
-                </Box>
-                <Box width={{ base: '100%', sm: '50%' }} pl={2}>
                   <FormLabel htmlFor='context'>Context</FormLabel>
                   <ReactSelect
                     styles={customStyles}
@@ -470,9 +469,27 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                     }
                   />
                 </Box>
+                <Box width={{ base: '100%', sm: '50%' }} pl={2}>
+                  <FormLabel htmlFor='namespace'>Namespace</FormLabel>
+                  <ReactSelect
+                    styles={customStyles}
+                    name='namespace'
+                    options={namespaceQuery.data?.map(namespace => ({
+                      label: namespace.name,
+                      value: namespace.name,
+                    }))}
+                    value={selectedNamespace}
+                    onChange={selectedOption =>
+                      handleSelectChange(
+                        selectedOption as Option,
+                        { name: 'namespace' } as ActionMeta<Option>,
+                      )
+                    }
+                  />
+                </Box>
               </FormControl>
 
-              {newConfig.workload_type === 'proxy' ? (
+              {newConfig.workload_type.startsWith('proxy') ? (
                 <>
                   <FormControl
                     display='flex'
@@ -480,7 +497,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                     flexWrap='wrap'
                     p={2}
                   >
-                    <Box width={{ base: '100%', sm: '100%' }} pl={2}>
+                    <Box width={{ base: '100%', sm: '60%' }} pl={2}>
                       <FormLabel htmlFor='remote_address'>
                         Remote Address
                       </FormLabel>
@@ -501,6 +518,24 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                           color: theme.colors.gray[500],
                         }}
                         color={theme.colors.gray[300]}
+                      />
+                    </Box>
+                    <Box width={{ base: '100%', sm: '40%' }} pl={2}>
+                      <FormLabel htmlFor='protocol'>Protocol</FormLabel>
+                      <ReactSelect
+                        styles={customStyles}
+                        name='protocol'
+                        options={[
+                          { label: 'udp', value: 'udp' },
+                          { label: 'tcp', value: 'tcp' },
+                        ]}
+                        value={selectedProtocol}
+                        onChange={selectedOption =>
+                          handleSelectChange(
+                            selectedOption as Option,
+                            { name: 'protocol' } as ActionMeta<Option>,
+                          )
+                        }
                       />
                     </Box>
                   </FormControl>
@@ -531,6 +566,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                         color={theme.colors.gray[300]}
                       />
                     </Box>
+
                     <Box width={{ base: '100%', sm: '50%' }} pl={2}>
                       <FormLabel htmlFor='local_port'>Local Port</FormLabel>
                       <Input
@@ -562,7 +598,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                     flexWrap='wrap'
                     p={2}
                   >
-                    <Box width={{ base: '100%', sm: '100%' }} pl={2}>
+                    <Box width={{ base: '100%', sm: '50%' }} pl={2}>
                       <FormLabel htmlFor='service'>Service</FormLabel>
                       <ReactSelect
                         styles={customStyles}
@@ -576,6 +612,24 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                           handleSelectChange(
                             selectedOption as Option,
                             { name: 'service' } as ActionMeta<Option>,
+                          )
+                        }
+                      />
+                    </Box>
+                    <Box width={{ base: '100%', sm: '50%' }} pl={2}>
+                      <FormLabel htmlFor='protocol'>Protocol</FormLabel>
+                      <ReactSelect
+                        styles={customStyles}
+                        name='protocol'
+                        options={[
+                          { label: 'udp', value: 'udp' },
+                          { label: 'tcp', value: 'tcp' },
+                        ]}
+                        value={selectedProtocol}
+                        onChange={selectedOption =>
+                          handleSelectChange(
+                            selectedOption as Option,
+                            { name: 'protocol' } as ActionMeta<Option>,
                           )
                         }
                       />

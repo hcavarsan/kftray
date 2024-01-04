@@ -1,23 +1,16 @@
-# Use a newer Rust base image
-FROM rust:buster as builder
+FROM golang:alpine as builder
 
-RUN USER=root cargo new --bin kftray-server
-WORKDIR /kftray-server
+WORKDIR /app
+COPY . .
 
-COPY ./Cargo.toml ./Cargo.toml
+RUN go mod tidy
+RUN go mod download
+RUN go get github.com/miladrahimi/gorelay
+RUN CGO_ENABLED=0 go build -o kftray-server
 
-RUN echo "fn main() {}" > src/main.rs
+FROM alpine
+WORKDIR /root/
+COPY --from=builder /app .
 
-RUN cargo build --release
 
-RUN rm -f target/release/deps/kftray_server*
-
-COPY ./src ./src
-
-RUN cargo build --release
-
-FROM debian:buster-slim
-
-COPY --from=builder /kftray-server/target/release/kftray-server .
-
-ENTRYPOINT ["./kftray-server"]
+CMD ["./kftray-server"]

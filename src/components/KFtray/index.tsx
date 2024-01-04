@@ -39,6 +39,7 @@ const KFTray = () => {
     remote_port: 0,
     namespace: '',
     workload_type: '',
+    protocol: '',
     remote_address: '',
     alias: '',
   })
@@ -60,6 +61,7 @@ const KFTray = () => {
       remote_port: initalRemotePort,
       namespace: '',
       workload_type: '',
+      protocol: '',
       remote_address: '',
       alias: '',
     })
@@ -206,6 +208,7 @@ const KFTray = () => {
         remote_port: configToEdit.remote_port,
         context: configToEdit.context,
         workload_type: configToEdit.workload_type,
+        protocol: configToEdit.protocol,
         remote_address: configToEdit.remote_address,
         alias: configToEdit.alias,
       })
@@ -230,6 +233,7 @@ const KFTray = () => {
         remote_port: newConfig.remote_port,
         namespace: newConfig.namespace,
         workload_type: newConfig.workload_type,
+        protocol: newConfig.protocol,
         remote_address: newConfig.remote_address,
         alias: newConfig.alias,
       }
@@ -267,6 +271,7 @@ const KFTray = () => {
       remote_port: newConfig.remote_port,
       namespace: newConfig.namespace,
       workload_type: newConfig.workload_type,
+      protocol: newConfig.protocol,
       remote_address: newConfig.remote_address,
       alias: newConfig.alias,
     }
@@ -318,7 +323,7 @@ const KFTray = () => {
           response = await invoke<Response>('start_port_forward', {
             configs: [config],
           })
-        } else if (config.workload_type === 'proxy') {
+        } else if (config.workload_type.startsWith('proxy')) {
           // Logic for initiating port forwarding with 'proxy' workload (new function invoked)
           response = await invoke<Response>('deploy_and_forward_pod', {
             configs: [config],

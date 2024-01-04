@@ -7,7 +7,9 @@ use rand::{distributions::Alphanumeric, Rng};
 use serde_json::json;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::port_forward::{start_port_forward, stop_port_forward, Config, CustomResponse};
+use crate::port_forward::{
+    start_port_forward, start_port_udp_forward, stop_port_forward, Config, CustomResponse,
+};
 
 #[tauri::command]
 pub async fn deploy_and_forward_pod(configs: Vec<Config>) -> Result<Vec<CustomResponse>, String> {
@@ -33,15 +35,25 @@ pub async fn deploy_and_forward_pod(configs: Vec<Config>) -> Result<Vec<CustomRe
             .map(|b| char::from(b).to_ascii_lowercase())
             .collect();
         let username = whoami::username();
+
+        let protocol = config.protocol.to_string();
+
         let hashed_name = format!(
-            "kftray-forward-{}-{}-{}",
-            username, timestamp, random_string
+            "kftray-forward-{}-{}-{}-{}",
+            username, protocol, timestamp, random_string
         );
 
         let config_id_str = config
             .id
             .map_or_else(|| "default".into(), |id| id.to_string());
 
+        if config
+            .remote_address
+            .as_ref()
+            .map_or(true, String::is_empty)
+        {
+            config.remote_address = config.service.clone();
+        }
         let pod_manifest = json!({
             "apiVersion": "v1",
             "kind": "Pod",
@@ -55,17 +67,20 @@ pub async fn deploy_and_forward_pod(configs: Vec<Config>) -> Result<Vec<CustomRe
             "spec": {
                 "containers": [{
                     "name": hashed_name,
-                    "image": "docker.io/hcavarsan/kftray-server:v0.0.1",
+                    "image": "docker.io/hcavarsan/kftray-server:v0.0.6",
                     "env": [
                         {"name": "LOCAL_PORT", "value": config.remote_port.to_string()},
                         {"name": "REMOTE_PORT", "value": config.remote_port.to_string()},
                         {"name": "REMOTE_ADDRESS", "value": config.remote_address},
-                        {"name": "TUNNELED_TYPE", "value": "tcp"}
+                        {"name": "PROXY_TYPE", "value": protocol},
+                        {"name": "RUST_LOG", "value": "DEBUG"},
                     ],
-                    "args": ["tcp"],
                 }],
             }
         });
+
+        // Check if remote_address is empty and set config.service
+
         let pod: Pod = serde_json::from_value(pod_manifest).map_err(|e| e.to_string())?;
         let pods: Api<Pod> = Api::namespaced(client.clone(), &config.namespace);
 
@@ -80,9 +95,14 @@ pub async fn deploy_and_forward_pod(configs: Vec<Config>) -> Result<Vec<CustomRe
         .await
         .map_err(|e| e.to_string())?;
 
-        config.service = Some(hashed_name);
+        config.service = Some(hashed_name.clone());
 
-        let start_response = start_port_forward(vec![config.clone()]).await;
+        let start_response = match protocol.as_str() {
+            "udp" => start_port_udp_forward(vec![config.clone()]).await,
+            "tcp" => start_port_forward(vec![config.clone()]).await,
+            _ => return Err("Unsupported proxy type".to_string()),
+        };
+
         match start_response {
             Ok(mut port_forward_responses) => {
                 let response = port_forward_responses
