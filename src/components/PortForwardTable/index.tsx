@@ -79,12 +79,28 @@ const PortForwardTable: React.FC<TableProps> = ({
   )
 
   const filteredConfigs = useMemo(() => {
-    return search
-      ? configs.filter(config =>
-        config.service.toLowerCase().includes(search.toLowerCase()),
+    const searchFiltered = search
+      ? configs.filter(
+        config =>
+          config.alias.toLowerCase().includes(search.toLowerCase()) ||
+            config.context.toLowerCase().includes(search.toLowerCase()) ||
+            config.remote_address
+            .toLowerCase()
+            .includes(search.toLowerCase()) ||
+            config.local_port.toString().includes(search.toLowerCase()),
       )
       : configs
+
+    const alias = searchFiltered.map(config => config.alias) ?? []
+    // Sort by alias in ascending order
+    const sortedByAliasAsc = searchFiltered.sort(
+      (a, b) =>
+        a.alias.localeCompare(b.alias) || a.context.localeCompare(b.context),
+    )
+
+    return sortedByAliasAsc
   }, [configs, search])
+
   const [groupBy, setGroupBy] = useState('none')
 
   const handleGroupByChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
@@ -351,40 +367,21 @@ const PortForwardTable: React.FC<TableProps> = ({
                             zIndex='sticky'
                             fontFamily={fontFamily}
                           >
-                            <Tr boxShadow={boxShadow} fontSize='10px'>
+                            <Tr boxShadow={boxShadow}>
                               <Th
                                 fontFamily={fontFamily}
                                 fontSize='10px'
-                                width='20%'
+                                width='40%'
                               >
-                                Service
+                                Alias
                               </Th>
-                              <Th
-                                fontFamily={fontFamily}
-                                fontSize='10px'
-                                width='25%'
-                              >
-                                Namespace
-                              </Th>
-                              <Th
-                                fontFamily={fontFamily}
-                                fontSize='10px'
-                                width='20%'
-                              >
+                              <Th fontFamily={fontFamily} fontSize='10px'>
                                 Port
                               </Th>
-                              <Th
-                                fontFamily={fontFamily}
-                                fontSize='10px'
-                                width='20%'
-                              >
+                              <Th fontFamily={fontFamily} fontSize='10px'>
                                 Status
                               </Th>
-                              <Th
-                                fontFamily={fontFamily}
-                                fontSize='10px'
-                                width='20%'
-                              >
+                              <Th fontFamily={fontFamily} fontSize='10px'>
                                 Action
                               </Th>
                             </Tr>
@@ -452,7 +449,7 @@ const PortForwardTable: React.FC<TableProps> = ({
             Options
           </MenuButton>
 
-          <MenuList>
+          <MenuList zIndex='popover'>
             <MenuItem icon={<MdAdd />} onClick={openModal}>
               Add New Config
             </MenuItem>

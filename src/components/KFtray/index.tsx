@@ -3,6 +3,7 @@ import { MdClose } from 'react-icons/md'
 
 import {
   Box,
+  Button,
   Center,
   IconButton,
   useColorModeValue,
@@ -37,6 +38,10 @@ const KFTray = () => {
     local_port: 0,
     remote_port: 0,
     namespace: '',
+    workload_type: '',
+    protocol: '',
+    remote_address: '',
+    alias: '',
   })
 
   const updateConfigRunningState = (id: number, isRunning: boolean) => {
@@ -55,6 +60,10 @@ const KFTray = () => {
       local_port: initialLocalPort,
       remote_port: initalRemotePort,
       namespace: '',
+      workload_type: '',
+      protocol: '',
+      remote_address: '',
+      alias: '',
     })
     setIsEdit(false)
     setIsModalOpen(true)
@@ -198,6 +207,10 @@ const KFTray = () => {
         local_port: configToEdit.local_port,
         remote_port: configToEdit.remote_port,
         context: configToEdit.context,
+        workload_type: configToEdit.workload_type,
+        protocol: configToEdit.protocol,
+        remote_address: configToEdit.remote_address,
+        alias: configToEdit.alias,
       })
       setIsEdit(true)
       setIsModalOpen(true)
@@ -219,6 +232,10 @@ const KFTray = () => {
         local_port: newConfig.local_port,
         remote_port: newConfig.remote_port,
         namespace: newConfig.namespace,
+        workload_type: newConfig.workload_type,
+        protocol: newConfig.protocol,
+        remote_address: newConfig.remote_address,
+        alias: newConfig.alias,
       }
 
       await invoke('update_config', { config: editedConfig })
@@ -253,6 +270,10 @@ const KFTray = () => {
       local_port: newConfig.local_port,
       remote_port: newConfig.remote_port,
       namespace: newConfig.namespace,
+      workload_type: newConfig.workload_type,
+      protocol: newConfig.protocol,
+      remote_address: newConfig.remote_address,
+      alias: newConfig.alias,
     }
 
     try {
@@ -291,37 +312,44 @@ const KFTray = () => {
     setIsInitiating(true)
     const errors = []
 
+    console.log('Starting port forwarding for configs:', configsToStart)
     for (const config of configsToStart) {
       try {
-        // Wrap the single config object in an array
-        await invoke<Response>('start_port_forward', {
-          configs: [
-            {
-              local_port: config.local_port,
-              remote_port: config.remote_port,
-              service: config.service,
-              namespace: config.namespace,
-              context: config.context,
-            },
-          ],
-        })
+        // Determine action based on the workload_type
+        let response
+
+        if (config.workload_type === 'service') {
+          // Existing logic for initiating port forwarding with 'service' workload
+          response = await invoke<Response>('start_port_forward', {
+            configs: [config],
+          })
+        } else if (config.workload_type.startsWith('proxy')) {
+          // Logic for initiating port forwarding with 'proxy' workload (new function invoked)
+          response = await invoke<Response>('deploy_and_forward_pod', {
+            configs: [config],
+          })
+        } else {
+          throw new Error(`Unsupported workload type: ${config.workload_type}`)
+        }
         updateConfigRunningState(config.id, true)
-        console.log('errors', errors)
+        console.log(
+          'Port forwarding initiated for config:',
+          config.id,
+          response,
+        )
       } catch (error) {
         console.error(
-          `Error starting port forward for config id ${config.service}:`,
+          `Error starting port forward for config id ${config.id}:`,
           error,
         )
-        if (error instanceof Error) {
-          errors.push({ service: config.service, error: error.toString() }) // Include error details
-        }
+        errors.push({ id: config.id, error })
         updateConfigRunningState(config.id, false)
       }
     }
 
     if (errors.length > 0) {
       const errorMessage = errors
-      .map(e => `Service: ${e.service}: ${e.error}`)
+      .map(e => `Config ID: ${e.id}, Error: ${e.error}`)
       .join(', ')
 
       await sendNotification({
@@ -414,9 +442,6 @@ const KFTray = () => {
       })
     }
     setIsStopping(false)
-  }
-  const quitApp = () => {
-    invoke('quit_app')
   }
 
   const cardBg = useColorModeValue('gray.800', 'gray.800')
