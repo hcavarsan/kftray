@@ -79,11 +79,8 @@ Easily create new port forwarding configurations through the UI by specifying th
 - **Local Port:** The local machine port that will listen for traffic.
 - **Remote Port:** The port on the Kubernetes resource that will receive the forwarded traffic.
 
-Add Config Modal:
+##### Add Config Modal:
 ![Create Service Configuration](img/createservice.png)
-
-Table alias information:
-![Alias Config Info](img/info.png)
 
 #### Start a Single Configuration
 
