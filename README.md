@@ -112,7 +112,6 @@ Below is an illustrated basic guide for KFTRay.
 
 Easily create new port forwarding configurations through the UI by specifying the necessary fields. Each configuration requires the following fields:
 
-![Create Service Configuration](img/createservice.png)
 
 - **Workload Type:** The Workload type is Proxy (upstream) or Service (kubernetes local service).
 - **Alias:** A unique identifier for the configuration.
@@ -125,22 +124,44 @@ Easily create new port forwarding configurations through the UI by specifying th
 - **Remote Port:** The port on the Kubernetes resource that will receive the forwarded traffic.
 
 
+<details>
+<summary><b>Screenshot - Create Service Configuration</b></summary>
+<p>
+
+![Create Service Configuration](img/createservice.png)
+
+</p>
+</details>
+
 
 
 #### Start a Single Configuration
 
-![Start Single Config](img/single.png)
+
 
 Initiate port forwarding for a single configuration with just one click. A green indicator signifies an active connection.
 
+<details>
+<summary><b>Screenshot - Start Single Config</b></summary>
+<p>
 
+![Start Single Config](img/single.png)
+
+</p>
+</details>
 
 #### Start All Configurations
-![Start All Configs](img/multi.png)
 
 Launch all your saved configurations simultaneously. This is highly efficient when working with multiple services.
 
+<details>
+<summary><b>Screenshot - Start All Configs</b></summary>
+<p>
 
+![Start All Configs](img/multi.png)
+
+</p>
+</details>
 
 #### Export Configurations
 
@@ -153,6 +174,10 @@ Import a previously exported JSON configuration file to quickly set up `kftray` 
 #### Configuration JSON Example
 
 Here is an example of what the exported JSON configuration file might look like:
+
+<details>
+<summary><b>Sample Json</b></summary>
+<p>
 
 ```json
 [
@@ -178,6 +203,12 @@ Here is an example of what the exported JSON configuration file might look like:
   }
 ]
 ```
+
+
+</p>
+</details>
+
+
 
 #### Configs Database
 
