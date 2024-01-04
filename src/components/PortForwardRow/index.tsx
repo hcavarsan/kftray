@@ -15,12 +15,13 @@ import {
   Portal,
   Switch,
   Td,
+  Tooltip,
   Tr,
   useBoolean,
   useColorModeValue,
   useDisclosure,
 } from '@chakra-ui/react'
-import { faPen, faTrash } from '@fortawesome/free-solid-svg-icons'
+import { faInfoCircle, faPen, faTrash } from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { invoke } from '@tauri-apps/api/tauri'
 
@@ -43,12 +44,55 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
 
   const togglePortForwarding = async (isChecked: boolean) => {
     setIsToggling.on()
+    console.log(
+      'togglePortForwarding' +
+        config.workload_type +
+        ' ' +
+        config.service +
+        ' ' +
+        config.id.toString() +
+        ' ' +
+        config.namespace +
+        ' ' +
+        config.local_port +
+        ' ' +
+        config.remote_address,
+      ' ' + config.protocol,
+    )
     try {
       if (isChecked) {
-        await invoke('start_port_forward', { configs: [config] })
+        if (config.workload_type === 'service' && config.protocol === 'tcp') {
+          await invoke('start_port_forward', { configs: [config] })
+        } else if (
+          config.workload_type.startsWith('proxy') ||
+          (config.workload_type === 'service' && config.protocol === 'udp')
+        ) {
+          await invoke('deploy_and_forward_pod', { configs: [config] })
+        } else {
+          throw new Error(`Unsupported workload type: ${config.workload_type}`)
+        }
         updateConfigRunningState(config.id, true)
       } else {
-        await invoke('stop_port_forward', { serviceName: config.service })
+        if (config.workload_type === 'service' && config.protocol === 'tcp') {
+          await invoke('stop_port_forward', {
+            serviceName: config.service,
+            configId: config.id.toString(),
+          })
+        } else if (
+          config.workload_type.startsWith('proxy') ||
+          (config.workload_type === 'service' && config.protocol === 'udp')
+        ) {
+          await invoke('stop_proxy_forward', {
+            configId: config.id.toString(),
+            namespace: config.namespace,
+            serviceName: config.service,
+            localPort: config.local_port,
+            remoteAddress: config.remote_address,
+            protocol: 'tcp',
+          })
+        } else {
+          throw new Error(`Unsupported workload type: ${config.workload_type}`)
+        }
         updateConfigRunningState(config.id, false)
       }
     } catch (error) {
@@ -62,54 +106,116 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   const handleDeleteClick = () => {
     onOpen()
   }
+
+  const infoIcon = (
+    <FontAwesomeIcon icon={faInfoCircle} style={{ fontSize: '10px' }} />
+  )
+
+  const tooltipLabel = (
+    <>
+      <Box as='span' fontWeight='semibold'>
+        Workload Type:
+      </Box>{' '}
+      {config.workload_type.startsWith('proxy')
+        ? config.workload_type
+        : 'Service'}
+      <br />
+      <Box as='span' fontWeight='semibold'>
+        {config.workload_type.startsWith('proxy')
+          ? 'Remote Address:'
+          : 'Service:'}
+      </Box>{' '}
+      {config.workload_type.startsWith('proxy')
+        ? config.remote_address
+        : config.service}
+      <br />
+      <Box as='span' fontWeight='semibold'>
+        Context:
+      </Box>{' '}
+      {config.context}
+      <br />
+      <Box as='span' fontWeight='semibold'>
+        Namespace:
+      </Box>{' '}
+      {config.namespace}
+      <br />
+      <Box as='span' fontWeight='semibold'>
+        Target Port:
+      </Box>{' '}
+      {config.remote_port}
+      <br />
+      <Box as='span' fontWeight='semibold'>
+        Local Port:
+      </Box>{' '}
+      {config.local_port}
+      <br />
+      <Box as='span' fontWeight='semibold'>
+        Protocol:
+      </Box>{' '}
+      {config.protocol}
+      <br />
+    </>
+  )
+
   const fontFamily = '\'Inter\', sans-serif'
 
   return (
     <>
       <Tr key={config.id}>
-        {showContext && <Td width='10%'>{config.context}</Td>}
-        <Td width='20%' color={textColor} fontFamily={fontFamily}>
-          {config.service}
+        {showContext && <Td>{config.context}</Td>}
+        <Td color={textColor} fontFamily={fontFamily} width='40%'>
+          {config.alias}
+          <Tooltip
+            hasArrow
+            label={tooltipLabel}
+            placement='right'
+            bg={useColorModeValue('white', 'gray.300')}
+            p={2}
+          >
+            <span>
+              <IconButton
+                size='xs'
+                aria-label='Info configuration'
+                icon={infoIcon}
+                variant='ghost'
+              />
+            </span>
+          </Tooltip>
         </Td>
-        <Td width='20%' color={textColor} fontFamily={fontFamily}>
-          {config.namespace}
-        </Td>
-        <Td width='15%' color={textColor} fontFamily={fontFamily}>
+        <Td color={textColor} fontFamily={fontFamily}>
           {config.local_port}
         </Td>
-        <Td width='15%'>
-          <Switch
-            colorScheme='green'
-            isChecked={config.isRunning}
-            size='sm'
-            onChange={e => togglePortForwarding(e.target.checked)}
-          />
-        </Td>
-        <Td textAlign='center' width='20%'>
-          <Flex justifyContent='center'>
-            <IconButton
-              size='xs'
-              aria-label='Edit configuration'
-              icon={
-                <FontAwesomeIcon icon={faPen} style={{ fontSize: '10px' }} />
-              }
-              onClick={() => handleEditConfig(config.id)}
-              variant='ghost'
-            />
-            <IconButton
-              size='xs'
-              aria-label='Delete configuration'
-              icon={
-                <FontAwesomeIcon icon={faTrash} style={{ fontSize: '10px' }} />
-              }
-              onClick={() => {
-                setIsAlertOpen(true),
-                handleDeleteClick(),
-                handleDeleteConfig(config.id)
-              }}
-              variant='ghost'
+        <Td>
+          <Flex alignItems='center'>
+            <Switch
+              colorScheme='green'
+              isChecked={config.isRunning}
+              size='sm'
+              onChange={e => togglePortForwarding(e.target.checked)}
             />
           </Flex>
+        </Td>
+        <Td>
+          <IconButton
+            size='xs'
+            aria-label='Edit configuration'
+            icon={<FontAwesomeIcon icon={faPen} style={{ fontSize: '10px' }} />}
+            onClick={() => handleEditConfig(config.id)}
+            variant='ghost'
+          />
+          <IconButton
+            size='xs'
+            aria-label='Delete configuration'
+            icon={
+              <FontAwesomeIcon icon={faTrash} style={{ fontSize: '10px' }} />
+            }
+            onClick={() => {
+              setIsAlertOpen(true),
+              handleDeleteClick(),
+              handleDeleteConfig(config.id)
+            }}
+            variant='ghost'
+          />
         </Td>
       </Tr>
       {isAlertOpen && (
