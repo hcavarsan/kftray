@@ -51,7 +51,7 @@
 - **Resilient Port Forwarding Connection:** Ensures continuous service even if a pod dies by reconnecting to another running pod automatically.
 - **One-Click Multiple Port Forwards:** Set up several port forwarding instances at the same time with a single click, saving time and effort.
 - **Independent of Kubectl:** Interfaces directly with the Kubernetes API, eliminating the need for `kubectl` and simplifying port forwarding management.
-- **Multi Protocol:** Kftray enables access to internal or external servers through a Kubernetes cluster, offering TCP proxy forwarding and native UDP port forwarding not supported by kubectl.
+- **Multi Protocol:** Kftray allows access to internal or external servers through a Proxy Relay server deployed in a Kubernetes cluster. It provides TCP proxy forwarding and native UDP port forwarding, which are not supported by kubectl.
 
 
 
