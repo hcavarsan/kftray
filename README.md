@@ -51,7 +51,7 @@
 - **Resilient Port Forwarding Connection:** Ensures continuous service even if a pod dies by reconnecting to another running pod automatically.
 - **One-Click Multiple Port Forwards:** Set up several port forwarding instances at the same time with a single click, saving time and effort.
 - **Independent of Kubectl:** Interfaces directly with the Kubernetes API, eliminating the need for `kubectl` and simplifying port forwarding management.
-- **Multi Protocol:** UDP and TCP proxy forwarding connections through the Kubernetes cluster.
+- **Multi Protocol:** enables access to internal or external servers through a Kubernetes cluster, offering TCP proxy forwarding and native UDP port forwarding not supported by kubectl.
 
 
 
@@ -262,8 +262,6 @@ sequenceDiagram
     Local Service-->>Kubernetes Pod: UDP Packet response
     Kubernetes Pod-->>Application: UDP Packet over TCP
 ```
-
-These flows are particularly useful in scenarios where direct communication between the application and the upstream service is not possible or desirable, and a relay is needed to facilitate the communication.
 
 
 ### Contributing
