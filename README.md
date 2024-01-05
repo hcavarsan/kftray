@@ -35,12 +35,12 @@
 ---
 
 ## Table of Contents
-- [Features](#features)
-- [Installation](#installation)
-- [Usage](#usage)
-- [Architecture](#architecture)
-- [Contributing](#contributing)
-- [License](#license)
+- [Features](#-features)
+- [Installation](#-installation)
+- [Usage](#-usage)
+- [Architecture](#-architecture)
+- [Contributing](#-contributing)
+- [License](#-license)
 
 ---
 
@@ -167,7 +167,7 @@ Below is an example of an exported JSON configuration:
 ]
 ```
 
-## Architecture
+## 🏗 Architecture
 
 ### Server
 
