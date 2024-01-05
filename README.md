@@ -251,7 +251,7 @@ sequenceDiagram
 
 #### Proxy and Service UDP Forwarding Flow
 
-Similar to the TCP forwarding flow, the kftray-app client deploys the kftray-server pod in Kubernetes, opens a local TCP socket, and establishes a port-forwarding connection to the kftray-server pod. This connection serves as the communication tunnel for sending UDP packets over TCP to the kftray-server, which then relays them to the appropriate service or remote address.
+Similar to the TCP forwarding flow, the kftray-app client deploys the kftray-server pod in Kubernetes, opens a local UDP socket, and establishes a tcp port-forwarding connection to the kftray-server pod. This connection serves as the communication tunnel for sending UDP packets over TCP to the kftray-server, which then relays them to the appropriate service or remote address.
 
 ```mermaid
 sequenceDiagram
