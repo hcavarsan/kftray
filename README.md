@@ -141,9 +141,6 @@ Use the UI to add new port forward settings. Necessary details include:
 
 Below is an example of an exported JSON configuration:
 
-<details>
-<summary><b>Sample Json</b></summary>
-<p>
 
 ```json
 [
@@ -169,9 +166,6 @@ Below is an example of an exported JSON configuration:
   }
 ]
 ```
-
-</p>
-</details>
 
 ## Architecture
 
