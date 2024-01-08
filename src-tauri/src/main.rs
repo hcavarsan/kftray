@@ -105,7 +105,7 @@ fn main() {
                     ..
                 } => {
                     let window = app.get_window("main").unwrap();
-                    window.move_window(Position::TrayCenter).unwrap();
+                    let _ = window.move_window(Position::TrayCenter);
 
                     if window.is_visible().unwrap() {
                         window.hide().unwrap();
