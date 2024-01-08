@@ -105,4 +105,6 @@ jobs:
           context: ./kftray-server
           file: ./kftray-server/Dockerfile
           push: true
-          tags: ghcr.io/${{ github.repository_owner }}/kftray-server:${{ github.ref_name }}
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/kftray-server:${{ github.ref_name }}
+            ghcr.io/${{ github.repository_owner }}/kftray-server:latest
