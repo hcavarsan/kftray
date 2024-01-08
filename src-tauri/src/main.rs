@@ -12,6 +12,7 @@ use std::fs::OpenOptions;
 use std::path::PathBuf;
 use tauri::{CustomMenuItem, Manager, SystemTray, SystemTrayEvent, SystemTrayMenu};
 use tauri_plugin_positioner::{Position, WindowExt};
+
 use tokio::runtime::Runtime;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -113,6 +114,8 @@ fn main() {
                         window.show().unwrap();
                         window.set_focus().unwrap();
                     }
+                    app.get_window("main").unwrap().show().unwrap();
+                    app.get_window("main").unwrap().set_focus().unwrap();
                 }
                 SystemTrayEvent::RightClick {
                     position: _,
