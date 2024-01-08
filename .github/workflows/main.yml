@@ -78,6 +78,7 @@ jobs:
           releaseBody: 'See the assets to download this version and install.'
           releaseDraft: true
           prerelease: false
+          updaterJsonKeepUniversal: true
           args: ${{ matrix.platform == 'macos-latest' && ' --target universal-apple-darwin --verbose' || '--verbose' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
