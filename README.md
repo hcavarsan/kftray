@@ -211,3 +211,7 @@ Kubernetes Pod-->>Application: Relays as TCP
 ## 📄 License
 
 KFtray is available under the [MIT License](LICENSE.md), which is included in the repository. See the LICENSE file for full details.
+
+## Stargazers over time
+[![Stargazers over time](https://starchart.cc/hcavarsan/kftray.svg?variant=dark)](https://starchart.cc/hcavarsan/kftray)
+
