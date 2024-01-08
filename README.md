@@ -11,6 +11,9 @@
   <a href="https://www.rust-lang.org/">
     <img src="https://img.shields.io/badge/Rust-v1.74.0-brightgreen.svg" alt="rust version">
   </a>
+    <img src="https://img.shields.io/github/downloads/hcavarsan/kftray/total.svg" alt="downloads">
+	<img src="https://img.shields.io/github/actions/workflow/status/hcavarsan/kftray/main.yml
+" alt="release build">
 </div>
 
 <div align="center">
