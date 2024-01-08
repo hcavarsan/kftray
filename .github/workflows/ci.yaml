@@ -1,4 +1,4 @@
-name: Lint and Format
+name: PR
 
 on:
   workflow_dispatch:
