@@ -75,17 +75,50 @@ fn setup_logging() {
     }
 }
 
+fn position_window_near_tray(
+    window: &tauri::Window,
+    position: tauri::PhysicalPosition<f64>,
+    size: tauri::PhysicalSize<f64>,
+) {
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        let _position = position;
+        let _size = size;
+        window.move_window(Position::TrayCenter).unwrap();
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        let window_size = window.outer_size().unwrap();
+        let scale_factor = window.scale_factor();
+        let scaled_window_size = (
+            (window_size.width as f64 * scale_factor) as i32,
+            (window_size.height as f64 * scale_factor) as i32,
+        );
+
+        let (tray_x, tray_y) = (position.x as i32, position.y as i32);
+        // Corrected: Comparison with parentheses around the cast
+        let tray_y = if (tray_y + size.height as i32) < scaled_window_size.1 {
+            tray_y + size.height as i32 // Position below the system tray
+        } else {
+            tray_y - scaled_window_size.1 // Position above the system tray
+        };
+        let tray_x = tray_x - scaled_window_size.0 / 2;
+
+        window
+            .set_position(tauri::Position::Physical(tray_x, tray_y))
+            .unwrap();
+    }
+}
+
 fn main() {
     setup_logging();
     let _ = fix_path_env::fix();
     let quit = CustomMenuItem::new("quit".to_string(), "Quit").accelerator("Cmd+Q");
     let system_tray_menu = SystemTrayMenu::new().add_item(quit);
     tauri::Builder::default()
-        .plugin(tauri_plugin_positioner::init())
         .manage(SaveDialogState::default())
-        .setup(|app| {
-            let win = app.get_window("main").unwrap();
-            let _ = win.set_decorations(false);
+        .setup(|_app| {
             db::init();
             if let Err(e) = config::migrate_configs() {
                 eprintln!("Failed to migrate configs: {}", e);
@@ -93,36 +126,24 @@ fn main() {
 
             #[cfg(target_os = "macos")]
             {
-                app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+                _app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             }
-            tauri::async_runtime::spawn(async move {
-                let _ = win.move_window(Position::TrayCenter);
-            });
             Ok(())
         })
+        .plugin(tauri_plugin_positioner::init())
         .system_tray(SystemTray::new().with_menu(system_tray_menu))
         .on_system_tray_event(|app, event| {
             tauri_plugin_positioner::on_tray_event(app, &event);
+            let window = app.get_window("main").unwrap();
             match event {
-                SystemTrayEvent::LeftClick {
-                    position: _,
-                    size: _,
-                    ..
-                } => {
-                    let window = app.get_window("main").unwrap();
-                    let win_visible = window.is_visible().unwrap();
-                    if win_visible {
+                SystemTrayEvent::LeftClick { position, size, .. } => {
+                    position_window_near_tray(&window, position, size);
+
+                    if window.is_visible().unwrap() {
                         window.hide().unwrap();
                     } else {
-                        let logical_size = tauri::LogicalSize::<f64> {
-                            width: 500.00,
-                            height: 700.00,
-                        };
-                        let logical_s = tauri::Size::Logical(logical_size);
-                        let _ = window.set_size(logical_s);
                         window.show().unwrap();
                         window.set_focus().unwrap();
-                        let _ = window.move_window(Position::TrayCenter);
                     }
                 }
                 SystemTrayEvent::RightClick {
