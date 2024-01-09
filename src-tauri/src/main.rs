@@ -75,43 +75,6 @@ fn setup_logging() {
     }
 }
 
-fn position_window_near_tray(
-    window: &tauri::Window,
-    position: tauri::PhysicalPosition<f64>,
-    size: tauri::PhysicalSize<f64>,
-) {
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    {
-        let _position = position;
-        let _size = size;
-        window.move_window(Position::TrayCenter).unwrap();
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        let window_size = window.outer_size().unwrap();
-        let scale_factor = window.scale_factor().unwrap();
-        let scaled_window_size = (
-            (window_size.width as f64 * scale_factor) as i32,
-            (window_size.height as f64 * scale_factor) as i32,
-        );
-
-        let (mut tray_x, mut tray_y) = (position.x as i32, position.y as i32);
-        tray_x -= scaled_window_size.0 / 2;
-        tray_y = if (tray_y + size.height as i32) < scaled_window_size.1 {
-            tray_y + size.height as i32
-        } else {
-            tray_y - scaled_window_size.1
-        };
-
-        window
-            .set_position(tauri::Position::Physical(tauri::PhysicalPosition {
-                x: tray_x,
-                y: tray_y,
-            }))
-            .unwrap();
-    }
-}
 fn main() {
     setup_logging();
     let _ = fix_path_env::fix();
@@ -135,10 +98,14 @@ fn main() {
         .system_tray(SystemTray::new().with_menu(system_tray_menu))
         .on_system_tray_event(|app, event| {
             tauri_plugin_positioner::on_tray_event(app, &event);
-            let window = app.get_window("main").unwrap();
             match event {
-                SystemTrayEvent::LeftClick { position, size, .. } => {
-                    position_window_near_tray(&window, position, size);
+                SystemTrayEvent::LeftClick {
+                    position: _,
+                    size: _,
+                    ..
+                } => {
+                    let window = app.get_window("main").unwrap();
+                    let _ = window.move_window(Position::TrayCenter);
 
                     if window.is_visible().unwrap() {
                         window.hide().unwrap();
