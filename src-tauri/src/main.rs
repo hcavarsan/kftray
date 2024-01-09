@@ -10,10 +10,8 @@ use log::LevelFilter;
 use std::env;
 use std::fs::OpenOptions;
 use std::path::PathBuf;
-use tauri::{
-    CustomMenuItem, Manager, PhysicalPosition, SystemTray, SystemTrayEvent, SystemTrayMenu,
-};
-
+use tauri::{CustomMenuItem, Manager, SystemTray, SystemTrayEvent, SystemTrayMenu};
+use tauri_plugin_positioner::{Position, WindowExt};
 use tokio::runtime::Runtime;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -83,8 +81,11 @@ fn main() {
     let quit = CustomMenuItem::new("quit".to_string(), "Quit").accelerator("Cmd+Q");
     let system_tray_menu = SystemTrayMenu::new().add_item(quit);
     tauri::Builder::default()
+        .plugin(tauri_plugin_positioner::init())
         .manage(SaveDialogState::default())
-        .setup(|_app| {
+        .setup(|app| {
+            let win = app.get_window("main").unwrap();
+            let _ = win.set_decorations(false);
             db::init();
             if let Err(e) = config::migrate_configs() {
                 eprintln!("Failed to migrate configs: {}", e);
@@ -92,112 +93,77 @@ fn main() {
 
             #[cfg(target_os = "macos")]
             {
-                _app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+                app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             }
+            tauri::async_runtime::spawn(async move {
+                let _ = win.move_window(Position::TrayCenter);
+            });
             Ok(())
         })
         .system_tray(SystemTray::new().with_menu(system_tray_menu))
-        .on_system_tray_event(|app, event| match event {
-            SystemTrayEvent::LeftClick { position, size, .. } => {
-                if let Some(window) = app.get_window("main") {
-                    if let Ok(window_size) = window.inner_size() {
-                        let primary_monitor = window.primary_monitor().ok().flatten();
-                        let available_monitors = window.available_monitors().unwrap_or_default();
-
-                        let monitor = available_monitors
-                            .iter()
-                            .find(|monitor| {
-                                let monitor_pos = monitor.position();
-                                let monitor_size = monitor.size();
-                                position.x >= monitor_pos.x as f64
-                                    && position.x
-                                        <= (monitor_pos.x as f64 + monitor_size.width as f64)
-                                    && position.y >= monitor_pos.y as f64
-                                    && position.y
-                                        <= (monitor_pos.y as f64 + monitor_size.height as f64)
-                            })
-                            .or(primary_monitor.as_ref())
-                            .expect("No appropriate monitor found");
-
-                        let monitor_size = monitor.size();
-                        let monitor_position = monitor.position();
-
-                        let mut new_x =
-                            position.x - (window_size.width as f64 / 2.0) + (size.width / 2.0);
-                        let mut new_y = position.y - window_size.height as f64 - (size.height);
-
-                        if new_x < monitor_position.x as f64 {
-                            new_x = monitor_position.x as f64;
-                        } else if new_x + window_size.width as f64
-                            > monitor_position.x as f64 + monitor_size.width as f64
-                        {
-                            new_x = monitor_position.x as f64 + monitor_size.width as f64
-                                - window_size.width as f64;
-                        }
-
-                        if new_y < monitor_position.y as f64 {
-                            new_y = monitor_position.y as f64;
-                        } else if new_y + window_size.height as f64
-                            > monitor_position.y as f64 + monitor_size.height as f64
-                        {
-                            new_y = monitor_position.y as f64 + monitor_size.height as f64
-                                - window_size.height as f64;
-                        }
-
-                        window
-                            .set_position(tauri::Position::Physical(PhysicalPosition::new(
-                                new_x as i32,
-                                new_y as i32,
-                            )))
-                            .unwrap();
-
-                        if window.is_visible().unwrap() {
-                            window.hide().unwrap();
-                        } else {
-                            window.show().unwrap();
-                            window.set_focus().unwrap();
-                        }
+        .on_system_tray_event(|app, event| {
+            tauri_plugin_positioner::on_tray_event(app, &event);
+            match event {
+                SystemTrayEvent::LeftClick {
+                    position: _,
+                    size: _,
+                    ..
+                } => {
+                    let window = app.get_window("main").unwrap();
+                    let win_visible = window.is_visible().unwrap();
+                    if win_visible {
+                        window.hide().unwrap();
+                    } else {
+                        let logical_size = tauri::LogicalSize::<f64> {
+                            width: 500.00,
+                            height: 700.00,
+                        };
+                        let logical_s = tauri::Size::Logical(logical_size);
+                        let _ = window.set_size(logical_s);
+                        window.show().unwrap();
+                        window.set_focus().unwrap();
+                        let _ = window.move_window(Position::TrayCenter);
                     }
                 }
-            }
-            SystemTrayEvent::RightClick {
-                position: _,
-                size: _,
-                ..
-            } => {
-                println!("system tray received a right click");
-            }
-            SystemTrayEvent::DoubleClick {
-                position: _,
-                size: _,
-                ..
-            } => {
-                println!("system tray received a double click");
-            }
-            SystemTrayEvent::MenuItemClick { id, .. } => match id.as_str() {
-                "quit" => {
-                    let runtime = Runtime::new().expect("Failed to create a Tokio runtime");
-
-                    runtime.block_on(async {
-                        match kubeforward::port_forward::stop_all_port_forward().await {
-                            Ok(_) => {
-                                println!("Successfully stopped all port forwards.");
-                            }
-                            Err(err) => {
-                                eprintln!("Failed to stop port forwards: {}", err);
-                            }
-                        }
-                    });
-
-                    std::process::exit(0);
+                SystemTrayEvent::RightClick {
+                    position: _,
+                    size: _,
+                    ..
+                } => {
+                    println!("system tray received a right click");
                 }
-                "hide" => {
-                    let window = app.get_window("main").unwrap();
-                    window.hide().unwrap();
+                SystemTrayEvent::DoubleClick {
+                    position: _,
+                    size: _,
+                    ..
+                } => {
+                    println!("system tray received a double click");
                 }
+                SystemTrayEvent::MenuItemClick { id, .. } => match id.as_str() {
+                    "quit" => {
+                        let runtime = Runtime::new().expect("Failed to create a Tokio runtime");
+
+                        runtime.block_on(async {
+                            match kubeforward::port_forward::stop_all_port_forward().await {
+                                Ok(_) => {
+                                    println!("Successfully stopped all port forwards.");
+                                }
+                                Err(err) => {
+                                    eprintln!("Failed to stop port forwards: {}", err);
+                                }
+                            }
+                        });
+
+                        std::process::exit(0);
+                    }
+                    "hide" => {
+                        let window = app.get_window("main").unwrap();
+                        window.hide().unwrap();
+                    }
+                    _ => {}
+                },
                 _ => {}
-            },
-            _ => {}
+            }
         })
         .on_window_event(|event| {
             if let tauri::WindowEvent::Focused(is_focused) = event.event() {
