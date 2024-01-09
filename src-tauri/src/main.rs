@@ -90,27 +90,28 @@ fn position_window_near_tray(
     #[cfg(target_os = "windows")]
     {
         let window_size = window.outer_size().unwrap();
-        let scale_factor = window.scale_factor();
+        let scale_factor = window.scale_factor().unwrap();
         let scaled_window_size = (
             (window_size.width as f64 * scale_factor) as i32,
             (window_size.height as f64 * scale_factor) as i32,
         );
 
-        let (tray_x, tray_y) = (position.x as i32, position.y as i32);
-        // Corrected: Comparison with parentheses around the cast
-        let tray_y = if (tray_y + size.height as i32) < scaled_window_size.1 {
-            tray_y + size.height as i32 // Position below the system tray
+        let (mut tray_x, mut tray_y) = (position.x as i32, position.y as i32);
+        tray_x -= scaled_window_size.0 / 2;
+        tray_y = if (tray_y + size.height as i32) < scaled_window_size.1 {
+            tray_y + size.height as i32
         } else {
-            tray_y - scaled_window_size.1 // Position above the system tray
+            tray_y - scaled_window_size.1
         };
-        let tray_x = tray_x - scaled_window_size.0 / 2;
 
         window
-            .set_position(tauri::Position::Physical(tray_x, tray_y))
+            .set_position(tauri::Position::Physical(tauri::PhysicalPosition {
+                x: tray_x,
+                y: tray_y,
+            }))
             .unwrap();
     }
 }
-
 fn main() {
     setup_logging();
     let _ = fix_path_env::fix();
