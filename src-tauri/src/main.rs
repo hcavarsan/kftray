@@ -10,8 +10,9 @@ use log::LevelFilter;
 use std::env;
 use std::fs::OpenOptions;
 use std::path::PathBuf;
-use tauri::{CustomMenuItem, Manager, SystemTray, SystemTrayEvent, SystemTrayMenu};
-use tauri_plugin_positioner::{Position, WindowExt};
+use tauri::{
+    CustomMenuItem, Manager, PhysicalPosition, SystemTray, SystemTrayEvent, SystemTrayMenu,
+};
 
 use tokio::runtime::Runtime;
 
@@ -95,67 +96,108 @@ fn main() {
             }
             Ok(())
         })
-        .plugin(tauri_plugin_positioner::init())
         .system_tray(SystemTray::new().with_menu(system_tray_menu))
-        .on_system_tray_event(|app, event| {
-            tauri_plugin_positioner::on_tray_event(app, &event);
-            match event {
-                SystemTrayEvent::LeftClick {
-                    position: _,
-                    size: _,
-                    ..
-                } => {
-                    let window = app.get_window("main").unwrap();
-                    let _ = window.move_window(Position::TrayCenter);
+        .on_system_tray_event(|app, event| match event {
+            SystemTrayEvent::LeftClick { position, size, .. } => {
+                if let Some(window) = app.get_window("main") {
+                    if let Ok(window_size) = window.inner_size() {
+                        let primary_monitor = window.primary_monitor().ok().flatten();
+                        let available_monitors = window.available_monitors().unwrap_or_default();
 
-                    if window.is_visible().unwrap() {
-                        window.hide().unwrap();
-                    } else {
-                        window.show().unwrap();
-                        window.set_focus().unwrap();
-                    }
-                    app.get_window("main").unwrap().show().unwrap();
-                    app.get_window("main").unwrap().set_focus().unwrap();
-                }
-                SystemTrayEvent::RightClick {
-                    position: _,
-                    size: _,
-                    ..
-                } => {
-                    println!("system tray received a right click");
-                }
-                SystemTrayEvent::DoubleClick {
-                    position: _,
-                    size: _,
-                    ..
-                } => {
-                    println!("system tray received a double click");
-                }
-                SystemTrayEvent::MenuItemClick { id, .. } => match id.as_str() {
-                    "quit" => {
-                        let runtime = Runtime::new().expect("Failed to create a Tokio runtime");
+                        let monitor = available_monitors
+                            .iter()
+                            .find(|monitor| {
+                                let monitor_pos = monitor.position();
+                                let monitor_size = monitor.size();
+                                position.x >= monitor_pos.x as f64
+                                    && position.x
+                                        <= (monitor_pos.x as f64 + monitor_size.width as f64)
+                                    && position.y >= monitor_pos.y as f64
+                                    && position.y
+                                        <= (monitor_pos.y as f64 + monitor_size.height as f64)
+                            })
+                            .or(primary_monitor.as_ref())
+                            .expect("No appropriate monitor found");
 
-                        runtime.block_on(async {
-                            match kubeforward::port_forward::stop_all_port_forward().await {
-                                Ok(_) => {
-                                    println!("Successfully stopped all port forwards.");
-                                }
-                                Err(err) => {
-                                    eprintln!("Failed to stop port forwards: {}", err);
-                                }
-                            }
-                        });
+                        let monitor_size = monitor.size();
+                        let monitor_position = monitor.position();
 
-                        std::process::exit(0);
+                        let mut new_x =
+                            position.x - (window_size.width as f64 / 2.0) + (size.width / 2.0);
+                        let mut new_y = position.y - window_size.height as f64 - (size.height);
+
+                        if new_x < monitor_position.x as f64 {
+                            new_x = monitor_position.x as f64;
+                        } else if new_x + window_size.width as f64
+                            > monitor_position.x as f64 + monitor_size.width as f64
+                        {
+                            new_x = monitor_position.x as f64 + monitor_size.width as f64
+                                - window_size.width as f64;
+                        }
+
+                        if new_y < monitor_position.y as f64 {
+                            new_y = monitor_position.y as f64;
+                        } else if new_y + window_size.height as f64
+                            > monitor_position.y as f64 + monitor_size.height as f64
+                        {
+                            new_y = monitor_position.y as f64 + monitor_size.height as f64
+                                - window_size.height as f64;
+                        }
+
+                        window
+                            .set_position(tauri::Position::Physical(PhysicalPosition::new(
+                                new_x as i32,
+                                new_y as i32,
+                            )))
+                            .unwrap();
+
+                        if window.is_visible().unwrap() {
+                            window.hide().unwrap();
+                        } else {
+                            window.show().unwrap();
+                            window.set_focus().unwrap();
+                        }
                     }
-                    "hide" => {
-                        let window = app.get_window("main").unwrap();
-                        window.hide().unwrap();
-                    }
-                    _ => {}
-                },
-                _ => {}
+                }
             }
+            SystemTrayEvent::RightClick {
+                position: _,
+                size: _,
+                ..
+            } => {
+                println!("system tray received a right click");
+            }
+            SystemTrayEvent::DoubleClick {
+                position: _,
+                size: _,
+                ..
+            } => {
+                println!("system tray received a double click");
+            }
+            SystemTrayEvent::MenuItemClick { id, .. } => match id.as_str() {
+                "quit" => {
+                    let runtime = Runtime::new().expect("Failed to create a Tokio runtime");
+
+                    runtime.block_on(async {
+                        match kubeforward::port_forward::stop_all_port_forward().await {
+                            Ok(_) => {
+                                println!("Successfully stopped all port forwards.");
+                            }
+                            Err(err) => {
+                                eprintln!("Failed to stop port forwards: {}", err);
+                            }
+                        }
+                    });
+
+                    std::process::exit(0);
+                }
+                "hide" => {
+                    let window = app.get_window("main").unwrap();
+                    window.hide().unwrap();
+                }
+                _ => {}
+            },
+            _ => {}
         })
         .on_window_event(|event| {
             if let tauri::WindowEvent::Focused(is_focused) = event.event() {
