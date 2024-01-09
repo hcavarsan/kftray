@@ -8,7 +8,7 @@
 	},
 	"package": {
 	  "productName": "kftray",
-	  "version": "0.5.0"
+	  "version": "0.5.1"
 	},
 	"tauri": {
 	  "allowlist": {
@@ -39,11 +39,15 @@
 		"shortDescription": "",
 		"targets": "all",
 		"windows": {
-		  "certificateThumbprint": null,
-		  "digestAlgorithm": "sha256",
-		  "timestampUrl": ""
-		}
-	  },
+			"certificateThumbprint": null,
+			"digestAlgorithm": "sha256",
+			"timestampUrl": "",
+			"webviewInstallMode": {
+			  "silent": true,
+			  "type": "embedBootstrapper"
+			}
+		  }
+		},
 	  "security": {
 		"csp": null
 	  },
@@ -62,14 +66,15 @@
 		  "fullscreen": false,
 		  "height": 700,
 		  "resizable": false,
-		  "title": "menubar",
+		  "title": "kftray",
 		  "width": 500,
 		  "visible": false,
 		  "hiddenTitle": true,
 		  "decorations": false,
 		  "focus": false,
 		  "transparent": true,
-		  "skipTaskbar": true
+		  "skipTaskbar": true,
+		  "alwaysOnTop": true
 		}
 	  ],
 	  "systemTray": {

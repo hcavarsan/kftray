@@ -3,9 +3,9 @@ body {
 }
 
 .arrow {
-  position: relative;
-  padding: 12px 0;
-}
+	position: relative;
+	padding: 12px 0;
+  }
 
 .accordion-shadow {
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2); /* Horizontal offset, vertical offset, blur radius, color */
@@ -13,19 +13,18 @@ body {
 }
 
 .arrow:before {
-  content: '';
-  height: 0;
-  width: 0;
-  border-width: 0 8px 12px 8px;
-  border-style: solid;
-  border-color: transparent transparent rgba(45, 57, 81, 0.8) transparent; /* Dark gray with transparency */
-  position: absolute;
-  top: 0px;
-  left: 50%;
-  transform: translateX(-50%);
-  /* Apply outer shadow to the arrow */
-  box-shadow: 0 -2px 4px rgba(0, 0, 0, 0.1);
-}
+	content: "";
+	height: 0;
+	width: 0;
+	border-width: 0 8px 12px 8px;
+	border-style: solid;
+	border-color: transparent transparent #2f2f2f transparent;
+	position: absolute;
+	top: 0px;
+	left: 50%;
+	transform: translateX(-50%);
+  }
+
 
 /* The scrollbar track (background) */
 /* The scrollbar track (background) */
@@ -67,3 +66,11 @@ body {
   width: 1rem;
   height: 1rem;
 }
+
+@media (prefers-color-scheme: dark) {
+	body > div {
+	  border-radius: 7px;
+	  color: #f6f6f6;
+	  background-color: #2f2f2f;
+	}
+  }

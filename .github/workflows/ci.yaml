@@ -1,4 +1,4 @@
-name: Lint and Format
+name: PR
 
 on:
   workflow_dispatch:
@@ -91,3 +91,27 @@ jobs:
 
       - name: Run Clippy
         run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
+
+  build-and-push-docker:
+    permissions:
+      contents: write
+      packages: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v3
+        with:
+          context: ./kftray-server
+          file: ./kftray-server/Dockerfile
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/kftray-server:${{ github.sha }}
+            ghcr.io/${{ github.repository_owner }}/kftray-server:${{ github.head_ref }}

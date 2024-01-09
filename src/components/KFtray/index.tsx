@@ -447,7 +447,7 @@ const KFTray = () => {
   const cardBg = useColorModeValue('gray.800', 'gray.800')
 
   return (
-    <Center h='100%' w='100%' overflow='hidden' margin='0'>
+    <Center h='auto' w='auto' overflow='hidden' margin='0'>
       <Box
         width='100%'
         height='75vh'

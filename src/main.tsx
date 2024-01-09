@@ -16,7 +16,7 @@ if (import.meta.env.DEV) {
 
 const queryClient = new QueryClient()
 
-const rootElement = document.getElementById('root')
+const rootElement = document.getElementById('app')
 
 if (!rootElement) {
   throw new Error('Failed to find the root element')
