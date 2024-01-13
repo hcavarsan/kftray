@@ -73,6 +73,9 @@ const PortForwardSearchTable: React.FC<PortForwardSearchTableProps> = ({
                 setIsAlertOpen={setIsAlertOpen}
                 updateConfigRunningState={updateConfigRunningState}
                 showContext={true}
+                onSelectionChange={() => {}}
+                updateSelectionState={() => {}}
+                selected={false}
               />
             ))
           ) : (

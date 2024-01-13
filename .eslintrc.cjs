@@ -81,6 +81,7 @@ module.exports = {
         '@typescript-eslint/no-unused-vars': 'off',
         'max-statements': 'off',
         'no-magic-numbers': 'off',
+        'no-empty-function': 'off',
         'react/no-unescaped-entities': 'off',
         'simple-import-sort/imports': [
           'error',

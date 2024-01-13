@@ -17,6 +17,7 @@ const initialStatus = 0
 const KFTray = () => {
   const [configs, setConfigs] = useState<Status[]>([])
   const [isModalOpen, setIsModalOpen] = useState(false)
+  const [selectedConfigs, setSelectedConfigs] = useState<Status[]>([])
 
   const [isEdit, setIsEdit] = useState(false)
 
@@ -34,11 +35,19 @@ const KFTray = () => {
   })
 
   const updateConfigRunningState = (id: number, isRunning: boolean) => {
-    setConfigs(currentConfigs =>
-      currentConfigs.map(config => {
-        return config.id === id ? { ...config, isRunning } : config
-      }),
+    setConfigs(prevConfigs =>
+      prevConfigs.map(config =>
+        config.id === id ? { ...config, isRunning } : config,
+      ),
     )
+
+    if (isRunning) {
+      // If a config is now running, remove it from selectedConfigs
+      setSelectedConfigs(prevSelectedConfigs =>
+        prevSelectedConfigs.filter(config => config.id !== id),
+      )
+    }
+    // No need to remove from selectedConfigs if isRunning is false
   }
 
   const openModal = () => {
@@ -491,6 +500,8 @@ const KFTray = () => {
             handleExportConfigs={handleExportConfigs}
             handleImportConfigs={handleImportConfigs}
             isPortForwarding={isPortForwarding}
+            selectedConfigs={selectedConfigs}
+            setSelectedConfigs={setSelectedConfigs}
           />
         </VStack>
       </Box>
