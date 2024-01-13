@@ -10,14 +10,11 @@ import {
   Box,
   Button,
   Flex,
-  HStack,
   IconButton,
-  Portal,
   Switch,
   Td,
   Tooltip,
   Tr,
-  useBoolean,
   useColorModeValue,
   useDisclosure,
 } from '@chakra-ui/react'
@@ -25,7 +22,7 @@ import { faInfoCircle, faPen, faTrash } from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { invoke } from '@tauri-apps/api/tauri'
 
-import { PortForwardRowProps, Status } from '../../types'
+import { PortForwardRowProps } from '../../types'
 
 const PortForwardRow: React.FC<PortForwardRowProps> = ({
   config,
@@ -40,10 +37,46 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   const { isOpen, onOpen, onClose } = useDisclosure()
   const textColor = useColorModeValue('gray.100', 'gray.100')
   const cancelRef = React.useRef<HTMLButtonElement>(null)
-  const [isToggling, setIsToggling] = useBoolean(false)
+
+  const startPortForwarding = async () => {
+    if (config.workload_type === 'service' && config.protocol === 'tcp') {
+      await invoke('start_port_forward', { configs: [config] })
+    } else if (
+      config.workload_type.startsWith('proxy') ||
+      (config.workload_type === 'service' && config.protocol === 'udp')
+    ) {
+      await invoke('deploy_and_forward_pod', { configs: [config] })
+    } else {
+      throw new Error(`Unsupported workload type: ${config.workload_type}`)
+    }
+    updateConfigRunningState(config.id, true)
+  }
+
+  const stopPortForwarding = async () => {
+    if (config.workload_type === 'service' && config.protocol === 'tcp') {
+      await invoke('stop_port_forward', {
+        serviceName: config.service,
+        configId: config.id.toString(),
+      })
+    } else if (
+      config.workload_type.startsWith('proxy') ||
+      (config.workload_type === 'service' && config.protocol === 'udp')
+    ) {
+      await invoke('stop_proxy_forward', {
+        configId: config.id.toString(),
+        namespace: config.namespace,
+        serviceName: config.service,
+        localPort: config.local_port,
+        remoteAddress: config.remote_address,
+        protocol: 'tcp',
+      })
+    } else {
+      throw new Error(`Unsupported workload type: ${config.workload_type}`)
+    }
+    updateConfigRunningState(config.id, false)
+  }
 
   const togglePortForwarding = async (isChecked: boolean) => {
-    setIsToggling.on()
     console.log(
       'togglePortForwarding' +
         config.workload_type +
@@ -61,48 +94,17 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
     )
     try {
       if (isChecked) {
-        if (config.workload_type === 'service' && config.protocol === 'tcp') {
-          await invoke('start_port_forward', { configs: [config] })
-        } else if (
-          config.workload_type.startsWith('proxy') ||
-          (config.workload_type === 'service' && config.protocol === 'udp')
-        ) {
-          await invoke('deploy_and_forward_pod', { configs: [config] })
-        } else {
-          throw new Error(`Unsupported workload type: ${config.workload_type}`)
-        }
-        updateConfigRunningState(config.id, true)
+        await startPortForwarding()
       } else {
-        if (config.workload_type === 'service' && config.protocol === 'tcp') {
-          await invoke('stop_port_forward', {
-            serviceName: config.service,
-            configId: config.id.toString(),
-          })
-        } else if (
-          config.workload_type.startsWith('proxy') ||
-          (config.workload_type === 'service' && config.protocol === 'udp')
-        ) {
-          await invoke('stop_proxy_forward', {
-            configId: config.id.toString(),
-            namespace: config.namespace,
-            serviceName: config.service,
-            localPort: config.local_port,
-            remoteAddress: config.remote_address,
-            protocol: 'tcp',
-          })
-        } else {
-          throw new Error(`Unsupported workload type: ${config.workload_type}`)
-        }
-        updateConfigRunningState(config.id, false)
+        await stopPortForwarding()
       }
     } catch (error) {
       console.error('Error toggling port-forwarding:', error)
       updateConfigRunningState(config.id, false)
     } finally {
-      setIsToggling.off()
+      console.log('togglePortForwarding finally')
     }
   }
-
   const handleDeleteClick = () => {
     onOpen()
   }
@@ -157,7 +159,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
     </>
   )
 
-  const fontFamily = '\'Inter\', sans-serif'
+  const fontFamily = '"Inter", sans-serif'
 
   return (
     <>
@@ -210,8 +212,8 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
               <FontAwesomeIcon icon={faTrash} style={{ fontSize: '10px' }} />
             }
             onClick={() => {
-              setIsAlertOpen(true),
-              handleDeleteClick(),
+              setIsAlertOpen(true)
+              handleDeleteClick()
               handleDeleteConfig(config.id)
             }}
             variant='ghost'

@@ -27,12 +27,12 @@ jobs:
       - name: Install pnpm
         uses: pnpm/action-setup@v2.2.2
         with:
-          version: 8.x.x
+          version: 8.11.0
 
       - name: Install Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: 20
+          node-version: 20.11.0
           cache: 'pnpm'
 
       - name: Install pnpm dependencies
@@ -81,12 +81,12 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: 20
+          node-version: 20.11.0
 
       - name: Install pnpm
         uses: pnpm/action-setup@v2.0.1
         with:
-          version: 8
+          version: 8.11.0
           run_install: false
 
       - name: Run Clippy

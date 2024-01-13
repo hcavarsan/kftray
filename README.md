@@ -1,23 +1,22 @@
 <div align="center">
   <a href="https://nodejs.org/en/">
-    <img src="https://img.shields.io/badge/Node-v20.10.0-brightgreen.svg" alt="node version">
+    <img src="https://img.shields.io/badge/Node-v20.11.0-brightgreen.svg" alt="node version">
   </a>
   <a href="https://tauri.app/">
-    <img src="https://img.shields.io/badge/Tauri-v1.5.2-brightgreen.svg" alt="tauri version">
+    <img src="https://img.shields.io/badge/Tauri-v1.5.8-brightgreen.svg" alt="tauri version">
   </a>
   <a href="https://react.dev">
     <img src="https://img.shields.io/badge/React-v18.2.0-brightgreen.svg" alt="react version">
   </a>
 
   <a href="https://www.rust-lang.org/">
-    <img src="https://img.shields.io/badge/Rust-v1.74.0-brightgreen.svg" alt="rust version">
+    <img src="https://img.shields.io/badge/Rust-v1.75.0-brightgreen.svg" alt="rust version">
   </a>
     </div>
   <div align="center">
     <img src="https://img.shields.io/github/downloads/hcavarsan/kftray/total.svg" alt="downloads">
 	<img src="https://img.shields.io/github/actions/workflow/status/hcavarsan/kftray/main.yml" alt="release=">
 	</div>
-
 
 <div align="center">
   <h1>KFtray</h1>
@@ -35,12 +34,12 @@
     <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.5.1_amd64.AppImage">Download for Linux</a>
   </p>
 
-
 </div>
 
 ---
 
 ## Table of Contents
+
 - [Features](#-features)
 - [Installation](#-installation)
 - [Usage](#-usage)
@@ -64,18 +63,20 @@
 Install kftray with ease using Homebrew by tapping into the custom repository. Run the following commands:
 
 For Linux:
+
 ```bash
 brew tap hcavarsan/kftray
 brew install --HEAD kftray
 ```
 
 For macOS:
+
 ```bash
 brew tap hcavarsan/kftray
 brew install --HEAD kftray
 ```
 
-*Please check the caveats section for global app creation instructions after installation.*
+_Please check the caveats section for global app creation instructions after installation._
 
 #### Building from Source
 
@@ -118,7 +119,6 @@ Use the UI to add new port forward settings. Necessary details include:
 - `Protocol`: TCP or UDP.
 - `Local and Remote Ports`: Endpoint details.
 
-
 <details>
 <summary><b>Create Service Configuration Screenshot</b></summary>
 <p align="center">
@@ -146,7 +146,6 @@ Use the UI to add new port forward settings. Necessary details include:
 #### Configuration JSON Sample
 
 Below is an example of an exported JSON configuration:
-
 
 ```json
 [
@@ -182,12 +181,15 @@ KFtray Server is a Golang application that relays UDP/TCP traffic to an upstream
 ### Forwarding Flows
 
 - **TCP Forwarding:** A local TCP socket, similar to kubectl, can be used to communicate with a Kubernetes pod. This approach offers parallel execution and improved resilience.
+
 ```mermaid
 sequenceDiagram
 Application->>Kubernetes Pod: Opens TCP socket, starts port-forwarding
 Kubernetes Pod-->>Application: Responds with TCP Packet
 ```
+
 - **Proxy TCP Forwarding:** The local TCP connects to the kftray-server pod, which then sends TCP packet to the upstream server.
+
 ```mermaid
 sequenceDiagram
 Application->>Kubernetes Pod: Socket to kftray-server, facilitates TCP relay
@@ -206,18 +208,16 @@ Service/Remote-->>Kubernetes Pod: Responds with UDP Packet
 Kubernetes Pod-->>Application: Relays as TCP
 ```
 
-
 ## 👥 Contributing
 
-
 - 🛠 **Pull Requests**: Feel free to create pull requests for bug fixes, new features, or improvements.
-- 📝 **Issues**:  Report bugs, suggest new features, or ask questions.
-- 💡 **Feedback**:  Your feedback helps improve kftray.
+- 📝 **Issues**: Report bugs, suggest new features, or ask questions.
+- 💡 **Feedback**: Your feedback helps improve kftray.
 
 ## 📄 License
 
 KFtray is available under the [MIT License](LICENSE.md), which is included in the repository. See the LICENSE file for full details.
 
 ## Stargazers over time
-[![Stargazers over time](https://starchart.cc/hcavarsan/kftray.svg?variant=dark)](https://starchart.cc/hcavarsan/kftray)
 
+[![Stargazers over time](https://starchart.cc/hcavarsan/kftray.svg?variant=dark)](https://starchart.cc/hcavarsan/kftray)

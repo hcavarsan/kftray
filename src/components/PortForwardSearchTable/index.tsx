@@ -3,20 +3,14 @@ import React from 'react'
 
 import {
   Box,
-  Flex,
-  IconButton,
-  Switch,
   Table,
   Tbody,
   Td,
-  Text,
   Th,
   Thead,
   Tr,
   useColorModeValue,
 } from '@chakra-ui/react'
-import { faPen, faTrash } from '@fortawesome/free-solid-svg-icons'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 
 import { Status } from '../../types'
 import PortForwardRow from '../PortForwardRow'
