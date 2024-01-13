@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState } from 'react'
 
 import {
   AlertDialog,
@@ -37,6 +37,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   const { isOpen, onOpen, onClose } = useDisclosure()
   const textColor = useColorModeValue('gray.100', 'gray.100')
   const cancelRef = React.useRef<HTMLButtonElement>(null)
+  const [isRunning, setIsRunning] = useState(false)
 
   const startPortForwarding = async () => {
     if (config.workload_type === 'service' && config.protocol === 'tcp') {
@@ -93,6 +94,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
       ' ' + config.protocol,
     )
     try {
+      setIsRunning(true)
       if (isChecked) {
         await startPortForwarding()
       } else {
@@ -103,6 +105,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
       updateConfigRunningState(config.id, false)
     } finally {
       console.log('togglePortForwarding finally')
+      setIsRunning(false)
     }
   }
   const handleDeleteClick = () => {
@@ -194,6 +197,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
               isChecked={config.isRunning}
               size='sm'
               onChange={e => togglePortForwarding(e.target.checked)}
+              isDisabled={isRunning}
             />
           </Flex>
         </Td>
