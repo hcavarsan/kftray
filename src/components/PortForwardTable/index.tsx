@@ -18,6 +18,7 @@ import {
   Box,
   Button,
   ButtonGroup,
+  Checkbox,
   Flex,
   Image,
   Input,
@@ -57,14 +58,37 @@ const PortForwardTable: React.FC<TableProps> = ({
   openModal,
   handleExportConfigs,
   handleImportConfigs,
+  selectedConfigs,
+  setSelectedConfigs,
 }) => {
   const [search, setSearch] = useState('')
   const [expandedIndices, setExpandedIndices] = useState<number[]>([])
   const [version, setVersion] = useState('')
+  const [selectedConfigsByContext, setSelectedConfigsByContext] = useState<
+    Record<string, boolean>
+  >({})
+  const [isCheckboxAction, setIsCheckboxAction] = useState(false)
+
+  const updateSelectionState = (id: number, isRunning: boolean) => {
+    if (isRunning) {
+      setSelectedConfigs(prev => prev.filter(config => config.id !== id))
+    }
+  }
 
   useEffect(() => {
     app.getVersion().then(setVersion)
   }, [])
+
+  useEffect(() => {
+    setSelectedConfigs(prevSelectedConfigs =>
+      prevSelectedConfigs.filter(
+        selectedConfig =>
+          !configs.some(
+            config => config.id === selectedConfig.id && config.isRunning,
+          ),
+      ),
+    )
+  }, [configs, setSelectedConfigs])
 
   const filteredConfigs = useMemo(() => {
     const searchFiltered = search
@@ -94,6 +118,15 @@ const PortForwardTable: React.FC<TableProps> = ({
       setExpandedIndices([])
     } else {
       setExpandedIndices(allIndices)
+    }
+    setIsCheckboxAction(true)
+  }
+
+  const startSelectedPortForwarding = async () => {
+    const configsToStart = selectedConfigs.filter(config => !config.isRunning)
+
+    if (configsToStart.length > 0) {
+      await initiatePortForwarding(configsToStart)
     }
   }
 
@@ -130,8 +163,77 @@ const PortForwardTable: React.FC<TableProps> = ({
   const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     setSearch(event.target.value)
   }
-  const handleChange = (expandedIndex: number | number[]) => {
-    setExpandedIndices(expandedIndex as number[])
+  const handleAccordionChange = (expandedIndex: number | number[]) => {
+    if (!isCheckboxAction) {
+      setExpandedIndices(expandedIndex as number[])
+    }
+  }
+
+  // eslint-disable-next-line max-params
+  const handleCheckboxChange = (context: string, isChecked: boolean) => {
+    setIsCheckboxAction(true)
+    handleContextSelectionChange(context, isChecked)
+    setIsCheckboxAction(false)
+  }
+
+  useEffect(() => {
+    const newSelectedConfigsByContext: Record<string, boolean> = {}
+
+    Object.entries(configsByContext).forEach(([context, contextConfigs]) => {
+      newSelectedConfigsByContext[context] = contextConfigs.every(config =>
+        selectedConfigs.some(selectedConfig => selectedConfig.id === config.id),
+      )
+    })
+
+    setSelectedConfigsByContext(newSelectedConfigsByContext)
+  }, [selectedConfigs, configsByContext])
+
+  const handleSelectionChange = (config: Status, isSelected: boolean) => {
+    setSelectedConfigs(prevSelectedConfigs => {
+      const isSelectedCurrently = prevSelectedConfigs.some(
+        c => c.id === config.id,
+      )
+
+      if (isSelected && !isSelectedCurrently) {
+        return [...prevSelectedConfigs, config]
+      } else if (!isSelected && isSelectedCurrently) {
+        return prevSelectedConfigs.filter(c => c.id !== config.id)
+      } else {
+        return prevSelectedConfigs
+      }
+    })
+  }
+  const handleContextSelectionChange = (
+    context: string,
+    isContextSelected: boolean,
+  ) => {
+    setIsCheckboxAction(true)
+    setSelectedConfigs(currentSelectedConfigs => {
+      const contextConfigs = configs.filter(
+        config => config.context === context,
+      )
+
+      if (isContextSelected) {
+        // eslint-disable-next-line max-len
+        const newConfigsToAdd = contextConfigs.filter(
+          config =>
+            !currentSelectedConfigs.some(
+              selectedConfig => selectedConfig.id === config.id,
+            ),
+        )
+
+        return [...currentSelectedConfigs, ...newConfigsToAdd]
+      } else {
+        return currentSelectedConfigs.filter(
+          config => config.context !== context,
+        )
+      }
+    })
+
+    setSelectedConfigsByContext(prev => ({
+      ...prev,
+      [context]: isContextSelected,
+    }))
   }
 
   return (
@@ -190,14 +292,20 @@ const PortForwardTable: React.FC<TableProps> = ({
               leftIcon={<MdRefresh />}
               colorScheme='facebook'
               isLoading={isInitiating}
-              loadingText='Starting...'
-              onClick={startAllPortForwarding}
+              loadingText={isInitiating ? 'Starting...' : null}
+              onClick={
+                selectedConfigs.length > 0
+                  ? startSelectedPortForwarding
+                  : startAllPortForwarding
+              }
               isDisabled={
-                isInitiating || !configs.some(config => !config.isRunning)
+                isInitiating ||
+                (!selectedConfigs.length &&
+                  !configs.some(config => !config.isRunning))
               }
               size='xs'
             >
-              Start All
+              {selectedConfigs.length > 0 ? 'Start Selected' : 'Start All'}
             </Button>
             <Button
               leftIcon={<MdClose />}
@@ -280,11 +388,11 @@ const PortForwardTable: React.FC<TableProps> = ({
           <Accordion
             allowMultiple
             index={expandedIndices}
-            onChange={handleChange}
+            onChange={handleAccordionChange}
             borderColor={borderColor}
           >
             {Object.entries(configsByContext).map(
-              ([context, contextConfigs]) => (
+              ([context, contextConfigs], contextIndex) => (
                 <AccordionItem key={context} border='none'>
                   <AccordionButton
                     bg={accordionBg}
@@ -302,7 +410,30 @@ const PortForwardTable: React.FC<TableProps> = ({
                       fontSize='sm'
                       color={textColor}
                     >
-                      cluster: {context}
+                      <div onClick={event => event.stopPropagation()}>
+                        <Checkbox
+                          size='sm'
+                          isChecked={
+                            selectedConfigsByContext[context] ||
+                            contextConfigs.every(config => config.isRunning)
+                          }
+                          onChange={event => {
+                            event.stopPropagation()
+                            handleCheckboxChange(
+                              context,
+                              !selectedConfigsByContext[context],
+                            )
+                          }}
+                          onClick={event => {
+                            event.stopPropagation()
+                          }}
+                          isDisabled={contextConfigs.every(
+                            config => config.isRunning,
+                          )}
+                        >
+                          cluster: {context}
+                        </Checkbox>
+                      </div>
                     </Box>
                     <Box
                       flex='1'
@@ -374,6 +505,14 @@ const PortForwardTable: React.FC<TableProps> = ({
                                   confirmDeleteConfig={confirmDeleteConfig}
                                   handleEditConfig={handleEditConfig}
                                   isAlertOpen={isAlertOpen}
+                                  selected={selectedConfigs.some(
+                                    selectedConfig =>
+                                      selectedConfig.id === config.id,
+                                  )}
+                                  onSelectionChange={isSelected =>
+                                    handleSelectionChange(config, isSelected)
+                                  }
+                                  updateSelectionState={updateSelectionState}
                                   setIsAlertOpen={setIsAlertOpen}
                                   updateConfigRunningState={
                                     updateConfigRunningState

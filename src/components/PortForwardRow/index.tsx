@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React from 'react'
 
 import {
   AlertDialog,
@@ -9,6 +9,7 @@ import {
   AlertDialogOverlay,
   Box,
   Button,
+  Checkbox,
   Flex,
   IconButton,
   Switch,
@@ -33,11 +34,13 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   isAlertOpen,
   updateConfigRunningState,
   showContext = false,
+  selected,
+  onSelectionChange,
+  updateSelectionState,
 }) => {
   const { isOpen, onOpen, onClose } = useDisclosure()
   const textColor = useColorModeValue('gray.100', 'gray.100')
   const cancelRef = React.useRef<HTMLButtonElement>(null)
-  const [isRunning, setIsRunning] = useState(false)
 
   const startPortForwarding = async () => {
     if (config.workload_type === 'service' && config.protocol === 'tcp') {
@@ -51,8 +54,8 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
       throw new Error(`Unsupported workload type: ${config.workload_type}`)
     }
     updateConfigRunningState(config.id, true)
+    updateSelectionState(config.id, true)
   }
-
   const stopPortForwarding = async () => {
     if (config.workload_type === 'service' && config.protocol === 'tcp') {
       await invoke('stop_port_forward', {
@@ -78,23 +81,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   }
 
   const togglePortForwarding = async (isChecked: boolean) => {
-    console.log(
-      'togglePortForwarding' +
-        config.workload_type +
-        ' ' +
-        config.service +
-        ' ' +
-        config.id.toString() +
-        ' ' +
-        config.namespace +
-        ' ' +
-        config.local_port +
-        ' ' +
-        config.remote_address,
-      ' ' + config.protocol,
-    )
     try {
-      setIsRunning(true)
       if (isChecked) {
         await startPortForwarding()
       } else {
@@ -102,10 +89,9 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
       }
     } catch (error) {
       console.error('Error toggling port-forwarding:', error)
-      updateConfigRunningState(config.id, false)
+      // Note: No need to call updateConfigRunningState here since it's done in start/stop functions directly
     } finally {
       console.log('togglePortForwarding finally')
-      setIsRunning(false)
     }
   }
   const handleDeleteClick = () => {
@@ -169,6 +155,19 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
       <Tr key={config.id}>
         {showContext && <Td>{config.context}</Td>}
         <Td color={textColor} fontFamily={fontFamily} width='40%'>
+          <Checkbox
+            size='sm'
+            isChecked={selected || config.isRunning}
+            onChange={event => {
+              event.stopPropagation()
+              onSelectionChange(!selected)
+            }}
+            disabled={config.isRunning}
+            ml={-4}
+            mr={2}
+            mt={1}
+            variant='ghost'
+          />
           {config.alias}
           <Tooltip
             hasArrow
@@ -197,7 +196,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
               isChecked={config.isRunning}
               size='sm'
               onChange={e => togglePortForwarding(e.target.checked)}
-              isDisabled={isRunning}
+              isDisabled={config.isRunning}
             />
           </Flex>
         </Td>
