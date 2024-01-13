@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { useQuery, useQueryClient } from 'react-query'
+import { useQuery } from 'react-query'
 import ReactSelect, { ActionMeta, StylesConfig } from 'react-select'
 
 import {
@@ -20,7 +20,7 @@ import {
 import { invoke } from '@tauri-apps/api/tauri'
 
 import theme from '../../assets/theme'
-import { ConfigProps, Status } from '../../types'
+import { ConfigProps } from '../../types'
 
 interface Namespace {
   namespace: string
@@ -102,13 +102,12 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     const isValid = [
       selectedContext,
       selectedNamespace,
-      selectedService || newConfig.remote_address,
-      selectedPort || newConfig.remote_port,
+      selectedService ?? newConfig.remote_address,
+      selectedPort ?? newConfig.remote_port,
       selectedWorkloadType,
       selectedProtocol,
       newConfig.alias,
       newConfig.local_port,
-      ,
     ].every(field => field !== null && field !== '')
 
     setIsFormValid(isValid)
@@ -128,7 +127,6 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
 
   const [isFormValid, setIsFormValid] = useState(false)
 
-  const queryClient = useQueryClient()
   const customStyles: StylesConfig = {
     control: provided => ({
       ...provided,
@@ -173,9 +171,13 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
   >([])
   const toast = useToast()
 
+  const fetchKubeContexts = (): Promise<KubeContext[]> => {
+    return invoke('list_kube_contexts')
+  }
+
   const contextQuery = useQuery<KubeContext[]>(
     'kube-contexts',
-    () => invoke('list_kube_contexts') as Promise<KubeContext[]>,
+    fetchKubeContexts,
   )
 
   const namespaceQuery = useQuery(
@@ -219,10 +221,10 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
           description: error,
           status: 'error',
         })
-        setPortData(configData?.ports || [])
+        setPortData(configData?.ports ?? [])
       })
     } else {
-      setPortData(configData?.ports || [])
+      setPortData(configData?.ports ?? [])
     }
   }, [
     newConfig.context,
@@ -382,13 +384,6 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     closeModal()
     resetState()
   }
-
-  const onSubmit = isEdit
-    ? handleSaveConfig
-    : (event: React.FormEvent<Element>) => {
-      event.preventDefault()
-      handleSaveConfig(event)
-    }
 
   return (
     <Center>

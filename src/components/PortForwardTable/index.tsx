@@ -19,7 +19,6 @@ import {
   Button,
   ButtonGroup,
   Flex,
-  IconButton,
   Image,
   Input,
   InputGroup,
@@ -28,13 +27,11 @@ import {
   MenuButton,
   MenuItem,
   MenuList,
-  Select,
   Table,
   Tbody,
   Text,
   Th,
   Thead,
-  Tooltip,
   Tr,
   useColorModeValue,
 } from '@chakra-ui/react'
@@ -69,15 +66,6 @@ const PortForwardTable: React.FC<TableProps> = ({
     app.getVersion().then(setVersion)
   }, [])
 
-  const groupByOptions = useMemo(
-    () => [
-      { value: 'none', label: 'None' },
-      { value: 'context', label: 'Cluster' },
-      // additional group by options can be added here
-    ],
-    [],
-  )
-
   const filteredConfigs = useMemo(() => {
     const searchFiltered = search
       ? configs.filter(
@@ -91,25 +79,13 @@ const PortForwardTable: React.FC<TableProps> = ({
       )
       : configs
 
-    const alias = searchFiltered.map(config => config.alias) ?? []
-    // Sort by alias in ascending order
-    const sortedByAliasAsc = searchFiltered.sort(
+    const sortedByAliasAsc = [...searchFiltered].sort(
       (a, b) =>
         a.alias.localeCompare(b.alias) || a.context.localeCompare(b.context),
     )
 
     return sortedByAliasAsc
   }, [configs, search])
-
-  const [groupBy, setGroupBy] = useState('none')
-
-  const handleGroupByChange = (event: React.ChangeEvent<HTMLSelectElement>) => {
-    if (event.target.value === 'none') {
-      setExpandedIndices([])
-    }
-
-    setGroupBy(event.target.value)
-  }
 
   const toggleExpandAll = () => {
     const allIndices = Object.keys(configsByContext).map((_, index) => index)
@@ -142,20 +118,14 @@ const PortForwardTable: React.FC<TableProps> = ({
       return group
     }, {})
 
-  // Calculate the count of configs and the count of configs running
-  const configsCount = configs.length
-  const runningConfigsCount = configs.filter(config => config.isRunning).length
-
   const configsByContext = groupByContext(configs)
 
   const bg = useColorModeValue('gray.50', 'gray.700')
   const accordionBg = useColorModeValue('gray.100', 'gray.800')
-  const border = useColorModeValue('gray.200', 'gray.600')
   const borderColor = useColorModeValue('gray.200', 'gray.600')
   const textColor = useColorModeValue('gray.800', 'white')
   const boxShadow = useColorModeValue('base', 'lg')
   const fontFamily = '\'Inter\', sans-serif'
-  const accentColor = useColorModeValue('gray.100', 'gray.600') // use accent color for delineation
 
   const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     setSearch(event.target.value)
@@ -163,9 +133,6 @@ const PortForwardTable: React.FC<TableProps> = ({
   const handleChange = (expandedIndex: number | number[]) => {
     setExpandedIndices(expandedIndex as number[])
   }
-
-  const isAllExpanded =
-    expandedIndices.length === Object.keys(configsByContext).length
 
   return (
     <Flex
