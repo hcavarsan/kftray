@@ -1,15 +1,6 @@
 import React, { useEffect, useState } from 'react'
-import { MdClose } from 'react-icons/md'
 
-import {
-  Box,
-  Button,
-  Center,
-  IconButton,
-  useColorModeValue,
-  useDisclosure,
-  VStack,
-} from '@chakra-ui/react'
+import { Box, Center, useColorModeValue, VStack } from '@chakra-ui/react'
 import { open, save } from '@tauri-apps/api/dialog'
 import { readTextFile, writeTextFile } from '@tauri-apps/api/fs'
 import { sendNotification } from '@tauri-apps/api/notification'
@@ -17,7 +8,6 @@ import { invoke } from '@tauri-apps/api/tauri'
 
 import { Config, Response, Status } from '../../types'
 import AddConfigModal from '../AddConfigModal'
-import PortForwardSearchTable from '../PortForwardSearchTable'
 import PortForwardTable from '../PortForwardTable'
 
 const initalRemotePort = 0
@@ -25,7 +15,6 @@ const initialLocalPort = 0
 const initialId = 0
 const initialStatus = 0
 const KFTray = () => {
-  const { isOpen, onOpen, onClose } = useDisclosure()
   const [configs, setConfigs] = useState<Status[]>([])
   const [isModalOpen, setIsModalOpen] = useState(false)
 
@@ -74,34 +63,26 @@ const KFTray = () => {
   }
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target
-    const updatedValue =
-      name === 'local_port' || name === 'remote_port'
-        ? value === ''
-          ? ''
-          : Number(value)
-        : value
+
+    let updatedValue: string | number
+
+    if (name === 'local_port' || name === 'remote_port') {
+      updatedValue = value === '' ? '' : Number(value)
+    } else {
+      updatedValue = value
+    }
 
     setNewConfig(prev => ({
       ...prev,
       [name]: updatedValue,
     }))
   }
-
-  const [hasRunningConfigs, setHasRunningConfigs] = useState(false)
-  const [hasStoppedConfigs, setHasStoppedConfigs] = useState(false)
-
-  useEffect(() => {
-    setHasRunningConfigs(configs.some(config => config.isRunning))
-    setHasStoppedConfigs(configs.some(config => !config.isRunning))
-  }, [configs])
-
   const cancelRef = React.useRef<HTMLElement>(null)
   const [isInitiating, setIsInitiating] = useState(false)
   const [isStopping, setIsStopping] = useState(false)
   const [isPortForwarding, setIsPortForwarding] = useState(false)
   const [isAlertOpen, setIsAlertOpen] = useState(false)
   const [configToDelete, setConfigToDelete] = useState<number | undefined>()
-  const [selectedConfigId, setSelectedConfigId] = useState(null)
 
   useEffect(() => {
     const fetchConfigs = async () => {
