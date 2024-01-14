@@ -250,6 +250,7 @@ const KFTray = () => {
       })
     }
   }
+  // eslint-disable-next-line complexity
   const handleSaveConfig = async (e: React.FormEvent) => {
     e.preventDefault()
 
@@ -267,15 +268,87 @@ const KFTray = () => {
     }
 
     try {
+      let wasRunning = false
+      const originalConfigsRunningState = new Map()
+
+      configs.forEach(conf =>
+        originalConfigsRunningState.set(conf.id, conf.isRunning),
+      )
+
+      if (isEdit && originalConfigsRunningState.get(newConfig.id)) {
+        wasRunning = true
+
+        if (
+          newConfig.workload_type === 'service' &&
+          newConfig.protocol === 'tcp'
+        ) {
+          await invoke('stop_port_forward', {
+            serviceName: newConfig.service,
+            configId: newConfig.id.toString(),
+          })
+        } else if (
+          newConfig.workload_type.startsWith('proxy') ||
+          (newConfig.workload_type === 'service' &&
+            newConfig.protocol === 'udp')
+        ) {
+          await invoke('stop_proxy_forward', {
+            configId: newConfig.id.toString(),
+            namespace: newConfig.namespace,
+            serviceName: newConfig.service,
+            localPort: newConfig.local_port,
+            remoteAddress: newConfig.remote_address,
+            protocol: 'tcp',
+          })
+        } else {
+          throw new Error(
+            `Unsupported workload type: ${newConfig.workload_type}`,
+          )
+        }
+      }
+
       if (isEdit) {
-        // Update existing config
         await invoke('update_config', { config: configToSave })
       } else {
-        // Insert new config
         await invoke('insert_config', { config: configToSave })
       }
 
-      const updatedConfigs = await invoke<Status[]>('get_configs')
+      let updatedConfigs = await invoke<Status[]>('get_configs')
+
+      updatedConfigs = updatedConfigs.map(conf => ({
+        ...conf,
+        isRunning:
+          conf.id === newConfig.id
+            ? wasRunning
+            : originalConfigsRunningState.get(conf.id) || false,
+      }))
+
+      if (wasRunning) {
+        const updatedConfig = updatedConfigs.find(
+          conf => conf.id === newConfig.id,
+        )
+
+        if (updatedConfig) {
+          if (
+            updatedConfig.workload_type === 'service' &&
+            updatedConfig.protocol === 'tcp'
+          ) {
+            await invoke('start_port_forward', { configs: [updatedConfig] })
+          } else if (
+            updatedConfig.workload_type.startsWith('proxy') ||
+            (updatedConfig.workload_type === 'service' &&
+              updatedConfig.protocol === 'udp')
+          ) {
+            await invoke('deploy_and_forward_pod', { configs: [updatedConfig] })
+          } else {
+            throw new Error(
+              `Unsupported workload type: ${updatedConfig.workload_type}`,
+            )
+          }
+          updatedConfigs = updatedConfigs.map(conf =>
+            conf.id === updatedConfig.id ? { ...conf, isRunning: true } : conf,
+          )
+        }
+      }
 
       setConfigs(updatedConfigs)
 
@@ -287,17 +360,15 @@ const KFTray = () => {
 
       closeModal()
     } catch (error) {
-      console.error(`Failed to ${isEdit ? 'update' : 'insert'} config:`, error)
-
+      console.error(`Failed to ${isEdit ? 'update' : 'add'} config:`, error)
       await sendNotification({
         title: 'Error',
-        body: `Failed to ${
-          isEdit ? 'update' : 'add'
-        } configuration. Error: ${error}`,
+        body: `Failed to ${isEdit ? 'update' : 'add'} configuration. Error: ${error}`,
         icon: 'error',
       })
     }
   }
+
   const initiatePortForwarding = async (configsToStart: Status[]) => {
     setIsInitiating(true)
     const errors = []

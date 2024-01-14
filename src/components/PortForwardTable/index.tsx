@@ -119,7 +119,6 @@ const PortForwardTable: React.FC<TableProps> = ({
     } else {
       setExpandedIndices(allIndices)
     }
-    setIsCheckboxAction(true)
   }
 
   const startSelectedPortForwarding = async () => {

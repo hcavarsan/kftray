@@ -196,7 +196,6 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
               isChecked={config.isRunning}
               size='sm'
               onChange={e => togglePortForwarding(e.target.checked)}
-              isDisabled={config.isRunning}
             />
           </Flex>
         </Td>
