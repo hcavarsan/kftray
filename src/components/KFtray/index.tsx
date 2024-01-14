@@ -42,12 +42,10 @@ const KFTray = () => {
     )
 
     if (isRunning) {
-      // If a config is now running, remove it from selectedConfigs
       setSelectedConfigs(prevSelectedConfigs =>
         prevSelectedConfigs.filter(config => config.id !== id),
       )
     }
-    // No need to remove from selectedConfigs if isRunning is false
   }
 
   const openModal = () => {
@@ -441,7 +439,16 @@ const KFTray = () => {
 
     try {
       await invoke('delete_config', { id: configToDelete })
-      const updatedConfigs = await invoke<Status[]>('get_configs')
+
+      const configsAfterDeletion = await invoke<Status[]>('get_configs')
+      const runningStateMap = new Map(
+        configs.map(conf => [conf.id, conf.isRunning]),
+      )
+
+      const updatedConfigs = configsAfterDeletion.map(conf => ({
+        ...conf,
+        isRunning: runningStateMap.get(conf.id) || false,
+      }))
 
       setConfigs(updatedConfigs)
 
@@ -454,14 +461,13 @@ const KFTray = () => {
       console.error('Failed to delete configuration:', error)
       await sendNotification({
         title: 'Error',
-        body: 'Failed to delete configuration:", "unknown error"',
+        body: 'Failed to delete configuration: "unknown error"',
         icon: 'error',
       })
     }
 
     setIsAlertOpen(false)
   }
-
   const stopPortForwarding = async () => {
     setIsStopping(true)
     try {
