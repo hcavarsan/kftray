@@ -67,7 +67,7 @@ pub async fn deploy_and_forward_pod(configs: Vec<Config>) -> Result<Vec<CustomRe
             "spec": {
                 "containers": [{
                     "name": hashed_name,
-                    "image": "ghcr.io/hcavarsan/kftray-server:v0.5.2",
+                    "image": "ghcr.io/hcavarsan/kftray-server:v0.5.3",
                     "env": [
                         {"name": "LOCAL_PORT", "value": config.remote_port.to_string()},
                         {"name": "REMOTE_PORT", "value": config.remote_port.to_string()},
