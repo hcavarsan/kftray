@@ -2260,7 +2260,7 @@ dependencies = [
 
 [[package]]
 name = "kftray"
-version = "0.5.3"
+version = "0.5.4"
 dependencies = [
  "directories-next",
  "dirs",

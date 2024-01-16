@@ -87,4 +87,6 @@ export interface PortForwardRowProps {
   onSelectionChange: (isSelected: boolean) => void
   updateSelectionState: (id: number, isRunning: boolean) => void
   selected: boolean
+  isInitiating: boolean
+  isStopping: boolean
 }

@@ -366,6 +366,8 @@ const PortForwardTable: React.FC<TableProps> = ({
             updateConfigRunningState={updateConfigRunningState}
             isAlertOpen={isAlertOpen}
             setIsAlertOpen={setIsAlertOpen}
+            isInitiating={isInitiating}
+            isStopping={isStopping}
           />
         </Flex>
       ) : (
@@ -516,6 +518,8 @@ const PortForwardTable: React.FC<TableProps> = ({
                                   updateConfigRunningState={
                                     updateConfigRunningState
                                   }
+                                  isInitiating={isInitiating}
+                                  isStopping={isStopping}
                                 />
                               ))}
                             </Tbody>

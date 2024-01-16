@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState } from 'react'
 
 import {
   AlertDialog,
@@ -37,12 +37,16 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   selected,
   onSelectionChange,
   updateSelectionState,
+  isInitiating,
+  isStopping,
 }) => {
   const { isOpen, onOpen, onClose } = useDisclosure()
   const textColor = useColorModeValue('gray.100', 'gray.100')
   const cancelRef = React.useRef<HTMLButtonElement>(null)
+  const [isRunning, setIsRunning] = useState(false)
 
   const startPortForwarding = async () => {
+    setIsRunning(true)
     if (config.workload_type === 'service' && config.protocol === 'tcp') {
       await invoke('start_port_forward', { configs: [config] })
     } else if (
@@ -55,8 +59,10 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
     }
     updateConfigRunningState(config.id, true)
     updateSelectionState(config.id, true)
+    setIsRunning(false)
   }
   const stopPortForwarding = async () => {
+    setIsRunning(true)
     if (config.workload_type === 'service' && config.protocol === 'tcp') {
       await invoke('stop_port_forward', {
         serviceName: config.service,
@@ -78,6 +84,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
       throw new Error(`Unsupported workload type: ${config.workload_type}`)
     }
     updateConfigRunningState(config.id, false)
+    setIsRunning(false)
   }
 
   const togglePortForwarding = async (isChecked: boolean) => {
@@ -89,7 +96,6 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
       }
     } catch (error) {
       console.error('Error toggling port-forwarding:', error)
-      // Note: No need to call updateConfigRunningState here since it's done in start/stop functions directly
     } finally {
       console.log('togglePortForwarding finally')
     }
@@ -196,6 +202,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
               isChecked={config.isRunning}
               size='sm'
               onChange={e => togglePortForwarding(e.target.checked)}
+              isDisabled={isRunning || isInitiating}
             />
           </Flex>
         </Td>
