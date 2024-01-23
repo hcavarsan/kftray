@@ -142,6 +142,7 @@ Use the UI to add new port forward settings. Necessary details include:
 
 - **Export/Import:** Share configurations effortlessly with JSON files.
 - **Local Storage:** Keep configurations safe and sound in "$HOME/.kftray/configs.db".
+- **Custom Server Pod:** Customize the kftray server pod manifest in "$HOME/.kftray/proxy_manifest.json".
 
 #### Configuration JSON Sample
 
