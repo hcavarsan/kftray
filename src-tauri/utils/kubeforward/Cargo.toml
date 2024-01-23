@@ -26,7 +26,8 @@ rand = "0.8.4"
 kube-runtime = "0.87.2"
 tower = "0.4.11"
 whoami = "1.4.1"
-
+dirs = "5.0.1"
+serde_yaml = "0.8"
 hyper-rustls = { version = "0.24", features = ["webpki-roots"] }
 
 

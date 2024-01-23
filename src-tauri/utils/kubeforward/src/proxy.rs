@@ -4,12 +4,28 @@ use kube::api::{DeleteParams, ListParams};
 use kube::{api::Api, Client};
 use kube_runtime::wait::conditions;
 use rand::{distributions::Alphanumeric, Rng};
-use serde_json::json;
+use std::collections::HashMap;
+use std::fs::File;
+use std::io::Read;
+use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::port_forward::{
     start_port_forward, start_port_udp_forward, stop_port_forward, Config, CustomResponse,
 };
+
+fn get_pod_manifest_path() -> PathBuf {
+    let home_dir = dirs::home_dir().expect("Failed to resolve home directory");
+    home_dir.join(".kftray/proxy_manifest.json")
+}
+
+fn render_json_template(template: &str, values: &HashMap<&str, String>) -> String {
+    let mut rendered_template = template.to_string();
+    for (key, value) in values.iter() {
+        rendered_template = rendered_template.replace(&format!("{{{}}}", key), value);
+    }
+    rendered_template
+}
 
 #[tauri::command]
 pub async fn deploy_and_forward_pod(configs: Vec<Config>) -> Result<Vec<CustomResponse>, String> {
@@ -54,34 +70,26 @@ pub async fn deploy_and_forward_pod(configs: Vec<Config>) -> Result<Vec<CustomRe
         {
             config.remote_address = config.service.clone();
         }
-        let pod_manifest = json!({
-            "apiVersion": "v1",
-            "kind": "Pod",
-            "metadata": {
-                "name": hashed_name,
-                "labels": {
-                    "app": hashed_name,
-                    "config_id": config_id_str
-                }
-            },
-            "spec": {
-                "containers": [{
-                    "name": hashed_name,
-                    "image": "ghcr.io/hcavarsan/kftray-server:v0.5.4",
-                    "env": [
-                        {"name": "LOCAL_PORT", "value": config.remote_port.to_string()},
-                        {"name": "REMOTE_PORT", "value": config.remote_port.to_string()},
-                        {"name": "REMOTE_ADDRESS", "value": config.remote_address},
-                        {"name": "PROXY_TYPE", "value": protocol},
-                        {"name": "RUST_LOG", "value": "DEBUG"},
-                    ],
-                }],
-            }
-        });
+        let mut values: HashMap<&str, String> = HashMap::new();
+        values.insert("hashed_name", hashed_name.clone());
+        values.insert("config_id", config_id_str.clone()); // Ensure the key matches the placeholder
+        values.insert("service_name", config.service.as_ref().unwrap().clone());
+        values.insert(
+            "remote_address",
+            config.remote_address.as_ref().unwrap().clone(),
+        );
+        values.insert("remote_port", config.remote_port.to_string());
+        values.insert("local_port", config.remote_port.to_string());
+        values.insert("protocol", protocol.clone());
 
-        // Check if remote_address is empty and set config.service
+        let mut file = File::open(get_pod_manifest_path()).map_err(|e| e.to_string())?;
+        let mut contents = String::new();
+        file.read_to_string(&mut contents)
+            .map_err(|e| e.to_string())?;
 
-        let pod: Pod = serde_json::from_value(pod_manifest).map_err(|e| e.to_string())?;
+        let rendered_json = render_json_template(&contents, &values);
+
+        let pod: Pod = serde_json::from_str(&rendered_json).map_err(|e| e.to_string())?;
         let pods: Api<Pod> = Api::namespaced(client.clone(), &config.namespace);
 
         pods.create(&kube::api::PostParams::default(), &pod)
@@ -89,7 +97,7 @@ pub async fn deploy_and_forward_pod(configs: Vec<Config>) -> Result<Vec<CustomRe
             .map_err(|e| e.to_string())?;
         kube_runtime::wait::await_condition(
             pods.clone(),
-            &hashed_name,
+            &hashed_name.clone(),
             conditions::is_pod_running(),
         )
         .await

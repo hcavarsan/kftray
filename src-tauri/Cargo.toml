@@ -1,6 +1,6 @@
 [package]
 name = "kftray"
-version = "0.5.4"
+version = "0.5.5"
 description = "A Tauri App"
 authors = ["you"]
 license = ""
@@ -31,6 +31,7 @@ directories-next = "2.0"
 env_logger = "0.10.1"
 wasmedge_quickjs = "0.2.0"
 openssl = { version = "0.10.35", features = ["vendored"] }
+serde_yaml = "0.8"
 
 [dev-dependencies]
 tempfile = "3.0"
