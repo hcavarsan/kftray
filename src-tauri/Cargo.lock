@@ -2260,7 +2260,7 @@ dependencies = [
 
 [[package]]
 name = "kftray"
-version = "0.5.4"
+version = "0.5.5"
 dependencies = [
  "directories-next",
  "dirs",
@@ -2274,6 +2274,7 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "serde_yaml 0.8.26",
  "tauri",
  "tauri-build",
  "tauri-plugin-positioner",
@@ -2322,7 +2323,7 @@ dependencies = [
  "secrecy",
  "serde",
  "serde_json",
- "serde_yaml",
+ "serde_yaml 0.9.28",
  "thiserror",
  "tokio",
  "tokio-tungstenite",
@@ -2380,6 +2381,7 @@ name = "kubeforward"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "dirs",
  "env_logger 0.9.3",
  "futures",
  "hyper",
@@ -2393,6 +2395,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "serde_yaml 0.8.26",
  "tauri",
  "tokio",
  "tokio-stream",
@@ -2490,6 +2493,12 @@ checksum = "f30344350a2a51da54c1d53be93fade8a237e545dbcc4bdbe635413f2117cab9"
 dependencies = [
  "safemem",
 ]
+
+[[package]]
+name = "linked-hash-map"
+version = "0.5.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0717cef1bc8b636c6e1c1bbdefc09e6322da8a9321966e8928ef80d20f7f770f"
 
 [[package]]
 name = "linux-raw-sys"
@@ -4142,6 +4151,18 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.42",
+]
+
+[[package]]
+name = "serde_yaml"
+version = "0.8.26"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "578a7433b776b56a35785ed5ce9a7e777ac0598aac5a6dd1b4b18a307c7fc71b"
+dependencies = [
+ "indexmap 1.9.3",
+ "ryu",
+ "serde",
+ "yaml-rust",
 ]
 
 [[package]]
@@ -6199,6 +6220,15 @@ checksum = "2769203cd13a0c6015d515be729c526d041e9cf2c0cc478d57faee85f40c6dcd"
 dependencies = [
  "nix",
  "winapi",
+]
+
+[[package]]
+name = "yaml-rust"
+version = "0.4.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "56c1936c4cc7a1c9ab21a1ebb602eb942ba868cbd44a99cb7cdc5892335e1c85"
+dependencies = [
+ "linked-hash-map",
 ]
 
 [[package]]
