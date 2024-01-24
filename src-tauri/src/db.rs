@@ -34,7 +34,7 @@ fn create_server_config_manifest() {
         "spec": {
             "containers": [{
                 "name": "{hashed_name}",
-                "image": "ghcr.io/hcavarsan/kftray-server:v0.5.5",
+                "image": "ghcr.io/hcavarsan/kftray-server:latest",
                 "env": [
                     {"name": "LOCAL_PORT", "value": "{local_port}"},
                     {"name": "REMOTE_PORT", "value": "{remote_port}"},
