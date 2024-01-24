@@ -50,13 +50,17 @@ pub async fn deploy_and_forward_pod(configs: Vec<Config>) -> Result<Vec<CustomRe
             .take(6)
             .map(|b| char::from(b).to_ascii_lowercase())
             .collect();
-        let username = whoami::username();
+        let username = whoami::username().to_lowercase();
+
+        let clean_username: String = username.chars().filter(|c| c.is_alphanumeric()).collect();
+
+        println!("Cleaned username: {}", clean_username);
 
         let protocol = config.protocol.to_string();
 
         let hashed_name = format!(
             "kftray-forward-{}-{}-{}-{}",
-            username, protocol, timestamp, random_string
+            clean_username, protocol, timestamp, random_string
         );
 
         let config_id_str = config
