@@ -5,7 +5,7 @@ COPY . .
 
 RUN go mod tidy
 RUN go mod download
-RUN go get github.com/miladrahimi/gorelay
+RUN go get github.com/miladrahimi/netrelay
 RUN CGO_ENABLED=0 go build -o kftray-server
 
 FROM alpine

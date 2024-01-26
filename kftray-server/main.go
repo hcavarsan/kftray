@@ -8,7 +8,7 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/miladrahimi/gorelay"
+	"github.com/miladrahimi/netrelay"
 )
 
 func main() {
@@ -34,7 +34,7 @@ func main() {
 
 	switch proxyType {
 	case "tcp":
-		tcp := gorelay.NewTcpRelay()
+		tcp := netrelay.NewTcpRelay()
 		err := tcp.Relay(proxyPort, targetPort, targetHost)
 		if err != nil {
 			log.Fatalf("Failed to start the TCP proxy server: %s", err)
