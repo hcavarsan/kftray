@@ -12,8 +12,8 @@ import {
   CheckCircleIcon,
   ChevronDownIcon,
   ChevronUpIcon,
-  SearchIcon,
-} from '@chakra-ui/icons'
+  InfoIcon,
+  SearchIcon } from '@chakra-ui/icons'
 import {
   Accordion,
   AccordionButton,
@@ -463,8 +463,10 @@ const PortForwardTable: React.FC<TableProps> = ({
                             borderRadius='full'
                             mr={2}
                           >
-                            {contextRunningCount > 0 && (
+                            {contextRunningCount > 0 ? (
                               <TagLeftIcon as={CheckCircleIcon} />
+                            ) : (
+                              <TagLeftIcon as={InfoIcon} />
                             )}
                             <TagLabel>{`${contextRunningCount}/${contextTotalCount}`}</TagLabel>
                           </Tag>
@@ -474,7 +476,7 @@ const PortForwardTable: React.FC<TableProps> = ({
                           size='xs'
                           colorScheme={contextTagColorScheme}
                           borderRadius='lg'
-                          width='70px'
+                          width='85px'
                         />
                       </Flex>
                       <AccordionIcon color={textColor} />
