@@ -13,7 +13,8 @@ import {
   ChevronDownIcon,
   ChevronUpIcon,
   InfoIcon,
-  SearchIcon } from '@chakra-ui/icons'
+  SearchIcon,
+} from '@chakra-ui/icons'
 import {
   Accordion,
   AccordionButton,
