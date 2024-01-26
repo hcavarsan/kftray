@@ -198,7 +198,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
         <Td>
           <Flex alignItems='center'>
             <Switch
-              colorScheme='green'
+              colorScheme='facebook'
               isChecked={config.isRunning}
               size='sm'
               onChange={e => togglePortForwarding(e.target.checked)}
