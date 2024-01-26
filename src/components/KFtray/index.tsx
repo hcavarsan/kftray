@@ -374,16 +374,16 @@ const KFTray = () => {
     console.log('Starting port forwarding for configs:', configsToStart)
     for (const config of configsToStart) {
       try {
-        // Determine action based on the workload_type
         let response
 
-        if (config.workload_type === 'service') {
-          // Existing logic for initiating port forwarding with 'service' workload
+        if (config.workload_type === 'service' && config.protocol === 'tcp') {
           response = await invoke<Response>('start_port_forward', {
             configs: [config],
           })
-        } else if (config.workload_type.startsWith('proxy')) {
-          // Logic for initiating port forwarding with 'proxy' workload (new function invoked)
+        } else if (
+          config.workload_type.startsWith('proxy') ||
+          (config.workload_type === 'service' && config.protocol === 'udp')
+        ) {
           response = await invoke<Response>('deploy_and_forward_pod', {
             configs: [config],
           })
@@ -447,7 +447,7 @@ const KFTray = () => {
 
       const updatedConfigs = configsAfterDeletion.map(conf => ({
         ...conf,
-        isRunning: runningStateMap.get(conf.id) || false,
+        isRunning: runningStateMap.get(conf.id) ?? false,
       }))
 
       setConfigs(updatedConfigs)
