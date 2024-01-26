@@ -8,7 +8,7 @@ import (
 	"os"
 	"strconv"
 
-	"github.com/miladrahimi/gorelay"
+	"github.com/miladrahimi/netrelay"
 )
 
 func main() {
@@ -31,11 +31,15 @@ func main() {
 	if err != nil {
 		log.Fatalf("Invalid LOCAL_PORT: %s", proxyPortStr)
 	}
+	source := &netrelay.Address{Host: "0.0.0.0", Port: proxyPort}
+	destination := netrelay.NewRoundRobinPool([]*netrelay.Address{
+		{Host: targetHost, Port: targetPort},
+	})
 
 	switch proxyType {
 	case "tcp":
-		tcp := gorelay.NewTcpRelay()
-		err := tcp.Relay(proxyPort, targetPort, targetHost)
+		tcp := netrelay.NewTcpRelay()
+		err := tcp.Relay(source, destination)
 		if err != nil {
 			log.Fatalf("Failed to start the TCP proxy server: %s", err)
 		}

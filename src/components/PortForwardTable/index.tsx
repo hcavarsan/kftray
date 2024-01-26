@@ -8,7 +8,12 @@ import {
   MdRefresh,
 } from 'react-icons/md'
 
-import { ChevronDownIcon, ChevronUpIcon, SearchIcon } from '@chakra-ui/icons'
+import {
+  CheckCircleIcon,
+  ChevronDownIcon,
+  ChevronUpIcon,
+  SearchIcon,
+} from '@chakra-ui/icons'
 import {
   Accordion,
   AccordionButton,
@@ -20,7 +25,6 @@ import {
   ButtonGroup,
   Checkbox,
   Flex,
-  Image,
   Input,
   InputGroup,
   InputLeftElement,
@@ -28,17 +32,21 @@ import {
   MenuButton,
   MenuItem,
   MenuList,
+  Progress,
   Table,
+  Tag,
+  TagLabel,
+  TagLeftIcon,
   Tbody,
   Text,
   Th,
   Thead,
+  Tooltip,
   Tr,
   useColorModeValue,
 } from '@chakra-ui/react'
 import { app } from '@tauri-apps/api'
 
-import logo from '../../assets/logo.png'
 import { Status, TableProps } from '../../types'
 import PortForwardRow from '../PortForwardRow'
 import PortForwardSearchTable from '../PortForwardSearchTable'
@@ -244,18 +252,15 @@ const PortForwardTable: React.FC<TableProps> = ({
       width='100%'
       borderColor={borderColor}
     >
-      <Flex justifyContent='center' mb='5' mt='0'>
-        <Image boxSize='52px' src={logo} borderRadius='full' />
-      </Flex>
       <Flex
         direction='row'
-        alignItems='center'
+        alignItems='left'
         bg={accordionBg}
         p='1'
         borderRadius='lg'
         width='98%'
         borderColor={borderColor}
-        justifyContent='space-between'
+        justifyContent='left'
       >
         <InputGroup size='xs' maxWidth='200px'>
           <InputLeftElement pointerEvents='none'>
@@ -393,147 +398,175 @@ const PortForwardTable: React.FC<TableProps> = ({
             borderColor={borderColor}
           >
             {Object.entries(configsByContext).map(
-              ([context, contextConfigs], contextIndex) => (
-                <AccordionItem key={context} border='none'>
-                  <AccordionButton
-                    bg={accordionBg}
-                    mt={2}
-                    borderRadius='lg'
-                    border='1px'
-                    borderColor={borderColor}
-                    boxShadow='lg'
-                    _hover={{ bg: bg }}
-                    _expanded={{ bg: accordionBg, boxShadow: 'lg' }}
-                  >
-                    <Box
-                      flex='1'
-                      textAlign='left'
-                      fontSize='sm'
-                      color={textColor}
+              ([context, contextConfigs], contextIndex) => {
+                const contextRunningCount = contextConfigs.filter(
+                  config => config.isRunning,
+                ).length
+                const contextTotalCount = contextConfigs.length
+                const contextTagColorScheme =
+                  contextRunningCount > 0 ? 'facebook' : 'gray'
+                const contextProgressValue =
+                  (contextRunningCount / contextTotalCount) * 100
+
+                return (
+                  <AccordionItem key={context} border='none'>
+                    <AccordionButton
+                      bg={accordionBg}
+                      mt={2}
+                      borderRadius='lg'
+                      border='1px'
+                      borderColor={borderColor}
+                      boxShadow='lg'
+                      _hover={{ bg: bg }}
+                      _expanded={{ bg: accordionBg, boxShadow: 'lg' }}
                     >
-                      <div onClick={event => event.stopPropagation()}>
-                        <Checkbox
-                          size='sm'
-                          isChecked={
-                            selectedConfigsByContext[context] ||
-                            contextConfigs.every(config => config.isRunning)
-                          }
-                          onChange={event => {
-                            event.stopPropagation()
-                            handleCheckboxChange(
-                              context,
-                              !selectedConfigsByContext[context],
-                            )
-                          }}
-                          onClick={event => {
-                            event.stopPropagation()
-                          }}
-                          isDisabled={contextConfigs.every(
-                            config => config.isRunning,
-                          )}
-                        >
-                          cluster: {context}
-                        </Checkbox>
-                      </div>
-                    </Box>
-                    <Box
-                      flex='1'
-                      textAlign='right'
-                      fontSize='sm'
-                      color={textColor}
-                    >
-                      ({contextConfigs.filter(c => c.isRunning).length}/
-                      {contextConfigs.length}) running
-                    </Box>
-                    <AccordionIcon color={textColor} />
-                  </AccordionButton>
-                  <AccordionPanel
-                    pb={4}
-                    borderColor={borderColor}
-                    fontFamily={fontFamily}
-                  >
-                    {contextConfigs.length > 0 ? (
-                      <Flex direction='column' width='100%' mt={0} p={0}>
-                        <Table
-                          variant='simple'
-                          size='sm'
-                          border='none'
-                          style={{ tableLayout: 'fixed' }}
-                        >
-                          <Thead
-                            position='sticky'
-                            top='0'
-                            zIndex='sticky'
-                            fontFamily={fontFamily}
+                      <Box
+                        flex='1'
+                        textAlign='left'
+                        fontSize='sm'
+                        color={textColor}
+                      >
+                        <div onClick={event => event.stopPropagation()}>
+                          <Checkbox
+                            size='sm'
+                            isChecked={
+                              selectedConfigsByContext[context] ||
+                              contextConfigs.every(config => config.isRunning)
+                            }
+                            onChange={event => {
+                              event.stopPropagation()
+                              handleCheckboxChange(
+                                context,
+                                !selectedConfigsByContext[context],
+                              )
+                            }}
+                            onClick={event => {
+                              event.stopPropagation()
+                            }}
+                            isDisabled={contextConfigs.every(
+                              config => config.isRunning,
+                            )}
                           >
-                            <Tr boxShadow={boxShadow}>
-                              <Th
-                                fontFamily={fontFamily}
-                                fontSize='10px'
-                                width='40%'
-                              >
-                                Alias
-                              </Th>
-                              <Th fontFamily={fontFamily} fontSize='10px'>
-                                Port
-                              </Th>
-                              <Th fontFamily={fontFamily} fontSize='10px'>
-                                Status
-                              </Th>
-                              <Th fontFamily={fontFamily} fontSize='10px'>
-                                Action
-                              </Th>
-                            </Tr>
-                          </Thead>
-                        </Table>
-                        <Box>
+                            cluster: {context}
+                          </Checkbox>
+                        </div>
+                      </Box>
+                      <Flex alignItems='center'>
+                        <Tooltip
+                          hasArrow
+                          label={`${contextRunningCount} running out of ${contextTotalCount} total`}
+                          bg='gray.300'
+                        >
+                          <Tag
+                            size='sm'
+                            colorScheme={contextTagColorScheme}
+                            borderRadius='full'
+                            mr={2}
+                          >
+                            {contextRunningCount > 0 && (
+                              <TagLeftIcon as={CheckCircleIcon} />
+                            )}
+                            <TagLabel>{`${contextRunningCount}/${contextTotalCount}`}</TagLabel>
+                          </Tag>
+                        </Tooltip>
+                        <Progress
+                          value={contextProgressValue}
+                          size='xs'
+                          colorScheme={contextTagColorScheme}
+                          borderRadius='lg'
+                          width='70px'
+                        />
+                      </Flex>
+                      <AccordionIcon color={textColor} />
+                    </AccordionButton>
+                    <AccordionPanel
+                      pb={4}
+                      borderColor={borderColor}
+                      fontFamily={fontFamily}
+                    >
+                      {contextConfigs.length > 0 ? (
+                        <Flex direction='column' width='100%' mt={0} p={0}>
                           <Table
+                            variant='simple'
                             size='sm'
                             border='none'
                             style={{ tableLayout: 'fixed' }}
                           >
-                            <Tbody
-                              width='full'
+                            <Thead
                               position='sticky'
                               top='0'
                               zIndex='sticky'
+                              fontFamily={fontFamily}
                             >
-                              {contextConfigs.map(config => (
-                                <PortForwardRow
-                                  key={config.id}
-                                  config={config}
-                                  handleDeleteConfig={handleDeleteConfig}
-                                  confirmDeleteConfig={confirmDeleteConfig}
-                                  handleEditConfig={handleEditConfig}
-                                  isAlertOpen={isAlertOpen}
-                                  selected={selectedConfigs.some(
-                                    selectedConfig =>
-                                      selectedConfig.id === config.id,
-                                  )}
-                                  onSelectionChange={isSelected =>
-                                    handleSelectionChange(config, isSelected)
-                                  }
-                                  updateSelectionState={updateSelectionState}
-                                  setIsAlertOpen={setIsAlertOpen}
-                                  updateConfigRunningState={
-                                    updateConfigRunningState
-                                  }
-                                  isInitiating={isInitiating}
-                                  isStopping={isStopping}
-                                />
-                              ))}
-                            </Tbody>
+                              <Tr boxShadow={boxShadow}>
+                                <Th
+                                  fontFamily={fontFamily}
+                                  fontSize='10px'
+                                  width='40%'
+                                >
+                                  Alias
+                                </Th>
+                                <Th fontFamily={fontFamily} fontSize='10px'>
+                                  Port
+                                </Th>
+                                <Th fontFamily={fontFamily} fontSize='10px'>
+                                  Status
+                                </Th>
+                                <Th fontFamily={fontFamily} fontSize='10px'>
+                                  Action
+                                </Th>
+                              </Tr>
+                            </Thead>
                           </Table>
-                        </Box>
-                      </Flex>
-                    ) : (
-                      <Flex justify='center' p={6}>
-                        <Text>No Configurations Found for {context}</Text>
-                      </Flex>
-                    )}
-                  </AccordionPanel>
-                </AccordionItem>
-              ),
+                          <Box>
+                            <Table
+                              size='sm'
+                              border='none'
+                              style={{ tableLayout: 'fixed' }}
+                            >
+                              <Tbody
+                                width='full'
+                                position='sticky'
+                                top='0'
+                                zIndex='sticky'
+                              >
+                                {contextConfigs.map(config => (
+                                  <PortForwardRow
+                                    key={config.id}
+                                    config={config}
+                                    handleDeleteConfig={handleDeleteConfig}
+                                    confirmDeleteConfig={confirmDeleteConfig}
+                                    handleEditConfig={handleEditConfig}
+                                    isAlertOpen={isAlertOpen}
+                                    selected={selectedConfigs.some(
+                                      selectedConfig =>
+                                        selectedConfig.id === config.id,
+                                    )}
+                                    onSelectionChange={isSelected =>
+                                      handleSelectionChange(config, isSelected)
+                                    }
+                                    updateSelectionState={updateSelectionState}
+                                    setIsAlertOpen={setIsAlertOpen}
+                                    updateConfigRunningState={
+                                      updateConfigRunningState
+                                    }
+                                    isInitiating={isInitiating}
+                                    isStopping={isStopping}
+                                  />
+                                ))}
+                              </Tbody>
+                            </Table>
+                          </Box>
+                        </Flex>
+                      ) : (
+                        <Flex justify='center' p={6}>
+                          <Text>No Configurations Found for {context}</Text>
+                        </Flex>
+                      )}
+                    </AccordionPanel>
+                  </AccordionItem>
+                )
+              },
             )}
           </Accordion>
         </Flex>
@@ -570,7 +603,16 @@ const PortForwardTable: React.FC<TableProps> = ({
             </MenuItem>
           </MenuList>
         </Menu>
-        <Text fontSize='xs'>{version}</Text>
+        <Text
+          fontSize='sm'
+          textAlign='center'
+          color='gray.400'
+          fontFamily='Inter, sans-serif'
+          p={2}
+          borderColor={useColorModeValue('gray.200', 'gray.700')}
+        >
+          {version}
+        </Text>
       </Flex>
     </Flex>
   )

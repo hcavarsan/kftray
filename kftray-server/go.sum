@@ -1,2 +1,2 @@
-github.com/miladrahimi/gorelay v0.0.0-20230907185746-32f8b7091a10 h1:8UrUXi8n6tFS8GDjoR32d9cPcUDpAUOEimDG5Wu4ZSI=
-github.com/miladrahimi/gorelay v0.0.0-20230907185746-32f8b7091a10/go.mod h1:D0pJN9rFSLVCi3xyyQIs4476OPPBYFnpxf9VYn9Jiy8=
+github.com/miladrahimi/netrelay v0.0.0-20240125222044-8c8ea32d1443 h1:GojxptcScc/a0VDXmxdGOSxywcNZp+NOGnYnbhP3Luw=
+github.com/miladrahimi/netrelay v0.0.0-20240125222044-8c8ea32d1443/go.mod h1:SI0+s3BGT30AqUBxCSueiCA6bRxpAGSEt1iVDfV5FcA=
