@@ -603,7 +603,16 @@ const PortForwardTable: React.FC<TableProps> = ({
             </MenuItem>
           </MenuList>
         </Menu>
-        <Text fontSize='xs'>{version}</Text>
+        <Text
+          fontSize='sm'
+          textAlign='center'
+          color='gray.400'
+          fontFamily='Inter, sans-serif'
+          p={2}
+          borderColor={useColorModeValue('gray.200', 'gray.700')}
+        >
+          {version}
+        </Text>
       </Flex>
     </Flex>
   )
