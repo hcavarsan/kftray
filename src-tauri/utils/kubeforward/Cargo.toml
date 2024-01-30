@@ -8,7 +8,6 @@ edition = "2021"
 
 [dependencies]
 tauri = { version = "1.5", features = [ "api-all", "macos-private-api", "system-tray"] }
-reqwest = { version = "0.11", features = ["json", "rustls-tls"] }
 kube = { version = "0.87.2", features = ["client", "config", "rustls-tls", "ws"] }
 k8s-openapi = { version = "0.20.0", default-features = false, features = ["latest"] }
 tokio = { version = "1.32.0", features = [ "full" ] }
@@ -16,19 +15,16 @@ tokio-stream = { version = "0.1.14", features = ["net"] }
 futures = "0.3.28"
 anyhow = "1.0.75"
 tracing = "0.1.37"
-serde_json = "1.0.107"
+serde_json = "1.0.113"
 hyper = { version = "0.14.27", features = [ "client", "http1", "http2", "tcp", "stream" ] }
 lazy_static = "1.4.0"
 serde = { version = "1.0", features = ["derive"] }
 log = "0.4"
-env_logger = "0.9"
 rand = "0.8.4"
 kube-runtime = "0.87.2"
 tower = "0.4.11"
 whoami = "1.4.1"
 dirs = "5.0.1"
-serde_yaml = "0.8"
-hyper-rustls = { version = "0.24", features = ["webpki-roots"] }
 
 
 [dev-dependencies]
