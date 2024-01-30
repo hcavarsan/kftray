@@ -31,7 +31,7 @@ directories-next = "2.0"
 env_logger = "0.10.1"
 wasmedge_quickjs = "0.2.0"
 openssl = { version = "0.10.35", features = ["vendored"] }
-serde_yaml = "0.8"
+serde_yaml = "0.9"
 
 [dev-dependencies]
 tempfile = "3.0"
