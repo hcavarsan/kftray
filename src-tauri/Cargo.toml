@@ -30,7 +30,7 @@ log = "0.4"
 directories-next = "2.0"
 env_logger = "0.10.1"
 wasmedge_quickjs = "0.2.0"
-openssl = { version = "0.10.35", features = ["vendored"] }
+openssl = { version = "0.10.63", features = ["vendored"] }
 serde_yaml = "0.8"
 
 [dev-dependencies]
