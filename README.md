@@ -1,11 +1,5 @@
 <div align="center">
-  <img src="./logo.png" alt="KFtray Logo" width="200" />
-  <h1>KFtray</h1>
-  <h3>Manage Kubernetes Port Forwarding from Your Tray</h3>
-  <p>
-<h4>KFtray is a system tray application designed for Kubernetes users. It simplifies the process of setting up and managing port forwarding configurations with an easy-to-use interface.
-  </p>
-  <br>
+
 
 
   <!-- Badges -->
@@ -30,7 +24,24 @@
     <img src="https://img.shields.io/github/actions/workflow/status/hcavarsan/kftray/main.yml" alt="release=">
   </a>
   </br>
+
   </br>
+    <img src="./logo.png" alt="KFtray Logo" width="150" />
+  <h2>KFtray</h2>
+
+
+  <h3>Manage Kubernetes Port Forwarding from Your Tray</h3>
+
+  ---
+
+
+  <p>
+
+
+
+  <h4>KFtray is a system tray application designed for Kubernetes users. It simplifies the process of setting up and managing port forwarding configurations with an easy-to-use interface.
+  </p>
+  <br>
   <!-- Demo GIF -->
   <img src="https://raw.githubusercontent.com/hcavarsan/homebrew-kftray/main/img/demo.gif" alt="KFtray Demo" width="1500" />
 
