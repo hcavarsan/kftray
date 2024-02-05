@@ -11,8 +11,7 @@ use std::env;
 use std::fs::OpenOptions;
 use std::path::PathBuf;
 use tauri::{
-    CustomMenuItem, GlobalShortcutManager, Manager, SystemTray, SystemTrayEvent,
-    SystemTrayMenu,
+    CustomMenuItem, GlobalShortcutManager, Manager, SystemTray, SystemTrayEvent, SystemTrayMenu,
 };
 use tauri_plugin_positioner::{Position, WindowExt};
 use tokio::runtime::Runtime;
@@ -79,6 +78,24 @@ fn setup_logging() {
 }
 
 fn main() {
+    let inject_script = r#"
+    var style = document.createElement('style');
+    if (navigator.appVersion.includes('Mac')) {
+      style.innerHTML = 'body { background-color: transparent !important; margin: 0; } .arrow { position: relative; padding: 12px 0 0 0; } .arrow:before { content: ""; height: 0; width: 0; border-width: 0 8px 12px 8px; border-style: solid; border-color: transparent transparent #2f2f2f transparent; position: absolute; top: 0px; left: 50%; transform: translateX(-50%); } body > div { background-color: #343541 !important; border-radius: 7px !important; overflow: hidden !important; } @media (prefers-color-scheme: light) { body > div { background-color: white !important; }}';
+    } else {
+      style.innerHTML = 'body { background-color: transparent !important; margin: 0; } .arrow { position: relative; padding: 0 0 12px 0; } .arrow:after { content: ""; height: 0; width: 0; border-width: 12px 8px 0 8px; border-style: solid; border-color: #2f2f2f transparent transparent transparent; position: absolute; bottom: 0px; left: 50%; transform: translateX(-50%); } body > div { background-color: #343541 !important; border-radius: 7px !important; overflow: hidden !important; } @media (prefers-color-scheme: light) { body > div { background-color: white !important; }}';
+    }
+    document.head.appendChild(style);
+    document.body.classList.add('arrow');
+    document.addEventListener("keydown", e => {
+        if (e.code == "Enter" && e.target.tagName == "TEXTAREA") {
+            if (e.target.nextSibling.tagName == "BUTTON" && e.shiftKey == false) {
+                e.preventDefault()
+                e.target.nextSibling.click()
+            }
+        }
+    })
+    "#;
     setup_logging();
     let _ = fix_path_env::fix();
     let quit = CustomMenuItem::new("quit".to_string(), "Quit").accelerator("Cmd+Q");
@@ -125,7 +142,14 @@ fn main() {
                     } else {
                         window.show().unwrap();
                         window.set_focus().unwrap();
+
+                        window
+                            .eval(inject_script)
+                            .map_err(|err| println!("{:?}", err))
+                            .ok();
                     }
+                    // app.get_window("main").unwrap().show().unwrap();
+                    // app.get_window("main").unwrap().set_focus().unwrap();
                 }
                 SystemTrayEvent::RightClick {
                     position: _,
