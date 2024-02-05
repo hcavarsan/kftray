@@ -10,7 +10,10 @@ use log::LevelFilter;
 use std::env;
 use std::fs::OpenOptions;
 use std::path::PathBuf;
-use tauri::{CustomMenuItem, Manager, SystemTray, SystemTrayEvent, SystemTrayMenu};
+use tauri::{
+    CustomMenuItem, GlobalShortcutManager, Manager, SystemTray, SystemTrayEvent,
+    SystemTrayMenu,
+};
 use tauri_plugin_positioner::{Position, WindowExt};
 use tokio::runtime::Runtime;
 
@@ -82,16 +85,26 @@ fn main() {
     let system_tray_menu = SystemTrayMenu::new().add_item(quit);
     tauri::Builder::default()
         .manage(SaveDialogState::default())
-        .setup(|_app| {
+        .setup(|app| {
             db::init();
             if let Err(e) = config::migrate_configs() {
                 eprintln!("Failed to migrate configs: {}", e);
             }
 
-            #[cfg(target_os = "macos")]
-            {
-                _app.set_activation_policy(tauri::ActivationPolicy::Accessory);
-            }
+            let window = app.get_window("main").unwrap();
+
+            let mut shortcut = app.global_shortcut_manager();
+            shortcut
+                .register("Cmd+Shift+O", move || {
+                    if window.is_visible().unwrap() {
+                        window.hide().unwrap();
+                    } else {
+                        window.show().unwrap();
+                        window.set_focus().unwrap();
+                    }
+                })
+                .unwrap_or_else(|err| println!("{:?}", err));
+
             Ok(())
         })
         .plugin(tauri_plugin_positioner::init())
