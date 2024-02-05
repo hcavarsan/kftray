@@ -47,7 +47,7 @@
     "eslint-plugin-react-hooks": "^4.6.0",
     "eslint-plugin-simple-import-sort": "^10.0.0",
     "jsdom": "^24.0.0",
-    "prettier": "^3.2.1",
+    "prettier": "^3.2.5",
     "react-query": "^3.39.3",
     "taze": "^0.13.1",
     "typescript": "^5.3.3",
