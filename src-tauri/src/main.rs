@@ -10,12 +10,13 @@ use log::LevelFilter;
 use std::env;
 use std::fs::OpenOptions;
 use std::path::PathBuf;
-use tauri::{CustomMenuItem, Manager, SystemTray, SystemTrayEvent, SystemTrayMenu};
+use tauri::{CustomMenuItem, Manager, SystemTray, SystemTrayEvent, SystemTrayMenu, GlobalShortcutManager};
 use tauri_plugin_positioner::{Position, WindowExt};
 use tokio::runtime::Runtime;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::State;
+
 
 struct SaveDialogState {
     pub is_open: AtomicBool,
@@ -76,13 +77,16 @@ fn setup_logging() {
 }
 
 fn main() {
+
     setup_logging();
     let _ = fix_path_env::fix();
-    let quit = CustomMenuItem::new("quit".to_string(), "Quit").accelerator("Cmd+Q");
-    let system_tray_menu = SystemTrayMenu::new().add_item(quit);
+    let quit = CustomMenuItem::new("quit".to_string(), "Quit").accelerator("CmdOrCtrl+Shift+Q");
+    let open = CustomMenuItem::new("open".to_string(), "Open App");
+    let system_tray_menu = SystemTrayMenu::new().add_item(open).add_item(quit);
+    
     tauri::Builder::default()
         .manage(SaveDialogState::default())
-        .setup(|_app| {
+        .setup(move |app| {
             db::init();
             if let Err(e) = config::migrate_configs() {
                 eprintln!("Failed to migrate configs: {}", e);
@@ -92,6 +96,32 @@ fn main() {
             {
                 _app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             }
+
+
+            let window = app.get_window("main").unwrap();
+
+            let mut shortcut = app.global_shortcut_manager();
+            shortcut
+                .register("CmdOrCtrl+Shift+F1", move || {
+                    if window.is_visible().unwrap() {
+                        window.hide().unwrap();
+                    } else {
+                        #[cfg(target_os = "linux")]
+                        let _ = window.move_window(Position::TopRight);
+                        #[cfg(target_os = "windows")]
+                        let _ = window.move_window(Position::BottomRight);
+                        #[cfg(target_os = "macos")]
+                        let _ = window.move_window(Position::TrayCenter);
+                        
+                        window.show().unwrap();
+                        window.set_focus().unwrap(); 
+                    }
+                })
+                .unwrap_or_else(|err| println!("{:?}", err));
+            
+
+
+
             Ok(())
         })
         .plugin(tauri_plugin_positioner::init())
@@ -105,8 +135,13 @@ fn main() {
                     ..
                 } => {
                     let window = app.get_window("main").unwrap();
+                    #[cfg(target_os = "linux")]
+                    let _ = window.move_window(Position::TopRight);
+                    #[cfg(target_os = "windows")]
+                    let _ = window.move_window(Position::BottomRight);
+                    #[cfg(target_os = "macos")]
                     let _ = window.move_window(Position::TrayCenter);
-
+                    
                     if window.is_visible().unwrap() {
                         window.hide().unwrap();
                     } else {
@@ -144,6 +179,17 @@ fn main() {
                         });
 
                         std::process::exit(0);
+                    }
+                    "open" => {
+                        let window = app.get_window("main").unwrap();
+                        #[cfg(target_os = "linux")]
+                        let _ = window.move_window(Position::TopRight);
+                        #[cfg(target_os = "windows")]
+                        let _ = window.move_window(Position::BottomRight);
+                        #[cfg(target_os = "macos")]
+                        let _ = window.move_window(Position::TrayCenter);
+                        window.show().unwrap();
+                        window.set_focus().unwrap();
                     }
                     "hide" => {
                         let window = app.get_window("main").unwrap();
