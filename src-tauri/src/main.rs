@@ -59,7 +59,6 @@ fn setup_logging() {
 
         let log_file = OpenOptions::new()
             .create(true)
-            .write(true)
             .append(true)
             .open(log_path)
             .expect("Could not open log file");
