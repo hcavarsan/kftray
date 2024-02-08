@@ -10,13 +10,14 @@ use log::LevelFilter;
 use std::env;
 use std::fs::OpenOptions;
 use std::path::PathBuf;
-use tauri::{CustomMenuItem, Manager, SystemTray, SystemTrayEvent, SystemTrayMenu, GlobalShortcutManager};
+use tauri::{
+    CustomMenuItem, GlobalShortcutManager, Manager, SystemTray, SystemTrayEvent, SystemTrayMenu,
+};
 use tauri_plugin_positioner::{Position, WindowExt};
 use tokio::runtime::Runtime;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::State;
-
 
 struct SaveDialogState {
     pub is_open: AtomicBool,
@@ -77,13 +78,12 @@ fn setup_logging() {
 }
 
 fn main() {
-
     setup_logging();
     let _ = fix_path_env::fix();
     let quit = CustomMenuItem::new("quit".to_string(), "Quit").accelerator("CmdOrCtrl+Shift+Q");
     let open = CustomMenuItem::new("open".to_string(), "Open App");
     let system_tray_menu = SystemTrayMenu::new().add_item(open).add_item(quit);
-    
+
     tauri::Builder::default()
         .manage(SaveDialogState::default())
         .setup(move |app| {
@@ -96,7 +96,6 @@ fn main() {
             {
                 _app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             }
-
 
             let window = app.get_window("main").unwrap();
 
@@ -112,15 +111,12 @@ fn main() {
                         let _ = window.move_window(Position::BottomRight);
                         #[cfg(target_os = "macos")]
                         let _ = window.move_window(Position::TrayCenter);
-                        
+
                         window.show().unwrap();
-                        window.set_focus().unwrap(); 
+                        window.set_focus().unwrap();
                     }
                 })
                 .unwrap_or_else(|err| println!("{:?}", err));
-            
-
-
 
             Ok(())
         })
@@ -141,7 +137,7 @@ fn main() {
                     let _ = window.move_window(Position::BottomRight);
                     #[cfg(target_os = "macos")]
                     let _ = window.move_window(Position::TrayCenter);
-                    
+
                     if window.is_visible().unwrap() {
                         window.hide().unwrap();
                     } else {
