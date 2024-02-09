@@ -36,7 +36,7 @@
     "@tauri-apps/cli": "^1.5.9",
     "@testing-library/jest-dom": "^6.4.0",
     "@testing-library/react": "^14.2.1",
-    "@types/node": "^20.11.16",
+    "@types/node": "^20.11.17",
     "@types/react": "^18.2.47",
     "@types/react-dom": "^18.2.18",
     "@typescript-eslint/eslint-plugin": "^6.18.1",
