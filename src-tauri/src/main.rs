@@ -93,7 +93,7 @@ fn main() {
 
             #[cfg(target_os = "macos")]
             {
-                _app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+                app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             }
 
             let window = app.get_window("main").unwrap();
