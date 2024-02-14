@@ -29,6 +29,11 @@ openssl = { version = "0.10.63", features = ["vendored"] }
 [dev-dependencies]
 tempfile = "3.9"
 
+[dependencies.h2]
+optional = true
+version = "0.3.24"
+
+
 [features]
 # by default Tauri runs in production mode
 # when `tauri dev` runs it is executed with `cargo run --no-default-features` if `devPath` is an URL
