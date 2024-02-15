@@ -1,18 +1,15 @@
 version: 2
 updates:
-  # Enable version updates for npm
   - package-ecosystem: "npm"
-    # Look for `package.json` and `lock` files in the `root` directory
     directory: "/"
-    # Check the npm registry for updates every day (weekdays)
     schedule:
-      interval: "daily"
+      interval: "weekly"
   - package-ecosystem: "cargo"
     directory: "/src-tauri/"
     schedule:
       interval: "daily"
     ignore:
-        # These are peer deps of Cargo and should not be automatically bumped
         - dependency-name: "semver"
         - dependency-name: "crates-io"
+        - dependency-name: "h2"
     rebase-strategy: "disabled"
