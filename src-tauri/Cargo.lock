@@ -1674,7 +1674,26 @@ dependencies = [
  "futures-core",
  "futures-sink",
  "futures-util",
- "http",
+ "http 0.2.11",
+ "indexmap 2.1.0",
+ "slab",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
+name = "h2"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "31d030e59af851932b72ceebadf4a2b5986dba4c3b99dd2493f8273a0f151943"
+dependencies = [
+ "bytes",
+ "fnv",
+ "futures-core",
+ "futures-sink",
+ "futures-util",
+ "http 1.0.0",
  "indexmap 2.1.0",
  "slab",
  "tokio",
@@ -1769,13 +1788,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "http"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b32afd38673a8016f7c9ae69e5af41a58f81b1d31689040f2f1959594ce194ea"
+dependencies = [
+ "bytes",
+ "fnv",
+ "itoa 1.0.10",
+]
+
+[[package]]
 name = "http-body"
 version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7ceab25649e9960c0311ea418d17bee82c0dcec1bd053b5f9a66e265a693bed2"
 dependencies = [
  "bytes",
- "http",
+ "http 0.2.11",
  "pin-project-lite",
 ]
 
@@ -1819,8 +1849,8 @@ dependencies = [
  "futures-channel",
  "futures-core",
  "futures-util",
- "h2",
- "http",
+ "h2 0.3.24",
+ "http 0.2.11",
  "http-body",
  "httparse",
  "httpdate",
@@ -1840,7 +1870,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ec3efd23720e2049821a693cbc7e65ea87c72f1c58ff2f9522ff332b1491e590"
 dependencies = [
  "futures-util",
- "http",
+ "http 0.2.11",
  "hyper",
  "log",
  "rustls",
@@ -2127,7 +2157,7 @@ dependencies = [
  "dirs",
  "env_logger",
  "fix-path-env",
- "h2",
+ "h2 0.4.2",
  "kubeforward",
  "log",
  "openssl",
@@ -2163,7 +2193,7 @@ dependencies = [
  "either",
  "futures",
  "home",
- "http",
+ "http 0.2.11",
  "http-body",
  "hyper",
  "hyper-rustls",
@@ -2197,7 +2227,7 @@ checksum = "b5bba93d054786eba7994d03ce522f368ef7d48c88a1826faa28478d85fb63ae"
 dependencies = [
  "chrono",
  "form_urlencoded",
- "http",
+ "http 0.2.11",
  "json-patch",
  "k8s-openapi",
  "once_cell",
@@ -3444,8 +3474,8 @@ dependencies = [
  "encoding_rs",
  "futures-core",
  "futures-util",
- "h2",
- "http",
+ "h2 0.3.24",
+ "http 0.2.11",
  "http-body",
  "hyper",
  "hyper-tls",
@@ -4254,7 +4284,7 @@ dependencies = [
  "glob",
  "gtk",
  "heck 0.4.1",
- "http",
+ "http 0.2.11",
  "ignore",
  "minisign-verify",
  "notify-rust",
@@ -4372,7 +4402,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf2d0652aa2891ff3e9caa2401405257ea29ab8372cce01f186a5825f1bd0e76"
 dependencies = [
  "gtk",
- "http",
+ "http 0.2.11",
  "http-range",
  "rand 0.8.5",
  "raw-window-handle",
@@ -4766,7 +4796,7 @@ dependencies = [
  "bytes",
  "futures-core",
  "futures-util",
- "http",
+ "http 0.2.11",
  "http-body",
  "http-range-header",
  "mime",
@@ -4874,7 +4904,7 @@ dependencies = [
  "byteorder",
  "bytes",
  "data-encoding",
- "http",
+ "http 0.2.11",
  "httparse",
  "log",
  "rand 0.8.5",
@@ -5731,7 +5761,7 @@ dependencies = [
  "glib",
  "gtk",
  "html5ever",
- "http",
+ "http 0.2.11",
  "kuchikiki",
  "libc",
  "log",
