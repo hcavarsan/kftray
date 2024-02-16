@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from 'react'
-import { M } from 'vite/dist/node/types.d-jgA8ss1A'
 
 import { Box, Center, useColorModeValue, VStack } from '@chakra-ui/react'
 import { open, save } from '@tauri-apps/api/dialog'
