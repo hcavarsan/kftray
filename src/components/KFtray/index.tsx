@@ -8,6 +8,7 @@ import { invoke } from '@tauri-apps/api/tauri'
 
 import { Config, Response, Status } from '../../types'
 import AddConfigModal from '../AddConfigModal'
+import MenuOptions from '../Menu'
 import PortForwardTable from '../PortForwardTable'
 
 const initalRemotePort = 0
@@ -514,75 +515,77 @@ const KFTray = () => {
   const cardBg = useColorModeValue('gray.800', 'gray.800')
 
   return (
-    <Center h='100%' w='100%' overflow='hidden' margin='0'>
-      <Box
-        width='100%'
-        height='75vh'
-        maxH='95vh'
-        maxW='600px'
-        overflow='hidden'
-        borderRadius='20px'
-        bg={cardBg}
-        boxShadow={`
+    <Box
+      width='100%'
+      height='75vh'
+      maxH='95vh'
+      maxW='600px'
+      overflow='hidden'
+      borderRadius='20px'
+      bg={cardBg}
+      boxShadow={`
       /* Inset shadow for top & bottom inner border effect using dark gray */
       inset 0 2px 4px rgba(0, 0, 0, 0.3),
       inset 0 -2px 4px rgba(0, 0, 0, 0.3),
       /* Inset shadow for an inner border all around using dark gray */
       inset 0 0 0 4px rgba(45, 57, 81, 0.9)
     `}
+    >
+      <VStack
+        css={{
+          '&::-webkit-scrollbar': {
+            width: '5px',
+            background: 'transparent',
+          },
+          '&::-webkit-scrollbar-thumb': {
+            background: '#555',
+          },
+          '&::-webkit-scrollbar-thumb:hover': {
+            background: '#666',
+          },
+        }}
+        h='100%'
+        w='100%'
+        maxW='100%'
+        overflowY='auto'
+        padding='15px'
+        mt='2px'
       >
-        <VStack
-          css={{
-            '&::-webkit-scrollbar': {
-              width: '5px',
-              background: 'transparent',
-            },
-            '&::-webkit-scrollbar-thumb': {
-              background: '#555',
-            },
-            '&::-webkit-scrollbar-thumb:hover': {
-              background: '#666',
-            },
-          }}
-          h='100%'
-          w='100%'
-          maxW='100%'
-          overflowY='auto'
-          padding='15px'
-          mt='2px'
-        >
-          <AddConfigModal
-            isModalOpen={isModalOpen}
-            closeModal={closeModal}
-            newConfig={newConfig}
-            handleInputChange={handleInputChange}
-            handleSaveConfig={handleSaveConfig}
-            isEdit={isEdit}
-            handleEditSubmit={handleEditSubmit}
-            cancelRef={cancelRef}
-          />
-          <PortForwardTable
-            configs={configs}
-            initiatePortForwarding={initiatePortForwarding}
-            isInitiating={isInitiating}
-            isStopping={isStopping}
-            handleEditConfig={handleEditConfig}
-            stopPortForwarding={stopPortForwarding}
-            handleDeleteConfig={handleDeleteConfig}
-            confirmDeleteConfig={confirmDeleteConfig}
-            isAlertOpen={isAlertOpen}
-            setIsAlertOpen={setIsAlertOpen}
-            updateConfigRunningState={updateConfigRunningState}
+        <AddConfigModal
+          isModalOpen={isModalOpen}
+          closeModal={closeModal}
+          newConfig={newConfig}
+          handleInputChange={handleInputChange}
+          handleSaveConfig={handleSaveConfig}
+          isEdit={isEdit}
+          handleEditSubmit={handleEditSubmit}
+          cancelRef={cancelRef}
+        />
+        <PortForwardTable
+          configs={configs}
+          initiatePortForwarding={initiatePortForwarding}
+          isInitiating={isInitiating}
+          isStopping={isStopping}
+          handleEditConfig={handleEditConfig}
+          stopPortForwarding={stopPortForwarding}
+          handleDeleteConfig={handleDeleteConfig}
+          confirmDeleteConfig={confirmDeleteConfig}
+          isAlertOpen={isAlertOpen}
+          setIsAlertOpen={setIsAlertOpen}
+          updateConfigRunningState={updateConfigRunningState}
+          isPortForwarding={isPortForwarding}
+          selectedConfigs={selectedConfigs}
+          setSelectedConfigs={setSelectedConfigs}
+        />
+        <Box justifyContent='space-between' mt='10'>
+          <MenuOptions
             openModal={openModal}
             handleExportConfigs={handleExportConfigs}
             handleImportConfigs={handleImportConfigs}
-            isPortForwarding={isPortForwarding}
-            selectedConfigs={selectedConfigs}
-            setSelectedConfigs={setSelectedConfigs}
           />
-        </VStack>
-      </Box>
-    </Center>
+        </Box>
+      </VStack>
+    </Box>
   )
 }
 

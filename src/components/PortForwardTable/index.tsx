@@ -46,7 +46,6 @@ import {
   Tr,
   useColorModeValue,
 } from '@chakra-ui/react'
-import { app } from '@tauri-apps/api'
 
 import { Status, TableProps } from '../../types'
 import PortForwardRow from '../PortForwardRow'
@@ -64,15 +63,12 @@ const PortForwardTable: React.FC<TableProps> = ({
   isAlertOpen,
   setIsAlertOpen,
   updateConfigRunningState,
-  openModal,
-  handleExportConfigs,
-  handleImportConfigs,
   selectedConfigs,
   setSelectedConfigs,
 }) => {
   const [search, setSearch] = useState('')
   const [expandedIndices, setExpandedIndices] = useState<number[]>([])
-  const [version, setVersion] = useState('')
+
   const [selectedConfigsByContext, setSelectedConfigsByContext] = useState<
     Record<string, boolean>
   >({})
@@ -83,10 +79,6 @@ const PortForwardTable: React.FC<TableProps> = ({
       setSelectedConfigs(prev => prev.filter(config => config.id !== id))
     }
   }
-
-  useEffect(() => {
-    app.getVersion().then(setVersion)
-  }, [])
 
   useEffect(() => {
     setSelectedConfigs(prevSelectedConfigs =>
@@ -574,49 +566,6 @@ const PortForwardTable: React.FC<TableProps> = ({
           </Accordion>
         </Flex>
       )}
-      <Flex
-        justifyContent='space-between'
-        align='center'
-        mt='3'
-        alignItems='center'
-        maxWidth='100%'
-      >
-        <Menu placement='top'>
-          <MenuButton
-            as={Button}
-            rightIcon={<MdMoreVert />}
-            size='xs'
-            colorScheme='facebook'
-            variant='outline'
-            borderRadius='md'
-            width='85px'
-          >
-            Options
-          </MenuButton>
-
-          <MenuList zIndex='popover'>
-            <MenuItem icon={<MdAdd />} onClick={openModal}>
-              Add New Config
-            </MenuItem>
-            <MenuItem icon={<MdFileUpload />} onClick={handleExportConfigs}>
-              Export Configs
-            </MenuItem>
-            <MenuItem icon={<MdFileDownload />} onClick={handleImportConfigs}>
-              Import Configs
-            </MenuItem>
-          </MenuList>
-        </Menu>
-        <Text
-          fontSize='sm'
-          textAlign='center'
-          color='gray.400'
-          fontFamily='Inter, sans-serif'
-          p={2}
-          borderColor={useColorModeValue('gray.200', 'gray.700')}
-        >
-          {version}
-        </Text>
-      </Flex>
     </Flex>
   )
 }
