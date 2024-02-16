@@ -693,7 +693,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                   size='xs'
                   ml={3}
                   onClick={handleSave}
-                  isDisabled={!isFormValid} // Disable the button when the form is not valid
+                  isDisabled={!isFormValid}
                 >
                   {isEdit ? 'Save Changes' : 'Add Config'}
                 </Button>
