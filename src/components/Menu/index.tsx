@@ -1,5 +1,11 @@
 import React, { useEffect, useState } from 'react'
-import { MdAdd, MdFileDownload, MdFileUpload, MdMoreVert } from 'react-icons/md'
+import {
+  MdAdd,
+  MdAdminPanelSettings,
+  MdFileDownload,
+  MdFileUpload,
+  MdMoreVert,
+} from 'react-icons/md'
 
 import {
   Box,
@@ -18,6 +24,7 @@ import { MenuProps } from '../../types'
 
 const MenuOptions: React.FC<MenuProps> = ({
   openModal,
+  openSettingsModal,
   handleExportConfigs,
   handleImportConfigs,
 }) => {
@@ -52,6 +59,12 @@ const MenuOptions: React.FC<MenuProps> = ({
             </MenuItem>
             <MenuItem icon={<MdFileDownload />} onClick={handleImportConfigs}>
               Import Configs
+            </MenuItem>
+            <MenuItem
+              icon={<MdAdminPanelSettings />}
+              onClick={openSettingsModal}
+            >
+              Settings
             </MenuItem>
           </MenuList>
         </Menu>

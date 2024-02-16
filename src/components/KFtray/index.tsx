@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react'
+import { M } from 'vite/dist/node/types.d-jgA8ss1A'
 
 import { Box, Center, useColorModeValue, VStack } from '@chakra-ui/react'
 import { open, save } from '@tauri-apps/api/dialog'
@@ -10,6 +11,7 @@ import { Config, Response, Status } from '../../types'
 import AddConfigModal from '../AddConfigModal'
 import MenuOptions from '../Menu'
 import PortForwardTable from '../PortForwardTable'
+import SettingsModal from '../SettingsModal'
 
 const initalRemotePort = 0
 const initialLocalPort = 0
@@ -18,6 +20,7 @@ const initialStatus = 0
 const KFTray = () => {
   const [configs, setConfigs] = useState<Status[]>([])
   const [isModalOpen, setIsModalOpen] = useState(false)
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false)
   const [selectedConfigs, setSelectedConfigs] = useState<Status[]>([])
 
   const [isEdit, setIsEdit] = useState(false)
@@ -69,6 +72,11 @@ const KFTray = () => {
     setIsModalOpen(false)
     setIsEdit(false)
   }
+
+  const openSettingsModal = () => {
+    setIsSettingsModalOpen(true)
+  }
+
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target
 
@@ -551,6 +559,10 @@ const KFTray = () => {
         padding='15px'
         mt='2px'
       >
+        <SettingsModal
+          isSettingsModalOpen={isSettingsModalOpen}
+          closeModal={() => setIsSettingsModalOpen(false)}
+        />
         <AddConfigModal
           isModalOpen={isModalOpen}
           closeModal={closeModal}
@@ -561,6 +573,7 @@ const KFTray = () => {
           handleEditSubmit={handleEditSubmit}
           cancelRef={cancelRef}
         />
+
         <PortForwardTable
           configs={configs}
           initiatePortForwarding={initiatePortForwarding}
@@ -580,6 +593,7 @@ const KFTray = () => {
         <Box justifyContent='space-between' mt='10'>
           <MenuOptions
             openModal={openModal}
+            openSettingsModal={openSettingsModal}
             handleExportConfigs={handleExportConfigs}
             handleImportConfigs={handleImportConfigs}
           />

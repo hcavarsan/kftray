@@ -55,6 +55,11 @@ export interface ConfigProps {
   isEdit: boolean
 }
 
+export interface SettingsModalProps {
+  isSettingsModalOpen: boolean
+  closeModal: () => void
+}
+
 export interface TableProps {
   configs: Status[]
   isInitiating: boolean
@@ -90,6 +95,7 @@ export interface PortForwardRowProps {
 
 export interface MenuProps {
   openModal: () => void
+  openSettingsModal: () => void
   handleExportConfigs: () => void
   handleImportConfigs: () => void
 }
