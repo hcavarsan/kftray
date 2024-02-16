@@ -68,9 +68,6 @@ export interface TableProps {
   isAlertOpen: boolean
   setIsAlertOpen: (isOpen: boolean) => void
   updateConfigRunningState: (id: number, isRunning: boolean) => void
-  openModal: () => void
-  handleExportConfigs: () => void
-  handleImportConfigs: () => void
   selectedConfigs: Status[]
   setSelectedConfigs: React.Dispatch<React.SetStateAction<Status[]>>
 }
@@ -89,4 +86,10 @@ export interface PortForwardRowProps {
   selected: boolean
   isInitiating: boolean
   isStopping: boolean
+}
+
+export interface MenuProps {
+  openModal: () => void
+  handleExportConfigs: () => void
+  handleImportConfigs: () => void
 }

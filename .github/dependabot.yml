@@ -1,15 +1,15 @@
 version: 2
 updates:
-  - package-ecosystem: "npm"
-    directory: "/"
+  - package-ecosystem: 'npm'
+    directory: '/'
     schedule:
-      interval: "weekly"
-  - package-ecosystem: "cargo"
-    directory: "/src-tauri/"
+      interval: 'weekly'
+  - package-ecosystem: 'cargo'
+    directory: '/src-tauri/'
     schedule:
-      interval: "daily"
+      interval: 'daily'
     ignore:
-        - dependency-name: "semver"
-        - dependency-name: "crates-io"
-        - dependency-name: "h2"
-    rebase-strategy: "disabled"
+      - dependency-name: 'semver'
+      - dependency-name: 'crates-io'
+      - dependency-name: 'h2'
+    rebase-strategy: 'disabled'

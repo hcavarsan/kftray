@@ -6,7 +6,6 @@
   </p>
   <br>
 
-
   <!-- Badges -->
   <a href="https://nodejs.org/en/">
     <img src="https://img.shields.io/badge/Node-v20.11.0-brightgreen.svg" alt="Node.js version" />
@@ -46,8 +45,6 @@
     </a>
   </p>
 </div>
-
-
 
 ## Table of Contents
 
