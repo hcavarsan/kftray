@@ -56,13 +56,13 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                 p={2}
               >
                 <Box width={{ base: '100%', sm: '100%' }} pl={2}>
-                  <FormLabel htmlFor='settingInput'>Setting Name</FormLabel>
+                  <FormLabel htmlFor='settingInput'>Github Repository URL</FormLabel>
                   <Input
                     id='settingInput'
                     type='text'
                     value={settingInputValue}
                     onChange={handleInputChange}
-                    placeholder='Enter your setting name here' // Placeholder text
+                    placeholder='Github Repository URL'
                     name='settingInput'
                     size='sm'
                     height='36px'
