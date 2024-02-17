@@ -1,6 +1,6 @@
 extern crate base64;
 use crate::config::import_configs;
-use dirs;
+
 use kubeforward::port_forward::Config;
 use reqwest::header::{AUTHORIZATION, USER_AGENT};
 use rusqlite::Connection;
@@ -40,7 +40,7 @@ pub async fn import_configs_from_github(
         .trim();
     println!("base64_content: {}", base64_content);
 
-    let base64_content_cleaned = base64_content.replace("\n", "").replace("\r", "");
+    let base64_content_cleaned = base64_content.replace('\n', "").replace('\r', "");
 
     let decoded_content = base64::decode(&base64_content_cleaned)
         .map_err(|e| format!("Failed to decode base64 content: {}", e))?;
