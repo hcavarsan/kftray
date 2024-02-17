@@ -72,6 +72,10 @@ const KFTray = () => {
     setIsEdit(false)
   }
 
+  const closeSettingsModal = () => {
+    setIsSettingsModalOpen(false)
+  }
+
   const openSettingsModal = () => {
     setIsSettingsModalOpen(true)
   }
@@ -254,6 +258,16 @@ const KFTray = () => {
         body: 'Failed to update configuration.',
         icon: 'error',
       })
+    }
+  }
+
+  const fetchAndUpdateConfigs = async () => {
+    try {
+      const updatedConfigs = await invoke<Status[]>('get_configs')
+
+      setConfigs(updatedConfigs)
+    } catch (error) {
+      console.error('Failed to fetch updated configs:', error)
     }
   }
   // eslint-disable-next-line complexity
@@ -560,7 +574,8 @@ const KFTray = () => {
       >
         <SettingsModal
           isSettingsModalOpen={isSettingsModalOpen}
-          closeModal={() => setIsSettingsModalOpen(false)}
+          closeSettingsModal={closeSettingsModal}
+          onSettingsSaved={fetchAndUpdateConfigs}
         />
         <AddConfigModal
           isModalOpen={isModalOpen}

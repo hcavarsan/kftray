@@ -57,7 +57,8 @@ export interface ConfigProps {
 
 export interface SettingsModalProps {
   isSettingsModalOpen: boolean
-  closeModal: () => void
+  closeSettingsModal: () => void
+  onSettingsSaved: () => void
 }
 
 export interface TableProps {

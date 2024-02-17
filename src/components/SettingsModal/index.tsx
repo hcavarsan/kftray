@@ -1,10 +1,11 @@
 import React, { useState } from 'react'
-import ReactSelect from 'react-select'
 
 import {
-  Box,
+  Alert,
+  AlertIcon,
   Button,
   Center,
+  Checkbox,
   FormControl,
   FormLabel,
   Input,
@@ -15,30 +16,66 @@ import {
   ModalFooter,
   ModalOverlay,
 } from '@chakra-ui/react'
+import { invoke } from '@tauri-apps/api/tauri'
 
 import theme from '../../assets/theme'
 import { SettingsModalProps } from '../../types'
 
 const SettingsModal: React.FC<SettingsModalProps> = ({
   isSettingsModalOpen,
-  closeModal,
+  closeSettingsModal,
+  onSettingsSaved,
 }) => {
   const [settingInputValue, setSettingInputValue] = useState('')
+  const [configPath, setConfigPath] = useState('')
+  const [isPrivateRepo, setIsPrivateRepo] = useState(false)
+  const [gitToken, setGitToken] = useState('')
+  const [isLoading, setIsLoading] = useState(false)
 
-  const handleInputChange = (e: {
-    target: { value: React.SetStateAction<string> }
-  }) => setSettingInputValue(e.target.value)
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) =>
+    setSettingInputValue(e.target.value)
+  const handleConfigPathChange = (e: React.ChangeEvent<HTMLInputElement>) =>
+    setConfigPath(e.target.value)
+  const handleCheckboxChange = (e: React.ChangeEvent<HTMLInputElement>) =>
+    setIsPrivateRepo(e.target.checked)
+  const handleGitTokenChange = (e: React.ChangeEvent<HTMLInputElement>) =>
+    setGitToken(e.target.value)
 
-  const handleSaveSettings = (e: { preventDefault: () => void }) => {
+  const handleSaveSettings = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
-    console.log('Saving setting:', settingInputValue)
-    closeModal()
-    setSettingInputValue('')
+    setIsLoading(true)
+    try {
+      // Check if settingInputValue is a valid URL
+      new URL(settingInputValue)
+      await invoke('import_configs_from_github', {
+        repoUrl: settingInputValue,
+        configPath: configPath,
+        isPrivate: isPrivateRepo,
+        token: isPrivateRepo ? gitToken : undefined,
+      })
+      // Reset the form after successful saving
+      setSettingInputValue('')
+      setConfigPath('')
+      setIsPrivateRepo(false)
+      setGitToken('')
+
+      if (typeof onSettingsSaved === 'function') {
+        onSettingsSaved()
+      }
+      closeSettingsModal()
+    } catch (e) {
+      if (e instanceof TypeError) {
+        console.error('Invalid URL:', settingInputValue)
+      } else {
+        console.error('Error importing configs:', e)
+      }
+    } finally {
+      setIsLoading(false) // Stop loading
+    }
   }
 
   const handleCancel = () => {
-    closeModal()
-    setSettingInputValue('')
+    closeSettingsModal()
   }
 
   return (
@@ -49,21 +86,68 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
           <ModalCloseButton />
           <ModalBody p={2} mt={3}>
             <form onSubmit={handleSaveSettings}>
+              <FormControl p={2} isDisabled={isLoading}>
+                <FormLabel htmlFor='settingInput'>
+                  GitHub Repository URL
+                </FormLabel>
+                <Input
+                  id='settingInput'
+                  type='text'
+                  value={settingInputValue}
+                  onChange={handleInputChange}
+                  placeholder='GitHub Repository URL'
+                  size='sm'
+                  height='36px'
+                  bg={theme.colors.gray[800]}
+                  borderColor={theme.colors.gray[700]}
+                  _hover={{ borderColor: theme.colors.gray[600] }}
+                  _placeholder={{ color: theme.colors.gray[500] }}
+                  color={theme.colors.gray[300]}
+                />
+              </FormControl>
+
+              <FormControl p={2} isDisabled={isLoading}>
+                <FormLabel htmlFor='configPath'>Config Path</FormLabel>
+                <Input
+                  id='configPath'
+                  type='text'
+                  value={configPath}
+                  onChange={handleConfigPathChange}
+                  placeholder='Path to Config File'
+                  size='sm'
+                  height='36px'
+                  bg={theme.colors.gray[800]}
+                  borderColor={theme.colors.gray[700]}
+                  _hover={{ borderColor: theme.colors.gray[600] }}
+                  _placeholder={{ color: theme.colors.gray[500] }}
+                  color={theme.colors.gray[300]}
+                />
+              </FormControl>
+
               <FormControl
+                p={2}
                 display='flex'
                 alignItems='center'
-                flexWrap='wrap'
-                p={2}
+                isDisabled={isLoading}
               >
-                <Box width={{ base: '100%', sm: '100%' }} pl={2}>
-                  <FormLabel htmlFor='settingInput'>Github Repository URL</FormLabel>
+                <Checkbox
+                  id='isPrivateRepo'
+                  isChecked={isPrivateRepo}
+                  onChange={handleCheckboxChange}
+                >
+                  Private repository
+                </Checkbox>
+              </FormControl>
+
+              {isPrivateRepo && (
+                <FormControl p={2} isDisabled={isLoading}>
+                  <FormLabel htmlFor='gitToken'>Git Token</FormLabel>
                   <Input
-                    id='settingInput'
+                    id='gitToken'
                     type='text'
-                    value={settingInputValue}
-                    onChange={handleInputChange}
-                    placeholder='Github Repository URL'
-                    name='settingInput'
+                    value={gitToken}
+                    onChange={handleGitTokenChange}
+                    placeholder='Git Token'
                     size='sm'
                     height='36px'
                     bg={theme.colors.gray[800]}
@@ -72,17 +156,34 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                     _placeholder={{ color: theme.colors.gray[500] }}
                     color={theme.colors.gray[300]}
                   />
-                </Box>
-              </FormControl>
+                </FormControl>
+              )}
 
               <ModalFooter justifyContent='flex-end' p={2} mt={5}>
-                <Button variant='outline' onClick={handleCancel} size='xs'>
+                <Button
+                  variant='outline'
+                  onClick={handleCancel}
+                  size='xs'
+                  isDisabled={isLoading}
+                >
                   Cancel
                 </Button>
-                <Button type='submit' colorScheme='blue' size='xs' ml={3}>
+                <Button
+                  type='submit'
+                  colorScheme='blue'
+                  size='xs'
+                  ml={3}
+                  isLoading={isLoading}
+                  isDisabled={isLoading}
+                >
                   Save Settings
                 </Button>
               </ModalFooter>
+              <Alert status='warning' mt={4}>
+                <AlertIcon />
+                Configuring this feature will replace all existing settings with
+                the configs fetched from the repository.
+              </Alert>
             </form>
           </ModalBody>
         </ModalContent>

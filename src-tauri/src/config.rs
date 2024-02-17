@@ -172,11 +172,24 @@ pub async fn export_configs() -> Result<String, String> {
 
 #[tauri::command]
 pub async fn import_configs(json: String) -> Result<(), String> {
-    let configs: Vec<Config> = serde_json::from_str(&json).map_err(|e| e.to_string())?;
-    for config in configs {
-        insert_config(config)?;
+    // Try to parse as Vec<Config>
+    let parse_result = serde_json::from_str::<Vec<Config>>(&json);
+
+    match parse_result {
+        Ok(configs) => {
+            for config in configs {
+                insert_config(config)?;
+            }
+            Ok(())
+        }
+        Err(_) => {
+            // If parsing as Vec<Config> fails, try to parse as Config
+            let config = serde_json::from_str::<Config>(&json)
+                .map_err(|e| format!("Failed to parse config: {}", e))?;
+            insert_config(config)?;
+            Ok(())
+        }
     }
-    Ok(())
 }
 
 pub fn migrate_configs() -> Result<(), String> {

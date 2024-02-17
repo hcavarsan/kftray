@@ -2124,6 +2124,7 @@ dependencies = [
 name = "kftray"
 version = "0.6.2"
 dependencies = [
+ "base64 0.13.1",
  "dirs",
  "env_logger",
  "fix-path-env",
@@ -2131,6 +2132,7 @@ dependencies = [
  "kubeforward",
  "log",
  "openssl",
+ "reqwest",
  "rusqlite",
  "serde_json",
  "tauri",

@@ -21,6 +21,8 @@ tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 rusqlite = { version = "0.30.0", features = ["bundled"] }
 dirs = "5.0.1"
 kubeforward = { path = "./utils/kubeforward" }
+reqwest = "0.11"
+base64 = "0.13.0"
 
 log = "0.4"
 env_logger = "0.11.2"
