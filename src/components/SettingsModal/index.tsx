@@ -1,8 +1,6 @@
 import React, { useState } from 'react'
 
 import {
-  Alert,
-  AlertIcon,
   Button,
   Center,
   Checkbox,
@@ -31,6 +29,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   const [isPrivateRepo, setIsPrivateRepo] = useState(false)
   const [gitToken, setGitToken] = useState('')
   const [isLoading, setIsLoading] = useState(false)
+  const [flushConfigs, setFlushConfigs] = useState(false)
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) =>
     setSettingInputValue(e.target.value)
@@ -41,19 +40,22 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   const handleGitTokenChange = (e: React.ChangeEvent<HTMLInputElement>) =>
     setGitToken(e.target.value)
 
+  const handleFlushConfigsChange = (e: React.ChangeEvent<HTMLInputElement>) =>
+    setFlushConfigs(e.target.checked) // New event handler
+
   const handleSaveSettings = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     setIsLoading(true)
     try {
-      // Check if settingInputValue is a valid URL
       new URL(settingInputValue)
       await invoke('import_configs_from_github', {
         repoUrl: settingInputValue,
         configPath: configPath,
         isPrivate: isPrivateRepo,
         token: isPrivateRepo ? gitToken : undefined,
+        flush: flushConfigs,
       })
-      // Reset the form after successful saving
+
       setSettingInputValue('')
       setConfigPath('')
       setIsPrivateRepo(false)
@@ -70,7 +72,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
         console.error('Error importing configs:', e)
       }
     } finally {
-      setIsLoading(false) // Stop loading
+      setIsLoading(false)
     }
   }
 
@@ -127,9 +129,18 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
               <FormControl
                 p={2}
                 display='flex'
-                alignItems='center'
+                flexDirection='column'
                 isDisabled={isLoading}
               >
+                <Checkbox
+                  id='flushConfigs'
+                  isChecked={flushConfigs}
+                  onChange={handleFlushConfigsChange}
+                  mb={2}
+                  mt={2}
+                >
+                  Flush all existing configs
+                </Checkbox>
                 <Checkbox
                   id='isPrivateRepo'
                   isChecked={isPrivateRepo}
@@ -144,7 +155,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                   <FormLabel htmlFor='gitToken'>Git Token</FormLabel>
                   <Input
                     id='gitToken'
-                    type='text'
+                    type='password'
                     value={gitToken}
                     onChange={handleGitTokenChange}
                     placeholder='Git Token'
@@ -179,11 +190,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                   Save Settings
                 </Button>
               </ModalFooter>
-              <Alert status='warning' mt={4}>
-                <AlertIcon />
-                Configuring this feature will replace all existing settings with
-                the configs fetched from the repository.
-              </Alert>
             </form>
           </ModalBody>
         </ModalContent>

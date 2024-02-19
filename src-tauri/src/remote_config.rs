@@ -10,6 +10,7 @@ pub async fn import_configs_from_github(
     repo_url: String,
     config_path: String,
     is_private: bool,
+    flush: bool,
     token: Option<String>,
 ) -> Result<(), String> {
     let client = reqwest::Client::new();
@@ -52,7 +53,9 @@ pub async fn import_configs_from_github(
     let configs: Vec<Config> = serde_json::from_str(&decoded_str)
         .map_err(|e| format!("Failed to parse configs: {}", e))?;
 
-    clear_existing_configs().map_err(|e| e.to_string())?;
+    if flush {
+        clear_existing_configs().map_err(|e| e.to_string())?;
+    }
     for config in configs {
         let config_json = serde_json::to_string(&config)
             .map_err(|e| format!("Failed to serialize config: {}", e))?;
