@@ -17,7 +17,9 @@ import {
 } from '@chakra-ui/react'
 import { app } from '@tauri-apps/api'
 
-const MenuOptions = ({
+import { MenuProps } from '../../types'
+
+const MenuOptions: React.FC<MenuProps> = ({
   openModal,
   openSettingsModal,
   handleExportConfigs,
