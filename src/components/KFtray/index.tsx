@@ -538,7 +538,7 @@ const KFTray = () => {
   return (
     <Box
       width='100%'
-      height='78vh'
+      height='76vh'
       maxW='600px'
       overflow='hidden'
       borderRadius='20px'
@@ -564,29 +564,13 @@ const KFTray = () => {
             background: '#666',
           },
         }}
-        height='80vh'
+        height='78vh'
         w='100%'
         maxW='100%'
         overflowY='auto'
         padding='15px'
         mt='2px'
       >
-        <SettingsModal
-          isSettingsModalOpen={isSettingsModalOpen}
-          closeSettingsModal={closeSettingsModal}
-          onSettingsSaved={fetchAndUpdateConfigs}
-        />
-        <AddConfigModal
-          isModalOpen={isModalOpen}
-          closeModal={closeModal}
-          newConfig={newConfig}
-          handleInputChange={handleInputChange}
-          handleSaveConfig={handleSaveConfig}
-          isEdit={isEdit}
-          handleEditSubmit={handleEditSubmit}
-          cancelRef={cancelRef}
-        />
-
         <PortForwardTable
           configs={configs}
           initiatePortForwarding={initiatePortForwarding}
@@ -608,6 +592,21 @@ const KFTray = () => {
           openSettingsModal={openSettingsModal}
           handleExportConfigs={handleExportConfigs}
           handleImportConfigs={handleImportConfigs}
+        />
+        <SettingsModal
+          isSettingsModalOpen={isSettingsModalOpen}
+          closeSettingsModal={closeSettingsModal}
+          onSettingsSaved={fetchAndUpdateConfigs}
+        />
+        <AddConfigModal
+          isModalOpen={isModalOpen}
+          closeModal={closeModal}
+          newConfig={newConfig}
+          handleInputChange={handleInputChange}
+          handleSaveConfig={handleSaveConfig}
+          isEdit={isEdit}
+          handleEditSubmit={handleEditSubmit}
+          cancelRef={cancelRef}
         />
       </VStack>
     </Box>

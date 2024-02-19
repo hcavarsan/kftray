@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useState } from 'react'
 import { MdAdd, MdFileDownload, MdFileUpload, MdMoreVert } from 'react-icons/md'
 
 import {
@@ -12,10 +12,7 @@ import {
   Popover,
   PopoverContent,
   PopoverTrigger,
-  Text,
-  useColorModeValue,
 } from '@chakra-ui/react'
-import { app } from '@tauri-apps/api'
 
 import { MenuProps } from '../../types'
 
@@ -25,12 +22,7 @@ const MenuOptions: React.FC<MenuProps> = ({
   handleExportConfigs,
   handleImportConfigs,
 }) => {
-  const [version, setVersion] = useState('')
   const [isImportSubmenuOpen, setIsImportSubmenuOpen] = useState(false)
-
-  useEffect(() => {
-    app.getVersion().then(setVersion).catch(console.error)
-  }, [])
 
   const handleSubmenuOpen = () => setIsImportSubmenuOpen(true)
   const handleSubmenuClose = () => setIsImportSubmenuOpen(false)
@@ -89,15 +81,6 @@ const MenuOptions: React.FC<MenuProps> = ({
             </Box>
           </MenuList>
         </Menu>
-        <Text
-          fontSize='sm'
-          textAlign='right'
-          color={useColorModeValue('gray.500', 'gray.200')}
-          fontFamily='Inter, sans-serif'
-          p={2}
-        >
-          {version}
-        </Text>
       </Grid>
     </Box>
   )
