@@ -7,6 +7,7 @@ mod commands;
 mod config;
 mod db;
 mod logging;
+mod remote_config;
 mod tray;
 
 use std::env;
@@ -166,6 +167,7 @@ fn main() {
             config::import_configs,
             commands::open_save_dialog,
             commands::close_save_dialog,
+            remote_config::import_configs_from_github
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
