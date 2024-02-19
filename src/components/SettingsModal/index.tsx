@@ -187,7 +187,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                   isLoading={isLoading}
                   isDisabled={isLoading}
                 >
-                  Save Settings
+                  Import Configs
                 </Button>
               </ModalFooter>
             </form>
