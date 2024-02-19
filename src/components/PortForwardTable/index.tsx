@@ -1,12 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import {
-  MdAdd,
-  MdClose,
-  MdFileDownload,
-  MdFileUpload,
-  MdMoreVert,
-  MdRefresh,
-} from 'react-icons/md'
+import { MdClose, MdRefresh } from 'react-icons/md'
 
 import {
   CheckCircleIcon,
@@ -26,13 +19,10 @@ import {
   ButtonGroup,
   Checkbox,
   Flex,
+  Image,
   Input,
   InputGroup,
   InputLeftElement,
-  Menu,
-  MenuButton,
-  MenuItem,
-  MenuList,
   Progress,
   Table,
   Tag,
@@ -46,7 +36,9 @@ import {
   Tr,
   useColorModeValue,
 } from '@chakra-ui/react'
+import { app } from '@tauri-apps/api'
 
+import logo from '../../assets/logo.png'
 import { Status, TableProps } from '../../types'
 import PortForwardRow from '../PortForwardRow'
 import PortForwardSearchTable from '../PortForwardSearchTable'
@@ -68,11 +60,16 @@ const PortForwardTable: React.FC<TableProps> = ({
 }) => {
   const [search, setSearch] = useState('')
   const [expandedIndices, setExpandedIndices] = useState<number[]>([])
+  const [version, setVersion] = useState('')
 
   const [selectedConfigsByContext, setSelectedConfigsByContext] = useState<
     Record<string, boolean>
   >({})
   const [isCheckboxAction, setIsCheckboxAction] = useState(false)
+
+  useEffect(() => {
+    app.getVersion().then(setVersion).catch(console.error)
+  }, [])
 
   const updateSelectionState = (id: number, isRunning: boolean) => {
     if (isRunning) {
@@ -97,9 +94,10 @@ const PortForwardTable: React.FC<TableProps> = ({
         config =>
           config.alias.toLowerCase().includes(search.toLowerCase()) ||
             config.context.toLowerCase().includes(search.toLowerCase()) ||
-            config.remote_address
-            .toLowerCase()
-            .includes(search.toLowerCase()) ||
+            (config.remote_address &&
+              config.remote_address
+              .toLowerCase()
+              .includes(search.toLowerCase())) ||
             config.local_port.toString().includes(search.toLowerCase()),
       )
       : configs
@@ -239,32 +237,36 @@ const PortForwardTable: React.FC<TableProps> = ({
   return (
     <Flex
       direction='column'
-      height='500px'
-      maxHeight='500px'
+      height='550px'
+      maxHeight='550px'
       overflow='hidden'
       width='100%'
       borderColor={borderColor}
     >
       <Flex
         direction='row'
-        alignItems='left'
-        bg={accordionBg}
-        p='1'
+        alignItems='center'
+        justifyContent='space-between'
+        position='sticky'
+        top='0'
+        bg='gray.800'
         borderRadius='lg'
-        width='98%'
+        width='98.4%'
         borderColor={borderColor}
-        justifyContent='left'
       >
-        <InputGroup size='xs' maxWidth='200px'>
+        <Tooltip label={`Kftray v${version}`} aria-label='Kftray version'>
+          <Image src={logo} alt='Kftray Logo' boxSize='30px' ml={3} />
+        </Tooltip>
+        <InputGroup size='xs' width='250px'>
           <InputLeftElement pointerEvents='none'>
             <SearchIcon color='gray.300' />
           </InputLeftElement>
           <Input
+            height='25px'
             type='text'
             placeholder='Search'
             onChange={handleSearchChange}
             borderRadius='md'
-            size='xs'
           />
         </InputGroup>
       </Flex>
@@ -272,7 +274,7 @@ const PortForwardTable: React.FC<TableProps> = ({
         direction='row'
         alignItems='center'
         mt='2'
-        justifyContent='space-between'
+        justifyContent='flex-start'
         position='sticky'
         top='0'
         bg='gray.900'
@@ -283,43 +285,39 @@ const PortForwardTable: React.FC<TableProps> = ({
         width='98.4%'
         borderColor={borderColor}
       >
-        <Flex direction='row' justifyContent='center'>
-          <ButtonGroup variant='outline'>
-            <Button
-              leftIcon={<MdRefresh />}
-              colorScheme='facebook'
-              isLoading={isInitiating}
-              loadingText={isInitiating ? 'Starting...' : null}
-              onClick={
-                selectedConfigs.length > 0
-                  ? startSelectedPortForwarding
-                  : startAllPortForwarding
-              }
-              isDisabled={
-                isInitiating ||
-                (!selectedConfigs.length &&
-                  !configs.some(config => !config.isRunning))
-              }
-              size='xs'
-            >
-              {selectedConfigs.length > 0 ? 'Start Selected' : 'Start All'}
-            </Button>
-            <Button
-              leftIcon={<MdClose />}
-              colorScheme='facebook'
-              isLoading={isStopping}
-              loadingText='Stopping...'
-              onClick={stopAllPortForwarding}
-              isDisabled={
-                isStopping || !configs.some(config => config.isRunning)
-              }
-              size='xs'
-            >
-              Stop All
-            </Button>
-          </ButtonGroup>
-        </Flex>
-        <Flex justifyContent='flex-end'>
+        <ButtonGroup variant='outline'>
+          <Button
+            leftIcon={<MdRefresh />}
+            colorScheme='facebook'
+            isLoading={isInitiating}
+            loadingText={isInitiating ? 'Starting...' : null}
+            onClick={
+              selectedConfigs.length > 0
+                ? startSelectedPortForwarding
+                : startAllPortForwarding
+            }
+            isDisabled={
+              isInitiating ||
+              (!selectedConfigs.length &&
+                !configs.some(config => !config.isRunning))
+            }
+            size='xs'
+          >
+            {selectedConfigs.length > 0 ? 'Start Selected' : 'Start All'}
+          </Button>
+          <Button
+            leftIcon={<MdClose />}
+            colorScheme='facebook'
+            isLoading={isStopping}
+            loadingText='Stopping...'
+            onClick={stopAllPortForwarding}
+            isDisabled={isStopping || !configs.some(config => config.isRunning)}
+            size='xs'
+          >
+            Stop All
+          </Button>
+        </ButtonGroup>
+        <Flex justifyContent='flex-end' width='100%'>
           <Button
             onClick={toggleExpandAll}
             size='xs'
@@ -340,6 +338,7 @@ const PortForwardTable: React.FC<TableProps> = ({
           </Button>
         </Flex>
       </Flex>
+
       {search.trim() ? (
         <Flex
           direction='column'
@@ -348,7 +347,7 @@ const PortForwardTable: React.FC<TableProps> = ({
           pb='30px'
           flex='1'
           width='100%'
-          mt='4'
+          mt='1'
           overflowY='scroll'
           borderBottom='none'
           borderRadius='lg'
@@ -371,11 +370,11 @@ const PortForwardTable: React.FC<TableProps> = ({
       ) : (
         <Flex
           direction='column'
-          height='500px'
-          maxHeight='500px'
+          height='550px'
+          maxHeight='550px'
           pb='90px'
           flex='1'
-          mt='4'
+          mt='5'
           overflowY='scroll'
           width='100%'
           borderBottom='none'

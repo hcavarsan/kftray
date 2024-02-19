@@ -34,13 +34,13 @@
 
   <!-- Download Buttons -->
   <p>
-    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.6.2_universal.dmg">
+    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.6.3_universal.dmg">
       Download for macOS
     </a> ·
-    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.6.2_x64-setup.exe">
+    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.6.3_x64-setup.exe">
       Download for Windows
     </a> ·
-    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.6.2_amd64.AppImage">
+    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.6.3_amd64.AppImage">
       Download for Linux
     </a>
   </p>
@@ -148,9 +148,11 @@ Use the UI to add new port forward settings. Necessary details include:
 
 ### 🗂 Configuration Management
 
-- **Export/Import:** Share configurations effortlessly with JSON files.
-- **Local Storage:** Keep configurations safe and sound in "$HOME/.kftray/configs.db".
-- **Custom Server Pod:** Customize the kftray server pod manifest in "$HOME/.kftray/proxy_manifest.json".
+- **Export/Import:** Easily exchange JSON configuration files.
+- **Git Imports:** Fetch configs directly from Git repositories with a few clicks.
+- **Local Storage:** Store configurations reliably at `$HOME/.kftray/configs.db`.
+- **Server Pod Manifest:** Customize the manifest at `$HOME/.kftray/proxy_manifest.json`.
+
 
 #### Configuration JSON Sample
 

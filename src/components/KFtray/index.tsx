@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 
-import { Box, Center, useColorModeValue, VStack } from '@chakra-ui/react'
+import { Box, useColorModeValue, VStack } from '@chakra-ui/react'
 import { open, save } from '@tauri-apps/api/dialog'
 import { readTextFile, writeTextFile } from '@tauri-apps/api/fs'
 import { sendNotification } from '@tauri-apps/api/notification'
@@ -10,6 +10,7 @@ import { Config, Response, Status } from '../../types'
 import AddConfigModal from '../AddConfigModal'
 import MenuOptions from '../Menu'
 import PortForwardTable from '../PortForwardTable'
+import SettingsModal from '../SettingsModal'
 
 const initalRemotePort = 0
 const initialLocalPort = 0
@@ -18,6 +19,7 @@ const initialStatus = 0
 const KFTray = () => {
   const [configs, setConfigs] = useState<Status[]>([])
   const [isModalOpen, setIsModalOpen] = useState(false)
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false)
   const [selectedConfigs, setSelectedConfigs] = useState<Status[]>([])
 
   const [isEdit, setIsEdit] = useState(false)
@@ -69,6 +71,15 @@ const KFTray = () => {
     setIsModalOpen(false)
     setIsEdit(false)
   }
+
+  const closeSettingsModal = () => {
+    setIsSettingsModalOpen(false)
+  }
+
+  const openSettingsModal = () => {
+    setIsSettingsModalOpen(true)
+  }
+
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target
 
@@ -247,6 +258,16 @@ const KFTray = () => {
         body: 'Failed to update configuration.',
         icon: 'error',
       })
+    }
+  }
+
+  const fetchAndUpdateConfigs = async () => {
+    try {
+      const updatedConfigs = await invoke<Status[]>('get_configs')
+
+      setConfigs(updatedConfigs)
+    } catch (error) {
+      console.error('Failed to fetch updated configs:', error)
     }
   }
   // eslint-disable-next-line complexity
@@ -517,8 +538,7 @@ const KFTray = () => {
   return (
     <Box
       width='100%'
-      height='75vh'
-      maxH='95vh'
+      height='76vh'
       maxW='600px'
       overflow='hidden'
       borderRadius='20px'
@@ -544,23 +564,13 @@ const KFTray = () => {
             background: '#666',
           },
         }}
-        h='100%'
+        height='78vh'
         w='100%'
         maxW='100%'
         overflowY='auto'
         padding='15px'
         mt='2px'
       >
-        <AddConfigModal
-          isModalOpen={isModalOpen}
-          closeModal={closeModal}
-          newConfig={newConfig}
-          handleInputChange={handleInputChange}
-          handleSaveConfig={handleSaveConfig}
-          isEdit={isEdit}
-          handleEditSubmit={handleEditSubmit}
-          cancelRef={cancelRef}
-        />
         <PortForwardTable
           configs={configs}
           initiatePortForwarding={initiatePortForwarding}
@@ -577,13 +587,27 @@ const KFTray = () => {
           selectedConfigs={selectedConfigs}
           setSelectedConfigs={setSelectedConfigs}
         />
-        <Box justifyContent='space-between' mt='10'>
-          <MenuOptions
-            openModal={openModal}
-            handleExportConfigs={handleExportConfigs}
-            handleImportConfigs={handleImportConfigs}
-          />
-        </Box>
+        <MenuOptions
+          openModal={openModal}
+          openSettingsModal={openSettingsModal}
+          handleExportConfigs={handleExportConfigs}
+          handleImportConfigs={handleImportConfigs}
+        />
+        <SettingsModal
+          isSettingsModalOpen={isSettingsModalOpen}
+          closeSettingsModal={closeSettingsModal}
+          onSettingsSaved={fetchAndUpdateConfigs}
+        />
+        <AddConfigModal
+          isModalOpen={isModalOpen}
+          closeModal={closeModal}
+          newConfig={newConfig}
+          handleInputChange={handleInputChange}
+          handleSaveConfig={handleSaveConfig}
+          isEdit={isEdit}
+          handleEditSubmit={handleEditSubmit}
+          cancelRef={cancelRef}
+        />
       </VStack>
     </Box>
   )
