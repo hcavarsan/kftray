@@ -1,12 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import {
-  MdAdd,
-  MdClose,
-  MdFileDownload,
-  MdFileUpload,
-  MdMoreVert,
-  MdRefresh,
-} from 'react-icons/md'
+import { MdClose, MdRefresh } from 'react-icons/md'
 
 import {
   CheckCircleIcon,
@@ -29,10 +22,6 @@ import {
   Input,
   InputGroup,
   InputLeftElement,
-  Menu,
-  MenuButton,
-  MenuItem,
-  MenuList,
   Progress,
   Table,
   Tag,
@@ -371,8 +360,8 @@ const PortForwardTable: React.FC<TableProps> = ({
       ) : (
         <Flex
           direction='column'
-          height='500px'
-          maxHeight='500px'
+          height='550px'
+          maxHeight='550px'
           pb='90px'
           flex='1'
           mt='4'

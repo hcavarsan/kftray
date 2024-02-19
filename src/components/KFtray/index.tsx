@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 
-import { Box, Center, useColorModeValue, VStack } from '@chakra-ui/react'
+import { Box, useColorModeValue, VStack } from '@chakra-ui/react'
 import { open, save } from '@tauri-apps/api/dialog'
 import { readTextFile, writeTextFile } from '@tauri-apps/api/fs'
 import { sendNotification } from '@tauri-apps/api/notification'
@@ -538,8 +538,7 @@ const KFTray = () => {
   return (
     <Box
       width='100%'
-      height='75vh'
-      maxH='95vh'
+      height='78vh'
       maxW='600px'
       overflow='hidden'
       borderRadius='20px'
@@ -565,7 +564,7 @@ const KFTray = () => {
             background: '#666',
           },
         }}
-        h='100%'
+        height='80vh'
         w='100%'
         maxW='100%'
         overflowY='auto'
@@ -604,14 +603,12 @@ const KFTray = () => {
           selectedConfigs={selectedConfigs}
           setSelectedConfigs={setSelectedConfigs}
         />
-        <Box justifyContent='space-between' mt='10'>
-          <MenuOptions
-            openModal={openModal}
-            openSettingsModal={openSettingsModal}
-            handleExportConfigs={handleExportConfigs}
-            handleImportConfigs={handleImportConfigs}
-          />
-        </Box>
+        <MenuOptions
+          openModal={openModal}
+          openSettingsModal={openSettingsModal}
+          handleExportConfigs={handleExportConfigs}
+          handleImportConfigs={handleImportConfigs}
+        />
       </VStack>
     </Box>
   )

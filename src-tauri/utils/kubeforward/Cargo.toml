@@ -7,7 +7,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-tauri = { version = "1.5", features = [ "api-all", "macos-private-api", "system-tray"] }
+tauri = { version = "1.6", features = [ "api-all", "macos-private-api", "system-tray"] }
 kube = { version = "0.87.2", features = ["client", "config", "rustls-tls", "ws"] }
 k8s-openapi = { version = "0.20.0", default-features = false, features = ["latest"] }
 tokio = { version = "1.32.0", features = [ "full" ] }
