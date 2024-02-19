@@ -172,7 +172,6 @@ pub async fn export_configs() -> Result<String, String> {
 
 #[tauri::command]
 pub async fn import_configs(json: String) -> Result<(), String> {
-    // Try to parse as Vec<Config>
     let parse_result = serde_json::from_str::<Vec<Config>>(&json);
 
     match parse_result {
@@ -183,7 +182,6 @@ pub async fn import_configs(json: String) -> Result<(), String> {
             Ok(())
         }
         Err(_) => {
-            // If parsing as Vec<Config> fails, try to parse as Config
             let config = serde_json::from_str::<Config>(&json)
                 .map_err(|e| format!("Failed to parse config: {}", e))?;
             insert_config(config)?;
