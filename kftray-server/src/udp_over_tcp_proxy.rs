@@ -19,7 +19,7 @@ fn handle_tcp_to_udp(tcp_stream: TcpStream, udp_socket: Arc<UdpSocket>) -> io::R
 
 fn handle_udp_to_tcp(udp_socket: Arc<UdpSocket>, tcp_stream: TcpStream) -> io::Result<()> {
     let mut tcp_stream = tcp_stream;
-    let mut buffer = [0u8; 65507];
+    let mut buffer = [0u8; 65535];
     loop {
         let (size, _) = udp_socket.recv_from(&mut buffer)?;
         tcp_stream.write_all(&buffer[..size])?;
