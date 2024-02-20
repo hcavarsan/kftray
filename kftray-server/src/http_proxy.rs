@@ -17,7 +17,7 @@ async fn handle_client(
         let mut buf = [0; 1024];
         loop {
             let read_size = match client_reader.read(&mut buf).await {
-                Ok(0) => return Ok(()), // Connection was closed
+                Ok(0) => return Ok(()),
                 Ok(size) => size,
                 Err(e) => {
                     error!("Error reading from client: {}", e);
@@ -36,7 +36,7 @@ async fn handle_client(
         let mut buf = [0; 1024];
         loop {
             let read_size = match server_reader.read(&mut buf).await {
-                Ok(0) => return Ok(()), // Connection was closed
+                Ok(0) => return Ok(()),
                 Ok(size) => size,
                 Err(e) => {
                     error!("Error reading from server: {}", e);
@@ -51,12 +51,8 @@ async fn handle_client(
         }
     });
 
-    // Wait for both tasks to complete
     let _ = tokio::try_join!(client_to_server, server_to_client)?;
 
-    // At this point, you could check for a shutdown signal, assuming there is a mechanism
-    // that calls shutdown_notify.notify_one() when a shutdown is desired.
-    // Here's an example of how to wait for a shutdown_notify.
     shutdown_notify.notified().await;
 
     Ok(())
