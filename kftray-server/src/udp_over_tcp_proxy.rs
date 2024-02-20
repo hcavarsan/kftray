@@ -43,6 +43,7 @@ fn handle_udp_to_tcp(
                 info!("UDP to TCP: Received {} bytes", size);
                 if let Ok(mut stream) = tcp_stream.lock() {
                     stream.write_all(&buffer[..size])?;
+                    stream.flush()?; // Ensure the buffer is flushed immediately.
                 }
             }
             Err(e) => {
