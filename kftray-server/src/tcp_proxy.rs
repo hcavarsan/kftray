@@ -1,3 +1,4 @@
+use log::{error, info};
 use std::io::{self, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream};
 use std::sync::atomic::AtomicBool;
@@ -9,8 +10,10 @@ fn relay_streams(mut read_stream: TcpStream, mut write_stream: TcpStream) -> io:
     loop {
         let n = read_stream.read(&mut buffer)?;
         if n == 0 {
+            info!("No more data to read.");
             break;
         }
+        info!("Read {} bytes from stream.", n);
         write_stream.write_all(&buffer[..n])?;
     }
     write_stream.shutdown(Shutdown::Both)?;
@@ -24,6 +27,7 @@ pub fn start_tcp_proxy(
     _is_running: Arc<AtomicBool>,
 ) -> std::io::Result<()> {
     let listener = TcpListener::bind(format!("0.0.0.0:{}", proxy_port))?;
+    info!("TCP Proxy started on port {}", proxy_port);
 
     for stream in listener.incoming() {
         let tunnel_stream = stream?;
@@ -32,6 +36,8 @@ pub fn start_tcp_proxy(
         thread::spawn(move || {
             match TcpStream::connect(&target) {
                 Ok(target_stream) => {
+                    info!("Connected to target {}", target);
+
                     // Clone the streams so each direction has a reader and writer
                     let tunnel_reader = tunnel_stream
                         .try_clone()
@@ -44,13 +50,13 @@ pub fn start_tcp_proxy(
 
                     let client_to_target = thread::spawn(move || {
                         relay_streams(tunnel_reader, target_writer).unwrap_or_else(|e| {
-                            eprintln!("Tunnel to Target relay failed: {}", e);
+                            error!("Tunnel to Target relay failed: {}", e);
                         });
                     });
 
                     let target_to_client = thread::spawn(move || {
                         relay_streams(target_reader, tunnel_writer).unwrap_or_else(|e| {
-                            eprintln!("Target to Tunnel relay failed: {}", e);
+                            error!("Target to Tunnel relay failed: {}", e);
                         });
                     });
 
@@ -59,7 +65,7 @@ pub fn start_tcp_proxy(
                     let _ = target_to_client.join();
                 }
                 Err(e) => {
-                    eprintln!("Failed to connect to target: {}", e);
+                    error!("Failed to connect to target: {}", e);
                 }
             };
         });

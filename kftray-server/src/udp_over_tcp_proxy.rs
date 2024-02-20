@@ -1,3 +1,4 @@
+use log::{error, info};
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -13,12 +14,16 @@ fn handle_tcp_to_udp(
     let mut buffer = [0u8; 4096];
     while is_running.load(Ordering::SeqCst) {
         match tcp_stream.read(&mut buffer) {
-            Ok(0) => break, // Updated line
+            Ok(0) => {
+                info!("TCP to UDP: Connection closed");
+                break;
+            }
             Ok(size) => {
+                info!("TCP to UDP: Read {} bytes", size);
                 udp_socket.send(&buffer[..size])?;
             }
             Err(e) => {
-                eprintln!("TCP to UDP read error: {}", e);
+                error!("TCP to UDP read error: {}", e);
                 break;
             }
         }
@@ -35,12 +40,13 @@ fn handle_udp_to_tcp(
     while is_running.load(Ordering::SeqCst) {
         match udp_socket.recv(&mut buffer) {
             Ok(size) => {
+                info!("UDP to TCP: Received {} bytes", size);
                 if let Ok(mut stream) = tcp_stream.lock() {
                     stream.write_all(&buffer[..size])?;
                 }
             }
             Err(e) => {
-                eprintln!("UDP to TCP recv error: {}", e);
+                error!("UDP to TCP recv error: {}", e);
                 break;
             }
         }
@@ -58,13 +64,14 @@ pub fn start_udp_over_tcp_proxy(
 
     for stream_result in tcp_listener.incoming() {
         if !is_running.load(Ordering::SeqCst) {
+            info!("Stopping UDP over TCP proxy");
             break;
         }
 
         let tcp_stream = match stream_result {
             Ok(stream) => stream,
             Err(e) => {
-                eprintln!("Failed to accept incoming connection: {}", e);
+                error!("Failed to accept incoming connection: {}", e);
                 continue;
             }
         };
@@ -89,7 +96,7 @@ pub fn start_udp_over_tcp_proxy(
             if let Err(e) =
                 handle_tcp_to_udp(tcp_reader, udp_write_socket, is_running_for_tcp_to_udp)
             {
-                eprintln!("Failed to handle TCP to UDP: {}", e);
+                error!("Failed to handle TCP to UDP: {}", e);
             }
         });
 
@@ -97,7 +104,7 @@ pub fn start_udp_over_tcp_proxy(
             if let Err(e) =
                 handle_udp_to_tcp(udp_read_socket, tcp_writer, is_running_for_udp_to_tcp)
             {
-                eprintln!("Failed to handle UDP to TCP: {}", e);
+                error!("Failed to handle UDP to TCP: {}", e);
             }
         });
     }
