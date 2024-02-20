@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 
-import { Box, useColorModeValue, VStack } from '@chakra-ui/react'
+import { Box, useColorModeValue, useDisclosure, VStack } from '@chakra-ui/react'
 import { open, save } from '@tauri-apps/api/dialog'
 import { readTextFile, writeTextFile } from '@tauri-apps/api/fs'
 import { sendNotification } from '@tauri-apps/api/notification'
@@ -21,6 +21,8 @@ const KFTray = () => {
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false)
   const [selectedConfigs, setSelectedConfigs] = useState<Status[]>([])
+  const { isOpen, onOpen, onClose } = useDisclosure()
+  const [configsToDelete, setConfigsToDelete] = useState<number[]>([])
 
   const [isEdit, setIsEdit] = useState(false)
 
@@ -101,6 +103,7 @@ const KFTray = () => {
   const [isStopping, setIsStopping] = useState(false)
   const [isPortForwarding, setIsPortForwarding] = useState(false)
   const [isAlertOpen, setIsAlertOpen] = useState(false)
+  const [isBulkAlertOpen, setIsBulkAlertOpen] = useState(false)
   const [configToDelete, setConfigToDelete] = useState<number | undefined>()
 
   useEffect(() => {
@@ -448,6 +451,11 @@ const KFTray = () => {
     setIsAlertOpen(true)
   }
 
+  const handleDeleteConfigs = (selectedIds: number[]) => {
+    setConfigsToDelete(selectedIds)
+    setIsBulkAlertOpen(true)
+  }
+
   const confirmDeleteConfig = async () => {
     if (typeof configToDelete !== 'number') {
       await sendNotification({
@@ -490,6 +498,52 @@ const KFTray = () => {
 
     setIsAlertOpen(false)
   }
+
+  const confirmDeleteConfigs = async () => {
+    if (!Array.isArray(configsToDelete) || !configsToDelete.length) {
+      await sendNotification({
+        title: 'Error',
+        body: 'No configurations selected for deletion.',
+        icon: 'error',
+      })
+
+      return
+    }
+
+    try {
+      console.log('Deleting configs:', configsToDelete)
+      await invoke('delete_configs', { ids: configsToDelete })
+
+      const configsAfterDeletion = await invoke<Status[]>('get_configs')
+      const runningStateMap = new Map(
+        configs.map(conf => [conf.id, conf.isRunning]),
+      )
+
+      const updatedConfigs = configsAfterDeletion.map(conf => ({
+        ...conf,
+        isRunning: runningStateMap.get(conf.id) ?? false,
+      }))
+
+      setConfigs(updatedConfigs)
+      setSelectedConfigs([])
+
+      await sendNotification({
+        title: 'Success',
+        body: 'Configurations deleted successfully.',
+        icon: 'success',
+      })
+    } catch (error) {
+      console.error('Failed to delete configurations:', error)
+      await sendNotification({
+        title: 'Error',
+        body: 'Failed to delete configurations: "unknown error"',
+        icon: 'error',
+      })
+    }
+
+    setIsBulkAlertOpen(false)
+  }
+
   const stopPortForwarding = async () => {
     setIsStopping(true)
     try {
@@ -586,6 +640,10 @@ const KFTray = () => {
           isPortForwarding={isPortForwarding}
           selectedConfigs={selectedConfigs}
           setSelectedConfigs={setSelectedConfigs}
+          confirmDeleteConfigs={confirmDeleteConfigs}
+          handleDeleteConfigs={handleDeleteConfigs}
+          isBulkAlertOpen={isBulkAlertOpen}
+          setIsBulkAlertOpen={setIsBulkAlertOpen}
         />
         <MenuOptions
           openModal={openModal}

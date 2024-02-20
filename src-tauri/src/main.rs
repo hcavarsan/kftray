@@ -165,6 +165,8 @@ fn main() {
             config::update_config,
             config::export_configs,
             config::import_configs,
+            config::delete_configs,
+            config::delete_all_configs,
             commands::open_save_dialog,
             commands::close_save_dialog,
             remote_config::import_configs_from_github
