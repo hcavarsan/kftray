@@ -2163,7 +2163,7 @@ dependencies = [
 name = "kftray"
 version = "0.6.3"
 dependencies = [
- "base64 0.13.1",
+ "base64 0.21.5",
  "dirs",
  "env_logger",
  "fix-path-env",

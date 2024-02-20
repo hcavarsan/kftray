@@ -22,7 +22,7 @@ rusqlite = { version = "0.31.0", features = ["bundled"] }
 dirs = "5.0.1"
 kubeforward = { path = "./utils/kubeforward" }
 reqwest = "0.11"
-base64 = "0.13.0"
+base64 = "0.21.5"
 
 log = "0.4"
 env_logger = "0.11.2"
