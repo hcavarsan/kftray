@@ -1,16 +1,23 @@
-FROM golang:alpine as builder
+FROM rust:1.76-slim AS builder
 
-WORKDIR /app
+
+RUN USER=root cargo new --bin kftray-server
+WORKDIR /kftray-server
+
 COPY . .
 
-RUN go mod tidy
-RUN go mod download
-RUN go get github.com/miladrahimi/netrelay
-RUN CGO_ENABLED=0 go build -o kftray-server
+RUN cargo build --release
+RUN cargo install --path .
 
-FROM alpine
-WORKDIR /root/
-COPY --from=builder /app .
+FROM rust:1.76-slim
 
+COPY --from=builder /usr/local/cargo/bin/kftray-server /kftray-server
 
-CMD ["./kftray-server"]
+ENV REMOTE_ADDRESS=127.0.0.1
+ENV REMOTE_PORT=8080
+ENV LOCAL_PORT=8080
+ENV PROXY_TYPE=tcp
+
+EXPOSE 8080
+
+CMD ["/kftray-server"]
