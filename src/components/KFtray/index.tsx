@@ -103,6 +103,7 @@ const KFTray = () => {
   const [isStopping, setIsStopping] = useState(false)
   const [isPortForwarding, setIsPortForwarding] = useState(false)
   const [isAlertOpen, setIsAlertOpen] = useState(false)
+  const [isBulkAlertOpen, setIsBulkAlertOpen] = useState(false)
   const [configToDelete, setConfigToDelete] = useState<number | undefined>()
 
   useEffect(() => {
@@ -451,10 +452,8 @@ const KFTray = () => {
   }
 
   const handleDeleteConfigs = (selectedIds: number[]) => {
-    if (selectedIds.length > 0) {
-      setConfigsToDelete(selectedIds)
-      setIsAlertOpen(true)
-    }
+    setConfigsToDelete(selectedIds)
+    setIsBulkAlertOpen(true)
   }
 
   const confirmDeleteConfig = async () => {
@@ -542,7 +541,7 @@ const KFTray = () => {
       })
     }
 
-    setIsAlertOpen(false)
+    setIsBulkAlertOpen(false)
   }
 
   const stopPortForwarding = async () => {
@@ -643,6 +642,8 @@ const KFTray = () => {
           setSelectedConfigs={setSelectedConfigs}
           confirmDeleteConfigs={confirmDeleteConfigs}
           handleDeleteConfigs={handleDeleteConfigs}
+          isBulkAlertOpen={isBulkAlertOpen}
+          setIsBulkAlertOpen={setIsBulkAlertOpen}
         />
         <MenuOptions
           openModal={openModal}

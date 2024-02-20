@@ -69,6 +69,8 @@ const PortForwardTable: React.FC<TableProps> = ({
   setSelectedConfigs,
   confirmDeleteConfigs,
   handleDeleteConfigs,
+  isBulkAlertOpen,
+  setIsBulkAlertOpen,
 }) => {
   const [search, setSearch] = useState('')
   const [expandedIndices, setExpandedIndices] = useState<number[]>([])
@@ -270,9 +272,9 @@ const PortForwardTable: React.FC<TableProps> = ({
         borderColor={borderColor}
       >
         <AlertDialog
-          isOpen={isAlertOpen}
+          isOpen={isBulkAlertOpen}
           leastDestructiveRef={cancelRef}
-          onClose={() => setIsAlertOpen(false)}
+          onClose={() => setIsBulkAlertOpen(false)}
         >
           <AlertDialogOverlay
             style={{ alignItems: 'flex-start', justifyContent: 'flex-start' }}
@@ -289,7 +291,9 @@ const PortForwardTable: React.FC<TableProps> = ({
               </AlertDialogBody>
 
               <AlertDialogFooter>
-                <Button onClick={() => setIsAlertOpen(false)}>Cancel</Button>
+                <Button onClick={() => setIsBulkAlertOpen(false)}>
+                  Cancel
+                </Button>
                 <Button colorScheme='red' onClick={confirmDeleteConfigs} ml={3}>
                   Delete
                 </Button>

@@ -73,6 +73,8 @@ export interface TableProps {
   handleEditConfig: (id: number) => void
   isAlertOpen: boolean
   setIsAlertOpen: (isOpen: boolean) => void
+  isBulkAlertOpen: boolean
+  setIsBulkAlertOpen: (isOpen: boolean) => void
   updateConfigRunningState: (id: number, isRunning: boolean) => void
   selectedConfigs: Status[]
   setSelectedConfigs: React.Dispatch<React.SetStateAction<Status[]>>
