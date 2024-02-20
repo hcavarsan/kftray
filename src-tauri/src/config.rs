@@ -52,6 +52,39 @@ pub async fn delete_config(id: i64) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub async fn delete_configs(ids: Vec<i64>) -> Result<(), String> {
+    println!("Deleting configs with ids: {:?}", ids);
+    let home_dir =
+        dirs::home_dir().ok_or_else(|| "Unable to determine home directory".to_owned())?;
+    let db_dir = format!("{}/.kftray/configs.db", home_dir.to_string_lossy());
+    let mut conn = Connection::open(db_dir).map_err(|e| e.to_string())?;
+
+    let transaction = conn.transaction().map_err(|e| e.to_string())?;
+    for id in ids {
+        transaction
+            .execute("DELETE FROM configs WHERE id = ?1", params![id])
+            .map_err(|e| format!("Failed to delete config with id {}: {}", id, e))?;
+    }
+    transaction.commit().map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn delete_all_configs() -> Result<(), String> {
+    println!("Deleting all configs");
+    let home_dir =
+        dirs::home_dir().ok_or_else(|| "Unable to determine home directory".to_owned())?;
+    let db_dir = format!("{}/.kftray/configs.db", home_dir.to_string_lossy());
+    let conn = Connection::open(db_dir).map_err(|e| e.to_string())?;
+
+    match conn.execute("DELETE FROM configs", params![]) {
+        Ok(_) => Ok(()),
+        Err(e) => Err(format!("Failed to delete all configs: {}", e)),
+    }
+}
+
+#[tauri::command]
 pub fn insert_config(config: Config) -> Result<(), String> {
     let home_dir = dirs::home_dir().unwrap();
     let db_dir = home_dir.to_str().unwrap().to_string() + "/.kftray/configs.db";

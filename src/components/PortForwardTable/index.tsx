@@ -14,11 +14,18 @@ import {
   AccordionIcon,
   AccordionItem,
   AccordionPanel,
+  AlertDialog,
+  AlertDialogBody,
+  AlertDialogContent,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogOverlay,
   Box,
   Button,
   ButtonGroup,
   Checkbox,
   Flex,
+  IconButton,
   Image,
   Input,
   InputGroup,
@@ -35,7 +42,10 @@ import {
   Tooltip,
   Tr,
   useColorModeValue,
+  useDisclosure,
 } from '@chakra-ui/react'
+import { faTrash } from '@fortawesome/free-solid-svg-icons'
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { app } from '@tauri-apps/api'
 
 import logo from '../../assets/logo.png'
@@ -57,10 +67,16 @@ const PortForwardTable: React.FC<TableProps> = ({
   updateConfigRunningState,
   selectedConfigs,
   setSelectedConfigs,
+  confirmDeleteConfigs,
+  handleDeleteConfigs,
+  isBulkAlertOpen,
+  setIsBulkAlertOpen,
 }) => {
   const [search, setSearch] = useState('')
   const [expandedIndices, setExpandedIndices] = useState<number[]>([])
   const [version, setVersion] = useState('')
+  const cancelRef = React.useRef<HTMLButtonElement>(null)
+  const { isOpen, onOpen, onClose } = useDisclosure()
 
   const [selectedConfigsByContext, setSelectedConfigsByContext] = useState<
     Record<string, boolean>
@@ -201,6 +217,7 @@ const PortForwardTable: React.FC<TableProps> = ({
       }
     })
   }
+
   const handleContextSelectionChange = (
     context: string,
     isContextSelected: boolean,
@@ -254,6 +271,36 @@ const PortForwardTable: React.FC<TableProps> = ({
         width='98.4%'
         borderColor={borderColor}
       >
+        <AlertDialog
+          isOpen={isBulkAlertOpen}
+          leastDestructiveRef={cancelRef}
+          onClose={() => setIsBulkAlertOpen(false)}
+        >
+          <AlertDialogOverlay
+            style={{ alignItems: 'flex-start', justifyContent: 'flex-start' }}
+            bg='transparent'
+          >
+            <AlertDialogContent>
+              <AlertDialogHeader fontSize='sm' fontWeight='bold'>
+                Delete Config(s)
+              </AlertDialogHeader>
+
+              <AlertDialogBody>
+                Are you sure you want to delete the selected config(s)? This
+                action cannot be undone.
+              </AlertDialogBody>
+
+              <AlertDialogFooter>
+                <Button onClick={() => setIsBulkAlertOpen(false)}>
+                  Cancel
+                </Button>
+                <Button colorScheme='red' onClick={confirmDeleteConfigs} ml={3}>
+                  Delete
+                </Button>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialogOverlay>
+        </AlertDialog>
         <Tooltip label={`Kftray v${version}`} aria-label='Kftray version'>
           <Image src={logo} alt='Kftray Logo' boxSize='30px' ml={3} />
         </Tooltip>
@@ -317,7 +364,23 @@ const PortForwardTable: React.FC<TableProps> = ({
             Stop All
           </Button>
         </ButtonGroup>
+
         <Flex justifyContent='flex-end' width='100%'>
+          {selectedConfigs.length > 0 && (
+            <IconButton
+              colorScheme='red'
+              variant='outline'
+              mr={5}
+              onClick={() =>
+                handleDeleteConfigs(selectedConfigs.map(config => config.id))
+              }
+              size='xs'
+              aria-label='Delete selected configs'
+              icon={
+                <FontAwesomeIcon icon={faTrash} style={{ fontSize: '12px' }} />
+              }
+            />
+          )}
           <Button
             onClick={toggleExpandAll}
             size='xs'
