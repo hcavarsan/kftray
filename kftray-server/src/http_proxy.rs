@@ -1,11 +1,11 @@
-use std::sync::Arc;
-use std::sync::atomic::AtomicBool;
 use std::io::prelude::*;
 use std::net::{TcpListener, TcpStream};
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 use std::thread;
 
 fn handle_client(mut client_stream: TcpStream, target_addr: String) -> std::io::Result<()> {
-    let mut server_stream = TcpStream::connect(&target_addr)?;
+    let mut server_stream = TcpStream::connect(target_addr)?;
 
     let mut client_read_stream = client_stream.try_clone()?;
     let mut server_write_stream = server_stream.try_clone()?;
@@ -38,7 +38,12 @@ fn copy_stream(read_stream: &mut TcpStream, write_stream: &mut TcpStream) -> std
     Ok(())
 }
 
-pub fn start_http_proxy(target_host: &str, target_port: u16, proxy_port: u16, _is_running: Arc<AtomicBool>) -> std::io::Result<()> {
+pub fn start_http_proxy(
+    target_host: &str,
+    target_port: u16,
+    proxy_port: u16,
+    _is_running: Arc<AtomicBool>,
+) -> std::io::Result<()> {
     let tcp_listener = TcpListener::bind(format!("0.0.0.0:{}", proxy_port))?;
     let target_addr = format!("{}:{}", target_host, target_port);
 
