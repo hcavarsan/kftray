@@ -7,9 +7,12 @@ use std::env;
 use std::process;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use tokio::sync::Notify;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     env_logger::init();
+    let shutdown_notify = Arc::new(Notify::new());
 
     let is_running = Arc::new(AtomicBool::new(true));
     let is_running_signal = is_running.clone();
@@ -78,8 +81,11 @@ fn main() {
                 target_port,
                 proxy_port,
                 Arc::clone(&is_running),
-            ) {
-                error!("HTTP Proxy failed with error: {}", e);
+                Arc::clone(&shutdown_notify),
+            )
+            .await
+            {
+                error!("Failed to start the HTTP proxy: {}", e);
             }
         }
         _ => {
@@ -87,8 +93,8 @@ fn main() {
             process::exit(1);
         }
     }
-
     while is_running.load(Ordering::SeqCst) {
+        shutdown_notify.notified().await;
         std::thread::sleep(std::time::Duration::from_secs(1));
     }
 

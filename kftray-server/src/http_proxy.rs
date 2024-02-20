@@ -1,63 +1,86 @@
 use log::{error, info};
-use std::io::prelude::*;
-use std::net::{TcpListener, TcpStream};
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::thread;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::Notify;
 
-fn handle_client(mut client_stream: TcpStream, target_addr: String) -> std::io::Result<()> {
-    let mut server_stream = TcpStream::connect(target_addr.clone())?;
-    info!("Connected to target {}", target_addr);
+async fn handle_client(
+    client_stream: TcpStream,
+    server_stream: TcpStream,
+    shutdown_notify: Arc<Notify>,
+) -> std::io::Result<()> {
+    let (mut client_reader, mut client_writer) = client_stream.into_split();
+    let (mut server_reader, mut server_writer) = server_stream.into_split();
 
-    let mut client_read_stream = client_stream.try_clone()?;
-    let mut server_write_stream = server_stream.try_clone()?;
+    let client_to_server = tokio::spawn(async move {
+        let mut buf = [0; 1024];
+        loop {
+            let read_size = match client_reader.read(&mut buf).await {
+                Ok(0) => return Ok(()), // Connection was closed
+                Ok(size) => size,
+                Err(e) => {
+                    error!("Error reading from client: {}", e);
+                    return Err(e);
+                }
+            };
 
-    let client_to_server = thread::spawn(move || -> std::io::Result<()> {
-        copy_stream(&mut client_read_stream, &mut server_write_stream)
-    });
-
-    let server_to_client = thread::spawn(move || -> std::io::Result<()> {
-        copy_stream(&mut server_stream, &mut client_stream)
-    });
-
-    client_to_server.join().unwrap()?;
-    server_to_client.join().unwrap()?;
-
-    Ok(())
-}
-
-fn copy_stream(read_stream: &mut TcpStream, write_stream: &mut TcpStream) -> std::io::Result<()> {
-    let mut buffer = [0; 4096];
-    loop {
-        let count = read_stream.read(&mut buffer)?;
-        if count == 0 {
-            info!("No more data to read.");
-            break;
+            if let Err(e) = server_writer.write_all(&buf[..read_size]).await {
+                error!("Error writing to server: {}", e);
+                return Err(e);
+            }
         }
-        info!("Read {} bytes from stream.", count);
-        write_stream.write_all(&buffer[..count])?;
-    }
+    });
+
+    let server_to_client = tokio::spawn(async move {
+        let mut buf = [0; 1024];
+        loop {
+            let read_size = match server_reader.read(&mut buf).await {
+                Ok(0) => return Ok(()), // Connection was closed
+                Ok(size) => size,
+                Err(e) => {
+                    error!("Error reading from server: {}", e);
+                    return Err(e);
+                }
+            };
+
+            if let Err(e) = client_writer.write_all(&buf[..read_size]).await {
+                error!("Error writing to client: {}", e);
+                return Err(e);
+            }
+        }
+    });
+
+    // Wait for both tasks to complete
+    let _ = tokio::try_join!(client_to_server, server_to_client)?;
+
+    // At this point, you could check for a shutdown signal, assuming there is a mechanism
+    // that calls shutdown_notify.notify_one() when a shutdown is desired.
+    // Here's an example of how to wait for a shutdown_notify.
+    shutdown_notify.notified().await;
 
     Ok(())
 }
 
-pub fn start_http_proxy(
+pub async fn start_http_proxy(
     target_host: &str,
     target_port: u16,
     proxy_port: u16,
-    _is_running: Arc<AtomicBool>,
+    is_running: Arc<AtomicBool>,
+    shutdown_notify: Arc<Notify>,
 ) -> std::io::Result<()> {
-    let tcp_listener = TcpListener::bind(format!("0.0.0.0:{}", proxy_port))?;
+    let tcp_listener = TcpListener::bind(format!("0.0.0.0:{}", proxy_port)).await?;
     info!("HTTP Proxy started on port {}", proxy_port);
-    let target_addr = format!("{}:{}", target_host, target_port);
 
-    for stream in tcp_listener.incoming() {
-        let client_stream = stream?;
-        let target_addr = target_addr.clone();
+    while is_running.load(Ordering::SeqCst) {
+        let (client_stream, _) = tcp_listener.accept().await?;
+        let server_stream = TcpStream::connect(format!("{}:{}", target_host, target_port)).await?;
+        let shutdown_notify_clone = shutdown_notify.clone();
 
-        thread::spawn(move || {
-            if let Err(e) = handle_client(client_stream, target_addr) {
-                error!("Error relaying HTTP connection: {}", e);
+        tokio::spawn(async move {
+            if let Err(e) = handle_client(client_stream, server_stream, shutdown_notify_clone).await
+            {
+                error!("Error while handling client: {}", e);
             }
         });
     }
