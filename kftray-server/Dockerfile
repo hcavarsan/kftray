@@ -1,4 +1,6 @@
-FROM rust:1.76-slim AS builder
+FROM rust:1.76.0-alpine3.19 AS builder
+
+RUN apk add --no-cache musl-dev
 
 
 RUN USER=root cargo new --bin kftray-server
@@ -9,7 +11,7 @@ COPY . .
 RUN cargo build --release
 RUN cargo install --path .
 
-FROM rust:1.76-slim
+FROM alpine:3.19
 
 COPY --from=builder /usr/local/cargo/bin/kftray-server /kftray-server
 
@@ -21,3 +23,4 @@ ENV PROXY_TYPE=tcp
 EXPOSE 8080
 
 CMD ["/kftray-server"]
+
