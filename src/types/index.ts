@@ -76,6 +76,8 @@ export interface TableProps {
   updateConfigRunningState: (id: number, isRunning: boolean) => void
   selectedConfigs: Status[]
   setSelectedConfigs: React.Dispatch<React.SetStateAction<Status[]>>
+  confirmDeleteConfigs: () => void
+  handleDeleteConfigs: (ids: number[]) => void
 }
 
 export interface PortForwardRowProps {
