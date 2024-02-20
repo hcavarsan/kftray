@@ -1,3 +1,4 @@
+#![allow(clippy::too_many_arguments)]
 use crate::kubecontext::create_client_with_specific_context;
 use k8s_openapi::api::core::v1::Pod;
 use kube::api::{DeleteParams, ListParams};
