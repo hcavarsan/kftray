@@ -233,7 +233,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
         <AlertDialog
           isOpen={isOpen}
           leastDestructiveRef={cancelRef}
-          onClose={onClose}
+          onClose={() => setIsAlertOpen(false)}
         >
           <AlertDialogOverlay bg='transparent'>
             <AlertDialogContent>
@@ -244,9 +244,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
                 {'Are you sure? You can\'t undo this action afterwards.'}
               </AlertDialogBody>
               <AlertDialogFooter>
-                <Button ref={cancelRef} onClick={onClose}>
-                  Cancel
-                </Button>
+                <Button onClick={() => setIsAlertOpen(false)}>Cancel</Button>
                 <Button colorScheme='red' onClick={confirmDeleteConfig} ml={3}>
                   Delete
                 </Button>
