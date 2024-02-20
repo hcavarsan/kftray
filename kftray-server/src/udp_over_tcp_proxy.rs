@@ -1,3 +1,4 @@
+use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use log::{error, info};
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream, UdpSocket};
@@ -6,28 +7,29 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 
 fn handle_tcp_to_udp(
-    tcp_stream: TcpStream,
+    mut tcp_stream: TcpStream,
     udp_socket: Arc<UdpSocket>,
     is_running: Arc<AtomicBool>,
 ) -> io::Result<()> {
-    let mut tcp_stream = tcp_stream;
-    let mut buffer = [0u8; 4096];
     while is_running.load(Ordering::SeqCst) {
-        match tcp_stream.read(&mut buffer) {
-            Ok(0) => {
-                info!("TCP to UDP: Connection closed");
-                break;
-            }
-            Ok(size) => {
-                info!("TCP to UDP: Read {} bytes", size);
-                udp_socket.send(&buffer[..size])?;
+        let size = match tcp_stream.read_u32::<BigEndian>() {
+            Ok(size) => size as usize,
+            Err(ref e) if e.kind() == io::ErrorKind::UnexpectedEof => {
+                info!("TCP connection closed by client");
+                return Ok(());
             }
             Err(e) => {
-                error!("TCP to UDP read error: {}", e);
-                break;
+                error!("Failed to read from TCP: {}", e);
+                return Err(e);
             }
-        }
+        };
+
+        // Read the specified number of bytes from tcp_stream
+        let mut buffer = vec![0u8; size];
+        tcp_stream.read_exact(&mut buffer)?;
+        udp_socket.send(&buffer)?;
     }
+
     Ok(())
 }
 
@@ -40,10 +42,13 @@ fn handle_udp_to_tcp(
     while is_running.load(Ordering::SeqCst) {
         match udp_socket.recv(&mut buffer) {
             Ok(size) => {
-                info!("UDP to TCP: Received {} bytes", size);
+                let mut length_buffer = vec![];
+                length_buffer.write_u32::<BigEndian>(size as u32)?;
+
                 if let Ok(mut stream) = tcp_stream.lock() {
+                    stream.write_all(&length_buffer)?;
                     stream.write_all(&buffer[..size])?;
-                    stream.flush()?; // Ensure the buffer is flushed immediately.
+                    stream.flush()?;
                 }
             }
             Err(e) => {
@@ -52,9 +57,9 @@ fn handle_udp_to_tcp(
             }
         }
     }
+
     Ok(())
 }
-
 pub fn start_udp_over_tcp_proxy(
     target_host: &str,
     target_port: u16,
