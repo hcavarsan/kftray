@@ -24,7 +24,6 @@ fn handle_tcp_to_udp(
             }
         };
 
-        // Read the specified number of bytes from tcp_stream
         let mut buffer = vec![0u8; size];
         tcp_stream.read_exact(&mut buffer)?;
         udp_socket.send(&buffer)?;
@@ -90,9 +89,7 @@ pub fn start_udp_over_tcp_proxy(
         let udp_write_socket = Arc::new(udp_socket);
         let udp_read_socket = udp_write_socket.clone();
 
-        // Try to clone the TCP stream for the reading thread.
         let tcp_reader = tcp_stream.try_clone()?;
-        // Wrap the TCP stream for the writing thread in a Mutex and Arc.
         let tcp_writer = Arc::new(Mutex::new(tcp_stream));
 
         let is_running_for_tcp_to_udp = Arc::clone(&is_running);

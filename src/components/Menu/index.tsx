@@ -38,7 +38,7 @@ const MenuOptions: React.FC<MenuProps> = ({
           colorScheme='facebook'
           variant='outline'
         />
-        <MenuList onMouseLeave={handleSubmenuClose}>
+        <MenuList onMouseLeave={handleSubmenuClose} zIndex='popover'>
           <MenuItem icon={<MdAdd />} onClick={openModal}>
             Add New Config
           </MenuItem>

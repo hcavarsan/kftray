@@ -38,7 +38,6 @@ pub fn start_tcp_proxy(
                 Ok(target_stream) => {
                     info!("Connected to target {}", target);
 
-                    // Clone the streams so each direction has a reader and writer
                     let tunnel_reader = tunnel_stream
                         .try_clone()
                         .expect("Failed to clone tunnel_stream for reading");
@@ -60,7 +59,6 @@ pub fn start_tcp_proxy(
                         });
                     });
 
-                    // Wait for both threads to finish (optional, depending on your application's needs)
                     let _ = client_to_target.join();
                     let _ = target_to_client.join();
                 }
