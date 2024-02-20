@@ -1,5 +1,5 @@
-extern crate base64;
 use crate::config::import_configs;
+use base64::{engine::general_purpose, Engine as _};
 
 use kubeforward::port_forward::Config;
 use reqwest::header::{AUTHORIZATION, USER_AGENT};
@@ -43,7 +43,8 @@ pub async fn import_configs_from_github(
 
     let base64_content_cleaned = base64_content.replace('\n', "").replace('\r', "");
 
-    let decoded_content = base64::decode(&base64_content_cleaned)
+    let decoded_content = general_purpose::STANDARD
+        .decode(&base64_content_cleaned)
         .map_err(|e| format!("Failed to decode base64 content: {}", e))?;
 
     let decoded_str = String::from_utf8(decoded_content)

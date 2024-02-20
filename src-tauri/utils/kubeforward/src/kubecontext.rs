@@ -174,9 +174,7 @@ pub async fn list_service_ports(
                                         if cp.name.as_deref() == Some(name) {
                                             service_port_infos.push(KubeServicePortInfo {
                                                 name: cp.name.clone(),
-                                                port: Some(IntOrString::Int(
-                                                    cp.container_port as i32,
-                                                )),
+                                                port: Some(IntOrString::Int(cp.container_port)),
                                             });
                                             break 'port_search;
                                         }
