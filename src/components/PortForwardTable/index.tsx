@@ -272,7 +272,7 @@ const PortForwardTable: React.FC<TableProps> = ({
         <AlertDialog
           isOpen={isAlertOpen}
           leastDestructiveRef={cancelRef}
-          onClose={() => setIsAlertOpen(false)} // Close handler set to update `isAlertOpen` state
+          onClose={() => setIsAlertOpen(false)}
         >
           <AlertDialogOverlay
             style={{ alignItems: 'flex-start', justifyContent: 'flex-start' }}
