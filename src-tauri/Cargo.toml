@@ -14,7 +14,7 @@ rust-version = "1.57"
 tauri-build = { version = "1.5", features = [] }
 
 [dependencies]
-serde_json = "1.0.113"
+serde_json = "1.0.114"
 tauri = { version = "1.6", features = [ "updater", "api-all", "macos-private-api", "system-tray"] }
 tauri-plugin-positioner = { version = "1.0", features = ["system-tray"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
