@@ -1,9 +1,27 @@
 use log::{error, info};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{self, AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Notify;
+use tokio::time::{self, Duration};
+
+const MAX_RETRIES: u32 = 5;
+const RETRY_DELAY: Duration = Duration::from_secs(1);
+
+async fn retryable_write(writer: &mut (impl AsyncWriteExt + Unpin), buf: &[u8]) -> io::Result<()> {
+    let mut attempts = 0;
+    loop {
+        match writer.write_all(buf).await {
+            Ok(()) => return Ok(()),
+            Err(_e) if attempts < MAX_RETRIES => {
+                attempts += 1;
+                time::sleep(RETRY_DELAY).await;
+            }
+            Err(e) => return Err(e),
+        }
+    }
+}
 
 async fn handle_client(
     client_stream: TcpStream,
@@ -14,48 +32,34 @@ async fn handle_client(
     let (mut server_reader, mut server_writer) = server_stream.into_split();
 
     let client_to_server = tokio::spawn(async move {
-        let mut buf = [0; 1024];
+        let mut buf = vec![0; 4096];
         loop {
-            let read_size = match client_reader.read(&mut buf).await {
-                Ok(0) => return Ok(()),
-                Ok(size) => size,
-                Err(e) => {
-                    error!("Error reading from client: {}", e);
-                    return Err(e);
-                }
-            };
-
-            if let Err(e) = server_writer.write_all(&buf[..read_size]).await {
-                error!("Error writing to server: {}", e);
-                return Err(e);
+            let n = client_reader.read(&mut buf).await?;
+            if n == 0 {
+                break;
             }
+            retryable_write(&mut server_writer, &buf[..n]).await?;
         }
+        Ok::<(), io::Error>(())
     });
 
     let server_to_client = tokio::spawn(async move {
-        let mut buf = [0; 1024];
+        let mut buf = vec![0; 4096];
         loop {
-            let read_size = match server_reader.read(&mut buf).await {
-                Ok(0) => return Ok(()),
-                Ok(size) => size,
-                Err(e) => {
-                    error!("Error reading from server: {}", e);
-                    return Err(e);
-                }
-            };
-
-            if let Err(e) = client_writer.write_all(&buf[..read_size]).await {
-                error!("Error writing to client: {}", e);
-                return Err(e);
+            let n = server_reader.read(&mut buf).await?;
+            if n == 0 {
+                break;
             }
+            retryable_write(&mut client_writer, &buf[..n]).await?;
         }
+        Ok::<(), io::Error>(())
     });
 
-    let _ = tokio::try_join!(client_to_server, server_to_client)?;
-
-    shutdown_notify.notified().await;
-
-    Ok(())
+    tokio::select! {
+        result = client_to_server => Ok(result??),
+        result = server_to_client => Ok(result??),
+        _ = shutdown_notify.notified() => Ok(()),
+    }
 }
 
 pub async fn start_http_proxy(
