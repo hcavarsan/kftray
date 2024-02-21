@@ -3,22 +3,26 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-pub fn init() {
+pub fn init() -> Result<(), std::io::Error> {
     if !db_file_exists() {
-        create_db_file();
+        create_db_file()?;
     }
 
     if !pod_manifest_file_exists() {
-        create_server_config_manifest();
+        create_server_config_manifest()?;
     }
+
+    Ok(())
 }
 
-fn create_server_config_manifest() {
+fn create_server_config_manifest() -> Result<(), std::io::Error> {
     let manifest_path = get_pod_manifest_path();
-    let manifest_dir = manifest_path.parent().unwrap();
+    let manifest_dir = manifest_path
+        .parent()
+        .expect("Failed to get manifest directory");
 
     if !manifest_dir.exists() {
-        fs::create_dir_all(manifest_dir).unwrap();
+        fs::create_dir_all(manifest_dir)?;
     }
 
     let placeholders = json!({
@@ -56,10 +60,8 @@ fn create_server_config_manifest() {
         }
     });
 
-    let manifest_json = serde_json::to_string_pretty(&placeholders).unwrap();
-    File::create(&manifest_path)
-        .and_then(|mut file| file.write_all(manifest_json.as_bytes()))
-        .unwrap();
+    let manifest_json = serde_json::to_string_pretty(&placeholders)?;
+    File::create(&manifest_path)?.write_all(manifest_json.as_bytes())
 }
 
 fn pod_manifest_file_exists() -> bool {
@@ -67,31 +69,73 @@ fn pod_manifest_file_exists() -> bool {
 }
 
 fn get_pod_manifest_path() -> PathBuf {
-    let home_dir = dirs::home_dir().unwrap();
+    let home_dir = dirs::home_dir().expect("Failed to get home directory");
     home_dir.join(".kftray/proxy_manifest.json")
 }
 
-fn create_db_file() {
+fn create_db_file() -> Result<(), std::io::Error> {
     let db_path = get_db_path();
-    let db_dir = Path::new(&db_path).parent().unwrap();
+    let db_dir = Path::new(&db_path)
+        .parent()
+        .expect("Failed to get db directory");
 
-    // If the parent directory does not exist, create it.
     if !db_dir.exists() {
-        fs::create_dir_all(db_dir).unwrap();
+        fs::create_dir_all(db_dir)?;
     }
 
-    // Create the database file.
-    fs::File::create(db_path).unwrap();
+    fs::File::create(db_path)?;
+    Ok(())
 }
 
-// Check whether the database file exists.
 fn db_file_exists() -> bool {
     let db_path = get_db_path();
     Path::new(&db_path).exists()
 }
 
-// Get the path where the database file should be located.
 pub fn get_db_path() -> String {
-    let home_dir = dirs::home_dir().unwrap();
+    let home_dir = dirs::home_dir().expect("Failed to get home directory");
     home_dir.to_str().unwrap().to_string() + "/.kftray/configs.db"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use tempfile::TempDir;
+
+    fn setup_test_environment() -> TempDir {
+        let temp = tempfile::tempdir().expect("Failed to create a temp dir");
+        std::env::set_var("HOME", temp.path());
+        temp
+    }
+
+    #[test]
+    fn test_initialization_creates_files() {
+        let _temp_dir = setup_test_environment();
+        init().expect("Initialization failed");
+
+        assert!(db_file_exists());
+        assert!(pod_manifest_file_exists());
+    }
+
+    #[test]
+    fn test_pod_manifest_content() {
+        let _temp_dir = setup_test_environment();
+        init().expect("Initialization failed");
+
+        let manifest_path = get_pod_manifest_path();
+        let manifest_content =
+            fs::read_to_string(manifest_path).expect("Failed to read pod manifest");
+
+        assert!(manifest_content.contains("\"apiVersion\": \"v1\""));
+        assert!(manifest_content.contains("\"kind\": \"Pod\""));
+    }
+
+    #[test]
+    fn test_db_file_creation() {
+        let _temp_dir = setup_test_environment();
+        create_db_file().expect("Failed to create db file");
+
+        assert!(db_file_exists());
+    }
 }
