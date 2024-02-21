@@ -187,7 +187,7 @@ Below is an example of an exported JSON configuration:
 
 ### Server
 
-KFtray Server is a Golang application that relays UDP/TCP traffic to an upstream server. Learn more [here](https://github.com/hcavarsan/kftray/tree/main/kftray-server).
+KFtray Server is a Rust application that relays UDP/TCP traffic to an upstream server. Check the source code [here](https://github.com/hcavarsan/kftray/tree/main/kftray-server).
 
 ### Forwarding Flows
 
