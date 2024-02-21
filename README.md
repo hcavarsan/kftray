@@ -63,6 +63,7 @@
 - **One-Click Multiple Port Forwards:** Allows for the setup of several port forwarding instances at the same time with a single click.
 - **Independent of Kubectl:** Directly interfaces with the Kubernetes API, eliminating the need for `kubectl`.
 - **Multi-Protocol Support:** Enables access to internal or external servers through a Proxy Relay server deployed in a Kubernetes cluster, including TCP and UDP port forwarding.
+- **Import Configs from Git** Store and import configurations directly from Git repositories with a few clicks.
 
 ## 📦 Installation
 
