@@ -1,5 +1,5 @@
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
-use log::{error, info};
+use log::{debug, error, info};
 use std::io::{self, Read, Write};
 use std::net::{TcpListener, TcpStream, UdpSocket};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -13,25 +13,39 @@ fn handle_tcp_to_udp(
 ) -> io::Result<()> {
     while is_running.load(Ordering::SeqCst) {
         let size = match tcp_stream.read_u32::<BigEndian>() {
-            Ok(size) => size as usize,
+            Ok(size) => {
+                debug!("TCP to UDP: Read size {}", size);
+                size as usize
+            }
             Err(ref e) if e.kind() == io::ErrorKind::UnexpectedEof => {
-                info!("TCP connection closed by client");
+                info!("TCP to UDP: TCP connection closed by client");
                 return Ok(());
             }
             Err(e) => {
-                error!("Failed to read from TCP: {}", e);
+                error!("TCP to UDP: Failed to read size from TCP: {}", e);
                 return Err(e);
             }
         };
 
         let mut buffer = vec![0u8; size];
-        tcp_stream.read_exact(&mut buffer)?;
-        udp_socket.send(&buffer)?;
+        match tcp_stream.read_exact(&mut buffer) {
+            Ok(_) => debug!("TCP to UDP: Read {} bytes from TCP stream", size),
+            Err(e) => {
+                error!("TCP to UDP: Failed to read data from TCP: {}", e);
+                return Err(e);
+            }
+        }
+        match udp_socket.send(&buffer) {
+            Ok(bytes_sent) => debug!("TCP to UDP: Sent {} bytes to UDP socket", bytes_sent),
+            Err(e) => {
+                error!("TCP to UDP: Failed to send data to UDP socket: {}", e);
+                return Err(e);
+            }
+        }
     }
 
     Ok(())
 }
-
 fn handle_udp_to_tcp(
     udp_socket: Arc<UdpSocket>,
     tcp_stream: Arc<Mutex<TcpStream>>,
@@ -41,17 +55,23 @@ fn handle_udp_to_tcp(
     while is_running.load(Ordering::SeqCst) {
         match udp_socket.recv(&mut buffer) {
             Ok(size) => {
+                debug!("UDP to TCP: Received {} bytes from UDP", size);
                 let mut length_buffer = vec![];
                 length_buffer.write_u32::<BigEndian>(size as u32)?;
 
                 if let Ok(mut stream) = tcp_stream.lock() {
+                    debug!("UDP to TCP: Sending size to TCP client");
                     stream.write_all(&length_buffer)?;
+                    debug!("UDP to TCP: Sending {} bytes to TCP client", size);
                     stream.write_all(&buffer[..size])?;
                     stream.flush()?;
                 }
             }
             Err(e) => {
-                error!("UDP to TCP recv error: {}", e);
+                // Handling the would block error that is normal for non-blocking IO
+                if e.kind() != io::ErrorKind::WouldBlock {
+                    error!("UDP to TCP: Error receiving from UDP socket: {}", e);
+                }
                 break;
             }
         }
