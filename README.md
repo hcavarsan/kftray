@@ -2,7 +2,7 @@
   <img src="./logo.png" alt="KFtray Logo" width="200" />
   <h1>KFtray</h1>
   <p>
-<h3>KFtray is a system tray application designed for Kubernetes users. It simplifies the process of setting up and managing port forwarding configurations with an easy-to-use interface.</h3>
+<h3>A system tray app made with Tauri (Rust and TypeScript) for Kubernetes users. It simplifies the process of setting up and managing port forwarding configurations with an easy-to-use interface.</h3>
   </p>
   <br>
 
@@ -63,6 +63,7 @@
 - **One-Click Multiple Port Forwards:** Allows for the setup of several port forwarding instances at the same time with a single click.
 - **Independent of Kubectl:** Directly interfaces with the Kubernetes API, eliminating the need for `kubectl`.
 - **Multi-Protocol Support:** Enables access to internal or external servers through a Proxy Relay server deployed in a Kubernetes cluster, including TCP and UDP port forwarding.
+- **Import Configs from Git:** Store and import configurations directly from Git repositories with a few clicks.
 
 ## 📦 Installation
 
@@ -187,7 +188,7 @@ Below is an example of an exported JSON configuration:
 
 ### Server
 
-KFtray Server is a Golang application that relays UDP/TCP traffic to an upstream server. Learn more [here](https://github.com/hcavarsan/kftray/tree/main/kftray-server).
+KFtray Server is a Rust application that relays UDP/TCP traffic to an upstream server. Check the source code [here](https://github.com/hcavarsan/kftray/tree/main/kftray-server).
 
 ### Forwarding Flows
 
