@@ -1,22 +1,26 @@
 use log::{error, info};
-use std::io::{self, Read, Write};
-use std::net::{Shutdown, TcpListener, TcpStream};
-use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
+use std::io::{ErrorKind, Read, Result as IoResult, Write};
+use std::net::TcpListener;
+use std::net::TcpStream;
+use std::sync::{atomic::AtomicBool, Arc};
 use std::thread;
 
-fn relay_streams(mut read_stream: TcpStream, mut write_stream: TcpStream) -> io::Result<()> {
+fn relay_streams<R: Read, W: Write>(mut read_stream: R, mut write_stream: W) -> IoResult<()> {
     let mut buffer = [0; 4096];
     loop {
-        let n = read_stream.read(&mut buffer)?;
-        if n == 0 {
-            info!("No more data to read.");
-            break;
+        match read_stream.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(n) => {
+                if let Err(e) = write_stream.write_all(&buffer[..n]) {
+                    if e.kind() != ErrorKind::BrokenPipe {
+                        return Err(e);
+                    }
+                    break;
+                }
+            }
+            Err(e) => return Err(e)
         }
-        info!("Read {} bytes from stream.", n);
-        write_stream.write_all(&buffer[..n])?;
     }
-    write_stream.shutdown(Shutdown::Both)?;
     Ok(())
 }
 
@@ -70,4 +74,52 @@ pub fn start_tcp_proxy(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use mockall::mock;
+    use mockall::predicate::*;
+
+    mock! {
+        pub TcpStream {}
+
+        impl Read for TcpStream {
+            fn read(&mut self, buf: &mut [u8]) -> IoResult<usize>;
+        }
+
+        impl Write for TcpStream {
+            fn write(&mut self, buf: &[u8]) -> IoResult<usize>;
+            fn flush(&mut self) -> IoResult<()>;
+        }
+    }
+
+    #[test]
+    fn test_relay_streams_with_mocks() {
+        let mut read_mock = MockTcpStream::new();
+        let mut write_mock = MockTcpStream::new();
+
+        read_mock
+            .expect_read()
+            .returning(|buf| {
+                let data = b"Hello, world!";
+                let n = std::cmp::min(buf.len(), data.len());
+                buf[..n].copy_from_slice(&data[..n]);
+                Ok(n)
+            })
+            .times(1);
+
+
+        write_mock
+            .expect_write()
+            .with(eq(b"Hello, world!".as_ref()))
+            .returning(|data| Ok(data.len()))
+            .times(1);
+
+        read_mock.expect_read().returning(|_buf| Ok(0)).times(1);
+
+        let result = relay_streams(&mut read_mock, &mut write_mock);
+        assert!(result.is_ok());
+    }
 }
