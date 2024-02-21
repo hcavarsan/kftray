@@ -27,7 +27,7 @@ fn main() {
     tauri::Builder::default()
         .manage(SaveDialogState::default())
         .setup(move |app| {
-            db::init();
+            let _ = db::init();
             if let Err(e) = config::migrate_configs() {
                 eprintln!("Failed to migrate configs: {}", e);
             }

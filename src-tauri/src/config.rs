@@ -288,3 +288,63 @@ fn merge_json_values(default: JsonValue, mut config: JsonValue) -> JsonValue {
     }
     config
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn test_is_value_blank() {
+        assert!(is_value_blank(&json!("")));
+        assert!(!is_value_blank(&json!("not blank")));
+        assert!(!is_value_blank(&json!(0)));
+        assert!(!is_value_blank(&json!(false)));
+    }
+
+    // Test `remove_blank_fields` function
+    #[test]
+    fn test_remove_blank_fields() {
+        let mut obj = json!({
+            "name": "Test",
+            "empty_string": "   ",
+            "nested": {
+                "blank": "",
+                "non_blank": "value"
+            },
+            "array": [
+                {
+                    "blank_field": "  "
+                }
+            ]
+        });
+        remove_blank_fields(&mut obj);
+        assert!(obj.get("empty_string").is_none());
+        assert!(obj.get("nested").unwrap().get("blank").is_none());
+        assert_eq!(
+            obj.get("nested").unwrap().get("non_blank"),
+            Some(&json!("value"))
+        );
+        assert_eq!(
+            obj.get("array").unwrap().as_array().unwrap()[0]["blank_field"],
+            json!(null)
+        );
+    }
+    #[test]
+    fn test_merge_json_values() {
+        let default = json!({
+            "field1": "default value",
+            "field2": null,
+            "nested": {
+                "nested_field1": "nested default"
+            }
+        });
+        let to_merge = json!({
+            "field2": "overridden value",
+            "nested": {}
+        });
+
+        let merged = merge_json_values(default, to_merge);
+        assert_eq!(merged["field1"], "default value");
+        assert_eq!(merged["field2"], "overridden value");
+        assert_eq!(merged["nested"]["nested_field1"], "nested default");
+    }
+}
