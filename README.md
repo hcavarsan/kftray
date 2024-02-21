@@ -2,7 +2,7 @@
   <img src="./logo.png" alt="KFtray Logo" width="200" />
   <h1>KFtray</h1>
   <p>
-<h3>KFtray is a system tray app made with Tauri, Rust and TypeScript for Kubernetes users. It simplifies the process of setting up and managing port forwarding configurations with an easy-to-use interface.</h3>
+<h3>KFtray is a system tray app made with Tauri (Rust and TypeScript) for Kubernetes users. It simplifies the process of setting up and managing port forwarding configurations with an easy-to-use interface.</h3>
   </p>
   <br>
 
