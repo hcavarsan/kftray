@@ -30,7 +30,11 @@ impl From<CustomError> for InvokeError {
 }
 
 #[tauri::command]
-pub fn store_key(service: &str, name: &str, password: &str) -> std::result::Result<(), CustomError> {
+pub fn store_key(
+    service: &str,
+    name: &str,
+    password: &str,
+) -> std::result::Result<(), CustomError> {
     let entry = Entry::new(service, name).map_err(CustomError::from)?;
     entry.set_password(password).map_err(CustomError::from)?;
     Ok(())
@@ -58,19 +62,19 @@ mod tests {
     const ACCOUNT: &str = "test_account";
     const PASSWORD: &str = "test_password";
 
-	#[test]
-	fn test_store_key_success() {
-		println!("Starting test_store_key_success");
-		let res = store_key(SERVICE, ACCOUNT, PASSWORD);
-		assert!(res.is_ok());
-		println!("store_key succeeded");
+    #[test]
+    fn test_store_key_success() {
+        println!("Starting test_store_key_success");
+        let res = store_key(SERVICE, ACCOUNT, PASSWORD);
+        assert!(res.is_ok());
+        println!("store_key succeeded");
 
-		let entry = Entry::new(SERVICE, ACCOUNT).unwrap();
-		let delete_result = entry.delete_password();
-		println!("Tried to delete password: {:?}", delete_result);
-		assert!(delete_result.is_ok());
-		println!("Password deleted successfully");
-	}
+        let entry = Entry::new(SERVICE, ACCOUNT).unwrap();
+        let delete_result = entry.delete_password();
+        println!("Tried to delete password: {:?}", delete_result);
+        assert!(delete_result.is_ok());
+        println!("Password deleted successfully");
+    }
     #[test]
     fn test_get_key_success() {
         let entry = Entry::new(SERVICE, ACCOUNT).unwrap();
