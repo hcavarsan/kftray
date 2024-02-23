@@ -149,10 +149,12 @@ Use the UI to add new port forward settings. Necessary details include:
 
 ### 🗂 Configuration Management
 
-- **Export/Import:** Easily exchange JSON configuration files.
-- **Git Imports:** Fetch configs directly from Git repositories with a few clicks.
-- **Local Storage:** Store configurations reliably at `$HOME/.kftray/configs.db`.
-- **Server Pod Manifest:** Customize the manifest at `$HOME/.kftray/proxy_manifest.json`.
+Manage and share port forward settings:
+
+- **Export and Import**: Quickly transfer configurations using JSON files.
+- **Git Synchronization**: Seamlessly fetch configurations from a Git repository.
+- **Local Storage**: Securely save configurations at `$HOME/.kftray/configs.db`.
+- **Server Pod Manifest**: Tailor the Proxy Relay server manifests stored at `$HOME/.kftray/proxy_manifest.json`.
 
 
 #### Configuration JSON Sample
@@ -233,3 +235,5 @@ KFtray is available under the [MIT License](LICENSE.md), which is included in th
 ## Stargazers over time
 
 [![Stargazers over time](https://starchart.cc/hcavarsan/kftray.svg?variant=dark)](https://starchart.cc/hcavarsan/kftray)
+
+
