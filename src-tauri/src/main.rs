@@ -6,6 +6,7 @@
 mod commands;
 mod config;
 mod db;
+mod keychain;
 mod logging;
 mod remote_config;
 mod tray;
@@ -169,7 +170,10 @@ fn main() {
             config::delete_all_configs,
             commands::open_save_dialog,
             commands::close_save_dialog,
-            remote_config::import_configs_from_github
+            remote_config::import_configs_from_github,
+            keychain::store_key,
+            keychain::get_key,
+            keychain::delete_key
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

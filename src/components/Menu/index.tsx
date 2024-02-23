@@ -1,6 +1,6 @@
-import React, { useState } from 'react'
+import React from 'react'
 import { IoSettingsOutline } from 'react-icons/io5'
-import { MdAdd, MdFileDownload, MdFileUpload } from 'react-icons/md'
+import { MdAdd, MdFileDownload, MdFileUpload, MdSettings } from 'react-icons/md'
 
 import {
   Box,
@@ -9,26 +9,23 @@ import {
   MenuButton,
   MenuItem,
   MenuList,
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
 } from '@chakra-ui/react'
 
 import { MenuProps } from '../../types'
+import SyncConfigsButton from '../SyncConfigsButton'
 
 const MenuOptions: React.FC<MenuProps> = ({
   openModal,
   openSettingsModal,
   handleExportConfigs,
   handleImportConfigs,
+  onConfigsSynced,
+  credentialsSaved,
+  setCredentialsSaved,
+  isSettingsModalOpen,
 }) => {
-  const [isImportSubmenuOpen, setIsImportSubmenuOpen] = useState(false)
-
-  const handleSubmenuOpen = () => setIsImportSubmenuOpen(true)
-  const handleSubmenuClose = () => setIsImportSubmenuOpen(false)
-
   return (
-    <Box display='flex' justifyContent='flex-start' width='100%' mt={4}>
+    <Box display='flex' justifyContent='flex-start' width='100%' mt={5}>
       <Menu placement='top'>
         <MenuButton
           as={IconButton}
@@ -38,47 +35,36 @@ const MenuOptions: React.FC<MenuProps> = ({
           colorScheme='facebook'
           variant='outline'
         />
-        <MenuList onMouseLeave={handleSubmenuClose} zIndex='popover'>
-          <MenuItem icon={<MdAdd />} onClick={openModal}>
+        <MenuList zIndex='popover'>
+          <MenuItem icon={<MdAdd />} onClick={openModal} isDisabled={credentialsSaved}>
             Add New Config
           </MenuItem>
           <MenuItem icon={<MdFileUpload />} onClick={handleExportConfigs}>
-            Export Configs
+            Export Local File
           </MenuItem>
-          <Box
-            onMouseEnter={handleSubmenuOpen}
-            onMouseLeave={handleSubmenuClose}
-            position='relative'
+          <MenuItem
+            icon={<MdFileDownload />}
+            isDisabled={credentialsSaved}
+            onClick={handleImportConfigs}
           >
-            <Popover
-              isOpen={isImportSubmenuOpen}
-              placement='right-start'
-              closeOnBlur={false}
-            >
-              <PopoverTrigger>
-                <MenuItem icon={<MdFileDownload />}>Import Configs</MenuItem>
-              </PopoverTrigger>
-              <PopoverContent
-                border='0'
-                boxShadow='none'
-                bg='transparent'
-                width='auto'
-                zIndex={1}
-              >
-                <MenuList
-                  onMouseEnter={handleSubmenuOpen}
-                  onMouseLeave={handleSubmenuClose}
-                >
-                  <MenuItem onClick={handleImportConfigs}>
-                    From Local File
-                  </MenuItem>
-                  <MenuItem onClick={openSettingsModal}>From Git</MenuItem>
-                </MenuList>
-              </PopoverContent>
-            </Popover>
-          </Box>
+            Import Local File
+          </MenuItem>
+          <MenuItem icon={<MdSettings />} onClick={openSettingsModal}>
+            Configure Git Sync
+          </MenuItem>
         </MenuList>
       </Menu>
+      <Box display='flex' justifyContent='flex-end' width='100%' mt={2}>
+        <SyncConfigsButton
+          serviceName='kftray'
+          accountName='github_config'
+          onConfigsSynced={onConfigsSynced}
+          onSyncFailure={error => console.error('Sync failed:', error)}
+          credentialsSaved={credentialsSaved}
+          setCredentialsSaved={setCredentialsSaved}
+          isSettingsModalOpen={isSettingsModalOpen}
+        />
+      </Box>
     </Box>
   )
 }
