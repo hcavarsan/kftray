@@ -1,6 +1,6 @@
 [package]
 name = "kftray"
-version = "0.6.4"
+version = "0.7.0"
 description = "A Tauri App"
 authors = ["you"]
 license = ""
@@ -23,6 +23,8 @@ dirs = "5.0.1"
 kubeforward = { path = "./utils/kubeforward" }
 reqwest = "0.11.24"
 base64 = "0.21.7"
+keyring = "2.0.0"
+mockall = "0.10"
 
 log = "0.4"
 env_logger = "0.11.2"
