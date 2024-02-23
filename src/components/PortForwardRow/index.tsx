@@ -252,7 +252,6 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
             </AlertDialogContent>
           </AlertDialogOverlay>
         </AlertDialog>
-
       )}
     </>
   )

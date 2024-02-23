@@ -302,7 +302,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
         leastDestructiveRef={cancelRef}
         onClose={() => setIsImportAlertOpen(false)}
       >
-        <AlertDialogOverlay bg='transparent' size='xs'>
+        <AlertDialogOverlay bg='transparent'>
           <AlertDialogContent>
             <AlertDialogHeader fontSize='xs' fontWeight='bold'>
               Enable Git Sync
