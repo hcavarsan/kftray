@@ -1,6 +1,13 @@
-import React, { useState } from 'react'
+/* eslint-disable max-len */
+import React, { useEffect, useState } from 'react'
 
 import {
+  AlertDialog,
+  AlertDialogBody,
+  AlertDialogContent,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogOverlay,
   Button,
   Center,
   Checkbox,
@@ -23,13 +30,91 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   isSettingsModalOpen,
   closeSettingsModal,
   onSettingsSaved,
+  credentialsSaved,
+  setCredentialsSaved,
 }) => {
   const [settingInputValue, setSettingInputValue] = useState('')
   const [configPath, setConfigPath] = useState('')
   const [isPrivateRepo, setIsPrivateRepo] = useState(false)
   const [gitToken, setGitToken] = useState('')
   const [isLoading, setIsLoading] = useState(false)
-  const [flushConfigs, setFlushConfigs] = useState(false)
+  const [isImportAlertOpen, setIsImportAlertOpen] = useState(false)
+  const cancelRef = React.useRef<HTMLButtonElement>(null)
+
+  const serviceName = 'kftray'
+  const accountName = 'github_config'
+
+  useEffect(() => {
+    let isComponentMounted = true
+
+    async function getCredentials() {
+      if (!isSettingsModalOpen) {
+        return
+      }
+
+      setIsLoading(true)
+      try {
+        const credentialsString = await invoke('get_key', {
+          service: serviceName,
+          name: accountName,
+        })
+
+        if (typeof credentialsString === 'string' && isComponentMounted) {
+          console.log('Credentials found:', credentialsString)
+          const credentials = JSON.parse(credentialsString)
+
+          console.log('credentialsString', credentialsString)
+
+          setSettingInputValue(credentials.repoUrl || '')
+          setConfigPath(credentials.configPath || '')
+          setIsPrivateRepo(credentials.isPrivate || false)
+          setGitToken(credentials.token || '')
+          setCredentialsSaved(true)
+        }
+      } catch (error) {
+        console.error('Failed to check saved credentials settingsmodal:', error)
+        if (isComponentMounted) {
+          setCredentialsSaved(false)
+        }
+      } finally {
+        if (isComponentMounted) {
+          setIsLoading(false)
+        }
+      }
+    }
+
+    if (isSettingsModalOpen) {
+      getCredentials()
+    }
+
+    return () => {
+      isComponentMounted = false
+    }
+  }, [isSettingsModalOpen, credentialsSaved, setCredentialsSaved])
+
+  const handleDeleteGitConfig = async () => {
+    setIsLoading(true)
+    try {
+      await invoke('delete_key', {
+        service: serviceName,
+        name: accountName,
+      })
+      console.log('Git config deleted')
+
+      setSettingInputValue('')
+      setConfigPath('')
+      setIsPrivateRepo(false)
+      setGitToken('')
+
+      onSettingsSaved?.()
+      setCredentialsSaved(true)
+      closeSettingsModal()
+    } catch (error) {
+      console.error('Failed to delete git config:', error)
+    } finally {
+      closeSettingsModal()
+    }
+  }
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) =>
     setSettingInputValue(e.target.value)
@@ -40,44 +125,53 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   const handleGitTokenChange = (e: React.ChangeEvent<HTMLInputElement>) =>
     setGitToken(e.target.value)
 
-  const handleFlushConfigsChange = (e: React.ChangeEvent<HTMLInputElement>) =>
-    setFlushConfigs(e.target.checked) // New event handler
+  const handleCancel = () => {
+    closeSettingsModal()
+  }
 
   const handleSaveSettings = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
+    setIsImportAlertOpen(true)
+  }
+  const onConfirmImport = async () => {
+    // Close the AlertDialog
+    setIsImportAlertOpen(false)
+
+    // Set loading state on
     setIsLoading(true)
+
+    const credentials = JSON.stringify({
+      repoUrl: settingInputValue,
+      configPath: configPath,
+      isPrivate: isPrivateRepo,
+      token: gitToken,
+      flush: true,
+    })
+
     try {
-      new URL(settingInputValue)
       await invoke('import_configs_from_github', {
         repoUrl: settingInputValue,
         configPath: configPath,
         isPrivate: isPrivateRepo,
-        token: isPrivateRepo ? gitToken : undefined,
-        flush: flushConfigs,
+        token: gitToken,
+        flush: true,
+      })
+      await invoke('store_key', {
+        service: serviceName,
+        name: accountName,
+        password: credentials,
       })
 
-      setSettingInputValue('')
-      setConfigPath('')
-      setIsPrivateRepo(false)
-      setGitToken('')
-
-      if (typeof onSettingsSaved === 'function') {
-        onSettingsSaved()
-      }
-      closeSettingsModal()
-    } catch (e) {
-      if (e instanceof TypeError) {
-        console.error('Invalid URL:', settingInputValue)
-      } else {
-        console.error('Error importing configs:', e)
-      }
+      console.log('Credentials saved')
+      onSettingsSaved?.()
+      setCredentialsSaved(true)
+    } catch (error) {
+      console.error('Failed to save settings:', error)
     } finally {
+      // Set loading state off and close the modal
       setIsLoading(false)
+      closeSettingsModal()
     }
-  }
-
-  const handleCancel = () => {
-    closeSettingsModal()
   }
 
   return (
@@ -88,13 +182,14 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
           <ModalCloseButton />
           <ModalBody p={2} mt={3}>
             <form onSubmit={handleSaveSettings}>
-              <FormControl p={2} isDisabled={isLoading}>
+              <FormControl p={2}>
                 <FormLabel htmlFor='settingInput'>
                   GitHub Repository URL
                 </FormLabel>
                 <Input
                   id='settingInput'
                   type='text'
+                  isDisabled={isLoading}
                   value={settingInputValue}
                   onChange={handleInputChange}
                   placeholder='GitHub Repository URL'
@@ -114,6 +209,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                   id='configPath'
                   type='text'
                   value={configPath}
+                  isDisabled={isLoading}
                   onChange={handleConfigPathChange}
                   placeholder='Path to Config File'
                   size='sm'
@@ -133,16 +229,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                 isDisabled={isLoading}
               >
                 <Checkbox
-                  id='flushConfigs'
-                  isChecked={flushConfigs}
-                  onChange={handleFlushConfigsChange}
-                  mb={2}
-                  mt={2}
-                >
-                  Flush all existing configs
-                </Checkbox>
-                <Checkbox
                   id='isPrivateRepo'
+                  isDisabled={isLoading}
                   isChecked={isPrivateRepo}
                   onChange={handleCheckboxChange}
                 >
@@ -158,6 +246,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                     type='password'
                     value={gitToken}
                     onChange={handleGitTokenChange}
+                    isDisabled={isLoading}
                     placeholder='Git Token'
                     size='sm'
                     height='36px'
@@ -171,11 +260,25 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
               )}
 
               <ModalFooter justifyContent='flex-end' p={2} mt={5}>
+                {credentialsSaved && (
+                  <Button
+                    onClick={handleDeleteGitConfig}
+                    variant='outline'
+                    colorScheme='red'
+                    size='xs'
+                    isLoading={isLoading}
+                    mr={3}
+                  >
+                    Disable Git Sync
+                  </Button>
+                )}
                 <Button
                   variant='outline'
                   onClick={handleCancel}
+                  disabled={credentialsSaved}
                   size='xs'
                   isDisabled={isLoading}
+                  isLoading={isLoading}
                 >
                   Cancel
                 </Button>
@@ -185,15 +288,45 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                   size='xs'
                   ml={3}
                   isLoading={isLoading}
-                  isDisabled={isLoading}
+                  isDisabled={isLoading || !settingInputValue || !configPath}
                 >
-                  Import Configs
+                  Save Settings
                 </Button>
               </ModalFooter>
             </form>
           </ModalBody>
         </ModalContent>
       </Modal>
+      <AlertDialog
+        isOpen={isImportAlertOpen}
+        leastDestructiveRef={cancelRef}
+        onClose={() => setIsImportAlertOpen(false)}
+      >
+        <AlertDialogOverlay bg='transparent' size='xs'>
+          <AlertDialogContent>
+            <AlertDialogHeader fontSize='xs' fontWeight='bold'>
+              Enable Git Sync
+            </AlertDialogHeader>
+
+            <AlertDialogBody>
+              Enabling Git Sync will replace all current configurations with
+              those from the git repository. Do you want to continue?
+            </AlertDialogBody>
+
+            <AlertDialogFooter>
+              <Button
+                ref={cancelRef}
+                onClick={() => setIsImportAlertOpen(false)}
+              >
+                Cancel
+              </Button>
+              <Button colorScheme='blue' onClick={onConfirmImport} ml={3}>
+                Import
+              </Button>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialogOverlay>
+      </AlertDialog>
     </Center>
   )
 }

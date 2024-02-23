@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 
-import { Box, useColorModeValue, useDisclosure, VStack } from '@chakra-ui/react'
+import { Box, useColorModeValue, VStack } from '@chakra-ui/react'
 import { open, save } from '@tauri-apps/api/dialog'
 import { readTextFile, writeTextFile } from '@tauri-apps/api/fs'
 import { sendNotification } from '@tauri-apps/api/notification'
@@ -21,8 +21,8 @@ const KFTray = () => {
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false)
   const [selectedConfigs, setSelectedConfigs] = useState<Status[]>([])
-  const { isOpen, onOpen, onClose } = useDisclosure()
   const [configsToDelete, setConfigsToDelete] = useState<number[]>([])
+  const [credentialsSaved, setCredentialsSaved] = useState(false)
 
   const [isEdit, setIsEdit] = useState(false)
 
@@ -50,6 +50,22 @@ const KFTray = () => {
       setSelectedConfigs(prevSelectedConfigs =>
         prevSelectedConfigs.filter(config => config.id !== id),
       )
+    }
+  }
+  const syncConfigsAndUpdateState = async () => {
+    try {
+      const updatedConfigs = await invoke<Status[]>('get_configs')
+
+      if (!updatedConfigs) {
+        console.log('No configs were returned from the backend.')
+
+        return
+      }
+
+      console.log('Configs synced successfully:', updatedConfigs)
+      setConfigs(updatedConfigs)
+    } catch (error) {
+      console.error('Error syncing configs:', error)
     }
   }
 
@@ -107,22 +123,31 @@ const KFTray = () => {
   const [configToDelete, setConfigToDelete] = useState<number | undefined>()
 
   useEffect(() => {
+    let isMounted = true
+
     const fetchConfigs = async () => {
-      try {
+	  try {
         const configsResponse = await invoke<Status[]>('get_configs')
 
-        setConfigs(
-          configsResponse.map(config => ({
-            ...config,
-            isRunning: false,
-          })),
-        )
-      } catch (error) {
+
+        if (isMounted) {
+		  setConfigs(
+            configsResponse.map((config) => ({
+			  ...config,
+			  isRunning: false,
+            }))
+		  )
+        }
+	  } catch (error) {
         console.error('Failed to fetch configs:', error)
-      }
+	  }
     }
 
     fetchConfigs()
+
+    return () => {
+	  isMounted = false
+    }
   }, [])
 
   const handleExportConfigs = async () => {
@@ -650,11 +675,17 @@ const KFTray = () => {
           openSettingsModal={openSettingsModal}
           handleExportConfigs={handleExportConfigs}
           handleImportConfigs={handleImportConfigs}
+          onConfigsSynced={syncConfigsAndUpdateState}
+          setCredentialsSaved={setCredentialsSaved}
+          credentialsSaved={credentialsSaved}
+          isSettingsModalOpen={isSettingsModalOpen}
         />
         <SettingsModal
           isSettingsModalOpen={isSettingsModalOpen}
           closeSettingsModal={closeSettingsModal}
           onSettingsSaved={fetchAndUpdateConfigs}
+          setCredentialsSaved={setCredentialsSaved}
+          credentialsSaved={credentialsSaved}
         />
         <AddConfigModal
           isModalOpen={isModalOpen}
