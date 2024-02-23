@@ -126,27 +126,26 @@ const KFTray = () => {
     let isMounted = true
 
     const fetchConfigs = async () => {
-	  try {
+      try {
         const configsResponse = await invoke<Status[]>('get_configs')
 
-
         if (isMounted) {
-		  setConfigs(
-            configsResponse.map((config) => ({
-			  ...config,
-			  isRunning: false,
-            }))
-		  )
+          setConfigs(
+            configsResponse.map(config => ({
+              ...config,
+              isRunning: false,
+            })),
+          )
         }
-	  } catch (error) {
+      } catch (error) {
         console.error('Failed to fetch configs:', error)
-	  }
+      }
     }
 
     fetchConfigs()
 
     return () => {
-	  isMounted = false
+      isMounted = false
     }
   }, [])
 
