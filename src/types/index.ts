@@ -44,6 +44,14 @@ export interface Response {
   stderr: string
 }
 
+export interface GitConfig {
+  repoUrl: string
+  configPath: string
+  isPrivate: boolean
+  token: string
+  flush: boolean
+}
+
 export interface ConfigProps {
   isModalOpen: boolean
   closeModal: () => void
@@ -59,6 +67,8 @@ export interface SettingsModalProps {
   isSettingsModalOpen: boolean
   closeSettingsModal: () => void
   onSettingsSaved: () => void
+  credentialsSaved: boolean
+  setCredentialsSaved: React.Dispatch<React.SetStateAction<boolean>>
 }
 
 export interface TableProps {
@@ -103,4 +113,18 @@ export interface MenuProps {
   openSettingsModal: () => void
   handleExportConfigs: () => void
   handleImportConfigs: () => void
+  credentialsSaved: boolean
+  setCredentialsSaved: React.Dispatch<React.SetStateAction<boolean>>
+  onConfigsSynced: () => void
+  isSettingsModalOpen: boolean
+}
+
+export interface SyncConfigsButtonProps {
+  serviceName: string
+  accountName: string
+  onConfigsSynced?: () => void
+  onSyncFailure?: (error: Error) => void
+  credentialsSaved: boolean
+  setCredentialsSaved: React.Dispatch<React.SetStateAction<boolean>>
+  isSettingsModalOpen: boolean
 }

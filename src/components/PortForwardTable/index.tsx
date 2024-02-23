@@ -302,7 +302,7 @@ const PortForwardTable: React.FC<TableProps> = ({
           </AlertDialogOverlay>
         </AlertDialog>
         <Tooltip label={`Kftray v${version}`} aria-label='Kftray version'>
-          <Image src={logo} alt='Kftray Logo' boxSize='30px' ml={3} />
+          <Image src={logo} alt='Kftray Logo' boxSize='30px' ml={3} mt={0.5} />
         </Tooltip>
         <InputGroup size='xs' width='250px'>
           <InputLeftElement pointerEvents='none'>
