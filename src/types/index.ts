@@ -67,7 +67,7 @@ export interface SettingsModalProps {
   isSettingsModalOpen: boolean
   closeSettingsModal: () => void
   onSettingsSaved: () => void
-  credentialsSaved: boolean // Now a prop instead of a state
+  credentialsSaved: boolean
   setCredentialsSaved: React.Dispatch<React.SetStateAction<boolean>>
 }
 
@@ -113,7 +113,7 @@ export interface MenuProps {
   openSettingsModal: () => void
   handleExportConfigs: () => void
   handleImportConfigs: () => void
-  credentialsSaved: boolean // Now a prop instead of a state
+  credentialsSaved: boolean
   setCredentialsSaved: React.Dispatch<React.SetStateAction<boolean>>
   onConfigsSynced: () => void
   isSettingsModalOpen: boolean
@@ -124,7 +124,7 @@ export interface SyncConfigsButtonProps {
   accountName: string
   onConfigsSynced?: () => void
   onSyncFailure?: (error: Error) => void
-  credentialsSaved: boolean // Now a prop instead of a state
+  credentialsSaved: boolean
   setCredentialsSaved: React.Dispatch<React.SetStateAction<boolean>>
   isSettingsModalOpen: boolean
 }
