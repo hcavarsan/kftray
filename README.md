@@ -34,13 +34,13 @@
 
   <!-- Download Buttons -->
   <p>
-    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.6.4_universal.dmg">
+    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.7.0_universal.dmg">
       Download for macOS
     </a> ·
-    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.6.4_x64-setup.exe">
+    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.7.0_x64-setup.exe">
       Download for Windows
     </a> ·
-    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.6.4_amd64.AppImage">
+    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.7.0_amd64.AppImage">
       Download for Linux
     </a>
   </p>
