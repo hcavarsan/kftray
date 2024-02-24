@@ -1,7 +1,6 @@
-use keyring::Entry;
-use keyring::Error as KeyringError;
-use tauri::Error as TauriError;
-use tauri::InvokeError;
+use keyring::{Entry, Error as KeyringError};
+use log::{error, info};
+use tauri::{Error as TauriError, InvokeError};
 
 #[derive(Debug)]
 pub enum CustomError {
@@ -11,46 +10,58 @@ pub enum CustomError {
 
 impl From<KeyringError> for CustomError {
     fn from(error: KeyringError) -> Self {
+        error!("Keyring error occurred: {:?}", error);
         CustomError::Keyring(error)
     }
 }
 
 impl From<TauriError> for CustomError {
     fn from(error: TauriError) -> Self {
+        error!("Tauri error occurred: {:?}", error);
         CustomError::Tauri(error)
     }
 }
+
 impl From<CustomError> for InvokeError {
     fn from(error: CustomError) -> Self {
-        match error {
-            CustomError::Keyring(err) => InvokeError::from(err.to_string()),
-            CustomError::Tauri(err) => InvokeError::from(err.to_string()),
+        match &error {
+            CustomError::Keyring(err) => error!("Converting to InvokeError: {:?}", err),
+            CustomError::Tauri(err) => error!("Converting to InvokeError: {:?}", err),
         }
+        InvokeError::from(error)
     }
 }
 
 #[tauri::command]
-pub fn store_key(
-    service: &str,
-    name: &str,
-    password: &str,
-) -> std::result::Result<(), CustomError> {
-    let entry = Entry::new(service, name).map_err(CustomError::from)?;
-    entry.set_password(password).map_err(CustomError::from)?;
+pub fn store_key(service: &str, name: &str, password: &str) -> Result<(), CustomError> {
+    let entry = Entry::new(service, name)?;
+    entry.set_password(password)?;
+    info!(
+        "Stored password for service '{}' and name '{}'",
+        service, name
+    );
     Ok(())
 }
 
 #[tauri::command]
-pub fn get_key(service: &str, name: &str) -> std::result::Result<String, CustomError> {
-    let entry = Entry::new(service, name).map_err(CustomError::from)?;
-    let password = entry.get_password().map_err(CustomError::from)?;
+pub fn get_key(service: &str, name: &str) -> Result<String, CustomError> {
+    let entry = Entry::new(service, name)?;
+    let password = entry.get_password()?;
+    info!(
+        "Retrieved password for service '{}' and name '{}'",
+        service, name
+    );
     Ok(password)
 }
 
 #[tauri::command]
-pub fn delete_key(service: &str, name: &str) -> std::result::Result<(), CustomError> {
-    let entry = Entry::new(service, name).map_err(CustomError::from)?;
-    entry.delete_password().map_err(CustomError::from)?;
+pub fn delete_key(service: &str, name: &str) -> Result<(), CustomError> {
+    let entry = Entry::new(service, name)?;
+    entry.delete_password()?;
+    info!(
+        "Deleted password for service '{}' and name '{}'",
+        service, name
+    );
     Ok(())
 }
 
