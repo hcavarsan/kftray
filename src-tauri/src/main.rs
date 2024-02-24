@@ -21,7 +21,10 @@ use std::sync::atomic::Ordering;
 use commands::SaveDialogState;
 
 fn main() {
-    logging::setup_logging();
+    match logging::setup_logging() {
+        Ok(_) => (),
+        Err(e) => eprintln!("Failed to setup logging: {}", e),
+    }
     let _ = fix_path_env::fix();
 
     let system_tray = tray::create_tray_menu();
