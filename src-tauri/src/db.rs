@@ -3,6 +3,8 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+/// Initializes the application by ensuring that both the database file and the server configuration
+/// manifest file exist.
 pub fn init() -> Result<(), std::io::Error> {
     if !db_file_exists() {
         create_db_file()?;
@@ -15,6 +17,7 @@ pub fn init() -> Result<(), std::io::Error> {
     Ok(())
 }
 
+/// Creates the server configuration manifest file with placeholders.
 fn create_server_config_manifest() -> Result<(), std::io::Error> {
     let manifest_path = get_pod_manifest_path();
     let manifest_dir = manifest_path
@@ -64,15 +67,18 @@ fn create_server_config_manifest() -> Result<(), std::io::Error> {
     File::create(&manifest_path)?.write_all(manifest_json.as_bytes())
 }
 
+/// Checks if the pod manifest file already exists.
 fn pod_manifest_file_exists() -> bool {
     get_pod_manifest_path().exists()
 }
 
+/// Returns the path to the pod manifest file.
 fn get_pod_manifest_path() -> PathBuf {
     let home_dir = dirs::home_dir().expect("Failed to get home directory");
     home_dir.join(".kftray/proxy_manifest.json")
 }
 
+/// Creates a new database file if it doesn't exist already.
 fn create_db_file() -> Result<(), std::io::Error> {
     let db_path = get_db_path();
     let db_dir = Path::new(&db_path)
@@ -103,12 +109,14 @@ mod tests {
     use std::fs;
     use tempfile::TempDir;
 
+    /// Sets up a temporary test environment and overrides the home directory.
     fn setup_test_environment() -> TempDir {
         let temp = tempfile::tempdir().expect("Failed to create a temp dir");
         std::env::set_var("HOME", temp.path());
         temp
     }
 
+    /// Tests if the initialization creates the required database and manifest files.
     #[test]
     fn test_initialization_creates_files() {
         let _temp_dir = setup_test_environment();
@@ -118,6 +126,7 @@ mod tests {
         assert!(pod_manifest_file_exists());
     }
 
+    /// Tests if the contents of the created pod manifest file match the expected default structure.
     #[test]
     fn test_pod_manifest_content() {
         let _temp_dir = setup_test_environment();
@@ -131,6 +140,7 @@ mod tests {
         assert!(manifest_content.contains("\"kind\": \"Pod\""));
     }
 
+    /// Confirms that the database file gets created successfully.
     #[test]
     fn test_db_file_creation() {
         let _temp_dir = setup_test_environment();
