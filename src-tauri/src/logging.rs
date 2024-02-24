@@ -1,36 +1,56 @@
-use std::{env, fs::OpenOptions, path::PathBuf};
+use log::LevelFilter;
+use std::{env, fs::OpenOptions, io, path::PathBuf};
+use thiserror::Error;
 
-pub fn get_log_path() -> PathBuf {
-    let home_dir = dirs::home_dir().expect("Could not find the home directory");
-    home_dir.join(".kftray").join("app.log")
+#[derive(Debug, Error)]
+pub enum LogError {
+    #[error("home directory could not be determined")]
+    HomeDirNotFound,
+
+    #[error("log directory could not be verified: {0}")]
+    LogDirNotFound(io::Error),
+
+    #[error("Failed to create log directory: {0}")]
+    LogDirCreationFailed(io::Error),
+
+    #[error("Failed to open log file: {0}")]
+    LogFileOpenFailed(io::Error),
 }
 
-pub fn setup_logging() {
-    let log_filter = match env::var("RUST_LOG") {
-        Ok(filter) => filter.parse().unwrap_or(log::LevelFilter::Info),
-        Err(_) => log::LevelFilter::Off,
-    };
+pub fn get_log_path() -> Result<PathBuf, LogError> {
+    let home_dir = dirs::home_dir().ok_or(LogError::HomeDirNotFound)?;
+    Ok(home_dir.join(".kftray").join("app.log"))
+}
+
+pub fn setup_logging() -> Result<(), LogError> {
+    let log_filter = env::var("RUST_LOG")
+        .map(|filter| filter.parse().unwrap_or(LevelFilter::Info))
+        .unwrap_or(LevelFilter::Off);
+
+    let mut builder = env_logger::builder();
+    builder.filter_level(log_filter).format_timestamp_secs();
 
     if env::var("KFTRAY_DEBUG").is_ok() {
-        let log_path = get_log_path();
-        let log_dir = log_path.parent().expect("Could not find the log directory");
-        std::fs::create_dir_all(log_dir).expect("Could not create log directory");
+        let log_path = get_log_path()?;
+        let log_dir = log_path
+            .parent()
+            .ok_or(LogError::LogDirNotFound(io::Error::new(
+                io::ErrorKind::NotFound,
+                "Log directory path cannot be determined",
+            )))?;
+
+        std::fs::create_dir_all(log_dir).map_err(LogError::LogDirCreationFailed)?;
 
         let log_file = OpenOptions::new()
             .create(true)
             .append(true)
             .open(log_path)
-            .expect("Could not open log file");
+            .map_err(LogError::LogFileOpenFailed)?;
 
-        env_logger::Builder::from_default_env()
-            .filter_level(log_filter)
-            .format_timestamp_secs()
-            .target(env_logger::Target::Pipe(Box::new(log_file)))
-            .init();
-    } else {
-        env_logger::Builder::new()
-            .filter_level(log_filter)
-            .format_timestamp_secs()
-            .init();
+        builder.target(env_logger::Target::Pipe(Box::new(log_file)));
     }
+
+    builder.init();
+
+    Ok(())
 }
