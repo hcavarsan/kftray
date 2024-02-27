@@ -30,7 +30,7 @@
   </br>
   </br>
   <!-- Demo GIF -->
-  <img src="https://raw.githubusercontent.com/hcavarsan/homebrew-kftray/main/img/demo.gif" alt="KFtray Demo" width="1500" />
+  <img src="https://raw.githubusercontent.com/hcavarsan/homebrew-kftray/main/img/demo2.png" alt="KFtray Demo" width="1500" />
 
   <!-- Download Buttons -->
   <p>
