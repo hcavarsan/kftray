@@ -1,7 +1,4 @@
 <div align="center">
-  <p>
-<h4>KFtray is a cross-platform system tray app made with Tauri (Rust and TypeScript) for Kubernetes users. It simplifies setting up multiple kubectl port forward configurations through a user-friendly interface. Easily store and manage all configurations from local files or GitHub repositories.</h4>
-  </p>
   <!-- Badges -->
   <a href="https://nodejs.org/en/">
     <img src="https://img.shields.io/badge/Node-v20.11.0-brightgreen.svg" alt="Node.js version" />
@@ -50,6 +47,7 @@
 
 ## Table of Contents
 
+- [Kftray](#what-is-kftray)
 - [Features](#-features)
 - [Installation](#-installation)
 - [Usage](#-usage)
@@ -58,6 +56,10 @@
 - [License](#-license)
 
 ---
+
+## What Is Kftray?
+
+KFtray is a cross-platform system tray app made with Tauri (Rust and TypeScript) for Kubernetes users. It simplifies setting up multiple kubectl port forward configurations through a user-friendly interface. Easily store and manage all configurations from local files or GitHub repositories.
 
 ## 🚀 Features
 
