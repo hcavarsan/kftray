@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { MdClose, MdRefresh } from 'react-icons/md'
 
 import {
@@ -76,7 +76,8 @@ const PortForwardTable: React.FC<TableProps> = ({
   const [expandedIndices, setExpandedIndices] = useState<number[]>([])
   const [version, setVersion] = useState('')
   const cancelRef = React.useRef<HTMLButtonElement>(null)
-  const { isOpen, onOpen, onClose } = useDisclosure()
+  const prevSelectedConfigsRef = useRef(selectedConfigs)
+
 
   const [selectedConfigsByContext, setSelectedConfigsByContext] = useState<
     Record<string, boolean>
@@ -191,15 +192,24 @@ const PortForwardTable: React.FC<TableProps> = ({
   }
 
   useEffect(() => {
-    const newSelectedConfigsByContext: Record<string, boolean> = {}
+    console.log('selectedConfigs', selectedConfigs)
+    if (prevSelectedConfigsRef.current !== selectedConfigs) {
+	  // Only proceed if selectedConfigs have changed
+	  const newSelectedConfigsByContext: Record<string, boolean> = {}
 
-    Object.entries(configsByContext).forEach(([context, contextConfigs]) => {
-      newSelectedConfigsByContext[context] = contextConfigs.every(config =>
-        selectedConfigs.some(selectedConfig => selectedConfig.id === config.id),
-      )
-    })
+	  for (const context of Object.keys(configsByContext)) {
+        newSelectedConfigsByContext[context] = configsByContext[context].every(
+		  (config) => selectedConfigs.some(
+            (selectedConfig) => selectedConfig.id === config.id,
+		  ),
+        )
+	  }
 
-    setSelectedConfigsByContext(newSelectedConfigsByContext)
+	  setSelectedConfigsByContext(newSelectedConfigsByContext)
+
+	  // Update the ref to the current selected configs
+	  prevSelectedConfigsRef.current = selectedConfigs
+    }
   }, [selectedConfigs, configsByContext])
 
   const handleSelectionChange = (config: Status, isSelected: boolean) => {
