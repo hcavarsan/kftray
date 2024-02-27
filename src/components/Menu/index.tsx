@@ -36,11 +36,7 @@ const MenuOptions: React.FC<MenuProps> = ({
           variant='outline'
         />
         <MenuList zIndex='popover'>
-          <MenuItem
-            icon={<MdAdd />}
-            onClick={openModal}
-            isDisabled={credentialsSaved}
-          >
+          <MenuItem icon={<MdAdd />} onClick={openModal} isDisabled={credentialsSaved}>
             Add New Config
           </MenuItem>
           <MenuItem icon={<MdFileUpload />} onClick={handleExportConfigs}>
