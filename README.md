@@ -1,10 +1,4 @@
 <div align="center">
-  <img src="./logo.png" alt="KFtray Logo" width="200" />
-  <h1>KFtray</h1>
-  <p>
-<h3>A cross-platform system tray app made with Tauri (Rust and TypeScript) for Kubernetes users. It simplifies setting up multiple kubectl port forward configurations through a user-friendly interface. Easily store and manage all configurations from local files or GitHub repositories.</h3>
-  </p>
-  <br>
 
   <!-- Badges -->
   <a href="https://nodejs.org/en/">
@@ -21,6 +15,7 @@
   </a>
 
   <!-- Download Links and Stats -->
+
   <a href="https://github.com/hcavarsan/kftray/releases/latest">
     <img src="https://img.shields.io/github/downloads/hcavarsan/kftray/total.svg" alt="downloads" />
   </a>
@@ -29,10 +24,9 @@
   </a>
   </br>
   </br>
-  <!-- Demo GIF -->
-  <img src="https://raw.githubusercontent.com/hcavarsan/homebrew-kftray/main/img/demo2.png" alt="KFtray Demo" width="1500" />
 
-  <!-- Download Buttons -->
+  <img src="https://raw.githubusercontent.com/hcavarsan/homebrew-kftray/main/img/demo2.png" alt="KFtray Demo" width="1500" />
+    <!-- Download Buttons -->
   <p>
     <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.7.1_universal.dmg">
       Download for macOS
@@ -44,6 +38,14 @@
       Download for Linux
     </a>
   </p>
+
+
+  <p>
+<h6>KFtray is a cross-platform system tray app made with Tauri (Rust and TypeScript) for Kubernetes users. It simplifies setting up multiple kubectl port forward configurations through a user-friendly interface. Easily store and manage all configurations from local files or GitHub repositories.</h6>
+  </p>
+  <br>
+
+
 </div>
 
 ## Table of Contents
