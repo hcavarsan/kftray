@@ -1,6 +1,7 @@
-use keyring::{Entry, Error as KeyringError};
-use log::{error, info};
-use tauri::{Error as TauriError, InvokeError};
+use keyring::Entry;
+use keyring::Error as KeyringError;
+use tauri::Error as TauriError;
+use tauri::InvokeError;
 
 #[derive(Debug)]
 pub enum CustomError {
@@ -11,7 +12,6 @@ pub enum CustomError {
 // Define a custom error type that encapsulates errors from different sources.
 impl From<KeyringError> for CustomError {
     fn from(error: KeyringError) -> Self {
-        error!("Keyring error occurred: {:?}", error);
         CustomError::Keyring(error)
     }
 }
@@ -19,55 +19,43 @@ impl From<KeyringError> for CustomError {
 // Implement conversion from `KeyringError` to `CustomError`.
 impl From<TauriError> for CustomError {
     fn from(error: TauriError) -> Self {
-        error!("Tauri error occurred: {:?}", error);
         CustomError::Tauri(error)
     }
 }
-
-/// Implements the conversion from `CustomError` to `InvokeError`.
 impl From<CustomError> for InvokeError {
     fn from(error: CustomError) -> Self {
-        match &error {
-            CustomError::Keyring(err) => error!("Converting to InvokeError: {:?}", err),
-            CustomError::Tauri(err) => error!("Converting to InvokeError: {:?}", err),
+        match error {
+            CustomError::Keyring(err) => InvokeError::from(err.to_string()),
+            CustomError::Tauri(err) => InvokeError::from(err.to_string()),
         }
-        InvokeError::from(error)
     }
 }
 
 /// Stores a key using the `keyring` crate.
 #[tauri::command]
-pub fn store_key(service: &str, name: &str, password: &str) -> Result<(), CustomError> {
-    let entry = Entry::new(service, name)?;
-    entry.set_password(password)?;
-    info!(
-        "Stored password for service '{}' and name '{}'",
-        service, name
-    );
+pub fn store_key(
+    service: &str,
+    name: &str,
+    password: &str,
+) -> std::result::Result<(), CustomError> {
+    let entry = Entry::new(service, name).map_err(CustomError::from)?;
+    entry.set_password(password).map_err(CustomError::from)?;
     Ok(())
 }
 
 /// Retrieves a key using the `keyring` crate.
 #[tauri::command]
-pub fn get_key(service: &str, name: &str) -> Result<String, CustomError> {
-    let entry = Entry::new(service, name)?;
-    let password = entry.get_password()?;
-    info!(
-        "Retrieved password for service '{}' and name '{}'",
-        service, name
-    );
+pub fn get_key(service: &str, name: &str) -> std::result::Result<String, CustomError> {
+    let entry = Entry::new(service, name).map_err(CustomError::from)?;
+    let password = entry.get_password().map_err(CustomError::from)?;
     Ok(password)
 }
 
 /// Deletes a key using the `keyring` crate.
 #[tauri::command]
-pub fn delete_key(service: &str, name: &str) -> Result<(), CustomError> {
-    let entry = Entry::new(service, name)?;
-    entry.delete_password()?;
-    info!(
-        "Deleted password for service '{}' and name '{}'",
-        service, name
-    );
+pub fn delete_key(service: &str, name: &str) -> std::result::Result<(), CustomError> {
+    let entry = Entry::new(service, name).map_err(CustomError::from)?;
+    entry.delete_password().map_err(CustomError::from)?;
     Ok(())
 }
 
