@@ -21,8 +21,7 @@
   <a href="https://github.com/hcavarsan/kftray/actions">
     <img src="https://img.shields.io/github/actions/workflow/status/hcavarsan/kftray/main.yml" alt="release=">
   </a>
-  </br>
-  </br>
+
 
   <img src="https://raw.githubusercontent.com/hcavarsan/homebrew-kftray/main/img/demo2.png" alt="KFtray Demo" width="1500" />
     <!-- Download Buttons -->
