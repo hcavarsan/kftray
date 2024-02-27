@@ -37,12 +37,6 @@
       Download for Linux
     </a>
   </p>
-
-
-
-  <br>
-
-
 </div>
 
 ---
