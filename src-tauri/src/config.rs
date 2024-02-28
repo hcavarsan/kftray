@@ -4,6 +4,7 @@ use rusqlite::{params, Connection, Result};
 use serde_json::to_value;
 use serde_json::{json, Value as JsonValue};
 
+
 fn is_value_blank(value: &JsonValue) -> bool {
     match value {
         JsonValue::String(s) => s.trim().is_empty(),
@@ -35,6 +36,7 @@ fn remove_blank_fields(value: &mut JsonValue) {
     }
 }
 
+//  function to delete a config from the database
 #[tauri::command]
 pub async fn delete_config(id: i64) -> Result<(), String> {
     println!("Deleting config with id: {}", id);
@@ -51,6 +53,7 @@ pub async fn delete_config(id: i64) -> Result<(), String> {
     }
 }
 
+// function to delete multiple configs from the database
 #[tauri::command]
 pub async fn delete_configs(ids: Vec<i64>) -> Result<(), String> {
     println!("Deleting configs with ids: {:?}", ids);
@@ -70,6 +73,7 @@ pub async fn delete_configs(ids: Vec<i64>) -> Result<(), String> {
     Ok(())
 }
 
+// function to delete all configs from the database
 #[tauri::command]
 pub async fn delete_all_configs() -> Result<(), String> {
     println!("Deleting all configs");
@@ -84,6 +88,7 @@ pub async fn delete_all_configs() -> Result<(), String> {
     }
 }
 
+// function to insert a config into the database
 #[tauri::command]
 pub fn insert_config(config: Config) -> Result<(), String> {
     let home_dir = dirs::home_dir().unwrap();
@@ -107,6 +112,7 @@ pub fn insert_config(config: Config) -> Result<(), String> {
     Ok(())
 }
 
+// function to read configs from the database
 fn read_configs() -> Result<Vec<Config>, rusqlite::Error> {
     let home_dir = dirs::home_dir().unwrap();
     let db_dir = home_dir.to_str().unwrap().to_string() + "/.kftray/configs.db";
@@ -131,6 +137,7 @@ fn read_configs() -> Result<Vec<Config>, rusqlite::Error> {
     Ok(configs)
 }
 
+// function to get all configs from the database
 #[tauri::command]
 pub async fn get_configs() -> Result<Vec<Config>, String> {
     println!("get_configs called");
@@ -139,6 +146,7 @@ pub async fn get_configs() -> Result<Vec<Config>, String> {
     Ok(configs)
 }
 
+// function to get a config from the database
 #[tauri::command]
 pub async fn get_config(id: i64) -> Result<Config, String> {
     println!("get_config called with id: {}", id);
@@ -172,6 +180,7 @@ pub async fn get_config(id: i64) -> Result<Config, String> {
     }
 }
 
+// function to update a config in the database
 #[tauri::command]
 pub fn update_config(config: Config) -> Result<(), String> {
     let home_dir = dirs::home_dir().unwrap();
@@ -189,6 +198,7 @@ pub fn update_config(config: Config) -> Result<(), String> {
     Ok(())
 }
 
+// function to export configs to a json file
 #[tauri::command]
 pub async fn export_configs() -> Result<String, String> {
     let mut configs = read_configs().map_err(|e| e.to_string())?;
@@ -203,6 +213,7 @@ pub async fn export_configs() -> Result<String, String> {
     Ok(json)
 }
 
+// function to import configs from a json file
 #[tauri::command]
 pub async fn import_configs(json: String) -> Result<(), String> {
     let parse_result = serde_json::from_str::<Vec<Config>>(&json);
