@@ -1,10 +1,10 @@
 <div align="center">
   <!-- Badges -->
   <a href="https://nodejs.org/en/">
-    <img src="https://img.shields.io/badge/Node-v20.11.0-brightgreen.svg" alt="Node.js version" />
+    <img src="https://img.shields.io/badge/Node-v21.5.0-brightgreen.svg" alt="Node.js version" />
   </a>
   <a href="https://tauri.app/">
-    <img src="https://img.shields.io/badge/Tauri-v1.5.8-brightgreen.svg" alt="Tauri version" />
+    <img src="https://img.shields.io/badge/Tauri-v1.6.1-brightgreen.svg" alt="Tauri version" />
   </a>
   <a href="https://react.dev">
     <img src="https://img.shields.io/badge/React-v18.2.0-brightgreen.svg" alt="React version" />
