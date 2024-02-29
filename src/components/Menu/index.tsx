@@ -4,11 +4,15 @@ import { MdAdd, MdFileDownload, MdFileUpload, MdSettings } from 'react-icons/md'
 
 import {
   Box,
+  Flex,
   IconButton,
   Menu,
   MenuButton,
   MenuItem,
   MenuList,
+  Spacer,
+  Tooltip,
+  useColorModeValue,
 } from '@chakra-ui/react'
 
 import { MenuProps } from '../../types'
@@ -24,25 +28,40 @@ const MenuOptions: React.FC<MenuProps> = ({
   setCredentialsSaved,
   isSettingsModalOpen,
 }) => {
+  const borderColor = useColorModeValue('gray.200', 'gray.600')
+
   return (
-    <Box display='flex' justifyContent='flex-start' width='100%' mt={5}>
-      <Menu placement='top'>
-        <MenuButton
-          as={IconButton}
-          aria-label='Options'
-          icon={<IoSettingsOutline />}
-          size='sm'
-          colorScheme='facebook'
-          variant='outline'
-        />
+    <Flex
+      as='footer'
+      direction='row'
+      justifyContent='flex-start'
+      top='0'
+      bg='gray.800'
+      py='1.5'
+      px='2'
+      boxShadow='lg'
+      borderRadius='lg'
+      border='1px'
+      width='97%'
+      borderColor={borderColor}
+    >
+      <Menu placement='top-end'>
+        <Tooltip
+          label='Configurations'
+          placement='top'
+          fontSize='xs'
+          lineHeight='tight'
+        >
+          <MenuButton
+            as={IconButton}
+            aria-label='Options'
+            icon={<IoSettingsOutline />}
+            size='sm'
+            colorScheme='facebook'
+            variant='outline'
+          />
+        </Tooltip>
         <MenuList zIndex='popover'>
-          <MenuItem
-            icon={<MdAdd />}
-            onClick={openModal}
-            isDisabled={credentialsSaved}
-          >
-            Add New Config
-          </MenuItem>
           <MenuItem icon={<MdFileUpload />} onClick={handleExportConfigs}>
             Export Local File
           </MenuItem>
@@ -57,8 +76,24 @@ const MenuOptions: React.FC<MenuProps> = ({
             Configure Git Sync
           </MenuItem>
         </MenuList>
-      </Menu>
-      <Box display='flex' justifyContent='flex-end' width='100%' mt={2}>
+        <Tooltip
+          label='Add New Config'
+          placement='top'
+          fontSize='xs'
+          lineHeight='tight'
+        >
+          <IconButton
+            variant='outline'
+            icon={<MdAdd />}
+            colorScheme='facebook'
+            onClick={openModal}
+            isDisabled={credentialsSaved}
+            size='sm'
+            ml={2}
+            aria-label='Add New Config'
+          />
+        </Tooltip>
+        <Spacer />
         <SyncConfigsButton
           serviceName='kftray'
           accountName='github_config'
@@ -68,8 +103,8 @@ const MenuOptions: React.FC<MenuProps> = ({
           setCredentialsSaved={setCredentialsSaved}
           isSettingsModalOpen={isSettingsModalOpen}
         />
-      </Box>
-    </Box>
+      </Menu>
+    </Flex>
   )
 }
 
