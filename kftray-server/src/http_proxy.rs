@@ -74,8 +74,7 @@ async fn handle_client(
         loop {
             match server_reader.read(&mut buf).await {
                 Ok(0) => {
-                    info!("Server stream closed; stopping server_to_client loop.");
-                    break;
+                    info!("Server stream closed");
                 }
                 Ok(n) => {
                     debug!(
@@ -86,7 +85,7 @@ async fn handle_client(
                 }
                 Err(e) => {
                     error!("An error occurred while reading from server stream: {}", e);
-                    return Err(e);
+                    break;
                 }
             }
         }
