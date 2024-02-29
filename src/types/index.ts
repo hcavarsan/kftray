@@ -89,7 +89,6 @@ export interface TableProps {
   selectedConfigs: Status[]
   setSelectedConfigs: React.Dispatch<React.SetStateAction<Status[]>>
   confirmDeleteConfigs: () => void
-  handleDeleteConfigs: (ids: number[]) => void
 }
 
 export interface PortForwardRowProps {
@@ -117,6 +116,8 @@ export interface MenuProps {
   setCredentialsSaved: React.Dispatch<React.SetStateAction<boolean>>
   onConfigsSynced: () => void
   isSettingsModalOpen: boolean
+  selectedConfigs: Status[]
+  handleDeleteConfigs: (ids: number[]) => void
 }
 
 export interface SyncConfigsButtonProps {

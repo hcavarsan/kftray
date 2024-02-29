@@ -57,12 +57,9 @@ const KFTray = () => {
       const updatedConfigs = await invoke<Status[]>('get_configs')
 
       if (!updatedConfigs) {
-        console.log('No configs were returned from the backend.')
-
         return
       }
 
-      console.log('Configs synced successfully:', updatedConfigs)
       setConfigs(updatedConfigs)
     } catch (error) {
       console.error('Error syncing configs:', error)
@@ -665,7 +662,6 @@ const KFTray = () => {
           selectedConfigs={selectedConfigs}
           setSelectedConfigs={setSelectedConfigs}
           confirmDeleteConfigs={confirmDeleteConfigs}
-          handleDeleteConfigs={handleDeleteConfigs}
           isBulkAlertOpen={isBulkAlertOpen}
           setIsBulkAlertOpen={setIsBulkAlertOpen}
         />
@@ -678,6 +674,8 @@ const KFTray = () => {
           setCredentialsSaved={setCredentialsSaved}
           credentialsSaved={credentialsSaved}
           isSettingsModalOpen={isSettingsModalOpen}
+          handleDeleteConfigs={handleDeleteConfigs}
+          selectedConfigs={selectedConfigs}
         />
         <SettingsModal
           isSettingsModalOpen={isSettingsModalOpen}
