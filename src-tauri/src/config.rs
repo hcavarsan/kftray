@@ -4,7 +4,6 @@ use rusqlite::{params, Connection, Result};
 use serde_json::to_value;
 use serde_json::{json, Value as JsonValue};
 
-
 fn is_value_blank(value: &JsonValue) -> bool {
     match value {
         JsonValue::String(s) => s.trim().is_empty(),
