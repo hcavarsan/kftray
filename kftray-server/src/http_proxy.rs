@@ -1,7 +1,7 @@
 use log::{error, info, warn};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tokio::io::{AsyncReadExt, AsyncWriteExt}; // Remove the self import as it's not needed
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Notify;
 use tokio::time::{self, Duration};
@@ -14,12 +14,11 @@ async fn handle_client(
     server_stream: TcpStream,
     shutdown_notify: Arc<Notify>,
 ) -> std::io::Result<()> {
-    // Prefix the io::Result with std to prevent ambiguity
-    let (client_reader, mut client_writer) = tokio::io::split(client_stream); // No need to prefix with io::
-    let (server_reader, mut server_writer) = server_stream.into_split();
+    let (client_reader, client_writer) = tokio::io::split(client_stream);
+    let (server_reader, server_writer) = server_stream.into_split();
 
-    let client_to_server = relay_stream(client_reader, &mut server_writer, shutdown_notify.clone());
-    let server_to_client = relay_stream(server_reader, &mut client_writer, shutdown_notify);
+    let client_to_server = relay_stream(client_reader, server_writer, shutdown_notify.clone());
+    let server_to_client = relay_stream(server_reader, client_writer, shutdown_notify);
 
     tokio::select! {
         result = client_to_server => result,
@@ -29,18 +28,15 @@ async fn handle_client(
 
 async fn relay_stream(
     mut read_stream: impl AsyncReadExt + Unpin,
-    write_stream: impl AsyncWriteExt + Unpin,
+    mut write_stream: impl AsyncWriteExt + Unpin,
     shutdown_notify: Arc<Notify>,
 ) -> std::io::Result<()> {
-    // Prefix the io::Result with std to prevent ambiguity
-    let mut write_stream = write_stream;
     let mut buffer = vec![0u8; 65536];
     loop {
         tokio::select! {
             read_result = read_stream.read(&mut buffer) => {
                 match read_result {
                     Ok(0) => {
-                        // End of stream.
                         break;
                     },
                     Ok(n) => {
@@ -67,7 +63,6 @@ async fn retryable_write(
     writer: &mut (impl AsyncWriteExt + Unpin),
     buf: &[u8],
 ) -> std::io::Result<()> {
-    // Prefix the io::Result with std to prevent ambiguity
     let mut attempts = 0;
     loop {
         match writer.write_all(buf).await {
@@ -100,7 +95,6 @@ pub async fn start_http_proxy(
     is_running: Arc<AtomicBool>,
     shutdown_notify: Arc<Notify>,
 ) -> std::io::Result<()> {
-    // Prefix the io::Result with std to prevent ambiguity
     let tcp_listener = TcpListener::bind(format!("0.0.0.0:{}", proxy_port)).await?;
     info!("HTTP Proxy started on port {}", proxy_port);
 
