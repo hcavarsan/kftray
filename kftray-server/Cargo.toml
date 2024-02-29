@@ -11,4 +11,4 @@ byteorder = "1.4"
 tokio = { version = "1", features = ["full"] }
 
 [dev-dependencies]
-mockall = "0.10"
+mockall = "0.12"
