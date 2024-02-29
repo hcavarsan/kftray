@@ -309,7 +309,12 @@ const PortForwardTable: React.FC<TableProps> = ({
             </AlertDialogContent>
           </AlertDialogOverlay>
         </AlertDialog>
-        <Tooltip label={`Kftray v${version}`} aria-label='Kftray version'>
+        <Tooltip
+          label={`Kftray v${version}`}
+          aria-label='Kftray version'
+          fontSize='xs'
+          lineHeight='tight'
+        >
           <Image src={logo} alt='Kftray Logo' boxSize='30px' ml={3} mt={0.5} />
         </Tooltip>
         <InputGroup size='xs' width='250px'>
@@ -519,6 +524,8 @@ const PortForwardTable: React.FC<TableProps> = ({
                           hasArrow
                           label={`${contextRunningCount} running out of ${contextTotalCount} total`}
                           bg='gray.300'
+                          fontSize='xs'
+                          lineHeight='tight'
                         >
                           <Tag
                             size='sm'
