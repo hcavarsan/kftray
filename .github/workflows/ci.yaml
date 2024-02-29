@@ -30,7 +30,7 @@ jobs:
           version: 8.11.0
 
       - name: Install Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: 20.11.0
           cache: 'pnpm'
@@ -79,7 +79,7 @@ jobs:
           components: clippy
 
       - name: Install Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: 20.11.0
 
