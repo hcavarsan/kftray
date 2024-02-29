@@ -9,7 +9,7 @@ edition = "2021"
 [dependencies]
 tauri = { version = "1.6", features = [ "api-all", "macos-private-api", "system-tray"] }
 kube = { version = "0.87.2", features = ["client", "config", "rustls-tls", "ws"] }
-k8s-openapi = { version = "0.20.0", default-features = false, features = ["latest"] }
+k8s-openapi = { version = "0.21.0", default-features = false, features = ["latest"] }
 tokio = { version = "1.32.0", features = [ "full" ] }
 tokio-stream = { version = "0.1.14", features = ["net"] }
 futures = "0.3.28"
