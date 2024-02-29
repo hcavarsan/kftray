@@ -1,6 +1,21 @@
 {
     "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-    "extends": ["config:base", ":preserveSemverRanges", ":semanticCommitTypeAll(chore)", "schedule:daily"],
+    "extends": [
+		"config:base",
+		":preserveSemverRanges",
+		":semanticCommitTypeAll(chore)",
+		"schedule:daily",
+        "group:allNonMajor",
+        ":combinePatchMinorReleases",
+        ":enableVulnerabilityAlertsWithLabel(security)",
+        ":ignoreModulesAndTests",
+        ":label(dependencies)",
+        ":prNotPending",
+        ":rebaseStalePrs",
+        ":semanticCommits",
+        ":separateMajorReleases",
+        ":timezone(America/Sao_Paulo)"
+	],
     "lockFileMaintenance": {
         "enabled": true,
         "automerge": false
