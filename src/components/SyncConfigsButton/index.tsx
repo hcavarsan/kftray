@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 
 import { RepeatIcon } from '@chakra-ui/icons'
-import { Box, Button, Text, Tooltip } from '@chakra-ui/react'
+import { Box, IconButton, Text, Tooltip } from '@chakra-ui/react'
 import { invoke } from '@tauri-apps/api/tauri'
 
 import { GitConfig, SyncConfigsButtonProps } from '../../types'
@@ -70,30 +70,31 @@ const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
     }
   }
 
-  if (!credentialsSaved) {
-    return null
-  }
-
   const tooltipContent = (
-    <Box fontSize='sm' lineHeight='tight'>
-      <Text>Repo URL: {credentials?.repoUrl}</Text>
-      <Text>Config Path: {credentials?.configPath}</Text>
-      <Text>Private Repo: {credentials?.isPrivate ? 'Yes' : 'No'}</Text>
+    <Box fontSize='xs' lineHeight='tight'>
+      {credentialsSaved ? (
+        <>
+          <Text>Github Sync Enabled</Text>
+          <Text>Repo URL: {credentials?.repoUrl}</Text>
+          <Text>Config Path: {credentials?.configPath}</Text>
+          <Text>Private Repo: {credentials?.isPrivate ? 'Yes' : 'No'}</Text>
+        </>
+      ) : (
+        <Text>Github Sync Disabled</Text>
+      )}
     </Box>
   )
 
   return (
-    <Tooltip hasArrow label={tooltipContent} placement='top' shouldWrapChildren>
-      <Button
-        onClick={handleSyncConfigs}
-        size='xs'
-        colorScheme='facebook'
-        disabled={isLoading}
+    <Tooltip hasArrow label={tooltipContent} placement='top'>
+      <IconButton
         variant='outline'
-        leftIcon={<RepeatIcon />}
-      >
-        Sync Configs
-      </Button>
+        icon={<RepeatIcon />}
+        colorScheme='facebook'
+        onClick={handleSyncConfigs}
+        isDisabled={!credentialsSaved}
+        size='sm'
+      />
     </Tooltip>
   )
 }
