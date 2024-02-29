@@ -23,7 +23,7 @@ use commands::SaveDialogState;
 fn main() {
     logging::setup_logging();
     let _ = fix_path_env::fix();
-// configure tray menu
+    // configure tray menu
     let system_tray = tray::create_tray_menu();
     tauri::Builder::default()
         .manage(SaveDialogState::default())
