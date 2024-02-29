@@ -134,10 +134,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
     setIsImportAlertOpen(true)
   }
   const onConfirmImport = async () => {
-    // Close the AlertDialog
     setIsImportAlertOpen(false)
 
-    // Set loading state on
     setIsLoading(true)
 
     const credentials = JSON.stringify({
@@ -168,7 +166,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
     } catch (error) {
       console.error('Failed to save settings:', error)
     } finally {
-      // Set loading state off and close the modal
       setIsLoading(false)
       closeSettingsModal()
     }
