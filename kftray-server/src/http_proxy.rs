@@ -75,6 +75,7 @@ async fn handle_client(
             match server_reader.read(&mut buf).await {
                 Ok(0) => {
                     info!("Server stream closed");
+                    break;
                 }
                 Ok(n) => {
                     debug!(
