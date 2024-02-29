@@ -1,6 +1,4 @@
-
 use rusqlite::Connection;
-
 
 //  function to clear existing configs from the database
 pub fn clear_existing_configs() -> Result<(), rusqlite::Error> {
