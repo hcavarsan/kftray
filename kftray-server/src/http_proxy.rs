@@ -1,7 +1,7 @@
-use log::{debug, error, info, warn};
+use log::{error, info, warn};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use tokio::io::{self, AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncReadExt, AsyncWriteExt}; // Remove the self import as it's not needed
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::Notify;
 use tokio::time::{self, Duration};
@@ -9,13 +9,69 @@ use tokio::time::{self, Duration};
 const MAX_RETRIES: u32 = 5;
 const RETRY_DELAY: Duration = Duration::from_secs(1);
 
-async fn retryable_write(writer: &mut (impl AsyncWriteExt + Unpin), buf: &[u8]) -> io::Result<()> {
+async fn handle_client(
+    client_stream: TcpStream,
+    server_stream: TcpStream,
+    shutdown_notify: Arc<Notify>,
+) -> std::io::Result<()> {
+    // Prefix the io::Result with std to prevent ambiguity
+    let (client_reader, mut client_writer) = tokio::io::split(client_stream); // No need to prefix with io::
+    let (server_reader, mut server_writer) = server_stream.into_split();
+
+    let client_to_server = relay_stream(client_reader, &mut server_writer, shutdown_notify.clone());
+    let server_to_client = relay_stream(server_reader, &mut client_writer, shutdown_notify);
+
+    tokio::select! {
+        result = client_to_server => result,
+        result = server_to_client => result,
+    }
+}
+
+async fn relay_stream(
+    mut read_stream: impl AsyncReadExt + Unpin,
+    write_stream: impl AsyncWriteExt + Unpin,
+    shutdown_notify: Arc<Notify>,
+) -> std::io::Result<()> {
+    // Prefix the io::Result with std to prevent ambiguity
+    let mut write_stream = write_stream;
+    let mut buffer = vec![0u8; 65536];
+    loop {
+        tokio::select! {
+            read_result = read_stream.read(&mut buffer) => {
+                match read_result {
+                    Ok(0) => {
+                        // End of stream.
+                        break;
+                    },
+                    Ok(n) => {
+                        retryable_write(&mut write_stream, &buffer[..n]).await?;
+                    },
+                    Err(e) => {
+                        error!("Failed to read from stream: {}", e);
+                        return Err(e);
+                    },
+                }
+            },
+
+            _ = shutdown_notify.notified() => {
+                info!("Shutdown signal received.");
+                break;
+            },
+        };
+    }
+    write_stream.shutdown().await?;
+    Ok(())
+}
+
+async fn retryable_write(
+    writer: &mut (impl AsyncWriteExt + Unpin),
+    buf: &[u8],
+) -> std::io::Result<()> {
+    // Prefix the io::Result with std to prevent ambiguity
     let mut attempts = 0;
     loop {
         match writer.write_all(buf).await {
-            Ok(()) => {
-                return Ok(());
-            }
+            Ok(()) => return Ok(()),
             Err(e) if attempts < MAX_RETRIES => {
                 warn!(
                     "Failed to write to stream, attempt {}: {}. Retrying in {} seconds...",
@@ -37,134 +93,41 @@ async fn retryable_write(writer: &mut (impl AsyncWriteExt + Unpin), buf: &[u8]) 
     }
 }
 
-async fn handle_client(
-    client_stream: TcpStream,
-    server_stream: TcpStream,
-    shutdown_notify: Arc<Notify>,
-) -> io::Result<()> {
-    let (mut client_reader, mut client_writer) = io::split(client_stream);
-    let (mut server_reader, mut server_writer) = io::split(server_stream);
-
-    let client_to_server = tokio::spawn(async move {
-        let mut buf = vec![0; 65536];
-        loop {
-            match client_reader.read(&mut buf).await {
-                Ok(0) => {
-                    info!("Client stream closed; stopping client_to_server loop.");
-                    break;
-                }
-                Ok(n) => {
-                    debug!(
-                        "Read {} bytes from client stream; writing to server stream.",
-                        n
-                    );
-                    retryable_write(&mut server_writer, &buf[..n]).await?;
-                }
-                Err(e) => {
-                    error!("An error occurred while reading from client stream: {}", e);
-                    return Err(e);
-                }
-            }
-        }
-        Ok::<(), io::Error>(())
-    });
-
-    let server_to_client = tokio::spawn(async move {
-        let mut buf = vec![0; 65536];
-        loop {
-            match server_reader.read(&mut buf).await {
-                Ok(0) => {
-                    info!("Server stream closed");
-                    break;
-                }
-                Ok(n) => {
-                    debug!(
-                        "Read {} bytes from server stream; writing to client stream.",
-                        n
-                    );
-                    retryable_write(&mut client_writer, &buf[..n]).await?;
-                }
-                Err(e) => {
-                    error!("An error occurred while reading from server stream: {}", e);
-                    break;
-                }
-            }
-        }
-        Ok::<(), io::Error>(())
-    });
-
-    tokio::select! {
-        result = client_to_server => {
-            match result {
-                Ok(Ok(())) => {
-                    info!("client_to_server task completed successfully.");
-                    Ok(())
-                },
-                Ok(Err(e)) => {
-                    error!("client_to_server task encountered an IO error: {}", e);
-                    Err(e)
-                },
-                Err(e) => {
-                    error!("client_to_server task failed to join: {}", e);
-                    Err(std::io::Error::new(std::io::ErrorKind::Other, e))
-                },
-            }
-        },
-        result = server_to_client => {
-            match result {
-                Ok(Ok(())) => {
-                    info!("server_to_client task completed successfully.");
-                    Ok(())
-                },
-                Ok(Err(e)) => {
-                    error!("server_to_client task encountered an IO error: {}", e);
-                    Err(e)
-                },
-                Err(e) => {
-                    error!("server_to_client task failed to join: {}", e);
-                    Err(std::io::Error::new(std::io::ErrorKind::Other, e))
-                },
-            }
-        },
-        _ = shutdown_notify.notified() => {
-            warn!("Shutdown signal received. Exiting handle_client.");
-            Ok(())
-        },
-    }
-}
-
 pub async fn start_http_proxy(
     target_host: &str,
     target_port: u16,
     proxy_port: u16,
     is_running: Arc<AtomicBool>,
     shutdown_notify: Arc<Notify>,
-) -> io::Result<()> {
+) -> std::io::Result<()> {
+    // Prefix the io::Result with std to prevent ambiguity
     let tcp_listener = TcpListener::bind(format!("0.0.0.0:{}", proxy_port)).await?;
-
     info!("HTTP Proxy started on port {}", proxy_port);
 
     while is_running.load(Ordering::SeqCst) {
-        let (client_stream, peer_addr) = tcp_listener.accept().await?;
-
-        info!("Accepted connection from {}", peer_addr);
-
-        let server_stream_result =
-            TcpStream::connect(format!("{}:{}", target_host, target_port)).await;
-
-        let server_stream = match server_stream_result {
-            Ok(stream) => {
-                info!("Connected to server at {}:{}", target_host, target_port);
-                stream
-            }
+        let (client_stream, peer_addr) = match tcp_listener.accept().await {
+            Ok((stream, addr)) => (stream, addr),
             Err(e) => {
-                error!(
-                    "Failed to connect to server at {}:{}: {}",
-                    target_host, target_port, e
-                );
+                error!("Failed to accept client: {}", e);
                 continue;
             }
         };
+
+        info!("Accepted connection from {}", peer_addr);
+
+        let server_stream =
+            match TcpStream::connect(format!("{}:{}", target_host, target_port)).await {
+                Ok(stream) => stream,
+                Err(e) => {
+                    error!(
+                        "Failed to connect to server at {}:{}: {}",
+                        target_host, target_port, e
+                    );
+                    continue;
+                }
+            };
+
+        info!("Connected to server at {}:{}", target_host, target_port);
 
         let shutdown_notify_clone = shutdown_notify.clone();
 
@@ -177,7 +140,6 @@ pub async fn start_http_proxy(
     }
 
     info!("HTTP Proxy stopped.");
-
     Ok(())
 }
 
@@ -189,7 +151,7 @@ mod tests {
     use tokio::sync::watch;
     use tokio::time::{self};
 
-    async fn start_echo_server() -> io::Result<(u16, watch::Sender<bool>)> {
+    async fn start_echo_server() -> std::io::Result<(u16, watch::Sender<bool>)> {
         let listener = TcpListener::bind("127.0.0.1:0").await?;
         let local_port = listener.local_addr()?.port();
         let (shutdown_sender, mut shutdown_receiver) = watch::channel(false);
