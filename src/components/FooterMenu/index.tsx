@@ -21,10 +21,10 @@ import {
   useColorModeValue,
 } from '@chakra-ui/react'
 
-import { MenuProps } from '../../types'
+import { FooterMenu } from '../../types'
 import SyncConfigsButton from '../SyncConfigsButton'
 
-const MenuOptions: React.FC<MenuProps> = ({
+const FooterMenu: React.FC<FooterMenu> = ({
   openModal,
   openSettingsModal,
   handleExportConfigs,
@@ -36,7 +36,7 @@ const MenuOptions: React.FC<MenuProps> = ({
   selectedConfigs,
   handleDeleteConfigs,
 }) => {
-  const borderColor = useColorModeValue('gray.200', 'gray.600')
+  const borderColor = useColorModeValue('gray.500', 'gray.700')
 
   return (
     <Flex
@@ -45,13 +45,14 @@ const MenuOptions: React.FC<MenuProps> = ({
       justifyContent='flex-start'
       top='0'
       bg='gray.800'
-      py='1.5'
-      px='2'
+      py='1'
+      px='1'
       boxShadow='lg'
       borderRadius='lg'
       border='1px'
-      width='97%'
+      width='99%'
       borderColor={borderColor}
+      mb='1'
     >
       <Menu placement='top-end'>
         <Tooltip
@@ -64,9 +65,10 @@ const MenuOptions: React.FC<MenuProps> = ({
             as={IconButton}
             aria-label='Options'
             icon={<IoSettingsOutline />}
-            size='xs'
+            size='sm'
             colorScheme='facebook'
             variant='outline'
+            borderColor={borderColor}
           />
         </Tooltip>
         <MenuList zIndex='popover'>
@@ -96,9 +98,10 @@ const MenuOptions: React.FC<MenuProps> = ({
             colorScheme='facebook'
             onClick={openModal}
             isDisabled={credentialsSaved}
-            size='xs'
+            size='sm'
             ml={2}
             aria-label='Add New Config'
+            borderColor={borderColor}
           />
         </Tooltip>
         {selectedConfigs.length > 0 && (
@@ -114,7 +117,7 @@ const MenuOptions: React.FC<MenuProps> = ({
               onClick={() =>
                 handleDeleteConfigs(selectedConfigs.map(config => config.id))
               }
-              size='xs'
+              size='sm'
               aria-label='Delete selected configs'
               icon={<MdDelete />}
               ml={2}
@@ -136,4 +139,4 @@ const MenuOptions: React.FC<MenuProps> = ({
   )
 }
 
-export default MenuOptions
+export default FooterMenu

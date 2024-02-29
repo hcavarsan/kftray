@@ -93,7 +93,7 @@ const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
         colorScheme='facebook'
         onClick={handleSyncConfigs}
         isDisabled={!credentialsSaved}
-        size='xs'
+        size='sm'
         aria-label='Sync Configs'
       />
     </Tooltip>
