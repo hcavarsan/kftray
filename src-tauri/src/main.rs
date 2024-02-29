@@ -23,7 +23,7 @@ use commands::SaveDialogState;
 fn main() {
     logging::setup_logging();
     let _ = fix_path_env::fix();
-
+// configure tray menu
     let system_tray = tray::create_tray_menu();
     tauri::Builder::default()
         .manage(SaveDialogState::default())
@@ -39,7 +39,7 @@ fn main() {
             }
 
             let window = app.get_window("main").unwrap();
-
+            // register global shortcut to open the app
             let mut shortcut = app.global_shortcut_manager();
             shortcut
                 .register("CmdOrCtrl+Shift+F1", move || {
@@ -71,6 +71,7 @@ fn main() {
                     size: _,
                     ..
                 } => {
+                    // temp solution due to a limitation in libappindicator and tray events in linux
                     let window = app.get_window("main").unwrap();
                     #[cfg(target_os = "linux")]
                     let _ = window.move_window(Position::TopRight);
