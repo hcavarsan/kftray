@@ -29,6 +29,23 @@ async fn main() {
         exit(1);
     });
 
+    let resolved_target_host = match target_host.parse::<std::net::IpAddr>() {
+        Ok(ip_addr) => ip_addr.to_string(),
+        Err(_) => match tokio::net::lookup_host((target_host.as_str(), 0)).await {
+            Ok(mut ip_iter) => ip_iter
+                .next()
+                .map(|socket_addr| socket_addr.ip().to_string())
+                .unwrap_or_else(|| {
+                    error!("Failed to resolve the domain to an IP.");
+                    exit(1);
+                }),
+            Err(_) => {
+                error!("Unable to resolve the REMOTE_ADDRESS domain.");
+                exit(1);
+            }
+        },
+    };
+
     let target_port: u16 = env::var("REMOTE_PORT")
         .unwrap_or_else(|_| {
             error!("REMOTE_PORT not set.");
@@ -60,7 +77,7 @@ async fn main() {
         "tcp" => {
             info!("Starting HTTP proxy...");
             if let Err(e) = http_proxy::start_http_proxy(
-                &target_host,
+                &resolved_target_host,
                 target_port,
                 proxy_port,
                 Arc::clone(&is_running),
@@ -74,7 +91,7 @@ async fn main() {
         "udp" => {
             info!("Starting UDP over TCP proxy...");
             if let Err(e) = udp_over_tcp_proxy::start_udp_over_tcp_proxy(
-                &target_host,
+                &resolved_target_host,
                 target_port,
                 proxy_port,
                 Arc::clone(&is_running),
@@ -85,7 +102,7 @@ async fn main() {
         "http" => {
             info!("Starting HTTP proxy...");
             if let Err(e) = http_proxy::start_http_proxy(
-                &target_host,
+                &resolved_target_host,
                 target_port,
                 proxy_port,
                 Arc::clone(&is_running),
