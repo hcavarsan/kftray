@@ -14,7 +14,7 @@ async fn retryable_write(writer: &mut (impl AsyncWriteExt + Unpin), buf: &[u8]) 
     loop {
         match writer.write_all(buf).await {
             Ok(()) => {
-                info!("Successfully wrote to stream.");
+                return Ok(());
             }
             Err(e) if attempts < MAX_RETRIES => {
                 warn!(
@@ -46,7 +46,7 @@ async fn handle_client(
     let (mut server_reader, mut server_writer) = io::split(server_stream);
 
     let client_to_server = tokio::spawn(async move {
-        let mut buf = vec![0; 4096];
+        let mut buf = vec![0; 65536];
         loop {
             match client_reader.read(&mut buf).await {
                 Ok(0) => {
@@ -70,7 +70,7 @@ async fn handle_client(
     });
 
     let server_to_client = tokio::spawn(async move {
-        let mut buf = vec![0; 4096];
+        let mut buf = vec![0; 65536];
         loop {
             match server_reader.read(&mut buf).await {
                 Ok(0) => {
@@ -200,7 +200,7 @@ mod tests {
                     accept_result = listener.accept() => {
                         if let Ok((mut socket, _)) = accept_result {
                             let (mut reader, mut writer) = socket.split();
-                            let mut buffer = [0; 1024];
+                            let mut buffer = [0; 65536];
                             while let Ok(read_bytes) = reader.read(&mut buffer).await {
                                 if read_bytes == 0 {
                                     break;

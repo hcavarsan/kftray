@@ -6,7 +6,7 @@ use std::sync::{atomic::AtomicBool, Arc};
 use std::thread;
 
 fn relay_streams<R: Read, W: Write>(mut read_stream: R, mut write_stream: W) -> IoResult<()> {
-    let mut buffer = [0; 4096];
+    let mut buffer = [0; 65536];
     loop {
         match read_stream.read(&mut buffer) {
             Ok(0) => {
