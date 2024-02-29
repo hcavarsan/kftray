@@ -1,6 +1,21 @@
 {
-  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": [
-    "config:recommended"
-  ]
+    "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+    "extends": ["config:base", ":preserveSemverRanges", ":semanticCommitTypeAll(chore)"],
+    "lockFileMaintenance": {
+        "enabled": true,
+        "automerge": false
+    },
+    "packageRules": [
+        {
+            "automerge": false,
+            "automergeType": "branch",
+            "matchUpdateTypes": ["patch", "pin", "digest"]
+        },
+        {
+            "automerge": false,
+            "automergeType": "branch",
+            "matchUpdateTypes": ["minor"],
+            "matchCurrentVersion": ">=1.0.0"
+        }
+    ]
 }
