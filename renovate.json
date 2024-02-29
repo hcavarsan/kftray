@@ -1,36 +1,34 @@
 {
-    "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-    "extends": [
+	"$schema": "https://docs.renovatebot.com/renovate-schema.json",
+	"extends": [
 		"config:base",
 		":preserveSemverRanges",
 		":semanticCommitTypeAll(chore)",
 		"schedule:daily",
-        "group:allNonMajor",
-        ":combinePatchMinorReleases",
-        ":enableVulnerabilityAlertsWithLabel(security)",
-        ":ignoreModulesAndTests",
-        ":label(dependencies)",
-        ":prNotPending",
-        ":rebaseStalePrs",
-        ":semanticCommits",
-        ":separateMajorReleases",
-        ":timezone(America/Sao_Paulo)"
+		"group:allNonMajor",
+		":combinePatchMinorReleases",
+		":enableVulnerabilityAlertsWithLabel(security)",
+		":ignoreModulesAndTests",
+		":label(dependencies)",
+		":prNotPending",
+		":rebaseStalePrs",
+		":semanticCommits",
+		":separateMajorReleases",
+		":timezone(America/Sao_Paulo)"
 	],
-    "lockFileMaintenance": {
-        "enabled": true,
-        "automerge": false
-    },
-    "packageRules": [
-        {
-            "automerge": false,
-            "automergeType": "branch",
-            "matchUpdateTypes": ["patch", "pin", "digest"]
-        },
-        {
-            "automerge": false,
-            "automergeType": "branch",
-            "matchUpdateTypes": ["minor"],
-            "matchCurrentVersion": ">=1.0.0"
-        }
-    ]
+	"lockFileMaintenance": {
+		"enabled": true,
+		"automerge": false
+	},
+	"packageRules": [{
+		"matchPackagePatterns": [
+			"*"
+		],
+		"matchUpdateTypes": [
+			"minor",
+			"patch"
+		],
+		"groupName": "all non-major dependencies",
+		"groupSlug": "all-minor-patch"
+	}]
 }
