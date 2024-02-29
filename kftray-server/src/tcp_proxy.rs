@@ -11,7 +11,7 @@ fn relay_streams<R: Read, W: Write>(mut read_stream: R, mut write_stream: W) -> 
         match read_stream.read(&mut buffer) {
             Ok(0) => {
                 debug!("No more bytes to read; end of stream.");
-                break;
+                continue;
             }
             Ok(n) => {
                 debug!("Read {} bytes, now writing them.", n);
