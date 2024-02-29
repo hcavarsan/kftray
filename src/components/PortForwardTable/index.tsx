@@ -193,7 +193,6 @@ const PortForwardTable: React.FC<TableProps> = ({
   useEffect(() => {
     console.log('selectedConfigs', selectedConfigs)
     if (prevSelectedConfigsRef.current !== selectedConfigs) {
-      // Only proceed if selectedConfigs have changed
       const newSelectedConfigsByContext: Record<string, boolean> = {}
 
       for (const context of Object.keys(configsByContext)) {
@@ -207,7 +206,6 @@ const PortForwardTable: React.FC<TableProps> = ({
 
       setSelectedConfigsByContext(newSelectedConfigsByContext)
 
-      // Update the ref to the current selected configs
       prevSelectedConfigsRef.current = selectedConfigs
     }
   }, [selectedConfigs, configsByContext])
