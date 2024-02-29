@@ -8,7 +8,7 @@ import { invoke } from '@tauri-apps/api/tauri'
 
 import { Config, Response, Status } from '../../types'
 import AddConfigModal from '../AddConfigModal'
-import MenuOptions from '../Menu'
+import FooterMenu from '../FooterMenu'
 import PortForwardTable from '../PortForwardTable'
 import SettingsModal from '../SettingsModal'
 
@@ -665,7 +665,15 @@ const KFTray = () => {
           isBulkAlertOpen={isBulkAlertOpen}
           setIsBulkAlertOpen={setIsBulkAlertOpen}
         />
-        <MenuOptions
+
+        <SettingsModal
+          isSettingsModalOpen={isSettingsModalOpen}
+          closeSettingsModal={closeSettingsModal}
+          onSettingsSaved={fetchAndUpdateConfigs}
+          setCredentialsSaved={setCredentialsSaved}
+          credentialsSaved={credentialsSaved}
+        />
+        <FooterMenu
           openModal={openModal}
           openSettingsModal={openSettingsModal}
           handleExportConfigs={handleExportConfigs}
@@ -676,13 +684,6 @@ const KFTray = () => {
           isSettingsModalOpen={isSettingsModalOpen}
           handleDeleteConfigs={handleDeleteConfigs}
           selectedConfigs={selectedConfigs}
-        />
-        <SettingsModal
-          isSettingsModalOpen={isSettingsModalOpen}
-          closeSettingsModal={closeSettingsModal}
-          onSettingsSaved={fetchAndUpdateConfigs}
-          setCredentialsSaved={setCredentialsSaved}
-          credentialsSaved={credentialsSaved}
         />
         <AddConfigModal
           isModalOpen={isModalOpen}

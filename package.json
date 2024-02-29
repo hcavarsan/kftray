@@ -8,6 +8,8 @@
     "dev": "vite",
     "format": "prettier --write ./src/",
     "lint": "eslint . --ext .js,.jsx,.ts,.tsx",
+    "lint:fix": "eslint . --ext .js,.jsx,.ts,.tsx --fix",
+    "precommit": "pnpm run format && pnpm run lint:fix",
     "preview": "vite preview",
     "tauri": "tauri",
     "taze": "taze major -I",
