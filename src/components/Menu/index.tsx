@@ -1,6 +1,12 @@
 import React from 'react'
 import { IoSettingsOutline } from 'react-icons/io5'
-import { MdAdd, MdFileDownload, MdFileUpload, MdSettings } from 'react-icons/md'
+import {
+  MdAdd,
+  MdDelete,
+  MdFileDownload,
+  MdFileUpload,
+  MdSettings,
+} from 'react-icons/md'
 
 import {
   Box,
@@ -27,6 +33,8 @@ const MenuOptions: React.FC<MenuProps> = ({
   credentialsSaved,
   setCredentialsSaved,
   isSettingsModalOpen,
+  selectedConfigs,
+  handleDeleteConfigs,
 }) => {
   const borderColor = useColorModeValue('gray.200', 'gray.600')
 
@@ -56,7 +64,7 @@ const MenuOptions: React.FC<MenuProps> = ({
             as={IconButton}
             aria-label='Options'
             icon={<IoSettingsOutline />}
-            size='sm'
+            size='xs'
             colorScheme='facebook'
             variant='outline'
           />
@@ -88,11 +96,31 @@ const MenuOptions: React.FC<MenuProps> = ({
             colorScheme='facebook'
             onClick={openModal}
             isDisabled={credentialsSaved}
-            size='sm'
+            size='xs'
             ml={2}
             aria-label='Add New Config'
           />
         </Tooltip>
+        {selectedConfigs.length > 0 && (
+          <Tooltip
+            label='Delete Configs'
+            placement='top'
+            fontSize='xs'
+            lineHeight='tight'
+          >
+            <IconButton
+              colorScheme='red'
+              variant='outline'
+              onClick={() =>
+                handleDeleteConfigs(selectedConfigs.map(config => config.id))
+              }
+              size='xs'
+              aria-label='Delete selected configs'
+              icon={<MdDelete />}
+              ml={2}
+            />
+          </Tooltip>
+        )}
         <Spacer />
         <SyncConfigsButton
           serviceName='kftray'

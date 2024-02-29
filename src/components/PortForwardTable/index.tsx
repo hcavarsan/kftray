@@ -68,7 +68,6 @@ const PortForwardTable: React.FC<TableProps> = ({
   selectedConfigs,
   setSelectedConfigs,
   confirmDeleteConfigs,
-  handleDeleteConfigs,
   isBulkAlertOpen,
   setIsBulkAlertOpen,
 }) => {
@@ -379,21 +378,6 @@ const PortForwardTable: React.FC<TableProps> = ({
         </ButtonGroup>
 
         <Flex justifyContent='flex-end' width='100%'>
-          {selectedConfigs.length > 0 && (
-            <IconButton
-              colorScheme='red'
-              variant='outline'
-              mr={5}
-              onClick={() =>
-                handleDeleteConfigs(selectedConfigs.map(config => config.id))
-              }
-              size='xs'
-              aria-label='Delete selected configs'
-              icon={
-                <FontAwesomeIcon icon={faTrash} style={{ fontSize: '12px' }} />
-              }
-            />
-          )}
           <Button
             onClick={toggleExpandAll}
             size='xs'
