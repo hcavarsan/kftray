@@ -1,5 +1,4 @@
 mod http_proxy;
-mod tcp_proxy;
 mod udp_over_tcp_proxy;
 
 use log::{error, info, warn};
@@ -59,14 +58,17 @@ async fn main() {
 
     match proxy_type.as_str() {
         "tcp" => {
-            info!("Starting TCP proxy...");
-            if let Err(e) = tcp_proxy::start_tcp_proxy(
+            info!("Starting HTTP proxy...");
+            if let Err(e) = http_proxy::start_http_proxy(
                 &target_host,
                 target_port,
                 proxy_port,
                 Arc::clone(&is_running),
-            ) {
-                error!("TCP Proxy failed with error: {}", e);
+                Arc::clone(&shutdown_notify),
+            )
+            .await
+            {
+                error!("Failed to start the HTTP proxy: {}", e);
             }
         }
         "udp" => {
