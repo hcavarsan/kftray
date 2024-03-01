@@ -72,7 +72,7 @@ const FooterMenu: React.FC<FooterMenu> = ({
               borderColor={borderColor}
             />
           </Tooltip>
-          <MenuList zIndex='popover'>
+          <MenuList zIndex='popover' fontSize='xs' minW='150px'>
             <MenuItem icon={<MdFileUpload />} onClick={handleExportConfigs}>
               Export Local File
             </MenuItem>
