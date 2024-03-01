@@ -95,7 +95,8 @@ const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
         isDisabled={!credentialsSaved}
         size='sm'
         aria-label='Sync Configs'
-        justifyContent='center' // Add this line
+        justifyContent='center'
+        borderColor='gray.700'
       >
         <HStack spacing={1}>
           <Box as={FaGithub} />
