@@ -240,3 +240,4 @@ KFtray is available under the [MIT License](LICENSE.md), which is included in th
 [![Stargazers over time](https://starchart.cc/hcavarsan/kftray.svg?variant=dark)](https://starchart.cc/hcavarsan/kftray)
 
 
+
