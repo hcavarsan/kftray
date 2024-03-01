@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react'
+import { FaGithub } from 'react-icons/fa' // Import Github icon from react-icons
 
 import { RepeatIcon } from '@chakra-ui/icons'
-import { Box, IconButton, Text, Tooltip } from '@chakra-ui/react'
+import { Box, Button, HStack, Text, Tooltip } from '@chakra-ui/react'
 import { invoke } from '@tauri-apps/api/tauri'
 
 import { GitConfig, SyncConfigsButtonProps } from '../../types'
@@ -87,15 +88,20 @@ const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
 
   return (
     <Tooltip hasArrow label={tooltipContent} placement='top'>
-      <IconButton
+      <Button
         variant='outline'
-        icon={<RepeatIcon />}
         colorScheme='facebook'
         onClick={handleSyncConfigs}
         isDisabled={!credentialsSaved}
         size='sm'
         aria-label='Sync Configs'
-      />
+        justifyContent='center' // Add this line
+      >
+        <HStack spacing={1}>
+          <Box as={FaGithub} />
+          <RepeatIcon />
+        </HStack>
+      </Button>
     </Tooltip>
   )
 }
