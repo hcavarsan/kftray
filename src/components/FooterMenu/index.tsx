@@ -41,90 +41,94 @@ const FooterMenu: React.FC<FooterMenu> = ({
   return (
     <Flex
       as='footer'
-      direction='row'
-      justifyContent='flex-start'
-      top='0'
+      direction={{ base: 'column', sm: 'row' }}
+      justifyContent='space-between'
+      wrap='wrap'
       bg='gray.800'
-      py='1'
-      px='1'
-      boxShadow='lg'
+      py={{ base: 2, sm: 1 }}
+      px={{ base: 2, sm: 1 }}
+      boxShadow='0px 0px 8px 3px rgba(0, 0, 0, 0.2)'
       borderRadius='lg'
       border='1px'
-      width='99%'
       borderColor={borderColor}
-      mb='1'
+      mb={3}
+      width='97%'
     >
-      <Menu placement='top-end'>
-        <Tooltip
-          label='Configurations'
-          placement='top'
-          fontSize='xs'
-          lineHeight='tight'
-        >
-          <MenuButton
-            as={IconButton}
-            aria-label='Options'
-            icon={<IoSettingsOutline />}
-            size='sm'
-            colorScheme='facebook'
-            variant='outline'
-            borderColor={borderColor}
-          />
-        </Tooltip>
-        <MenuList zIndex='popover'>
-          <MenuItem icon={<MdFileUpload />} onClick={handleExportConfigs}>
-            Export Local File
-          </MenuItem>
-          <MenuItem
-            icon={<MdFileDownload />}
-            isDisabled={credentialsSaved}
-            onClick={handleImportConfigs}
-          >
-            Import Local File
-          </MenuItem>
-          <MenuItem icon={<MdSettings />} onClick={openSettingsModal}>
-            Configure Git Sync
-          </MenuItem>
-        </MenuList>
-        <Tooltip
-          label='Add New Config'
-          placement='top'
-          fontSize='xs'
-          lineHeight='tight'
-        >
-          <IconButton
-            variant='outline'
-            icon={<MdAdd />}
-            colorScheme='facebook'
-            onClick={openModal}
-            isDisabled={credentialsSaved}
-            size='sm'
-            ml={2}
-            aria-label='Add New Config'
-            borderColor={borderColor}
-          />
-        </Tooltip>
-        {selectedConfigs.length > 0 && (
+      <Flex align='center' mb={{ base: 2, sm: 0 }}>
+        <Menu placement='top-end'>
           <Tooltip
-            label='Delete Configs'
+            label='Configurations'
+            placement='top'
+            fontSize='xs'
+            lineHeight='tight'
+          >
+            <MenuButton
+              as={IconButton}
+              aria-label='Options'
+              icon={<IoSettingsOutline />}
+              size='sm'
+              colorScheme='facebook'
+              variant='outline'
+              borderColor={borderColor}
+            />
+          </Tooltip>
+          <MenuList zIndex='popover'>
+            <MenuItem icon={<MdFileUpload />} onClick={handleExportConfigs}>
+              Export Local File
+            </MenuItem>
+            <MenuItem
+              icon={<MdFileDownload />}
+              isDisabled={credentialsSaved}
+              onClick={handleImportConfigs}
+            >
+              Import Local File
+            </MenuItem>
+            <MenuItem icon={<MdSettings />} onClick={openSettingsModal}>
+              Configure Git Sync
+            </MenuItem>
+          </MenuList>
+          <Tooltip
+            label='Add New Config'
             placement='top'
             fontSize='xs'
             lineHeight='tight'
           >
             <IconButton
-              colorScheme='red'
               variant='outline'
-              onClick={() =>
-                handleDeleteConfigs(selectedConfigs.map(config => config.id))
-              }
+              icon={<MdAdd />}
+              colorScheme='facebook'
+              onClick={openModal}
+              isDisabled={credentialsSaved}
               size='sm'
-              aria-label='Delete selected configs'
-              icon={<MdDelete />}
               ml={2}
+              aria-label='Add New Config'
+              borderColor={borderColor}
             />
           </Tooltip>
-        )}
-        <Spacer />
+          {selectedConfigs.length > 0 && (
+            <Tooltip
+              label='Delete Configs'
+              placement='top'
+              fontSize='xs'
+              lineHeight='tight'
+            >
+              <IconButton
+                colorScheme='red'
+                variant='outline'
+                onClick={() =>
+                  handleDeleteConfigs(selectedConfigs.map(config => config.id))
+                }
+                size='sm'
+                aria-label='Delete selected configs'
+                icon={<MdDelete />}
+                ml={2}
+              />
+            </Tooltip>
+          )}
+        </Menu>
+      </Flex>
+
+      <Flex align='center' flexGrow={1} justifyContent={{ sm: 'flex-end' }}>
         <SyncConfigsButton
           serviceName='kftray'
           accountName='github_config'
@@ -134,7 +138,7 @@ const FooterMenu: React.FC<FooterMenu> = ({
           setCredentialsSaved={setCredentialsSaved}
           isSettingsModalOpen={isSettingsModalOpen}
         />
-      </Menu>
+      </Flex>
     </Flex>
   )
 }
