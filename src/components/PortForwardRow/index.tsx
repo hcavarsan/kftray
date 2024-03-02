@@ -48,7 +48,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   const [isRunning, setIsRunning] = useState(false)
 
   const handleOpenLocalURL = () => {
-    open(`http://127.0.0.1:${config.local_port}`).catch(error => {
+    open(`http://${config.local_address}:${config.local_port}`).catch(error => {
       console.error('Error opening the URL:', error)
     })
   }
