@@ -1,7 +1,7 @@
 use image::io::Reader as ImageReader;
 use image::{DynamicImage, ImageError, ImageFormat};
 use std::fs::{self, File};
-use std::io::Error as IoError;
+use std::io::{BufWriter, Error as IoError};
 use std::path::PathBuf;
 use std::process::Command;
 use thiserror::Error;
@@ -10,11 +10,15 @@ const SRC_FILE: &str = "./img/logo.png";
 const DST_PATH: &str = "./src-tauri/icons";
 
 #[derive(Debug, Error)]
-enum CustomError {
+pub enum CustomError {
     #[error("Image error: {0}")]
     ImageError(#[from] ImageError),
+
     #[error("IO error: {0}")]
     IoError(#[from] IoError),
+
+    #[error("Iconutil command failed: {0}")]
+    CommandError(String),
 }
 
 fn main() -> Result<(), CustomError> {
@@ -32,48 +36,71 @@ fn main() -> Result<(), CustomError> {
 
 fn generate_png_icons() -> Result<(), CustomError> {
     println!("Info: Generating PNG icons ...");
-    let sizes = [16, 24, 32, 48, 64, 128, 256, 512, 1024];
+    let sizes = [32, 128, 256, 512];
     let src = ImageReader::open(SRC_FILE)?
         .with_guessed_format()?
         .decode()?;
+
+    resize_and_save(
+        &src,
+        256,
+        256,
+        &PathBuf::from(DST_PATH).join("128x128@2x.png"),
+    )?;
+
     for size in sizes.iter() {
         resize_and_save(
             &src,
             *size,
             *size,
-            &PathBuf::from(DST_PATH).join(format!("icon_{}x{}.png", size, size)),
+            &PathBuf::from(DST_PATH).join(format!("{}x{}.png", size, size)),
         )?;
     }
     Ok(())
 }
-
 fn generate_icns() -> Result<(), CustomError> {
     println!("Info: Generating icon.icns ...");
+
     let icns_path = PathBuf::from(DST_PATH).join("icon.iconset");
     fs::create_dir_all(&icns_path)?;
 
-    let sizes = [16, 32, 64, 128, 256, 512, 1024];
+    let sizes = [
+        (16, 1),
+        (16, 2), // 16x16@1x and 16x16@2x (32x32)
+        (32, 1),
+        (32, 2), // 32x32@1x and 32x32@2x (64x64)
+        (128, 1),
+        (128, 2), // 128x128@1x and 128x128@2x (256x256)
+        (256, 1),
+        (256, 2), // 256x256@1x and 256x256@2x (512x512)
+        (512, 1),
+        (512, 2), // 512x512@1x and 512x512@2x (1024x1024)
+    ];
+
     let src = ImageReader::open(SRC_FILE)?.decode()?;
-    for size in sizes.iter() {
-        let factor = if *size > 16 { 2 } else { 1 };
-        let actual_size = size / factor;
-        let file_name = if factor > 1 {
-            format!("icon_{}x{}@2x.png", actual_size, actual_size)
+
+    for (size, factor) in sizes {
+        let filename = if factor == 2 {
+            format!("icon_{}x{}@2x.png", size / factor, size / factor)
         } else {
             format!("icon_{}x{}.png", size, size)
         };
-        resize_and_save(&src, *size, *size, &icns_path.join(&file_name))?;
+        let output_size = size * factor;
+        resize_and_save(&src, output_size, output_size, &icns_path.join(&filename))?;
     }
 
-    Command::new("iconutil")
-        .arg("-c")
-        .arg("icns")
-        .arg(&icns_path)
-        .arg("-o")
-        .arg(PathBuf::from(DST_PATH).join("icon.icns"))
-        .status()?;
+    let output = Command::new("iconutil")
+        .args(["-c", "icns", &icns_path.to_str().unwrap(), "-o"])
+        .arg(icns_path.with_extension("icns").to_str().unwrap())
+        .output()?;
 
-    fs::remove_dir_all(icns_path)?;
+    if !output.status.success() {
+        let error_message = String::from_utf8_lossy(&output.stderr).to_string();
+        fs::remove_dir_all(&icns_path)?;
+        return Err(CustomError::CommandError(error_message));
+    }
+
+    fs::remove_dir_all(&icns_path)?;
     Ok(())
 }
 
@@ -93,7 +120,7 @@ fn generate_ico() -> Result<(), CustomError> {
     }
 
     let file_path = PathBuf::from(DST_PATH).join("icon.ico");
-    let file_out = File::create(file_path)?;
+    let file_out = BufWriter::new(File::create(file_path)?);
     icon_dir.write(file_out)?;
 
     Ok(())
@@ -105,7 +132,7 @@ fn resize_and_save(
     height: u32,
     save_path: &PathBuf,
 ) -> Result<(), CustomError> {
-    src.resize(width, height, image::imageops::FilterType::Lanczos3)
+    src.resize_exact(width, height, image::imageops::FilterType::Lanczos3)
         .save_with_format(save_path, ImageFormat::Png)?;
     Ok(())
 }
