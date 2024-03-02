@@ -1,5 +1,6 @@
 import React, { useState } from 'react'
 
+import { ExternalLinkIcon } from '@chakra-ui/icons'
 import {
   AlertDialog,
   AlertDialogBody,
@@ -21,6 +22,7 @@ import {
 } from '@chakra-ui/react'
 import { faInfoCircle, faPen, faTrash } from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { open } from '@tauri-apps/api/shell'
 import { invoke } from '@tauri-apps/api/tauri'
 
 import { PortForwardRowProps } from '../../types'
@@ -44,6 +46,14 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   const textColor = useColorModeValue('gray.100', 'gray.100')
   const cancelRef = React.useRef<HTMLButtonElement>(null)
   const [isRunning, setIsRunning] = useState(false)
+
+  const handleOpenLocalURL = () => {
+    open(`http://127.0.0.1:${config.local_port}`).catch(error => {
+      console.error('Error opening the URL:', error)
+    })
+  }
+
+  const openLocalURLIcon = <ExternalLinkIcon style={{ fontSize: '10px' }} />
 
   const startPortForwarding = async () => {
     setIsRunning(true)
@@ -204,6 +214,29 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
               onChange={e => togglePortForwarding(e.target.checked)}
               isDisabled={isRunning || isInitiating}
             />
+            {config.isRunning && (
+              <Tooltip
+                hasArrow
+                label='Open URL'
+                placement='top-start'
+                bg='gray.300'
+                p={1}
+                size='xs'
+                fontSize='xs'
+              >
+                <IconButton
+                  aria-label='Open local URL'
+                  icon={openLocalURLIcon}
+                  onClick={handleOpenLocalURL}
+                  size='xs'
+                  variant='ghost'
+                  _hover={{
+                    background: 'none',
+                    transform: 'none',
+                  }}
+                />
+              </Tooltip>
+            )}
           </Flex>
         </Td>
         <Td>
