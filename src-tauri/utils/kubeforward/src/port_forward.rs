@@ -10,7 +10,6 @@ use tokio::net::TcpListener;
 use tokio::net::UdpSocket as TokioUdpSocket;
 use tokio::task::JoinHandle;
 
-
 use tokio_stream::wrappers::TcpListenerStream;
 
 use crate::{
@@ -63,53 +62,54 @@ impl PortForward {
         self.local_port.unwrap_or(0)
     }
 
-	fn local_address(&self) -> Option<String> {
-		self.local_address.clone()
-	}
+    fn local_address(&self) -> Option<String> {
+        self.local_address.clone()
+    }
 
     /// Runs the port forwarding proxy until a SIGINT signal is received.
-	pub async fn port_forward(self) -> anyhow::Result<(u16, tokio::task::JoinHandle<()>)> {
-		let local_addr = self.local_address()
-			.unwrap_or_else(|| "127.0.0.1".to_string());
-		let addr = format!("{}:{}", local_addr, self.local_port())
-			.parse::<SocketAddr>()
-			.expect("Invalid local address");
+    pub async fn port_forward(self) -> anyhow::Result<(u16, tokio::task::JoinHandle<()>)> {
+        let local_addr = self
+            .local_address()
+            .unwrap_or_else(|| "127.0.0.1".to_string());
+        let addr = format!("{}:{}", local_addr, self.local_port())
+            .parse::<SocketAddr>()
+            .expect("Invalid local address");
 
-		let bind = TcpListener::bind(addr).await?;
-		let port = bind.local_addr()?.port();
-		tracing::trace!(port, "Bound to local address and port");
+        let bind = TcpListener::bind(addr).await?;
+        let port = bind.local_addr()?.port();
+        tracing::trace!(port, "Bound to local address and port");
 
-		let server = TcpListenerStream::new(bind).try_for_each(move |client_conn| {
-			let pf = self.clone();
+        let server = TcpListenerStream::new(bind).try_for_each(move |client_conn| {
+            let pf = self.clone();
 
-			async move {
-				let client_conn = client_conn;
-				if let Ok(peer_addr) = client_conn.peer_addr() {
-					tracing::trace!(%peer_addr, "new connection");
-				}
+            async move {
+                let client_conn = client_conn;
+                if let Ok(peer_addr) = client_conn.peer_addr() {
+                    tracing::trace!(%peer_addr, "new connection");
+                }
 
-				tokio::spawn(async move {
-					if let Err(e) = pf.forward_connection(client_conn).await {
-						tracing::error!(
-							error = e.as_ref() as &dyn std::error::Error,
-							"failed to forward connection"
-						);
-					}
-				});
+                tokio::spawn(async move {
+                    if let Err(e) = pf.forward_connection(client_conn).await {
+                        tracing::error!(
+                            error = e.as_ref() as &dyn std::error::Error,
+                            "failed to forward connection"
+                        );
+                    }
+                });
 
-				Ok(())
-			}
-		});
+                Ok(())
+            }
+        });
 
-		Ok((
-			port,
-			tokio::spawn(async {
-				if let Err(e) = server.await {
-					tracing::error!(error = &e as &dyn std::error::Error, "server error");
-				}
-			}),
-		))
-	}
+        Ok((
+            port,
+            tokio::spawn(async {
+                if let Err(e) = server.await {
+                    tracing::error!(error = &e as &dyn std::error::Error, "server error");
+                }
+            }),
+        ))
+    }
     async fn forward_connection(
         self,
         mut client_conn: tokio::net::TcpStream,
@@ -147,7 +147,9 @@ impl PortForward {
     }
 
     pub async fn port_forward_udp(self) -> anyhow::Result<(u16, JoinHandle<()>)> {
-        let local_address = self.local_address().unwrap_or_else(|| "127.0.0.1".to_string());
+        let local_address = self
+            .local_address()
+            .unwrap_or_else(|| "127.0.0.1".to_string());
         let local_udp_addr = format!("{}:{}", local_address, self.local_port());
         let local_udp_socket = Arc::new(
             TokioUdpSocket::bind(&local_udp_addr)
@@ -157,87 +159,87 @@ impl PortForward {
         let local_port = local_udp_socket.local_addr()?.port();
         tracing::info!("Local UDP socket bound to {}", local_udp_addr);
 
-		let target = self.finder().find(&self.target).await?;
-		let (pod_name, pod_port) = target.into_parts();
+        let target = self.finder().find(&self.target).await?;
+        let (pod_name, pod_port) = target.into_parts();
 
-		// Start port forwarding to the pod via TCP
-		let mut port_forwarder = self
-			.pod_api
-			.portforward(&pod_name, &[pod_port])
-			.await
-			.context("Failed to start port forwarding to pod")?;
+        // Start port forwarding to the pod via TCP
+        let mut port_forwarder = self
+            .pod_api
+            .portforward(&pod_name, &[pod_port])
+            .await
+            .context("Failed to start port forwarding to pod")?;
 
-		let (mut tcp_read, mut tcp_write) = tokio::io::split(
-			port_forwarder
-				.take_stream(pod_port)
-				.context("port not found in forwarder")?,
-		);
+        let (mut tcp_read, mut tcp_write) = tokio::io::split(
+            port_forwarder
+                .take_stream(pod_port)
+                .context("port not found in forwarder")?,
+        );
 
-		let local_udp_socket_read = local_udp_socket.clone();
-		let local_udp_socket_write = local_udp_socket;
+        let local_udp_socket_read = local_udp_socket.clone();
+        let local_udp_socket_write = local_udp_socket;
 
-		let handle = tokio::spawn(async move {
-			let mut udp_buffer = [0u8; 65535]; // Maximum UDP packet size
-			let mut peer: Option<std::net::SocketAddr> = None;
+        let handle = tokio::spawn(async move {
+            let mut udp_buffer = [0u8; 65535]; // Maximum UDP packet size
+            let mut peer: Option<std::net::SocketAddr> = None;
 
-			loop {
-				tokio::select! {
-					// Handle incoming UDP packets and forward them to the pod via TCP
-					result = local_udp_socket_read.recv_from(&mut udp_buffer) => {
-						match result {
-							Ok((len, src)) => {
-								peer = Some(src); // Store the peer address
+            loop {
+                tokio::select! {
+                    // Handle incoming UDP packets and forward them to the pod via TCP
+                    result = local_udp_socket_read.recv_from(&mut udp_buffer) => {
+                        match result {
+                            Ok((len, src)) => {
+                                peer = Some(src); // Store the peer address
 
-								// Encapsulate the UDP packet in a custom protocol for sending over TCP
-								let packet_len = (len as u32).to_be_bytes();
-								if let Err(e) = tcp_write.write_all(&packet_len).await {
-									tracing::error!("Failed to write packet length to TCP stream: {:?}", e);
-									break;
-								}
-								if let Err(e) = tcp_write.write_all(&udp_buffer[..len]).await {
-									tracing::error!("Failed to write UDP packet to TCP stream: {:?}", e);
-									break;
-								}
-								if let Err(e) = tcp_write.flush().await {
-									tracing::error!("Failed to flush TCP stream: {:?}", e);
-									break;
-								}
-							},
-							Err(e) => {
-								tracing::error!("Failed to receive from UDP socket: {:?}", e);
-								break;
-							}
-						}
-					},
+                                // Encapsulate the UDP packet in a custom protocol for sending over TCP
+                                let packet_len = (len as u32).to_be_bytes();
+                                if let Err(e) = tcp_write.write_all(&packet_len).await {
+                                    tracing::error!("Failed to write packet length to TCP stream: {:?}", e);
+                                    break;
+                                }
+                                if let Err(e) = tcp_write.write_all(&udp_buffer[..len]).await {
+                                    tracing::error!("Failed to write UDP packet to TCP stream: {:?}", e);
+                                    break;
+                                }
+                                if let Err(e) = tcp_write.flush().await {
+                                    tracing::error!("Failed to flush TCP stream: {:?}", e);
+                                    break;
+                                }
+                            },
+                            Err(e) => {
+                                tracing::error!("Failed to receive from UDP socket: {:?}", e);
+                                break;
+                            }
+                        }
+                    },
 
-					result = Self::read_tcp_length_and_packet(&mut tcp_read) => {
-						match result {
-							Ok(Some(packet)) => {
-								if let Some(peer) = peer {
-									if let Err(e) = local_udp_socket_write.send_to(&packet, &peer).await {
-										tracing::error!("Failed to send UDP packet to peer: {:?}", e);
-										break;
-									}
-								} else {
-									tracing::error!("No UDP peer to send to");
-									break;
-								}
-							},
-							Ok(None) => {
-								break;
-							}
-							Err(e) => {
-								tracing::error!("Failed to read from TCP stream or send to UDP socket: {:?}", e);
-								break;
-							}
-						}
-					}
-				}
-			}
-		});
+                    result = Self::read_tcp_length_and_packet(&mut tcp_read) => {
+                        match result {
+                            Ok(Some(packet)) => {
+                                if let Some(peer) = peer {
+                                    if let Err(e) = local_udp_socket_write.send_to(&packet, &peer).await {
+                                        tracing::error!("Failed to send UDP packet to peer: {:?}", e);
+                                        break;
+                                    }
+                                } else {
+                                    tracing::error!("No UDP peer to send to");
+                                    break;
+                                }
+                            },
+                            Ok(None) => {
+                                break;
+                            }
+                            Err(e) => {
+                                tracing::error!("Failed to read from TCP stream or send to UDP socket: {:?}", e);
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        });
 
-		Ok((local_port, handle))
-	}
+        Ok((local_port, handle))
+    }
 
     pub async fn read_tcp_length_and_packet(
         tcp_read: &mut (impl AsyncReadExt + Unpin),
@@ -402,12 +404,17 @@ pub async fn start_port_udp_forward(configs: Vec<Config>) -> Result<Vec<CustomRe
         let target = crate::Target::new(selector, remote_port, namespace);
 
         log::debug!("Attempting to forward to service: {:?}", &config.service);
-        let port_forward = PortForward::new(target, config.local_port, config.local_address, context_name)
-            .await
-            .map_err(|e| {
-                log::error!("Failed to create PortForward: {:?}", e);
-                e.to_string()
-            })?;
+        let port_forward = PortForward::new(
+            target,
+            config.local_port,
+            config.local_address,
+            context_name,
+        )
+        .await
+        .map_err(|e| {
+            log::error!("Failed to create PortForward: {:?}", e);
+            e.to_string()
+        })?;
 
         let (actual_local_port, handle) = port_forward.port_forward_udp().await.map_err(|e| {
             log::error!("Failed to start UDP port forwarding: {:?}", e);
@@ -463,18 +470,23 @@ pub async fn start_port_forward(configs: Vec<Config>) -> Result<Vec<CustomRespon
         let context_name = Some(config.context.clone());
         log::info!("Remote Port: {}", config.remote_port);
         log::info!("Local Port: {}", config.remote_port);
-		log::info!("Local Address: {:?}", config.local_address);
+        log::info!("Local Address: {:?}", config.local_address);
 
         let namespace = config.namespace.clone();
         let target = crate::Target::new(selector, remote_port, namespace);
 
         log::debug!("Attempting to forward to service: {:?}", &config.service);
-        let port_forward = PortForward::new(target, config.local_port, config.local_address, context_name)
-            .await
-            .map_err(|e| {
-                log::error!("Failed to create PortForward: {:?}", e);
-                e.to_string()
-            })?;
+        let port_forward = PortForward::new(
+            target,
+            config.local_port,
+            config.local_address,
+            context_name,
+        )
+        .await
+        .map_err(|e| {
+            log::error!("Failed to create PortForward: {:?}", e);
+            e.to_string()
+        })?;
 
         let (actual_local_port, handle) = port_forward.port_forward().await.map_err(|e| {
             log::error!("Failed to start port forwarding: {:?}", e);
