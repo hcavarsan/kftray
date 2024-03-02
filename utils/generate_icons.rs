@@ -36,7 +36,7 @@ fn main() -> Result<(), CustomError> {
 
 fn generate_png_icons() -> Result<(), CustomError> {
     println!("Info: Generating PNG icons ...");
-    let sizes = [32, 128, 256, 512];
+    let sizes = [32, 128, 256];
     let src = ImageReader::open(SRC_FILE)?
         .with_guessed_format()?
         .decode()?;
@@ -73,8 +73,6 @@ fn generate_icns() -> Result<(), CustomError> {
         (128, 2), // 128x128@1x and 128x128@2x (256x256)
         (256, 1),
         (256, 2), // 256x256@1x and 256x256@2x (512x512)
-        (512, 1),
-        (512, 2), // 512x512@1x and 512x512@2x (1024x1024)
     ];
 
     let src = ImageReader::open(SRC_FILE)?.decode()?;
