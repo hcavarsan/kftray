@@ -70,7 +70,14 @@ fn bump_version(bump_type: &str) -> io::Result<()> {
         new_version,
         update_cargo_toml_version,
     )?;
-    log::info!("Cargo.toml updated");
+    log::info!("src-tauri Cargo.toml updated");
+    update_file_content(
+        "kftray-server/Cargo.toml",
+        new_version,
+        update_cargo_toml_version,
+    )?;
+    info!("kftray-server Cargo.toml updated");
+
     update_file_content("README.md", new_version, update_markdown_version)?;
     log::info!("README.md updated");
     update_file_content(
@@ -112,7 +119,7 @@ fn update_cargo_toml_version(content: &str, new_version: &str) -> io::Result<Str
         }
         if in_package_section && version_regex.is_match(line) {
             updated_lines.push(format!(r#"version = "{}""#, new_version));
-            in_package_section = false; // Not sure if you want to set this to false here
+            in_package_section = false;
         } else {
             updated_lines.push(line.to_string());
         }
