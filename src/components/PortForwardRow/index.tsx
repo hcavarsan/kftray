@@ -230,6 +230,10 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
                   onClick={handleOpenLocalURL}
                   size='xs'
                   variant='ghost'
+                  _hover={{
+                    background: 'none',
+                    transform: 'none',
+                  }}
                 />
               </Tooltip>
             )}
