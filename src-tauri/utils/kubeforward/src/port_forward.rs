@@ -26,6 +26,7 @@ use kube::{
 pub struct PortForward {
     target: crate::Target,
     local_port: Option<u16>,
+    local_address: Option<String>,
     pod_api: Api<Pod>,
     svc_api: Api<Service>,
     context_name: Option<String>,
@@ -35,6 +36,7 @@ impl PortForward {
     pub async fn new(
         target: crate::Target,
         local_port: impl Into<Option<u16>>,
+        local_address: impl Into<Option<String>>,
         context_name: Option<String>,
     ) -> anyhow::Result<Self> {
         // Check if context_name was provided and create a Kubernetes client
@@ -49,6 +51,7 @@ impl PortForward {
         Ok(Self {
             target,
             local_port: local_port.into(),
+            local_address: local_address.into(),
             pod_api: Api::namespaced(client.clone(), &namespace),
             svc_api: Api::namespaced(client, &namespace),
             context_name, // Store the context name if provided
@@ -59,18 +62,27 @@ impl PortForward {
         self.local_port.unwrap_or(0)
     }
 
+    fn local_address(&self) -> Option<String> {
+        self.local_address.clone()
+    }
+
     /// Runs the port forwarding proxy until a SIGINT signal is received.
     pub async fn port_forward(self) -> anyhow::Result<(u16, tokio::task::JoinHandle<()>)> {
-        let addr = SocketAddr::from(([127, 0, 0, 1], self.local_port()));
+        let local_addr = self
+            .local_address()
+            .unwrap_or_else(|| "127.0.0.1".to_string());
+        let addr = format!("{}:{}", local_addr, self.local_port())
+            .parse::<SocketAddr>()
+            .expect("Invalid local address");
 
         let bind = TcpListener::bind(addr).await?;
         let port = bind.local_addr()?.port();
-        tracing::trace!(port, "Bound to local port");
+        tracing::trace!(port, "Bound to local address and port");
 
         let server = TcpListenerStream::new(bind).try_for_each(move |client_conn| {
             let pf = self.clone();
 
-            async {
+            async move {
                 let client_conn = client_conn;
                 if let Ok(peer_addr) = client_conn.peer_addr() {
                     tracing::trace!(%peer_addr, "new connection");
@@ -135,13 +147,15 @@ impl PortForward {
     }
 
     pub async fn port_forward_udp(self) -> anyhow::Result<(u16, JoinHandle<()>)> {
-        let local_udp_addr = format!("127.0.0.1:{}", self.local_port());
+        let local_address = self
+            .local_address()
+            .unwrap_or_else(|| "127.0.0.1".to_string());
+        let local_udp_addr = format!("{}:{}", local_address, self.local_port());
         let local_udp_socket = Arc::new(
             TokioUdpSocket::bind(&local_udp_addr)
                 .await
                 .context("Failed to bind local UDP socket")?,
         );
-
         let local_port = local_udp_socket.local_addr()?.port();
         tracing::info!("Local UDP socket bound to {}", local_udp_addr);
 
@@ -226,6 +240,7 @@ impl PortForward {
 
         Ok((local_port, handle))
     }
+
     pub async fn read_tcp_length_and_packet(
         tcp_read: &mut (impl AsyncReadExt + Unpin),
     ) -> anyhow::Result<Option<Vec<u8>>> {
@@ -351,6 +366,8 @@ pub struct Config {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remote_address: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_address: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub alias: Option<String>,
 }
 
@@ -366,6 +383,7 @@ impl Default for Config {
             workload_type: "default-workload".to_string(),
             protocol: "tcp".to_string(),
             remote_address: Some("default-remote-address".to_string()),
+            local_address: Some("127.0.0.1".to_string()),
             alias: Some("default-alias".to_string()),
         }
     }
@@ -386,12 +404,17 @@ pub async fn start_port_udp_forward(configs: Vec<Config>) -> Result<Vec<CustomRe
         let target = crate::Target::new(selector, remote_port, namespace);
 
         log::debug!("Attempting to forward to service: {:?}", &config.service);
-        let port_forward = PortForward::new(target, config.local_port, context_name)
-            .await
-            .map_err(|e| {
-                log::error!("Failed to create PortForward: {:?}", e);
-                e.to_string()
-            })?;
+        let port_forward = PortForward::new(
+            target,
+            config.local_port,
+            config.local_address,
+            context_name,
+        )
+        .await
+        .map_err(|e| {
+            log::error!("Failed to create PortForward: {:?}", e);
+            e.to_string()
+        })?;
 
         let (actual_local_port, handle) = port_forward.port_forward_udp().await.map_err(|e| {
             log::error!("Failed to start UDP port forwarding: {:?}", e);
@@ -447,17 +470,23 @@ pub async fn start_port_forward(configs: Vec<Config>) -> Result<Vec<CustomRespon
         let context_name = Some(config.context.clone());
         log::info!("Remote Port: {}", config.remote_port);
         log::info!("Local Port: {}", config.remote_port);
+        log::info!("Local Address: {:?}", config.local_address);
 
         let namespace = config.namespace.clone();
         let target = crate::Target::new(selector, remote_port, namespace);
 
         log::debug!("Attempting to forward to service: {:?}", &config.service);
-        let port_forward = PortForward::new(target, config.local_port, context_name)
-            .await
-            .map_err(|e| {
-                log::error!("Failed to create PortForward: {:?}", e);
-                e.to_string()
-            })?;
+        let port_forward = PortForward::new(
+            target,
+            config.local_port,
+            config.local_address,
+            context_name,
+        )
+        .await
+        .map_err(|e| {
+            log::error!("Failed to create PortForward: {:?}", e);
+            e.to_string()
+        })?;
 
         let (actual_local_port, handle) = port_forward.port_forward().await.map_err(|e| {
             log::error!("Failed to start port forwarding: {:?}", e);
