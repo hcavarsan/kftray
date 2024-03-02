@@ -8,6 +8,7 @@ export interface Status {
   isRunning: boolean
   namespace: string
   remote_port: number
+  local_address: string
   workload_type: string
   protocol: string
   alias: string
@@ -20,6 +21,7 @@ export interface Config {
   service: string
   namespace: string
   local_port: number
+  local_address: string
   remote_port: number
   context: string
   alias: string

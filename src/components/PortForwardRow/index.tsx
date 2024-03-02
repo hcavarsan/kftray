@@ -152,6 +152,11 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
       {config.remote_port}
       <br />
       <Box as='span' fontWeight='semibold'>
+        Local Address:
+      </Box>{' '}
+      {config.local_address}
+      <br />
+      <Box as='span' fontWeight='semibold'>
         Local Port:
       </Box>{' '}
       {config.local_port}

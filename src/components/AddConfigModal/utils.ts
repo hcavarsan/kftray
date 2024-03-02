@@ -1,6 +1,9 @@
 import { StylesConfig } from 'react-select'
 
+import { invoke } from '@tauri-apps/api/tauri'
+
 import theme from '../../assets/theme'
+import { KubeContext } from '../../types'
 
 export const customStyles: StylesConfig = {
   control: provided => ({

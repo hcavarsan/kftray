@@ -6,6 +6,7 @@ import {
   Box,
   Button,
   Center,
+  Checkbox,
   FormControl,
   FormLabel,
   Input,
@@ -63,6 +64,11 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     value: string | number
     label: string
   } | null>(null)
+
+  const [isChecked, setIsChecked] = useState(false)
+  const handleCheckboxChange = () => {
+    setIsChecked(!isChecked)
+  }
 
   useEffect(() => {
     const isValid = [
@@ -294,6 +300,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
       },
     } as unknown as React.ChangeEvent<HTMLInputElement>)
   }
+
   const handleSave = (event: React.FormEvent<Element>) => {
     event.preventDefault()
     handleSaveConfig(event)
@@ -315,12 +322,11 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
         <ModalContent
           mx={5}
           my={5}
-          mt={8}
+          mt={6}
           borderRadius='lg'
           boxShadow='0px 10px 25px 5px rgba(0,0,0,0.5)'
           maxW='27rem'
-          maxH='30rem'
-          border='1px'
+          maxH='32rem'
         >
           <ModalCloseButton />
           <ModalBody p={2} mt={3}>
@@ -614,8 +620,41 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                   </FormControl>
                 </>
               )}
-
-              <ModalFooter justifyContent='flex-end' p={2} mt={5}>
+              <Box width={{ base: '100%', sm: '52%' }} pl={2}>
+                <FormControl display='flex' flexDirection='column' p={2}>
+                  <FormLabel htmlFor='local_address'>
+                    <Checkbox
+                      mt='1.5'
+                      mr='1'
+                      size='sm'
+                      isChecked={isChecked}
+                      onChange={handleCheckboxChange}
+                    >
+                      Custom Local Address
+                    </Checkbox>
+                  </FormLabel>
+                  <Input
+                    id='local_address'
+                    isDisabled={!isChecked}
+                    value={newConfig.local_address || '127.0.0.1'}
+                    type='text'
+                    height='36px'
+                    name='local_address'
+                    onChange={handleInputChange}
+                    size='sm'
+                    bg='gray.800'
+                    borderColor='gray.700'
+                    _hover={{
+                      borderColor: 'gray.600',
+                    }}
+                    _placeholder={{
+                      color: 'gray.500',
+                    }}
+                    color='gray.300'
+                  />
+                </FormControl>
+              </Box>
+              <ModalFooter justifyContent='flex-end' p={2} mt={1}>
                 <Button variant='outline' onClick={handleCancel} size='xs'>
                   Cancel
                 </Button>
