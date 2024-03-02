@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { useQuery } from 'react-query'
-import ReactSelect, { ActionMeta, StylesConfig } from 'react-select'
+import ReactSelect, { ActionMeta } from 'react-select'
 
 import {
   Box,
@@ -20,44 +20,10 @@ import {
 import { invoke } from '@tauri-apps/api/tauri'
 
 import theme from '../../assets/theme'
-import { ConfigProps } from '../../types'
+import { CustomConfigProps, KubeContext, Option } from '../../types'
 
-interface Namespace {
-  namespace: string
-  name: string
-}
-interface Context {
-  value: string
-  label: string
-}
+import { customStyles, fetchKubeContexts } from './utils'
 
-interface Service {
-  name: string
-  service: string
-}
-
-interface Port {
-  remote_port: number
-  name?: string
-  port?: number
-}
-
-interface KubeContext {
-  name: string
-}
-
-interface CustomConfigProps extends ConfigProps {
-  configData?: {
-    context?: KubeContext[]
-    namespace?: Namespace[]
-    service?: Service[]
-    port: number
-    name?: string
-    remote_port?: number
-    ports?: Port[]
-  }
-}
-type Option = { name: string; value: string | number; label: string }
 const AddConfigModal: React.FC<CustomConfigProps> = ({
   isModalOpen,
   closeModal,
@@ -127,53 +93,10 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
 
   const [isFormValid, setIsFormValid] = useState(false)
 
-  const customStyles: StylesConfig = {
-    control: provided => ({
-      ...provided,
-      background: theme.colors.gray[800],
-      borderColor: theme.colors.gray[700],
-    }),
-    menu: provided => ({
-      ...provided,
-      background: theme.colors.gray[800],
-    }),
-    option: (provided, state) => ({
-      ...provided,
-      color: state.isSelected ? theme.colors.white : theme.colors.gray[300],
-      background: state.isSelected ? theme.colors.gray[600] : 'none',
-      cursor: 'pointer',
-      ':active': {
-        ...provided[':active'],
-        background: theme.colors.gray[500],
-      },
-      ':hover': {
-        ...provided[':hover'],
-        background: theme.colors.gray[700],
-        color: theme.colors.white,
-      },
-    }),
-    singleValue: provided => ({
-      ...provided,
-      color: theme.colors.gray[300],
-    }),
-    input: provided => ({
-      ...provided,
-      color: theme.colors.gray[300],
-    }),
-    placeholder: provided => ({
-      ...provided,
-      color: theme.colors.gray[500],
-    }),
-  }
-
   const [portData, setPortData] = useState<
     { remote_port: number; port?: number | string; name?: string | number }[]
   >([])
   const toast = useToast()
-
-  const fetchKubeContexts = (): Promise<KubeContext[]> => {
-    return invoke('list_kube_contexts')
-  }
 
   const contextQuery = useQuery<KubeContext[]>(
     'kube-contexts',
@@ -387,9 +310,18 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
 
   return (
     <Center>
-      <Modal isOpen={isModalOpen} onClose={handleCancel} size='xl'>
+      <Modal isOpen={isModalOpen} onClose={handleCancel}>
         <ModalOverlay bg='transparent' />
-        <ModalContent mx={5} my={5} mt={8}>
+        <ModalContent
+          mx={5}
+          my={5}
+          mt={8}
+          borderRadius='lg'
+          boxShadow='0px 10px 25px 5px rgba(0,0,0,0.5)'
+          maxW='27rem'
+          maxH='30rem'
+          border='1px'
+        >
           <ModalCloseButton />
           <ModalBody p={2} mt={3}>
             <form onSubmit={handleSave}>

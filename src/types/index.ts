@@ -129,3 +129,42 @@ export interface SyncConfigsButtonProps {
   setCredentialsSaved: React.Dispatch<React.SetStateAction<boolean>>
   isSettingsModalOpen: boolean
 }
+
+export interface Namespace {
+  namespace: string
+  name: string
+}
+
+export interface Context {
+  value: string
+  label: string
+}
+
+export interface KubeContext {
+  name: string
+}
+
+export interface Service {
+  name: string
+  service: string
+}
+
+export interface Port {
+  remote_port: number
+  name?: string
+  port?: number
+}
+
+export interface CustomConfigProps extends ConfigProps {
+  configData?: {
+    context?: KubeContext[]
+    namespace?: Namespace[]
+    service?: Service[]
+    port: number
+    name?: string
+    remote_port?: number
+    ports?: Port[]
+  }
+}
+
+export type Option = { name: string; value: string | number; label: string }

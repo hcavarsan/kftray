@@ -350,6 +350,8 @@ pub struct Config {
     pub protocol: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remote_address: Option<String>,
+	#[serde(skip_serializing_if = "Option::is_none")]
+	pub local_address: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub alias: Option<String>,
 }
@@ -366,6 +368,7 @@ impl Default for Config {
             workload_type: "default-workload".to_string(),
             protocol: "tcp".to_string(),
             remote_address: Some("default-remote-address".to_string()),
+			local_address: Some("127.0.0.1".to_string()),
             alias: Some("default-alias".to_string()),
         }
     }
