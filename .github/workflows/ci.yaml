@@ -39,7 +39,7 @@ jobs:
         run: pnpm i --frozen-lockfile
 
       - name: Perform linting
-        run: pnpm lint
+        run: pnpm lint:front
 
   rust-format:
     name: rustfmt
