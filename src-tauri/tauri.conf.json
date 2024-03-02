@@ -1,81 +1,80 @@
 {
-	"build": {
-	  "beforeDevCommand": "pnpm dev",
-	  "beforeBuildCommand": "pnpm build",
-	  "devPath": "http://localhost:1420",
-	  "distDir": "../dist",
-	  "withGlobalTauri": true
-	},
-	"package": {
-	  "productName": "kftray",
-	  "version": "0.7.4"
-	},
-	"tauri": {
-	  "allowlist": {
-		"all": true,
-		"shell": {
-		  "all": false,
-		  "open": true
-		}
-	  },
-	  "bundle": {
-		"active": true,
-		"category": "DeveloperTool",
-		"copyright": "",
-		"deb": {
-		  "depends": []
-		},
-		"externalBin": [],
-		"icon": [
-		  "icons/32x32.png",
-		  "icons/128x128.png",
-		  "icons/128x128@2x.png",
-		  "icons/icon.icns",
-		  "icons/icon.ico"
-		],
-		"identifier": "com.hcavarsan.kftray",
-		"longDescription": "",
-		"resources": [],
-		"shortDescription": "",
-		"targets": "all",
-		"windows": {
-		  "certificateThumbprint": null,
-		  "digestAlgorithm": "sha256",
-		  "timestampUrl": ""
-		}
-	  },
-	  "security": {
-		"csp": null
-	  },
-	  "updater": {
-		"active": true,
-		"endpoints": [
-		  "https://github.com/hcavarsan/kftray/releases/latest/download/latest.json"
-		],
-		"dialog": true,
-		"pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDZEMEYxNzA4ODFFNjA3RTgKUldUb0IrYUJDQmNQYmRrZFFUTUN0T3lseStZVmc5YlR4YmxtaHBoanJYeGxSMWFQbjhtTFpERGsK"
-	},
-
-	  "macOSPrivateApi": true,
-	  "windows": [
-		{
-		  "fullscreen": false,
-		  "height": 700,
-		  "resizable": false,
-		  "title": "menubar",
-		  "width": 500,
-		  "visible": false,
-		  "hiddenTitle": true,
-		  "decorations": false,
-		  "focus": false,
-		  "transparent": true,
-		  "skipTaskbar": true
-		}
-	  ],
-	  "systemTray": {
-		"iconPath": "icons/128x128@2x.png",
-		"iconAsTemplate": false,
-		"menuOnLeftClick": false
-	  }
-	}
+  "build": {
+    "beforeBuildCommand": "pnpm build",
+    "beforeDevCommand": "pnpm dev",
+    "devPath": "http://localhost:1420",
+    "distDir": "../dist",
+    "withGlobalTauri": true
+  },
+  "package": {
+    "productName": "kftray",
+	"version": "0.7.4"
+  },
+  "tauri": {
+    "allowlist": {
+      "all": true,
+      "shell": {
+        "all": false,
+        "open": true
+      }
+    },
+    "bundle": {
+      "active": true,
+      "category": "DeveloperTool",
+      "copyright": "",
+      "deb": {
+        "depends": []
+      },
+      "externalBin": [],
+      "icon": [
+        "icons/32x32.png",
+        "icons/128x128.png",
+        "icons/128x128@2x.png",
+        "icons/icon.icns",
+        "icons/icon.ico"
+      ],
+      "identifier": "com.hcavarsan.kftray",
+      "longDescription": "",
+      "resources": [],
+      "shortDescription": "",
+      "targets": "all",
+      "windows": {
+        "certificateThumbprint": null,
+        "digestAlgorithm": "sha256",
+        "timestampUrl": ""
+      }
+    },
+    "macOSPrivateApi": true,
+    "security": {
+      "csp": null
+    },
+    "systemTray": {
+      "iconAsTemplate": false,
+      "iconPath": "icons/128x128@2x.png",
+      "menuOnLeftClick": false
+    },
+    "updater": {
+      "active": true,
+      "dialog": true,
+      "endpoints": [
+        "https://github.com/hcavarsan/kftray/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDZEMEYxNzA4ODFFNjA3RTgKUldUb0IrYUJDQmNQYmRrZFFUTUN0T3lseStZVmc5YlR4YmxtaHBoanJYeGxSMWFQbjhtTFpERGsK"
+    },
+    "windows": [
+      {
+        "decorations": false,
+        "focus": false,
+        "fullscreen": false,
+        "height": 700,
+        "hiddenTitle": true,
+        "resizable": false,
+        "skipTaskbar": true,
+        "title": "menubar",
+        "transparent": true,
+        "visible": false,
+        "width": 500
+      }
+    ]
   }
+}

@@ -1,0 +1,19 @@
+[package]
+name = "kftray-utils"
+version = "0.0.1"
+edition = "2021"
+
+[ dependencies ]
+regex = "1"
+log = "0.4"
+serde_json = "1.0"
+image = "0.24.9"
+ico = "0.3.0"
+
+[[bin]]
+name = "bump_version"
+path = "utils/bump_version.rs"
+
+[[bin]]
+name = "generate_icons"
+path = "utils/generate_icons.rs"
