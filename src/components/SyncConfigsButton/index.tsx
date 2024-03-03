@@ -25,11 +25,6 @@ const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
   useEffect(() => {
     async function pollingConfigs() {
       if (credentialsSaved && credentials && credentials.pollingInterval > 0) {
-        const nextSyncDate = new Date(
-          new Date().getTime() + credentials.pollingInterval * 60000,
-        ).toLocaleTimeString()
-        const lastSyncDate = new Date().toLocaleTimeString()
-
         try {
           const credentialsString = await invoke('get_key', {
             service: serviceName,
@@ -49,6 +44,10 @@ const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
               token: credentials.token,
               flush: true,
             })
+            const nextSyncDate = new Date(
+              new Date().getTime() + credentials.pollingInterval * 60000,
+            ).toLocaleTimeString()
+            const lastSyncDate = new Date().toLocaleTimeString()
 
             setLastSync(lastSyncDate)
             setNextSync(nextSyncDate)
