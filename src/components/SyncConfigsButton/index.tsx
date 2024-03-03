@@ -100,7 +100,6 @@ const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
         borderColor='gray.700'
       >
         <HStack spacing={1}>
-          <Box as={FaGithub} />
           <RepeatIcon />
         </HStack>
       </Button>
