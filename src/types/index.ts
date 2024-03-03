@@ -50,6 +50,7 @@ export interface GitConfig {
   repoUrl: string
   configPath: string
   isPrivate: boolean
+  pollingInterval: number
   token: string
   flush: boolean
 }
