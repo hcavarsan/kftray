@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { FaGithub } from 'react-icons/fa' // Import Github icon from react-icons
+import { FaGithub } from 'react-icons/fa'
 
 import { RepeatIcon } from '@chakra-ui/icons'
 import { Box, Button, HStack, Text, Tooltip } from '@chakra-ui/react'
@@ -15,9 +15,73 @@ const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
   credentialsSaved,
   setCredentialsSaved,
   isSettingsModalOpen,
+  setPollingInterval,
 }) => {
   const [isLoading, setIsLoading] = useState(false)
   const [credentials, setCredentials] = useState<GitConfig | null>(null)
+  const [lastSync, setLastSync] = useState<string | null>(null)
+  const [nextSync, setNextSync] = useState<string | null>(null)
+
+  useEffect(() => {
+    async function pollingConfigs() {
+      if (credentialsSaved && credentials && credentials.pollingInterval > 0) {
+        const nextSyncDate = new Date(
+          new Date().getTime() + credentials.pollingInterval * 60000,
+        ).toLocaleTimeString()
+        const lastSyncDate = new Date().toLocaleTimeString()
+
+        try {
+          const credentialsString = await invoke('get_key', {
+            service: serviceName,
+            name: accountName,
+          })
+
+          if (typeof credentialsString === 'string') {
+            const credentials = JSON.parse(credentialsString)
+
+            setPollingInterval(credentials.pollingInterval)
+
+            await invoke('import_configs_from_github', {
+              repoUrl: credentials.repoUrl,
+              configPath: credentials.configPath,
+              isPrivate: credentials.isPrivate,
+              pollingInterval: credentials.pollingInterval,
+              token: credentials.token,
+              flush: true,
+            })
+
+            setLastSync(lastSyncDate)
+            setNextSync(nextSyncDate)
+          }
+        } catch (error) {
+          console.error(
+            'Failed to update configs from GitHub during polling:',
+            error,
+          )
+        }
+      }
+    }
+
+    const pollingId = setInterval(
+      () => {
+        pollingConfigs()
+      },
+      credentials && credentials.pollingInterval
+        ? credentials.pollingInterval * 60000
+        : 0,
+    )
+
+    return () => {
+      clearInterval(pollingId)
+    }
+  }, [
+    credentialsSaved,
+    credentials?.pollingInterval,
+    serviceName,
+    accountName,
+    setPollingInterval,
+    credentials,
+  ])
 
   useEffect(() => {
     if (!isSettingsModalOpen) {
@@ -37,7 +101,6 @@ const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
             setCredentialsSaved(true)
           }
         } catch (error) {
-          console.error('Failed to check saved credentials syncbutton:', error)
           if (error instanceof Error) {
             onSyncFailure?.(error)
           }
@@ -58,11 +121,22 @@ const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
   const handleSyncConfigs = async () => {
     setIsLoading(true)
     try {
+      if (!credentials) {
+        throw new Error('Credentials are not provided')
+      }
+
       await invoke('import_configs_from_github', credentials)
-      console.log('Configs synced successfully')
+
+      const nextSyncDate = new Date(
+        new Date().getTime() + credentials.pollingInterval * 60000,
+      ).toLocaleTimeString()
+      const lastSyncDate = new Date().toLocaleTimeString()
+
+      setLastSync(lastSyncDate)
+      setNextSync(nextSyncDate)
+
       onConfigsSynced?.()
     } catch (error) {
-      console.error('Error syncing configs:', error)
       if (error instanceof Error) {
         onSyncFailure?.(error)
       }
@@ -79,7 +153,9 @@ const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
           <Text>Repo URL: {credentials?.repoUrl}</Text>
           <Text>Config Path: {credentials?.configPath}</Text>
           <Text>Private Repo: {credentials?.isPrivate ? 'Yes' : 'No'}</Text>
-          <Text>Polling Interval: {credentials?.pollingInterval}s</Text>
+          <Text>Polling Interval: {credentials?.pollingInterval} minutes</Text>
+          <Text>Last Sync: {lastSync || ''}</Text>
+          <Text>Next Sync: {nextSync || ''}</Text>
         </>
       ) : (
         <Text>Github Sync Disabled</Text>
@@ -100,7 +176,6 @@ const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
         borderColor='gray.700'
       >
         <HStack spacing={1}>
-          <Box as={FaGithub} />
           <RepeatIcon />
         </HStack>
       </Button>

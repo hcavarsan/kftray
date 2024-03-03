@@ -1,4 +1,5 @@
 import React from 'react'
+import { FaGithub } from 'react-icons/fa'
 import { IoSettingsOutline } from 'react-icons/io5'
 import {
   MdAdd,
@@ -8,9 +9,12 @@ import {
   MdSettings,
 } from 'react-icons/md'
 
+import { HamburgerIcon } from '@chakra-ui/icons'
 import {
   Box,
+  Button,
   Flex,
+  HStack,
   IconButton,
   Menu,
   MenuButton,
@@ -35,6 +39,8 @@ const FooterMenu: React.FC<FooterMenu> = ({
   isSettingsModalOpen,
   selectedConfigs,
   handleDeleteConfigs,
+  setPollingInterval,
+  pollingInterval,
 }) => {
   const borderColor = useColorModeValue('gray.500', 'gray.700')
 
@@ -56,22 +62,15 @@ const FooterMenu: React.FC<FooterMenu> = ({
     >
       <Flex align='center' mb={{ base: 2, sm: 0 }}>
         <Menu placement='top-end'>
-          <Tooltip
-            label='Configurations'
-            placement='top'
-            fontSize='xs'
-            lineHeight='tight'
-          >
-            <MenuButton
-              as={IconButton}
-              aria-label='Options'
-              icon={<IoSettingsOutline />}
-              size='sm'
-              colorScheme='facebook'
-              variant='outline'
-              borderColor={borderColor}
-            />
-          </Tooltip>
+          <MenuButton
+            as={IconButton}
+            aria-label='Options'
+            icon={<HamburgerIcon />}
+            size='sm'
+            colorScheme='facebook'
+            variant='outline'
+            borderColor={borderColor}
+          />
           <MenuList zIndex='popover' fontSize='xs' minW='150px'>
             <MenuItem icon={<MdFileUpload />} onClick={handleExportConfigs}>
               Export Local File
@@ -82,9 +81,6 @@ const FooterMenu: React.FC<FooterMenu> = ({
               onClick={handleImportConfigs}
             >
               Import Local File
-            </MenuItem>
-            <MenuItem icon={<MdSettings />} onClick={openSettingsModal}>
-              Configure Git Sync
             </MenuItem>
           </MenuList>
           <Tooltip
@@ -120,6 +116,7 @@ const FooterMenu: React.FC<FooterMenu> = ({
                 }
                 size='sm'
                 aria-label='Delete selected configs'
+                borderColor={borderColor}
                 icon={<MdDelete />}
                 ml={2}
               />
@@ -129,6 +126,28 @@ const FooterMenu: React.FC<FooterMenu> = ({
       </Flex>
 
       <Flex align='center' flexGrow={1} justifyContent={{ sm: 'flex-end' }}>
+        <Tooltip
+          label='Configure Git Sync'
+          placement='top'
+          fontSize='xs'
+          lineHeight='tight'
+        >
+          <Button
+            variant='outline'
+            colorScheme='facebook'
+            onClick={openSettingsModal}
+            size='sm'
+            aria-label='Sync Configs'
+            justifyContent='center'
+            borderColor='gray.700'
+            mr={2}
+          >
+            <HStack spacing={1}>
+              <Box as={FaGithub} />
+              <MdSettings />
+            </HStack>
+          </Button>
+        </Tooltip>
         <SyncConfigsButton
           serviceName='kftray'
           accountName='github_config'
@@ -137,6 +156,8 @@ const FooterMenu: React.FC<FooterMenu> = ({
           credentialsSaved={credentialsSaved}
           setCredentialsSaved={setCredentialsSaved}
           isSettingsModalOpen={isSettingsModalOpen}
+          setPollingInterval={setPollingInterval}
+          pollingInterval={pollingInterval}
         />
       </Flex>
     </Flex>

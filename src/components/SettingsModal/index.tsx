@@ -39,6 +39,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   onSettingsSaved,
   credentialsSaved,
   setCredentialsSaved,
+  setPollingInterval,
+  pollingInterval,
 }) => {
   const [settingInputValue, setSettingInputValue] = useState('')
   const [configPath, setConfigPath] = useState('')
@@ -46,62 +48,12 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   const [gitToken, setGitToken] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [isImportAlertOpen, setIsImportAlertOpen] = useState(false)
-  const [pollingInterval, setPollingInterval] = useState(0)
+
   const cancelRef = React.useRef<HTMLButtonElement>(null)
   const [showTooltip, setShowTooltip] = React.useState(false)
 
   const serviceName = 'kftray'
   const accountName = 'github_config'
-
-  useEffect(() => {
-    async function pollingConfigs() {
-      if (credentialsSaved && pollingInterval > 0) {
-        console.log(`Polling every ${pollingInterval} seconds.`)
-        try {
-          const credentialsString = await invoke('get_key', {
-            service: serviceName,
-            name: accountName,
-          })
-
-          if (typeof credentialsString === 'string') {
-            console.log('Credentials found:', credentialsString)
-
-            const credentials = JSON.parse(credentialsString)
-
-            setPollingInterval(credentials.pollingInterval)
-            console.log(
-              'Polling interval updated to:',
-              credentials.pollingInterval,
-            )
-
-            await invoke('import_configs_from_github', {
-              repoUrl: credentials.repoUrl,
-              configPath: credentials.configPath,
-              isPrivate: credentials.isPrivate,
-              pollingInterval: credentials.pollingInterval,
-              token: credentials.token,
-              flush: true,
-            })
-
-            console.log('Configs successfully updated from GitHub.')
-          }
-        } catch (error) {
-          console.error(
-            'Failed to update configs from GitHub during polling:',
-            error,
-          )
-        }
-      }
-    }
-
-    const pollingId = setInterval(() => {
-      pollingConfigs()
-    }, pollingInterval * 1000)
-
-    return () => {
-      clearInterval(pollingId)
-    }
-  }, [credentialsSaved, pollingInterval, serviceName, accountName])
 
   useEffect(() => {
     let isComponentMounted = true
@@ -119,10 +71,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
         })
 
         if (typeof credentialsString === 'string' && isComponentMounted) {
-          console.log('Credentials found:', credentialsString)
           const credentials = JSON.parse(credentialsString)
-
-          console.log('credentialsString', credentialsString)
 
           setSettingInputValue(credentials.repoUrl || '')
           setConfigPath(credentials.configPath || '')
@@ -132,7 +81,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
           setCredentialsSaved(true)
         }
       } catch (error) {
-        console.error('Failed to check saved credentials settingsmodal:', error)
         if (isComponentMounted) {
           setCredentialsSaved(false)
         }
@@ -150,7 +98,12 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
     return () => {
       isComponentMounted = false
     }
-  }, [isSettingsModalOpen, credentialsSaved, setCredentialsSaved])
+  }, [
+    isSettingsModalOpen,
+    credentialsSaved,
+    setCredentialsSaved,
+    setPollingInterval,
+  ])
 
   const handleDeleteGitConfig = async () => {
     setIsLoading(true)
@@ -159,7 +112,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
         service: serviceName,
         name: accountName,
       })
-      console.log('Git config deleted')
 
       setSettingInputValue('')
       setConfigPath('')
@@ -227,7 +179,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
         password: credentials,
       })
 
-      console.log('Credentials saved')
       onSettingsSaved?.()
       setCredentialsSaved(true)
     } catch (error) {
@@ -293,11 +244,11 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
               </FormControl>
               <FormControl p={2} mt='1'>
                 <FormLabel htmlFor='pollingInterval'>
-                  Polling Interval (seconds)
+                  Polling Interval in minutes (set 0 to disable)
                 </FormLabel>
                 <Slider
                   id='pollingInterval'
-                  value={pollingInterval} // use value instead of defaultValue
+                  value={pollingInterval}
                   min={0}
                   step={5}
                   max={120}
@@ -307,7 +258,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                   onMouseEnter={() => setShowTooltip(true)}
                   onMouseLeave={() => setShowTooltip(false)}
                   width='80%'
-                  mb='5'
+                  mx='3'
+                  ml='2'
                 >
                   <SliderMark value={20} mt='1' ml='-2.5' fontSize='sm'>
                     20
@@ -338,6 +290,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                 display='flex'
                 flexDirection='column'
                 isDisabled={isLoading}
+                mt='3'
               >
                 <Checkbox
                   id='isPrivateRepo'
