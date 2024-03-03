@@ -72,6 +72,8 @@ export interface SettingsModalProps {
   onSettingsSaved: () => void
   credentialsSaved: boolean
   setCredentialsSaved: React.Dispatch<React.SetStateAction<boolean>>
+  setPollingInterval: React.Dispatch<React.SetStateAction<number>>
+  pollingInterval: number
 }
 
 export interface TableProps {
@@ -121,6 +123,8 @@ export interface FooterMenu {
   isSettingsModalOpen: boolean
   selectedConfigs: Status[]
   handleDeleteConfigs: (ids: number[]) => void
+  setPollingInterval: React.Dispatch<React.SetStateAction<number>>
+  pollingInterval: number
 }
 
 export interface SyncConfigsButtonProps {
@@ -131,6 +135,8 @@ export interface SyncConfigsButtonProps {
   credentialsSaved: boolean
   setCredentialsSaved: React.Dispatch<React.SetStateAction<boolean>>
   isSettingsModalOpen: boolean
+  setPollingInterval: React.Dispatch<React.SetStateAction<number>>
+  pollingInterval: number
 }
 
 export interface Namespace {
