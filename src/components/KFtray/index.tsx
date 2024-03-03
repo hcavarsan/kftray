@@ -17,6 +17,7 @@ const initialLocalPort = 0
 const initialId = 0
 const initialStatus = 0
 const KFTray = () => {
+  const [pollingInterval, setPollingInterval] = useState(0)
   const [configs, setConfigs] = useState<Status[]>([])
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false)
@@ -211,7 +212,6 @@ const KFTray = () => {
           icon: 'success',
         })
       } else {
-        console.log('No file was selected or the dialog was cancelled.')
       }
     } catch (error) {
       console.error('Error during import:', error)
@@ -280,7 +280,6 @@ const KFTray = () => {
 
       closeModal()
     } catch (error) {
-      console.error('Failed to update config:', error)
       await sendNotification({
         title: 'Error',
         body: 'Failed to update configuration.',
@@ -422,7 +421,6 @@ const KFTray = () => {
     setIsInitiating(true)
     const errors = []
 
-    console.log('Starting port forwarding for configs:', configsToStart)
     for (const config of configsToStart) {
       try {
         let response
@@ -442,16 +440,7 @@ const KFTray = () => {
           throw new Error(`Unsupported workload type: ${config.workload_type}`)
         }
         updateConfigRunningState(config.id, true)
-        console.log(
-          'Port forwarding initiated for config:',
-          config.id,
-          response,
-        )
       } catch (error) {
-        console.error(
-          `Error starting port forward for config id ${config.id}:`,
-          error,
-        )
         errors.push({ id: config.id, error })
         updateConfigRunningState(config.id, false)
       }
@@ -537,7 +526,6 @@ const KFTray = () => {
     }
 
     try {
-      console.log('Deleting configs:', configsToDelete)
       await invoke('delete_configs', { ids: configsToDelete })
 
       const configsAfterDeletion = await invoke<Status[]>('get_configs')
@@ -677,6 +665,8 @@ const KFTray = () => {
           onSettingsSaved={fetchAndUpdateConfigs}
           setCredentialsSaved={setCredentialsSaved}
           credentialsSaved={credentialsSaved}
+          setPollingInterval={setPollingInterval}
+          pollingInterval={pollingInterval}
         />
         <FooterMenu
           openModal={openModal}
@@ -689,6 +679,8 @@ const KFTray = () => {
           isSettingsModalOpen={isSettingsModalOpen}
           handleDeleteConfigs={handleDeleteConfigs}
           selectedConfigs={selectedConfigs}
+          setPollingInterval={setPollingInterval}
+          pollingInterval={pollingInterval}
         />
         <AddConfigModal
           isModalOpen={isModalOpen}
