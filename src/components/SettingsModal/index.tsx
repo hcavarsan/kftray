@@ -8,6 +8,7 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogOverlay,
+  Box,
   Button,
   Center,
   Checkbox,
@@ -20,6 +21,12 @@ import {
   ModalContent,
   ModalFooter,
   ModalOverlay,
+  Slider,
+  SliderFilledTrack,
+  SliderMark,
+  SliderThumb,
+  SliderTrack,
+  Tooltip,
 } from '@chakra-ui/react'
 import { invoke } from '@tauri-apps/api/tauri'
 
@@ -39,10 +46,62 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   const [gitToken, setGitToken] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [isImportAlertOpen, setIsImportAlertOpen] = useState(false)
+  const [pollingInterval, setPollingInterval] = useState(0)
   const cancelRef = React.useRef<HTMLButtonElement>(null)
+  const [showTooltip, setShowTooltip] = React.useState(false)
 
   const serviceName = 'kftray'
   const accountName = 'github_config'
+
+  useEffect(() => {
+    async function pollingConfigs() {
+      if (credentialsSaved && pollingInterval > 0) {
+        console.log(`Polling every ${pollingInterval} seconds.`)
+        try {
+          const credentialsString = await invoke('get_key', {
+            service: serviceName,
+            name: accountName,
+          })
+
+          if (typeof credentialsString === 'string') {
+            console.log('Credentials found:', credentialsString)
+
+            const credentials = JSON.parse(credentialsString)
+
+            setPollingInterval(credentials.pollingInterval)
+            console.log(
+              'Polling interval updated to:',
+              credentials.pollingInterval,
+            )
+
+            await invoke('import_configs_from_github', {
+              repoUrl: credentials.repoUrl,
+              configPath: credentials.configPath,
+              isPrivate: credentials.isPrivate,
+              pollingInterval: credentials.pollingInterval,
+              token: credentials.token,
+              flush: true,
+            })
+
+            console.log('Configs successfully updated from GitHub.')
+          }
+        } catch (error) {
+          console.error(
+            'Failed to update configs from GitHub during polling:',
+            error,
+          )
+        }
+      }
+    }
+
+    const pollingId = setInterval(() => {
+      pollingConfigs()
+    }, pollingInterval * 1000)
+
+    return () => {
+      clearInterval(pollingId)
+    }
+  }, [credentialsSaved, pollingInterval, serviceName, accountName])
 
   useEffect(() => {
     let isComponentMounted = true
@@ -69,6 +128,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
           setConfigPath(credentials.configPath || '')
           setIsPrivateRepo(credentials.isPrivate || false)
           setGitToken(credentials.token || '')
+          setPollingInterval(credentials.pollingInterval || 60)
           setCredentialsSaved(true)
         }
       } catch (error) {
@@ -104,6 +164,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
       setSettingInputValue('')
       setConfigPath('')
       setIsPrivateRepo(false)
+      setPollingInterval(0)
       setGitToken('')
 
       onSettingsSaved?.()
@@ -125,6 +186,10 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   const handleGitTokenChange = (e: React.ChangeEvent<HTMLInputElement>) =>
     setGitToken(e.target.value)
 
+  const handleSliderChange = (value: number) => {
+    setPollingInterval(value)
+  }
+
   const handleCancel = () => {
     closeSettingsModal()
   }
@@ -143,6 +208,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
       configPath: configPath,
       isPrivate: isPrivateRepo,
       token: gitToken,
+      pollingInterval: pollingInterval,
       flush: true,
     })
 
@@ -152,6 +218,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
         configPath: configPath,
         isPrivate: isPrivateRepo,
         token: gitToken,
+        pollingInterval: pollingInterval,
         flush: true,
       })
       await invoke('store_key', {
@@ -173,9 +240,15 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
 
   return (
     <Center>
-      <Modal isOpen={isSettingsModalOpen} onClose={handleCancel} size='xl'>
+      <Modal isOpen={isSettingsModalOpen} onClose={handleCancel} size='xs'>
         <ModalOverlay bg='transparent' />
-        <ModalContent mx={5} my={5} mt={8}>
+        <ModalContent
+          mx={5}
+          my={5}
+          mt={8}
+          borderRadius='lg'
+          boxShadow='0px 10px 25px 5px rgba(0,0,0,0.5)'
+        >
           <ModalCloseButton />
           <ModalBody p={2} mt={3}>
             <form onSubmit={handleSaveSettings}>
@@ -218,7 +291,48 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                   color={theme.colors.gray[300]}
                 />
               </FormControl>
-
+              <FormControl p={2} mt='1'>
+                <FormLabel htmlFor='pollingInterval'>
+                  Polling Interval (seconds)
+                </FormLabel>
+                <Slider
+                  id='pollingInterval'
+                  value={pollingInterval} // use value instead of defaultValue
+                  min={0}
+                  step={5}
+                  max={120}
+                  colorScheme='facebook'
+                  variant='outline'
+                  onChange={value => handleSliderChange(value)}
+                  onMouseEnter={() => setShowTooltip(true)}
+                  onMouseLeave={() => setShowTooltip(false)}
+                  width='80%'
+                  mb='5'
+                >
+                  <SliderMark value={20} mt='1' ml='-2.5' fontSize='sm'>
+                    20
+                  </SliderMark>
+                  <SliderMark value={60} mt='1' ml='-2.5' fontSize='sm'>
+                    60
+                  </SliderMark>
+                  <SliderMark value={100} mt='1' ml='-2.5' fontSize='sm'>
+                    100
+                  </SliderMark>
+                  <SliderTrack>
+                    <SliderFilledTrack />
+                  </SliderTrack>
+                  <Tooltip
+                    hasArrow
+                    bg='gray.600'
+                    color='white'
+                    placement='top'
+                    isOpen={showTooltip}
+                    label={`${pollingInterval}`}
+                  >
+                    <SliderThumb />
+                  </Tooltip>
+                </Slider>
+              </FormControl>
               <FormControl
                 p={2}
                 display='flex'
