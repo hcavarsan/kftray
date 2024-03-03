@@ -244,7 +244,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
               </FormControl>
               <FormControl p={2} mt='1'>
                 <FormLabel htmlFor='pollingInterval'>
-                  Polling Interval (minutes)
+                  Polling Interval in minutes (set 0 to disable)
                 </FormLabel>
                 <Slider
                   id='pollingInterval'
