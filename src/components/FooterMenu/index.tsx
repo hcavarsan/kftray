@@ -126,6 +126,17 @@ const FooterMenu: React.FC<FooterMenu> = ({
       </Flex>
 
       <Flex align='center' flexGrow={1} justifyContent={{ sm: 'flex-end' }}>
+        <SyncConfigsButton
+          serviceName='kftray'
+          accountName='github_config'
+          onConfigsSynced={onConfigsSynced}
+          onSyncFailure={error => console.error('Sync failed:', error)}
+          credentialsSaved={credentialsSaved}
+          setCredentialsSaved={setCredentialsSaved}
+          isSettingsModalOpen={isSettingsModalOpen}
+          setPollingInterval={setPollingInterval}
+          pollingInterval={pollingInterval}
+        />
         <Tooltip
           label='Configure Git Sync'
           placement='top'
@@ -140,7 +151,7 @@ const FooterMenu: React.FC<FooterMenu> = ({
             aria-label='Sync Configs'
             justifyContent='center'
             borderColor='gray.700'
-            mr={2}
+            ml={1}
           >
             <HStack spacing={1}>
               <Box as={FaGithub} />
@@ -148,17 +159,6 @@ const FooterMenu: React.FC<FooterMenu> = ({
             </HStack>
           </Button>
         </Tooltip>
-        <SyncConfigsButton
-          serviceName='kftray'
-          accountName='github_config'
-          onConfigsSynced={onConfigsSynced}
-          onSyncFailure={error => console.error('Sync failed:', error)}
-          credentialsSaved={credentialsSaved}
-          setCredentialsSaved={setCredentialsSaved}
-          isSettingsModalOpen={isSettingsModalOpen}
-          setPollingInterval={setPollingInterval}
-          pollingInterval={pollingInterval}
-        />
       </Flex>
     </Flex>
   )
