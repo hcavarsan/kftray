@@ -168,7 +168,7 @@ const PortForwardTable: React.FC<TableProps> = ({
 
   const bg = useColorModeValue('gray.50', 'gray.700')
   const accordionBg = useColorModeValue('gray.100', 'gray.800')
-  const borderColor = useColorModeValue('gray.200', 'gray.600')
+  const borderColor = useColorModeValue('gray.200', 'gray.700')
   const textColor = useColorModeValue('gray.800', 'white')
   const boxShadow = useColorModeValue('base', 'lg')
   const fontFamily = '\'Inter\', sans-serif'
@@ -190,7 +190,6 @@ const PortForwardTable: React.FC<TableProps> = ({
   }
 
   useEffect(() => {
-    console.log('selectedConfigs', selectedConfigs)
     if (prevSelectedConfigsRef.current !== selectedConfigs) {
       const newSelectedConfigsByContext: Record<string, boolean> = {}
 
@@ -314,9 +313,9 @@ const PortForwardTable: React.FC<TableProps> = ({
           fontSize='xs'
           lineHeight='tight'
         >
-          <Image src={logo} alt='Kftray Logo' boxSize='30px' ml={3} mt={0.5} />
+          <Image src={logo} alt='Kftray Logo' boxSize='32px' ml={3} mt={0.5} />
         </Tooltip>
-        <InputGroup size='xs' width='250px'>
+        <InputGroup size='xs' width='250px' mt='1'>
           <InputLeftElement pointerEvents='none'>
             <SearchIcon color='gray.300' />
           </InputLeftElement>
