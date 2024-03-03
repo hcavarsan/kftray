@@ -55,7 +55,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
 
   useEffect(() => {
     async function pollingConfigs() {
-      if (credentialsSaved) {
+      if (credentialsSaved && pollingInterval > 0) {
         console.log(`Polling every ${pollingInterval} seconds.`)
         try {
           const credentialsString = await invoke('get_key', {
