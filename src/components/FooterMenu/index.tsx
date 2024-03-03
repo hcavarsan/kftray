@@ -39,6 +39,8 @@ const FooterMenu: React.FC<FooterMenu> = ({
   isSettingsModalOpen,
   selectedConfigs,
   handleDeleteConfigs,
+  setPollingInterval,
+  pollingInterval,
 }) => {
   const borderColor = useColorModeValue('gray.500', 'gray.700')
 
@@ -154,6 +156,8 @@ const FooterMenu: React.FC<FooterMenu> = ({
           credentialsSaved={credentialsSaved}
           setCredentialsSaved={setCredentialsSaved}
           isSettingsModalOpen={isSettingsModalOpen}
+          setPollingInterval={setPollingInterval}
+          pollingInterval={pollingInterval}
         />
       </Flex>
     </Flex>
