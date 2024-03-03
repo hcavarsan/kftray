@@ -205,7 +205,6 @@ const PortForwardTable: React.FC<TableProps> = ({
       setSelectedConfigsByContext(newSelectedConfigsByContext)
 
       prevSelectedConfigsRef.current = selectedConfigs
-      console.log('selectedConfigs', selectedConfigs)
     }
   }, [selectedConfigs, configsByContext])
 
@@ -314,13 +313,14 @@ const PortForwardTable: React.FC<TableProps> = ({
           fontSize='xs'
           lineHeight='tight'
         >
-          <Image src={logo} alt='Kftray Logo' boxSize='40px' ml={4} mt={0.5} />
+          <Image src={logo} alt='Kftray Logo' boxSize='32px' ml={3} mt={0.5} />
         </Tooltip>
-        <InputGroup size='sm' width='200px' height='30px' mt='2'>
+        <InputGroup size='xs' width='250px' mt='1'>
           <InputLeftElement pointerEvents='none'>
             <SearchIcon color='gray.300' />
           </InputLeftElement>
           <Input
+            height='25px'
             type='text'
             placeholder='Search'
             onChange={handleSearchChange}
