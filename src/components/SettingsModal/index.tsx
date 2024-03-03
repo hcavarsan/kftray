@@ -307,7 +307,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                   onMouseEnter={() => setShowTooltip(true)}
                   onMouseLeave={() => setShowTooltip(false)}
                   width='80%'
-                  mb='5'
+                  mx='3'
+                  ml='2'
                 >
                   <SliderMark value={20} mt='1' ml='-2.5' fontSize='sm'>
                     20
@@ -338,6 +339,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                 display='flex'
                 flexDirection='column'
                 isDisabled={isLoading}
+                mt='3'
               >
                 <Checkbox
                   id='isPrivateRepo'
