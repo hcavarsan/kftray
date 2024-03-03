@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { FaGithub } from 'react-icons/fa' // Import Github icon from react-icons
+import { FaGithub } from 'react-icons/fa'
 
 import { RepeatIcon } from '@chakra-ui/icons'
 import { Box, Button, HStack, Text, Tooltip } from '@chakra-ui/react'
@@ -19,10 +19,17 @@ const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
 }) => {
   const [isLoading, setIsLoading] = useState(false)
   const [credentials, setCredentials] = useState<GitConfig | null>(null)
+  const [lastSync, setLastSync] = useState<string | null>(null)
+  const [nextSync, setNextSync] = useState<string | null>(null)
 
   useEffect(() => {
     async function pollingConfigs() {
       if (credentialsSaved && credentials && credentials.pollingInterval > 0) {
+        const nextSyncDate = new Date(
+          new Date().getTime() + credentials.pollingInterval * 60000,
+        ).toLocaleTimeString()
+        const lastSyncDate = new Date().toLocaleTimeString()
+
         try {
           const credentialsString = await invoke('get_key', {
             service: serviceName,
@@ -42,6 +49,9 @@ const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
               token: credentials.token,
               flush: true,
             })
+
+            setLastSync(lastSyncDate)
+            setNextSync(nextSyncDate)
           }
         } catch (error) {
           console.error(
@@ -111,7 +121,20 @@ const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
   const handleSyncConfigs = async () => {
     setIsLoading(true)
     try {
+      if (!credentials) {
+        throw new Error('Credentials are not provided')
+      }
+
       await invoke('import_configs_from_github', credentials)
+
+      const nextSyncDate = new Date(
+        new Date().getTime() + credentials.pollingInterval * 60000,
+      ).toLocaleTimeString()
+      const lastSyncDate = new Date().toLocaleTimeString()
+
+      setLastSync(lastSyncDate)
+      setNextSync(nextSyncDate)
+
       onConfigsSynced?.()
     } catch (error) {
       if (error instanceof Error) {
@@ -131,6 +154,8 @@ const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
           <Text>Config Path: {credentials?.configPath}</Text>
           <Text>Private Repo: {credentials?.isPrivate ? 'Yes' : 'No'}</Text>
           <Text>Polling Interval: {credentials?.pollingInterval} minutes</Text>
+          <Text>Last Sync: {lastSync || ''}</Text>
+          <Text>Next Sync: {nextSync || ''}</Text>
         </>
       ) : (
         <Text>Github Sync Disabled</Text>
