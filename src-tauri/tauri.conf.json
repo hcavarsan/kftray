@@ -8,7 +8,7 @@
   },
   "package": {
     "productName": "kftray",
-	"version": "0.7.4"
+    "version": "0.8.0"
   },
   "tauri": {
     "allowlist": {
@@ -29,7 +29,7 @@
       "icon": [
         "icons/32x32.png",
         "icons/128x128.png",
-		"icons/128x128@2x.png",
+        "icons/128x128@2x.png",
         "icons/icon.icns",
         "icons/icon.ico"
       ],

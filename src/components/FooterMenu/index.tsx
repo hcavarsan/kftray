@@ -126,6 +126,28 @@ const FooterMenu: React.FC<FooterMenu> = ({
       </Flex>
 
       <Flex align='center' flexGrow={1} justifyContent={{ sm: 'flex-end' }}>
+        <Tooltip
+          label='Configure Git Sync'
+          placement='top'
+          fontSize='xs'
+          lineHeight='tight'
+        >
+          <Button
+            variant='outline'
+            colorScheme='facebook'
+            onClick={openSettingsModal}
+            size='sm'
+            aria-label='Sync Configs'
+            justifyContent='center'
+            borderColor='gray.700'
+            mr={2}
+          >
+            <HStack spacing={1}>
+              <Box as={FaGithub} />
+              <MdSettings />
+            </HStack>
+          </Button>
+        </Tooltip>
         <SyncConfigsButton
           serviceName='kftray'
           accountName='github_config'
