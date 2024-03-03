@@ -159,28 +159,6 @@ const FooterMenu: React.FC<FooterMenu> = ({
           setPollingInterval={setPollingInterval}
           pollingInterval={pollingInterval}
         />
-        <Tooltip
-          label='Configure Git Sync'
-          placement='top'
-          fontSize='xs'
-          lineHeight='tight'
-        >
-          <Button
-            variant='outline'
-            colorScheme='facebook'
-            onClick={openSettingsModal}
-            size='sm'
-            aria-label='Sync Configs'
-            justifyContent='center'
-            borderColor='gray.700'
-            ml={1}
-          >
-            <HStack spacing={1}>
-              <Box as={FaGithub} />
-              <MdSettings />
-            </HStack>
-          </Button>
-        </Tooltip>
       </Flex>
     </Flex>
   )
