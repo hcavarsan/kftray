@@ -22,7 +22,7 @@ const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
 
   useEffect(() => {
     async function pollingConfigs() {
-      if (credentialsSaved && credentials?.pollingInterval > 0) {
+      if (credentialsSaved && credentials && credentials.pollingInterval > 0) {
         try {
           const credentialsString = await invoke('get_key', {
             service: serviceName,
@@ -52,9 +52,14 @@ const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
       }
     }
 
-    const pollingId = setInterval(() => {
-      pollingConfigs()
-    }, credentials?.pollingInterval * 60000)
+    const pollingId = setInterval(
+      () => {
+        pollingConfigs()
+      },
+      credentials && credentials.pollingInterval
+        ? credentials.pollingInterval * 60000
+        : 0,
+    )
 
     return () => {
       clearInterval(pollingId)
@@ -65,6 +70,7 @@ const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
     serviceName,
     accountName,
     setPollingInterval,
+    credentials,
   ])
 
   useEffect(() => {
