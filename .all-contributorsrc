@@ -8,19 +8,27 @@
   "commitConvention": "angular",
   "contributors": [
     {
-      "login": "fandujar",
-      "name": "Filipe Andujar",
-      "avatar_url": "https://avatars.githubusercontent.com/u/6901387?v=4",
-      "profile": "http://fandujar.dev",
+      "login": "hcavarsan",
+      "name": "Henrique Cavarsan",
+      "avatar_url": "https://avatars.githubusercontent.com/u/30353685?v=4",
+      "profile": "https://github.com/hcavarsan",
       "contributions": [
         "code"
       ]
-    }
-  ],
-  "contributorsPerLine": 7,
-  "skipCi": true,
-  "repoType": "github",
-  "repoHost": "https://github.com",
-  "projectName": "kftray",
-  "projectOwner": "hcavarsan"
+    },
+    "login": "fandujar",
+    "name": "Filipe Andujar",
+    "avatar_url": "https://avatars.githubusercontent.com/u/6901387?v=4",
+    "profile": "http://fandujar.dev",
+    "contributions": [
+      "code"
+    ]
+  }
+],
+"contributorsPerLine": 7,
+"skipCi": true,
+"repoType": "github",
+"repoHost": "https://github.com",
+"projectName": "kftray",
+"projectOwner": "hcavarsan"
 }
