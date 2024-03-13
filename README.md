@@ -13,7 +13,7 @@
     <img src="https://img.shields.io/badge/Rust-v1.75.0-brightgreen.svg" alt="Rust version" />
   </a>
   <a href="https://github.com/hcavarsan/kftray">
-    <img src="https://img.shields.io/github/all-contributors/hcavarsan/kftray?color=ee8449&style=flat-square" alt="Contributors" />
+    <img src="https://img.shields.io/github/all-contributors/hcavarsan/kftray" alt="contributors" />
   </a>
 
   <!-- Download Links and Stats -->
