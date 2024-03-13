@@ -1,7 +1,4 @@
 <div align="center">
-<!-- ALL-CONTRIBUTORS-BADGE:START - Do not remove or modify this section -->
-[![All Contributors](https://img.shields.io/github/all-contributors/hcavarsan/kftray?color=ee8449&style=flat-square)](#contributors)
-<!-- ALL-CONTRIBUTORS-BADGE:END -->
   <!-- Badges -->
   <a href="https://nodejs.org/en/">
     <img src="https://img.shields.io/badge/Node-v21.5.0-brightgreen.svg" alt="Node.js version" />
@@ -14,6 +11,9 @@
   </a>
   <a href="https://www.rust-lang.org/">
     <img src="https://img.shields.io/badge/Rust-v1.75.0-brightgreen.svg" alt="Rust version" />
+  </a>
+  <a href="https://github.com/hcavarsan/kftray">
+    <img src="https://img.shields.io/github/all-contributors/hcavarsan/kftray?color=ee8449&style=flat-square" alt="Contributors" />
   </a>
 
   <!-- Download Links and Stats -->
