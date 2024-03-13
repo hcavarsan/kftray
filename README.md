@@ -12,9 +12,7 @@
   <a href="https://www.rust-lang.org/">
     <img src="https://img.shields.io/badge/Rust-v1.75.0-brightgreen.svg" alt="Rust version" />
   </a>
-  <a href="https://github.com/hcavarsan/kftray">
-    <img src="https://img.shields.io/github/all-contributors/hcavarsan/kftray" alt="contributors" />
-  </a>
+
 
   <!-- Download Links and Stats -->
 
@@ -23,6 +21,9 @@
   </a>
   <a href="https://github.com/hcavarsan/kftray/actions">
     <img src="https://img.shields.io/github/actions/workflow/status/hcavarsan/kftray/main.yml" alt="release=">
+  </a>
+    <a href="https://github.com/hcavarsan/kftray">
+    <img src="https://img.shields.io/github/all-contributors/hcavarsan/kftray" alt="contributors" />
   </a>
 
   <br>
