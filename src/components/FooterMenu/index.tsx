@@ -1,6 +1,5 @@
 import React from 'react'
 import { FaGithub } from 'react-icons/fa'
-import { IoSettingsOutline } from 'react-icons/io5'
 import {
   MdAdd,
   MdDelete,
@@ -20,15 +19,14 @@ import {
   MenuButton,
   MenuItem,
   MenuList,
-  Spacer,
   Tooltip,
   useColorModeValue,
 } from '@chakra-ui/react'
 
-import { FooterMenu } from '../../types'
+import { FooterMenuProps } from '../../types'
 import SyncConfigsButton from '../SyncConfigsButton'
 
-const FooterMenu: React.FC<FooterMenu> = ({
+const FooterMenu: React.FC<FooterMenuProps> = ({
   openModal,
   openSettingsModal,
   handleExportConfigs,
