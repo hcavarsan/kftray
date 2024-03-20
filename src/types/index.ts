@@ -112,7 +112,7 @@ export interface PortForwardRowProps {
   isStopping: boolean
 }
 
-export interface FooterMenu {
+export interface FooterMenuProps {
   openModal: () => void
   openSettingsModal: () => void
   handleExportConfigs: () => void
