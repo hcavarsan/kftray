@@ -2132,6 +2132,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tauri",
+ "tempfile",
  "tokio",
  "tokio-stream",
  "tower",
