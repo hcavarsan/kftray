@@ -19,7 +19,7 @@
     "lint:utils": "cargo clippy --manifest-path ./Cargo.toml --all-targets -- -D warnings",
     "precommit": "pnpm run format && pnpm run lint",
     "preview": "vite preview",
-    "release:minor": "cargo run --bin bump_version minor && git commit -m 'Bump version' && git push && git push --tags --force",
+    "release:minor": "cargo run --bin bump_version minor && git add . && git commit -m 'chore: release new version' && git push && git push --tags --force",
     "tauri": "tauri",
     "taze": "taze major -I",
     "taze:minor": "taze minor -w",
