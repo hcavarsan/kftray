@@ -26,6 +26,7 @@ tower = "0.4.13"
 whoami = "1.4.1"
 dirs = "5.0.1"
 tempfile = "3"
+hostsfile = { git = "https://github.com/tonarino/innernet", branch = "main" }
 
 
 [dependencies.h2]

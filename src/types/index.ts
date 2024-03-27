@@ -9,6 +9,7 @@ export interface Status {
   namespace: string
   remote_port: number
   local_address: string
+  domain_enabled: boolean
   workload_type: string
   protocol: string
   alias: string
@@ -22,6 +23,7 @@ export interface Config {
   namespace: string
   local_port: number
   local_address: string
+  domain_enabled: boolean
   remote_port: number
   context: string
   alias: string
