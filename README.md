@@ -32,13 +32,13 @@
   <img src="https://raw.githubusercontent.com/hcavarsan/homebrew-kftray/main/img/demo2.png" alt="KFtray Demo" width="1500" />
     <!-- Download Buttons -->
   <p>
-    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.8.0_universal.dmg">
+    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.9.0_universal.dmg">
       Download for macOS
     </a> ·
-    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.8.0_x64-setup.exe">
+    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.9.0_x64-setup.exe">
       Download for Windows
     </a> ·
-    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.8.0_amd64.AppImage">
+    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.9.0_amd64.AppImage">
       Download for Linux
     </a>
   </p>
