@@ -25,6 +25,7 @@ reqwest = "0.12.0"
 base64 = "0.22.0"
 keyring = "2.3.2"
 mockall = "0.12"
+hostsfile = { git = "https://github.com/tonarino/innernet", branch = "main" }
 
 log = "0.4"
 env_logger = "0.11.2"

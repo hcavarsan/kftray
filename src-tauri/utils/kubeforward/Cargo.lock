@@ -1671,6 +1671,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "hostsfile"
+version = "1.2.0"
+source = "git+https://github.com/tonarino/innernet?branch=main#a9e2f55c91d1fb6fc58add79c3c26125a1fd4a2c"
+dependencies = [
+ "log",
+]
+
+[[package]]
 name = "html5ever"
 version = "0.26.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2151,6 +2159,7 @@ dependencies = [
  "dirs",
  "futures",
  "h2 0.4.3",
+ "hostsfile",
  "hyper",
  "k8s-openapi",
  "kube",

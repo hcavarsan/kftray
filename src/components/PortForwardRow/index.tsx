@@ -48,8 +48,11 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   const [isRunning, setIsRunning] = useState(false)
 
   const handleOpenLocalURL = () => {
-    open(`http://${config.local_address}:${config.local_port}`).catch(error => {
-      console.error('Error opening the URL:', error)
+    const baseUrl = config.domain_enabled ? config.alias : config.local_address
+
+
+    open(`http://${baseUrl}:${config.local_port}`).catch(error => {
+	  console.error('Error opening the URL:', error)
     })
   }
 
@@ -165,6 +168,11 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
         Protocol:
       </Box>{' '}
       {config.protocol}
+      <br />
+      <Box as='span' fontWeight='semibold'>
+        Domain Enabled:
+      </Box>{' '}
+      {config.domain_enabled ? 'true' : 'false'}
       <br />
     </>
   )
