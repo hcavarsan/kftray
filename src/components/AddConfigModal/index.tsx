@@ -16,6 +16,8 @@ import {
   ModalContent,
   ModalFooter,
   ModalOverlay,
+  Text,
+  Tooltip,
   useToast,
 } from '@chakra-ui/react'
 import { invoke } from '@tauri-apps/api/tauri'
@@ -338,24 +340,6 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                 p={2}
               >
                 <Box width={{ base: '100%', sm: '50%' }} pl={2}>
-                  <FormLabel htmlFor='workload_type'>Workload Type</FormLabel>
-                  <ReactSelect
-                    styles={customStyles}
-                    name='workload_type'
-                    options={[
-                      { label: 'service', value: 'service' },
-                      { label: 'proxy', value: 'proxy' },
-                    ]}
-                    value={selectedWorkloadType}
-                    onChange={selectedOption =>
-                      handleSelectChange(
-                        selectedOption as Option,
-                        { name: 'workload_type' } as ActionMeta<Option>,
-                      )
-                    }
-                  />
-                </Box>
-                <Box width={{ base: '100%', sm: '50%' }} pl={2}>
                   <FormLabel htmlFor='alias'>Alias</FormLabel>
                   <Input
                     id='alias'
@@ -374,6 +358,46 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                       color: theme.colors.gray[500],
                     }}
                     color={theme.colors.gray[300]}
+                  />
+
+
+                  <Checkbox
+                    mt='0.5'
+                    ml='0.5'
+                    size='sm'
+                    name='domain_enabled'
+                    isChecked={newConfig.domain_enabled || false}
+                    onChange={(e) => handleInputChange({
+                      target: {
+                        name: e.target.name,
+                        value: e.target.checked,
+                      },
+                    } as unknown as React.ChangeEvent<HTMLInputElement>)}
+                  >
+								  <Tooltip label='Add a hostfile entry to resolve alias to local address' placement='bottom-end'
+                      fontSize='xs'
+                      lineHeight='tight'>
+                      <Text fontSize='xs'>enable alias as local domain</Text>
+                    </Tooltip>
+                  </Checkbox>
+
+                </Box>
+                <Box width={{ base: '100%', sm: '50%' }} pl={2} mt='-6'>
+                  <FormLabel htmlFor='workload_type'>Workload Type</FormLabel>
+                  <ReactSelect
+                    styles={customStyles}
+                    name='workload_type'
+                    options={[
+                      { label: 'service', value: 'service' },
+                      { label: 'proxy', value: 'proxy' },
+                    ]}
+                    value={selectedWorkloadType}
+                    onChange={selectedOption =>
+                      handleSelectChange(
+                        selectedOption as Option,
+                        { name: 'workload_type' } as ActionMeta<Option>,
+                      )
+                    }
                   />
                 </Box>
               </FormControl>
@@ -654,7 +678,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                   />
                 </FormControl>
               </Box>
-              <ModalFooter justifyContent='flex-end' p={2} mt={1}>
+              <ModalFooter justifyContent='flex-end' p={2} mt='-1'>
                 <Button variant='outline' onClick={handleCancel} size='xs'>
                   Cancel
                 </Button>

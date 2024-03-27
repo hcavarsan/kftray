@@ -28,6 +28,7 @@ fn main() {
     tauri::Builder::default()
         .manage(SaveDialogState::default())
         .setup(move |app| {
+            let _ = config::clean_all_custom_hosts_entries();
             let _ = db::init();
             if let Err(e) = config::migrate_configs() {
                 eprintln!("Failed to migrate configs: {}", e);

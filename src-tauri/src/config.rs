@@ -1,3 +1,4 @@
+use hostsfile::HostsBuilder;
 use kubeforward::port_forward::Config;
 use rusqlite::types::ToSql;
 use rusqlite::{params, Connection, Result};
@@ -134,6 +135,26 @@ fn read_configs() -> Result<Vec<Config>, rusqlite::Error> {
     }
     println!("Reading configs {:?}", configs);
     Ok(configs)
+}
+pub fn clean_all_custom_hosts_entries() -> Result<(), String> {
+    let configs = read_configs().map_err(|e| e.to_string())?;
+
+    for config in configs {
+        let hostfile_comment = format!(
+            "kftray custom host for {} - {}",
+            config.service.unwrap_or_default(),
+            config.id.unwrap_or_default()
+        );
+        let hosts_builder = HostsBuilder::new(&hostfile_comment);
+        hosts_builder.write().map_err(|e| {
+            format!(
+                "Failed to write to the hostfile for {}: {}",
+                hostfile_comment, e
+            )
+        })?;
+    }
+
+    Ok(())
 }
 
 // function to get all configs from the database
