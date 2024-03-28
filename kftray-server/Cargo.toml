@@ -4,7 +4,7 @@ version = "0.9.0"
 edition = "2021"
 
 [dependencies]
-ctrlc = "3.4.2"
+ctrlc = "3.4.4"
 log = "0.4"
 env_logger = "0.11.2"
 byteorder = "1.4"
