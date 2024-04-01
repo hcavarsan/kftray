@@ -38,7 +38,7 @@
     <tr>
       <td align="center">
         <a href="https://www.youtube.com/watch?v=BAdL7IzaEh8">
-          <img src="https://img.youtube.com/vi/BAdL7IzaEh8/0.jpg" alt="Kftray Demo: Github Sync" width="300"/>
+          <img src="https://img.youtube.com/vi/BAdL7IzaEh8/0.jpg" alt="Kftray Demo: Github Sync" width="256"/>
         </a>
       </td>
       <td align="center">
