@@ -1,5 +1,5 @@
 <div align="center">
-<img src="./img/logo.png" alt="KFtray Demo" width="300" />
+<img src="./img/logo.png" alt="KFtray Demo" width="256" />
   <p>
     <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.9.0_universal.dmg">
       Download for macOS
