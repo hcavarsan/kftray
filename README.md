@@ -1,4 +1,6 @@
 <div align="center">
+<img src="./img/logo.png" alt="KFtray Demo" width="300" />
+<br/>
   <!-- Badges -->
   <a href="https://nodejs.org/en/">
     <img src="https://img.shields.io/badge/Node-v21.5.0-brightgreen.svg" alt="Node.js version" />
@@ -29,7 +31,7 @@
   <br>
 
 
-  <img src="./img/logo.png" alt="KFtray Demo" width="300" />
+
   <table align="center">
     <tr>
       <td align="center"><strong>Demo: GitHub Sync</strong></td>
