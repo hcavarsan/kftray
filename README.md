@@ -1,5 +1,4 @@
 <div align="center">
-
 <img src="./img/logo.png" alt="KFtray Demo" width="300" />
   <p>
     <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.9.0_universal.dmg">
@@ -12,6 +11,7 @@
       Download for Linux
     </a>
   </p>
+
 
 
   <!-- Badges -->
@@ -40,10 +40,11 @@
     <a href="https://github.com/hcavarsan/kftray">
     <img src="https://img.shields.io/github/all-contributors/hcavarsan/kftray" alt="contributors" />
   </a>
-
-  <br>
-
 <br/>
+
+
+
+
 
 
 
