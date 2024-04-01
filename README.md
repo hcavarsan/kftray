@@ -1,62 +1,49 @@
 <div align="center">
-<img src="./img/logo.png" alt="KFtray Demo" width="200" />
-  <p>
-    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.9.0_universal.dmg">
-      Download for macOS
-    </a> ·
-    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.9.0_x64-setup.exe">
-      Download for Windows
-    </a> ·
-    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.9.0_amd64.AppImage">
-      Download for Linux
-    </a>
-  </p>
-
-
-
+<img src="./img/logo.png" alt="KFtray Logo" width="192" height="192">
+<h1>KFtray</h1>
   <!-- Badges -->
   <a href="https://nodejs.org/en/">
-    <img src="https://img.shields.io/badge/Node-v21.5.0-brightgreen.svg" alt="Node.js version" />
+    <img src="https://img.shields.io/badge/Node-v21.5.0-brightgreen.svg?style=for-the-badge" alt="Node.js version" />
   </a>
   <a href="https://tauri.app/">
-    <img src="https://img.shields.io/badge/Tauri-v1.6.1-brightgreen.svg" alt="Tauri version" />
+    <img src="https://img.shields.io/badge/Tauri-v1.6.1-brightgreen.svg?style=for-the-badge" alt="Tauri version" />
   </a>
   <a href="https://react.dev">
-    <img src="https://img.shields.io/badge/React-v18.2.0-brightgreen.svg" alt="React version" />
+    <img src="https://img.shields.io/badge/React-v18.2.0-brightgreen.svg?style=for-the-badge" alt="React version" />
   </a>
   <a href="https://www.rust-lang.org/">
-    <img src="https://img.shields.io/badge/Rust-v1.75.0-brightgreen.svg" alt="Rust version" />
+    <img src="https://img.shields.io/badge/Rust-v1.75.0-brightgreen.svg?style=for-the-badge" alt="Rust version" />
   </a>
-
-
-  <!-- Download Links and Stats -->
-
   <a href="https://github.com/hcavarsan/kftray/releases/latest">
-    <img src="https://img.shields.io/github/downloads/hcavarsan/kftray/total.svg" alt="downloads" />
+    <img src="https://img.shields.io/github/downloads/hcavarsan/kftray/total.svg?style=for-the-badge" alt="downloads" />
   </a>
-  <a href="https://github.com/hcavarsan/kftray/actions">
-    <img src="https://img.shields.io/github/actions/workflow/status/hcavarsan/kftray/main.yml" alt="release=">
-  </a>
-    <a href="https://github.com/hcavarsan/kftray">
-    <img src="https://img.shields.io/github/all-contributors/hcavarsan/kftray" alt="contributors" />
-  </a>
-<br/>
+
+  <div align="center">
 
 
 
+  <h3>A cross-platform system tray app for Kubernetes port-forward management.</h3>
+  <br>
 
+  <div>
+    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.9.0_universal.dmg">
+      <img src="https://img.shields.io/badge/-Download for macOS-grey.svg?style=for-the-badge&logo=apple" alt="Download for macOS" />
+    </a>
+    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.9.0_x64-setup.exe">
+      <img src="https://img.shields.io/badge/-Download for Windows-grey.svg?style=for-the-badge&logo=windows" alt="Download for Windows" />
+    </a>
+    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.9.0_amd64.AppImage">
+      <img src="https://img.shields.io/badge/-Download for Linux-grey.svg?style=for-the-badge&logo=linux" alt="Download for Linux" />
+    </a>
+  </div>
 
+  <br>
 
 
 
 </div>
 
-## What Is Kftray?
-
-KFtray is a cross-platform system tray app made with Tauri (Rust and TypeScript) for Kubernetes users. It simplifies setting up multiple kubectl port forward configurations through a user-friendly interface. Easily store and manage all configurations from local files or GitHub repositories.
-
-**Blog Post**:
-[Kubernetes Debugging: Handling Multiple kubectl port-forward from System Tray](https://kftray.hashnode.dev/kubernetes-debugging-handling-multiple-kubectl-port-forward-from-tray)
+## Video Demo
 
   <table align="center">
     <tr>
@@ -71,11 +58,20 @@ KFtray is a cross-platform system tray app made with Tauri (Rust and TypeScript)
       </td>
       <td align="center">
         <a href="https://www.youtube.com/watch?v=nqEhmcKeCc4">
-          <img src="https://img.youtube.com/vi/nqEhmcKeCc4/0.jpg" alt="Kftray Demo: Adding a new configuration" width="280"/>
+          <img src="https://img.youtube.com/vi/nqEhmcKeCc4/0.jpg" alt="Kftray Demo: Adding a new configuration" width="256"/>
         </a>
       </td>
     </tr>
   </table>
+</div>
+
+
+
+<br>
+
+  <h2>Overview</h2>
+  <p>kftray is a cross-platform system tray app made with Tauri (Rust and TypeScript) for Kubernetes users. It simplifies setting up multiple kubectl port forward configurations through a user-friendly interface. Easily store and manage all configurations from local files or GitHub repositories.</p>
+    <p><strong>Learn More:</strong> <a href="https://kftray.hashnode.dev/kubernetes-debugging-handling-multiple-kubectl-port-forward-from-tray">Blog Post - Kubernetes Debugging with KFtray</a></p>
 
 
 ## Table of Contents
