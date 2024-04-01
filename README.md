@@ -31,7 +31,17 @@
   <br>
 
 <br/>
-
+  <p>
+    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.9.0_universal.dmg">
+      Download for macOS
+    </a> ·
+    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.9.0_x64-setup.exe">
+      Download for Windows
+    </a> ·
+    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.9.0_amd64.AppImage">
+      Download for Linux
+    </a>
+  </p>
   <table align="center">
     <tr>
       <td align="center"><strong>Demo: GitHub Sync</strong></td>
@@ -50,23 +60,13 @@
       </td>
     </tr>
   </table>
-  <p>
-    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.9.0_universal.dmg">
-      Download for macOS
-    </a> ·
-    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.9.0_x64-setup.exe">
-      Download for Windows
-    </a> ·
-    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.9.0_amd64.AppImage">
-      Download for Linux
-    </a>
-  </p>
+
 
 
 
 </div>
 
----
+
 
 ## What Is Kftray?
 
