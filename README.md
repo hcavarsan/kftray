@@ -29,8 +29,25 @@
   <br>
 
 
-  <img src="./img/logo.png" alt="KFtray Demo" width="400" />
-    <!-- Download Buttons -->
+  <img src="./img/logo.png" alt="KFtray Demo" width="300" />
+  <table align="center">
+    <tr>
+      <td align="center"><strong>Demo: GitHub Sync</strong></td>
+      <td align="center"><strong>Demo: Adding a New Configuration</strong></td>
+    </tr>
+    <tr>
+      <td align="center">
+        <a href="https://www.youtube.com/watch?v=BAdL7IzaEh8">
+          <img src="https://img.youtube.com/vi/BAdL7IzaEh8/0.jpg" alt="Kftray Demo: Github Sync" width="300"/>
+        </a>
+      </td>
+      <td align="center">
+        <a href="https://www.youtube.com/watch?v=nqEhmcKeCc4">
+          <img src="https://img.youtube.com/vi/nqEhmcKeCc4/0.jpg" alt="Kftray Demo: Adding a new configuration" width="280"/>
+        </a>
+      </td>
+    </tr>
+  </table>
   <p>
     <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.9.0_universal.dmg">
       Download for macOS
@@ -49,30 +66,12 @@
 
 ---
 
-
-  <table align="center">
-    <tr>
-      <td align="center"><strong>Demo: GitHub Sync</strong></td>
-      <td align="center"><strong>Demo: Adding a New Configuration</strong></td>
-    </tr>
-    <tr>
-      <td align="center">
-        <a href="https://www.youtube.com/watch?v=BAdL7IzaEh8">
-          <img src="https://img.youtube.com/vi/BAdL7IzaEh8/0.jpg" alt="Kftray Demo: Github Sync" width="280"/>
-        </a>
-      </td>
-      <td align="center">
-        <a href="https://www.youtube.com/watch?v=nqEhmcKeCc4">
-          <img src="https://img.youtube.com/vi/nqEhmcKeCc4/0.jpg" alt="Kftray Demo: Adding a new configuration" width="280"/>
-        </a>
-      </td>
-    </tr>
-  </table>
-
-
 ## What Is Kftray?
 
 KFtray is a cross-platform system tray app made with Tauri (Rust and TypeScript) for Kubernetes users. It simplifies setting up multiple kubectl port forward configurations through a user-friendly interface. Easily store and manage all configurations from local files or GitHub repositories.
+
+
+
 
 ## Table of Contents
 
