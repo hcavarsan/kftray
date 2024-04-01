@@ -1,6 +1,19 @@
 <div align="center">
+
 <img src="./img/logo.png" alt="KFtray Demo" width="300" />
-<br/>
+  <p>
+    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.9.0_universal.dmg">
+      Download for macOS
+    </a> ·
+    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.9.0_x64-setup.exe">
+      Download for Windows
+    </a> ·
+    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.9.0_amd64.AppImage">
+      Download for Linux
+    </a>
+  </p>
+
+
   <!-- Badges -->
   <a href="https://nodejs.org/en/">
     <img src="https://img.shields.io/badge/Node-v21.5.0-brightgreen.svg" alt="Node.js version" />
@@ -32,6 +45,18 @@
 
 <br/>
 
+
+
+
+</div>
+
+## What Is Kftray?
+
+KFtray is a cross-platform system tray app made with Tauri (Rust and TypeScript) for Kubernetes users. It simplifies setting up multiple kubectl port forward configurations through a user-friendly interface. Easily store and manage all configurations from local files or GitHub repositories.
+
+**Blog Post**:
+[Kubernetes Debugging: Handling Multiple kubectl port-forward from System Tray](https://kftray.hashnode.dev/kubernetes-debugging-handling-multiple-kubectl-port-forward-from-tray)
+
   <table align="center">
     <tr>
       <td align="center"><strong>Demo: GitHub Sync</strong></td>
@@ -50,28 +75,6 @@
       </td>
     </tr>
   </table>
-
-  <p>
-    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.9.0_universal.dmg">
-      Download for macOS
-    </a> ·
-    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.9.0_x64-setup.exe">
-      Download for Windows
-    </a> ·
-    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.9.0_amd64.AppImage">
-      Download for Linux
-    </a>
-  </p>
-
-
-</div>
-
-## What Is Kftray?
-
-KFtray is a cross-platform system tray app made with Tauri (Rust and TypeScript) for Kubernetes users. It simplifies setting up multiple kubectl port forward configurations through a user-friendly interface. Easily store and manage all configurations from local files or GitHub repositories.
-
-**Blog Post**:
-[Kubernetes Debugging: Handling Multiple kubectl port-forward from System Tray](https://kftray.hashnode.dev/kubernetes-debugging-handling-multiple-kubectl-port-forward-from-tray)
 
 
 ## Table of Contents
