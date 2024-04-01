@@ -31,17 +31,7 @@
   <br>
 
 <br/>
-  <p>
-    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.9.0_universal.dmg">
-      Download for macOS
-    </a> ·
-    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.9.0_x64-setup.exe">
-      Download for Windows
-    </a> ·
-    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.9.0_amd64.AppImage">
-      Download for Linux
-    </a>
-  </p>
+
   <table align="center">
     <tr>
       <td align="center"><strong>Demo: GitHub Sync</strong></td>
@@ -61,19 +51,22 @@
     </tr>
   </table>
 
-
+  <p>
+    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.9.0_universal.dmg">
+      Download for macOS
+    </a> ·
+    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.9.0_x64-setup.exe">
+      Download for Windows
+    </a> ·
+    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.9.0_amd64.AppImage">
+      Download for Linux
+    </a>
+  </p>
 
 
 </div>
 
 
-
-## What Is Kftray?
-
-KFtray is a cross-platform system tray app made with Tauri (Rust and TypeScript) for Kubernetes users. It simplifies setting up multiple kubectl port forward configurations through a user-friendly interface. Easily store and manage all configurations from local files or GitHub repositories.
-
-**Blog Post**:
-[Kubernetes Debugging: Handling Multiple kubectl port-forward from System Tray](https://kftray.hashnode.dev/kubernetes-debugging-handling-multiple-kubectl-port-forward-from-tray)
 
 
 ## Table of Contents
