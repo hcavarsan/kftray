@@ -1,7 +1,9 @@
 <div align="center">
-<img src="./img/logo.png" alt="KFtray Logo" width="192" height="192">
+<img src="./img/logo.png" alt="KFtray Logo" width="210" height="210">
 <h1>KFtray</h1>
+  <h3>A cross-platform system tray app for Kubernetes port-forward management.</h3>
   <!-- Badges -->
+   <br>
   <a href="https://nodejs.org/en/">
     <img src="https://img.shields.io/badge/Node-v21.5.0-brightgreen.svg?style=for-the-badge" alt="Node.js version" />
   </a>
@@ -22,8 +24,8 @@
 
 
 
-  <h3>A cross-platform system tray app for Kubernetes port-forward management.</h3>
-  <br>
+  
+ 
 
   <div>
     <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.9.0_universal.dmg">
@@ -43,39 +45,40 @@
 
 </div>
 
-## Video Demo
 
-  <table align="center">
-    <tr>
-      <td align="center"><strong>Demo: GitHub Sync</strong></td>
-      <td align="center"><strong>Demo: Adding a New Configuration</strong></td>
-    </tr>
-    <tr>
-      <td align="center">
-        <a href="https://www.youtube.com/watch?v=BAdL7IzaEh8">
-          <img src="https://img.youtube.com/vi/BAdL7IzaEh8/0.jpg" alt="Kftray Demo: Github Sync" width="256"/>
-        </a>
-      </td>
-      <td align="center">
-        <a href="https://www.youtube.com/watch?v=nqEhmcKeCc4">
-          <img src="https://img.youtube.com/vi/nqEhmcKeCc4/0.jpg" alt="Kftray Demo: Adding a new configuration" width="256"/>
-        </a>
-      </td>
-    </tr>
-  </table>
 </div>
 
 
 
 <br>
 
-  <h2>Overview</h2>
+  <h1>Overview</h1>
   <p>kftray is a cross-platform system tray app made with Tauri (Rust and TypeScript) for Kubernetes users. It simplifies setting up multiple kubectl port forward configurations through a user-friendly interface. Easily store and manage all configurations from local files or GitHub repositories.</p>
     <p><strong>Learn More:</strong> <a href="https://kftray.hashnode.dev/kubernetes-debugging-handling-multiple-kubectl-port-forward-from-tray">Blog Post - Kubernetes Debugging with KFtray</a></p>
+    
+### Demo
 
+  <table>
+    <tr>
+      <td><strong>Demo: GitHub Sync</strong></td>
+      <td><strong>Demo: Adding a New Configuration</strong></td>
+    </tr>
+    <tr>
+      <td>
+        <a href="https://www.youtube.com/watch?v=BAdL7IzaEh8">
+          <img src="https://img.youtube.com/vi/BAdL7IzaEh8/0.jpg" alt="Kftray Demo: Github Sync" width="256"/>
+        </a>
+      </td>
+      <td>
+        <a href="https://www.youtube.com/watch?v=nqEhmcKeCc4">
+          <img src="https://img.youtube.com/vi/nqEhmcKeCc4/0.jpg" alt="Kftray Demo: Adding a new configuration" width="256"/>
+        </a>
+      </td>
+    </tr>
+  </table>
+  <br>
 
 ## Table of Contents
-
 
 - [Features](#-features)
 - [Installation](#-installation)
