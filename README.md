@@ -255,11 +255,15 @@ Kubernetes Pod-->>Application: Relays as TCP
 
 KFtray is available under the [MIT License](LICENSE.md), which is included in the repository. See the LICENSE file for full details.
 
-## Stargazers over time
+## Star History
 
-[![Stargazers over time](https://starchart.cc/hcavarsan/kftray.svg?variant=dark)](https://starchart.cc/hcavarsan/kftray)
-
-
+<a href="https://star-history.com/#hcavarsan/kftray&Date">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=hcavarsan/kftray&type=Date&theme=dark" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=hcavarsan/kftray&type=Date" />
+   <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=hcavarsan/kftray&type=Date" />
+ </picture>
+</a>
 
 
 ## Contributors ✨
