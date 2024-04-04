@@ -622,15 +622,15 @@ checksum = "baf1de4339761588bc0619e3cbc0120ee582ebb74b53b4efbf79117bd2da40fd"
 
 [[package]]
 name = "chrono"
-version = "0.4.31"
+version = "0.4.37"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f2c685bad3eb3d45a01354cedb7d5faa66194d1d58ba6e267a8de788f79db38"
+checksum = "8a0d04d43504c61aa6c7531f1871dd0d418d91130162063b789da00fd7057a5e"
 dependencies = [
  "android-tzdata",
  "iana-time-zone",
  "num-traits",
  "serde",
- "windows-targets 0.48.5",
+ "windows-targets 0.52.0",
 ]
 
 [[package]]
@@ -1779,9 +1779,9 @@ dependencies = [
 
 [[package]]
 name = "h2"
-version = "0.4.3"
+version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "51ee2dd2e4f378392eeff5d51618cd9a63166a2513846bbc55f21cfacd9199d4"
+checksum = "816ec7294445779408f36fe57bc5b7fc1cf59664059096c65f905c1c61f58069"
 dependencies = [
  "bytes",
  "fnv",
@@ -2016,7 +2016,7 @@ dependencies = [
  "bytes",
  "futures-channel",
  "futures-util",
- "h2 0.4.3",
+ "h2 0.4.4",
  "http 1.1.0",
  "http-body 1.0.0",
  "httparse",
@@ -2365,13 +2365,13 @@ dependencies = [
 
 [[package]]
 name = "kftray"
-version = "0.8.0"
+version = "0.9.0"
 dependencies = [
  "base64 0.22.0",
  "dirs",
  "env_logger",
  "fix-path-env",
- "h2 0.4.3",
+ "h2 0.4.4",
  "hostsfile",
  "keyring",
  "kubeforward",
@@ -3878,7 +3878,7 @@ dependencies = [
  "encoding_rs",
  "futures-core",
  "futures-util",
- "h2 0.4.3",
+ "h2 0.4.4",
  "http 1.1.0",
  "http-body 1.0.0",
  "http-body-util",
