@@ -32,7 +32,7 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: 20.11.0
+          node-version: '20.x'
           cache: 'pnpm'
 
       - name: Install pnpm dependencies
@@ -81,7 +81,7 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: 20.11.0
+          node-version: '20.x'
 
       - name: Install pnpm
         uses: pnpm/action-setup@v2.4.0
