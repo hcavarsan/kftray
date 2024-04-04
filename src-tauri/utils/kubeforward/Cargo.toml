@@ -31,7 +31,7 @@ hostsfile = { git = "https://github.com/tonarino/innernet", branch = "main" }
 
 [dependencies.h2]
 optional = true
-version = "0.4.0"
+version = "0.4.3"
 
 [dev-dependencies]
 tracing-subscriber = { version = "0.3.18", features = [ "env-filter" ] }
