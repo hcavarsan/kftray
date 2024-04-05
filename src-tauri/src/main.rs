@@ -68,21 +68,21 @@ fn main() {
                         .set_icon(tauri::Icon::Raw(
                             include_bytes!("../icons/tray-light.png").to_vec(),
                         ))
-                        .unwrap();
+                        .unwrap_or_else(|e| eprintln!("Failed to set tray icon: {}", e));
                 }
                 dark_light::Mode::Light => {
                     app.tray_handle()
                         .set_icon(tauri::Icon::Raw(
                             include_bytes!("../icons/tray-dark.png").to_vec(),
                         ))
-                        .unwrap();
+                        .unwrap_or_else(|e| eprintln!("Failed to set tray icon: {}", e));
                 }
                 dark_light::Mode::Default => {
                     app.tray_handle()
                         .set_icon(tauri::Icon::Raw(
                             include_bytes!("../icons/32x32.png").to_vec(),
                         ))
-                        .unwrap();
+                        .unwrap_or_else(|e| eprintln!("Failed to set tray icon: {}", e));
                 }
             }
             Ok(())
