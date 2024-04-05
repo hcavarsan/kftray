@@ -59,7 +59,32 @@ fn main() {
                     }
                 })
                 .unwrap_or_else(|err| println!("{:?}", err));
+            println!("Current mode: {:?}", dark_light::detect());
+            let mode = dark_light::detect();
 
+            match mode {
+                dark_light::Mode::Dark => {
+                    app.tray_handle()
+                        .set_icon(tauri::Icon::Raw(
+                            include_bytes!("../icons/tray-light.png").to_vec(),
+                        ))
+                        .unwrap();
+                }
+                dark_light::Mode::Light => {
+                    app.tray_handle()
+                        .set_icon(tauri::Icon::Raw(
+                            include_bytes!("../icons/tray-dark.png").to_vec(),
+                        ))
+                        .unwrap();
+                }
+                dark_light::Mode::Default => {
+                    app.tray_handle()
+                        .set_icon(tauri::Icon::Raw(
+                            include_bytes!("../icons/32x32.png").to_vec(),
+                        ))
+                        .unwrap();
+                }
+            }
             Ok(())
         })
         .plugin(tauri_plugin_positioner::init())
