@@ -14,14 +14,14 @@ rust-version = "1.57"
 tauri-build = { version = "1.5", features = [] }
 
 [dependencies]
-serde_json = "1.0.114"
+serde_json = "1.0.115"
 tauri = { version = "1.6", features = [ "updater", "api-all", "macos-private-api", "system-tray", "icon-png"] }
 tauri-plugin-positioner = { version = "1.0", features = ["system-tray"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
 rusqlite = { version = "0.31.0", features = ["bundled"] }
 dirs = "5.0.1"
 kubeforward = { path = "./utils/kubeforward" }
-reqwest = "0.12.2"
+reqwest = "0.12.3"
 base64 = "0.22.0"
 keyring = "2.3.2"
 mockall = "0.12"
@@ -29,7 +29,7 @@ hostsfile = { git = "https://github.com/tonarino/innernet", branch = "main" }
 dark-light = "1.1.1"
 
 log = "0.4"
-env_logger = "0.11.2"
+env_logger = "0.11.3"
 openssl = { version = "0.10.64", features = ["vendored"] }
 
 [dev-dependencies]
@@ -37,7 +37,7 @@ tempfile = "3.9"
 
 [dependencies.h2]
 optional = true
-version = "0.4.3"
+version = "0.4.4"
 
 
 [features]
