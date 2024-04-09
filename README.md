@@ -28,13 +28,13 @@
  
 
   <div>
-    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.9.1_universal.dmg">
+    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.9.2_universal.dmg">
       <img src="https://img.shields.io/badge/-Download for macOS-grey.svg?style=for-the-badge&logo=apple" alt="Download for macOS" />
     </a>
-    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.9.1_x64-setup.exe">
+    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.9.2_x64-setup.exe">
       <img src="https://img.shields.io/badge/-Download for Windows-grey.svg?style=for-the-badge&logo=windows" alt="Download for Windows" />
     </a>
-    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.9.1_amd64.AppImage">
+    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.9.2_amd64.AppImage">
       <img src="https://img.shields.io/badge/-Download for Linux-grey.svg?style=for-the-badge&logo=linux" alt="Download for Linux" />
     </a>
   </div>
