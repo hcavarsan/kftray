@@ -26,7 +26,6 @@ base64 = "0.22.0"
 keyring = "2.3.2"
 mockall = "0.12"
 hostsfile = { git = "https://github.com/tonarino/innernet", branch = "main" }
-dark-light = "1.1.1"
 
 log = "0.4"
 env_logger = "0.11.3"
