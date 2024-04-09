@@ -59,32 +59,7 @@ fn main() {
                     }
                 })
                 .unwrap_or_else(|err| println!("{:?}", err));
-            println!("Current mode: {:?}", dark_light::detect());
-            let mode = dark_light::detect();
 
-            match mode {
-                dark_light::Mode::Dark => {
-                    app.tray_handle()
-                        .set_icon(tauri::Icon::Raw(
-                            include_bytes!("../icons/tray-light.png").to_vec(),
-                        ))
-                        .unwrap_or_else(|e| eprintln!("Failed to set tray icon: {}", e));
-                }
-                dark_light::Mode::Light => {
-                    app.tray_handle()
-                        .set_icon(tauri::Icon::Raw(
-                            include_bytes!("../icons/tray-dark.png").to_vec(),
-                        ))
-                        .unwrap_or_else(|e| eprintln!("Failed to set tray icon: {}", e));
-                }
-                dark_light::Mode::Default => {
-                    app.tray_handle()
-                        .set_icon(tauri::Icon::Raw(
-                            include_bytes!("../icons/32x32.png").to_vec(),
-                        ))
-                        .unwrap_or_else(|e| eprintln!("Failed to set tray icon: {}", e));
-                }
-            }
             Ok(())
         })
         .plugin(tauri_plugin_positioner::init())
@@ -102,7 +77,7 @@ fn main() {
                     #[cfg(target_os = "linux")]
                     let _ = window.move_window(Position::TopRight);
                     #[cfg(target_os = "windows")]
-                    let _ = window.move_window(Position::BottomRight);
+                    let _ = window.move_window(Position::TrayCenter);
                     #[cfg(target_os = "macos")]
                     let _ = window.move_window(Position::TrayCenter);
 
@@ -149,7 +124,7 @@ fn main() {
                         #[cfg(target_os = "linux")]
                         let _ = window.move_window(Position::TopRight);
                         #[cfg(target_os = "windows")]
-                        let _ = window.move_window(Position::BottomRight);
+                        let _ = window.move_window(Position::TrayCenter);
                         #[cfg(target_os = "macos")]
                         let _ = window.move_window(Position::TrayCenter);
                         window.show().unwrap();
