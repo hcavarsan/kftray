@@ -2473,7 +2473,7 @@ dependencies = [
 
 [[package]]
 name = "kftray"
-version = "0.9.5"
+version = "0.9.6"
 dependencies = [
  "base64 0.22.0",
  "dirs",
