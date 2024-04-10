@@ -2,10 +2,11 @@ use serde_json::json;
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use rusqlite::{params, Connection, Result};
 
 /// Initializes the application by ensuring that both the database file and the server configuration
 /// manifest file exist.
-pub fn init() -> Result<(), std::io::Error> {
+pub fn init() -> Result<(), Box<dyn std::error::Error>> {
     if !db_file_exists() {
         create_db_file()?;
     }
@@ -13,6 +14,23 @@ pub fn init() -> Result<(), std::io::Error> {
     if !pod_manifest_file_exists() {
         create_server_config_manifest()?;
     }
+
+    create_db_table()?;
+
+    Ok(())
+}
+
+fn create_db_table() -> Result<(), rusqlite::Error> {
+    let db_path = get_db_path();
+    let conn = Connection::open(db_path)?;
+
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS configs (
+            id INTEGER PRIMARY KEY,
+            data TEXT NOT NULL
+        )",
+        params![],
+    )?;
 
     Ok(())
 }
