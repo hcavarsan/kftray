@@ -2,31 +2,10 @@ body {
   margin: 0;
 }
 
-.arrow {
-  position: relative;
-  padding: 12px 0;
-}
-
 .accordion-shadow {
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2); /* Horizontal offset, vertical offset, blur radius, color */
-  border: 1px solid #e2e8f0; /* For light borders; change as needed */
-}
-
-.arrow:before {
-  content: '';
-  height: 0;
-  width: 0;
-  border-width: 0 8px 12px 8px;
-  border-style: solid;
-  border-color: transparent transparent rgba(45, 57, 81, 0.8) transparent; /* Dark gray with transparency */
-  position: absolute;
-  top: 0px;
-  left: 50%;
-  transform: translateX(-50%);
-  /* Apply outer shadow to the arrow */
-  box-shadow: 0 -2px 4px rgba(0, 0, 0, 0.1);
-}
-
+	box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2); /* Horizontal offset, vertical offset, blur radius, color */
+	border: 1px solid #e2e8f0; /* For light borders; change as needed */
+  }
 /* The scrollbar track (background) */
 /* The scrollbar track (background) */
 ::-webkit-scrollbar {
