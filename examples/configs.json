@@ -1,22 +1,28 @@
 [
-  {
-    "alias": "consul-ui",
-    "context": "kind-7",
-    "local_port": 8500,
-    "namespace": "consul",
-    "protocol": "tcp",
-    "remote_port": 8500,
-    "service": "consul-ui",
-    "workload_type": "service"
-  },
-  {
-    "alias": "redis-gcp",
-    "context": "kind-6",
-    "local_port": 26379,
-    "namespace": "default",
-    "protocol": "udp",
-    "remote_address": "redis-prod.gcp.internal",
-    "remote_port": 6379,
-    "workload_type": "proxy"
-  }
+ {
+  "service": "argocd-server",
+  "namespace": "argocd",
+  "local_port": 8888,
+  "remote_port": 8080,
+  "context": "test-cluster",
+  "workload_type": "service",
+  "protocol": "tcp",
+  "remote_address": "",
+  "local_address": "127.0.0.1",
+  "alias": "argocd",
+  "domain_enabled": true
+ },
+ {
+  "service": "backstage-ui",
+  "namespace": "backstage",
+  "local_port": 8085,
+  "remote_port": 8080,
+  "context": "test-cluster",
+  "workload_type": "service",
+  "protocol": "tcp",
+  "remote_address": "",
+  "local_address": "127.0.0.1",
+  "alias": "argocd",
+  "domain_enabled": true
+ }
 ]
