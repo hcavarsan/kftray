@@ -46,27 +46,7 @@ fn main() {
 		}
 	  `;
 	} else if (navigator.appVersion.includes('Win')) {
-	  style.innerHTML = `
-		body { background-color: transparent !important; margin: 0; }
-		.arrow { position: relative; padding: 12px 0; }
-		.arrow:before {
-		  content: "";
-		  height: 0;
-		  width: 0;
-		  border-width: 0 8px 12px 8px;
-		  border-style: solid;
-		  border-color: transparent transparent rgba(45, 57, 81, 0.8) transparent;
-		  position: absolute;
-		  top: 0px;
-		  left: 50%;
-		  transform: translateX(-50%);
-		  box-shadow: 0 -2px 4px rgba(0, 0, 0, 0.1);
-		}
-		body > div {
-		  background-color: transparent !important;
-		  overflow: hidden !important;
-		}
-	  `;
+	  style.innerHTML = 'body { background-color: transparent !important; margin: 0; } .arrow { position: relative; padding: 0 0 12px 0; } .arrow:after { content: ""; height: 0; width: 0; border-width: 12px 8px 0 8px; border-style: solid; border-color: #2f2f2f transparent transparent transparent; position: absolute; bottom: 0px; left: 50%; transform: translateX(-50%); } body > div { background-color: transparent !important; border-radius: 7px !important; overflow: hidden !important; } @media (prefers-color-scheme: light) { body > div { background-color: transparent !important; }}';
 	} else {
 	  style.innerHTML = `
 		body { background-color: transparent !important; margin: 0; }
@@ -138,7 +118,7 @@ fn main() {
                     #[cfg(target_os = "linux")]
                     let _ = window.move_window(Position::TopRight);
                     #[cfg(target_os = "windows")]
-                    let _ = window.move_window(Position::TrayCenter);
+                    let _ = window.move_window(Position::BottomRight);
                     #[cfg(target_os = "macos")]
                     let _ = window.move_window(Position::TrayCenter);
 
@@ -191,7 +171,7 @@ fn main() {
                         #[cfg(target_os = "linux")]
                         let _ = window.move_window(Position::TopRight);
                         #[cfg(target_os = "windows")]
-                        let _ = window.move_window(Position::TrayCenter);
+                        let _ = window.move_window(Position::BottomRight);
                         #[cfg(target_os = "macos")]
                         let _ = window.move_window(Position::TrayCenter);
 
