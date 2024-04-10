@@ -123,8 +123,12 @@ fn main() {
                         let window = app.get_window("main").unwrap();
                         #[cfg(target_os = "linux")]
                         let _ = window.move_window(Position::TopRight);
+                        window.show().unwrap();
+                        window.set_focus().unwrap();
                         #[cfg(target_os = "windows")]
                         let _ = window.move_window(Position::TrayCenter);
+                        window.show().unwrap();
+                        window.set_focus().unwrap();
                         #[cfg(target_os = "macos")]
                         let _ = window.move_window(Position::TrayCenter);
                         window.show().unwrap();
