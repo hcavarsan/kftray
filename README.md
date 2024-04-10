@@ -24,17 +24,17 @@
 
 
 
-  
- 
+
+
 
   <div>
-    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.9.2_universal.dmg">
+    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.9.3_universal.dmg">
       <img src="https://img.shields.io/badge/-Download for macOS-grey.svg?style=for-the-badge&logo=apple" alt="Download for macOS" />
     </a>
-    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.9.2_x64-setup.exe">
+    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.9.3_x64-setup.exe">
       <img src="https://img.shields.io/badge/-Download for Windows-grey.svg?style=for-the-badge&logo=windows" alt="Download for Windows" />
     </a>
-    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.9.2_amd64.AppImage">
+    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.9.3_amd64.AppImage">
       <img src="https://img.shields.io/badge/-Download for Linux-grey.svg?style=for-the-badge&logo=linux" alt="Download for Linux" />
     </a>
   </div>
@@ -55,7 +55,7 @@
   <h1>Overview</h1>
   <p>kftray is a cross-platform system tray app made with Tauri (Rust and TypeScript) for Kubernetes users. It simplifies setting up multiple kubectl port forward configurations through a user-friendly interface. Easily store and manage all configurations from local files or GitHub repositories.</p>
     <p><strong>Learn More:</strong> <a href="https://kftray.hashnode.dev/kubernetes-debugging-handling-multiple-kubectl-port-forward-from-tray">Blog Post - Kubernetes Debugging with KFtray</a></p>
-    
+
 ### Demo
 
   <table>
@@ -100,18 +100,24 @@
 
 KFtray is available for macOS and Linux users via Homebrew, and directly from the GitHub releases page for other systems. Here's how you can get started:
 
-**For macOS and Linux:**
+**For macOS**
 
 ```bash
-
 brew tap hcavarsan/kftray
-
 brew install --HEAD kftray
 ```
 
-For other systems, visit the [GitHub releases page](https://github.com/hcavarsan/kftray/releases) for downloadable binaries.
+**For Linux**
 
+```bash
+brew tap hcavarsan/kftray
+brew install kftray-linux
+```
 _Please check the caveats section for global app creation instructions after installation._
+
+Linux Note: due to GTK limitations, it is necessary to install and enable the GNOME Shell extension for AppIndicator support to kftray works. See here: https://extensions.gnome.org/extension/615/appindicator-support/
+
+For other systems, visit the [GitHub releases page](https://github.com/hcavarsan/kftray/releases) for downloadable binaries.
 
 
 ## 🧭 Usage
