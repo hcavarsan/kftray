@@ -1,8 +1,8 @@
+use rusqlite::{params, Connection, Result};
 use serde_json::json;
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use rusqlite::{params, Connection, Result};
 
 /// Initializes the application by ensuring that both the database file and the server configuration
 /// manifest file exist.
