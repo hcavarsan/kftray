@@ -106,7 +106,13 @@ fn main() {
                         window.hide().unwrap();
                     } else {
                         #[cfg(target_os = "linux")]
-                        let _ = window.move_window(Position::TopRight);
+                        let device_state = DeviceState::new();
+                        let mouse = device_state.get_mouse();
+                        {
+                            let mouse_position = mouse.coords;
+                            move_window_to_mouse_position(&window, mouse_position);
+                            println!("Position: {:#?}", mouse_position);
+                        }
                         #[cfg(target_os = "windows")]
                         let _ = window.move_window(Position::BottomRight);
                         #[cfg(target_os = "macos")]
@@ -133,7 +139,13 @@ fn main() {
                     // temp solution due to a limitation in libappindicator and tray events in linux
                     let window = app.get_window("main").unwrap();
                     #[cfg(target_os = "linux")]
-                    let _ = window.move_window(Position::TopRight);
+                    let device_state = DeviceState::new();
+                    let mouse = device_state.get_mouse();
+                    {
+                        let mouse_position = mouse.coords;
+                        move_window_to_mouse_position(&window, mouse_position);
+                        println!("Position: {:#?}", mouse_position);
+                    }
                     #[cfg(target_os = "windows")]
                     let _ = window.move_window(Position::BottomRight);
                     #[cfg(target_os = "macos")]
@@ -185,12 +197,12 @@ fn main() {
                         let window = app.get_window("main").unwrap();
                         let device_state = DeviceState::new();
                         let mouse = device_state.get_mouse();
-
                         {
                             let mouse_position = mouse.coords;
                             move_window_to_mouse_position(&window, mouse_position);
+                            println!("Position: {:#?}", mouse_position);
                         }
-
+                        
                         if window.is_visible().unwrap() {
                             window.hide().unwrap();
                         } else {
