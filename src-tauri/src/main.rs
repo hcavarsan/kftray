@@ -20,6 +20,23 @@ use std::sync::atomic::Ordering;
 
 use commands::SaveDialogState;
 
+use device_query::{DeviceQuery, DeviceState};
+
+fn move_window_to_mouse_position(window: &tauri::Window, mouse_position: (i32, i32)) {
+    if let Ok(window_size) = window.inner_size() {
+        let window_width = window_size.width as f64;
+        let window_height = window_size.height as f64;
+
+        let new_x = mouse_position.0 as f64 - (window_width / 2.0);
+        let new_y = mouse_position.1 as f64 - (window_height / 2.0);
+
+        window
+            .set_position(tauri::Position::Logical(tauri::LogicalPosition::new(
+                new_x, new_y,
+            )))
+            .ok();
+    }
+}
 fn main() {
     let inject_script = r#"
 	var style = document.createElement('style');
@@ -91,7 +108,7 @@ fn main() {
                         #[cfg(target_os = "linux")]
                         let _ = window.move_window(Position::TopRight);
                         #[cfg(target_os = "windows")]
-                        let _ = window.move_window(Position::TrayCenter);
+                        let _ = window.move_window(Position::BottomRight);
                         #[cfg(target_os = "macos")]
                         let _ = window.move_window(Position::TrayCenter);
 
@@ -166,14 +183,13 @@ fn main() {
                     }
                     "toggle" => {
                         let window = app.get_window("main").unwrap();
+                        let device_state = DeviceState::new();
+                        let mouse = device_state.get_mouse();
 
-                        // Set position based on OS
-                        #[cfg(target_os = "linux")]
-                        let _ = window.move_window(Position::TopRight);
-                        #[cfg(target_os = "windows")]
-                        let _ = window.move_window(Position::BottomRight);
-                        #[cfg(target_os = "macos")]
-                        let _ = window.move_window(Position::TrayCenter);
+                        {
+                            let mouse_position = mouse.coords;
+                            move_window_to_mouse_position(&window, mouse_position);
+                        }
 
                         if window.is_visible().unwrap() {
                             window.hide().unwrap();
