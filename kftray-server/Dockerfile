@@ -1,4 +1,4 @@
-FROM rust:1.77.1-alpine3.19 AS builder
+FROM rust:1.77.2-alpine3.19 AS builder
 
 RUN apk add --no-cache musl-dev
 
