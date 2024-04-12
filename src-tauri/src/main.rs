@@ -13,13 +13,37 @@ mod tray;
 
 use std::env;
 use tauri::{GlobalShortcutManager, Manager, SystemTrayEvent};
+
+#[cfg(not(target_os = "linux"))]
 use tauri_plugin_positioner::{Position, WindowExt};
+
 use tokio::runtime::Runtime;
 
 use std::sync::atomic::Ordering;
 
 use commands::SaveDialogState;
 
+use device_query::{DeviceQuery, DeviceState};
+
+fn move_window_to_mouse_position(window: &tauri::Window) {
+    if let Ok(window_size) = window.inner_size() {
+        let device_state = DeviceState::new();
+        let mouse = device_state.get_mouse();
+        let mouse_position = mouse.coords;
+        println!("Position: {:#?}", mouse_position);
+        let window_width = window_size.width as f64;
+        let window_height = window_size.height as f64;
+
+        let new_x = mouse_position.0 as f64 - (window_width / 2.0);
+        let new_y = mouse_position.1 as f64 - (window_height / 2.0);
+
+        window
+            .set_position(tauri::Position::Logical(tauri::LogicalPosition::new(
+                new_x, new_y,
+            )))
+            .ok();
+    }
+}
 fn main() {
     let inject_script = r#"
 	var style = document.createElement('style');
@@ -89,9 +113,9 @@ fn main() {
                         window.hide().unwrap();
                     } else {
                         #[cfg(target_os = "linux")]
-                        let _ = window.move_window(Position::TopRight);
+                        move_window_to_mouse_position(&window);
                         #[cfg(target_os = "windows")]
-                        let _ = window.move_window(Position::TrayCenter);
+                        let _ = window.move_window(Position::BottomRight);
                         #[cfg(target_os = "macos")]
                         let _ = window.move_window(Position::TrayCenter);
 
@@ -116,7 +140,7 @@ fn main() {
                     // temp solution due to a limitation in libappindicator and tray events in linux
                     let window = app.get_window("main").unwrap();
                     #[cfg(target_os = "linux")]
-                    let _ = window.move_window(Position::TopRight);
+                    move_window_to_mouse_position(&window);
                     #[cfg(target_os = "windows")]
                     let _ = window.move_window(Position::BottomRight);
                     #[cfg(target_os = "macos")]
@@ -166,14 +190,7 @@ fn main() {
                     }
                     "toggle" => {
                         let window = app.get_window("main").unwrap();
-
-                        // Set position based on OS
-                        #[cfg(target_os = "linux")]
-                        let _ = window.move_window(Position::TopRight);
-                        #[cfg(target_os = "windows")]
-                        let _ = window.move_window(Position::BottomRight);
-                        #[cfg(target_os = "macos")]
-                        let _ = window.move_window(Position::TrayCenter);
+                        move_window_to_mouse_position(&window);
 
                         if window.is_visible().unwrap() {
                             window.hide().unwrap();
