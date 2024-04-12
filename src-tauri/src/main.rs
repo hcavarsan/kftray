@@ -13,7 +13,10 @@ mod tray;
 
 use std::env;
 use tauri::{GlobalShortcutManager, Manager, SystemTrayEvent};
+
+#[cfg(not(target_os = "linux"))]
 use tauri_plugin_positioner::{Position, WindowExt};
+
 use tokio::runtime::Runtime;
 
 use std::sync::atomic::Ordering;
