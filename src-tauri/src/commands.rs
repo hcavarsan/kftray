@@ -70,7 +70,7 @@ pub async fn import_configs_from_github(
         .trim();
     println!("base64_content: {}", base64_content);
 
-    let base64_content_cleaned = base64_content.replace('\n', "").replace('\r', "");
+    let base64_content_cleaned = base64_content.replace(['\n', '\r'], "");
 
     let decoded_content = general_purpose::STANDARD
         .decode(&base64_content_cleaned)

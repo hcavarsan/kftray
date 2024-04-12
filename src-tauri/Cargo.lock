@@ -2502,6 +2502,7 @@ dependencies = [
  "log",
  "mockall",
  "openssl",
+ "openssl-sys",
  "reqwest 0.12.3",
  "rusqlite",
  "serde_json",
