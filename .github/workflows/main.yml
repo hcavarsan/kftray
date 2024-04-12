@@ -50,12 +50,12 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: '20.11.0'
+          node-version: '21.7.1'
 
       - name: Install pnpm
         uses: pnpm/action-setup@v2.4.0
         with:
-          version: 8.11.0
+          version: 8.15.6
 
       - name: Cache pnpm modules
         uses: actions/cache@v3
@@ -74,7 +74,7 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         with:
           tagName: ${{ github.ref_name }}
-          releaseName: 'KFtray - v${{ github.ref_name }}'
+          releaseName: 'KFtray - ${{ github.ref_name }}'
           releaseBody: 'See the assets to download this version and install.'
           releaseDraft: true
           prerelease: false
