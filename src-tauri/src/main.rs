@@ -113,10 +113,7 @@ fn main() {
                         window.hide().unwrap();
                     } else {
                         #[cfg(target_os = "linux")]
-                        {
-                            let mouse_position = mouse.coords;
-                            move_window_to_mouse_position(&window);
-                        }
+                        move_window_to_mouse_position(&window);
                         #[cfg(target_os = "windows")]
                         let _ = window.move_window(Position::BottomRight);
                         #[cfg(target_os = "macos")]
