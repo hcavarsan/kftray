@@ -130,7 +130,7 @@ In a few simple steps, you can configure your first port forward:
 2.  **Open the configuration panel from the tray icon**
 3.  **Add a new configuration:**
 
-    *   Give it a unique alias and set if you want to set the alias as domain to your forward
+    *   Give it a unique alias and set if you want to set the alias as domain to your forward *1
     *    Indicate if the configuration is for a port forward for a service (common use) or a proxy (port forward to an endpoint via a Kubernetes cluster).
     *   Specify the Kubernetes context
     *   Define the namespace housing your service
@@ -141,6 +141,18 @@ In a few simple steps, you can configure your first port forward:
 
 4. **Activate Your Configuration**: With your configuration saved, simply click on the switch button in the main menu to start the port forward in a single por forward or in Start All to start all configurations at the same time .
 
+To utilize the alias feature with a local domain name, you must enable write permissions in the hosts file. This method is not secure. We are addressing this in the following issue: [https://github.com/hcavarsan/kftray/issues/171](https://github.com/hcavarsan/kftray/issues/171). 
+Follow these steps to allow write access:
+
+For Windows:
+```bash
+icacls "C:\Windows\System32\drivers\etc\hosts" /grant Everyone:(R,W)
+```
+
+For MacOS and Linux:
+```bash
+sudo chmod ugo+rw /etc/hosts
+```
 
 
 ## Export configurations to a JSON file
