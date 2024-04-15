@@ -139,20 +139,21 @@ In a few simple steps, you can configure your first port forward:
     *   Set the local and remote port numbers
     *   Configure a custom local IP address (optional)
 
-4. **Activate Your Configuration**: With your configuration saved, simply click on the switch button in the main menu to start the port forward in a single por forward or in Start All to start all configurations at the same time .
+4. **Activate Your Configuration**: With your configuration saved, simply click on the switch button in the main menu to start the port forward in a single por forward or in Start All to start all configurations at the same time
 
-To utilize the alias feature with a local domain name, you must enable write permissions in the hosts file. This method is not secure. We are addressing this in the following issue: [https://github.com/hcavarsan/kftray/issues/171](https://github.com/hcavarsan/kftray/issues/171). 
-Follow these steps to allow write access:
 
-For Windows:
-```bash
-icacls "C:\Windows\System32\drivers\etc\hosts" /grant Everyone:(R,W)
-```
-
-For MacOS and Linux:
-```bash
-sudo chmod ugo+rw /etc/hosts
-```
+>Note: To use the alias feature with a local domain name, you must enable write permissions in the hosts file. This method is not secure. We are addressing this in the following issue: [https://github.com/hcavarsan/kftray/issues/171](https://github.com/hcavarsan/kftray/issues/171). 
+>Follow these steps to allow write access:
+>
+>For Windows:
+>```bash
+>icacls "C:\Windows\System32\drivers\etc\hosts" /grant Everyone:(R,W)
+>```
+>
+>For MacOS and Linux:
+>```bash
+>sudo chmod ugo+rw /etc/hosts
+>```
 
 
 ## Export configurations to a JSON file
