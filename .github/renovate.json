@@ -32,7 +32,7 @@
 		"groupSlug": "all-minor-patch"
 	},
 	{
-		"matchPackageNames": ["kube", "k8s-openapi", "kube-runtime"],
+		"matchPackageNames": ["kube", "k8s-openapi", "kube-runtime", "eslint", "hyper"],
 		"enabled": false
 	}]
 }
