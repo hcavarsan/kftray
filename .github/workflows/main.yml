@@ -22,6 +22,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+
+      - name: Add Rust target
+        if: matrix.platform == 'macos-latest'
+        run: rustup target add x86_64-apple-darwin
+
+
       - name: Install Rust stable
         uses: actions-rs/toolchain@v1
         with:
