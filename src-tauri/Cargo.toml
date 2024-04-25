@@ -1,6 +1,6 @@
 [package]
 name = "kftray"
-version = "0.9.7"
+version = "0.9.8"
 description = "A Tauri App"
 authors = ["you"]
 license = ""
