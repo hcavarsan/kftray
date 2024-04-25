@@ -1,25 +1,23 @@
 <div align="center">
-<img src="./img/logo.png" alt="KFtray Logo" width="210" height="210">
-<h1>KFtray</h1>
+  <img src="./img/logo.png" alt="KFtray Logo" width="210" height="210">
+  <h1>KFtray</h1>
   <h3>A cross-platform system tray app for Kubernetes port-forward management.</h3>
-  <!-- Badges -->
    <br>
   <a href="https://nodejs.org/en/">
-    <img src="https://img.shields.io/badge/Node-v20.12.0-brightgreen.svg?style=for-the-badge" alt="Node.js version" />
+    <img src="https://img.shields.io/badge/-Node.js-grey?style=for-the-badge&logo=node.js" alt="Node.js" />
   </a>
   <a href="https://tauri.app/">
-    <img src="https://img.shields.io/badge/Tauri-v1.6.1-brightgreen.svg?style=for-the-badge" alt="Tauri version" />
+    <img src="https://img.shields.io/badge/-Tauri-grey?style=for-the-badge&logo=tauri" alt="Tauri" />
   </a>
-  <a href="https://react.dev">
-    <img src="https://img.shields.io/badge/React-v18.2.0-brightgreen.svg?style=for-the-badge" alt="React version" />
+  <a href="https://www.typescriptlang.org/v">
+    <img src="https://img.shields.io/badge/-Typescript-grey?style=for-the-badge&logo=typescript" alt="Typescript" />
   </a>
   <a href="https://www.rust-lang.org/">
-    <img src="https://img.shields.io/badge/Rust-v1.75.0-brightgreen.svg?style=for-the-badge" alt="Rust version" />
+    <img src="https://img.shields.io/badge/-Rust-grey?style=for-the-badge&logo=rust" alt="Rust" />
   </a>
   <a href="https://github.com/hcavarsan/kftray/releases/latest">
     <img src="https://img.shields.io/github/downloads/hcavarsan/kftray/total.svg?style=for-the-badge" alt="downloads" />
   </a>
-
   <div align="center">
 
 
@@ -142,7 +140,7 @@ In a few simple steps, you can configure your first port forward:
 4. **Activate Your Configuration**: With your configuration saved, simply click on the switch button in the main menu to start the port forward in a single por forward or in Start All to start all configurations at the same time
 
 
->Note: To use the alias feature with a local domain name, you must enable write permissions in the hosts file. This method is not secure. We are addressing this in the following issue: [https://github.com/hcavarsan/kftray/issues/171](https://github.com/hcavarsan/kftray/issues/171). 
+>Note: To use the alias feature with a local domain name, you must enable write permissions in the hosts file. This method is not secure. We are addressing this in the following issue: [https://github.com/hcavarsan/kftray/issues/171](https://github.com/hcavarsan/kftray/issues/171).
 >Follow these steps to allow write access:
 >
 >For Windows:
