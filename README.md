@@ -5,7 +5,7 @@
   <!-- Badges -->
    <br>
   <a href="https://nodejs.org/en/">
-    <img src="https://img.shields.io/badge/Node-v21.5.0-brightgreen.svg?style=for-the-badge" alt="Node.js version" />
+    <img src="https://img.shields.io/badge/Node-v20.12.0-brightgreen.svg?style=for-the-badge" alt="Node.js version" />
   </a>
   <a href="https://tauri.app/">
     <img src="https://img.shields.io/badge/Tauri-v1.6.1-brightgreen.svg?style=for-the-badge" alt="Tauri version" />
