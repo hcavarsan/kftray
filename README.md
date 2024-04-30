@@ -63,6 +63,7 @@
 
   <table>
     <tr>
+      <td><strong>Kftray Overview</strong></td>
       <td><strong>Demo: GitHub Sync</strong></td>
       <td><strong>Demo: Adding a New Configuration</strong></td>
     </tr>
