@@ -68,6 +68,11 @@
     </tr>
     <tr>
       <td>
+        <a href="https://www.youtube.com/watch?v=9fQO7x4mqn8">
+          <img src="https://img.youtube.com/vi/9fQO7x4mqn8/0.jpg" alt="Kftray Overview" width="256"/>
+        </a>
+      </td>
+      <td>
         <a href="https://www.youtube.com/watch?v=BAdL7IzaEh8">
           <img src="https://img.youtube.com/vi/BAdL7IzaEh8/0.jpg" alt="Kftray Demo: Github Sync" width="256"/>
         </a>
