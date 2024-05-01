@@ -3,9 +3,9 @@ body {
 }
 
 .accordion-shadow {
-	box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2); /* Horizontal offset, vertical offset, blur radius, color */
-	border: 1px solid #e2e8f0; /* For light borders; change as needed */
-  }
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2); /* Horizontal offset, vertical offset, blur radius, color */
+  border: 1px solid #e2e8f0; /* For light borders; change as needed */
+}
 /* The scrollbar track (background) */
 /* The scrollbar track (background) */
 ::-webkit-scrollbar {
