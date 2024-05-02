@@ -18,7 +18,7 @@ use crate::models::kube::PortForward;
 use crate::models::kube::TargetPodFinder;
 use crate::models::kube::{AnyReady, PodSelection};
 use crate::models::kube::{Port, Target, TargetPod, TargetSelector};
-use crate::models::response::CustomResponse;
+use crate::models::response::{CustomResponse, CustomResponseBuilder};
 use tokio::io::AsyncWriteExt;
 
 use kube::{
@@ -540,7 +540,9 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
     }
 
     let pods: Api<Pod> = Api::all(client.clone());
-    for config_id in handle_map.keys() {
+    for (composite_key, _handle) in handle_map.iter() {
+        let config_id = composite_key.split('_').next().unwrap_or_default();
+
         log::info!("Fetching pods for config_id: {}", config_id);
         let lp = ListParams::default().labels(&format!("config_id={}", config_id));
         let pod_list = match pods.list(&lp).await {
@@ -573,33 +575,37 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
                     match namespaced_pods.delete(&pod_name, &dp).await {
                         Ok(_) => {
                             log::info!("Successfully deleted pod: {}", pod_name);
-                            responses.push(CustomResponse::new(
-                                config_id.parse().ok(),
-                                pod_name.clone(),
-                                namespace.to_string(),
-                                0,
-                                0,
-                                String::new(),
-                                format!("Deleted pod {}", pod_name),
-                                String::new(),
-                                0,
-                                String::new(),
-                            ));
+                            responses.push(
+                                CustomResponseBuilder::new()
+                                    .id(config_id.parse().unwrap_or(0)) // Assuming 0 is an acceptable default
+                                    .service(pod_name.clone())
+                                    .namespace(namespace.to_string())
+                                    .local_port(0)
+                                    .remote_port(0)
+                                    .context(String::new())
+                                    .stdout(format!("Deleted pod {}", pod_name))
+                                    .stderr(String::new())
+                                    .status(0)
+                                    .protocol(String::new())
+                                    .build(),
+                            );
                         }
                         Err(e) => {
                             log::error!("Failed to delete pod {}: {}", pod_name, e);
-                            responses.push(CustomResponse::new(
-                                config_id.parse().ok(),
-                                pod_name.clone(),
-                                namespace.to_string(),
-                                0,
-                                0,
-                                String::new(),
-                                format!("Failed to delete pod {}", pod_name),
-                                e.to_string(),
-                                1,
-                                String::new(),
-                            ));
+                            responses.push(
+                                CustomResponseBuilder::new()
+                                    .id(config_id.parse().unwrap_or(0)) // Assuming 0 is an acceptable default
+                                    .service(pod_name.clone())
+                                    .namespace(namespace.to_string())
+                                    .local_port(0)
+                                    .remote_port(0)
+                                    .context(String::new())
+                                    .stdout(format!("Failed to delete pod {}", pod_name))
+                                    .stderr(e.to_string())
+                                    .status(1)
+                                    .protocol(String::new())
+                                    .build(),
+                            );
                         }
                     }
                 } else {

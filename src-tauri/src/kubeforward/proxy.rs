@@ -75,7 +75,7 @@ pub async fn deploy_and_forward_pod(configs: Vec<Config>) -> Result<Vec<CustomRe
             .as_ref()
             .map_or(true, String::is_empty)
         {
-            config.remote_address = config.service.clone();
+            config.remote_address.clone_from(&config.service);
         }
         let mut values: HashMap<&str, String> = HashMap::new();
         values.insert("hashed_name", hashed_name.clone());

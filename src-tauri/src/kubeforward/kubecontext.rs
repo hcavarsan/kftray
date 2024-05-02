@@ -92,6 +92,10 @@ pub async fn list_services(
     context_name: &str,
     namespace: &str,
 ) -> Result<Vec<KubeServiceInfo>, String> {
+    if namespace.trim().is_empty() {
+        return Err("Namespace parameter cannot be empty".to_string());
+    }
+
     let client = create_client_with_specific_context(None, context_name)
         .await
         .map_err(|err| {

@@ -5,10 +5,10 @@ use anyhow::Context;
 impl PodSelection for AnyReady {
     fn select<'p>(&self, pods: &'p [Pod], selector: &str) -> anyhow::Result<&'p Pod> {
         // todo: randomly select from the ready pods
-        let pod = pods
-            .iter()
-            .find(is_pod_ready)
-            .context(anyhow::anyhow!("No pod '{}' available", selector))?;
+        let pod = pods.iter().find(is_pod_ready).context(anyhow::anyhow!(
+            "No ready pods found matching the selector '{}'",
+            selector
+        ))?;
         Ok(pod)
     }
 }
