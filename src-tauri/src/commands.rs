@@ -1,13 +1,14 @@
-use crate::config::import_configs;
-use crate::remote_config::{build_github_api_url, clear_existing_configs};
-use base64::{engine::general_purpose, Engine as _};
 use std::sync::atomic::Ordering;
+
+use base64::{engine::general_purpose, Engine as _};
+use reqwest::header::{AUTHORIZATION, USER_AGENT};
 use tauri::State;
 
-use crate::config::migrate_configs;
-use crate::models::config::Config;
-use crate::models::dialog::SaveDialogState;
-use reqwest::header::{AUTHORIZATION, USER_AGENT};
+use crate::{
+    config::{import_configs, migrate_configs},
+    models::{config::Config, dialog::SaveDialogState},
+    remote_config::{build_github_api_url, clear_existing_configs},
+};
 
 //  command to save the dialog state when is open
 #[tauri::command]

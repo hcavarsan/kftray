@@ -1,6 +1,9 @@
-use crate::kubeforward::vx::Pod;
-use crate::models::kube::{AnyReady, PodSelection};
 use anyhow::Context;
+
+use crate::{
+    kubeforward::vx::Pod,
+    models::kube::{AnyReady, PodSelection},
+};
 
 impl PodSelection for AnyReady {
     fn select<'p>(&self, pods: &'p [Pod], selector: &str) -> anyhow::Result<&'p Pod> {

@@ -1,9 +1,8 @@
-use crate::models::config::Config;
 use hostsfile::HostsBuilder;
-use rusqlite::types::ToSql;
-use rusqlite::{params, Connection, Result};
-use serde_json::to_value;
-use serde_json::{json, Value as JsonValue};
+use rusqlite::{params, types::ToSql, Connection, Result};
+use serde_json::{json, to_value, Value as JsonValue};
+
+use crate::models::config::Config;
 
 fn is_value_blank(value: &JsonValue) -> bool {
     match value {

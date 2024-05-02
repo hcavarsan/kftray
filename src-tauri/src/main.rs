@@ -13,19 +13,15 @@ mod models;
 mod remote_config;
 mod tray;
 
-use std::env;
-use tauri::{GlobalShortcutManager, Manager, SystemTrayEvent};
-
-#[cfg(not(target_os = "linux"))]
-use tauri_plugin_positioner::{Position, WindowExt};
-
-use tokio::runtime::Runtime;
-
-use std::sync::atomic::Ordering;
-
-use crate::models::dialog::SaveDialogState;
+use std::{env, sync::atomic::Ordering};
 
 use device_query::{DeviceQuery, DeviceState};
+use tauri::{GlobalShortcutManager, Manager, SystemTrayEvent};
+#[cfg(not(target_os = "linux"))]
+use tauri_plugin_positioner::{Position, WindowExt};
+use tokio::runtime::Runtime;
+
+use crate::models::dialog::SaveDialogState;
 
 fn move_window_to_mouse_position(window: &tauri::Window) {
     if let Ok(window_size) = window.inner_size() {

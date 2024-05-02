@@ -6,13 +6,13 @@ pub mod port_forward;
 pub mod proxy;
 
 // Re-export k8s_openapi::api::core::v1 as vx for use within this module and potentially outside
-pub use k8s_openapi::api::core::v1 as vx;
-
-use crate::models::kube::{NameSpace, Port, Target, TargetPod, TargetSelector};
 use anyhow::Context;
+pub use k8s_openapi::api::core::v1 as vx;
 use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
 use kube::ResourceExt;
 use vx::Pod;
+
+use crate::models::kube::{NameSpace, Port, Target, TargetPod, TargetSelector};
 
 impl NameSpace {
     /// Returns the configured namespace or the default.

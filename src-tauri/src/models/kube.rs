@@ -1,7 +1,8 @@
-use crate::kubeforward::vx::{Pod, Service};
 use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
 use kube::api::Api;
 use serde::Serialize;
+
+use crate::kubeforward::vx::{Pod, Service};
 
 #[derive(Serialize)]
 pub struct KubeContextInfo {

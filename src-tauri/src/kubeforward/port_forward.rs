@@ -1,32 +1,35 @@
-use crate::models::config::Config;
+use std::{
+    collections::HashMap,
+    net::SocketAddr,
+    sync::{Arc, Mutex},
+};
+
 use anyhow::Context;
 use futures::TryStreamExt;
-use lazy_static::lazy_static;
-use std::collections::HashMap;
-use std::net::SocketAddr;
-use std::sync::{Arc, Mutex};
-use tokio::io::AsyncReadExt;
-use tokio::net::TcpListener;
-use tokio::net::UdpSocket as TokioUdpSocket;
-use tokio::task::JoinHandle;
-
-use tokio_stream::wrappers::TcpListenerStream;
-
-use crate::kubeforward::port_forward::Target as TargetImpl;
-use crate::kubeforward::vx::Pod;
-use crate::models::kube::PortForward;
-use crate::models::kube::TargetPodFinder;
-use crate::models::kube::{AnyReady, PodSelection};
-use crate::models::kube::{Port, Target, TargetPod, TargetSelector};
-use crate::models::response::{CustomResponse, CustomResponseBuilder};
-use tokio::io::AsyncWriteExt;
-
+use hostsfile::HostsBuilder;
 use kube::{
     api::{Api, DeleteParams, ListParams},
     Client,
 };
+use lazy_static::lazy_static;
+use tokio::{
+    io::{AsyncReadExt, AsyncWriteExt},
+    net::{TcpListener, UdpSocket as TokioUdpSocket},
+    task::JoinHandle,
+};
+use tokio_stream::wrappers::TcpListenerStream;
 
-use hostsfile::HostsBuilder;
+use crate::{
+    kubeforward::{port_forward::Target as TargetImpl, vx::Pod},
+    models::{
+        config::Config,
+        kube::{
+            AnyReady, PodSelection, Port, PortForward, Target, TargetPod, TargetPodFinder,
+            TargetSelector,
+        },
+        response::{CustomResponse, CustomResponseBuilder},
+    },
+};
 
 impl PortForward {
     pub async fn new(
