@@ -82,7 +82,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
 
       console.error('Failed to start port forwarding:', error)
       toast({
-        duration: 9000,
+        duration: 2000,
         isClosable: true,
         position: 'top-right',
         render: () => (
