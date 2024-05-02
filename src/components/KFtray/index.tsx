@@ -433,22 +433,7 @@ const KFTray = () => {
 
     for (const config of configsToStart) {
       try {
-        let response
-
-        if (config.workload_type === 'service' && config.protocol === 'tcp') {
-          await invoke<Response>('start_port_forward', {
-            configs: [config],
-          })
-        } else if (
-          config.workload_type.startsWith('proxy') ||
-          (config.workload_type === 'service' && config.protocol === 'udp')
-        ) {
-          await invoke<Response>('deploy_and_forward_pod', {
-            configs: [config],
-          })
-        } else {
-          throw new Error(`Unsupported workload type: ${config.workload_type}`)
-        }
+        await handlePortForwarding(config)
         updateConfigRunningState(config.id, true)
       } catch (error) {
         errors.push({ id: config.id, error })
@@ -471,6 +456,24 @@ const KFTray = () => {
     setIsInitiating(false)
   }
 
+  async function handlePortForwarding(config: Status) {
+    switch (config.workload_type) {
+    case 'service':
+      if (config.protocol === 'tcp') {
+        await invoke<Response>('start_port_forward', { configs: [config] })
+      } else if (config.protocol === 'udp') {
+        await invoke<Response>('deploy_and_forward_pod', {
+          configs: [config],
+        })
+      }
+      break
+    case 'proxy':
+      await invoke<Response>('deploy_and_forward_pod', { configs: [config] })
+      break
+    default:
+      throw new Error(`Unsupported workload type: ${config.workload_type}`)
+    }
+  }
   const handleDeleteConfig = (id: number) => {
     setConfigToDelete(id)
     setIsAlertOpen(true)
