@@ -4,6 +4,7 @@ use base64::{engine::general_purpose, Engine as _};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::State;
 
+use crate::config::migrate_configs;
 use kubeforward::port_forward::Config;
 use reqwest::header::{AUTHORIZATION, USER_AGENT};
 
@@ -90,6 +91,10 @@ pub async fn import_configs_from_github(
         let config_json = serde_json::to_string(&config)
             .map_err(|e| format!("Failed to serialize config: {}", e))?;
         import_configs(config_json).await?;
+    }
+
+    if let Err(e) = migrate_configs() {
+        eprintln!("Error migrating configs: {}. Please check if the configurations are valid and compatible with the current system/version.", e);
     }
 
     Ok(())

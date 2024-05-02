@@ -2488,7 +2488,7 @@ dependencies = [
 
 [[package]]
 name = "kftray"
-version = "0.9.7"
+version = "0.9.8"
 dependencies = [
  "base64 0.22.0",
  "device_query",
