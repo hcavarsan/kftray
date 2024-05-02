@@ -59,7 +59,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
 
   const openLocalURLIcon = <ExternalLinkIcon style={{ fontSize: '10px' }} />
 
-  const startPortForwarding = async toast => {
+  const startPortForwarding = async () => {
     try {
       setIsRunning(true)
       if (config.workload_type === 'service' && config.protocol === 'tcp') {
@@ -74,26 +74,29 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
       }
       updateConfigRunningState(config.id, true)
       updateSelectionState(config.id, true)
-    } catch (error) {
+    } catch (error: unknown) {
+      console.error('An error occurred during port forwarding stop:', error)
+
+      const errorMessage =
+        error instanceof Error ? error.message : String(error)
+
       console.error('Failed to start port forwarding:', error)
       toast({
-        duration: 2000,
+        duration: 9000,
         isClosable: true,
         position: 'top-right',
-        containerStyle: {
-          maxWidth: '300px',
-        },
         render: () => (
           <Box
             color='white'
             p={3}
-            bg='red.500'
+            bg='red.800'
             fontSize='xs'
             maxWidth='300px'
-            mt='4'
+            mt='3'
           >
             <Text fontWeight='bold'>Error starting port forwarding</Text>
-            <Text mt={1}>{error.toString()}</Text>
+            <Text mt={1}>{errorMessage}</Text>{' '}
+            {/* Ensure errorMessage is a string */}
           </Box>
         ),
       })
@@ -102,7 +105,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
     }
   }
 
-  const stopPortForwarding = async toast => {
+  const stopPortForwarding = async () => {
     try {
       setIsRunning(true)
       if (config.workload_type === 'service' && config.protocol === 'tcp') {
@@ -126,24 +129,27 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
         throw new Error(`Unsupported workload type: ${config.workload_type}`)
       }
       updateConfigRunningState(config.id, false)
+    } catch (error: unknown) {
+      console.error('An error occurred during port forwarding stop:', error)
+
+      const errorMessage =
+        error instanceof Error ? error.message : String(error)
+
       toast({
         duration: 2000,
         isClosable: true,
         position: 'top-right',
-        containerStyle: {
-          maxWidth: '300px',
-        },
         render: () => (
           <Box
             color='white'
             p={3}
-            bg='red.500'
+            bg='red.800'
             fontSize='xs'
             maxWidth='300px'
-            mt='4'
+            mt='3'
           >
             <Text fontWeight='bold'>Error stopping port forwarding</Text>
-            <Text mt={1}>{error.toString()}</Text>
+            <Text mt={1}>{errorMessage}</Text>
           </Box>
         ),
       })
@@ -155,9 +161,9 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   const togglePortForwarding = async (isChecked: boolean) => {
     try {
       if (isChecked) {
-        await startPortForwarding(toast)
+        await startPortForwarding()
       } else {
-        await stopPortForwarding(toast)
+        await stopPortForwarding()
       }
     } catch (error) {
       console.error('Error toggling port-forwarding:', error)

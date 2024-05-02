@@ -214,6 +214,11 @@ const KFTray = () => {
           icon: 'success',
         })
       } else {
+        await sendNotification({
+          title: 'Error',
+          body: 'Failed to import configurations.',
+          icon: 'error',
+        })
       }
     } catch (error) {
       console.error('Error during import:', error)
@@ -431,14 +436,14 @@ const KFTray = () => {
         let response
 
         if (config.workload_type === 'service' && config.protocol === 'tcp') {
-          response = await invoke<Response>('start_port_forward', {
+          await invoke<Response>('start_port_forward', {
             configs: [config],
           })
         } else if (
           config.workload_type.startsWith('proxy') ||
           (config.workload_type === 'service' && config.protocol === 'udp')
         ) {
-          response = await invoke<Response>('deploy_and_forward_pod', {
+          await invoke<Response>('deploy_and_forward_pod', {
             configs: [config],
           })
         } else {
