@@ -94,7 +94,7 @@ pub async fn import_configs_from_github(
     }
 
     if let Err(e) = migrate_configs() {
-        eprintln!("Failed to migrate configs: {}", e);
+        eprintln!("Error migrating configs: {}. Please check if the configurations are valid and compatible with the current system/version.", e);
     }
 
     Ok(())
