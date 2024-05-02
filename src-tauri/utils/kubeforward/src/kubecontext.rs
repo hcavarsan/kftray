@@ -3,7 +3,7 @@ use k8s_openapi::{
     api::core::v1::{Namespace, Service},
     apimachinery::pkg::util::intstr::IntOrString,
 };
-
+use std::path::Path;
 use crate::vx::Pod;
 use tower::ServiceBuilder;
 
@@ -15,8 +15,14 @@ use kube::{
 };
 use serde::Serialize;
 
-pub async fn create_client_with_specific_context(context_name: &str) -> Result<Client> {
-    let kubeconfig = Kubeconfig::read().context("Failed to read kubeconfig")?;
+pub async fn create_client_with_specific_context(
+    kubeconfig_path: Option<&Path>,
+    context_name: &str
+) -> Result<Client> {
+    let kubeconfig = match kubeconfig_path {
+        Some(path) => Kubeconfig::read_from(path).context("Failed to read kubeconfig from specified path")?,
+        None => Kubeconfig::read().context("Failed to read kubeconfig from default location")?,
+    };
 
     let config = Config::from_custom_kubeconfig(
         kubeconfig,
@@ -40,6 +46,7 @@ pub async fn create_client_with_specific_context(context_name: &str) -> Result<C
 
     Ok(client)
 }
+
 #[derive(Serialize)]
 pub struct KubeContextInfo {
     pub name: String,
@@ -73,7 +80,7 @@ pub async fn list_kube_contexts() -> Result<Vec<KubeContextInfo>, String> {
 
 #[tauri::command]
 pub async fn list_namespaces(context_name: &str) -> Result<Vec<KubeNamespaceInfo>, String> {
-    let client = create_client_with_specific_context(context_name)
+    let client = create_client_with_specific_context(None, context_name)
         .await
         .map_err(|err| {
             format!(
@@ -101,7 +108,7 @@ pub async fn list_services(
     context_name: &str,
     namespace: &str,
 ) -> Result<Vec<KubeServiceInfo>, String> {
-    let client = create_client_with_specific_context(context_name)
+    let client = create_client_with_specific_context(None, context_name)
         .await
         .map_err(|err| {
             format!(
@@ -130,7 +137,7 @@ pub async fn list_service_ports(
     namespace: &str,
     service_name: &str,
 ) -> Result<Vec<KubeServicePortInfo>, String> {
-    let client = create_client_with_specific_context(context_name)
+    let client = create_client_with_specific_context(None, context_name)
         .await
         .map_err(|err| {
             format!(
