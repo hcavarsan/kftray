@@ -5,7 +5,7 @@ use reqwest::header::{AUTHORIZATION, USER_AGENT};
 use tauri::State;
 
 use crate::{
-    config::import_configs,
+    config::{import_configs, migrate_configs},
     models::{config::Config, dialog::SaveDialogState},
     remote_config::{build_github_api_url, clear_existing_configs},
 };
@@ -79,6 +79,10 @@ pub async fn import_configs_from_github(
         let config_json = serde_json::to_string(&config)
             .map_err(|e| format!("Failed to serialize config: {}", e))?;
         import_configs(config_json).await?;
+    }
+
+    if let Err(e) = migrate_configs() {
+        eprintln!("Error migrating configs: {}. Please check if the configurations are valid and compatible with the current system/version.", e);
     }
 
     Ok(())
