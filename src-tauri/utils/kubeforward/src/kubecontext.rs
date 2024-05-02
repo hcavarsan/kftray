@@ -1,10 +1,10 @@
+use crate::vx::Pod;
 use anyhow::{Context, Result};
 use k8s_openapi::{
     api::core::v1::{Namespace, Service},
     apimachinery::pkg::util::intstr::IntOrString,
 };
 use std::path::Path;
-use crate::vx::Pod;
 use tower::ServiceBuilder;
 
 use kube::{
@@ -17,10 +17,12 @@ use serde::Serialize;
 
 pub async fn create_client_with_specific_context(
     kubeconfig_path: Option<&Path>,
-    context_name: &str
+    context_name: &str,
 ) -> Result<Client> {
     let kubeconfig = match kubeconfig_path {
-        Some(path) => Kubeconfig::read_from(path).context("Failed to read kubeconfig from specified path")?,
+        Some(path) => {
+            Kubeconfig::read_from(path).context("Failed to read kubeconfig from specified path")?
+        }
         None => Kubeconfig::read().context("Failed to read kubeconfig from default location")?,
     };
 
