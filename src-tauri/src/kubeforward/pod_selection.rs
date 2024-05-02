@@ -1,13 +1,6 @@
-use crate::vx::Pod;
+use crate::kubeforward::vx::Pod;
+use crate::models::kube::{AnyReady, PodSelection};
 use anyhow::Context;
-
-/// Pod selection according to impl specific criteria.
-pub(crate) trait PodSelection {
-    fn select<'p>(&self, pods: &'p [Pod], selector: &str) -> anyhow::Result<&'p Pod>;
-}
-
-/// Selects any pod so long as it's ready.
-pub(crate) struct AnyReady {}
 
 impl PodSelection for AnyReady {
     fn select<'p>(&self, pods: &'p [Pod], selector: &str) -> anyhow::Result<&'p Pod> {

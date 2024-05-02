@@ -1,26 +1,13 @@
 use crate::config::import_configs;
 use crate::remote_config::{build_github_api_url, clear_existing_configs};
 use base64::{engine::general_purpose, Engine as _};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::Ordering;
 use tauri::State;
 
 use crate::config::migrate_configs;
-use kubeforward::port_forward::Config;
+use crate::models::config::Config;
+use crate::models::dialog::SaveDialogState;
 use reqwest::header::{AUTHORIZATION, USER_AGENT};
-
-//  state for the save dialog
-pub struct SaveDialogState {
-    pub is_open: AtomicBool,
-}
-
-//  default implementation for the SaveDialogState
-impl Default for SaveDialogState {
-    fn default() -> Self {
-        SaveDialogState {
-            is_open: AtomicBool::new(false),
-        }
-    }
-}
 
 //  command to save the dialog state when is open
 #[tauri::command]

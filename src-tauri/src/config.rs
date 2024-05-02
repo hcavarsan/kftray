@@ -1,5 +1,5 @@
+use crate::models::config::Config;
 use hostsfile::HostsBuilder;
-use kubeforward::port_forward::Config;
 use rusqlite::types::ToSql;
 use rusqlite::{params, Connection, Result};
 use serde_json::to_value;

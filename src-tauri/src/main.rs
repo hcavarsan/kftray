@@ -7,7 +7,9 @@ mod commands;
 mod config;
 mod db;
 mod keychain;
+mod kubeforward;
 mod logging;
+mod models;
 mod remote_config;
 mod tray;
 
@@ -21,7 +23,7 @@ use tokio::runtime::Runtime;
 
 use std::sync::atomic::Ordering;
 
-use commands::SaveDialogState;
+use crate::models::dialog::SaveDialogState;
 
 use device_query::{DeviceQuery, DeviceState};
 
