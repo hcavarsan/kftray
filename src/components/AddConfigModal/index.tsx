@@ -360,27 +360,30 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                     color={theme.colors.gray[300]}
                   />
 
-
                   <Checkbox
                     mt='0.5'
                     ml='0.5'
                     size='sm'
                     name='domain_enabled'
                     isChecked={newConfig.domain_enabled || false}
-                    onChange={(e) => handleInputChange({
-                      target: {
-                        name: e.target.name,
-                        value: e.target.checked,
-                      },
-                    } as unknown as React.ChangeEvent<HTMLInputElement>)}
+                    onChange={e =>
+                      handleInputChange({
+                        target: {
+                          name: e.target.name,
+                          value: e.target.checked,
+                        },
+                      } as unknown as React.ChangeEvent<HTMLInputElement>)
+                    }
                   >
-								  <Tooltip label='Add a hostfile entry to resolve alias to local address' placement='bottom-end'
+                    <Tooltip
+                      label='Add a hostfile entry to resolve alias to local address'
+                      placement='bottom-end'
                       fontSize='xs'
-                      lineHeight='tight'>
+                      lineHeight='tight'
+                    >
                       <Text fontSize='xs'>enable alias as local domain</Text>
                     </Tooltip>
                   </Checkbox>
-
                 </Box>
                 <Box width={{ base: '100%', sm: '50%' }} pl={2} mt='-6'>
                   <FormLabel htmlFor='workload_type'>Workload Type</FormLabel>

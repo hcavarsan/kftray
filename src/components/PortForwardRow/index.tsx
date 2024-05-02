@@ -15,10 +15,12 @@ import {
   IconButton,
   Switch,
   Td,
+  Text,
   Tooltip,
   Tr,
   useColorModeValue,
   useDisclosure,
+  useToast,
 } from '@chakra-ui/react'
 import { faInfoCircle, faPen, faTrash } from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
@@ -42,62 +44,118 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   isInitiating,
   isStopping,
 }) => {
-  const { isOpen, onOpen, onClose } = useDisclosure()
+  const { isOpen, onOpen } = useDisclosure()
   const textColor = useColorModeValue('gray.100', 'gray.100')
   const cancelRef = React.useRef<HTMLButtonElement>(null)
   const [isRunning, setIsRunning] = useState(false)
-
+  const toast = useToast()
   const handleOpenLocalURL = () => {
     const baseUrl = config.domain_enabled ? config.alias : config.local_address
 
-
     open(`http://${baseUrl}:${config.local_port}`).catch(error => {
-	  console.error('Error opening the URL:', error)
+      console.error('Error opening the URL:', error)
     })
   }
 
   const openLocalURLIcon = <ExternalLinkIcon style={{ fontSize: '10px' }} />
 
   const startPortForwarding = async () => {
-    setIsRunning(true)
-    if (config.workload_type === 'service' && config.protocol === 'tcp') {
-      await invoke('start_port_forward', { configs: [config] })
-    } else if (
-      config.workload_type.startsWith('proxy') ||
-      (config.workload_type === 'service' && config.protocol === 'udp')
-    ) {
-      await invoke('deploy_and_forward_pod', { configs: [config] })
-    } else {
-      throw new Error(`Unsupported workload type: ${config.workload_type}`)
+    try {
+      setIsRunning(true)
+      if (config.workload_type === 'service' && config.protocol === 'tcp') {
+        await invoke('start_port_forward', { configs: [config] })
+      } else if (
+        config.workload_type.startsWith('proxy') ||
+        (config.workload_type === 'service' && config.protocol === 'udp')
+      ) {
+        await invoke('deploy_and_forward_pod', { configs: [config] })
+      } else {
+        throw new Error(`Unsupported workload type: ${config.workload_type}`)
+      }
+      updateConfigRunningState(config.id, true)
+      updateSelectionState(config.id, true)
+    } catch (error: unknown) {
+      console.error('An error occurred during port forwarding stop:', error)
+
+      const errorMessage =
+        error instanceof Error ? error.message : String(error)
+
+      console.error('Failed to start port forwarding:', error)
+      toast({
+        duration: 2000,
+        isClosable: true,
+        position: 'top-right',
+        render: () => (
+          <Box
+            color='white'
+            p={3}
+            bg='red.800'
+            fontSize='xs'
+            maxWidth='300px'
+            mt='3'
+          >
+            <Text fontWeight='bold'>Error starting port forwarding</Text>
+            <Text mt={1}>{errorMessage}</Text>{' '}
+            {/* Ensure errorMessage is a string */}
+          </Box>
+        ),
+      })
+    } finally {
+      setIsRunning(false)
     }
-    updateConfigRunningState(config.id, true)
-    updateSelectionState(config.id, true)
-    setIsRunning(false)
   }
+
   const stopPortForwarding = async () => {
-    setIsRunning(true)
-    if (config.workload_type === 'service' && config.protocol === 'tcp') {
-      await invoke('stop_port_forward', {
-        serviceName: config.service,
-        configId: config.id.toString(),
+    try {
+      setIsRunning(true)
+      if (config.workload_type === 'service' && config.protocol === 'tcp') {
+        await invoke('stop_port_forward', {
+          serviceName: config.service,
+          configId: config.id.toString(),
+        })
+      } else if (
+        config.workload_type.startsWith('proxy') ||
+        (config.workload_type === 'service' && config.protocol === 'udp')
+      ) {
+        await invoke('stop_proxy_forward', {
+          configId: config.id.toString(),
+          namespace: config.namespace,
+          serviceName: config.service,
+          localPort: config.local_port,
+          remoteAddress: config.remote_address,
+          protocol: 'tcp',
+        })
+      } else {
+        throw new Error(`Unsupported workload type: ${config.workload_type}`)
+      }
+      updateConfigRunningState(config.id, false)
+    } catch (error: unknown) {
+      console.error('An error occurred during port forwarding stop:', error)
+
+      const errorMessage =
+        error instanceof Error ? error.message : String(error)
+
+      toast({
+        duration: 2000,
+        isClosable: true,
+        position: 'top-right',
+        render: () => (
+          <Box
+            color='white'
+            p={3}
+            bg='red.800'
+            fontSize='xs'
+            maxWidth='300px'
+            mt='3'
+          >
+            <Text fontWeight='bold'>Error stopping port forwarding</Text>
+            <Text mt={1}>{errorMessage}</Text>
+          </Box>
+        ),
       })
-    } else if (
-      config.workload_type.startsWith('proxy') ||
-      (config.workload_type === 'service' && config.protocol === 'udp')
-    ) {
-      await invoke('stop_proxy_forward', {
-        configId: config.id.toString(),
-        namespace: config.namespace,
-        serviceName: config.service,
-        localPort: config.local_port,
-        remoteAddress: config.remote_address,
-        protocol: 'tcp',
-      })
-    } else {
-      throw new Error(`Unsupported workload type: ${config.workload_type}`)
+    } finally {
+      setIsRunning(false)
     }
-    updateConfigRunningState(config.id, false)
-    setIsRunning(false)
   }
 
   const togglePortForwarding = async (isChecked: boolean) => {
