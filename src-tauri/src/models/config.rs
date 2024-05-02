@@ -21,7 +21,7 @@ pub struct Config {
     pub alias: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub domain_enabled: Option<bool>,
-    #[serde(default = "default_kubeconfig_path")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub kubeconfig: Option<String>,
 }
 
@@ -40,16 +40,7 @@ impl Default for Config {
             local_address: Some("127.0.0.1".to_string()),
             domain_enabled: Some(false),
             alias: Some("default-alias".to_string()),
-            kubeconfig: default_kubeconfig_path(),
+            kubeconfig: Some("default".to_string()),
         }
     }
-}
-
-fn default_kubeconfig_path() -> Option<String> {
-    dirs::home_dir().map(|path| {
-        let mut kubeconfig_path = path;
-        kubeconfig_path.push(".kube");
-        kubeconfig_path.push("config");
-        kubeconfig_path.to_str().unwrap_or("").to_string()
-    })
 }

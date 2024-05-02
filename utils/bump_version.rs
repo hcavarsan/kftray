@@ -1,10 +1,11 @@
-use log::{error, info};
-use regex::Regex;
-use serde_json::Value;
 use std::{
     env, fs, io,
     process::{Command, ExitCode},
 };
+
+use log::{error, info};
+use regex::Regex;
+use serde_json::Value;
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().collect();
