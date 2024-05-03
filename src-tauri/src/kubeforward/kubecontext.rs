@@ -1,5 +1,3 @@
-use std::path::Path;
-
 use anyhow::{Context, Result};
 use k8s_openapi::{
     api::core::v1::{Namespace, Service},
@@ -17,17 +15,30 @@ use crate::{
     kubeforward::vx::Pod,
     models::kube::{KubeContextInfo, KubeNamespaceInfo, KubeServiceInfo, KubeServicePortInfo},
 };
-
 pub async fn create_client_with_specific_context(
-    kubeconfig_path: Option<&Path>,
+    kubeconfig: Option<String>,
     context_name: &str,
 ) -> Result<Client> {
-    let kubeconfig = match kubeconfig_path {
-        Some(path) => {
+    println!(
+        "create_client_with_specific_context {}",
+        kubeconfig.as_deref().unwrap_or("")
+    );
+    println!("create_client_with_specific_context {}", context_name);
+
+    // Determine the kubeconfig based on the input
+    let kubeconfig = if let Some(path) = kubeconfig {
+        if path == "default" {
+            // If the path explicitly mentions "default", read the default kubeconfig
+            Kubeconfig::read().context("Failed to read kubeconfig from default location")?
+        } else {
+            // Otherwise, try to read the kubeconfig from the specified path
             Kubeconfig::read_from(path).context("Failed to read kubeconfig from specified path")?
         }
-        None => Kubeconfig::read().context("Failed to read kubeconfig from default location")?,
+    } else {
+        // If no kubeconfig is specified, read the default kubeconfig
+        Kubeconfig::read().context("Failed to read kubeconfig from default location")?
     };
+    println!("create_client_with_specific_context2 {:?}", kubeconfig);
 
     let config = Config::from_custom_kubeconfig(
         kubeconfig,
@@ -53,8 +64,16 @@ pub async fn create_client_with_specific_context(
 }
 
 #[tauri::command]
-pub async fn list_kube_contexts() -> Result<Vec<KubeContextInfo>, String> {
-    let kubeconfig = Kubeconfig::read().map_err(|e| e.to_string())?;
+pub async fn list_kube_contexts(
+    kubeconfig: Option<String>,
+) -> Result<Vec<KubeContextInfo>, String> {
+    let kubeconfig_path = kubeconfig.as_deref().unwrap_or("");
+    println!("list_kube_contexts {}", kubeconfig_path);
+    let kubeconfig = match &kubeconfig {
+        Some(path) => Kubeconfig::read_from(path),
+        None => Kubeconfig::read(),
+    }
+    .map_err(|e| e.to_string())?;
     Ok(kubeconfig
         .contexts
         .into_iter()
@@ -63,8 +82,11 @@ pub async fn list_kube_contexts() -> Result<Vec<KubeContextInfo>, String> {
 }
 
 #[tauri::command]
-pub async fn list_namespaces(context_name: &str) -> Result<Vec<KubeNamespaceInfo>, String> {
-    let client = create_client_with_specific_context(None, context_name)
+pub async fn list_namespaces(
+    context_name: &str,
+    kubeconfig: Option<String>,
+) -> Result<Vec<KubeNamespaceInfo>, String> {
+    let client = create_client_with_specific_context(kubeconfig, context_name)
         .await
         .map_err(|err| {
             format!(
@@ -91,12 +113,13 @@ pub async fn list_namespaces(context_name: &str) -> Result<Vec<KubeNamespaceInfo
 pub async fn list_services(
     context_name: &str,
     namespace: &str,
+    kubeconfig: Option<String>,
 ) -> Result<Vec<KubeServiceInfo>, String> {
     if namespace.trim().is_empty() {
         return Err("Namespace parameter cannot be empty".to_string());
     }
 
-    let client = create_client_with_specific_context(None, context_name)
+    let client = create_client_with_specific_context(kubeconfig, context_name)
         .await
         .map_err(|err| {
             format!(
@@ -124,8 +147,9 @@ pub async fn list_service_ports(
     context_name: &str,
     namespace: &str,
     service_name: &str,
+    kubeconfig: Option<String>,
 ) -> Result<Vec<KubeServicePortInfo>, String> {
-    let client = create_client_with_specific_context(None, context_name)
+    let client = create_client_with_specific_context(kubeconfig, context_name)
         .await
         .map_err(|err| {
             format!(

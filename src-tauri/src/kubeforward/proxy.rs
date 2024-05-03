@@ -42,7 +42,8 @@ pub async fn deploy_and_forward_pod(configs: Vec<Config>) -> Result<Vec<CustomRe
 
     for mut config in configs {
         let client = if !config.context.is_empty() {
-            create_client_with_specific_context(None, &config.context)
+            let kubeconfig = config.kubeconfig.clone();
+            create_client_with_specific_context(kubeconfig, &config.context)
                 .await
                 .map_err(|e| e.to_string())?
         } else {

@@ -40,6 +40,7 @@ const KFTray = () => {
     protocol: '',
     remote_address: '',
     alias: '',
+    kubeconfig: 'default',
   })
 
   const updateConfigRunningState = (id: number, isRunning: boolean) => {
@@ -83,6 +84,7 @@ const KFTray = () => {
       protocol: '',
       remote_address: '',
       alias: '',
+      kubeconfig: 'default',
     })
     setIsEdit(false)
     setIsModalOpen(true)
@@ -246,6 +248,7 @@ const KFTray = () => {
         protocol: configToEdit.protocol,
         remote_address: configToEdit.remote_address,
         alias: configToEdit.alias,
+        kubeconfig: configToEdit.kubeconfig,
       })
       setIsEdit(true)
       setIsModalOpen(true)
@@ -273,6 +276,7 @@ const KFTray = () => {
         protocol: newConfig.protocol,
         remote_address: newConfig.remote_address,
         alias: newConfig.alias,
+        kubeconfig: newConfig.kubeconfig,
       }
 
       await invoke('update_config', { config: editedConfig })
@@ -307,11 +311,9 @@ const KFTray = () => {
     }
   }
   // eslint-disable-next-line complexity
-  const handleSaveConfig = async (e: React.FormEvent) => {
-    e.preventDefault()
-
-    const configToSave = {
-      id: isEdit ? newConfig.id : undefined,
+  const handleSaveConfig = async (configToSave: Config) => {
+    const updatedConfigToSave: Config = {
+      id: isEdit ? newConfig.id : 0,
       service: newConfig.service,
       context: newConfig.context,
       local_port: newConfig.local_port,
@@ -323,8 +325,10 @@ const KFTray = () => {
       protocol: newConfig.protocol,
       remote_address: newConfig.remote_address,
       alias: newConfig.alias,
+      kubeconfig: newConfig.kubeconfig,
     }
 
+    console.log('Sending config to save:', updatedConfigToSave)
     try {
       let wasRunning = false
       const originalConfigsRunningState = new Map()
@@ -365,9 +369,9 @@ const KFTray = () => {
       }
 
       if (isEdit) {
-        await invoke('update_config', { config: configToSave })
+        await invoke('update_config', { config: updatedConfigToSave })
       } else {
-        await invoke('insert_config', { config: configToSave })
+        await invoke('insert_config', { config: updatedConfigToSave })
       }
 
       let updatedConfigs = await invoke<Status[]>('get_configs')
@@ -704,6 +708,7 @@ const KFTray = () => {
           isEdit={isEdit}
           handleEditSubmit={handleEditSubmit}
           cancelRef={cancelRef}
+          setNewConfig={setNewConfig}
         />
       </VStack>
     </Box>

@@ -20,10 +20,11 @@ import {
   Tooltip,
   useToast,
 } from '@chakra-ui/react'
+import { open } from '@tauri-apps/api/dialog'
 import { invoke } from '@tauri-apps/api/tauri'
 
 import theme from '../../assets/theme'
-import { CustomConfigProps, KubeContext, Option } from '../../types'
+import { Config, CustomConfigProps, KubeContext, Option } from '../../types'
 
 import { customStyles, fetchKubeContexts } from './utils'
 
@@ -35,6 +36,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
   handleSaveConfig,
   isEdit,
   configData,
+  setNewConfig,
 }) => {
   const [selectedContext, setSelectedContext] = useState<{
     name?: string
@@ -100,22 +102,52 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
   ])
 
   const [isFormValid, setIsFormValid] = useState(false)
+  const [kubeConfig, setKubeConfig] = useState<string | undefined>()
 
+  const [initialModalOpen, setInitialModalOpen] = useState(false)
   const [portData, setPortData] = useState<
     { remote_port: number; port?: number | string; name?: string | number }[]
   >([])
   const toast = useToast()
 
   const contextQuery = useQuery<KubeContext[]>(
-    'kube-contexts',
-    fetchKubeContexts,
+    ['kube-contexts', kubeConfig],
+    () => fetchKubeContexts(kubeConfig),
+    {
+      enabled: isModalOpen,
+    },
   )
+
+  const handleSetKubeConfig = async () => {
+    try {
+      await invoke('open_save_dialog')
+      const selectedPath = await open({
+        multiple: false,
+        filters: [],
+      })
+
+      await invoke('close_save_dialog')
+      if (selectedPath) {
+        const filePath = Array.isArray(selectedPath)
+          ? selectedPath[0]
+          : selectedPath
+
+        setKubeConfig(filePath)
+      } else {
+        console.log('No file selected')
+      }
+    } catch (error) {
+      console.error('Error selecting a file: ', error)
+      setKubeConfig('default')
+    }
+  }
 
   const namespaceQuery = useQuery(
     ['kube-namespaces', newConfig.context],
     () =>
       invoke<{ name: string }[]>('list_namespaces', {
         contextName: newConfig.context,
+        kubeconfig: kubeConfig,
       }),
     {
       initialData: configData?.namespace,
@@ -125,11 +157,13 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
 
   const serviceQuery = useQuery(
     ['kube-services', newConfig.context, newConfig.namespace],
-    () =>
-      invoke<{ name: string }[]>('list_services', {
+    () => {
+      return invoke<{ name: string }[]>('list_services', {
         contextName: newConfig.context,
         namespace: newConfig.namespace,
-      }),
+        kubeconfig: kubeConfig,
+      })
+    },
     {
       initialData: configData?.service,
       enabled: !!newConfig.context && !!newConfig.namespace,
@@ -137,32 +171,55 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
   )
 
   useEffect(() => {
-    if (newConfig.context && newConfig.namespace && newConfig.service) {
-      invoke<{ remote_port: number }[]>('list_service_ports', {
-        contextName: newConfig.context,
-        namespace: newConfig.namespace,
-        serviceName: newConfig.service,
-      })
-      .then(ports => {
-        setPortData(ports)
-      })
-      .catch(error => {
-        toast({
-          title: 'Error fetching service ports',
-          description: error,
-          status: 'error',
-        })
-        setPortData(configData?.ports ?? [])
-      })
+    if (isModalOpen) {
+      setInitialModalOpen(true)
     } else {
-      setPortData(configData?.ports ?? [])
+      setInitialModalOpen(false)
     }
+  }, [isModalOpen])
+
+  useEffect(() => {
+    if (
+      !newConfig.context ||
+      !newConfig.namespace ||
+      !newConfig.service ||
+      !isModalOpen ||
+      (isEdit && initialModalOpen)
+    ) {
+      return
+    }
+
+    console.log('Effect triggered with newConfig:', newConfig)
+    console.log('Invoking list_service_ports with:', newConfig)
+    invoke<{ remote_port: number }[]>('list_service_ports', {
+      contextName: newConfig.context,
+      namespace: newConfig.namespace,
+      serviceName: newConfig.service,
+      kubeconfig: kubeConfig,
+    })
+    .then(ports => {
+      console.log('Ports fetched successfully:', ports)
+      setPortData(ports)
+    })
+    .catch(error => {
+      console.error('Error fetching service ports:', error)
+      toast({
+        title: 'Error fetching service ports',
+        description: error.message || error.toString(),
+        status: 'error',
+      })
+      setPortData(configData?.ports ?? [])
+    })
+
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
+    isModalOpen,
     newConfig.context,
     newConfig.namespace,
     newConfig.service,
     toast,
-    configData,
+    configData?.ports,
+    isEdit,
   ])
 
   useEffect(() => {
@@ -200,6 +257,8 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
           }
           : null,
       )
+      // Update the kubeConfig state based on the newConfig.kubeconfig value
+      setKubeConfig(newConfig.kubeconfig || 'default') // Adjust this line
     }
   }, [
     isEdit,
@@ -210,8 +269,8 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     newConfig.protocol,
     newConfig.remote_port,
     newConfig.workload_type,
+    newConfig.kubeconfig,
   ])
-
   useEffect(() => {
     if (!isModalOpen) {
       resetState()
@@ -226,6 +285,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     setPortData([])
     setSelectedWorkloadType(null)
     setSelectedProtocol(null)
+    setKubeConfig(undefined)
   }
 
   const handleSelectChange = (
@@ -303,9 +363,26 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     } as unknown as React.ChangeEvent<HTMLInputElement>)
   }
 
-  const handleSave = (event: React.FormEvent<Element>) => {
+  useEffect(() => {
+    if (setNewConfig) {
+      // Check if setNewConfig is not undefined
+      setNewConfig((prevConfig: Config) => ({
+        ...prevConfig,
+        kubeconfig: kubeConfig ?? '',
+      }))
+    }
+  }, [kubeConfig, setNewConfig])
+
+  const handleSave = async (event: React.FormEvent) => {
     event.preventDefault()
-    handleSaveConfig(event)
+
+    const configToSave = {
+      ...newConfig,
+      kubeconfig: kubeConfig ?? '',
+    }
+
+    await handleSaveConfig(configToSave)
+
     if (!isEdit) {
       resetState()
     }
@@ -324,11 +401,11 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
         <ModalContent
           mx={5}
           my={5}
-          mt={6}
+          mt={3}
           borderRadius='lg'
           boxShadow='0px 10px 25px 5px rgba(0,0,0,0.5)'
           maxW='27rem'
-          maxH='32rem'
+          maxH='35rem'
         >
           <ModalCloseButton />
           <ModalBody p={2} mt={3}>
@@ -681,20 +758,46 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                   />
                 </FormControl>
               </Box>
-              <ModalFooter justifyContent='flex-end' p={2} mt='-1'>
-                <Button variant='outline' onClick={handleCancel} size='xs'>
-                  Cancel
-                </Button>
-                <Button
-                  type='submit'
-                  colorScheme='blue'
-                  size='xs'
-                  ml={3}
-                  onClick={handleSave}
-                  isDisabled={!isFormValid}
-                >
-                  {isEdit ? 'Save Changes' : 'Add Config'}
-                </Button>
+              <ModalFooter justifyContent='space-between' p={2} mt='3'>
+                <Box display={{ base: 'block', sm: 'flex' }} width='100%'>
+                  <Button
+                    variant='outline'
+                    onClick={handleSetKubeConfig}
+                    size='xs'
+                    mr={{ base: 0, sm: 3 }}
+                    mb={{ base: 2, sm: 0 }}
+                    width={{ base: '100%', sm: 'auto' }}
+                  >
+                    {kubeConfig && kubeConfig !== 'default' ? (
+                      <Text fontSize='xs'>{kubeConfig}</Text> // Display the kubeConfig path
+                    ) : (
+                      <Text fontSize='xs'>Set Kubeconfig</Text> // Display 'Set Kubeconfig'
+                    )}
+                  </Button>
+                  <Box
+                    flex='1'
+                    display='flex'
+                    justifyContent={{ base: 'flex-start', sm: 'flex-end' }}
+                  >
+                    <Button
+                      variant='outline'
+                      onClick={handleCancel}
+                      size='xs'
+                      mr={3}
+                    >
+                      Cancel
+                    </Button>
+                    <Button
+                      type='submit'
+                      colorScheme='blue'
+                      size='xs'
+                      onClick={handleSave}
+                      isDisabled={!isFormValid}
+                    >
+                      {isEdit ? 'Save Changes' : 'Add Config'}
+                    </Button>
+                  </Box>
+                </Box>
               </ModalFooter>
             </form>
           </ModalBody>

@@ -37,11 +37,15 @@ impl PortForward {
         local_port: impl Into<Option<u16>>,
         local_address: impl Into<Option<String>>,
         context_name: Option<String>,
+        kubeconfig: Option<String>,
     ) -> anyhow::Result<Self> {
         // Check if context_name was provided and create a Kubernetes client
         let client = if let Some(ref context_name) = context_name {
-            crate::kubeforward::kubecontext::create_client_with_specific_context(None, context_name)
-                .await?
+            crate::kubeforward::kubecontext::create_client_with_specific_context(
+                kubeconfig,
+                context_name,
+            )
+            .await?
         } else {
             // Use default context (or whatever client creation logic you prefer)
             Client::try_default().await?
@@ -311,6 +315,7 @@ pub async fn start_port_udp_forward(configs: Vec<Config>) -> Result<Vec<CustomRe
         let selector = TargetSelector::ServiceName(config.service.clone().unwrap());
         let remote_port = Port::from(config.remote_port as i32);
         let context_name = Some(config.context.clone());
+        let kubeconfig = Some(config.kubeconfig.clone());
         log::info!("Remote Port: {}", config.remote_port);
         log::info!("Local Port: {}", config.local_port);
 
@@ -319,13 +324,18 @@ pub async fn start_port_udp_forward(configs: Vec<Config>) -> Result<Vec<CustomRe
 
         log::debug!("Attempting to forward to service: {:?}", &config.service);
         let local_address_clone = config.local_address.clone();
-        let port_forward =
-            PortForward::new(target, config.local_port, local_address_clone, context_name)
-                .await
-                .map_err(|e| {
-                    log::error!("Failed to create PortForward: {:?}", e);
-                    e.to_string()
-                })?;
+        let port_forward = PortForward::new(
+            target,
+            config.local_port,
+            local_address_clone,
+            context_name,
+            kubeconfig.flatten(),
+        )
+        .await
+        .map_err(|e| {
+            log::error!("Failed to create PortForward: {:?}", e);
+            e.to_string()
+        })?;
 
         let (actual_local_port, handle) = port_forward.port_forward_udp().await.map_err(|e| {
             log::error!("Failed to start UDP port forwarding: {:?}", e);
@@ -410,6 +420,7 @@ pub async fn start_port_forward(configs: Vec<Config>) -> Result<Vec<CustomRespon
         let selector = TargetSelector::ServiceName(config.service.clone().unwrap());
         let remote_port = Port::from(config.remote_port as i32);
         let context_name = Some(config.context.clone());
+        let kubeconfig = Some(config.kubeconfig.clone());
         log::info!("Remote Port: {}", config.remote_port);
         log::info!("Local Port: {}", config.remote_port);
         log::info!("Local Address: {:?}", config.local_address);
@@ -423,6 +434,7 @@ pub async fn start_port_forward(configs: Vec<Config>) -> Result<Vec<CustomRespon
             config.local_port,
             config.local_address.clone(),
             context_name.clone(),
+            kubeconfig.clone().flatten(),
         )
         .await
         .map_err(|e| {

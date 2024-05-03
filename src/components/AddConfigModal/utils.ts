@@ -44,6 +44,9 @@ export const customStyles: StylesConfig = {
   }),
 }
 
-export const fetchKubeContexts = (): Promise<KubeContext[]> => {
-  return invoke('list_kube_contexts')
+// utils.ts
+export const fetchKubeContexts = (
+  kubeconfigPath?: string,
+): Promise<KubeContext[]> => {
+  return invoke('list_kube_contexts', { kubeconfig: kubeconfigPath })
 }
