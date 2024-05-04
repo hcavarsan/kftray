@@ -618,10 +618,18 @@ const KFTray = () => {
     setIsStopping(false)
   }
 
+  useEffect(() => {
+    if (isModalOpen) {
+      document.body.style.overflow = 'hidden'
+    } else {
+      document.body.style.overflow = 'unset'
+    }
+  }, [isModalOpen])
   const cardBg = useColorModeValue('gray.800', 'gray.800')
 
   return (
     <Box
+      position='relative'
       width='100%'
       height='76vh'
       maxW='600px'
@@ -629,12 +637,12 @@ const KFTray = () => {
       borderRadius='20px'
       bg={cardBg}
       boxShadow={`
-      /* Inset shadow for top & bottom inner border effect using dark gray */
-      inset 0 2px 4px rgba(0, 0, 0, 0.3),
-      inset 0 -2px 4px rgba(0, 0, 0, 0.3),
-      /* Inset shadow for an inner border all around using dark gray */
-      inset 0 0 0 4px rgba(45, 57, 81, 0.9)
-    `}
+        /* Inset shadow for top & bottom inner border effect using dark gray */
+        inset 0 2px 4px rgba(0, 0, 0, 0.3),
+        inset 0 -2px 4px rgba(0, 0, 0, 0.3),
+        /* Inset shadow for an inner border all around using dark gray */
+        inset 0 0 0 4px rgba(45, 57, 81, 0.9)
+      `}
     >
       <VStack
         css={{

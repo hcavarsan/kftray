@@ -2,23 +2,25 @@ import React, { useEffect, useState } from 'react'
 import { useQuery } from 'react-query'
 import ReactSelect, { ActionMeta } from 'react-select'
 
+import { InfoIcon } from '@chakra-ui/icons'
 import {
-  Box,
   Button,
   Center,
   Checkbox,
+  Divider,
+  Flex,
   FormControl,
   FormLabel,
   Input,
   Modal,
   ModalBody,
-  ModalCloseButton,
   ModalContent,
-  ModalFooter,
   ModalOverlay,
+  SimpleGrid,
   Text,
   Tooltip,
   useToast,
+  VStack,
 } from '@chakra-ui/react'
 import { open } from '@tauri-apps/api/dialog'
 import { invoke } from '@tauri-apps/api/tauri'
@@ -26,7 +28,7 @@ import { invoke } from '@tauri-apps/api/tauri'
 import theme from '../../assets/theme'
 import { Config, CustomConfigProps, KubeContext, Option } from '../../types'
 
-import { customStyles, fetchKubeContexts } from './utils'
+import { assertIsError, customStyles, fetchKubeContexts } from './utils'
 
 const AddConfigModal: React.FC<CustomConfigProps> = ({
   isModalOpen,
@@ -102,9 +104,8 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
   ])
 
   const [isFormValid, setIsFormValid] = useState(false)
-  const [kubeConfig, setKubeConfig] = useState<string | undefined>()
+  const [kubeConfig, setKubeConfig] = useState<string>('default')
 
-  const [initialModalOpen, setInitialModalOpen] = useState(false)
   const [portData, setPortData] = useState<
     { remote_port: number; port?: number | string; name?: string | number }[]
   >([])
@@ -132,7 +133,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
           ? selectedPath[0]
           : selectedPath
 
-        setKubeConfig(filePath)
+        setKubeConfig(filePath ?? 'default')
       } else {
         console.log('No file selected')
       }
@@ -144,11 +145,14 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
 
   const namespaceQuery = useQuery(
     ['kube-namespaces', newConfig.context],
-    () =>
-      invoke<{ name: string }[]>('list_namespaces', {
+    () => {
+      console.log('Invoking namespaces with:', newConfig.context)
+
+      return invoke<{ name: string }[]>('list_namespaces', {
         contextName: newConfig.context,
         kubeconfig: kubeConfig,
-      }),
+      })
+    },
     {
       initialData: configData?.namespace,
       enabled: !!newConfig.context,
@@ -158,6 +162,8 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
   const serviceQuery = useQuery(
     ['kube-services', newConfig.context, newConfig.namespace],
     () => {
+      console.log('Invoking list_services with:', newConfig)
+
       return invoke<{ name: string }[]>('list_services', {
         contextName: newConfig.context,
         namespace: newConfig.namespace,
@@ -170,57 +176,47 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     },
   )
 
-  useEffect(() => {
-    if (isModalOpen) {
-      setInitialModalOpen(true)
-    } else {
-      setInitialModalOpen(false)
-    }
-  }, [isModalOpen])
+  const portQuery = useQuery(
+    [
+      'kube-service-ports',
+      newConfig.context,
+      newConfig.namespace,
+      newConfig.service,
+    ],
+    () => {
+      console.log('Invoking list_service_ports with:', newConfig)
 
-  useEffect(() => {
-    if (
-      !newConfig.context ||
-      !newConfig.namespace ||
-      !newConfig.service ||
-      !isModalOpen ||
-      (isEdit && initialModalOpen)
-    ) {
-      return
-    }
-
-    console.log('Effect triggered with newConfig:', newConfig)
-    console.log('Invoking list_service_ports with:', newConfig)
-    invoke<{ remote_port: number }[]>('list_service_ports', {
-      contextName: newConfig.context,
-      namespace: newConfig.namespace,
-      serviceName: newConfig.service,
-      kubeconfig: kubeConfig,
-    })
-    .then(ports => {
-      console.log('Ports fetched successfully:', ports)
-      setPortData(ports)
-    })
-    .catch(error => {
-      console.error('Error fetching service ports:', error)
-      toast({
-        title: 'Error fetching service ports',
-        description: error.message || error.toString(),
-        status: 'error',
+      return invoke<{ remote_port: number }[]>('list_service_ports', {
+        contextName: newConfig.context,
+        namespace: newConfig.namespace,
+        serviceName: newConfig.service,
+        kubeconfig: kubeConfig,
       })
-      setPortData(configData?.ports ?? [])
-    })
-
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    isModalOpen,
-    newConfig.context,
-    newConfig.namespace,
-    newConfig.service,
-    toast,
-    configData?.ports,
-    isEdit,
-  ])
+    },
+    {
+      initialData: configData?.ports,
+      enabled:
+        !!newConfig.context && !!newConfig.namespace && !!newConfig.service,
+      onSuccess: ports => {
+        console.log('Ports fetched successfully:', ports)
+        setPortData(ports)
+      },
+      onError: error => {
+        assertIsError(error)
+        console.error(
+          'Error fetching service ports:',
+          error instanceof Error ? error.message : error,
+        )
+        toast({
+          title: 'Error fetching service ports',
+          description:
+            error instanceof Error ? error.message : JSON.stringify(error),
+          status: 'error',
+        })
+        setPortData(configData?.ports ?? [])
+      },
+    },
+  )
 
   useEffect(() => {
     if (isEdit && isModalOpen) {
@@ -249,16 +245,16 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
           ? { label: newConfig.service, value: newConfig.service }
           : null,
       )
+      // Corrected part: Set selectedPort based on newConfig.remote_port
       setSelectedPort(
-        newConfig.remote_port !== undefined
+        newConfig.remote_port
           ? {
             label: newConfig.remote_port.toString(),
             value: newConfig.remote_port,
           }
           : null,
       )
-      // Update the kubeConfig state based on the newConfig.kubeconfig value
-      setKubeConfig(newConfig.kubeconfig || 'default') // Adjust this line
+      setKubeConfig(newConfig.kubeconfig ?? 'default')
     }
   }, [
     isEdit,
@@ -271,6 +267,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     newConfig.workload_type,
     newConfig.kubeconfig,
   ])
+
   useEffect(() => {
     if (!isModalOpen) {
       resetState()
@@ -285,7 +282,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     setPortData([])
     setSelectedWorkloadType(null)
     setSelectedProtocol(null)
-    setKubeConfig(undefined)
+    setKubeConfig('default')
   }
 
   const handleSelectChange = (
@@ -396,409 +393,400 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
 
   return (
     <Center>
-      <Modal isOpen={isModalOpen} onClose={handleCancel}>
+      <Modal isOpen={isModalOpen} onClose={handleCancel} size='sm'>
         <ModalOverlay bg='transparent' />
-        <ModalContent
-          mx={5}
-          my={5}
-          mt={3}
-          borderRadius='lg'
-          boxShadow='0px 10px 25px 5px rgba(0,0,0,0.5)'
-          maxW='27rem'
-          maxH='35rem'
-        >
-          <ModalCloseButton />
-          <ModalBody p={2} mt={3}>
+        <ModalContent bg='transparent' borderRadius='20px' marginTop='4'>
+          <ModalBody p={0}>
             <form onSubmit={handleSave}>
-              <FormControl
-                display='flex'
-                alignItems='center'
-                flexWrap='wrap'
-                p={2}
+              <VStack
+                spacing={3}
+                align='stretch'
+                p={4}
+                border='1px'
+                borderColor='gray.700'
+                borderRadius='20px'
+                bg='gray.800'
+                boxShadow={`
+				/* Inset shadow for top & bottom inner border effect using dark gray */
+				inset 0 2px 6px rgba(0, 0, 0, 0.6),
+				inset 0 -2px 6px rgba(0, 0, 0, 0.6),
+				/* Inset shadow for an inner border all around using dark gray */
+				inset 0 0 0 4px rgba(45, 60, 81, 0.9)
+			  `}
               >
-                <Box width={{ base: '100%', sm: '50%' }} pl={2}>
-                  <FormLabel htmlFor='alias'>Alias</FormLabel>
-                  <Input
-                    id='alias'
-                    type='string'
-                    value={newConfig.alias || ''}
-                    name='alias'
-                    onChange={handleInputChange}
-                    size='sm'
-                    height='36px'
-                    bg={theme.colors.gray[800]}
-                    borderColor={theme.colors.gray[700]}
-                    _hover={{
-                      borderColor: theme.colors.gray[600],
-                    }}
-                    _placeholder={{
-                      color: theme.colors.gray[500],
-                    }}
-                    color={theme.colors.gray[300]}
-                  />
-
-                  <Checkbox
-                    mt='0.5'
-                    ml='0.5'
-                    size='sm'
-                    name='domain_enabled'
-                    isChecked={newConfig.domain_enabled || false}
-                    onChange={e =>
-                      handleInputChange({
-                        target: {
-                          name: e.target.name,
-                          value: e.target.checked,
-                        },
-                      } as unknown as React.ChangeEvent<HTMLInputElement>)
-                    }
+                <Flex justifyContent='space-between' alignItems='center'>
+                  <Text fontSize='sm' fontWeight='bold'>
+                    {isEdit ? 'Edit Configuration' : 'Add Configuration'}
+                  </Text>
+                  <Button
+                    size='xs'
+                    height='26px'
+                    width='35%'
+                    variant='outline'
+                    onClick={handleSetKubeConfig}
+                    px={4}
+                    borderColor='gray.600'
                   >
                     <Tooltip
-                      label='Add a hostfile entry to resolve alias to local address'
-                      placement='bottom-end'
-                      fontSize='xs'
-                      lineHeight='tight'
+                      label={`Current kubeconfig: ${kubeConfig}`}
+                      aria-label='Kubeconfig Details'
+                      placement='top'
+                      hasArrow
                     >
-                      <Text fontSize='xs'>enable alias as local domain</Text>
+                      <Flex align='center'>
+                        <Text fontSize='10px' mr={2}>
+                          Set Kubeconfig
+                        </Text>
+                        <InfoIcon color='gray.500' w={2} h={2} />
+                      </Flex>
                     </Tooltip>
-                  </Checkbox>
-                </Box>
-                <Box width={{ base: '100%', sm: '50%' }} pl={2} mt='-6'>
-                  <FormLabel htmlFor='workload_type'>Workload Type</FormLabel>
-                  <ReactSelect
-                    styles={customStyles}
-                    name='workload_type'
-                    options={[
-                      { label: 'service', value: 'service' },
-                      { label: 'proxy', value: 'proxy' },
-                    ]}
-                    value={selectedWorkloadType}
-                    onChange={selectedOption =>
-                      handleSelectChange(
-                        selectedOption as Option,
-                        { name: 'workload_type' } as ActionMeta<Option>,
-                      )
-                    }
-                  />
-                </Box>
-              </FormControl>
-
-              <FormControl
-                display='flex'
-                alignItems='center'
-                flexWrap='wrap'
-                p={2}
-              >
-                <Box width={{ base: '100%', sm: '50%' }} pl={2}>
-                  <FormLabel htmlFor='context'>Context</FormLabel>
-                  <ReactSelect
-                    styles={customStyles}
-                    name='context'
-                    options={contextQuery.data?.map(context => ({
-                      label: context.name,
-                      value: context.name,
-                    }))}
-                    value={selectedContext}
-                    onChange={selectedOption =>
-                      handleSelectChange(
-                        selectedOption as Option,
-                        { name: 'context' } as ActionMeta<Option>,
-                      )
-                    }
-                  />
-                </Box>
-                <Box width={{ base: '100%', sm: '50%' }} pl={2}>
-                  <FormLabel htmlFor='namespace'>Namespace</FormLabel>
-                  <ReactSelect
-                    styles={customStyles}
-                    name='namespace'
-                    options={namespaceQuery.data?.map(namespace => ({
-                      label: namespace.name,
-                      value: namespace.name,
-                    }))}
-                    value={selectedNamespace}
-                    onChange={selectedOption =>
-                      handleSelectChange(
-                        selectedOption as Option,
-                        { name: 'namespace' } as ActionMeta<Option>,
-                      )
-                    }
-                  />
-                </Box>
-              </FormControl>
-
-              {newConfig.workload_type.startsWith('proxy') ? (
-                <>
-                  <FormControl
-                    display='flex'
-                    alignItems='center'
-                    flexWrap='wrap'
-                    p={2}
-                  >
-                    <Box width={{ base: '100%', sm: '60%' }} pl={2}>
-                      <FormLabel htmlFor='remote_address'>
-                        Remote Address
-                      </FormLabel>
-                      <Input
-                        id='remote_address'
-                        type='text'
-                        height='36px'
-                        value={newConfig.remote_address || ''}
-                        name='remote_address'
-                        onChange={handleInputChange}
-                        size='sm'
-                        bg={theme.colors.gray[800]}
-                        borderColor={theme.colors.gray[700]}
-                        _hover={{
-                          borderColor: theme.colors.gray[600],
-                        }}
-                        _placeholder={{
-                          color: theme.colors.gray[500],
-                        }}
-                        color={theme.colors.gray[300]}
-                      />
-                    </Box>
-                    <Box width={{ base: '100%', sm: '40%' }} pl={2}>
-                      <FormLabel htmlFor='protocol'>Protocol</FormLabel>
-                      <ReactSelect
-                        styles={customStyles}
-                        name='protocol'
-                        options={[
-                          { label: 'udp', value: 'udp' },
-                          { label: 'tcp', value: 'tcp' },
-                        ]}
-                        value={selectedProtocol}
-                        onChange={selectedOption =>
-                          handleSelectChange(
-                            selectedOption as Option,
-                            { name: 'protocol' } as ActionMeta<Option>,
-                          )
-                        }
-                      />
-                    </Box>
-                  </FormControl>
-                  <FormControl
-                    display='flex'
-                    alignItems='center'
-                    flexWrap='wrap'
-                    p={2}
-                  >
-                    <Box width={{ base: '100%', sm: '50%' }} pl={2}>
-                      <FormLabel htmlFor='remote_port'>Target Port</FormLabel>
-                      <Input
-                        id='remote_port'
-                        type='number'
-                        height='36px'
-                        value={newConfig.remote_port || ''}
-                        name='remote_port'
-                        onChange={handleInputChange}
-                        size='sm'
-                        bg={theme.colors.gray[800]}
-                        borderColor={theme.colors.gray[700]}
-                        _hover={{
-                          borderColor: theme.colors.gray[600],
-                        }}
-                        _placeholder={{
-                          color: theme.colors.gray[500],
-                        }}
-                        color={theme.colors.gray[300]}
-                      />
-                    </Box>
-
-                    <Box width={{ base: '100%', sm: '50%' }} pl={2}>
-                      <FormLabel htmlFor='local_port'>Local Port</FormLabel>
-                      <Input
-                        id='local_port'
-                        type='number'
-                        value={newConfig.local_port || ''}
-                        name='local_port'
-                        height='36px'
-                        onChange={handleInputChange}
-                        size='sm'
-                        bg={theme.colors.gray[800]}
-                        borderColor={theme.colors.gray[700]}
-                        _hover={{
-                          borderColor: theme.colors.gray[600],
-                        }}
-                        _placeholder={{
-                          color: theme.colors.gray[500],
-                        }}
-                        color={theme.colors.gray[300]}
-                      />
-                    </Box>
-                  </FormControl>
-                </>
-              ) : (
-                <>
-                  <FormControl
-                    display='flex'
-                    alignItems='center'
-                    flexWrap='wrap'
-                    p={2}
-                  >
-                    <Box width={{ base: '100%', sm: '50%' }} pl={2}>
-                      <FormLabel htmlFor='service'>Service</FormLabel>
-                      <ReactSelect
-                        styles={customStyles}
-                        name='service'
-                        options={serviceQuery.data?.map(service => ({
-                          label: service.name,
-                          value: service.name,
-                        }))}
-                        value={selectedService}
-                        onChange={selectedOption =>
-                          handleSelectChange(
-                            selectedOption as Option,
-                            { name: 'service' } as ActionMeta<Option>,
-                          )
-                        }
-                      />
-                    </Box>
-                    <Box width={{ base: '100%', sm: '50%' }} pl={2}>
-                      <FormLabel htmlFor='protocol'>Protocol</FormLabel>
-                      <ReactSelect
-                        styles={customStyles}
-                        name='protocol'
-                        options={[
-                          { label: 'udp', value: 'udp' },
-                          { label: 'tcp', value: 'tcp' },
-                        ]}
-                        value={selectedProtocol}
-                        onChange={selectedOption =>
-                          handleSelectChange(
-                            selectedOption as Option,
-                            { name: 'protocol' } as ActionMeta<Option>,
-                          )
-                        }
-                      />
-                    </Box>
-                  </FormControl>
-                  <FormControl
-                    display='flex'
-                    alignItems='center'
-                    flexWrap='wrap'
-                    p={2}
-                  >
-                    <Box width={{ base: '100%', sm: '50%' }} pl={2}>
-                      <FormLabel htmlFor='remote_port'>Target Port</FormLabel>
-                      <ReactSelect
-                        styles={customStyles}
-                        name='remote_port'
-                        options={portData
-                        .filter(port => port.port !== undefined)
-                        .map(port => ({
-                          label: port.port
-                            ? port.port.toString() + ' - ' + port.name
-                            : '',
-                          value: port.port,
-                        }))}
-                        value={selectedPort}
-                        onChange={selectedOption =>
-                          handleSelectChange(
-                            selectedOption as Option,
-                            { name: 'remote_port' } as ActionMeta<Option>,
-                          )
-                        }
-                      />
-                    </Box>
-                    <Box width={{ base: '100%', sm: '50%' }} pl={2}>
-                      <FormLabel htmlFor='local_port'>Local Port</FormLabel>
-                      <Input
-                        id='local_port'
-                        type='number'
-                        height='36px'
-                        value={newConfig.local_port || ''}
-                        name='local_port'
-                        onChange={handleInputChange}
-                        size='sm'
-                        bg={theme.colors.gray[800]}
-                        borderColor={theme.colors.gray[700]}
-                        _hover={{
-                          borderColor: theme.colors.gray[600],
-                        }}
-                        _placeholder={{
-                          color: theme.colors.gray[500],
-                        }}
-                        color={theme.colors.gray[300]}
-                      />
-                    </Box>
-                  </FormControl>
-                </>
-              )}
-              <Box width={{ base: '100%', sm: '52%' }} pl={2}>
-                <FormControl display='flex' flexDirection='column' p={2}>
-                  <FormLabel htmlFor='local_address'>
+                  </Button>
+                </Flex>
+                <Divider />
+                <SimpleGrid columns={2} spacing={3}>
+                  <FormControl>
+                    <FormLabel htmlFor='alias' fontSize='12px' mb='-0.4'>
+                      Alias
+                    </FormLabel>
+                    <Input
+                      id='alias'
+                      type='text'
+                      value={newConfig.alias || ''}
+                      name='alias'
+                      onChange={handleInputChange}
+                      size='xs'
+                      borderRadius='4px'
+                      height='25px'
+                    />
                     <Checkbox
-                      mt='1.5'
-                      mr='1'
+                      size='sm'
+                      isChecked={newConfig.domain_enabled || false}
+                      onChange={e =>
+                        handleInputChange({
+                          target: {
+                            name: e.target.name,
+                            value: e.target.checked,
+                          },
+                        } as unknown as React.ChangeEvent<HTMLInputElement>)
+                      }
+                      mt={1}
+                      ml={0.5}
+                      name='domain_enabled'
+                    >
+                      <Text fontSize='10px'>Enable alias as domain</Text>
+                    </Checkbox>
+                  </FormControl>
+                  <FormControl isRequired mt='0.4'>
+                    <FormLabel htmlFor='context' fontSize='12px' mb='0'>
+                      Context
+                    </FormLabel>
+                    <ReactSelect
+                      styles={customStyles}
+                      name='context'
+                      options={contextQuery.data?.map(context => ({
+                        label: context.name,
+                        value: context.name,
+                      }))}
+                      value={selectedContext}
+                      onChange={selectedOption =>
+                        handleSelectChange(
+                          selectedOption as Option,
+                          { name: 'context' } as ActionMeta<Option>,
+                        )
+                      }
+                      menuPlacement='auto'
+                      theme={theme => ({
+                        ...theme,
+                        borderRadius: 4,
+                        colors: {
+                          ...theme.colors,
+                          primary25: 'lightgrey',
+                          primary: 'grey',
+                        },
+                      })}
+                    />
+                  </FormControl>
+                </SimpleGrid>
+
+                <SimpleGrid columns={2} spacing={3}>
+                  <FormControl isRequired>
+                    <FormLabel htmlFor='workload_type' fontSize='12px' mb='0'>
+                      Workload Type
+                    </FormLabel>
+                    <ReactSelect
+                      styles={customStyles}
+                      name='workload_type'
+                      options={[
+                        { label: 'service', value: 'service' },
+                        { label: 'proxy', value: 'proxy' },
+                      ]}
+                      value={selectedWorkloadType}
+                      onChange={selectedOption =>
+                        handleSelectChange(
+                          selectedOption as Option,
+                          { name: 'workload_type' } as ActionMeta<Option>,
+                        )
+                      }
+                      isSearchable={false}
+                      menuPlacement='auto'
+                      theme={theme => ({
+                        ...theme,
+                        borderRadius: 4,
+                        colors: {
+                          ...theme.colors,
+                          primary25: 'lightgrey',
+                          primary: 'grey',
+                        },
+                      })}
+                    />
+                  </FormControl>
+
+                  <FormControl isRequired>
+                    <FormLabel htmlFor='namespace' fontSize='12px' mb='0'>
+                      Namespace
+                    </FormLabel>
+                    <ReactSelect
+                      styles={customStyles}
+                      name='namespace'
+                      options={namespaceQuery.data?.map(namespace => ({
+                        label: namespace.name,
+                        value: namespace.name,
+                      }))}
+                      value={selectedNamespace}
+                      onChange={selectedOption =>
+                        handleSelectChange(
+                          selectedOption as Option,
+                          { name: 'namespace' } as ActionMeta<Option>,
+                        )
+                      }
+                      menuPlacement='auto'
+                      theme={theme => ({
+                        ...theme,
+                        borderRadius: 4,
+                        colors: {
+                          ...theme.colors,
+                          primary25: 'lightgrey',
+                          primary: 'grey',
+                        },
+                      })}
+                    />
+                  </FormControl>
+                </SimpleGrid>
+
+                {newConfig.workload_type?.startsWith('proxy') ? (
+                  <>
+                    <SimpleGrid columns={2} spacing={3} mt='2'>
+                      <FormControl>
+                        <FormLabel
+                          htmlFor='remote_address'
+                          fontSize='12px'
+                          mb='0'
+                        >
+                          Remote Address
+                        </FormLabel>
+                        <Input
+                          id='remote_address'
+                          type='text'
+                          value={newConfig.remote_address || ''}
+                          name='remote_address'
+                          onChange={handleInputChange}
+                          size='xs'
+                        />
+                      </FormControl>
+
+                      <FormControl isRequired>
+                        <FormLabel htmlFor='protocol' fontSize='12px' mb='0'>
+                          Protocol
+                        </FormLabel>
+                        <ReactSelect
+                          styles={customStyles}
+                          name='protocol'
+                          options={[
+                            { label: 'udp', value: 'udp' },
+                            { label: 'tcp', value: 'tcp' },
+                          ]}
+                          value={selectedProtocol}
+                          onChange={selectedOption =>
+                            handleSelectChange(
+                              selectedOption as Option,
+                              { name: 'protocol' } as ActionMeta<Option>,
+                            )
+                          }
+                        />
+                      </FormControl>
+                    </SimpleGrid>
+
+                    <SimpleGrid columns={2} spacing={3} mt='2'>
+                      <FormControl isRequired>
+                        <FormLabel htmlFor='remote_port' fontSize='12px' mb='0'>
+                          Target Port
+                        </FormLabel>
+                        <Input
+                          id='remote_port'
+                          type='number'
+                          value={newConfig.remote_port || ''}
+                          name='remote_port'
+                          onChange={handleInputChange}
+                          size='xs'
+                        />
+                      </FormControl>
+
+                      <FormControl isRequired>
+                        <FormLabel htmlFor='local_port' fontSize='12px' mb='0'>
+                          Local Port
+                        </FormLabel>
+                        <Input
+                          id='local_port'
+                          type='number'
+                          value={newConfig.local_port || ''}
+                          name='local_port'
+                          onChange={handleInputChange}
+                          size='xs'
+                        />
+                      </FormControl>
+                    </SimpleGrid>
+                  </>
+                ) : (
+                  <>
+                    <SimpleGrid columns={2} spacing={3} mt='2'>
+                      <FormControl>
+                        <FormLabel htmlFor='service' fontSize='12px' mb='0'>
+                          Service
+                        </FormLabel>
+                        <ReactSelect
+                          styles={customStyles}
+                          name='service'
+                          options={serviceQuery.data?.map(service => ({
+                            label: service.name,
+                            value: service.name,
+                          }))}
+                          value={selectedService}
+                          onChange={selectedOption =>
+                            handleSelectChange(
+                              selectedOption as Option,
+                              { name: 'service' } as ActionMeta<Option>,
+                            )
+                          }
+                        />
+                      </FormControl>
+
+                      <FormControl isRequired>
+                        <FormLabel htmlFor='protocol' fontSize='12px' mb='0'>
+                          Protocol
+                        </FormLabel>
+                        <ReactSelect
+                          styles={customStyles}
+                          name='protocol'
+                          options={[
+                            { label: 'udp', value: 'udp' },
+                            { label: 'tcp', value: 'tcp' },
+                          ]}
+                          value={selectedProtocol}
+                          onChange={selectedOption =>
+                            handleSelectChange(
+                              selectedOption as Option,
+                              { name: 'protocol' } as ActionMeta<Option>,
+                            )
+                          }
+                        />
+                      </FormControl>
+                    </SimpleGrid>
+
+                    <SimpleGrid columns={2} spacing={3} mt='2'>
+                      <FormControl isRequired>
+                        <FormLabel htmlFor='remote_port' fontSize='12px' mb='0'>
+                          Target Port
+                        </FormLabel>
+                        <ReactSelect
+                          styles={customStyles}
+                          name='remote_port'
+                          options={portQuery.data?.map(port => ({
+                            label: portData.find(
+                              p => p.remote_port === port.remote_port,
+                            )?.port,
+                            value: portData.find(
+                              p => p.remote_port === port.remote_port,
+                            )?.port,
+                          }))}
+                          value={selectedPort}
+                          onChange={selectedOption =>
+                            handleSelectChange(
+                              selectedOption as Option,
+                              { name: 'remote_port' } as ActionMeta<Option>,
+                            )
+                          }
+                        />
+                      </FormControl>
+
+                      <FormControl isRequired>
+                        <FormLabel
+                          htmlFor='local_port'
+                          fontSize='12px'
+                          mb='-0.6'
+                        >
+                          Local Port
+                        </FormLabel>
+                        <Input
+                          id='local_port'
+                          type='number'
+                          value={newConfig.local_port || ''}
+                          name='local_port'
+                          onChange={handleInputChange}
+                          size='xs'
+                          borderRadius='4px'
+                          height='26px'
+                          borderColor='gray.600'
+                        />
+                      </FormControl>
+                    </SimpleGrid>
+                  </>
+                )}
+                <SimpleGrid columns={2} spacing={3} mt='1'>
+                  <FormControl mt='0'>
+                    <Checkbox
                       size='sm'
                       isChecked={isChecked}
                       onChange={handleCheckboxChange}
+                      mt={1.5}
                     >
-                      Custom Local Address
+                      <Text fontSize='12px'>Local Address</Text>
                     </Checkbox>
-                  </FormLabel>
-                  <Input
-                    id='local_address'
-                    isDisabled={!isChecked}
-                    value={newConfig.local_address || '127.0.0.1'}
-                    type='text'
-                    height='36px'
-                    name='local_address'
-                    onChange={handleInputChange}
-                    size='sm'
-                    bg='gray.800'
-                    borderColor='gray.700'
-                    _hover={{
-                      borderColor: 'gray.600',
-                    }}
-                    _placeholder={{
-                      color: 'gray.500',
-                    }}
-                    color='gray.300'
-                  />
-                </FormControl>
-              </Box>
-              <ModalFooter justifyContent='space-between' p={2} mt='3'>
-                <Box display={{ base: 'block', sm: 'flex' }} width='100%'>
+                    <Input
+                      id='local_address'
+                      isDisabled={!isChecked}
+                      value={newConfig.local_address || '127.0.0.1'}
+                      type='text'
+                      name='local_address'
+                      onChange={handleInputChange}
+                      size='xs'
+                      borderRadius='4px'
+                      height='26px'
+                      borderColor='gray.600'
+                    />
+                  </FormControl>
+                </SimpleGrid>
+
+                <Flex justifyContent='flex-end' pt={4} width='100%'>
                   <Button
-                    variant='outline'
-                    onClick={handleSetKubeConfig}
+                    onClick={handleCancel}
                     size='xs'
-                    mr={{ base: 0, sm: 3 }}
-                    mb={{ base: 2, sm: 0 }}
-                    width={{ base: '100%', sm: 'auto' }}
+                    height='20px'
+                    variant='outline'
+                    mr={2}
                   >
-                    {kubeConfig && kubeConfig !== 'default' ? (
-                      <Text fontSize='xs'>{kubeConfig}</Text> // Display the kubeConfig path
-                    ) : (
-                      <Text fontSize='xs'>Set Kubeconfig</Text> // Display 'Set Kubeconfig'
-                    )}
+                    Cancel
                   </Button>
-                  <Box
-                    flex='1'
-                    display='flex'
-                    justifyContent={{ base: 'flex-start', sm: 'flex-end' }}
+                  <Button
+                    height='20px'
+                    type='submit'
+                    colorScheme='blue'
+                    size='xs'
+                    isDisabled={!isFormValid}
                   >
-                    <Button
-                      variant='outline'
-                      onClick={handleCancel}
-                      size='xs'
-                      mr={3}
-                    >
-                      Cancel
-                    </Button>
-                    <Button
-                      type='submit'
-                      colorScheme='blue'
-                      size='xs'
-                      onClick={handleSave}
-                      isDisabled={!isFormValid}
-                    >
-                      {isEdit ? 'Save Changes' : 'Add Config'}
-                    </Button>
-                  </Box>
-                </Box>
-              </ModalFooter>
+                    {isEdit ? 'Save Changes' : 'Add Config'}
+                  </Button>
+                </Flex>
+              </VStack>
             </form>
           </ModalBody>
         </ModalContent>

@@ -1,5 +1,6 @@
 /* eslint-disable max-len */
 import React, { useEffect, useState } from 'react'
+import { MdGraphicEq } from 'react-icons/md'
 
 import {
   AlertDialog,
@@ -12,25 +13,25 @@ import {
   Button,
   Center,
   Checkbox,
+  Divider,
+  Flex,
   FormControl,
   FormLabel,
   Input,
   Modal,
   ModalBody,
-  ModalCloseButton,
   ModalContent,
-  ModalFooter,
   ModalOverlay,
   Slider,
   SliderFilledTrack,
-  SliderMark,
   SliderThumb,
   SliderTrack,
+  Text,
   Tooltip,
+  VStack,
 } from '@chakra-ui/react'
 import { invoke } from '@tauri-apps/api/tauri'
 
-import theme from '../../assets/theme'
 import { SettingsModalProps } from '../../types'
 
 const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -142,10 +143,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
     setPollingInterval(value)
   }
 
-  const handleCancel = () => {
-    closeSettingsModal()
-  }
-
   const handleSaveSettings = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     setIsImportAlertOpen(true)
@@ -191,139 +188,134 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
 
   return (
     <Center>
-      <Box>
-        <Modal isOpen={isSettingsModalOpen} onClose={handleCancel} size='xs'>
-          <ModalOverlay bg='transparent' />
-          <ModalContent
-            mx={5}
-            mt={8}
-            borderRadius='lg'
-            boxShadow='0px 10px 25px 5px rgba(0,0,0,0.5)'
-          >
-            <ModalCloseButton />
-            <ModalBody p={2} mt={3}>
-              <form onSubmit={handleSaveSettings}>
-                <FormControl p={2}>
-                  <FormLabel htmlFor='settingInput'>
+      <Modal
+        isOpen={isSettingsModalOpen}
+        onClose={closeSettingsModal}
+        size='sm'
+      >
+        <ModalOverlay bg='transparent' />
+        <ModalContent bg='transparent' borderRadius='20px' marginTop='10'>
+          <ModalBody p={0}>
+            <form onSubmit={handleSaveSettings}>
+              <VStack
+                spacing={2}
+                align='stretch'
+                p={5}
+                border='1px'
+                borderColor='gray.700'
+                borderRadius='20px'
+                bg='gray.800'
+                boxShadow={`
+              /* Inset shadow for top & bottom inner border effect using dark gray */
+              inset 0 2px 4px rgba(0, 0, 0, 0.3),
+              inset 0 -2px 4px rgba(0, 0, 0, 0.3),
+              /* Inset shadow for an inner border all around using dark gray */
+              inset 0 0 0 4px rgba(45, 57, 81, 0.9)
+            `}
+              >
+                <Text fontSize='sm' fontWeight='bold'>
+                  Configure Github Sync
+                </Text>
+                <Divider />
+                <FormControl mt='4'>
+                  <FormLabel htmlFor='settingInput' fontSize='xs'>
                     GitHub Repository URL
                   </FormLabel>
                   <Input
                     id='settingInput'
                     type='text'
-                    isDisabled={isLoading}
                     value={settingInputValue}
                     onChange={handleInputChange}
-                    placeholder='GitHub Repository URL'
-                    size='sm'
-                    height='36px'
-                    bg={theme.colors.gray[800]}
-                    borderColor={theme.colors.gray[700]}
-                    _hover={{ borderColor: theme.colors.gray[600] }}
-                    _placeholder={{ color: theme.colors.gray[500] }}
-                    color={theme.colors.gray[300]}
+                    size='xs'
                   />
                 </FormControl>
-
-                <FormControl p={2} isDisabled={isLoading}>
-                  <FormLabel htmlFor='configPath'>Config Path</FormLabel>
+                {/* Continue with other form controls following the same pattern */}
+                <FormControl mt='2'>
+                  <FormLabel htmlFor='configPath' fontSize='xs'>
+                    Config Path
+                  </FormLabel>
                   <Input
                     id='configPath'
                     type='text'
                     value={configPath}
-                    isDisabled={isLoading}
                     onChange={handleConfigPathChange}
-                    placeholder='Path to Config File'
-                    size='sm'
-                    height='36px'
-                    bg={theme.colors.gray[800]}
-                    borderColor={theme.colors.gray[700]}
-                    _hover={{ borderColor: theme.colors.gray[600] }}
-                    _placeholder={{ color: theme.colors.gray[500] }}
-                    color={theme.colors.gray[300]}
+                    size='xs'
                   />
                 </FormControl>
-                <FormControl p={2}>
-                  <FormLabel htmlFor='pollingInterval'>
-                    Polling Interval in minutes (set 0 to disable)
-                  </FormLabel>
-                  <Slider
-                    id='pollingInterval'
-                    value={pollingInterval}
-                    min={0}
-                    step={5}
-                    max={120}
-                    colorScheme='facebook'
-                    variant='outline'
-                    onChange={value => handleSliderChange(value)}
-                    onMouseEnter={() => setShowTooltip(true)}
-                    onMouseLeave={() => setShowTooltip(false)}
-                    width='80%'
-                    mx='3'
-                    ml='2'
-                  >
-                    <SliderMark value={20} ml='-2.5' fontSize='sm'>
-                      20
-                    </SliderMark>
-                    <SliderMark value={60} mt='1' ml='-2.5' fontSize='sm'>
-                      60
-                    </SliderMark>
-                    <SliderMark value={100} mt='1' ml='-2.5' fontSize='sm'>
-                      100
-                    </SliderMark>
-                    <SliderTrack>
-                      <SliderFilledTrack />
-                    </SliderTrack>
-                    <Tooltip
-                      hasArrow
-                      bg='gray.600'
-                      color='white'
-                      placement='top'
-                      isOpen={showTooltip}
-                      label={`${pollingInterval}`}
-                    >
-                      <SliderThumb />
-                    </Tooltip>
-                  </Slider>
-                </FormControl>
-                <FormControl
-                  p={2}
-                  display='flex'
-                  flexDirection='column'
-                  isDisabled={isLoading}
-                  mt='3'
-                >
+                <FormControl mt='2'>
                   <Checkbox
-                    id='isPrivateRepo'
-                    isDisabled={isLoading}
+                    size='sm'
                     isChecked={isPrivateRepo}
                     onChange={handleCheckboxChange}
                   >
-                    Private repository
+                    <Text fontSize='xs'>Private repository</Text>
                   </Checkbox>
-                </FormControl>
-
-                {isPrivateRepo && (
-                  <FormControl p={2} isDisabled={isLoading}>
-                    <FormLabel htmlFor='gitToken'>Git Token</FormLabel>
+                  {isPrivateRepo && (
                     <Input
                       id='gitToken'
                       type='password'
                       value={gitToken}
                       onChange={handleGitTokenChange}
-                      isDisabled={isLoading}
                       placeholder='Git Token'
-                      size='sm'
-                      height='36px'
-                      bg={theme.colors.gray[800]}
-                      borderColor={theme.colors.gray[700]}
-                      _hover={{ borderColor: theme.colors.gray[600] }}
-                      _placeholder={{ color: theme.colors.gray[500] }}
-                      color={theme.colors.gray[300]}
+                      size='xs'
+                      mt='2'
                     />
-                  </FormControl>
-                )}
-
-                <ModalFooter justifyContent='flex-end' p={2} mt={5}>
+                  )}
+                </FormControl>
+                {/* Slider for polling interval */}
+                <FormControl p={2}>
+                  <FormLabel
+                    htmlFor='pollingInterval'
+                    fontSize='xs'
+                    mb='4'
+                    mt='8s'
+                    ml='-3'
+                    color='gray.300'
+                    width='100%'
+                  >
+                    Polling Interval in minutes (set 0 to disable)
+                  </FormLabel>
+                  <Box position='relative' width='70%'>
+                    <Slider
+                      id='pollingInterval'
+                      defaultValue={pollingInterval}
+                      min={0}
+                      max={120}
+                      step={5}
+                      onChange={value => handleSliderChange(value)}
+                      onMouseEnter={() => setShowTooltip(true)}
+                      onMouseLeave={() => setShowTooltip(false)}
+                      colorScheme='facebook'
+                    >
+                      <SliderTrack bg='gray.700'>
+                        <Box position='relative' right={10} />
+                        <SliderFilledTrack bg='gray.600' />
+                      </SliderTrack>
+                      <Tooltip
+                        hasArrow
+                        bg='gray.600'
+                        color='white'
+                        placement='top'
+                        isOpen={showTooltip}
+                        label={`${pollingInterval} min`}
+                      >
+                        <SliderThumb boxSize={4}>
+                          <Box color='gray.600' as={MdGraphicEq} />
+                        </SliderThumb>
+                      </Tooltip>
+                    </Slider>
+                    <Flex justifyContent='space-between' mt='2'>
+                      <Text fontSize='xs' color='gray.400'>
+                        0 min
+                      </Text>
+                      <Text fontSize='xs' color='gray.400'>
+                        120 min
+                      </Text>
+                    </Flex>
+                  </Box>
+                </FormControl>
+                {/* Buttons */}
+                <Flex justifyContent='flex-end' pt={7} width='100%'>
                   {credentialsSaved && (
                     <Button
                       onClick={handleDeleteGitConfig}
@@ -338,11 +330,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                   )}
                   <Button
                     variant='outline'
-                    onClick={handleCancel}
-                    disabled={credentialsSaved}
+                    onClick={closeSettingsModal}
                     size='xs'
-                    isDisabled={isLoading}
-                    isLoading={isLoading}
+                    mr={2}
                   >
                     Cancel
                   </Button>
@@ -350,18 +340,17 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                     type='submit'
                     colorScheme='blue'
                     size='xs'
-                    ml={3}
                     isLoading={isLoading}
                     isDisabled={isLoading || !settingInputValue || !configPath}
                   >
                     Save Settings
                   </Button>
-                </ModalFooter>
-              </form>
-            </ModalBody>
-          </ModalContent>
-        </Modal>
-      </Box>
+                </Flex>
+              </VStack>
+            </form>
+          </ModalBody>
+        </ModalContent>
+      </Modal>
       <AlertDialog
         isOpen={isImportAlertOpen}
         leastDestructiveRef={cancelRef}

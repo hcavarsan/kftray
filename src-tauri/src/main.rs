@@ -43,47 +43,6 @@ fn move_window_to_mouse_position(window: &tauri::Window) {
     }
 }
 fn main() {
-    let inject_script = r#"
-	var style = document.createElement('style');
-	if (navigator.appVersion.includes('Mac')) {
-	  style.innerHTML = `
-		body { background-color: transparent !important; margin: 0; }
-		.arrow { position: relative; padding: 12px 0; }
-		.arrow:before {
-		  content: "";
-		  height: 0;
-		  width: 0;
-		  border-width: 0 8px 12px 8px;
-		  border-style: solid;
-		  border-color: transparent transparent rgba(45, 57, 81, 0.8) transparent;
-		  position: absolute;
-		  top: 0px;
-		  left: 50%;
-		  transform: translateX(-50%);
-		  box-shadow: 0 -2px 4px rgba(0, 0, 0, 0.1);
-		}
-		body > div {
-		  background-color: transparent !important;
-		  overflow: hidden !important;
-		}
-	  `;
-	} else if (navigator.appVersion.includes('Win')) {
-	  style.innerHTML = 'body { background-color: transparent !important; margin: 0; } .arrow { position: relative; padding: 0 0 12px 0; } .arrow:after { content: ""; height: 0; width: 0; border-width: 12px 8px 0 8px; border-style: solid; border-color: #2f2f2f transparent transparent transparent; position: absolute; bottom: 0px; left: 50%; transform: translateX(-50%); } body > div { background-color: transparent !important; border-radius: 7px !important; overflow: hidden !important; } @media (prefers-color-scheme: light) { body > div { background-color: transparent !important; }}';
-	} else {
-	  style.innerHTML = `
-		body { background-color: transparent !important; margin: 0; }
-		body > div {
-		  background-color: transparent !important;
-		  border-radius: 7px !important;
-		  overflow: hidden !important;
-		}
-	  `;
-	  document.body.classList.remove('arrow');
-	}
-	document.head.appendChild(style);
-	document.body.classList.add('arrow');
-	"#;
-
     logging::setup_logging();
     let _ = fix_path_env::fix();
     // configure tray menu
@@ -150,10 +109,6 @@ fn main() {
                         window.show().unwrap();
                         window.set_focus().unwrap();
                     }
-                    window
-                        .eval(inject_script)
-                        .map_err(|err| println!("{:?}", err))
-                        .ok();
                 }
                 SystemTrayEvent::RightClick {
                     position: _,
@@ -196,10 +151,6 @@ fn main() {
                             window.show().unwrap();
                             window.set_focus().unwrap();
                         }
-                        window
-                            .eval(inject_script)
-                            .map_err(|err| println!("{:?}", err))
-                            .ok();
                     }
                     "hide" => {
                         let window = app.get_window("main").unwrap();
