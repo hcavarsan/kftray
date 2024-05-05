@@ -1,9 +1,8 @@
 use hostsfile::HostsBuilder;
-use kubeforward::port_forward::Config;
-use rusqlite::types::ToSql;
-use rusqlite::{params, Connection, Result};
-use serde_json::to_value;
-use serde_json::{json, Value as JsonValue};
+use rusqlite::{params, types::ToSql, Connection, Result};
+use serde_json::{json, to_value, Value as JsonValue};
+
+use crate::models::config::Config;
 
 fn is_value_blank(value: &JsonValue) -> bool {
     match value {
@@ -236,22 +235,25 @@ pub async fn export_configs() -> Result<String, String> {
 // function to import configs from a json file
 #[tauri::command]
 pub async fn import_configs(json: String) -> Result<(), String> {
-    let parse_result = serde_json::from_str::<Vec<Config>>(&json);
-
-    match parse_result {
+    match serde_json::from_str::<Vec<Config>>(&json) {
         Ok(configs) => {
             for config in configs {
-                insert_config(config)?;
+                insert_config(config).map_err(|e| format!("Failed to insert config: {}", e))?;
             }
-            Ok(())
         }
         Err(_) => {
             let config = serde_json::from_str::<Config>(&json)
                 .map_err(|e| format!("Failed to parse config: {}", e))?;
-            insert_config(config)?;
-            Ok(())
+            insert_config(config).map_err(|e| format!("Failed to insert config: {}", e))?;
         }
     }
+
+    if let Err(e) = migrate_configs() {
+        eprintln!("Error migrating configs: {}. Please check if the configurations are valid and compatible with the current system/version.", e);
+        return Err(format!("Error migrating configs: {}", e));
+    }
+
+    Ok(())
 }
 
 pub fn migrate_configs() -> Result<(), String> {

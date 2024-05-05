@@ -1,21 +1,17 @@
-use crate::vx::Pod;
 use anyhow::Context;
 
-/// Pod selection according to impl specific criteria.
-pub(crate) trait PodSelection {
-    fn select<'p>(&self, pods: &'p [Pod], selector: &str) -> anyhow::Result<&'p Pod>;
-}
-
-/// Selects any pod so long as it's ready.
-pub(crate) struct AnyReady {}
+use crate::{
+    kubeforward::vx::Pod,
+    models::kube::{AnyReady, PodSelection},
+};
 
 impl PodSelection for AnyReady {
     fn select<'p>(&self, pods: &'p [Pod], selector: &str) -> anyhow::Result<&'p Pod> {
         // todo: randomly select from the ready pods
-        let pod = pods
-            .iter()
-            .find(is_pod_ready)
-            .context(anyhow::anyhow!("No pod '{}' available", selector))?;
+        let pod = pods.iter().find(is_pod_ready).context(anyhow::anyhow!(
+            "No ready pods found matching the selector '{}'",
+            selector
+        ))?;
         Ok(pod)
     }
 }

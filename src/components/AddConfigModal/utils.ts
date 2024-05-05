@@ -8,18 +8,44 @@ import { KubeContext } from '../../types'
 export const customStyles: StylesConfig = {
   control: provided => ({
     ...provided,
+    minHeight: '26px',
+    height: '26px',
+    fontSize: '0.75rem',
     background: theme.colors.gray[800],
-    borderColor: theme.colors.gray[700],
+    borderColor: theme.colors.gray[600],
+    boxShadow: 'none',
+    '&:hover': {
+      borderColor: theme.colors.gray[600],
+    },
   }),
-  menu: provided => ({
+  valueContainer: provided => ({
     ...provided,
-    background: theme.colors.gray[800],
+    height: '26px',
+    padding: '0 4px',
+  }),
+  input: provided => ({
+    ...provided,
+    margin: '0px',
+    color: theme.colors.gray[600],
+  }),
+  indicatorsContainer: provided => ({
+    ...provided,
+    height: '26px',
+  }),
+  clearIndicator: provided => ({
+    ...provided,
+    padding: '4px',
+  }),
+  dropdownIndicator: provided => ({
+    ...provided,
+    padding: '4px',
   }),
   option: (provided, state) => ({
     ...provided,
     color: state.isSelected ? theme.colors.white : theme.colors.gray[300],
     background: state.isSelected ? theme.colors.gray[600] : 'none',
     cursor: 'pointer',
+    fontSize: '0.70rem', // Adjust font size to match xs size
     ':active': {
       ...provided[':active'],
       background: theme.colors.gray[500],
@@ -30,11 +56,12 @@ export const customStyles: StylesConfig = {
       color: theme.colors.white,
     },
   }),
-  singleValue: provided => ({
+  menu: provided => ({
     ...provided,
-    color: theme.colors.gray[300],
+    background: theme.colors.gray[800],
+    fontSize: '0.70rem', // Adjust font size to match xs size
   }),
-  input: provided => ({
+  singleValue: provided => ({
     ...provided,
     color: theme.colors.gray[300],
   }),
@@ -43,7 +70,21 @@ export const customStyles: StylesConfig = {
     color: theme.colors.gray[500],
   }),
 }
+// utils.ts
+export const fetchKubeContexts = (
+  kubeConfig?: string,
+): Promise<KubeContext[]> => {
+  console.log('fetchKubeContexts', kubeConfig)
 
-export const fetchKubeContexts = (): Promise<KubeContext[]> => {
-  return invoke('list_kube_contexts')
+  return invoke('list_kube_contexts', { kubeconfig: kubeConfig })
+}
+
+export function assertIsError(
+  error: unknown,
+): asserts error is { message: string } {
+  if (typeof error === 'object' && error !== null && 'message' in error) {
+    // Nothing to do, the error is already in the correct format
+  } else {
+    throw new Error(`The provided value is not an Error object: ${error}`)
+  }
 }

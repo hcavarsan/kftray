@@ -1,18 +1,26 @@
 #![allow(clippy::too_many_arguments)]
-use crate::kubecontext::create_client_with_specific_context;
+use std::{
+    collections::HashMap,
+    fs::File,
+    io::Read,
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
+};
+
 use k8s_openapi::api::core::v1::Pod;
-use kube::api::{DeleteParams, ListParams};
-use kube::{api::Api, Client};
+use kube::{
+    api::{Api, DeleteParams, ListParams},
+    Client,
+};
 use kube_runtime::wait::conditions;
 use rand::{distributions::Alphanumeric, Rng};
-use std::collections::HashMap;
-use std::fs::File;
-use std::io::Read;
-use std::path::PathBuf;
-use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::port_forward::{
-    start_port_forward, start_port_udp_forward, stop_port_forward, Config, CustomResponse,
+use crate::{
+    kubeforward::{
+        kubecontext::create_client_with_specific_context,
+        port_forward::{start_port_forward, start_port_udp_forward, stop_port_forward},
+    },
+    models::{config::Config, response::CustomResponse},
 };
 
 fn get_pod_manifest_path() -> PathBuf {
@@ -34,7 +42,8 @@ pub async fn deploy_and_forward_pod(configs: Vec<Config>) -> Result<Vec<CustomRe
 
     for mut config in configs {
         let client = if !config.context.is_empty() {
-            create_client_with_specific_context(&config.context)
+            let kubeconfig = config.kubeconfig.clone();
+            create_client_with_specific_context(kubeconfig, &config.context)
                 .await
                 .map_err(|e| e.to_string())?
         } else {
@@ -73,7 +82,7 @@ pub async fn deploy_and_forward_pod(configs: Vec<Config>) -> Result<Vec<CustomRe
             .as_ref()
             .map_or(true, String::is_empty)
         {
-            config.remote_address = config.service.clone();
+            config.remote_address.clone_from(&config.service);
         }
         let mut values: HashMap<&str, String> = HashMap::new();
         values.insert("hashed_name", hashed_name.clone());

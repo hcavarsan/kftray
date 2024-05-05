@@ -232,6 +232,11 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
       </Box>{' '}
       {config.domain_enabled ? 'true' : 'false'}
       <br />
+      <Box as='span' fontWeight='semibold'>
+        kubeconfig
+      </Box>{' '}
+      {config.kubeconfig}
+      <br />
     </>
   )
 
