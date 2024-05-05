@@ -5,17 +5,23 @@ pub mod pod_selection;
 pub mod port_forward;
 pub mod proxy;
 
-// Re-export k8s_openapi::api::core::v1 as vx for use within this module and potentially outside
 use anyhow::Context;
 pub use k8s_openapi::api::core::v1 as vx;
 use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
 use kube::ResourceExt;
 use vx::Pod;
 
-use crate::models::kube::{NameSpace, Port, Target, TargetPod, TargetSelector};
+use crate::models::kube::{
+    NameSpace,
+    Port,
+    Target,
+    TargetPod,
+    TargetSelector,
+};
 
 impl NameSpace {
     /// Returns the configured namespace or the default.
+
     pub fn name_any(&self) -> String {
         self.0.clone().unwrap_or_else(|| "default".to_string())
     }
@@ -45,6 +51,7 @@ impl From<IntOrString> for Port {
 impl TargetPod {
     pub fn new(pod_name: String, port_number: i32) -> anyhow::Result<Self> {
         let port_number = u16::try_from(port_number).context("Port not valid")?;
+
         Ok(Self {
             pod_name,
             port_number,
@@ -58,9 +65,7 @@ impl TargetPod {
 
 impl Target {
     pub fn new<I: Into<Option<T>>, T: Into<String>, P: Into<Port>>(
-        selector: TargetSelector,
-        port: P,
-        namespace: I,
+        selector: TargetSelector, port: P, namespace: I,
     ) -> Self {
         Self {
             selector,
@@ -81,9 +86,13 @@ impl Target {
                 Port::Number(port) => *port,
                 Port::Name(name) => {
                     let spec = pod.spec.as_ref().context("Pod Spec is None")?;
+
                     let containers = &spec.containers;
+
                     let mut ports = containers.iter().filter_map(|c| c.ports.as_ref()).flatten();
+
                     let port = ports.find(|p| p.name.as_ref() == Some(name));
+
                     port.context("Port not found")?.container_port
                 }
             },
