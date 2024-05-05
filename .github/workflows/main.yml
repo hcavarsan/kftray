@@ -28,13 +28,8 @@ jobs:
         run: rustup target add x86_64-apple-darwin
 
 
-      - name: Install Rust stable
-        uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
-          target: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin' || '' }}
+      - name: install Rust stable
+        uses: dtolnay/rust-toolchain@stable
 
       - name: Install dependencies (Ubuntu only)
         if: matrix.platform == 'ubuntu-20.04'
