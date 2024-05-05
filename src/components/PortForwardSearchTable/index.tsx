@@ -25,6 +25,8 @@ interface PortForwardSearchTableProps {
   setIsAlertOpen: (isOpen: boolean) => void
   isInitiating: boolean
   isStopping: boolean
+  onSelectionChange: (isSelected: boolean) => void
+  updateSelectionState: (id: number, isRunning: boolean) => void
 }
 
 const PortForwardSearchTable: React.FC<PortForwardSearchTableProps> = ({
@@ -37,6 +39,8 @@ const PortForwardSearchTable: React.FC<PortForwardSearchTableProps> = ({
   setIsAlertOpen,
   isInitiating,
   isStopping,
+  onSelectionChange,
+  updateSelectionState,
 }) => {
   const textColor = useColorModeValue('gray.400', 'gray.400')
   const boxShadow = useColorModeValue('base', 'md')
@@ -77,11 +81,13 @@ const PortForwardSearchTable: React.FC<PortForwardSearchTableProps> = ({
                 setIsAlertOpen={setIsAlertOpen}
                 updateConfigRunningState={updateConfigRunningState}
                 showContext={true}
-                onSelectionChange={() => {}}
-                updateSelectionState={() => {}}
                 selected={false}
                 isInitiating={isInitiating}
                 isStopping={isStopping}
+                onSelectionChange={isSelected =>
+                  onSelectionChange(config, isSelected)
+                }
+                updateSelectionState={updateSelectionState}
               />
             ))
           ) : (

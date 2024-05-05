@@ -1,0 +1,14 @@
+{
+	"extends": "./tsconfig.json",
+	"include": [
+	  "src/**/*",
+	  ".eslintrc.cjs",
+	  "prettier.config.cjs",
+	  "vite.config.ts"
+	],
+	"exclude": [
+	  "node_modules",
+	  "**/*.spec.ts",
+	  "**/*.test.ts"
+	]
+  }

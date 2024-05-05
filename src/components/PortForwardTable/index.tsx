@@ -25,7 +25,6 @@ import {
   ButtonGroup,
   Checkbox,
   Flex,
-  IconButton,
   Image,
   Input,
   InputGroup,
@@ -42,10 +41,7 @@ import {
   Tooltip,
   Tr,
   useColorModeValue,
-  useDisclosure,
 } from '@chakra-ui/react'
-import { faTrash } from '@fortawesome/free-solid-svg-icons'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { app } from '@tauri-apps/api'
 
 import logo from '../../assets/logo.png'
@@ -424,6 +420,10 @@ const PortForwardTable: React.FC<TableProps> = ({
             setIsAlertOpen={setIsAlertOpen}
             isInitiating={isInitiating}
             isStopping={isStopping}
+            onSelectionChange={config =>
+              handleSelectionChange(config, isSelected)
+            }
+            updateSelectionState={updateSelectionState}
           />
         </Flex>
       ) : (
@@ -449,7 +449,7 @@ const PortForwardTable: React.FC<TableProps> = ({
             borderColor={borderColor}
           >
             {Object.entries(configsByContext).map(
-              ([context, contextConfigs], contextIndex) => {
+              ([context, contextConfigs], _contextIndex) => {
                 const contextRunningCount = contextConfigs.filter(
                   config => config.isRunning,
                 ).length

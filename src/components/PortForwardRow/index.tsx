@@ -42,7 +42,6 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   onSelectionChange,
   updateSelectionState,
   isInitiating,
-  isStopping,
 }) => {
   const { isOpen, onOpen } = useDisclosure()
   const textColor = useColorModeValue('gray.100', 'gray.100')
@@ -74,13 +73,12 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
       }
       updateConfigRunningState(config.id, true)
       updateSelectionState(config.id, true)
-    } catch (error: unknown) {
-      console.error('An error occurred during port forwarding stop:', error)
-
+    } catch (error) {
+      console.error('An error occurred during port forwarding start:', error)
       const errorMessage =
         error instanceof Error ? error.message : String(error)
 
-      console.error('Failed to start port forwarding:', error)
+
       toast({
         duration: 2000,
         isClosable: true,
@@ -95,12 +93,11 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
             mt='3'
           >
             <Text fontWeight='bold'>Error starting port forwarding</Text>
-            <Text mt={1}>{errorMessage}</Text>{' '}
-            {/* Ensure errorMessage is a string */}
+            <Text mt={1}>{errorMessage}</Text>
           </Box>
         ),
       })
-    } finally {
+      updateConfigRunningState(config.id, false)
       setIsRunning(false)
     }
   }
@@ -129,11 +126,11 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
         throw new Error(`Unsupported workload type: ${config.workload_type}`)
       }
       updateConfigRunningState(config.id, false)
-    } catch (error: unknown) {
+    } catch (error) {
       console.error('An error occurred during port forwarding stop:', error)
-
       const errorMessage =
         error instanceof Error ? error.message : String(error)
+
 
       toast({
         duration: 2000,

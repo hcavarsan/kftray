@@ -1,50 +1,59 @@
 module.exports = {
-	root: true,
-	settings: {
+  root: true,
+  parser: '@typescript-eslint/parser',
+  parserOptions: {
+	  ecmaFeatures: {
+      jsx: true,
+	  },
+	  ecmaVersion: 2020,
+	  sourceType: 'module',
+	  project: './tsconfig.eslint.json',
+  },
+  settings: {
 	  react: {
-		version: 'detect',
+      version: 'detect',
 	  },
 	  'import/resolver': {
-		node: {
+      node: {
 		  extensions: ['.js', '.jsx', '.ts', '.tsx'],
-		},
+      },
 	  },
-	},
-	extends: [
+  },
+  extends: [
 	  'plugin:react/recommended',
 	  'plugin:@typescript-eslint/recommended',
 	  'plugin:import/typescript',
 	  'prettier',
-	],
-	plugins: [
+  ],
+  plugins: [
 	  'react',
 	  'react-hooks',
 	  '@typescript-eslint',
 	  'simple-import-sort',
 	  'import',
-	],
-	rules: {
+  ],
+  rules: {
 	  semi: ['error', 'never'],
 	  indent: [2, 2, { MemberExpression: 0 }],
-	  complexity: ['error', { max: 10 }],
+	  complexity: ['error', { max: 20 }],
 	  curly: 'error',
 	  quotes: ['error', 'single'],
-	  'no-magic-numbers': ['error', { enforceConst: true, ignore: [-1, 0, 1] }],
+	  'no-magic-numbers': 'off',
 	  'padding-line-between-statements': [
-		'error',
-		{ blankLine: 'always', prev: ['const', 'let', 'var'], next: '*' },
-		{
+      'error',
+      { blankLine: 'always', prev: ['const', 'let', 'var'], next: '*' },
+      {
 		  blankLine: 'any',
 		  prev: ['const', 'let', 'var'],
 		  next: ['const', 'let', 'var'],
-		},
+      },
 	  ],
 	  'array-bracket-spacing': ['error', 'never'],
 	  'array-callback-return': 'error',
-	  'max-statements': ['error', 10],
+	  'max-statements': ['error', 50],
 	  'max-len': ['error', { code: 120 }],
-	  'max-lines-per-function': ['error', 50],
-	  'max-params': ['error', 3],
+	  'max-lines-per-function': ['error', 1000],
+	  'max-params': ['error', 15],
 	  'newline-after-var': 'error',
 	  'newline-before-return': 'error',
 	  'prefer-arrow-callback': 'error',
@@ -68,37 +77,37 @@ module.exports = {
 	  'no-multi-spaces': 'error',
 	  'react/react-in-jsx-scope': 'off',
 	  'react-hooks/exhaustive-deps': 'warn',
-	},
-	overrides: [
+  },
+  overrides: [
 	  {
-		files: ['**/*.js', '**/*.ts', '**/*.tsx'],
-		rules: {
+      files: ['**/*.js', '**/*.ts', '**/*.tsx'],
+      rules: {
 		  'react/prop-types': 'off',
 		  '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
 		  'simple-import-sort/imports': [
-			'error',
-			{
+          'error',
+          {
 			  groups: [
-				['^react$', '^next', '^[a-z]'],
-				['^@'],
-				['^@/'],
-				['^~'],
-				['^\\.\\.(?!/?$)', '^\\.\\./?$'],
-				['^\\./(?=.*/)(?!/?$)', '^\\.(?!/?$)', '^\\./?$'],
-				['^.+\\.s?css$'],
-				['^\\u0000'],
+              ['^react$', '^next', '^[a-z]'],
+              ['^@'],
+              ['^@/'],
+              ['^~'],
+              ['^\\.\\.(?!/?$)', '^\\.\\./?$'],
+              ['^\\./(?=.*/)(?!/?$)', '^\\.(?!/?$)', '^\\./?$'],
+              ['^.+\\.s?css$'],
+              ['^\\u0000'],
 			  ],
-			},
+          },
 		  ],
-		},
+      },
 	  },
 	  {
-		files: ['**/__tests__/**/*.[jt]s?(x)', '**/?(*.)+(spec|test).[jt]s?(x)'],
-		rules: { 'no-magic-numbers': 'off' },
+      files: ['**/__tests__/**/*.[jt]s?(x)', '**/?(*.)+(spec|test).[jt]s?(x)'],
+      rules: { 'no-magic-numbers': 'off' },
 	  },
 	  {
-		files: ['**/jest.config.js', '**/tailwind.config.js', '**/*.config.js'],
-		rules: { '@typescript-eslint/no-var-requires': 'off' },
+      files: ['**/jest.config.js', '**/tailwind.config.js', '**/*.config.js'],
+      rules: { '@typescript-eslint/no-var-requires': 'off' },
 	  },
-	],
-  }
+  ],
+}

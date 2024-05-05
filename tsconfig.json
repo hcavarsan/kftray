@@ -20,7 +20,7 @@
       "@/*": ["src/*"]
     }
   },
-  "include": ["src"],
-  "exclude": ["node_modules", "src-tauri", "dist", ".next"],
+  "include": ["src/**/*", "vite.config.ts"],
+  "exclude": ["node_modules", "src-tauri", "dist"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }
