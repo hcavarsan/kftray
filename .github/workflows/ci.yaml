@@ -22,15 +22,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v2.4.0
+        uses: pnpm/action-setup@v3
         with:
           version: 8.15.6
 
       - name: Install Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: '21.7.1'
           cache: 'pnpm'
@@ -46,7 +46,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
       - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev
@@ -65,7 +65,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
 
       - name: Install dependencies
         run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev libsoup2.4-dev
@@ -79,12 +79,12 @@ jobs:
           components: clippy
 
       - name: Install Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: '21.7.1'
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v2.4.0
+        uses: pnpm/action-setup@v3
         with:
           version: 8.15.6
           run_install: false
