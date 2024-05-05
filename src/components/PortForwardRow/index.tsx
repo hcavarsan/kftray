@@ -1,5 +1,3 @@
-import React, { useState } from 'react'
-
 import { ExternalLinkIcon } from '@chakra-ui/icons'
 import {
   AlertDialog,
@@ -46,7 +44,6 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   const { isOpen, onOpen } = useDisclosure()
   const textColor = useColorModeValue('gray.100', 'gray.100')
   const cancelRef = React.useRef<HTMLButtonElement>(null)
-  const [isRunning, setIsRunning] = useState(false)
   const toast = useToast()
   const handleOpenLocalURL = () => {
     const baseUrl = config.domain_enabled ? config.alias : config.local_address
@@ -60,7 +57,6 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
 
   const startPortForwarding = async () => {
     try {
-      setIsRunning(true)
       if (config.workload_type === 'service' && config.protocol === 'tcp') {
         await invoke('start_port_forward', { configs: [config] })
       } else if (
@@ -97,13 +93,11 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
         ),
       })
       updateConfigRunningState(config.id, false)
-      setIsRunning(false)
     }
   }
 
   const stopPortForwarding = async () => {
     try {
-      setIsRunning(true)
       if (config.workload_type === 'service' && config.protocol === 'tcp') {
         await invoke('stop_port_forward', {
           serviceName: config.service,
@@ -149,7 +143,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
         ),
       })
     } finally {
-      setIsRunning(false)
+      console.log('stopPortForwarding finally')
     }
   }
 
