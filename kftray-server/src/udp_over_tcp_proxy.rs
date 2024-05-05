@@ -1,10 +1,15 @@
+use std::{
+    io::{self, Read, Write},
+    net::{TcpListener, TcpStream, UdpSocket},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
+    thread,
+};
+
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use log::{debug, error, info};
-use std::io::{self, Read, Write};
-use std::net::{TcpListener, TcpStream, UdpSocket};
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
-use std::thread;
 
 fn handle_tcp_to_udp(
     mut tcp_stream: TcpStream,

@@ -1,14 +1,18 @@
 mod http_proxy;
 mod udp_over_tcp_proxy;
 
+use std::{
+    env,
+    process::exit,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::Duration,
+};
+
 use log::{error, info, warn};
-use std::env;
-use std::process::exit;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use std::time::Duration;
-use tokio::sync::Notify;
-use tokio::time::sleep;
+use tokio::{sync::Notify, time::sleep};
 
 #[tokio::main]
 async fn main() {

@@ -1,7 +1,7 @@
 declare module '@tauri-apps/api/dialog' {
   export function save(options: {
     defaultPath: string
-    filters: Array<{ name: string; extensions: string[] }>
+    filters?: Array<{ name: string; extensions: string[] }>
   }): Promise<string | null>
 
   export function open(options: {

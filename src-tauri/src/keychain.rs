@@ -1,7 +1,5 @@
-use keyring::Entry;
-use keyring::Error as KeyringError;
-use tauri::Error as TauriError;
-use tauri::InvokeError;
+use keyring::{Entry, Error as KeyringError};
+use tauri::{Error as TauriError, InvokeError};
 
 #[derive(Debug)]
 pub enum CustomError {

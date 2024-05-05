@@ -1,8 +1,11 @@
+use std::{
+    fs::{self, File},
+    io::Write,
+    path::{Path, PathBuf},
+};
+
 use rusqlite::{params, Connection, Result};
 use serde_json::json;
-use std::fs::{self, File};
-use std::io::Write;
-use std::path::{Path, PathBuf};
 
 /// Initializes the application by ensuring that both the database file and the server configuration
 /// manifest file exist.
@@ -123,9 +126,11 @@ pub fn get_db_path() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::fs;
+
     use tempfile::TempDir;
+
+    use super::*;
 
     /// Sets up a temporary test environment and overrides the home directory.
     fn setup_test_environment() -> TempDir {

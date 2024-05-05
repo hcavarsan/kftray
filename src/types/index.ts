@@ -15,6 +15,7 @@ export interface Status {
   alias: string
   remote_address: string
   cancelRef?: RefObject<HTMLButtonElement>
+  kubeconfig?: string
 }
 
 export interface Config {
@@ -30,6 +31,7 @@ export interface Config {
   remote_address: string
   workload_type: string
   protocol: string
+  kubeconfig: string
 }
 
 export interface Response {
@@ -62,7 +64,7 @@ export interface ConfigProps {
   closeModal: () => void
   newConfig: Config
   handleInputChange: (event: React.ChangeEvent<HTMLInputElement>) => void
-  handleSaveConfig: (e: React.FormEvent) => Promise<void>
+  handleSaveConfig: (config: Config) => Promise<void>
   handleEditSubmit: (e: React.FormEvent) => Promise<void>
   cancelRef: RefObject<HTMLElement>
   isEdit: boolean
@@ -175,7 +177,9 @@ export interface CustomConfigProps extends ConfigProps {
     name?: string
     remote_port?: number
     ports?: Port[]
+    kubeconfig?: string
   }
+  setNewConfig: React.Dispatch<React.SetStateAction<Config>>
 }
 
 export type Option = { name: string; value: string | number; label: string }
