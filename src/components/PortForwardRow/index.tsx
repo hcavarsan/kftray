@@ -78,7 +78,6 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
       const errorMessage =
         error instanceof Error ? error.message : String(error)
 
-
       toast({
         duration: 2000,
         isClosable: true,
@@ -130,7 +129,6 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
       console.error('An error occurred during port forwarding stop:', error)
       const errorMessage =
         error instanceof Error ? error.message : String(error)
-
 
       toast({
         duration: 2000,

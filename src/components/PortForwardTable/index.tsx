@@ -420,7 +420,7 @@ const PortForwardTable: React.FC<TableProps> = ({
             setIsAlertOpen={setIsAlertOpen}
             isInitiating={isInitiating}
             isStopping={isStopping}
-            onSelectionChange={config =>
+            onSelectionChange={(config, isSelected) =>
               handleSelectionChange(config, isSelected)
             }
             updateSelectionState={updateSelectionState}

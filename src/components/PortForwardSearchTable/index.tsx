@@ -25,7 +25,7 @@ interface PortForwardSearchTableProps {
   setIsAlertOpen: (isOpen: boolean) => void
   isInitiating: boolean
   isStopping: boolean
-  onSelectionChange: (isSelected: boolean) => void
+  onSelectionChange: (config: Status, isSelected: boolean) => void
   updateSelectionState: (id: number, isRunning: boolean) => void
 }
 
