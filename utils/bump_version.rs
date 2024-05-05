@@ -1,10 +1,11 @@
-use log::{error, info};
-use regex::Regex;
-use serde_json::Value;
 use std::{
     env, fs, io,
     process::{Command, ExitCode},
 };
+
+use log::{error, info};
+use regex::Regex;
+use serde_json::Value;
 
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().collect();
@@ -96,9 +97,24 @@ fn update_file_content<F>(file_path: &str, new_version: &str, update_fn: F) -> i
 where
     F: Fn(&str, &str) -> io::Result<String>,
 {
-    let content = fs::read_to_string(file_path)?;
-    let updated_content = update_fn(&content, new_version)?;
-    fs::write(file_path, updated_content)?;
+    let content = fs::read_to_string(file_path).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::Other,
+            format!("Failed to read {}: {}", file_path, e),
+        )
+    })?;
+    let updated_content = update_fn(&content, new_version).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::Other,
+            format!("Failed to update content for {}: {}", file_path, e),
+        )
+    })?;
+    fs::write(file_path, updated_content).map_err(|e| {
+        io::Error::new(
+            io::ErrorKind::Other,
+            format!("Failed to write updated content to {}: {}", file_path, e),
+        )
+    })?;
     Ok(())
 }
 

@@ -1,9 +1,11 @@
-use image::io::Reader as ImageReader;
-use image::{DynamicImage, ImageError, ImageFormat};
-use std::fs::{self, File};
-use std::io::{BufWriter, Error as IoError};
-use std::path::PathBuf;
-use std::process::Command;
+use std::{
+    fs::{self, File},
+    io::{BufWriter, Error as IoError},
+    path::PathBuf,
+    process::Command,
+};
+
+use image::{io::Reader as ImageReader, DynamicImage, ImageError, ImageFormat};
 use thiserror::Error;
 
 const SRC_FILE: &str = "./img/logo.png";

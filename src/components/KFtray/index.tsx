@@ -40,6 +40,7 @@ const KFTray = () => {
     protocol: '',
     remote_address: '',
     alias: '',
+    kubeconfig: 'default',
   })
 
   const updateConfigRunningState = (id: number, isRunning: boolean) => {
@@ -83,6 +84,7 @@ const KFTray = () => {
       protocol: '',
       remote_address: '',
       alias: '',
+      kubeconfig: 'default',
     })
     setIsEdit(false)
     setIsModalOpen(true)
@@ -246,6 +248,7 @@ const KFTray = () => {
         protocol: configToEdit.protocol,
         remote_address: configToEdit.remote_address,
         alias: configToEdit.alias,
+        kubeconfig: configToEdit.kubeconfig,
       })
       setIsEdit(true)
       setIsModalOpen(true)
@@ -273,6 +276,7 @@ const KFTray = () => {
         protocol: newConfig.protocol,
         remote_address: newConfig.remote_address,
         alias: newConfig.alias,
+        kubeconfig: newConfig.kubeconfig,
       }
 
       await invoke('update_config', { config: editedConfig })
@@ -307,11 +311,9 @@ const KFTray = () => {
     }
   }
   // eslint-disable-next-line complexity
-  const handleSaveConfig = async (e: React.FormEvent) => {
-    e.preventDefault()
-
-    const configToSave = {
-      id: isEdit ? newConfig.id : undefined,
+  const handleSaveConfig = async (configToSave: Config) => {
+    const updatedConfigToSave: Config = {
+      id: isEdit ? newConfig.id : 0,
       service: newConfig.service,
       context: newConfig.context,
       local_port: newConfig.local_port,
@@ -323,8 +325,10 @@ const KFTray = () => {
       protocol: newConfig.protocol,
       remote_address: newConfig.remote_address,
       alias: newConfig.alias,
+      kubeconfig: newConfig.kubeconfig,
     }
 
+    console.log('Sending config to save:', updatedConfigToSave)
     try {
       let wasRunning = false
       const originalConfigsRunningState = new Map()
@@ -365,9 +369,9 @@ const KFTray = () => {
       }
 
       if (isEdit) {
-        await invoke('update_config', { config: configToSave })
+        await invoke('update_config', { config: updatedConfigToSave })
       } else {
-        await invoke('insert_config', { config: configToSave })
+        await invoke('insert_config', { config: updatedConfigToSave })
       }
 
       let updatedConfigs = await invoke<Status[]>('get_configs')
@@ -614,10 +618,18 @@ const KFTray = () => {
     setIsStopping(false)
   }
 
+  useEffect(() => {
+    if (isModalOpen) {
+      document.body.style.overflow = 'hidden'
+    } else {
+      document.body.style.overflow = 'unset'
+    }
+  }, [isModalOpen])
   const cardBg = useColorModeValue('gray.800', 'gray.800')
 
   return (
     <Box
+      position='relative'
       width='100%'
       height='76vh'
       maxW='600px'
@@ -625,12 +637,12 @@ const KFTray = () => {
       borderRadius='20px'
       bg={cardBg}
       boxShadow={`
-      /* Inset shadow for top & bottom inner border effect using dark gray */
-      inset 0 2px 4px rgba(0, 0, 0, 0.3),
-      inset 0 -2px 4px rgba(0, 0, 0, 0.3),
-      /* Inset shadow for an inner border all around using dark gray */
-      inset 0 0 0 4px rgba(45, 57, 81, 0.9)
-    `}
+        /* Inset shadow for top & bottom inner border effect using dark gray */
+        inset 0 2px 4px rgba(0, 0, 0, 0.3),
+        inset 0 -2px 4px rgba(0, 0, 0, 0.3),
+        /* Inset shadow for an inner border all around using dark gray */
+        inset 0 0 0 4px rgba(45, 57, 81, 0.9)
+      `}
     >
       <VStack
         css={{
@@ -704,6 +716,7 @@ const KFTray = () => {
           isEdit={isEdit}
           handleEditSubmit={handleEditSubmit}
           cancelRef={cancelRef}
+          setNewConfig={setNewConfig}
         />
       </VStack>
     </Box>
