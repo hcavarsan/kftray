@@ -1,8 +1,7 @@
 import React, { useEffect, useState } from 'react'
-import { FaGithub } from 'react-icons/fa'
 
 import { RepeatIcon } from '@chakra-ui/icons'
-import { Box, Button, HStack, Text, Tooltip } from '@chakra-ui/react'
+import { Box, Button, HStack, Spinner, Text, Tooltip } from '@chakra-ui/react'
 import { invoke } from '@tauri-apps/api/tauri'
 
 import { GitConfig, SyncConfigsButtonProps } from '../../types'
@@ -17,7 +16,7 @@ const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
   isSettingsModalOpen,
   setPollingInterval,
 }) => {
-  const [isLoading, setIsLoading] = useState(false)
+  const [isLoading, setIsLoading] = useState<boolean>(false)
   const [credentials, setCredentials] = useState<GitConfig | null>(null)
   const [lastSync, setLastSync] = useState<string | null>(null)
   const [nextSync, setNextSync] = useState<string | null>(null)
@@ -115,6 +114,7 @@ const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
     onSyncFailure,
     setCredentialsSaved,
     isSettingsModalOpen,
+    setIsLoading,
   ])
 
   const handleSyncConfigs = async () => {
@@ -168,15 +168,22 @@ const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
         variant='outline'
         colorScheme='facebook'
         onClick={handleSyncConfigs}
-        isDisabled={!credentialsSaved}
+        isDisabled={!credentialsSaved || isLoading}
         size='sm'
         aria-label='Sync Configs'
         justifyContent='center'
         borderColor='gray.700'
       >
-        <HStack spacing={1}>
-          <RepeatIcon />
-        </HStack>
+        {isLoading ? (
+          <HStack spacing={1}>
+            <Spinner size='sm' />
+            <Text>Loading...</Text>
+          </HStack>
+        ) : (
+          <HStack spacing={1}>
+            <RepeatIcon />
+          </HStack>
+        )}
       </Button>
     </Tooltip>
   )

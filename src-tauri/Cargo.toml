@@ -1,12 +1,16 @@
 [package]
 name = "kftray"
 version = "0.9.8"
-description = "A Tauri App"
-authors = ["you"]
-license = ""
-repository = ""
+description = "A cross-platform system tray app for Kubernetes port-forward management"
+authors = [
+    "Henrique Cavarsan <hencavarsan@gmail.com>",
+]
+license = "MIT"
+homepage = "https://kftray.app"
+repository = "https://github.com/hcavarsan/kftray"
 edition = "2021"
-rust-version = "1.72"
+rust-version = "1.78"
+
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

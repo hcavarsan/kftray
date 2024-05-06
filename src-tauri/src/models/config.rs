@@ -1,6 +1,10 @@
-use serde::{Deserialize, Serialize};
+use serde::{
+    Deserialize,
+    Serialize,
+};
 
 #[derive(Clone, Deserialize, PartialEq, Serialize, Debug)]
+
 pub struct Config {
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]

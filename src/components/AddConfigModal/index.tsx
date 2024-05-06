@@ -25,7 +25,6 @@ import {
 import { open } from '@tauri-apps/api/dialog'
 import { invoke } from '@tauri-apps/api/tauri'
 
-import theme from '../../assets/theme'
 import { Config, CustomConfigProps, KubeContext, Option } from '../../types'
 
 import { assertIsError, customStyles, fetchKubeContexts } from './utils'
