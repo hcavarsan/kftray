@@ -19,7 +19,6 @@ import {
   SimpleGrid,
   Text,
   Tooltip,
-  useToast,
   VStack,
 } from '@chakra-ui/react'
 import { open } from '@tauri-apps/api/dialog'
@@ -104,8 +103,6 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
 
   const [isFormValid, setIsFormValid] = useState(false)
   const [kubeConfig, setKubeConfig] = useState<string>('default')
-
-  const toast = useToast()
 
   const contextQuery = useQuery<KubeContext[]>(
     ['kube-contexts', kubeConfig],
@@ -212,12 +209,6 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
           'Error fetching service ports:',
           error instanceof Error ? error.message : error,
         )
-        toast({
-          title: 'Error fetching service ports',
-          description:
-            error instanceof Error ? error.message : JSON.stringify(error),
-          status: 'error',
-        })
       },
     },
   )
