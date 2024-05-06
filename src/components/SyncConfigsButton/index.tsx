@@ -64,9 +64,7 @@ const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
       () => {
         pollingConfigs()
       },
-      credentials && credentials.pollingInterval
-        ? credentials.pollingInterval * 60000
-        : 0,
+      credentials?.pollingInterval ? credentials.pollingInterval * 60000 : 0,
     )
 
     return () => {
@@ -153,8 +151,8 @@ const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
           <Text>Config Path: {credentials?.configPath}</Text>
           <Text>Private Repo: {credentials?.isPrivate ? 'Yes' : 'No'}</Text>
           <Text>Polling Interval: {credentials?.pollingInterval} minutes</Text>
-          <Text>Last Sync: {lastSync || ''}</Text>
-          <Text>Next Sync: {nextSync || ''}</Text>
+          <Text>Last Sync: {lastSync ?? ''}</Text>
+          <Text>Next Sync: {nextSync ?? ''}</Text>
         </>
       ) : (
         <Text>Github Sync Disabled</Text>
