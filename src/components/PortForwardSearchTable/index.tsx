@@ -12,22 +12,8 @@ import {
   useColorModeValue,
 } from '@chakra-ui/react'
 
-import { Status } from '../../types'
+import { PortForwardSearchTableProps } from '../../types'
 import PortForwardRow from '../PortForwardRow'
-
-interface PortForwardSearchTableProps {
-  configs: Status[]
-  handleEditConfig: (id: number) => void
-  handleDeleteConfig: (id: number) => void
-  confirmDeleteConfig: () => void
-  updateConfigRunningState: (id: number, isRunning: boolean) => void
-  isAlertOpen: boolean
-  setIsAlertOpen: (isOpen: boolean) => void
-  isInitiating: boolean
-  isStopping: boolean
-  onSelectionChange: (config: Status, isSelected: boolean) => void
-  updateSelectionState: (id: number, isRunning: boolean) => void
-}
 
 const PortForwardSearchTable: React.FC<PortForwardSearchTableProps> = ({
   configs,

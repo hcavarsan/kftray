@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { MdClose, MdRefresh } from 'react-icons/md'
 
 import {
@@ -89,34 +89,33 @@ const PortForwardTable: React.FC<TableProps> = ({
   }
 
   useEffect(() => {
+    const isConfigRunning = (selectedConfig: Status) =>
+      configs.some(
+        config => config.id === selectedConfig.id && config.isRunning,
+      )
+
     setSelectedConfigs(prevSelectedConfigs =>
       prevSelectedConfigs.filter(
-        selectedConfig =>
-          !configs.some(
-            config => config.id === selectedConfig.id && config.isRunning,
-          ),
+        selectedConfig => !isConfigRunning(selectedConfig),
       ),
     )
   }, [configs, setSelectedConfigs])
 
   const filteredConfigs = useMemo(() => {
+    const filterConfigsBySearch = (config: Status) =>
+      config.alias.toLowerCase().includes(search.toLowerCase()) ||
+      config.context.toLowerCase().includes(search.toLowerCase()) ||
+      config.remote_address?.toLowerCase().includes(search.toLowerCase()) ||
+      config.local_port.toString().includes(search.toLowerCase())
+
     const searchFiltered = search
-      ? configs.filter(
-        config =>
-          config.alias.toLowerCase().includes(search.toLowerCase()) ||
-            config.context.toLowerCase().includes(search.toLowerCase()) ||
-            (config.remote_address &&
-              config.remote_address
-              .toLowerCase()
-              .includes(search.toLowerCase())) ||
-            config.local_port.toString().includes(search.toLowerCase()),
-      )
+      ? configs.filter(filterConfigsBySearch)
       : configs
 
-    const sortedByAliasAsc = [...searchFiltered].sort(
-      (a, b) =>
-        a.alias.localeCompare(b.alias) || a.context.localeCompare(b.context),
-    )
+    const compareConfigs = (a: Status, b: Status) =>
+      a.alias.localeCompare(b.alias) || a.context.localeCompare(b.context)
+
+    const sortedByAliasAsc = [...searchFiltered].sort(compareConfigs)
 
     return sortedByAliasAsc
   }, [configs, search])
@@ -151,16 +150,40 @@ const PortForwardTable: React.FC<TableProps> = ({
     stopPortForwarding(runningConfigs)
   }
 
-  const groupByContext = (configs: Status[]) =>
-    configs.reduce((group: Record<string, Status[]>, config: Status) => {
-      const { context } = config
+  const groupByContext = useCallback(
+    (configs: Status[]): Record<string, Status[]> => {
+      return configs.reduce(
+        (group: Record<string, Status[]>, config: Status) => {
+          const { context } = config
 
-      group[context] = [...(group[context] || []), config]
+          if (!group[context]) {
+            group[context] = []
+          }
+          group[context].push(config)
 
-      return group
-    }, {})
+          return group
+        },
+        {},
+      )
+    },
+    [],
+  )
 
-  const configsByContext = groupByContext(configs)
+  const configsByContext = useMemo(() => {
+    const grouped: Record<string, Status[]> = groupByContext(configs)
+    const sortedKeys = Object.keys(grouped).sort((a, b) => a.localeCompare(b))
+    const sortedGroup: Record<string, Status[]> = {}
+
+    sortedKeys.forEach(key => {
+      const sortedStatuses = [...grouped[key]].sort((a, b) =>
+        a.alias.localeCompare(b.alias, undefined, { sensitivity: 'base' }),
+      )
+
+      sortedGroup[key] = sortedStatuses
+    })
+
+    return sortedGroup
+  }, [configs, groupByContext])
 
   const bg = useColorModeValue('gray.50', 'gray.700')
   const accordionBg = useColorModeValue('gray.100', 'gray.800')
@@ -230,27 +253,31 @@ const PortForwardTable: React.FC<TableProps> = ({
         config => config.context === context,
       )
 
-      if (isContextSelected) {
-        // eslint-disable-next-line max-len
-        const newConfigsToAdd = contextConfigs.filter(
-          config =>
-            !currentSelectedConfigs.some(
-              selectedConfig => selectedConfig.id === config.id,
-            ),
-        )
-
-        return [...currentSelectedConfigs, ...newConfigsToAdd]
-      } else {
-        return currentSelectedConfigs.filter(
-          config => config.context !== context,
-        )
-      }
+      return isContextSelected
+        ? addContextConfigs(currentSelectedConfigs, contextConfigs)
+        : removeContextConfigs(currentSelectedConfigs, context)
     })
+  }
 
-    setSelectedConfigsByContext(prev => ({
-      ...prev,
-      [context]: isContextSelected,
-    }))
+  function addContextConfigs(
+    currentSelectedConfigs: Status[],
+    contextConfigs: Status[],
+  ) {
+    const newConfigsToAdd = contextConfigs.filter(
+      config =>
+        !currentSelectedConfigs.some(
+          selectedConfig => selectedConfig.id === config.id,
+        ),
+    )
+
+    return [...currentSelectedConfigs, ...newConfigsToAdd]
+  }
+
+  function removeContextConfigs(
+    currentSelectedConfigs: Status[],
+    context: string,
+  ) {
+    return currentSelectedConfigs.filter(config => config.context !== context)
   }
 
   return (
