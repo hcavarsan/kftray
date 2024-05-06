@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React from 'react'
 
 import { ExternalLinkIcon } from '@chakra-ui/icons'
 import {
@@ -42,12 +42,10 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   onSelectionChange,
   updateSelectionState,
   isInitiating,
-  isStopping,
 }) => {
   const { isOpen, onOpen } = useDisclosure()
   const textColor = useColorModeValue('gray.100', 'gray.100')
   const cancelRef = React.useRef<HTMLButtonElement>(null)
-  const [isRunning, setIsRunning] = useState(false)
   const toast = useToast()
   const handleOpenLocalURL = () => {
     const baseUrl = config.domain_enabled ? config.alias : config.local_address
@@ -61,7 +59,6 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
 
   const startPortForwarding = async () => {
     try {
-      setIsRunning(true)
       if (config.workload_type === 'service' && config.protocol === 'tcp') {
         await invoke('start_port_forward', { configs: [config] })
       } else if (
@@ -74,13 +71,11 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
       }
       updateConfigRunningState(config.id, true)
       updateSelectionState(config.id, true)
-    } catch (error: unknown) {
-      console.error('An error occurred during port forwarding stop:', error)
-
+    } catch (error) {
+      console.error('An error occurred during port forwarding start:', error)
       const errorMessage =
         error instanceof Error ? error.message : String(error)
 
-      console.error('Failed to start port forwarding:', error)
       toast({
         duration: 2000,
         isClosable: true,
@@ -95,19 +90,16 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
             mt='3'
           >
             <Text fontWeight='bold'>Error starting port forwarding</Text>
-            <Text mt={1}>{errorMessage}</Text>{' '}
-            {/* Ensure errorMessage is a string */}
+            <Text mt={1}>{errorMessage}</Text>
           </Box>
         ),
       })
-    } finally {
-      setIsRunning(false)
+      updateConfigRunningState(config.id, false)
     }
   }
 
   const stopPortForwarding = async () => {
     try {
-      setIsRunning(true)
       if (config.workload_type === 'service' && config.protocol === 'tcp') {
         await invoke('stop_port_forward', {
           serviceName: config.service,
@@ -129,9 +121,8 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
         throw new Error(`Unsupported workload type: ${config.workload_type}`)
       }
       updateConfigRunningState(config.id, false)
-    } catch (error: unknown) {
+    } catch (error) {
       console.error('An error occurred during port forwarding stop:', error)
-
       const errorMessage =
         error instanceof Error ? error.message : String(error)
 
@@ -154,7 +145,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
         ),
       })
     } finally {
-      setIsRunning(false)
+      console.log('stopPortForwarding finally')
     }
   }
 
@@ -288,7 +279,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
               isChecked={config.isRunning}
               size='sm'
               onChange={e => togglePortForwarding(e.target.checked)}
-              isDisabled={isRunning || isInitiating}
+              isDisabled={isInitiating}
             />
             {config.isRunning && (
               <Tooltip

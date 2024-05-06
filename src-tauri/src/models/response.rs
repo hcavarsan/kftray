@@ -1,4 +1,5 @@
 #[derive(serde::Serialize, serde::Deserialize, Debug)]
+
 pub struct CustomResponse {
     pub id: Option<i64>,
     pub service: String,
@@ -43,51 +44,61 @@ impl CustomResponseBuilder {
 
     pub fn id(mut self, id: i64) -> Self {
         self.id = Some(id);
+
         self
     }
 
     pub fn service(mut self, service: String) -> Self {
         self.service = Some(service);
+
         self
     }
 
     pub fn namespace(mut self, namespace: String) -> Self {
         self.namespace = Some(namespace);
+
         self
     }
 
     pub fn local_port(mut self, local_port: u16) -> Self {
         self.local_port = Some(local_port);
+
         self
     }
 
     pub fn remote_port(mut self, remote_port: u16) -> Self {
         self.remote_port = Some(remote_port);
+
         self
     }
 
     pub fn context(mut self, context: String) -> Self {
         self.context = Some(context);
+
         self
     }
 
     pub fn stdout(mut self, stdout: String) -> Self {
         self.stdout = Some(stdout);
+
         self
     }
 
     pub fn stderr(mut self, stderr: String) -> Self {
         self.stderr = Some(stderr);
+
         self
     }
 
     pub fn status(mut self, status: i32) -> Self {
         self.status = Some(status);
+
         self
     }
 
     pub fn protocol(mut self, protocol: String) -> Self {
         self.protocol = Some(protocol);
+
         self
     }
 

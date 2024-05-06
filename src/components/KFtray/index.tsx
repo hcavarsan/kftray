@@ -311,7 +311,7 @@ const KFTray = () => {
     }
   }
   // eslint-disable-next-line complexity
-  const handleSaveConfig = async (configToSave: Config) => {
+  const handleSaveConfig = async (_configToSave: Config) => {
     const updatedConfigToSave: Config = {
       id: isEdit ? newConfig.id : 0,
       service: newConfig.service,

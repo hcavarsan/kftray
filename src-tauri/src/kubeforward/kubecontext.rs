@@ -1,53 +1,79 @@
-use anyhow::{Context, Result};
+use anyhow::{
+    Context,
+    Result,
+};
 use k8s_openapi::{
-    api::core::v1::{Namespace, Service},
+    api::core::v1::{
+        Namespace,
+        Service,
+    },
     apimachinery::pkg::util::intstr::IntOrString,
 };
 use kube::{
-    api::{Api, ListParams},
+    api::{
+        Api,
+        ListParams,
+    },
     client::ConfigExt,
-    config::{Config, KubeConfigOptions, Kubeconfig},
-    Client, ResourceExt,
+    config::{
+        Config,
+        KubeConfigOptions,
+        Kubeconfig,
+    },
+    Client,
+    ResourceExt,
 };
 use tower::ServiceBuilder;
 
 use crate::{
     kubeforward::vx::Pod,
-    models::kube::{KubeContextInfo, KubeNamespaceInfo, KubeServiceInfo, KubeServicePortInfo},
+    models::kube::{
+        KubeContextInfo,
+        KubeNamespaceInfo,
+        KubeServiceInfo,
+        KubeServicePortInfo,
+    },
 };
+
 pub async fn create_client_with_specific_context(
-    kubeconfig: Option<String>,
-    context_name: &str,
+    kubeconfig: Option<String>, context_name: &str,
 ) -> Result<Client> {
     println!(
         "create_client_with_specific_context {}",
         kubeconfig.as_deref().unwrap_or("")
     );
+
     println!("create_client_with_specific_context {}", context_name);
 
     // Determine the kubeconfig based on the input
     let kubeconfig = if let Some(path) = kubeconfig {
         if path == "default" {
             let default_path = dirs::home_dir().unwrap().join(".kube/config");
+
             println!(
                 "Reading kubeconfig from default location: {:?}",
                 default_path
             );
+
             Kubeconfig::read().context("Failed to read kubeconfig from default location")?
         } else {
             // Otherwise, try to read the kubeconfig from the specified path
             println!("Reading kubeconfig from specified path: {}", path);
+
             Kubeconfig::read_from(path).context("Failed to read kubeconfig from specified path")?
         }
     } else {
         // If no kubeconfig is specified, read the default kubeconfig
         let default_path = dirs::home_dir().unwrap().join(".kube/config");
+
         println!(
             "Reading kubeconfig from default location: {:?}",
             default_path
         );
+
         Kubeconfig::read().context("Failed to read kubeconfig from default location")?
     };
+
     println!("create_client_with_specific_context2 {:?}", kubeconfig);
 
     let config = Config::from_custom_kubeconfig(
@@ -63,6 +89,7 @@ pub async fn create_client_with_specific_context(
     let https_connector = config
         .rustls_https_connector()
         .context("Failed to create Rustls HTTPS connector")?;
+
     let service = ServiceBuilder::new()
         .layer(config.base_uri_layer())
         .option_layer(config.auth_layer()?)
@@ -74,6 +101,7 @@ pub async fn create_client_with_specific_context(
 }
 
 #[tauri::command]
+
 pub async fn list_kube_contexts(
     kubeconfig: Option<String>,
 ) -> Result<Vec<KubeContextInfo>, String> {
@@ -84,23 +112,28 @@ pub async fn list_kube_contexts(
             let default_path = dirs::home_dir()
                 .ok_or_else(|| "Failed to locate home directory".to_string())?
                 .join(".kube/config");
+
             println!(
                 "Reading kubeconfig from default location: {:?}",
                 default_path
             );
+
             Kubeconfig::read_from(default_path.to_str().unwrap()).map_err(|e| e.to_string())?
         } else {
             println!("Reading kubeconfig from specified path: {}", path);
+
             Kubeconfig::read_from(path).map_err(|e| e.to_string())?
         }
     } else {
         let default_path = dirs::home_dir()
             .ok_or_else(|| "Failed to locate home directory".to_string())?
             .join(".kube/config");
+
         println!(
             "Reading kubeconfig from default location: {:?}",
             default_path
         );
+
         Kubeconfig::read_from(default_path.to_str().unwrap()).map_err(|e| e.to_string())?
     };
 
@@ -112,9 +145,9 @@ pub async fn list_kube_contexts(
 }
 
 #[tauri::command]
+
 pub async fn list_namespaces(
-    context_name: &str,
-    kubeconfig: Option<String>,
+    context_name: &str, kubeconfig: Option<String>,
 ) -> Result<Vec<KubeNamespaceInfo>, String> {
     let client = create_client_with_specific_context(kubeconfig, context_name)
         .await
@@ -126,6 +159,7 @@ pub async fn list_namespaces(
         })?;
 
     let api: Api<Namespace> = Api::all(client);
+
     let ns_list = api
         .list(&ListParams::default())
         .await
@@ -140,10 +174,9 @@ pub async fn list_namespaces(
 }
 
 #[tauri::command]
+
 pub async fn list_services(
-    context_name: &str,
-    namespace: &str,
-    kubeconfig: Option<String>,
+    context_name: &str, namespace: &str, kubeconfig: Option<String>,
 ) -> Result<Vec<KubeServiceInfo>, String> {
     if namespace.trim().is_empty() {
         return Err("Namespace parameter cannot be empty".to_string());
@@ -159,6 +192,7 @@ pub async fn list_services(
         })?;
 
     let api: Api<Service> = Api::namespaced(client, namespace);
+
     let svc_list = api
         .list(&ListParams::default())
         .await
@@ -173,11 +207,9 @@ pub async fn list_services(
 }
 
 #[tauri::command]
+
 pub async fn list_service_ports(
-    context_name: &str,
-    namespace: &str,
-    service_name: &str,
-    kubeconfig: Option<String>,
+    context_name: &str, namespace: &str, service_name: &str, kubeconfig: Option<String>,
 ) -> Result<Vec<KubeServicePortInfo>, String> {
     let client = create_client_with_specific_context(kubeconfig, context_name)
         .await
@@ -189,6 +221,7 @@ pub async fn list_service_ports(
         })?;
 
     let api_svc: Api<Service> = Api::namespaced(client.clone(), namespace);
+
     let service = api_svc.get(service_name).await.map_err(|e| e.to_string())?;
 
     let api_pod: Api<Pod> = Api::namespaced(client, namespace);
@@ -219,12 +252,14 @@ pub async fn list_service_ports(
                             for container in &spec.containers {
                                 if let Some(ports) = &container.ports {
                                     for cp in ports {
-                                        // Match the port name and add the port info to the service_port_infos vector if found.
+                                        // Match the port name and add the port info to the
+                                        // service_port_infos vector if found.
                                         if cp.name.as_deref() == Some(name) {
                                             service_port_infos.push(KubeServicePortInfo {
                                                 name: cp.name.clone(),
                                                 port: Some(IntOrString::Int(cp.container_port)),
                                             });
+
                                             break 'port_search;
                                         }
                                     }

@@ -13,12 +13,25 @@ mod models;
 mod remote_config;
 mod tray;
 
-use std::{env, sync::atomic::Ordering};
+use std::{
+    env,
+    sync::atomic::Ordering,
+};
 
-use device_query::{DeviceQuery, DeviceState};
-use tauri::{GlobalShortcutManager, Manager, SystemTrayEvent};
+use device_query::{
+    DeviceQuery,
+    DeviceState,
+};
+use tauri::{
+    GlobalShortcutManager,
+    Manager,
+    SystemTrayEvent,
+};
 #[cfg(not(target_os = "linux"))]
-use tauri_plugin_positioner::{Position, WindowExt};
+use tauri_plugin_positioner::{
+    Position,
+    WindowExt,
+};
 use tokio::runtime::Runtime;
 
 use crate::models::dialog::SaveDialogState;
@@ -26,13 +39,19 @@ use crate::models::dialog::SaveDialogState;
 fn move_window_to_mouse_position(window: &tauri::Window) {
     if let Ok(window_size) = window.inner_size() {
         let device_state = DeviceState::new();
+
         let mouse = device_state.get_mouse();
+
         let mouse_position = mouse.coords;
+
         println!("Position: {:#?}", mouse_position);
+
         let window_width = window_size.width as f64;
+
         let window_height = window_size.height as f64;
 
         let new_x = mouse_position.0 as f64 - (window_width / 2.0);
+
         let new_y = mouse_position.1 as f64 - (window_height / 2.0);
 
         window
@@ -42,16 +61,22 @@ fn move_window_to_mouse_position(window: &tauri::Window) {
             .ok();
     }
 }
+
 fn main() {
     logging::setup_logging();
+
     let _ = fix_path_env::fix();
+
     // configure tray menu
     let system_tray = tray::create_tray_menu();
+
     tauri::Builder::default()
         .manage(SaveDialogState::default())
         .setup(move |app| {
             let _ = config::clean_all_custom_hosts_entries();
+
             let _ = db::init();
+
             if let Err(e) = config::migrate_configs() {
                 eprintln!("Failed to migrate configs: {}", e);
             }
@@ -62,8 +87,10 @@ fn main() {
             }
 
             let window = app.get_window("main").unwrap();
+
             // register global shortcut to open the app
             let mut shortcut = app.global_shortcut_manager();
+
             shortcut
                 .register("CmdOrCtrl+Shift+F1", move || {
                     if window.is_visible().unwrap() {
@@ -71,12 +98,15 @@ fn main() {
                     } else {
                         #[cfg(target_os = "linux")]
                         move_window_to_mouse_position(&window);
+
                         #[cfg(target_os = "windows")]
                         let _ = window.move_window(Position::BottomRight);
+
                         #[cfg(target_os = "macos")]
                         let _ = window.move_window(Position::TrayCenter);
 
                         window.show().unwrap();
+
                         window.set_focus().unwrap();
                     }
                 })
@@ -88,6 +118,7 @@ fn main() {
         .system_tray(system_tray)
         .on_system_tray_event(|app, event| {
             tauri_plugin_positioner::on_tray_event(app, &event);
+
             match event {
                 SystemTrayEvent::LeftClick {
                     position: _,
@@ -96,10 +127,13 @@ fn main() {
                 } => {
                     // temp solution due to a limitation in libappindicator and tray events in linux
                     let window = app.get_window("main").unwrap();
+
                     #[cfg(target_os = "linux")]
                     move_window_to_mouse_position(&window);
+
                     #[cfg(target_os = "windows")]
                     let _ = window.move_window(Position::BottomRight);
+
                     #[cfg(target_os = "macos")]
                     let _ = window.move_window(Position::TrayCenter);
 
@@ -107,6 +141,7 @@ fn main() {
                         window.hide().unwrap();
                     } else {
                         window.show().unwrap();
+
                         window.set_focus().unwrap();
                     }
                 }
@@ -143,17 +178,20 @@ fn main() {
                     }
                     "toggle" => {
                         let window = app.get_window("main").unwrap();
+
                         move_window_to_mouse_position(&window);
 
                         if window.is_visible().unwrap() {
                             window.hide().unwrap();
                         } else {
                             window.show().unwrap();
+
                             window.set_focus().unwrap();
                         }
                     }
                     "hide" => {
                         let window = app.get_window("main").unwrap();
+
                         window.hide().unwrap();
                     }
                     _ => {}
@@ -165,6 +203,7 @@ fn main() {
             if let tauri::WindowEvent::Focused(is_focused) = event.event() {
                 if !is_focused {
                     let app_handle = event.window().app_handle();
+
                     if let Some(state) = app_handle.try_state::<SaveDialogState>() {
                         if !state.is_open.load(Ordering::SeqCst) {
                             event.window().hide().unwrap();
