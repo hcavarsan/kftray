@@ -183,3 +183,17 @@ export interface CustomConfigProps extends ConfigProps {
 }
 
 export type Option = { name: string; value: string | number; label: string }
+
+export interface PortForwardSearchTableProps {
+  configs: Status[]
+  handleEditConfig: (id: number) => void
+  handleDeleteConfig: (id: number) => void
+  confirmDeleteConfig: () => void
+  updateConfigRunningState: (id: number, isRunning: boolean) => void
+  isAlertOpen: boolean
+  setIsAlertOpen: (isOpen: boolean) => void
+  isInitiating: boolean
+  isStopping: boolean
+  onSelectionChange: (config: Status, isSelected: boolean) => void
+  updateSelectionState: (id: number, isRunning: boolean) => void
+}
