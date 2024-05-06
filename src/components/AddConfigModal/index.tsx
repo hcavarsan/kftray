@@ -19,7 +19,6 @@ import {
   SimpleGrid,
   Text,
   Tooltip,
-  useToast,
   VStack,
 } from '@chakra-ui/react'
 import { open } from '@tauri-apps/api/dialog'
@@ -105,11 +104,6 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
   const [isFormValid, setIsFormValid] = useState(false)
   const [kubeConfig, setKubeConfig] = useState<string>('default')
 
-  const [portData, setPortData] = useState<
-    { remote_port: number; port?: number | string; name?: string | number }[]
-  >([])
-  const toast = useToast()
-
   const contextQuery = useQuery<KubeContext[]>(
     ['kube-contexts', kubeConfig],
     () => fetchKubeContexts(kubeConfig),
@@ -171,7 +165,10 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     },
     {
       initialData: configData?.service,
-      enabled: !!newConfig.context && !!newConfig.namespace,
+      enabled:
+        !!newConfig.context &&
+        !!newConfig.namespace &&
+        newConfig.workload_type !== 'proxy',
     },
   )
 
@@ -185,7 +182,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     () => {
       console.log('Invoking list_service_ports with:', newConfig)
 
-      return invoke<{ remote_port: number }[]>('list_service_ports', {
+      return invoke<{ name: string; port: number }[]>('list_service_ports', {
         contextName: newConfig.context,
         namespace: newConfig.namespace,
         serviceName: newConfig.service,
@@ -193,12 +190,18 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
       })
     },
     {
-      initialData: configData?.ports,
+      initialData:
+        configData?.ports?.map(port => ({
+          name: port.name ?? 'default', // Provide a default name if undefined
+          port: port.port,
+        })) ?? [],
       enabled:
-        !!newConfig.context && !!newConfig.namespace && !!newConfig.service,
+        !!newConfig.context &&
+        !!newConfig.namespace &&
+        !!newConfig.service &&
+        newConfig.workload_type !== 'proxy',
       onSuccess: ports => {
         console.log('Ports fetched successfully:', ports)
-        setPortData(ports)
       },
       onError: error => {
         assertIsError(error)
@@ -206,13 +209,6 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
           'Error fetching service ports:',
           error instanceof Error ? error.message : error,
         )
-        toast({
-          title: 'Error fetching service ports',
-          description:
-            error instanceof Error ? error.message : JSON.stringify(error),
-          status: 'error',
-        })
-        setPortData(configData?.ports ?? [])
       },
     },
   )
@@ -278,7 +274,6 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     setSelectedNamespace(null)
     setSelectedService(null)
     setSelectedPort(null)
-    setPortData([])
     setSelectedWorkloadType(null)
     setSelectedProtocol(null)
     setKubeConfig('default')
@@ -298,7 +293,6 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
         setSelectedNamespace(null)
         setSelectedService(null)
         setSelectedPort(null)
-        setPortData([])
         handleInputChange({
           target: { name: 'namespace', value: '' },
         } as unknown as React.ChangeEvent<HTMLInputElement>)
@@ -318,7 +312,6 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
       ) {
         setSelectedService(null)
         setSelectedPort(null)
-        setPortData([])
         handleInputChange({
           target: { name: 'service', value: '' },
         } as unknown as React.ChangeEvent<HTMLInputElement>)
@@ -334,7 +327,6 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
           selectedService?.value !== selectedOption?.value
       ) {
         setSelectedPort(null)
-        setPortData([])
         handleInputChange({
           target: { name: 'remote_port', value: '' },
         } as unknown as React.ChangeEvent<HTMLInputElement>)
@@ -700,20 +692,33 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                           styles={customStyles}
                           name='remote_port'
                           options={portQuery.data?.map(port => ({
-                            label: portData.find(
-                              p => p.remote_port === port.remote_port,
-                            )?.port,
-                            value: portData.find(
-                              p => p.remote_port === port.remote_port,
-                            )?.port,
+                            label: `${port.port ? port.port + ' - ' : ''}${port.name}`,
+                            value: port.port,
                           }))}
-                          value={selectedPort}
+                          value={
+                            selectedPort
+                              ? {
+                                label: selectedPort.label,
+                                value: selectedPort.value,
+                              }
+                              : null
+                          }
                           onChange={selectedOption =>
                             handleSelectChange(
                               selectedOption as Option,
                               { name: 'remote_port' } as ActionMeta<Option>,
                             )
                           }
+                          menuPlacement='auto'
+                          theme={theme => ({
+                            ...theme,
+                            borderRadius: 4,
+                            colors: {
+                              ...theme.colors,
+                              primary25: 'lightgrey',
+                              primary: 'grey',
+                            },
+                          })}
                         />
                       </FormControl>
 
