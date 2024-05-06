@@ -1,42 +1,65 @@
 use std::{
     collections::HashMap,
     net::SocketAddr,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc,
+        Mutex,
+    },
 };
 
 use anyhow::Context;
 use futures::TryStreamExt;
 use hostsfile::HostsBuilder;
 use kube::{
-    api::{Api, DeleteParams, ListParams},
+    api::{
+        Api,
+        DeleteParams,
+        ListParams,
+    },
     Client,
 };
 use lazy_static::lazy_static;
 use tokio::{
-    io::{AsyncReadExt, AsyncWriteExt},
-    net::{TcpListener, UdpSocket as TokioUdpSocket},
+    io::{
+        AsyncReadExt,
+        AsyncWriteExt,
+    },
+    net::{
+        TcpListener,
+        UdpSocket as TokioUdpSocket,
+    },
     task::JoinHandle,
 };
 use tokio_stream::wrappers::TcpListenerStream;
 
 use crate::{
-    kubeforward::{port_forward::Target as TargetImpl, vx::Pod},
+    kubeforward::{
+        port_forward::Target as TargetImpl,
+        vx::Pod,
+    },
     models::{
         config::Config,
         kube::{
-            AnyReady, PodSelection, Port, PortForward, Target, TargetPod, TargetPodFinder,
+            AnyReady,
+            PodSelection,
+            Port,
+            PortForward,
+            Target,
+            TargetPod,
+            TargetPodFinder,
             TargetSelector,
         },
-        response::{CustomResponse, CustomResponseBuilder},
+        response::{
+            CustomResponse,
+            CustomResponseBuilder,
+        },
     },
 };
 
 impl PortForward {
     pub async fn new(
-        target: Target,
-        local_port: impl Into<Option<u16>>,
-        local_address: impl Into<Option<String>>,
-        context_name: Option<String>,
+        target: Target, local_port: impl Into<Option<u16>>,
+        local_address: impl Into<Option<String>>, context_name: Option<String>,
         kubeconfig: Option<String>,
     ) -> anyhow::Result<Self> {
         // Check if context_name was provided and create a Kubernetes client
@@ -50,6 +73,7 @@ impl PortForward {
             // Use default context (or whatever client creation logic you prefer)
             Client::try_default().await?
         };
+
         let namespace = target.namespace.name_any();
 
         Ok(Self {
@@ -71,16 +95,20 @@ impl PortForward {
     }
 
     /// Runs the port forwarding proxy until a SIGINT signal is received.
+
     pub async fn port_forward(self) -> anyhow::Result<(u16, tokio::task::JoinHandle<()>)> {
         let local_addr = self
             .local_address()
             .unwrap_or_else(|| "127.0.0.1".to_string());
+
         let addr = format!("{}:{}", local_addr, self.local_port())
             .parse::<SocketAddr>()
             .expect("Invalid local address");
 
         let bind = TcpListener::bind(addr).await?;
+
         let port = bind.local_addr()?.port();
+
         tracing::trace!(port, "Bound to local address and port");
 
         let server = TcpListenerStream::new(bind).try_for_each(move |client_conn| {
@@ -88,6 +116,7 @@ impl PortForward {
 
             async move {
                 let client_conn = client_conn;
+
                 if let Ok(peer_addr) = client_conn.peer_addr() {
                     tracing::trace!(%peer_addr, "new connection");
                 }
@@ -114,11 +143,12 @@ impl PortForward {
             }),
         ))
     }
+
     async fn forward_connection(
-        self,
-        mut client_conn: tokio::net::TcpStream,
+        self, mut client_conn: tokio::net::TcpStream,
     ) -> anyhow::Result<()> {
         let target = self.finder().find(&self.target).await?;
+
         let (pod_name, pod_port) = target.into_parts();
 
         let mut forwarder = self.pod_api.portforward(&pod_name, &[pod_port]).await?;
@@ -138,8 +168,11 @@ impl PortForward {
         }
 
         drop(upstream_conn);
+
         forwarder.join().await?;
+
         tracing::debug!(local_port, pod_port, pod_name, "connection closed");
+
         Ok(())
     }
 
@@ -154,16 +187,21 @@ impl PortForward {
         let local_address = self
             .local_address()
             .unwrap_or_else(|| "127.0.0.1".to_string());
+
         let local_udp_addr = format!("{}:{}", local_address, self.local_port());
+
         let local_udp_socket = Arc::new(
             TokioUdpSocket::bind(&local_udp_addr)
                 .await
                 .context("Failed to bind local UDP socket")?,
         );
+
         let local_port = local_udp_socket.local_addr()?.port();
+
         tracing::info!("Local UDP socket bound to {}", local_udp_addr);
 
         let target = self.finder().find(&self.target).await?;
+
         let (pod_name, pod_port) = target.into_parts();
 
         // Start port forwarding to the pod via TCP
@@ -180,6 +218,7 @@ impl PortForward {
         );
 
         let local_udp_socket_read = local_udp_socket.clone();
+
         let local_udp_socket_write = local_udp_socket;
 
         let handle = tokio::spawn(async move {
@@ -249,17 +288,21 @@ impl PortForward {
         tcp_read: &mut (impl AsyncReadExt + Unpin),
     ) -> anyhow::Result<Option<Vec<u8>>> {
         let mut len_bytes = [0u8; 4];
+
         if tcp_read.read_exact(&mut len_bytes).await.is_err() {
             // If there's an error reading (which includes EOF), return None
             return Ok(None);
         }
+
         let len = u32::from_be_bytes(len_bytes) as usize;
 
         let mut packet = vec![0u8; len];
+
         if tcp_read.read_exact(&mut packet).await.is_err() {
             // If there's an error reading the packet (which includes EOF), return None
             return Ok(None);
         }
+
         Ok(Some(packet))
     }
 }
@@ -267,6 +310,7 @@ impl PortForward {
 impl<'a> TargetPodFinder<'a> {
     pub(crate) async fn find(&self, target: &Target) -> anyhow::Result<TargetPod> {
         let ready_pod = AnyReady {};
+
         match &target.selector {
             TargetSelector::ServiceName(name) => match self.svc_api.get(name).await {
                 Ok(service) => {
@@ -281,7 +325,9 @@ impl<'a> TargetPodFinder<'a> {
                             .pod_api
                             .list(&ListParams::default().labels(&label_selector_str))
                             .await?;
+
                         let pod = ready_pod.select(&pods.items, &label_selector_str)?;
+
                         target.find(pod, None)
                     } else {
                         Err(anyhow::anyhow!("No selector found for service '{}'", name))
@@ -289,11 +335,14 @@ impl<'a> TargetPodFinder<'a> {
                 }
                 Err(kube::Error::Api(kube::error::ErrorResponse { code: 404, .. })) => {
                     let label_selector_str = format!("app={}", name);
+
                     let pods = self
                         .pod_api
                         .list(&ListParams::default().labels(&label_selector_str))
                         .await?;
+
                     let pod = ready_pod.select(&pods.items, &label_selector_str)?;
+
                     target.find(pod, None)
                 }
                 Err(e) => Err(anyhow::anyhow!("Error finding service '{}': {}", name, e)),
@@ -308,22 +357,31 @@ lazy_static! {
 }
 
 #[tauri::command]
+
 pub async fn start_port_udp_forward(configs: Vec<Config>) -> Result<Vec<CustomResponse>, String> {
     let mut responses = Vec::new();
 
     for config in configs {
         let selector = TargetSelector::ServiceName(config.service.clone().unwrap());
+
         let remote_port = Port::from(config.remote_port as i32);
+
         let context_name = Some(config.context.clone());
+
         let kubeconfig = Some(config.kubeconfig.clone());
+
         log::info!("Remote Port: {}", config.remote_port);
+
         log::info!("Local Port: {}", config.local_port);
 
         let namespace = config.namespace.clone();
+
         let target = TargetImpl::new(selector, remote_port, namespace);
 
         log::debug!("Attempting to forward to service: {:?}", &config.service);
+
         let local_address_clone = config.local_address.clone();
+
         let port_forward = PortForward::new(
             target,
             config.local_port,
@@ -334,11 +392,13 @@ pub async fn start_port_udp_forward(configs: Vec<Config>) -> Result<Vec<CustomRe
         .await
         .map_err(|e| {
             log::error!("Failed to create PortForward: {:?}", e);
+
             e.to_string()
         })?;
 
         let (actual_local_port, handle) = port_forward.port_forward_udp().await.map_err(|e| {
             log::error!("Failed to start UDP port forwarding: {:?}", e);
+
             e.to_string()
         })?;
 
@@ -372,6 +432,7 @@ pub async fn start_port_udp_forward(configs: Vec<Config>) -> Result<Vec<CustomRe
                     if let Ok(ip_addr) = local_address.parse::<std::net::IpAddr>() {
                         hosts_builder
                             .add_hostname(ip_addr, config.alias.clone().unwrap_or_default());
+
                         if let Err(e) = hosts_builder.write() {
                             log::error!(
                                 "Failed to write to the hostfile for {}: {}",
@@ -385,6 +446,7 @@ pub async fn start_port_udp_forward(configs: Vec<Config>) -> Result<Vec<CustomRe
                 }
             }
         }
+
         // Append a new CustomResponse to responses collection.
         responses.push(CustomResponse {
             id: config.id,
@@ -413,22 +475,31 @@ pub async fn start_port_udp_forward(configs: Vec<Config>) -> Result<Vec<CustomRe
 }
 
 #[tauri::command]
+
 pub async fn start_port_forward(configs: Vec<Config>) -> Result<Vec<CustomResponse>, String> {
     let mut responses = Vec::new();
 
     for config in configs {
         let selector = TargetSelector::ServiceName(config.service.clone().unwrap());
+
         let remote_port = Port::from(config.remote_port as i32);
+
         let context_name = Some(config.context.clone());
+
         let kubeconfig = Some(config.kubeconfig.clone());
+
         log::info!("Remote Port: {}", config.remote_port);
+
         log::info!("Local Port: {}", config.remote_port);
+
         log::info!("Local Address: {:?}", config.local_address);
 
         let namespace = config.namespace.clone();
+
         let target = TargetImpl::new(selector, remote_port, namespace);
 
         log::debug!("Attempting to forward to service: {:?}", &config.service);
+
         let port_forward = PortForward::new(
             target,
             config.local_port,
@@ -439,11 +510,13 @@ pub async fn start_port_forward(configs: Vec<Config>) -> Result<Vec<CustomRespon
         .await
         .map_err(|e| {
             log::error!("Failed to create PortForward: {:?}", e);
+
             e.to_string()
         })?;
 
         let (actual_local_port, handle) = port_forward.port_forward().await.map_err(|e| {
             log::error!("Failed to start port forwarding: {:?}", e);
+
             e.to_string()
         })?;
 
@@ -452,6 +525,7 @@ pub async fn start_port_forward(configs: Vec<Config>) -> Result<Vec<CustomRespon
             actual_local_port,
             &config.service
         );
+
         // Store the JoinHandle to the global child processes map.
         CHILD_PROCESSES.lock().unwrap().insert(
             format!(
@@ -476,6 +550,7 @@ pub async fn start_port_forward(configs: Vec<Config>) -> Result<Vec<CustomRespon
                     if let Ok(ip_addr) = local_address.parse::<std::net::IpAddr>() {
                         hosts_builder
                             .add_hostname(ip_addr, config.alias.clone().unwrap_or_default());
+
                         if let Err(e) = hosts_builder.write() {
                             log::error!(
                                 "Failed to write to the hostfile for {}: {}",
@@ -518,11 +593,15 @@ pub async fn start_port_forward(configs: Vec<Config>) -> Result<Vec<CustomRespon
 }
 
 #[tauri::command]
+
 pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
     log::info!("Attempting to stop all port forwards");
+
     let mut responses = Vec::new();
+
     let client = Client::try_default().await.map_err(|e| {
         log::error!("Failed to create Kubernetes client: {}", e);
+
         e.to_string()
     })?;
 
@@ -532,38 +611,49 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
 
     for (composite_key, handle) in handle_map.iter() {
         let ids: Vec<&str> = composite_key.split('_').collect();
+
         if ids.len() != 2 {
             log::error!(
                 "Invalid composite key format encountered: {}",
                 composite_key
             );
+
             continue;
         }
+
         let config_id = ids[0];
+
         let service_id = ids[1];
 
         let hostfile_comment = format!("kftray custom host for {} - {}", service_id, config_id);
+
         let hosts_builder = HostsBuilder::new(&hostfile_comment);
 
         hosts_builder.write().map_err(|e| {
             log::error!("Failed to write to the hostfile for {}: {}", service_id, e);
+
             e.to_string()
         })?;
 
         log::info!("Aborting port forwarding task for config_id: {}", config_id);
+
         handle.abort();
     }
 
     let pods: Api<Pod> = Api::all(client.clone());
+
     for (composite_key, _handle) in handle_map.iter() {
         let config_id = composite_key.split('_').next().unwrap_or_default();
 
         log::info!("Fetching pods for config_id: {}", config_id);
+
         let lp = ListParams::default().labels(&format!("config_id={}", config_id));
+
         let pod_list = match pods.list(&lp).await {
             Ok(pods) => pods,
             Err(e) => {
                 log::error!("Error fetching pods for config_id {}: {}", config_id, e);
+
                 continue;
             }
         };
@@ -573,12 +663,16 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
             pod_list.items.len(),
             config_id
         );
+
         let username = whoami::username();
+
         for pod in pod_list.items {
             if let Some(pod_name) = pod.metadata.name.clone() {
                 if pod_name.starts_with(&format!("kftray-forward-{}", username)) {
                     log::info!("Deleting pod: {}", pod_name);
+
                     let namespace = pod.metadata.namespace.as_deref().unwrap_or_default();
+
                     let namespaced_pods: Api<Pod> = Api::namespaced(client.clone(), namespace);
 
                     let dp = DeleteParams {
@@ -590,6 +684,7 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
                     match namespaced_pods.delete(&pod_name, &dp).await {
                         Ok(_) => {
                             log::info!("Successfully deleted pod: {}", pod_name);
+
                             responses.push(
                                 CustomResponseBuilder::new()
                                     .id(config_id.parse().unwrap_or(0)) // Assuming 0 is an acceptable default
@@ -607,6 +702,7 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
                         }
                         Err(e) => {
                             log::error!("Failed to delete pod {}: {}", pod_name, e);
+
                             responses.push(
                                 CustomResponseBuilder::new()
                                     .id(config_id.parse().unwrap_or(0)) // Assuming 0 is an acceptable default
@@ -637,15 +733,17 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
         "Port forward stopping process completed with {} responses",
         responses.len()
     );
+
     Ok(responses)
 }
 
 #[tauri::command]
+
 pub async fn stop_port_forward(
-    _service_name: String,
-    config_id: String,
+    _service_name: String, config_id: String,
 ) -> Result<CustomResponse, String> {
     let child_processes = CHILD_PROCESSES.lock().unwrap();
+
     let key_to_remove = child_processes
         .keys()
         .find(|key| key.starts_with(&format!("{}_", config_id)));
@@ -653,14 +751,19 @@ pub async fn stop_port_forward(
     match key_to_remove {
         Some(key) => {
             let composite_key = key.clone();
+
             drop(child_processes);
 
             let mut child_processes = CHILD_PROCESSES.lock().unwrap();
+
             if let Some(handle) = child_processes.remove(&composite_key) {
                 handle.abort();
+
                 let (config_id, service_name) = composite_key.split_once('_').unwrap_or(("", ""));
+
                 let hostfile_comment =
                     format!("kftray custom host for {} - {}", service_name, config_id);
+
                 let hosts_builder = HostsBuilder::new(hostfile_comment);
 
                 hosts_builder.write().map_err(|e| {
@@ -669,6 +772,7 @@ pub async fn stop_port_forward(
                         service_name,
                         e
                     );
+
                     e.to_string()
                 })?;
 

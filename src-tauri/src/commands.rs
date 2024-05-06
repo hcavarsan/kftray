@@ -1,42 +1,59 @@
 use std::sync::atomic::Ordering;
 
-use base64::{engine::general_purpose, Engine as _};
-use reqwest::header::{AUTHORIZATION, USER_AGENT};
+use base64::{
+    engine::general_purpose,
+    Engine as _,
+};
+use reqwest::header::{
+    AUTHORIZATION,
+    USER_AGENT,
+};
 use tauri::State;
 
 use crate::{
-    config::{import_configs, migrate_configs},
-    models::{config::Config, dialog::SaveDialogState},
-    remote_config::{build_github_api_url, clear_existing_configs},
+    config::{
+        import_configs,
+        migrate_configs,
+    },
+    models::{
+        config::Config,
+        dialog::SaveDialogState,
+    },
+    remote_config::{
+        build_github_api_url,
+        clear_existing_configs,
+    },
 };
 
 //  command to save the dialog state when is open
 #[tauri::command]
+
 pub fn open_save_dialog(state: State<SaveDialogState>) {
     state.is_open.store(true, Ordering::SeqCst);
 }
 
 // command to save the dialog state when is closed
 #[tauri::command]
+
 pub fn close_save_dialog(state: State<SaveDialogState>) {
     state.is_open.store(false, Ordering::SeqCst);
 }
 
 // command to import configs from github
 #[tauri::command]
+
 pub async fn import_configs_from_github(
-    repo_url: String,
-    config_path: String,
-    is_private: bool,
-    flush: bool,
-    token: Option<String>,
+    repo_url: String, config_path: String, is_private: bool, flush: bool, token: Option<String>,
 ) -> Result<(), String> {
     let client = reqwest::Client::new();
+
     let url = build_github_api_url(&repo_url, &config_path);
+
     let mut request_builder = client.get(url);
 
     if is_private {
         let token = token.ok_or("Token is required for private repositories")?;
+
         request_builder = request_builder.header(AUTHORIZATION, format!("token {}", token));
     }
 
@@ -57,6 +74,7 @@ pub async fn import_configs_from_github(
         .as_str()
         .ok_or("Failed to extract content from response")?
         .trim();
+
     println!("base64_content: {}", base64_content);
 
     let base64_content_cleaned = base64_content.replace(['\n', '\r'], "");
@@ -69,15 +87,18 @@ pub async fn import_configs_from_github(
         .map_err(|e| format!("Failed to convert decoded content to string: {}", e))?;
 
     println!("decoded_str: {}", decoded_str);
+
     let configs: Vec<Config> = serde_json::from_str(&decoded_str)
         .map_err(|e| format!("Failed to parse configs: {}", e))?;
 
     if flush {
         clear_existing_configs().map_err(|e| e.to_string())?;
     }
+
     for config in configs {
         let config_json = serde_json::to_string(&config)
             .map_err(|e| format!("Failed to serialize config: {}", e))?;
+
         import_configs(config_json).await?;
     }
 

@@ -1,7 +1,12 @@
-use std::{env, fs::OpenOptions, path::PathBuf};
+use std::{
+    env,
+    fs::OpenOptions,
+    path::PathBuf,
+};
 
 pub fn get_log_path() -> PathBuf {
     let home_dir = dirs::home_dir().expect("Could not find the home directory");
+
     home_dir.join(".kftray").join("app.log")
 }
 
@@ -14,7 +19,9 @@ pub fn setup_logging() {
     // If the `KFTRAY_DEBUG` environment variable is set, set up file-based logging.
     if env::var("KFTRAY_DEBUG").is_ok() {
         let log_path = get_log_path();
+
         let log_dir = log_path.parent().expect("Could not find the log directory");
+
         std::fs::create_dir_all(log_dir).expect("Could not create log directory");
 
         // Open the log file for appending, or return an error if it fails.
