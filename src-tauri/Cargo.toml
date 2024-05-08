@@ -18,14 +18,14 @@ rust-version = "1.78"
 tauri-build = { version = "1.5", features = [] }
 
 [dependencies]
-serde_json = "1.0.115"
+serde_json = "1.0.116"
 tauri = { version = "1.6", features = [ "updater", "api-all", "macos-private-api", "system-tray", "icon-png"] }
 tauri-plugin-positioner = { version = "1.0", features = ["system-tray"] }
 tokio = { version = "1.37.0", features = ["rt-multi-thread", "macros", "full"] }
 rusqlite = { version = "0.31.0", features = ["bundled"] }
 dirs = "5.0.1"
-reqwest = "0.12.3"
-base64 = "0.22.0"
+reqwest = "0.12.4"
+base64 = "0.22.1"
 keyring = "2.3.2"
 mockall = "0.12"
 hostsfile = { git = "https://github.com/tonarino/innernet", branch = "main" }
@@ -38,7 +38,7 @@ kube = { version = "0.88.0", features = ["client", "config", "rustls-tls", "ws"]
 k8s-openapi = { version = "0.21.0", default-features = false, features = ["latest"] }
 tokio-stream = { version = "0.1.15", features = ["net"] }
 futures = "0.3.30"
-anyhow = "1.0.81"
+anyhow = "1.0.82"
 tracing = "0.1.40"
 hyper = { version = "0.14.28", features = [ "client", "http1", "http2", "tcp", "stream" ] }
 lazy_static = "1.4.0"
