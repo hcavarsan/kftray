@@ -82,7 +82,7 @@ pub async fn deploy_and_forward_pod(configs: Vec<Config>) -> Result<Vec<CustomRe
             .sample_iter(&Alphanumeric)
             .take(6)
             .map(char::from)
-            .map(|c| c.to_ascii_lowercase()) // Ensure lowercase
+            .map(|c| c.to_ascii_lowercase())
             .collect();
 
         let username = whoami::username().to_lowercase();
@@ -90,7 +90,7 @@ pub async fn deploy_and_forward_pod(configs: Vec<Config>) -> Result<Vec<CustomRe
 
         println!("Cleaned username: {}", clean_username);
 
-        let protocol = config.protocol.to_string().to_lowercase(); // Ensure lowercase
+        let protocol = config.protocol.to_string().to_lowercase();
 
         let hashed_name = format!(
             "kftray-forward-{}-{}-{}-{}",
