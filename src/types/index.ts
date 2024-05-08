@@ -98,6 +98,7 @@ export interface TableProps {
   selectedConfigs: Status[]
   setSelectedConfigs: React.Dispatch<React.SetStateAction<Status[]>>
   confirmDeleteConfigs: () => void
+  setIsInitiating: React.Dispatch<React.SetStateAction<boolean>>
 }
 
 export interface PortForwardRowProps {
@@ -113,6 +114,7 @@ export interface PortForwardRowProps {
   updateSelectionState: (id: number, isRunning: boolean) => void
   selected: boolean
   isInitiating: boolean
+  setIsInitiating: React.Dispatch<React.SetStateAction<boolean>>
   isStopping: boolean
 }
 
@@ -193,6 +195,7 @@ export interface PortForwardSearchTableProps {
   isAlertOpen: boolean
   setIsAlertOpen: (isOpen: boolean) => void
   isInitiating: boolean
+  setIsInitiating: React.Dispatch<React.SetStateAction<boolean>>
   isStopping: boolean
   onSelectionChange: (config: Status, isSelected: boolean) => void
   updateSelectionState: (id: number, isRunning: boolean) => void
