@@ -32,6 +32,7 @@ use tokio::{
 };
 use tokio_stream::wrappers::TcpListenerStream;
 
+use crate::config;
 use crate::{
     kubeforward::{
         port_forward::Target as TargetImpl,
@@ -49,10 +50,7 @@ use crate::{
             TargetPodFinder,
             TargetSelector,
         },
-        response::{
-            CustomResponse,
-            CustomResponseBuilder,
-        },
+        response::CustomResponse,
     },
 };
 
@@ -357,32 +355,26 @@ lazy_static! {
 }
 
 #[tauri::command]
-
 pub async fn start_port_udp_forward(configs: Vec<Config>) -> Result<Vec<CustomResponse>, String> {
     let mut responses = Vec::new();
+    let mut errors = Vec::new();
+    let mut child_handles = Vec::new();
 
-    for config in configs {
+    for config in configs.iter() {
         let selector = TargetSelector::ServiceName(config.service.clone().unwrap());
-
         let remote_port = Port::from(config.remote_port as i32);
-
         let context_name = Some(config.context.clone());
-
         let kubeconfig = Some(config.kubeconfig.clone());
-
-        log::info!("Remote Port: {}", config.remote_port);
-
-        log::info!("Local Port: {}", config.local_port);
-
         let namespace = config.namespace.clone();
-
         let target = TargetImpl::new(selector, remote_port, namespace);
 
+        log::info!("Remote Port: {}", config.remote_port);
+        log::info!("Local Port: {}", config.local_port);
         log::debug!("Attempting to forward to service: {:?}", &config.service);
 
         let local_address_clone = config.local_address.clone();
 
-        let port_forward = PortForward::new(
+        match PortForward::new(
             target,
             config.local_port,
             local_address_clone,
@@ -390,81 +382,119 @@ pub async fn start_port_udp_forward(configs: Vec<Config>) -> Result<Vec<CustomRe
             kubeconfig.flatten(),
         )
         .await
-        .map_err(|e| {
-            log::error!("Failed to create PortForward: {:?}", e);
+        {
+            Ok(port_forward) => match port_forward.port_forward_udp().await {
+                Ok((actual_local_port, handle)) => {
+                    log::info!(
+                        "UDP port forwarding is set up on local port: {:?} for service: {:?}",
+                        actual_local_port,
+                        &config.service
+                    );
 
-            e.to_string()
-        })?;
+                    let handle_key = format!(
+                        "{}_{}",
+                        config.id.unwrap(),
+                        config.service.clone().unwrap_or_default()
+                    );
+                    CHILD_PROCESSES
+                        .lock()
+                        .unwrap()
+                        .insert(handle_key.clone(), handle);
+                    child_handles.push(handle_key.clone()); // Clone handle_key for tracking
 
-        let (actual_local_port, handle) = port_forward.port_forward_udp().await.map_err(|e| {
-            log::error!("Failed to start UDP port forwarding: {:?}", e);
+                    if config.domain_enabled.unwrap_or_default() {
+                        let hostfile_comment = format!(
+                            "kftray custom host for {} - {}",
+                            config.service.clone().unwrap_or_default(),
+                            config.id.unwrap_or_default()
+                        );
 
-            e.to_string()
-        })?;
+                        let mut hosts_builder = HostsBuilder::new(hostfile_comment);
 
-        log::info!(
-            "UDP port forwarding is set up on local port: {:?} for service: {:?}",
-            actual_local_port,
-            &config.service
-        );
+                        if let Some(service_name) = &config.service {
+                            if let Some(local_address) = &config.local_address {
+                                match local_address.parse::<std::net::IpAddr>() {
+                                    Ok(ip_addr) => {
+                                        hosts_builder.add_hostname(
+                                            ip_addr,
+                                            config.alias.clone().unwrap_or_default(),
+                                        );
+                                        if let Err(e) = hosts_builder.write() {
+                                            let error_message = format!(
+                                                "Failed to write to the hostfile for {}: {}",
+                                                service_name, e
+                                            );
+                                            log::error!("{}", &error_message);
+                                            errors.push(error_message);
 
-        // Store the JoinHandle to the global child processes map.
-        CHILD_PROCESSES.lock().unwrap().insert(
-            format!(
-                "{}_{}",
-                config.id.unwrap(),
-                config.service.clone().unwrap_or_default()
-            ),
-            handle,
-        );
-
-        if config.domain_enabled.unwrap_or_default() {
-            let hostfile_comment = format!(
-                "kftray custom host for {} - {}",
-                config.service.clone().unwrap_or_default(),
-                config.id.unwrap_or_default()
-            );
-
-            let mut hosts_builder = HostsBuilder::new(hostfile_comment);
-
-            if let Some(service_name) = &config.service {
-                if let Some(local_address) = &config.local_address {
-                    if let Ok(ip_addr) = local_address.parse::<std::net::IpAddr>() {
-                        hosts_builder
-                            .add_hostname(ip_addr, config.alias.clone().unwrap_or_default());
-
-                        if let Err(e) = hosts_builder.write() {
-                            log::error!(
-                                "Failed to write to the hostfile for {}: {}",
-                                service_name,
-                                e
-                            );
+                                            // Abort the child process due to critical error
+                                            if let Some(handle) =
+                                                CHILD_PROCESSES.lock().unwrap().remove(&handle_key)
+                                            {
+                                                handle.abort();
+                                            }
+                                            continue;
+                                        }
+                                    }
+                                    Err(_) => {
+                                        let warning_message =
+                                            format!("Invalid IP address format: {}", local_address);
+                                        log::warn!("{}", &warning_message);
+                                        errors.push(warning_message);
+                                    }
+                                }
+                            }
                         }
-                    } else {
-                        log::warn!("Invalid IP address format: {}", local_address);
                     }
+
+                    responses.push(CustomResponse {
+                        id: config.id,
+                        service: config.service.clone().unwrap(),
+                        namespace: config.namespace.clone(),
+                        local_port: actual_local_port,
+                        remote_port: config.remote_port,
+                        context: config.context.clone(),
+                        protocol: config.protocol.clone(),
+                        stdout: format!(
+                            "UDP forwarding from 127.0.0.1:{} -> {}:{}",
+                            actual_local_port,
+                            config.remote_port,
+                            config.service.clone().unwrap()
+                        ),
+                        stderr: String::new(),
+                        status: 0,
+                    });
                 }
+                Err(e) => {
+                    let error_message = format!(
+                        "Failed to start UDP port forwarding for service {}: {}",
+                        config.service.clone().unwrap_or_default(),
+                        e
+                    );
+                    log::error!("{}", &error_message);
+                    errors.push(error_message);
+                }
+            },
+            Err(e) => {
+                let error_message = format!(
+                    "Failed to create PortForward for service {}: {}",
+                    config.service.clone().unwrap_or_default(),
+                    e
+                );
+                log::error!("{}", &error_message);
+                errors.push(error_message);
             }
         }
+    }
 
-        // Append a new CustomResponse to responses collection.
-        responses.push(CustomResponse {
-            id: config.id,
-            service: config.service.clone().unwrap(),
-            namespace: config.namespace,
-            local_port: actual_local_port,
-            remote_port: config.remote_port,
-            context: config.context.clone(),
-            protocol: config.protocol.clone(),
-            stdout: format!(
-                "UDP forwarding from 127.0.0.1:{} -> {}:{}",
-                actual_local_port,
-                config.remote_port,
-                config.service.unwrap()
-            ),
-            stderr: String::new(),
-            status: 0,
-        });
+    if !errors.is_empty() {
+        // Abort all child processes if any critical error occurred
+        for handle_key in child_handles {
+            if let Some(handle) = CHILD_PROCESSES.lock().unwrap().remove(&handle_key) {
+                handle.abort();
+            }
+        }
+        return Err(errors.join("\n"));
     }
 
     if !responses.is_empty() {
@@ -475,32 +505,24 @@ pub async fn start_port_udp_forward(configs: Vec<Config>) -> Result<Vec<CustomRe
 }
 
 #[tauri::command]
-
 pub async fn start_port_forward(configs: Vec<Config>) -> Result<Vec<CustomResponse>, String> {
     let mut responses = Vec::new();
+    let mut errors = Vec::new();
+    let mut child_handles = Vec::new();
 
-    for config in configs {
+    for config in configs.iter() {
         let selector = TargetSelector::ServiceName(config.service.clone().unwrap());
-
         let remote_port = Port::from(config.remote_port as i32);
-
         let context_name = Some(config.context.clone());
-
         let kubeconfig = Some(config.kubeconfig.clone());
-
-        log::info!("Remote Port: {}", config.remote_port);
-
-        log::info!("Local Port: {}", config.remote_port);
-
-        log::info!("Local Address: {:?}", config.local_address);
-
         let namespace = config.namespace.clone();
-
         let target = TargetImpl::new(selector, remote_port, namespace);
 
-        log::debug!("Attempting to forward to service: {:?}", &config.service);
+        log::info!("Remote Port: {}", config.remote_port);
+        log::info!("Local Port: {}", config.local_port);
+        log::info!("Local Address: {:?}", config.local_address);
 
-        let port_forward = PortForward::new(
+        match PortForward::new(
             target,
             config.local_port,
             config.local_address.clone(),
@@ -508,81 +530,108 @@ pub async fn start_port_forward(configs: Vec<Config>) -> Result<Vec<CustomRespon
             kubeconfig.clone().flatten(),
         )
         .await
-        .map_err(|e| {
-            log::error!("Failed to create PortForward: {:?}", e);
+        {
+            Ok(port_forward) => match port_forward.port_forward().await {
+                Ok((actual_local_port, handle)) => {
+                    log::info!(
+                        "Port forwarding is set up on local port: {:?} for service: {:?}",
+                        actual_local_port,
+                        &config.service
+                    );
 
-            e.to_string()
-        })?;
+                    let handle_key = format!(
+                        "{}_{}",
+                        config.id.unwrap(),
+                        config.service.clone().unwrap_or_default()
+                    );
+                    CHILD_PROCESSES
+                        .lock()
+                        .unwrap()
+                        .insert(handle_key.clone(), handle);
+                    child_handles.push(handle_key.clone());
 
-        let (actual_local_port, handle) = port_forward.port_forward().await.map_err(|e| {
-            log::error!("Failed to start port forwarding: {:?}", e);
+                    if config.domain_enabled.unwrap_or_default() {
+                        let hostfile_comment = format!(
+                            "kftray custom host for {} - {}",
+                            config.service.clone().unwrap_or_default(),
+                            config.id.unwrap_or_default()
+                        );
 
-            e.to_string()
-        })?;
+                        let mut hosts_builder = HostsBuilder::new(hostfile_comment);
 
-        log::info!(
-            "Port forwarding is set up on local port: {:?} for service: {:?}",
-            actual_local_port,
-            &config.service
-        );
+                        if let Some(service_name) = &config.service {
+                            if let Some(local_address) = &config.local_address {
+                                match local_address.parse::<std::net::IpAddr>() {
+                                    Ok(ip_addr) => {
+                                        hosts_builder.add_hostname(
+                                            ip_addr,
+                                            config.alias.clone().unwrap_or_default(),
+                                        );
+                                        if let Err(e) = hosts_builder.write() {
+                                            let error_message = format!(
+                                                "Failed to write to the hostfile for {}: {}",
+                                                service_name, e
+                                            );
+                                            log::error!("{}", &error_message);
+                                            errors.push(error_message);
 
-        // Store the JoinHandle to the global child processes map.
-        CHILD_PROCESSES.lock().unwrap().insert(
-            format!(
-                "{}_{}",
-                config.id.unwrap(),
-                config.service.clone().unwrap_or_default()
-            ),
-            handle,
-        );
-
-        if config.domain_enabled.unwrap_or_default() {
-            let hostfile_comment = format!(
-                "kftray custom host for {} - {}",
-                config.service.clone().unwrap_or_default(),
-                config.id.unwrap_or_default()
-            );
-
-            let mut hosts_builder = HostsBuilder::new(hostfile_comment);
-
-            if let Some(service_name) = &config.service {
-                if let Some(local_address) = &config.local_address {
-                    if let Ok(ip_addr) = local_address.parse::<std::net::IpAddr>() {
-                        hosts_builder
-                            .add_hostname(ip_addr, config.alias.clone().unwrap_or_default());
-
-                        if let Err(e) = hosts_builder.write() {
-                            log::error!(
-                                "Failed to write to the hostfile for {}: {}",
-                                service_name,
-                                e
-                            );
+                                            if let Some(handle) =
+                                                CHILD_PROCESSES.lock().unwrap().remove(&handle_key)
+                                            {
+                                                handle.abort();
+                                            }
+                                            continue;
+                                        }
+                                    }
+                                    Err(_) => {
+                                        let warning_message =
+                                            format!("Invalid IP address format: {}", local_address);
+                                        log::warn!("{}", &warning_message);
+                                    }
+                                }
+                            }
                         }
-                    } else {
-                        log::warn!("Invalid IP address format: {}", local_address);
                     }
+
+                    responses.push(CustomResponse {
+                        id: config.id,
+                        service: config.service.clone().unwrap(),
+                        namespace: config.namespace.clone(),
+                        local_port: actual_local_port,
+                        remote_port: config.remote_port,
+                        context: config.context.clone(),
+                        protocol: config.protocol.clone(),
+                        stdout: format!(
+                            "Forwarding from 127.0.0.1:{} -> {}:{}",
+                            actual_local_port,
+                            config.remote_port,
+                            config.service.clone().unwrap()
+                        ),
+                        stderr: String::new(),
+                        status: 0,
+                    });
                 }
+                Err(e) => {
+                    let error_message = format!("Failed to start port forwarding: {}", e);
+                    log::error!("{}", &error_message);
+                    errors.push(error_message);
+                }
+            },
+            Err(e) => {
+                let error_message = format!("Failed to create PortForward for service: {}", e);
+                log::error!("{}", &error_message);
+                errors.push(error_message);
             }
         }
+    }
 
-        // Append a new CustomResponse to responses collection.
-        responses.push(CustomResponse {
-            id: config.id,
-            service: config.service.clone().unwrap(),
-            namespace: config.namespace,
-            local_port: actual_local_port,
-            remote_port: config.remote_port,
-            context: config.context.clone(),
-            protocol: config.protocol.clone(),
-            stdout: format!(
-                "Forwarding from 127.0.0.1:{} -> {}:{}",
-                actual_local_port,
-                config.remote_port,
-                config.service.unwrap()
-            ),
-            stderr: String::new(),
-            status: 0,
-        });
+    if !errors.is_empty() {
+        for handle_key in child_handles {
+            if let Some(handle) = CHILD_PROCESSES.lock().unwrap().remove(&handle_key) {
+                handle.abort();
+            }
+        }
+        return Err(errors.join("\n"));
     }
 
     if !responses.is_empty() {
@@ -593,7 +642,6 @@ pub async fn start_port_forward(configs: Vec<Config>) -> Result<Vec<CustomRespon
 }
 
 #[tauri::command]
-
 pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
     log::info!("Attempting to stop all port forwards");
 
@@ -601,7 +649,6 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
 
     let client = Client::try_default().await.map_err(|e| {
         log::error!("Failed to create Kubernetes client: {}", e);
-
         e.to_string()
     })?;
 
@@ -609,124 +656,99 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
     let handle_map: HashMap<String, tokio::task::JoinHandle<()>> =
         CHILD_PROCESSES.lock().unwrap().drain().collect();
 
+    let configs_result = config::get_configs().await;
+    if let Err(e) = configs_result {
+        return Err(format!("Failed to retrieve configs: {}", e));
+    }
+    let configs = configs_result.unwrap();
+
     for (composite_key, handle) in handle_map.iter() {
         let ids: Vec<&str> = composite_key.split('_').collect();
-
         if ids.len() != 2 {
             log::error!(
                 "Invalid composite key format encountered: {}",
                 composite_key
             );
-
             continue;
         }
 
-        let config_id = ids[0];
-
+        let config_id_str = ids[0];
         let service_id = ids[1];
+        let config_id_parsed = config_id_str.parse::<i64>().unwrap_or_default();
 
-        let hostfile_comment = format!("kftray custom host for {} - {}", service_id, config_id);
+        let config = configs
+            .iter()
+            .find(|c| c.id.map_or(false, |id| id == config_id_parsed));
+        if let Some(config) = config {
+            if config.domain_enabled.unwrap_or_default() {
+                let hostfile_comment =
+                    format!("kftray custom host for {} - {}", service_id, config_id_str);
+                let hosts_builder = HostsBuilder::new(&hostfile_comment);
 
-        let hosts_builder = HostsBuilder::new(&hostfile_comment);
+                if let Err(e) = hosts_builder.write() {
+                    log::error!("Failed to write to the hostfile for {}: {}", service_id, e);
+                    responses.push(CustomResponse {
+                        id: Some(config_id_parsed),
+                        service: service_id.to_string(),
+                        namespace: String::new(),
+                        local_port: 0,
+                        remote_port: 0,
+                        context: String::new(),
+                        protocol: String::new(),
+                        stdout: String::new(),
+                        stderr: e.to_string(),
+                        status: 1,
+                    });
+                    continue;
+                }
+            }
+        } else {
+            log::warn!("Config with id '{}' not found.", config_id_str);
+        }
 
-        hosts_builder.write().map_err(|e| {
-            log::error!("Failed to write to the hostfile for {}: {}", service_id, e);
+        log::info!(
+            "Aborting port forwarding task for config_id: {}",
+            config_id_str
+        );
+        handle.abort();
 
+        // Delete pods
+        let pods: Api<Pod> = Api::all(client.clone());
+        let lp = ListParams::default().labels(&format!("config_id={}", config_id_str));
+        let pod_list = pods.list(&lp).await.map_err(|e| {
+            log::error!("Error listing pods for config_id {}: {}", config_id_str, e);
             e.to_string()
         })?;
 
-        log::info!("Aborting port forwarding task for config_id: {}", config_id);
-
-        handle.abort();
-    }
-
-    let pods: Api<Pod> = Api::all(client.clone());
-
-    for (composite_key, _handle) in handle_map.iter() {
-        let config_id = composite_key.split('_').next().unwrap_or_default();
-
-        log::info!("Fetching pods for config_id: {}", config_id);
-
-        let lp = ListParams::default().labels(&format!("config_id={}", config_id));
-
-        let pod_list = match pods.list(&lp).await {
-            Ok(pods) => pods,
-            Err(e) => {
-                log::error!("Error fetching pods for config_id {}: {}", config_id, e);
-
-                continue;
-            }
-        };
-
-        log::info!(
-            "Found {} pods for config_id: {}",
-            pod_list.items.len(),
-            config_id
-        );
-
         let username = whoami::username();
+        let pod_prefix = format!("kftray-forward-{}", username);
 
-        for pod in pod_list.items {
-            if let Some(pod_name) = pod.metadata.name.clone() {
-                if pod_name.starts_with(&format!("kftray-forward-{}", username)) {
+        for pod in pod_list.items.into_iter() {
+            if let Some(pod_name) = pod.metadata.name {
+                if pod_name.starts_with(&pod_prefix) {
                     log::info!("Deleting pod: {}", pod_name);
-
-                    let namespace = pod.metadata.namespace.as_deref().unwrap_or_default();
-
-                    let namespaced_pods: Api<Pod> = Api::namespaced(client.clone(), namespace);
-
-                    let dp = DeleteParams {
-                        grace_period_seconds: Some(0),
-                        propagation_policy: Some(kube::api::PropagationPolicy::Background),
-                        ..Default::default()
-                    };
-
-                    match namespaced_pods.delete(&pod_name, &dp).await {
-                        Ok(_) => {
-                            log::info!("Successfully deleted pod: {}", pod_name);
-
-                            responses.push(
-                                CustomResponseBuilder::new()
-                                    .id(config_id.parse().unwrap_or(0)) // Assuming 0 is an acceptable default
-                                    .service(pod_name.clone())
-                                    .namespace(namespace.to_string())
-                                    .local_port(0)
-                                    .remote_port(0)
-                                    .context(String::new())
-                                    .stdout(format!("Deleted pod {}", pod_name))
-                                    .stderr(String::new())
-                                    .status(0)
-                                    .protocol(String::new())
-                                    .build(),
-                            );
-                        }
-                        Err(e) => {
-                            log::error!("Failed to delete pod {}: {}", pod_name, e);
-
-                            responses.push(
-                                CustomResponseBuilder::new()
-                                    .id(config_id.parse().unwrap_or(0)) // Assuming 0 is an acceptable default
-                                    .service(pod_name.clone())
-                                    .namespace(namespace.to_string())
-                                    .local_port(0)
-                                    .remote_port(0)
-                                    .context(String::new())
-                                    .stdout(format!("Failed to delete pod {}", pod_name))
-                                    .stderr(e.to_string())
-                                    .status(1)
-                                    .protocol(String::new())
-                                    .build(),
-                            );
-                        }
+                    let dp = DeleteParams::default();
+                    if let Err(e) = pods.delete(&pod_name, &dp).await {
+                        log::error!("Failed to delete pod {}: {}", pod_name, e);
+                    } else {
+                        log::info!("Successfully deleted pod: {}", pod_name);
                     }
-                } else {
-                    log::info!(
-                        "Pod {} does not match the username prefix, skipping",
-                        pod_name
-                    );
                 }
             }
         }
+
+        responses.push(CustomResponse {
+            id: Some(config_id_parsed),
+            service: service_id.to_string(),
+            namespace: String::new(),
+            local_port: 0,
+            remote_port: 0,
+            context: String::new(),
+            protocol: String::new(),
+            stdout: String::from("Service port forwarding has been stopped"),
+            stderr: String::new(),
+            status: 0,
+        });
     }
 
     log::info!(
@@ -738,66 +760,84 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
 }
 
 #[tauri::command]
-
 pub async fn stop_port_forward(
     _service_name: String, config_id: String,
 ) -> Result<CustomResponse, String> {
-    let child_processes = CHILD_PROCESSES.lock().unwrap();
+    let composite_key = {
+        let child_processes = CHILD_PROCESSES.lock().unwrap();
+        child_processes
+            .keys()
+            .find(|key| key.starts_with(&format!("{}_", config_id)))
+            .map(|key| key.to_string())
+    };
 
-    let key_to_remove = child_processes
-        .keys()
-        .find(|key| key.starts_with(&format!("{}_", config_id)));
-
-    match key_to_remove {
-        Some(key) => {
-            let composite_key = key.clone();
-
-            drop(child_processes);
-
+    if let Some(composite_key) = composite_key {
+        let handle = {
             let mut child_processes = CHILD_PROCESSES.lock().unwrap();
+            child_processes.remove(&composite_key)
+        };
 
-            if let Some(handle) = child_processes.remove(&composite_key) {
-                handle.abort();
+        if let Some(handle) = handle {
+            handle.abort();
 
-                let (config_id, service_name) = composite_key.split_once('_').unwrap_or(("", ""));
+            let (config_id_str, service_name) = composite_key.split_once('_').unwrap_or(("", ""));
+            let config_id_parsed = config_id_str.parse::<i64>().unwrap_or_default();
 
-                let hostfile_comment =
-                    format!("kftray custom host for {} - {}", service_name, config_id);
+            let configs_result = config::get_configs().await;
+            match configs_result {
+                Ok(configs) => {
+                    let config = configs
+                        .iter()
+                        .find(|c| c.id.map_or(false, |id| id == config_id_parsed));
 
-                let hosts_builder = HostsBuilder::new(hostfile_comment);
+                    if let Some(config) = config {
+                        if config.domain_enabled.unwrap_or_default() {
+                            let hostfile_comment = format!(
+                                "kftray custom host for {} - {}",
+                                service_name, config_id_str
+                            );
 
-                hosts_builder.write().map_err(|e| {
-                    log::error!(
-                        "Failed to write to the hostfile for {}: {}",
-                        service_name,
-                        e
-                    );
+                            let hosts_builder = HostsBuilder::new(hostfile_comment);
 
-                    e.to_string()
-                })?;
+                            hosts_builder.write().map_err(|e| {
+                                log::error!(
+                                    "Failed to remove from the hostfile for {}: {}",
+                                    service_name,
+                                    e
+                                );
 
-                Ok(CustomResponse {
-                    id: None,
-                    service: service_name.to_string(),
-                    namespace: String::new(),
-                    local_port: 0,
-                    remote_port: 0,
-                    context: String::new(),
-                    stdout: String::from("Service port forwarding has been stopped"),
-                    stderr: String::new(),
-                    status: 0,
-                    protocol: String::new(),
-                })
-            } else {
-                Err(format!(
-                    "Failed to stop port forwarding process for config_id '{}'",
-                    config_id
-                ))
+                                e.to_string()
+                            })?;
+                        }
+                    } else {
+                        log::warn!("Config with id '{}' not found.", config_id_str);
+                    }
+
+                    Ok(CustomResponse {
+                        id: None,
+                        service: service_name.to_string(),
+                        namespace: String::new(),
+                        local_port: 0,
+                        remote_port: 0,
+                        context: String::new(),
+                        protocol: String::new(),
+                        stdout: String::from("Service port forwarding has been stopped"),
+                        stderr: String::new(),
+                        status: 0,
+                    })
+                }
+                Err(e) => Err(format!("Failed to retrieve configs: {}", e)),
             }
+        } else {
+            Err(format!(
+                "Failed to stop port forwarding process for config_id '{}'",
+                config_id
+            ))
         }
-        None => Err(format!(
+    } else {
+        Err(format!(
             "No port forwarding process found for config_id '{}'",
             config_id
-        )),
+        ))
     }
 }
