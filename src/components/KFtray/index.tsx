@@ -3,11 +3,11 @@ import React, { useEffect, useState } from 'react'
 import { Box, useColorModeValue, VStack } from '@chakra-ui/react'
 import { open, save } from '@tauri-apps/api/dialog'
 import { readTextFile, writeTextFile } from '@tauri-apps/api/fs'
-import { sendNotification } from '@tauri-apps/api/notification'
 import { invoke } from '@tauri-apps/api/tauri'
 
 import { Config, Response, Status } from '../../types'
 import AddConfigModal from '../AddConfigModal'
+import useCustomToast from '../CustomToast'
 import FooterMenu from '../FooterMenu'
 import PortForwardTable from '../PortForwardTable'
 import SettingsModal from '../SettingsModal'
@@ -17,6 +17,7 @@ const initialLocalPort = 0
 const initialId = 0
 const initialStatus = 0
 const KFTray = () => {
+  const toast = useCustomToast()
   const [pollingInterval, setPollingInterval] = useState(0)
   const [configs, setConfigs] = useState<Status[]>([])
   const [isModalOpen, setIsModalOpen] = useState(false)
@@ -172,18 +173,21 @@ const KFTray = () => {
 
       if (filePath) {
         await writeTextFile(filePath, json)
-        await sendNotification({
+        toast({
           title: 'Success',
-          body: 'Configuration exported successfully.',
-          icon: 'success',
+          description: 'Configuration exported successfully.',
+          status: 'success',
         })
       }
     } catch (error) {
-      console.error('Failed to export configs:', error)
-      await sendNotification({
-        title: 'Error',
-        body: 'Failed to export configs.',
-        icon: 'error',
+      const errorMessage =
+        error instanceof Error ? error.message : String(error)
+
+      console.error('Failed to export configs:', errorMessage)
+      toast({
+        title: 'Failed to export configs',
+        description: errorMessage,
+        status: 'error',
       })
     }
   }
@@ -209,25 +213,24 @@ const KFTray = () => {
         const updatedConfigs = await invoke<Status[]>('get_configs')
 
         setConfigs(updatedConfigs)
-
-        await sendNotification({
+        toast({
           title: 'Success',
-          body: 'Configurations imported successfully.',
-          icon: 'success',
+          description: 'Configuration imported successfully.',
+          status: 'success',
         })
       } else {
-        await sendNotification({
+        toast({
           title: 'Error',
-          body: 'Failed to import configurations.',
-          icon: 'error',
+          description: 'Failed to import configurations.',
+          status: 'error',
         })
       }
     } catch (error) {
       console.error('Error during import:', error)
-      await sendNotification({
+      toast({
         title: 'Error',
-        body: 'Failed to import configurations.',
-        icon: 'error',
+        description: 'Failed to import configurations.',
+        status: 'error',
       })
     }
   }
@@ -284,19 +287,18 @@ const KFTray = () => {
       const updatedConfigs = await invoke<Status[]>('get_configs')
 
       setConfigs(updatedConfigs)
-
-      await sendNotification({
+      toast({
         title: 'Success',
-        body: 'Configuration updated successfully.',
-        icon: 'success',
+        description: 'Configuration updated successfully.',
+        status: 'success',
       })
 
       closeModal()
     } catch (error) {
-      await sendNotification({
+      toast({
         title: 'Error',
-        body: 'Failed to update configuration.',
-        icon: 'error',
+        description: 'Failed to update configuration.',
+        status: 'error',
       })
     }
   }
@@ -413,20 +415,19 @@ const KFTray = () => {
       }
 
       setConfigs(updatedConfigs)
-
-      await sendNotification({
+      toast({
         title: 'Success',
-        body: `Configuration ${isEdit ? 'updated' : 'added'} successfully.`,
-        icon: 'success',
+        description: `Configuration ${isEdit ? 'updated' : 'added'} successfully.`,
+        status: 'success',
       })
 
       closeModal()
     } catch (error) {
       console.error(`Failed to ${isEdit ? 'update' : 'add'} config:`, error)
-      await sendNotification({
+      toast({
         title: 'Error',
-        body: `Failed to ${isEdit ? 'update' : 'add'} configuration. Error: ${error}`,
-        icon: 'error',
+        description: `Failed to ${isEdit ? 'update' : 'add'} configuration.`,
+        status: 'error',
       })
     }
   }
@@ -450,10 +451,10 @@ const KFTray = () => {
       .map(e => `Config ID: ${e.id}, Error: ${e.error}`)
       .join(', ')
 
-      await sendNotification({
+      toast({
         title: 'Error Starting Port Forwarding',
-        body: `Some configs failed: ${errorMessage}`,
-        icon: 'error',
+        description: `Some configs failed: ${errorMessage}`,
+        status: 'error',
       })
     }
 
@@ -490,10 +491,10 @@ const KFTray = () => {
 
   const confirmDeleteConfig = async () => {
     if (typeof configToDelete !== 'number') {
-      await sendNotification({
+      toast({
         title: 'Error',
-        body: 'Configuration id is undefined.',
-        icon: 'error',
+        description: 'Configuration id is undefined.',
+        status: 'error',
       })
 
       return
@@ -514,17 +515,17 @@ const KFTray = () => {
 
       setConfigs(updatedConfigs)
 
-      await sendNotification({
+      toast({
         title: 'Success',
-        body: 'Configuration deleted successfully.',
-        icon: 'success',
+        description: 'Configuration deleted successfully.',
+        status: 'success',
       })
     } catch (error) {
       console.error('Failed to delete configuration:', error)
-      await sendNotification({
+      toast({
         title: 'Error',
-        body: 'Failed to delete configuration: "unknown error"',
-        icon: 'error',
+        description: 'Failed to delete configuration: "unknown error"',
+        status: 'error',
       })
     }
 
@@ -533,10 +534,10 @@ const KFTray = () => {
 
   const confirmDeleteConfigs = async () => {
     if (!Array.isArray(configsToDelete) || !configsToDelete.length) {
-      await sendNotification({
+      toast({
         title: 'Error',
-        body: 'No configurations selected for deletion.',
-        icon: 'error',
+        description: 'No configurations selected for deletion.',
+        status: 'error',
       })
 
       return
@@ -558,17 +559,17 @@ const KFTray = () => {
       setConfigs(updatedConfigs)
       setSelectedConfigs([])
 
-      await sendNotification({
+      toast({
         title: 'Success',
-        body: 'Configurations deleted successfully.',
-        icon: 'success',
+        description: 'Configurations deleted successfully.',
+        status: 'success',
       })
     } catch (error) {
       console.error('Failed to delete configurations:', error)
-      await sendNotification({
+      toast({
         title: 'Error',
-        body: 'Failed to delete configurations: "unknown error"',
-        icon: 'error',
+        description: 'Failed to delete configurations: "unknown error"',
+        status: 'error',
       })
     }
 
@@ -590,10 +591,11 @@ const KFTray = () => {
 
         setConfigs(updatedConfigs)
         setIsPortForwarding(false)
-        await sendNotification({
+        toast({
           title: 'Success',
-          body: 'Port forwarding stopped successfully for all configurations.',
-          icon: 'success',
+          description:
+            'Port forwarding stopped successfully for all configurations.',
+          status: 'success',
         })
       } else {
         const errorMessages = responses
@@ -601,18 +603,18 @@ const KFTray = () => {
         .map(res => `${res.service}: ${res.stderr}`)
         .join(', ')
 
-        await sendNotification({
+        toast({
           title: 'Error',
-          body: `Port forwarding failed for some configurations: ${errorMessages}`,
-          icon: 'error',
+          description: `Port forwarding failed for some configurations: ${errorMessages}`,
+          status: 'error',
         })
       }
     } catch (error) {
       console.error('An error occurred while stopping port forwarding:', error)
-      await sendNotification({
+      toast({
         title: 'Error',
-        body: `An error occurred while stopping port forwarding: ${error}`,
-        icon: 'error',
+        description: `An error occurred while stopping port forwarding: ${error}`,
+        status: 'error',
       })
     }
     setIsStopping(false)

@@ -23,7 +23,6 @@ const theme = extendTheme({
           bg: 'green.600',
           color: 'white',
         },
-        // Add more variants as needed
       },
       defaultProps: {
         variant: 'error',
