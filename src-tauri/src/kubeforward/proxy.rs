@@ -62,7 +62,7 @@ fn render_json_template(template: &str, values: &HashMap<&str, String>) -> Strin
 pub async fn deploy_and_forward_pod(configs: Vec<Config>) -> Result<Vec<CustomResponse>, String> {
     let mut responses: Vec<CustomResponse> = Vec::new();
 
-    for mut config in configs {
+    for mut config in configs.into_iter() {
         let client = if !config.context.is_empty() {
             let kubeconfig = config.kubeconfig.clone();
 
@@ -81,21 +81,22 @@ pub async fn deploy_and_forward_pod(configs: Vec<Config>) -> Result<Vec<CustomRe
         let random_string: String = rand::thread_rng()
             .sample_iter(&Alphanumeric)
             .take(6)
-            .map(|b| char::from(b).to_ascii_lowercase())
+            .map(char::from)
+            .map(|c| c.to_ascii_lowercase()) // Ensure lowercase
             .collect();
 
         let username = whoami::username().to_lowercase();
-
         let clean_username: String = username.chars().filter(|c| c.is_alphanumeric()).collect();
 
         println!("Cleaned username: {}", clean_username);
 
-        let protocol = config.protocol.to_string();
+        let protocol = config.protocol.to_string().to_lowercase(); // Ensure lowercase
 
         let hashed_name = format!(
             "kftray-forward-{}-{}-{}-{}",
             clean_username, protocol, timestamp, random_string
-        );
+        )
+        .to_lowercase();
 
         let config_id_str = config
             .id
@@ -106,76 +107,75 @@ pub async fn deploy_and_forward_pod(configs: Vec<Config>) -> Result<Vec<CustomRe
             .as_ref()
             .map_or(true, String::is_empty)
         {
-            config.remote_address.clone_from(&config.service);
+            config.remote_address.clone_from(&config.service)
         }
 
         let mut values: HashMap<&str, String> = HashMap::new();
-
         values.insert("hashed_name", hashed_name.clone());
-
-        values.insert("config_id", config_id_str.clone());
-
+        values.insert("config_id", config_id_str);
         values.insert("service_name", config.service.as_ref().unwrap().clone());
-
         values.insert(
             "remote_address",
             config.remote_address.as_ref().unwrap().clone(),
         );
-
         values.insert("remote_port", config.remote_port.to_string());
-
         values.insert("local_port", config.remote_port.to_string());
-
         values.insert("protocol", protocol.clone());
 
         let mut file = File::open(get_pod_manifest_path()).map_err(|e| e.to_string())?;
-
         let mut contents = String::new();
-
         file.read_to_string(&mut contents)
             .map_err(|e| e.to_string())?;
 
         let rendered_json = render_json_template(&contents, &values);
-
         let pod: Pod = serde_json::from_str(&rendered_json).map_err(|e| e.to_string())?;
 
         let pods: Api<Pod> = Api::namespaced(client.clone(), &config.namespace);
 
-        pods.create(&kube::api::PostParams::default(), &pod)
-            .await
-            .map_err(|e| e.to_string())?;
+        match pods.create(&kube::api::PostParams::default(), &pod).await {
+            Ok(_) => {
+                if let Err(e) = kube_runtime::wait::await_condition(
+                    pods.clone(),
+                    &hashed_name,
+                    conditions::is_pod_running(),
+                )
+                .await
+                {
+                    let _ = pods
+                        .delete(&hashed_name, &kube::api::DeleteParams::default())
+                        .await;
+                    return Err(e.to_string());
+                }
 
-        kube_runtime::wait::await_condition(
-            pods.clone(),
-            &hashed_name.clone(),
-            conditions::is_pod_running(),
-        )
-        .await
-        .map_err(|e| e.to_string())?;
+                config.service = Some(hashed_name.clone());
 
-        config.service = Some(hashed_name.clone());
+                let start_response = match protocol.as_str() {
+                    "udp" => start_port_udp_forward(vec![config.clone()]).await,
+                    "tcp" => start_port_forward(vec![config.clone()]).await,
+                    _ => {
+                        let _ = pods
+                            .delete(&hashed_name, &kube::api::DeleteParams::default())
+                            .await;
+                        return Err("Unsupported proxy type".to_string());
+                    }
+                };
 
-        let start_response = match protocol.as_str() {
-            "udp" => start_port_udp_forward(vec![config.clone()]).await,
-            "tcp" => start_port_forward(vec![config.clone()]).await,
-            _ => return Err("Unsupported proxy type".to_string()),
-        };
-
-        match start_response {
-            Ok(mut port_forward_responses) => {
-                let response = port_forward_responses
-                    .pop()
-                    .ok_or("No response received from port forwarding")?;
-
-                responses.push(response);
+                match start_response {
+                    Ok(mut port_forward_responses) => {
+                        let response = port_forward_responses
+                            .pop()
+                            .ok_or("No response received from port forwarding")?;
+                        responses.push(response);
+                    }
+                    Err(e) => {
+                        let _ = pods
+                            .delete(&hashed_name, &kube::api::DeleteParams::default())
+                            .await;
+                        return Err(format!("Failed to start port forwarding {}", e));
+                    }
+                }
             }
-            Err(e) => {
-                return Err(format!(
-                    "Failed to start port forwarding for {}: {}",
-                    config.service.unwrap(),
-                    e
-                ));
-            }
+            Err(e) => return Err(e.to_string()),
         }
     }
 

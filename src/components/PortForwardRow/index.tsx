@@ -77,7 +77,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
         error instanceof Error ? error.message : String(error)
 
       toast({
-        duration: 2000,
+        duration: 3000,
         isClosable: true,
         position: 'top-right',
         render: () => (
@@ -87,10 +87,17 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
             bg='red.800'
             fontSize='xs'
             maxWidth='300px'
-            mt='3'
+            borderRadius='lg'
+            boxShadow='md'
+            top='0'
+            right='-10'
           >
-            <Text fontWeight='bold'>Error starting port forwarding</Text>
-            <Text mt={1}>{errorMessage}</Text>
+            <Text fontWeight='bold' fontSize='12px'>
+              Error starting port forwarding
+            </Text>
+            <Text mt={1} fontSize='10px'>
+              {errorMessage}
+            </Text>
           </Box>
         ),
       })
@@ -127,7 +134,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
         error instanceof Error ? error.message : String(error)
 
       toast({
-        duration: 2000,
+        duration: 3000,
         isClosable: true,
         position: 'top-right',
         render: () => (
@@ -137,10 +144,16 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
             bg='red.800'
             fontSize='xs'
             maxWidth='300px'
-            mt='3'
+            borderRadius='lg'
+            boxShadow='md'
+            top='0'
           >
-            <Text fontWeight='bold'>Error stopping port forwarding</Text>
-            <Text mt={1}>{errorMessage}</Text>
+            <Text fontWeight='bold' fontSize='12px'>
+              Error stopping port forwarding
+            </Text>
+            <Text mt={1} fontSize='10px'>
+              {errorMessage}
+            </Text>
           </Box>
         ),
       })
