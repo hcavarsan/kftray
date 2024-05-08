@@ -15,12 +15,10 @@ import {
   IconButton,
   Switch,
   Td,
-  Text,
   Tooltip,
   Tr,
   useColorModeValue,
   useDisclosure,
-  useToast,
 } from '@chakra-ui/react'
 import { faInfoCircle, faPen, faTrash } from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
@@ -28,6 +26,7 @@ import { open } from '@tauri-apps/api/shell'
 import { invoke } from '@tauri-apps/api/tauri'
 
 import { PortForwardRowProps } from '../../types'
+import useCustomToast from '../CustomToast'
 
 const PortForwardRow: React.FC<PortForwardRowProps> = ({
   config,
@@ -46,7 +45,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   const { isOpen, onOpen } = useDisclosure()
   const textColor = useColorModeValue('gray.100', 'gray.100')
   const cancelRef = React.useRef<HTMLButtonElement>(null)
-  const toast = useToast()
+  const toast = useCustomToast()
   const handleOpenLocalURL = () => {
     const baseUrl = config.domain_enabled ? config.alias : config.local_address
 
@@ -77,30 +76,11 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
         error instanceof Error ? error.message : String(error)
 
       toast({
-        duration: 3000,
-        isClosable: true,
-        position: 'top-right',
-        render: () => (
-          <Box
-            color='white'
-            p={3}
-            bg='red.800'
-            fontSize='xs'
-            maxWidth='300px'
-            borderRadius='lg'
-            boxShadow='md'
-            top='0'
-            right='-10'
-          >
-            <Text fontWeight='bold' fontSize='12px'>
-              Error starting port forwarding
-            </Text>
-            <Text mt={1} fontSize='10px'>
-              {errorMessage}
-            </Text>
-          </Box>
-        ),
+        title: 'Error starting port forwarding',
+        description: errorMessage,
+        status: 'error',
       })
+
       updateConfigRunningState(config.id, false)
     }
   }
@@ -134,28 +114,9 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
         error instanceof Error ? error.message : String(error)
 
       toast({
-        duration: 3000,
-        isClosable: true,
-        position: 'top-right',
-        render: () => (
-          <Box
-            color='white'
-            p={3}
-            bg='red.800'
-            fontSize='xs'
-            maxWidth='300px'
-            borderRadius='lg'
-            boxShadow='md'
-            top='0'
-          >
-            <Text fontWeight='bold' fontSize='12px'>
-              Error stopping port forwarding
-            </Text>
-            <Text mt={1} fontSize='10px'>
-              {errorMessage}
-            </Text>
-          </Box>
-        ),
+        title: 'Error stopping port forwarding',
+        description: errorMessage,
+        status: 'error',
       })
     } finally {
       console.log('stopPortForwarding finally')
