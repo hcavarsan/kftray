@@ -41,6 +41,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   onSelectionChange,
   updateSelectionState,
   isInitiating,
+  setIsInitiating,
 }) => {
   const { isOpen, onOpen } = useDisclosure()
   const textColor = useColorModeValue('gray.100', 'gray.100')
@@ -124,6 +125,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   }
 
   const togglePortForwarding = async (isChecked: boolean) => {
+    setIsInitiating(true)
     try {
       if (isChecked) {
         await startPortForwarding()
@@ -134,6 +136,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
       console.error('Error toggling port-forwarding:', error)
     } finally {
       console.log('togglePortForwarding finally')
+      setIsInitiating(false)
     }
   }
   const handleDeleteClick = () => {
@@ -250,7 +253,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
           <Flex alignItems='center'>
             <Switch
               colorScheme='facebook'
-              isChecked={config.isRunning}
+              isChecked={config.isRunning && !isInitiating}
               size='sm'
               onChange={e => togglePortForwarding(e.target.checked)}
               isDisabled={isInitiating}
