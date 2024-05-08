@@ -206,7 +206,7 @@ export interface CustomToastProps {
 
 export interface ShowToastParams {
   title: string
-  description: string
+  description?: string
   status?: 'info' | 'warning' | 'success' | 'error'
   duration?: number
   isClosable?: boolean

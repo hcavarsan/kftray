@@ -33,6 +33,7 @@ import {
 import { invoke } from '@tauri-apps/api/tauri'
 
 import { SettingsModalProps } from '../../types'
+import useCustomToast from '../CustomToast'
 
 const SettingsModal: React.FC<SettingsModalProps> = ({
   isSettingsModalOpen,
@@ -52,6 +53,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
 
   const cancelRef = React.useRef<HTMLButtonElement>(null)
   const [showTooltip, setShowTooltip] = React.useState(false)
+  const toast = useCustomToast()
 
   const serviceName = 'kftray'
   const accountName = 'github_config'
@@ -82,8 +84,15 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
           setCredentialsSaved(true)
         }
       } catch (error) {
-        if (isComponentMounted) {
-          setCredentialsSaved(false)
+        if (isComponentMounted && isSettingsModalOpen && credentialsSaved) {
+          toast({
+            title: 'Error fetching credentials',
+            description:
+              error instanceof Error
+                ? error.message
+                : 'An unknown error occurred',
+            status: 'error',
+          })
         }
       } finally {
         if (isComponentMounted) {
@@ -92,9 +101,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
       }
     }
 
-    if (isSettingsModalOpen) {
-      getCredentials()
-    }
+    getCredentials()
 
     return () => {
       isComponentMounted = false
@@ -102,6 +109,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   }, [
     isSettingsModalOpen,
     credentialsSaved,
+    serviceName,
+    accountName,
+    toast,
     setCredentialsSaved,
     setPollingInterval,
   ])
@@ -123,8 +133,18 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
       onSettingsSaved?.()
       setCredentialsSaved(true)
       closeSettingsModal()
+      toast({
+        title: 'Git configuration deleted successfully',
+        status: 'success',
+      })
     } catch (error) {
       console.error('Failed to delete git config:', error)
+      toast({
+        title: 'Error deleting git configuration',
+        description:
+          error instanceof Error ? error.message : 'An unknown error occurred',
+        status: 'error',
+      })
     } finally {
       closeSettingsModal()
     }
@@ -178,8 +198,18 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
 
       onSettingsSaved?.()
       setCredentialsSaved(true)
+      toast({
+        title: 'Settings saved successfully',
+        status: 'success',
+      })
     } catch (error) {
       console.error('Failed to save settings:', error)
+      toast({
+        title: 'Error saving settings',
+        description:
+          error instanceof Error ? error.message : 'An unknown error occurred',
+        status: 'error',
+      })
     } finally {
       setIsLoading(false)
       closeSettingsModal()

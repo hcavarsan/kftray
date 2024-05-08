@@ -9,7 +9,7 @@ const useCustomToast = () => {
 
   const showToast = ({
     title,
-    description,
+    description = '',
     status = 'error',
     duration = 3000,
     isClosable = true,
