@@ -5,6 +5,7 @@ import { Box, Button, HStack, Spinner, Text, Tooltip } from '@chakra-ui/react'
 import { invoke } from '@tauri-apps/api/tauri'
 
 import { GitConfig, SyncConfigsButtonProps } from '../../types'
+import useCustomToast from '../CustomToast'
 
 const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
   serviceName,
@@ -20,6 +21,7 @@ const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
   const [credentials, setCredentials] = useState<GitConfig | null>(null)
   const [lastSync, setLastSync] = useState<string | null>(null)
   const [nextSync, setNextSync] = useState<string | null>(null)
+  const toast = useCustomToast()
 
   useEffect(() => {
     async function pollingConfigs() {
@@ -133,9 +135,18 @@ const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
       setNextSync(nextSyncDate)
 
       onConfigsSynced?.()
+      toast({
+        title: 'Configs synced successfully',
+        status: 'success',
+      })
     } catch (error) {
       if (error instanceof Error) {
         onSyncFailure?.(error)
+        toast({
+          title: 'Error syncing configs',
+          description: error.message,
+          status: 'error',
+        })
       }
     } finally {
       setIsLoading(false)
@@ -175,7 +186,6 @@ const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
         {isLoading ? (
           <HStack spacing={1}>
             <Spinner size='sm' />
-            <Text>Loading...</Text>
           </HStack>
         ) : (
           <HStack spacing={1}>
