@@ -197,3 +197,24 @@ export interface PortForwardSearchTableProps {
   onSelectionChange: (config: Status, isSelected: boolean) => void
   updateSelectionState: (id: number, isRunning: boolean) => void
 }
+
+export interface CustomToastProps {
+  title: string
+  description: string
+  status: 'info' | 'warning' | 'success' | 'error'
+}
+
+export interface ShowToastParams {
+  title: string
+  description: string
+  status?: 'info' | 'warning' | 'success' | 'error'
+  duration?: number
+  isClosable?: boolean
+  position?:
+    | 'top'
+    | 'top-right'
+    | 'top-left'
+    | 'bottom'
+    | 'bottom-right'
+    | 'bottom-left'
+}
