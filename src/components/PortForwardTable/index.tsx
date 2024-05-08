@@ -52,6 +52,7 @@ import PortForwardSearchTable from '../PortForwardSearchTable'
 const PortForwardTable: React.FC<TableProps> = ({
   configs,
   isInitiating,
+  setIsInitiating,
   isStopping,
   initiatePortForwarding,
   stopPortForwarding,
@@ -446,6 +447,7 @@ const PortForwardTable: React.FC<TableProps> = ({
             isAlertOpen={isAlertOpen}
             setIsAlertOpen={setIsAlertOpen}
             isInitiating={isInitiating}
+            setIsInitiating={setIsInitiating}
             isStopping={isStopping}
             onSelectionChange={(config, isSelected) =>
               handleSelectionChange(config, isSelected)
@@ -633,6 +635,7 @@ const PortForwardTable: React.FC<TableProps> = ({
                                       updateConfigRunningState
                                     }
                                     isInitiating={isInitiating}
+                                    setIsInitiating={setIsInitiating}
                                     isStopping={isStopping}
                                   />
                                 ))}

@@ -670,6 +670,7 @@ const KFTray = () => {
           configs={configs}
           initiatePortForwarding={initiatePortForwarding}
           isInitiating={isInitiating}
+          setIsInitiating={setIsInitiating}
           isStopping={isStopping}
           handleEditConfig={handleEditConfig}
           stopPortForwarding={stopPortForwarding}

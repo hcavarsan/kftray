@@ -27,6 +27,7 @@ const PortForwardSearchTable: React.FC<PortForwardSearchTableProps> = ({
   isStopping,
   onSelectionChange,
   updateSelectionState,
+  setIsInitiating,
 }) => {
   const textColor = useColorModeValue('gray.400', 'gray.400')
   const boxShadow = useColorModeValue('base', 'md')
@@ -69,6 +70,7 @@ const PortForwardSearchTable: React.FC<PortForwardSearchTableProps> = ({
                 showContext={true}
                 selected={false}
                 isInitiating={isInitiating}
+                setIsInitiating={setIsInitiating}
                 isStopping={isStopping}
                 onSelectionChange={isSelected =>
                   onSelectionChange(config, isSelected)
