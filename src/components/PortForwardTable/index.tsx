@@ -3,11 +3,11 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Accordion, Flex, useColorModeValue } from '@chakra-ui/react'
 
 import { Status, TableProps } from '../../types'
+import BulkDeleteAlertDialog from '../BulkDeleteAlertDialog'
+import ContextAccordionItem from '../ContextAccordionItem'
 import ControlPanel from '../ControlPanel'
 import Header from '../Header'
 
-import BulkDeleteAlertDialog from './BulkDeleteAlertDialog'
-import ContextAccordionItem from './ContextAccordionItem'
 import { useConfigsByContext } from './useConfigsByContext'
 
 const PortForwardTable: React.FC<TableProps> = ({

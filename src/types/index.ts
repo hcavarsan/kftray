@@ -243,8 +243,8 @@ export interface ContextAccordionItemProps {
   contextConfigs: Status[]
   selectedConfigs: Status[]
   handleDeleteConfig: (id: number) => void
-  confirmDeleteConfig: (id: number) => void
-  handleEditConfig: (config: Status) => void
+  confirmDeleteConfig: () => void
+  handleEditConfig: (id: number) => void
   isAlertOpen: boolean
   setIsAlertOpen: (isOpen: boolean) => void
   updateConfigRunningState: (id: number, isRunning: boolean) => void
@@ -253,6 +253,6 @@ export interface ContextAccordionItemProps {
   selectedConfigsByContext: Record<string, boolean>
   handleCheckboxChange: (context: string, isChecked: boolean) => void
   isInitiating: boolean
-  setIsInitiating: (isInitiating: boolean) => void
+  setIsInitiating: React.Dispatch<React.SetStateAction<boolean>>
   isStopping: boolean
 }
