@@ -1,13 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
-import { MdClose, MdRefresh } from 'react-icons/md'
 
-import {
-  CheckCircleIcon,
-  ChevronDownIcon,
-  ChevronUpIcon,
-  InfoIcon,
-  SearchIcon,
-} from '@chakra-ui/icons'
+import { CheckCircleIcon, InfoIcon } from '@chakra-ui/icons'
 import {
   Accordion,
   AccordionButton,
@@ -22,13 +15,8 @@ import {
   AlertDialogOverlay,
   Box,
   Button,
-  ButtonGroup,
   Checkbox,
   Flex,
-  Image,
-  Input,
-  InputGroup,
-  InputLeftElement,
   Progress,
   Table,
   Tag,
@@ -42,10 +30,10 @@ import {
   Tr,
   useColorModeValue,
 } from '@chakra-ui/react'
-import { app } from '@tauri-apps/api'
 
-import logo from '../../assets/logo.png'
 import { Status, TableProps } from '../../types'
+import ControlPanel from '../ControlPanel'
+import Header from '../Header'
 import PortForwardRow from '../PortForwardRow'
 
 import { useConfigsByContext } from './useConfigsByContext'
@@ -71,7 +59,6 @@ const PortForwardTable: React.FC<TableProps> = ({
 }) => {
   const [search, setSearch] = useState('')
   const [expandedIndices, setExpandedIndices] = useState<number[]>([])
-  const [version, setVersion] = useState('')
   const cancelRef = React.useRef<HTMLButtonElement>(null)
   const prevSelectedConfigsRef = useRef(selectedConfigs)
   const [isSelectAllChecked, setIsSelectAllChecked] = useState(false)
@@ -80,10 +67,6 @@ const PortForwardTable: React.FC<TableProps> = ({
     Record<string, boolean>
   >({})
   const [isCheckboxAction, setIsCheckboxAction] = useState(false)
-
-  useEffect(() => {
-    app.getVersion().then(setVersion).catch(console.error)
-  }, [])
 
   const updateSelectionState = (id: number, isRunning: boolean) => {
     if (isRunning) {
@@ -141,12 +124,6 @@ const PortForwardTable: React.FC<TableProps> = ({
     }
   }
 
-  const startAllPortForwarding = () => {
-    const stoppedConfigs = configs.filter(config => !config.isRunning)
-
-    initiatePortForwarding(stoppedConfigs)
-  }
-
   const stopAllPortForwarding = () => {
     const runningConfigs = configs.filter(config => config.isRunning)
 
@@ -161,9 +138,6 @@ const PortForwardTable: React.FC<TableProps> = ({
   const boxShadow = useColorModeValue('base', 'lg')
   const fontFamily = '\'Inter\', sans-serif'
 
-  const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    setSearch(event.target.value)
-  }
   const handleAccordionChange = (expandedIndex: number | number[]) => {
     if (!isCheckboxAction) {
       setExpandedIndices(expandedIndex as number[])
@@ -172,7 +146,9 @@ const PortForwardTable: React.FC<TableProps> = ({
 
   // eslint-disable-next-line max-params
   const handleCheckboxChange = (context: string, isChecked: boolean) => {
+    setIsCheckboxAction(true)
     handleContextSelectionChange(context, isChecked)
+    setIsCheckboxAction(false)
   }
 
   useEffect(() => {
@@ -299,26 +275,7 @@ const PortForwardTable: React.FC<TableProps> = ({
             </AlertDialogContent>
           </AlertDialogOverlay>
         </AlertDialog>
-        <Tooltip
-          label={`Kftray v${version}`}
-          aria-label='Kftray version'
-          fontSize='xs'
-          lineHeight='tight'
-        >
-          <Image src={logo} alt='Kftray Logo' boxSize='32px' ml={3} mt={0.5} />
-        </Tooltip>
-        <InputGroup size='xs' width='250px' mt='1'>
-          <InputLeftElement pointerEvents='none'>
-            <SearchIcon color='gray.300' />
-          </InputLeftElement>
-          <Input
-            height='25px'
-            type='text'
-            placeholder='Search'
-            onChange={handleSearchChange}
-            borderRadius='md'
-          />
-        </InputGroup>
+        <Header search={search} setSearch={setSearch} />
       </Flex>
       <Flex
         direction='row'
@@ -335,73 +292,21 @@ const PortForwardTable: React.FC<TableProps> = ({
         width='98.4%'
         borderColor={borderColor}
       >
-        <ButtonGroup variant='outline'>
-          <Checkbox
-            isChecked={isSelectAllChecked}
-            onChange={e => {
-              setIsSelectAllChecked(e.target.checked)
-              if (e.target.checked) {
-                setSelectedConfigs(configs)
-              } else {
-                setSelectedConfigs([])
-              }
-            }}
-            mr={2}
-            ml={2}
-            size='sm'
-          />
-          <Button
-            leftIcon={<MdRefresh />}
-            colorScheme='facebook'
-            isLoading={isInitiating}
-            loadingText={isInitiating ? 'Starting...' : null}
-            onClick={
-              selectedConfigs.length > 0
-                ? startSelectedPortForwarding
-                : startAllPortForwarding
-            }
-            isDisabled={
-              isInitiating ||
-              (!selectedConfigs.length &&
-                !configs.some(config => !config.isRunning))
-            }
-            size='xs'
-          >
-            {selectedConfigs.length > 0 ? 'Start Selected' : 'Start All'}
-          </Button>
-          <Button
-            leftIcon={<MdClose />}
-            colorScheme='facebook'
-            isLoading={isStopping}
-            loadingText='Stopping...'
-            onClick={stopAllPortForwarding}
-            isDisabled={isStopping || !configs.some(config => config.isRunning)}
-            size='xs'
-          >
-            Stop All
-          </Button>
-        </ButtonGroup>
-
-        <Flex justifyContent='flex-end' width='100%'>
-          <Button
-            onClick={toggleExpandAll}
-            size='xs'
-            colorScheme='facebook'
-            variant='outline'
-            rightIcon={
-              expandedIndices.length ===
-              Object.keys(configsByContext).length ? (
-                  <ChevronUpIcon />
-                ) : (
-                  <ChevronDownIcon />
-                )
-            }
-          >
-            {expandedIndices.length === Object.keys(configsByContext).length
-              ? 'Collapse All'
-              : 'Expand All'}
-          </Button>
-        </Flex>
+        <ControlPanel
+          isSelectAllChecked={isSelectAllChecked}
+          setIsSelectAllChecked={setIsSelectAllChecked}
+          configs={configs}
+          selectedConfigs={selectedConfigs}
+          setSelectedConfigs={setSelectedConfigs}
+          initiatePortForwarding={initiatePortForwarding}
+          startSelectedPortForwarding={startSelectedPortForwarding}
+          stopAllPortForwarding={stopAllPortForwarding}
+          isInitiating={isInitiating}
+          isStopping={isStopping}
+          toggleExpandAll={toggleExpandAll}
+          expandedIndices={expandedIndices}
+          configsByContext={configsByContext}
+        />
       </Flex>
       <Flex
         direction='column'

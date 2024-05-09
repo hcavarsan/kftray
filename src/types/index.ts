@@ -210,3 +210,24 @@ export interface ShowToastParams {
 export interface ConfigsByContext {
   [key: string]: Status[]
 }
+
+export interface HeaderProps {
+  search: string
+  setSearch: React.Dispatch<React.SetStateAction<string>>
+}
+
+export interface ControlPanelProps {
+  isSelectAllChecked: boolean
+  setIsSelectAllChecked: React.Dispatch<React.SetStateAction<boolean>>
+  configs: Status[]
+  selectedConfigs: Status[]
+  initiatePortForwarding: (configs: Status[]) => void
+  startSelectedPortForwarding: () => void
+  stopAllPortForwarding: () => void
+  isInitiating: boolean
+  isStopping: boolean
+  toggleExpandAll: () => void
+  expandedIndices: number[]
+  configsByContext: ConfigsByContext
+  setSelectedConfigs: React.Dispatch<React.SetStateAction<Status[]>>
+}
