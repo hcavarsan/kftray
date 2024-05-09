@@ -4,8 +4,8 @@ import { RepeatIcon } from '@chakra-ui/icons'
 import { Box, Button, HStack, Spinner, Text, Tooltip } from '@chakra-ui/react'
 import { invoke } from '@tauri-apps/api/tauri'
 
-import { GitConfig, SyncConfigsButtonProps } from '../../types'
-import useCustomToast from '../CustomToast'
+import { GitConfig, SyncConfigsButtonProps } from '../../../types'
+import useCustomToast from '../..//CustomToast'
 
 const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
   serviceName,
@@ -14,7 +14,7 @@ const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
   onSyncFailure,
   credentialsSaved,
   setCredentialsSaved,
-  isSettingsModalOpen,
+  isGitSyncModalOpen,
   setPollingInterval,
 }) => {
   const [isLoading, setIsLoading] = useState<boolean>(false)
@@ -82,7 +82,7 @@ const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
   ])
 
   useEffect(() => {
-    if (!isSettingsModalOpen) {
+    if (!isGitSyncModalOpen) {
       ;(async () => {
         setIsLoading(true)
 
@@ -113,7 +113,7 @@ const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
     accountName,
     onSyncFailure,
     setCredentialsSaved,
-    isSettingsModalOpen,
+    isGitSyncModalOpen,
     setIsLoading,
   ])
 
