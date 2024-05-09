@@ -1,53 +1,14 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { MdClose, MdRefresh } from 'react-icons/md'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 
-import {
-  CheckCircleIcon,
-  ChevronDownIcon,
-  ChevronUpIcon,
-  InfoIcon,
-  SearchIcon,
-} from '@chakra-ui/icons'
-import {
-  Accordion,
-  AccordionButton,
-  AccordionIcon,
-  AccordionItem,
-  AccordionPanel,
-  AlertDialog,
-  AlertDialogBody,
-  AlertDialogContent,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogOverlay,
-  Box,
-  Button,
-  ButtonGroup,
-  Checkbox,
-  Flex,
-  Image,
-  Input,
-  InputGroup,
-  InputLeftElement,
-  Progress,
-  Table,
-  Tag,
-  TagLabel,
-  TagLeftIcon,
-  Tbody,
-  Text,
-  Th,
-  Thead,
-  Tooltip,
-  Tr,
-  useColorModeValue,
-} from '@chakra-ui/react'
-import { app } from '@tauri-apps/api'
+import { Accordion, Flex, useColorModeValue } from '@chakra-ui/react'
 
-import logo from '../../assets/logo.png'
 import { Status, TableProps } from '../../types'
-import PortForwardRow from '../PortForwardRow'
-import PortForwardSearchTable from '../PortForwardSearchTable'
+import BulkDeleteAlertDialog from '../BulkDeleteAlertDialog'
+import ContextAccordionItem from '../ContextAccordionItem'
+import ControlPanel from '../ControlPanel'
+import Header from '../Header'
+
+import { useConfigsByContext } from './useConfigsByContext'
 
 const PortForwardTable: React.FC<TableProps> = ({
   configs,
@@ -70,18 +31,13 @@ const PortForwardTable: React.FC<TableProps> = ({
 }) => {
   const [search, setSearch] = useState('')
   const [expandedIndices, setExpandedIndices] = useState<number[]>([])
-  const [version, setVersion] = useState('')
-  const cancelRef = React.useRef<HTMLButtonElement>(null)
   const prevSelectedConfigsRef = useRef(selectedConfigs)
+  const [isSelectAllChecked, setIsSelectAllChecked] = useState(false)
 
   const [selectedConfigsByContext, setSelectedConfigsByContext] = useState<
     Record<string, boolean>
   >({})
   const [isCheckboxAction, setIsCheckboxAction] = useState(false)
-
-  useEffect(() => {
-    app.getVersion().then(setVersion).catch(console.error)
-  }, [])
 
   const updateSelectionState = (id: number, isRunning: boolean) => {
     if (isRunning) {
@@ -139,63 +95,16 @@ const PortForwardTable: React.FC<TableProps> = ({
     }
   }
 
-  const startAllPortForwarding = () => {
-    const stoppedConfigs = configs.filter(config => !config.isRunning)
-
-    initiatePortForwarding(stoppedConfigs)
-  }
-
   const stopAllPortForwarding = () => {
     const runningConfigs = configs.filter(config => config.isRunning)
 
     stopPortForwarding(runningConfigs)
   }
 
-  const groupByContext = useCallback(
-    (configs: Status[]): Record<string, Status[]> => {
-      return configs.reduce(
-        (group: Record<string, Status[]>, config: Status) => {
-          const { context } = config
-
-          if (!group[context]) {
-            group[context] = []
-          }
-          group[context].push(config)
-
-          return group
-        },
-        {},
-      )
-    },
-    [],
-  )
-
-  const configsByContext = useMemo(() => {
-    const grouped: Record<string, Status[]> = groupByContext(configs)
-    const sortedKeys = Object.keys(grouped).sort((a, b) => a.localeCompare(b))
-    const sortedGroup: Record<string, Status[]> = {}
-
-    sortedKeys.forEach(key => {
-      const sortedStatuses = [...grouped[key]].sort((a, b) =>
-        a.alias.localeCompare(b.alias, undefined, { sensitivity: 'base' }),
-      )
-
-      sortedGroup[key] = sortedStatuses
-    })
-
-    return sortedGroup
-  }, [configs, groupByContext])
-
-  const bg = useColorModeValue('gray.50', 'gray.700')
-  const accordionBg = useColorModeValue('gray.100', 'gray.800')
+  const configsByContext = useConfigsByContext(filteredConfigs)
   const borderColor = useColorModeValue('gray.200', 'gray.700')
-  const textColor = useColorModeValue('gray.800', 'white')
   const boxShadow = useColorModeValue('base', 'lg')
-  const fontFamily = '\'Inter\', sans-serif'
 
-  const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    setSearch(event.target.value)
-  }
   const handleAccordionChange = (expandedIndex: number | number[]) => {
     if (!isCheckboxAction) {
       setExpandedIndices(expandedIndex as number[])
@@ -224,9 +133,11 @@ const PortForwardTable: React.FC<TableProps> = ({
 
       setSelectedConfigsByContext(newSelectedConfigsByContext)
 
+      setIsSelectAllChecked(selectedConfigs.length === configs.length)
+
       prevSelectedConfigsRef.current = selectedConfigs
     }
-  }, [selectedConfigs, configsByContext])
+  }, [selectedConfigs, configs, configsByContext])
 
   const handleSelectionChange = (config: Status, isSelected: boolean) => {
     setSelectedConfigs(prevSelectedConfigs => {
@@ -301,63 +212,19 @@ const PortForwardTable: React.FC<TableProps> = ({
         width='98.4%'
         borderColor={borderColor}
       >
-        <AlertDialog
+        <BulkDeleteAlertDialog
           isOpen={isBulkAlertOpen}
-          leastDestructiveRef={cancelRef}
           onClose={() => setIsBulkAlertOpen(false)}
-        >
-          <AlertDialogOverlay
-            style={{ alignItems: 'flex-start', justifyContent: 'flex-start' }}
-            bg='transparent'
-          >
-            <AlertDialogContent>
-              <AlertDialogHeader fontSize='sm' fontWeight='bold'>
-                Delete Config(s)
-              </AlertDialogHeader>
-
-              <AlertDialogBody>
-                Are you sure you want to delete the selected config(s)? This
-                action cannot be undone.
-              </AlertDialogBody>
-
-              <AlertDialogFooter>
-                <Button onClick={() => setIsBulkAlertOpen(false)}>
-                  Cancel
-                </Button>
-                <Button colorScheme='red' onClick={confirmDeleteConfigs} ml={3}>
-                  Delete
-                </Button>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialogOverlay>
-        </AlertDialog>
-        <Tooltip
-          label={`Kftray v${version}`}
-          aria-label='Kftray version'
-          fontSize='xs'
-          lineHeight='tight'
-        >
-          <Image src={logo} alt='Kftray Logo' boxSize='32px' ml={3} mt={0.5} />
-        </Tooltip>
-        <InputGroup size='xs' width='250px' mt='1'>
-          <InputLeftElement pointerEvents='none'>
-            <SearchIcon color='gray.300' />
-          </InputLeftElement>
-          <Input
-            height='25px'
-            type='text'
-            placeholder='Search'
-            onChange={handleSearchChange}
-            borderRadius='md'
-          />
-        </InputGroup>
+          onConfirm={confirmDeleteConfigs}
+        />
+        <Header search={search} setSearch={setSearch} />
       </Flex>
       <Flex
         direction='row'
         alignItems='center'
         mt='2'
-        justifyContent='flex-start'
-        position='sticky'
+        justifyContent='space-between'
+        position='relative'
         top='0'
         bg='gray.900'
         p='2'
@@ -367,295 +234,68 @@ const PortForwardTable: React.FC<TableProps> = ({
         width='98.4%'
         borderColor={borderColor}
       >
-        <ButtonGroup variant='outline'>
-          <Button
-            leftIcon={<MdRefresh />}
-            colorScheme='facebook'
-            isLoading={isInitiating}
-            loadingText={isInitiating ? 'Starting...' : null}
-            onClick={
-              selectedConfigs.length > 0
-                ? startSelectedPortForwarding
-                : startAllPortForwarding
-            }
-            isDisabled={
-              isInitiating ||
-              (!selectedConfigs.length &&
-                !configs.some(config => !config.isRunning))
-            }
-            size='xs'
-          >
-            {selectedConfigs.length > 0 ? 'Start Selected' : 'Start All'}
-          </Button>
-          <Button
-            leftIcon={<MdClose />}
-            colorScheme='facebook'
-            isLoading={isStopping}
-            loadingText='Stopping...'
-            onClick={stopAllPortForwarding}
-            isDisabled={isStopping || !configs.some(config => config.isRunning)}
-            size='xs'
-          >
-            Stop All
-          </Button>
-        </ButtonGroup>
-
-        <Flex justifyContent='flex-end' width='100%'>
-          <Button
-            onClick={toggleExpandAll}
-            size='xs'
-            colorScheme='facebook'
-            variant='outline'
-            rightIcon={
-              expandedIndices.length ===
-              Object.keys(configsByContext).length ? (
-                  <ChevronUpIcon />
-                ) : (
-                  <ChevronDownIcon />
-                )
-            }
-          >
-            {expandedIndices.length === Object.keys(configsByContext).length
-              ? 'Collapse All'
-              : 'Expand All'}
-          </Button>
-        </Flex>
+        <ControlPanel
+          isSelectAllChecked={isSelectAllChecked}
+          setIsSelectAllChecked={setIsSelectAllChecked}
+          configs={configs}
+          selectedConfigs={selectedConfigs}
+          setSelectedConfigs={setSelectedConfigs}
+          initiatePortForwarding={initiatePortForwarding}
+          startSelectedPortForwarding={startSelectedPortForwarding}
+          stopAllPortForwarding={stopAllPortForwarding}
+          isInitiating={isInitiating}
+          isStopping={isStopping}
+          toggleExpandAll={toggleExpandAll}
+          expandedIndices={expandedIndices}
+          configsByContext={configsByContext}
+        />
       </Flex>
-
-      {search.trim() ? (
-        <Flex
-          direction='column'
-          height='500px'
-          maxHeight='500px'
-          pb='30px'
-          flex='1'
-          width='100%'
-          mt='1'
-          overflowY='scroll'
-          borderBottom='none'
-          borderRadius='lg'
-          background='gray.1000'
-          boxShadow='0 0 1px rgba(20, 20, 20, 0.50)'
-          marginTop='1'
+      <Flex
+        direction='column'
+        height='550px'
+        maxHeight='550px'
+        pb='90px'
+        flex='1'
+        mt='5'
+        overflowY='scroll'
+        width='100%'
+        borderBottom='none'
+        borderRadius='lg'
+        background='gray.1000'
+        boxShadow='0 0 1px rgba(20, 20, 20, 0.50)'
+        marginTop='1'
+      >
+        <Accordion
+          allowMultiple
+          index={expandedIndices}
+          onChange={handleAccordionChange}
+          borderColor={borderColor}
         >
-          <PortForwardSearchTable
-            configs={filteredConfigs}
-            handleEditConfig={handleEditConfig}
-            handleDeleteConfig={handleDeleteConfig}
-            confirmDeleteConfig={confirmDeleteConfig}
-            updateConfigRunningState={updateConfigRunningState}
-            isAlertOpen={isAlertOpen}
-            setIsAlertOpen={setIsAlertOpen}
-            isInitiating={isInitiating}
-            setIsInitiating={setIsInitiating}
-            isStopping={isStopping}
-            onSelectionChange={(config, isSelected) =>
-              handleSelectionChange(config, isSelected)
-            }
-            updateSelectionState={updateSelectionState}
-          />
-        </Flex>
-      ) : (
-        <Flex
-          direction='column'
-          height='550px'
-          maxHeight='550px'
-          pb='90px'
-          flex='1'
-          mt='5'
-          overflowY='scroll'
-          width='100%'
-          borderBottom='none'
-          borderRadius='lg'
-          background='gray.1000'
-          boxShadow='0 0 1px rgba(20, 20, 20, 0.50)'
-          marginTop='1'
-        >
-          <Accordion
-            allowMultiple
-            index={expandedIndices}
-            onChange={handleAccordionChange}
-            borderColor={borderColor}
-          >
-            {Object.entries(configsByContext).map(
-              ([context, contextConfigs], _contextIndex) => {
-                const contextRunningCount = contextConfigs.filter(
-                  config => config.isRunning,
-                ).length
-                const contextTotalCount = contextConfigs.length
-                const contextTagColorScheme =
-                  contextRunningCount > 0 ? 'facebook' : 'gray'
-                const contextProgressValue =
-                  (contextRunningCount / contextTotalCount) * 100
-
-                return (
-                  <AccordionItem key={context} border='none'>
-                    <AccordionButton
-                      bg={accordionBg}
-                      mt={2}
-                      borderRadius='lg'
-                      border='1px'
-                      borderColor={borderColor}
-                      boxShadow='lg'
-                      _hover={{ bg: bg }}
-                      _expanded={{ bg: accordionBg, boxShadow: 'lg' }}
-                    >
-                      <Box
-                        flex='1'
-                        textAlign='left'
-                        fontSize='sm'
-                        color={textColor}
-                      >
-                        <div onClick={event => event.stopPropagation()}>
-                          <Checkbox
-                            size='sm'
-                            isChecked={
-                              selectedConfigsByContext[context] ||
-                              contextConfigs.every(config => config.isRunning)
-                            }
-                            onChange={event => {
-                              event.stopPropagation()
-                              handleCheckboxChange(
-                                context,
-                                !selectedConfigsByContext[context],
-                              )
-                            }}
-                            onClick={event => {
-                              event.stopPropagation()
-                            }}
-                            isDisabled={contextConfigs.every(
-                              config => config.isRunning,
-                            )}
-                          >
-                            cluster: {context}
-                          </Checkbox>
-                        </div>
-                      </Box>
-                      <Flex alignItems='center'>
-                        <Tooltip
-                          hasArrow
-                          label={`${contextRunningCount} running out of ${contextTotalCount} total`}
-                          bg='gray.300'
-                          fontSize='xs'
-                          lineHeight='tight'
-                        >
-                          <Tag
-                            size='sm'
-                            colorScheme={contextTagColorScheme}
-                            borderRadius='full'
-                            mr={2}
-                          >
-                            {contextRunningCount > 0 ? (
-                              <TagLeftIcon as={CheckCircleIcon} />
-                            ) : (
-                              <TagLeftIcon as={InfoIcon} />
-                            )}
-                            <TagLabel>{`${contextRunningCount}/${contextTotalCount}`}</TagLabel>
-                          </Tag>
-                        </Tooltip>
-                        <Progress
-                          value={contextProgressValue}
-                          size='xs'
-                          colorScheme={contextTagColorScheme}
-                          borderRadius='lg'
-                          width='85px'
-                        />
-                      </Flex>
-                      <AccordionIcon color={textColor} />
-                    </AccordionButton>
-                    <AccordionPanel
-                      pb={4}
-                      borderColor={borderColor}
-                      fontFamily={fontFamily}
-                    >
-                      {contextConfigs.length > 0 ? (
-                        <Flex direction='column' width='100%' mt={0} p={0}>
-                          <Table
-                            variant='simple'
-                            size='sm'
-                            border='none'
-                            style={{ tableLayout: 'fixed' }}
-                          >
-                            <Thead
-                              position='sticky'
-                              top='0'
-                              zIndex='sticky'
-                              fontFamily={fontFamily}
-                            >
-                              <Tr boxShadow={boxShadow}>
-                                <Th
-                                  fontFamily={fontFamily}
-                                  fontSize='10px'
-                                  width='40%'
-                                >
-                                  Alias
-                                </Th>
-                                <Th fontFamily={fontFamily} fontSize='10px'>
-                                  Port
-                                </Th>
-                                <Th fontFamily={fontFamily} fontSize='10px'>
-                                  Status
-                                </Th>
-                                <Th fontFamily={fontFamily} fontSize='10px'>
-                                  Action
-                                </Th>
-                              </Tr>
-                            </Thead>
-                          </Table>
-                          <Box>
-                            <Table
-                              size='sm'
-                              border='none'
-                              style={{ tableLayout: 'fixed' }}
-                            >
-                              <Tbody
-                                width='full'
-                                position='sticky'
-                                top='0'
-                                zIndex='sticky'
-                              >
-                                {contextConfigs.map(config => (
-                                  <PortForwardRow
-                                    key={config.id}
-                                    config={config}
-                                    handleDeleteConfig={handleDeleteConfig}
-                                    confirmDeleteConfig={confirmDeleteConfig}
-                                    handleEditConfig={handleEditConfig}
-                                    isAlertOpen={isAlertOpen}
-                                    selected={selectedConfigs.some(
-                                      selectedConfig =>
-                                        selectedConfig.id === config.id,
-                                    )}
-                                    onSelectionChange={isSelected =>
-                                      handleSelectionChange(config, isSelected)
-                                    }
-                                    updateSelectionState={updateSelectionState}
-                                    setIsAlertOpen={setIsAlertOpen}
-                                    updateConfigRunningState={
-                                      updateConfigRunningState
-                                    }
-                                    isInitiating={isInitiating}
-                                    setIsInitiating={setIsInitiating}
-                                    isStopping={isStopping}
-                                  />
-                                ))}
-                              </Tbody>
-                            </Table>
-                          </Box>
-                        </Flex>
-                      ) : (
-                        <Flex justify='center' p={6}>
-                          <Text>No Configurations Found for {context}</Text>
-                        </Flex>
-                      )}
-                    </AccordionPanel>
-                  </AccordionItem>
-                )
-              },
-            )}
-          </Accordion>
-        </Flex>
-      )}
+          {Object.entries(configsByContext).map(
+            ([context, contextConfigs], _contextIndex) => (
+              <ContextAccordionItem
+                key={context}
+                context={context}
+                contextConfigs={contextConfigs}
+                selectedConfigs={selectedConfigs}
+                handleDeleteConfig={handleDeleteConfig}
+                confirmDeleteConfig={confirmDeleteConfig}
+                handleEditConfig={handleEditConfig}
+                isAlertOpen={isAlertOpen}
+                setIsAlertOpen={setIsAlertOpen}
+                updateConfigRunningState={updateConfigRunningState}
+                handleSelectionChange={handleSelectionChange}
+                updateSelectionState={updateSelectionState}
+                selectedConfigsByContext={selectedConfigsByContext}
+                handleCheckboxChange={handleCheckboxChange}
+                isInitiating={isInitiating}
+                setIsInitiating={setIsInitiating}
+                isStopping={isStopping}
+              />
+            ),
+          )}
+        </Accordion>
+      </Flex>
     </Flex>
   )
 }
