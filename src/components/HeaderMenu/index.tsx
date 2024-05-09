@@ -4,9 +4,9 @@ import { MdClose, MdRefresh } from 'react-icons/md'
 import { ChevronDownIcon, ChevronUpIcon } from '@chakra-ui/icons'
 import { Button, ButtonGroup, Checkbox } from '@chakra-ui/react'
 
-import { ControlPanelProps } from '../../types'
+import { HeaderMenuProps } from '../../types'
 
-const ControlPanel: React.FC<ControlPanelProps> = ({
+const HeaderMenu: React.FC<HeaderMenuProps> = ({
   isSelectAllChecked,
   setIsSelectAllChecked,
   configs,
@@ -94,4 +94,4 @@ const ControlPanel: React.FC<ControlPanelProps> = ({
   )
 }
 
-export default ControlPanel
+export default HeaderMenu

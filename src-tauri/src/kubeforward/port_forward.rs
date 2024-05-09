@@ -32,8 +32,8 @@ use tokio::{
 };
 use tokio_stream::wrappers::TcpListenerStream;
 
-use crate::config;
 use crate::{
+    config,
     kubeforward::{
         port_forward::Target as TargetImpl,
         vx::Pod,

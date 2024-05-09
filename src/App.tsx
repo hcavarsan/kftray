@@ -3,14 +3,14 @@ import React from 'react'
 import { ChakraProvider } from '@chakra-ui/react'
 
 import theme from './assets/theme'
-import KFTray from './components/KFtray'
+import Main from './components/Main'
 
 import './assets/style.css'
 
 const App: React.FC = () => {
   return (
     <ChakraProvider theme={theme}>
-      <KFTray />
+      <Main />
     </ChakraProvider>
   )
 }
