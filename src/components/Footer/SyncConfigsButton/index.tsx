@@ -5,7 +5,7 @@ import { Box, Button, HStack, Spinner, Text, Tooltip } from '@chakra-ui/react'
 import { invoke } from '@tauri-apps/api/tauri'
 
 import { GitConfig, SyncConfigsButtonProps } from '../../../types'
-import useCustomToast from '../..//CustomToast'
+import useCustomToast from '../../CustomToast'
 
 const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
   serviceName,

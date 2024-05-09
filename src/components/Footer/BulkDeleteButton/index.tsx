@@ -16,7 +16,7 @@ import {
 import { invoke } from '@tauri-apps/api/tauri'
 
 import { BulkDeleteButtonProps, Status } from '../../../types'
-import useCustomToast from '../..//CustomToast'
+import useCustomToast from '../../CustomToast'
 
 const BulkDeleteButton: React.FC<BulkDeleteButtonProps> = ({
   selectedConfigs,
