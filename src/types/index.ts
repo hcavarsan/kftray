@@ -186,21 +186,6 @@ export interface CustomConfigProps extends ConfigProps {
 
 export type Option = { name: string; value: string | number; label: string }
 
-export interface PortForwardSearchTableProps {
-  configs: Status[]
-  handleEditConfig: (id: number) => void
-  handleDeleteConfig: (id: number) => void
-  confirmDeleteConfig: () => void
-  updateConfigRunningState: (id: number, isRunning: boolean) => void
-  isAlertOpen: boolean
-  setIsAlertOpen: (isOpen: boolean) => void
-  isInitiating: boolean
-  setIsInitiating: React.Dispatch<React.SetStateAction<boolean>>
-  isStopping: boolean
-  onSelectionChange: (config: Status, isSelected: boolean) => void
-  updateSelectionState: (id: number, isRunning: boolean) => void
-}
-
 export interface CustomToastProps {
   title: string
   description: string
@@ -220,4 +205,8 @@ export interface ShowToastParams {
     | 'bottom'
     | 'bottom-right'
     | 'bottom-left'
+}
+
+export interface ConfigsByContext {
+  [key: string]: Status[]
 }
