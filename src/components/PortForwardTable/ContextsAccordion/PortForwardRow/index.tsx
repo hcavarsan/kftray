@@ -26,7 +26,7 @@ import { open } from '@tauri-apps/api/shell'
 import { invoke } from '@tauri-apps/api/tauri'
 
 import { PortForwardRowProps } from '../../../../types'
-import useCustomToast from '../../..//CustomToast'
+import useCustomToast from '../../../CustomToast'
 
 const PortForwardRow: React.FC<PortForwardRowProps> = ({
   config,
