@@ -3,11 +3,10 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Accordion, Flex, useColorModeValue } from '@chakra-ui/react'
 
 import { Status, TableProps } from '../../types'
-import BulkDeleteAlertDialog from '../BulkDeleteAlertDialog'
-import ContextAccordionItem from '../ContextAccordionItem'
-import ControlPanel from '../ControlPanel'
 import Header from '../Header'
+import HeaderMenu from '../HeaderMenu'
 
+import ContextsAccordion from './ContextsAccordion'
 import { useConfigsByContext } from './useConfigsByContext'
 
 const PortForwardTable: React.FC<TableProps> = ({
@@ -25,9 +24,6 @@ const PortForwardTable: React.FC<TableProps> = ({
   updateConfigRunningState,
   selectedConfigs,
   setSelectedConfigs,
-  confirmDeleteConfigs,
-  isBulkAlertOpen,
-  setIsBulkAlertOpen,
 }) => {
   const [search, setSearch] = useState('')
   const [expandedIndices, setExpandedIndices] = useState<number[]>([])
@@ -212,11 +208,6 @@ const PortForwardTable: React.FC<TableProps> = ({
         width='98.4%'
         borderColor={borderColor}
       >
-        <BulkDeleteAlertDialog
-          isOpen={isBulkAlertOpen}
-          onClose={() => setIsBulkAlertOpen(false)}
-          onConfirm={confirmDeleteConfigs}
-        />
         <Header search={search} setSearch={setSearch} />
       </Flex>
       <Flex
@@ -234,7 +225,7 @@ const PortForwardTable: React.FC<TableProps> = ({
         width='98.4%'
         borderColor={borderColor}
       >
-        <ControlPanel
+        <HeaderMenu
           isSelectAllChecked={isSelectAllChecked}
           setIsSelectAllChecked={setIsSelectAllChecked}
           configs={configs}
@@ -273,7 +264,7 @@ const PortForwardTable: React.FC<TableProps> = ({
         >
           {Object.entries(configsByContext).map(
             ([context, contextConfigs], _contextIndex) => (
-              <ContextAccordionItem
+              <ContextsAccordion
                 key={context}
                 context={context}
                 contextConfigs={contextConfigs}

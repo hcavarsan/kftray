@@ -23,10 +23,11 @@ import {
   useColorModeValue,
 } from '@chakra-ui/react'
 
-import { ContextAccordionItemProps } from '../../types'
-import PortForwardRow from '../PortForwardRow'
+import { ContextsAccordionProps } from '../../../types'
 
-const ContextAccordionItem: React.FC<ContextAccordionItemProps> = ({
+import PortForwardRow from './PortForwardRow'
+
+const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
   context,
   contextConfigs,
   selectedConfigs,
@@ -196,4 +197,4 @@ const ContextAccordionItem: React.FC<ContextAccordionItemProps> = ({
   )
 }
 
-export default ContextAccordionItem
+export default ContextsAccordion

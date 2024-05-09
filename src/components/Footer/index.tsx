@@ -1,12 +1,6 @@
 import React from 'react'
 import { FaGithub } from 'react-icons/fa'
-import {
-  MdAdd,
-  MdDelete,
-  MdFileDownload,
-  MdFileUpload,
-  MdSettings,
-} from 'react-icons/md'
+import { MdAdd, MdFileDownload, MdFileUpload, MdSettings } from 'react-icons/md'
 
 import { HamburgerIcon } from '@chakra-ui/icons'
 import {
@@ -23,22 +17,26 @@ import {
   useColorModeValue,
 } from '@chakra-ui/react'
 
-import { FooterMenuProps } from '../../types'
-import SyncConfigsButton from '../SyncConfigsButton'
+import { FooterProps } from '../../types'
 
-const FooterMenu: React.FC<FooterMenuProps> = ({
+import BulkDeleteButton from './BulkDeleteButton'
+import SyncConfigsButton from './SyncConfigsButton'
+
+const Footer: React.FC<FooterProps> = ({
   openModal,
-  openSettingsModal,
+  openGitSyncModal,
   handleExportConfigs,
   handleImportConfigs,
   onConfigsSynced,
   credentialsSaved,
   setCredentialsSaved,
-  isSettingsModalOpen,
-  selectedConfigs,
-  handleDeleteConfigs,
+  isGitSyncModalOpen,
   setPollingInterval,
   pollingInterval,
+  selectedConfigs,
+  setSelectedConfigs,
+  configs,
+  setConfigs,
 }) => {
   const borderColor = useColorModeValue('gray.500', 'gray.700')
 
@@ -99,28 +97,13 @@ const FooterMenu: React.FC<FooterMenuProps> = ({
               borderColor={borderColor}
             />
           </Tooltip>
-          {selectedConfigs.length > 0 && (
-            <Tooltip
-              label='Delete Configs'
-              placement='top'
-              fontSize='xs'
-              lineHeight='tight'
-            >
-              <IconButton
-                colorScheme='red'
-                variant='outline'
-                onClick={() =>
-                  handleDeleteConfigs(selectedConfigs.map(config => config.id))
-                }
-                size='sm'
-                aria-label='Delete selected configs'
-                borderColor={borderColor}
-                icon={<MdDelete />}
-                ml={2}
-              />
-            </Tooltip>
-          )}
         </Menu>
+        <BulkDeleteButton
+          setSelectedConfigs={setSelectedConfigs}
+          selectedConfigs={selectedConfigs}
+          configs={configs}
+          setConfigs={setConfigs}
+        />
       </Flex>
 
       <Flex align='center' flexGrow={1} justifyContent={{ sm: 'flex-end' }}>
@@ -133,7 +116,7 @@ const FooterMenu: React.FC<FooterMenuProps> = ({
           <Button
             variant='outline'
             colorScheme='facebook'
-            onClick={openSettingsModal}
+            onClick={openGitSyncModal}
             size='sm'
             aria-label='Sync Configs'
             justifyContent='center'
@@ -153,7 +136,7 @@ const FooterMenu: React.FC<FooterMenuProps> = ({
           onSyncFailure={error => console.error('Sync failed:', error)}
           credentialsSaved={credentialsSaved}
           setCredentialsSaved={setCredentialsSaved}
-          isSettingsModalOpen={isSettingsModalOpen}
+          isGitSyncModalOpen={isGitSyncModalOpen}
           setPollingInterval={setPollingInterval}
           pollingInterval={pollingInterval}
         />
@@ -162,4 +145,4 @@ const FooterMenu: React.FC<FooterMenuProps> = ({
   )
 }
 
-export default FooterMenu
+export default Footer
