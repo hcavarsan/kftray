@@ -215,7 +215,6 @@ export interface HeaderProps {
   setSearch: React.Dispatch<React.SetStateAction<string>>
 }
 
-
 export interface HeaderMenuProps {
   isSelectAllChecked: boolean
   setIsSelectAllChecked: React.Dispatch<React.SetStateAction<boolean>>

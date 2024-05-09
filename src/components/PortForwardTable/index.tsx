@@ -3,12 +3,10 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { Accordion, Flex, useColorModeValue } from '@chakra-ui/react'
 
 import { Status, TableProps } from '../../types'
-
 import Header from '../Header'
 import HeaderMenu from '../HeaderMenu'
 
 import ContextsAccordion from './ContextsAccordion'
-        
 import { useConfigsByContext } from './useConfigsByContext'
 
 const PortForwardTable: React.FC<TableProps> = ({
