@@ -8,9 +8,9 @@ import { invoke } from '@tauri-apps/api/tauri'
 import { Config, Response, Status } from '../../types'
 import AddConfigModal from '../AddConfigModal'
 import useCustomToast from '../CustomToast'
-import FooterMenu from '../FooterMenu'
+import Footer from '../Footer'
+import GitSyncModal from '../GitSyncModal'
 import PortForwardTable from '../PortForwardTable'
-import SettingsModal from '../SettingsModal'
 
 const initalRemotePort = 0
 const initialLocalPort = 0
@@ -21,9 +21,8 @@ const KFTray = () => {
   const [pollingInterval, setPollingInterval] = useState(0)
   const [configs, setConfigs] = useState<Status[]>([])
   const [isModalOpen, setIsModalOpen] = useState(false)
-  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false)
+  const [isGitSyncModalOpen, setIsGitSyncModalOpen] = useState(false)
   const [selectedConfigs, setSelectedConfigs] = useState<Status[]>([])
-  const [configsToDelete, setConfigsToDelete] = useState<number[]>([])
   const [credentialsSaved, setCredentialsSaved] = useState(false)
 
   const [isEdit, setIsEdit] = useState(false)
@@ -95,12 +94,12 @@ const KFTray = () => {
     setIsEdit(false)
   }
 
-  const closeSettingsModal = () => {
-    setIsSettingsModalOpen(false)
+  const closeGitSyncModal = () => {
+    setIsGitSyncModalOpen(false)
   }
 
-  const openSettingsModal = () => {
-    setIsSettingsModalOpen(true)
+  const openGitSyncModal = () => {
+    setIsGitSyncModalOpen(true)
   }
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -124,7 +123,6 @@ const KFTray = () => {
   const [isStopping, setIsStopping] = useState(false)
   const [isPortForwarding, setIsPortForwarding] = useState(false)
   const [isAlertOpen, setIsAlertOpen] = useState(false)
-  const [isBulkAlertOpen, setIsBulkAlertOpen] = useState(false)
   const [configToDelete, setConfigToDelete] = useState<number | undefined>()
 
   useEffect(() => {
@@ -484,11 +482,6 @@ const KFTray = () => {
     setIsAlertOpen(true)
   }
 
-  const handleDeleteConfigs = (selectedIds: number[]) => {
-    setConfigsToDelete(selectedIds)
-    setIsBulkAlertOpen(true)
-  }
-
   const confirmDeleteConfig = async () => {
     if (typeof configToDelete !== 'number') {
       toast({
@@ -530,50 +523,6 @@ const KFTray = () => {
     }
 
     setIsAlertOpen(false)
-  }
-
-  const confirmDeleteConfigs = async () => {
-    if (!Array.isArray(configsToDelete) || !configsToDelete.length) {
-      toast({
-        title: 'Error',
-        description: 'No configurations selected for deletion.',
-        status: 'error',
-      })
-
-      return
-    }
-
-    try {
-      await invoke('delete_configs', { ids: configsToDelete })
-
-      const configsAfterDeletion = await invoke<Status[]>('get_configs')
-      const runningStateMap = new Map(
-        configs.map(conf => [conf.id, conf.isRunning]),
-      )
-
-      const updatedConfigs = configsAfterDeletion.map(conf => ({
-        ...conf,
-        isRunning: runningStateMap.get(conf.id) ?? false,
-      }))
-
-      setConfigs(updatedConfigs)
-      setSelectedConfigs([])
-
-      toast({
-        title: 'Success',
-        description: 'Configurations deleted successfully.',
-        status: 'success',
-      })
-    } catch (error) {
-      console.error('Failed to delete configurations:', error)
-      toast({
-        title: 'Error',
-        description: 'Failed to delete configurations: "unknown error"',
-        status: 'error',
-      })
-    }
-
-    setIsBulkAlertOpen(false)
   }
 
   const stopPortForwarding = async () => {
@@ -682,33 +631,32 @@ const KFTray = () => {
           isPortForwarding={isPortForwarding}
           selectedConfigs={selectedConfigs}
           setSelectedConfigs={setSelectedConfigs}
-          confirmDeleteConfigs={confirmDeleteConfigs}
-          isBulkAlertOpen={isBulkAlertOpen}
-          setIsBulkAlertOpen={setIsBulkAlertOpen}
         />
 
-        <SettingsModal
-          isSettingsModalOpen={isSettingsModalOpen}
-          closeSettingsModal={closeSettingsModal}
+        <GitSyncModal
+          isGitSyncModalOpen={isGitSyncModalOpen}
+          closeGitSyncModal={closeGitSyncModal}
           onSettingsSaved={fetchAndUpdateConfigs}
           setCredentialsSaved={setCredentialsSaved}
           credentialsSaved={credentialsSaved}
           setPollingInterval={setPollingInterval}
           pollingInterval={pollingInterval}
         />
-        <FooterMenu
+        <Footer
           openModal={openModal}
-          openSettingsModal={openSettingsModal}
+          openGitSyncModal={openGitSyncModal}
           handleExportConfigs={handleExportConfigs}
           handleImportConfigs={handleImportConfigs}
           onConfigsSynced={syncConfigsAndUpdateState}
           setCredentialsSaved={setCredentialsSaved}
           credentialsSaved={credentialsSaved}
-          isSettingsModalOpen={isSettingsModalOpen}
-          handleDeleteConfigs={handleDeleteConfigs}
+          isGitSyncModalOpen={isGitSyncModalOpen}
           selectedConfigs={selectedConfigs}
           setPollingInterval={setPollingInterval}
           pollingInterval={pollingInterval}
+          setSelectedConfigs={setSelectedConfigs}
+          configs={configs}
+          setConfigs={setConfigs}
         />
         <AddConfigModal
           isModalOpen={isModalOpen}

@@ -70,9 +70,9 @@ export interface ConfigProps {
   isEdit: boolean
 }
 
-export interface SettingsModalProps {
-  isSettingsModalOpen: boolean
-  closeSettingsModal: () => void
+export interface GitSyncModalProps {
+  isGitSyncModalOpen: boolean
+  closeGitSyncModal: () => void
   onSettingsSaved: () => void
   credentialsSaved: boolean
   setCredentialsSaved: React.Dispatch<React.SetStateAction<boolean>>
@@ -92,12 +92,9 @@ export interface TableProps {
   handleEditConfig: (id: number) => void
   isAlertOpen: boolean
   setIsAlertOpen: (isOpen: boolean) => void
-  isBulkAlertOpen: boolean
-  setIsBulkAlertOpen: (isOpen: boolean) => void
   updateConfigRunningState: (id: number, isRunning: boolean) => void
   selectedConfigs: Status[]
   setSelectedConfigs: React.Dispatch<React.SetStateAction<Status[]>>
-  confirmDeleteConfigs: () => void
   setIsInitiating: React.Dispatch<React.SetStateAction<boolean>>
 }
 
@@ -118,19 +115,21 @@ export interface PortForwardRowProps {
   isStopping: boolean
 }
 
-export interface FooterMenuProps {
+export interface FooterProps {
   openModal: () => void
-  openSettingsModal: () => void
+  openGitSyncModal: () => void
   handleExportConfigs: () => void
   handleImportConfigs: () => void
   credentialsSaved: boolean
   setCredentialsSaved: React.Dispatch<React.SetStateAction<boolean>>
   onConfigsSynced: () => void
-  isSettingsModalOpen: boolean
+  isGitSyncModalOpen: boolean
   selectedConfigs: Status[]
-  handleDeleteConfigs: (ids: number[]) => void
   setPollingInterval: React.Dispatch<React.SetStateAction<number>>
   pollingInterval: number
+  setSelectedConfigs: React.Dispatch<React.SetStateAction<Status[]>>
+  configs: Status[]
+  setConfigs: React.Dispatch<React.SetStateAction<Status[]>>
 }
 
 export interface SyncConfigsButtonProps {
@@ -140,7 +139,7 @@ export interface SyncConfigsButtonProps {
   onSyncFailure?: (error: Error) => void
   credentialsSaved: boolean
   setCredentialsSaved: React.Dispatch<React.SetStateAction<boolean>>
-  isSettingsModalOpen: boolean
+  isGitSyncModalOpen: boolean
   setPollingInterval: React.Dispatch<React.SetStateAction<number>>
   pollingInterval: number
 }
@@ -216,7 +215,7 @@ export interface HeaderProps {
   setSearch: React.Dispatch<React.SetStateAction<string>>
 }
 
-export interface ControlPanelProps {
+export interface HeaderMenuProps {
   isSelectAllChecked: boolean
   setIsSelectAllChecked: React.Dispatch<React.SetStateAction<boolean>>
   configs: Status[]
@@ -232,13 +231,14 @@ export interface ControlPanelProps {
   setSelectedConfigs: React.Dispatch<React.SetStateAction<Status[]>>
 }
 
-export interface BulkDeleteAlertDialogProps {
-  isOpen: boolean
-  onClose: () => void
-  onConfirm: () => void
+export interface BulkDeleteButtonProps {
+  selectedConfigs: Status[]
+  setSelectedConfigs: React.Dispatch<React.SetStateAction<Status[]>>
+  configs: Status[]
+  setConfigs: React.Dispatch<React.SetStateAction<Status[]>>
 }
 
-export interface ContextAccordionItemProps {
+export interface ContextsAccordionProps {
   context: string
   contextConfigs: Status[]
   selectedConfigs: Status[]

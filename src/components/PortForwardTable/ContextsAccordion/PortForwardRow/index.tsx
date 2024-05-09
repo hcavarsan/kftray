@@ -25,8 +25,8 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { open } from '@tauri-apps/api/shell'
 import { invoke } from '@tauri-apps/api/tauri'
 
-import { PortForwardRowProps } from '../../types'
-import useCustomToast from '../CustomToast'
+import { PortForwardRowProps } from '../../../../types'
+import useCustomToast from '../../../CustomToast'
 
 const PortForwardRow: React.FC<PortForwardRowProps> = ({
   config,

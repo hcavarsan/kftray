@@ -32,12 +32,12 @@ import {
 } from '@chakra-ui/react'
 import { invoke } from '@tauri-apps/api/tauri'
 
-import { SettingsModalProps } from '../../types'
+import { GitSyncModalProps } from '../../types'
 import useCustomToast from '../CustomToast'
 
-const SettingsModal: React.FC<SettingsModalProps> = ({
-  isSettingsModalOpen,
-  closeSettingsModal,
+const GitSyncModal: React.FC<GitSyncModalProps> = ({
+  isGitSyncModalOpen,
+  closeGitSyncModal,
   onSettingsSaved,
   credentialsSaved,
   setCredentialsSaved,
@@ -62,7 +62,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
     let isComponentMounted = true
 
     async function getCredentials() {
-      if (!isSettingsModalOpen) {
+      if (!isGitSyncModalOpen) {
         return
       }
 
@@ -84,7 +84,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
           setCredentialsSaved(true)
         }
       } catch (error) {
-        if (isComponentMounted && isSettingsModalOpen && credentialsSaved) {
+        if (isComponentMounted && isGitSyncModalOpen && credentialsSaved) {
           toast({
             title: 'Error fetching credentials',
             description:
@@ -107,7 +107,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
       isComponentMounted = false
     }
   }, [
-    isSettingsModalOpen,
+    isGitSyncModalOpen,
     credentialsSaved,
     serviceName,
     accountName,
@@ -132,7 +132,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
 
       onSettingsSaved?.()
       setCredentialsSaved(true)
-      closeSettingsModal()
+      closeGitSyncModal()
       toast({
         title: 'Git configuration deleted successfully',
         status: 'success',
@@ -146,7 +146,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
         status: 'error',
       })
     } finally {
-      closeSettingsModal()
+      closeGitSyncModal()
     }
   }
 
@@ -212,17 +212,13 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
       })
     } finally {
       setIsLoading(false)
-      closeSettingsModal()
+      closeGitSyncModal()
     }
   }
 
   return (
     <Center>
-      <Modal
-        isOpen={isSettingsModalOpen}
-        onClose={closeSettingsModal}
-        size='sm'
-      >
+      <Modal isOpen={isGitSyncModalOpen} onClose={closeGitSyncModal} size='sm'>
         <ModalOverlay bg='transparent' />
         <ModalContent bg='transparent' borderRadius='20px' marginTop='10'>
           <ModalBody p={0}>
@@ -360,7 +356,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
                   )}
                   <Button
                     variant='outline'
-                    onClick={closeSettingsModal}
+                    onClick={closeGitSyncModal}
                     size='xs'
                     mr={2}
                   >
@@ -415,4 +411,4 @@ const SettingsModal: React.FC<SettingsModalProps> = ({
   )
 }
 
-export default SettingsModal
+export default GitSyncModal
