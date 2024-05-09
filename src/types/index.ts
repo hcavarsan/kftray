@@ -231,3 +231,28 @@ export interface ControlPanelProps {
   configsByContext: ConfigsByContext
   setSelectedConfigs: React.Dispatch<React.SetStateAction<Status[]>>
 }
+
+export interface BulkDeleteAlertDialogProps {
+  isOpen: boolean
+  onClose: () => void
+  onConfirm: () => void
+}
+
+export interface ContextAccordionItemProps {
+  context: string
+  contextConfigs: Status[]
+  selectedConfigs: Status[]
+  handleDeleteConfig: (id: number) => void
+  confirmDeleteConfig: (id: number) => void
+  handleEditConfig: (config: Status) => void
+  isAlertOpen: boolean
+  setIsAlertOpen: (isOpen: boolean) => void
+  updateConfigRunningState: (id: number, isRunning: boolean) => void
+  handleSelectionChange: (config: Status, isSelected: boolean) => void
+  updateSelectionState: (id: number, isRunning: boolean) => void
+  selectedConfigsByContext: Record<string, boolean>
+  handleCheckboxChange: (context: string, isChecked: boolean) => void
+  isInitiating: boolean
+  setIsInitiating: (isInitiating: boolean) => void
+  isStopping: boolean
+}
