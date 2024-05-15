@@ -1,6 +1,6 @@
 [package]
 name = "kftray"
-version = "0.10.2"
+version = "0.10.3"
 description = "A cross-platform system tray app for Kubernetes port-forward management"
 authors = [
     "Henrique Cavarsan <hencavarsan@gmail.com>",
@@ -29,7 +29,6 @@ base64 = "0.22.1"
 keyring = "2.3.2"
 mockall = "0.12"
 hostsfile = { git = "https://github.com/tonarino/innernet", branch = "main" }
-device_query = "=2.0.0"
 log = "0.4"
 env_logger = "0.11.3"
 openssl = { version = "0.10.64", features = ["vendored"] }
@@ -50,6 +49,7 @@ whoami = "1.5.1"
 tempfile = "3.9"
 h2 = { optional = true, version = "0.4.4" }
 fix-path-env = { git = "https://github.com/tauri-apps/fix-path-env-rs" }
+enigo = { version = "0.2.0", features = ["x11rb"] }
 
 [dev-dependencies]
 tempfile = "3.9"

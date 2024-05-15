@@ -13,14 +13,17 @@ mod models;
 mod remote_config;
 mod tray;
 
+use std::thread;
+use std::time::Duration;
 use std::{
     env,
     sync::atomic::Ordering,
 };
 
-use device_query::{
-    DeviceQuery,
-    DeviceState,
+use enigo::{
+    Enigo,
+    Mouse,
+    Settings,
 };
 use tauri::{
     GlobalShortcutManager,
@@ -38,27 +41,29 @@ use crate::models::dialog::SaveDialogState;
 
 fn move_window_to_mouse_position(window: &tauri::Window) {
     if let Ok(window_size) = window.inner_size() {
-        let device_state = DeviceState::new();
+        let settings = Settings::default();
+        let enigo = Enigo::new(&settings).unwrap();
+        let mouse_position = enigo.location().unwrap();
 
-        let mouse = device_state.get_mouse();
-
-        let mouse_position = mouse.coords;
-
-        println!("Position: {:#?}", mouse_position);
+        println!("Mouse Position: {:#?}", mouse_position);
+        println!("Window Size: {:#?}", window_size);
 
         let window_width = window_size.width as f64;
 
-        let window_height = window_size.height as f64;
+        let offset_x = 50.0;
 
-        let new_x = mouse_position.0 as f64 - (window_width / 2.0);
+        let new_x = mouse_position.0 as f64 - window_width + offset_x;
+        let new_y = mouse_position.1 as f64;
 
-        let new_y = mouse_position.1 as f64 - (window_height / 2.0);
+        println!("New Window Position: x: {}, y: {}", new_x, new_y);
 
-        window
-            .set_position(tauri::Position::Logical(tauri::LogicalPosition::new(
-                new_x, new_y,
-            )))
-            .ok();
+        thread::sleep(Duration::from_millis(200));
+
+        if let Err(e) = window.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(
+            new_x, new_y,
+        ))) {
+            eprintln!("Failed to set window position: {}", e);
+        }
     }
 }
 
