@@ -101,10 +101,10 @@ fn main() {
                     if window.is_visible().unwrap() {
                         window.hide().unwrap();
                     } else {
-						#[cfg(target_os = "linux")]
+                        #[cfg(target_os = "linux")]
                         move_window_to_mouse_position(&window);
 
-						#[cfg(target_os = "windows")]
+                        #[cfg(target_os = "windows")]
                         let _ = window.move_window(Position::BottomRight);
 
                         #[cfg(target_os = "macos")]
