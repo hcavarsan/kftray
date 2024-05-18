@@ -1,13 +1,7 @@
 <div align="center">
    <img align="center" width="160px" src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/logo.png" />
 	<h1 align="center"><b>Kftray</b></h1>
-	<p align="center">
-		A cross-platform system tray application for managing multiple kubectl port-forward commands
-    <br />
-    <a href="https://kftray.app"><strong>kftray.app»</strong></a>
-    <br />
  <div align="center">
-<br />
 <a href="https://nodejs.org/en/">
     <img src="https://img.shields.io/badge/-Node.js-grey?style=for-the-badge&logo=node.js" alt="Node.js" />
   </a>
@@ -36,10 +30,20 @@
       <img src="https://img.shields.io/badge/-Download for Linux-grey.svg?style=for-the-badge&logo=linux" alt="Download for Linux" />
     </a>
     <br />
+<br /> 
+</div>
+	<p align="center">
+		A cross-platform system tray application for managing multiple kubectl port-forward commands
+                  <br/>
+		 <a href="https://kftray.app"><strong>kftray.app»</strong></a>
+
+   
 <br />
-<img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/ss.png" alt="kftray" width=1024  />
- </div>
+<br />
+
   
+<img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/ss.png" alt="kftray" width=1024  />
+
 
 
 
@@ -65,8 +69,6 @@
 </div>
 
 
-
-<br>
 
   <h1>Overview</h1>
   <p>kftray is a cross-platform system tray app made with Tauri (Rust and TypeScript) for Kubernetes users. It simplifies setting up multiple kubectl port forward configurations through a user-friendly interface. Easily store and manage all configurations from local files or GitHub repositories.</p>
