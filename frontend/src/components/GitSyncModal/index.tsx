@@ -84,16 +84,7 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
           setCredentialsSaved(true)
         }
       } catch (error) {
-        if (isComponentMounted && isGitSyncModalOpen && credentialsSaved) {
-          toast({
-            title: 'Error fetching credentials',
-            description:
-              error instanceof Error
-                ? error.message
-                : 'An unknown error occurred',
-            status: 'error',
-          })
-        }
+        console.error('Failed to get git config:', error)
       } finally {
         if (isComponentMounted) {
           setIsLoading(false)
@@ -111,7 +102,6 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
     credentialsSaved,
     serviceName,
     accountName,
-    toast,
     setCredentialsSaved,
     setPollingInterval,
   ])
