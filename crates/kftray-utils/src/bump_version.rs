@@ -59,8 +59,12 @@ fn main() -> ExitCode {
 fn bump_version(bump_type: &str) -> io::Result<()> {
     log::info!("Bumping version to {}", bump_type);
 
+    let dir = "frontend";
+    log::info!("Bumping version to {} in directory {}", bump_type, dir);
+
     let npm_output = Command::new("npm")
         .args(["version", bump_type, "--no-git-tag-version"])
+        .current_dir(dir)
         .output()?;
 
     if !npm_output.status.success() {
@@ -88,15 +92,15 @@ fn bump_version(bump_type: &str) -> io::Result<()> {
     info!("Updating version in Cargo.toml, README.md and tauri.conf.json");
 
     update_file_content(
-        "src-tauri/Cargo.toml",
+        "crates/kftray-tauri/Cargo.toml",
         new_version,
         update_cargo_toml_version,
     )?;
 
-    log::info!("src-tauri Cargo.toml updated");
+    log::info!("kftray-tauri Cargo.toml updated");
 
     update_file_content(
-        "kftray-server/Cargo.toml",
+        "crates/kftray-server/Cargo.toml",
         new_version,
         update_cargo_toml_version,
     )?;
@@ -108,7 +112,7 @@ fn bump_version(bump_type: &str) -> io::Result<()> {
     log::info!("README.md updated");
 
     update_file_content(
-        "src-tauri/tauri.conf.json",
+        "crates/kftray-tauri/tauri.conf.json",
         new_version,
         update_json_version,
     )?;
