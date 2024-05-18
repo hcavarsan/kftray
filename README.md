@@ -1,10 +1,6 @@
 <div align="center">
    <img align="center" width="160px" src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/logo.png" />
 	<h1 align="center"><b>Kftray</b></h1>
-	<p align="center">
-		A cross-platform system tray application for managing multiple kubectl port-forward commands
-                  <br/>
-		 <a href="https://kftray.app"><strong>kftray.app»</strong></a>
  <div align="center">
 <br/>
 <a href="https://nodejs.org/en/">
@@ -37,6 +33,11 @@
     <br />
 <br /> 
 </div>
+	<p align="center">
+		A cross-platform system tray application for managing multiple kubectl port-forward commands
+                  <br/>
+		 <a href="https://kftray.app"><strong>kftray.app»</strong></a>
+
    
 <br />
 
