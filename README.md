@@ -3,7 +3,7 @@
 	<h1 align="center"><b>Kftray</b></h1>
 	<p align="center">
 		A cross-platform system tray application for managing multiple kubectl port-forward commands
-    <br />
+		 <a href="https://kftray.app"><strong>kftray.app»</strong></a>
  <div align="center">
 <br />
 <a href="https://nodejs.org/en/">
@@ -36,7 +36,7 @@
     <br />
 <br /> 
 </div>
-    <a href="https://kftray.app"><strong>kftray.app»</strong></a>
+   
     <br />
 
   
