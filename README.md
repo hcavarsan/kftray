@@ -1,72 +1,50 @@
 <div align="center">
    <img align="center" width="128px" src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/logo.png" />
-	<h1 align="center"><b>Kftray</b></h1>
- <div align="center">
-<a href="https://nodejs.org/en/">
-    <img src="https://img.shields.io/badge/-Node.js-grey?style=for-the-badge&logo=node.js" alt="Node.js" />
-  </a>
-  <a href="https://tauri.app/">
-    <img src="https://img.shields.io/badge/-Tauri-grey?style=for-the-badge&logo=tauri" alt="Tauri" />
-  </a>
-  <a href="https://www.typescriptlang.org/v">
-    <img src="https://img.shields.io/badge/-Typescript-grey?style=for-the-badge&logo=typescript" alt="Typescript" />
-  </a>
-  <a href="https://www.rust-lang.org/">
-    <img src="https://img.shields.io/badge/-Rust-grey?style=for-the-badge&logo=rust" alt="Rust" />
-  </a>
+   <h3 align="center"><b>kftray</b></h1>
+   <p align="center">
+    A cross-platform system tray application for managing multiple kubectl port-forward commands, with support for UDP and proxy connections through k8s clusters.
+   </p>
 
-  <a href="https://github.com/hcavarsan/kftray/releases/latest">
-    <img src="https://img.shields.io/github/downloads/hcavarsan/kftray/total.svg?style=for-the-badge" alt="downloads" />
-  </a>
+---
+
+   <div align="center">
+      <a href="https://nodejs.org/en/">
+         <img src="https://img.shields.io/badge/-Node.js-grey?style=for-the-badge&logo=node.js" alt="Node.js" />
+      </a>
+      <a href="https://tauri.app/">
+         <img src="https://img.shields.io/badge/-Tauri-grey?style=for-the-badge&logo=tauri" alt="Tauri" />
+      </a>
+      <a href="https://www.typescriptlang.org/">
+         <img src="https://img.shields.io/badge/-Typescript-grey?style=for-the-badge&logo=typescript" alt="Typescript" />
+      </a>
+      <a href="https://www.rust-lang.org/">
+         <img src="https://img.shields.io/badge/-Rust-grey?style=for-the-badge&logo=rust" alt="Rust" />
+      </a>
+      <a href="https://github.com/hcavarsan/kftray/releases/latest">
+         <img src="https://img.shields.io/github/downloads/hcavarsan/kftray/total.svg?style=for-the-badge" alt="downloads" />
+      </a>
    </div>
-<div align="center">
-    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.10.5_universal.dmg">
-      <img src="https://img.shields.io/badge/-Download for macOS-grey.svg?style=for-the-badge&logo=apple" alt="Download for macOS" />
-    </a>
-    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.10.5_x64-setup.exe">
-      <img src="https://img.shields.io/badge/-Download for Windows-grey.svg?style=for-the-badge&logo=windows" alt="Download for Windows" />
-    </a>
-    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.10.5_amd64.AppImage">
-      <img src="https://img.shields.io/badge/-Download for Linux-grey.svg?style=for-the-badge&logo=linux" alt="Download for Linux" />
-    </a>
-    <br />
-<br /> 
-</div>
-	<p align="center">
-		A cross-platform system tray application for managing multiple kubectl port-forward commands
-                  <br/>
-		 <a href="https://kftray.app"><strong>kftray.app»</strong></a>
-
+   <div align="center">
+      <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.10.5_universal.dmg">
+         <img src="https://img.shields.io/badge/-Download for macOS-grey.svg?style=for-the-badge&logo=apple" alt="Download for macOS" />
+      </a>
+      <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.10.5_x64-setup.exe">
+         <img src="https://img.shields.io/badge/-Download for Windows-grey.svg?style=for-the-badge&logo=windows" alt="Download for Windows" />
+      </a>
+      <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.10.5_amd64.AppImage">
+         <img src="https://img.shields.io/badge/-Download for Linux-grey.svg?style=for-the-badge&logo=linux" alt="Download for Linux" />
+      </a>
+   </div>
    
-<br />
-<br />
-
-  
-<img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/ss.png" alt="kftray" width=1024  />
-
-
-
-
-    
-
-  <div align="center">
-
-
-
-
-
-
-
-
-  <br>
-
-
-
-
+   <br />
+   
+   
+   <img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/ss.png" alt="kftray" width="600" />
 </div>
+<br/>
 
 
-</div>
+
 
 
 
