@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/public/img/ss.png" alt="kftray"  />
+  <img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/ss.png" alt="kftray"  />
   <h1>KFtray</h1>
   <h3>A cross-platform system tray app for Kubernetes port-forward management.</h3>
    <br>
