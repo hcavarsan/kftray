@@ -10,7 +10,7 @@
 <br/>
  <div align="center">
 
-    <a href="https://nodejs.org/en/">
+<a href="https://nodejs.org/en/">
     <img src="https://img.shields.io/badge/-Node.js-grey?style=for-the-badge&logo=node.js" alt="Node.js" />
   </a>
   <a href="https://tauri.app/">
