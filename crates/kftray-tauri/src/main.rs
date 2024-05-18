@@ -13,12 +13,9 @@ mod models;
 mod remote_config;
 mod tray;
 
+use std::sync::atomic::Ordering;
 use std::thread;
 use std::time::Duration;
-use std::{
-    env,
-    sync::atomic::Ordering,
-};
 
 use enigo::{
     Enigo,
