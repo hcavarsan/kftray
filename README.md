@@ -2,7 +2,7 @@
    <img align="center" width="160px" src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/logo.png" />
 	<h1 align="center"><b>Kftray</b></h1>
 	<p align="center">
-		Git cross-platform system tray application for managing multiple kubectl port-forward commands
+		A cross-platform system tray application for managing multiple kubectl port-forward commands
     <br />
     <a href="https://kftray.app"><strong>kftray.app»</strong></a>
     <br />
@@ -24,7 +24,6 @@
   <a href="https://www.rust-lang.org/">
     <img src="https://img.shields.io/badge/-Rust-grey?style=for-the-badge&logo=rust" alt="Rust" />
   </a>
-  
   <a href="https://github.com/hcavarsan/kftray/releases/latest">
     <img src="https://img.shields.io/github/downloads/hcavarsan/kftray/total.svg?style=for-the-badge" alt="downloads" />
   </a>
