@@ -2,7 +2,6 @@
    <img align="center" width="160px" src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/logo.png" />
 	<h1 align="center"><b>Kftray</b></h1>
  <div align="center">
-<br/>
 <a href="https://nodejs.org/en/">
     <img src="https://img.shields.io/badge/-Node.js-grey?style=for-the-badge&logo=node.js" alt="Node.js" />
   </a>
