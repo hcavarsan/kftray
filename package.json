@@ -14,6 +14,7 @@
 		"lint:front": "pnpm --filter @kftray/ui run lint",
 		"precommit": "pnpm run format && pnpm run lint",
 		"release:minor": "cargo run --bin bump_version minor && git add . && git commit -m 'chore: release new version'",
+		"release:patch": "cargo run --bin bump_version patch && git add . && git commit -m 'chore: release new version'",
 		"tauri": "tauri"
 	},
 	"devDependencies": {
