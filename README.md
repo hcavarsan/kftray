@@ -1,11 +1,8 @@
 <div align="center">
-  <img src="./img/logo.png" alt="KFtray Logo" width="210" height="210">
+  <img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/public/img/ss.png" alt="kftray"  />
   <h1>KFtray</h1>
   <h3>A cross-platform system tray app for Kubernetes port-forward management.</h3>
    <br>
-  <img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/public/img/kftray.png" alt="kftray" width="400"  />
-   <br>
-    <br>
 
   <a href="https://nodejs.org/en/">
     <img src="https://img.shields.io/badge/-Node.js-grey?style=for-the-badge&logo=node.js" alt="Node.js" />
