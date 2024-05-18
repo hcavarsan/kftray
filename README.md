@@ -6,7 +6,7 @@
                   <br/>
 		 <a href="https://kftray.app"><strong>kftray.app»</strong></a>
  <div align="center">
-<br />
+<br/>
 <a href="https://nodejs.org/en/">
     <img src="https://img.shields.io/badge/-Node.js-grey?style=for-the-badge&logo=node.js" alt="Node.js" />
   </a>
