@@ -415,7 +415,9 @@ const KFTray = () => {
       setConfigs(updatedConfigs)
       toast({
         title: 'Success',
-        description: `Configuration ${isEdit ? 'updated' : 'added'} successfully.`,
+        description: `Configuration ${
+          isEdit ? 'updated' : 'added'
+        } successfully.`,
         status: 'success',
       })
 

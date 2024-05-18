@@ -10,7 +10,7 @@
 		"format:front": "pnpm --filter @kftray/ui run format",
 		"generate-icons": "cargo run --bin generate_icons",
 		"lint": "pnpm --filter @kftray/ui run lint && pnpm run lint:back",
-		"lint:back": "cargo clippy --all-targets --all-features",
+		"lint:back": "cargo clippy --workspace --all-targets --all-features",
 		"lint:front": "pnpm --filter @kftray/ui run lint",
 		"precommit": "pnpm run format && pnpm run lint",
 		"release:minor": "cargo run --bin bump_version minor && git add . && git commit -m 'chore: release new version'",

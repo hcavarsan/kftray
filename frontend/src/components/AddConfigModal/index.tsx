@@ -692,7 +692,9 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                           styles={customStyles}
                           name='remote_port'
                           options={portQuery.data?.map(port => ({
-                            label: `${port.port ? port.port + ' - ' : ''}${port.name}`,
+                            label: `${port.port ? port.port + ' - ' : ''}${
+                              port.name
+                            }`,
                             value: port.port,
                           }))}
                           value={
