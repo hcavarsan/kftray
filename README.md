@@ -4,8 +4,6 @@
 	<p align="center">
 		A cross-platform system tray application for managing multiple kubectl port-forward commands
     <br />
-    <a href="https://kftray.app"><strong>kftray.app»</strong></a>
-    <br />
  <div align="center">
 <br />
 <a href="https://nodejs.org/en/">
@@ -36,10 +34,14 @@
       <img src="https://img.shields.io/badge/-Download for Linux-grey.svg?style=for-the-badge&logo=linux" alt="Download for Linux" />
     </a>
     <br />
-<br />
-<img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/ss.png" alt="kftray" width=1024  />
- </div>
+<br /> 
+</div>
+    <a href="https://kftray.app"><strong>kftray.app»</strong></a>
+    <br />
+
   
+<img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/ss.png" alt="kftray" width=1024  />
+
 
 
 
