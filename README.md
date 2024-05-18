@@ -9,9 +9,21 @@
   <a href="https://www.rust-lang.org/">
     <img src="https://img.shields.io/badge/-Rust-grey?style=for-the-badge&logo=rust" alt="Rust" />
   </a>
+  
   <a href="https://github.com/hcavarsan/kftray/releases/latest">
     <img src="https://img.shields.io/github/downloads/hcavarsan/kftray/total.svg?style=for-the-badge" alt="downloads" />
   </a>
+    <div>
+    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.10.5_universal.dmg">
+      <img src="https://img.shields.io/badge/-Download for macOS-grey.svg?style=for-the-badge&logo=apple" alt="Download for macOS" />
+    </a>
+    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.10.5_x64-setup.exe">
+      <img src="https://img.shields.io/badge/-Download for Windows-grey.svg?style=for-the-badge&logo=windows" alt="Download for Windows" />
+    </a>
+    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.10.5_amd64.AppImage">
+      <img src="https://img.shields.io/badge/-Download for Linux-grey.svg?style=for-the-badge&logo=linux" alt="Download for Linux" />
+    </a>
+  </div>
   <br>
   
   <h1>KFtray</h1>
@@ -30,17 +42,7 @@
 
 
 
-  <div>
-    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.10.5_universal.dmg">
-      <img src="https://img.shields.io/badge/-Download for macOS-grey.svg?style=for-the-badge&logo=apple" alt="Download for macOS" />
-    </a>
-    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.10.5_x64-setup.exe">
-      <img src="https://img.shields.io/badge/-Download for Windows-grey.svg?style=for-the-badge&logo=windows" alt="Download for Windows" />
-    </a>
-    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.10.5_amd64.AppImage">
-      <img src="https://img.shields.io/badge/-Download for Linux-grey.svg?style=for-the-badge&logo=linux" alt="Download for Linux" />
-    </a>
-  </div>
+
 
   <br>
 
