@@ -2,7 +2,7 @@
   <h2>KFtray</h2>
   <h3>A cross-platform system tray app for Kubernetes port-forward management.</h3>
  
-  <img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/ss.png" alt="kftray" width=800  />
+  <img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/ss.png" alt="kftray" width=1024  />
     <br />
     <br />
     <a href="https://nodejs.org/en/">
