@@ -21,7 +21,7 @@ use thiserror::Error;
 
 const SRC_FILE: &str = "./img/logo.png";
 
-const DST_PATH: &str = "./src-tauri/icons";
+const DST_PATH: &str = "./crates/kftray-tauri/icons";
 
 #[derive(Debug, Error)]
 

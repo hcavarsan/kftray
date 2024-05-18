@@ -55,7 +55,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Run rustfmt
-        run: cargo fmt --manifest-path ./src-tauri/Cargo.toml --all -- --check
+        run: cargo +nightly fmt --all -- --check
 
   rust-lint:
     name: Clippy
@@ -82,7 +82,7 @@ jobs:
           run_install: false
 
       - name: Run Clippy
-        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --all-features -- -D warnings
+        run: cargo clippy --all-targets --all-features -- -D warnings
 
   build-and-push-docker:
     permissions:
@@ -101,8 +101,8 @@ jobs:
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
-          context: ./kftray-server
-          file: ./kftray-server/Dockerfile
+          context: ./crates/kftray-server
+          file: ./crates/kftray-server/Dockerfile
           push: true
           tags: |
             ghcr.io/${{ github.repository_owner }}/kftray-server:${{ github.sha }}

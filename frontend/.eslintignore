@@ -12,5 +12,5 @@ yarn.lock
 
 
 dist/
-src-tauri/
+crates/
 kftray-server/
