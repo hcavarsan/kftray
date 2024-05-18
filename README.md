@@ -1,5 +1,5 @@
 <div align="center">
-   <img align="center" width="128px" src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/logoapp.png" />
+   <img align="center" width="160px" src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/logo.png" />
 	<h1 align="center"><b>Kftray</b></h1>
 	<p align="center">
 		Git cross-platform system tray application for managing multiple kubectl port-forward commands
