@@ -37,7 +37,6 @@
     <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.10.5_amd64.AppImage">
       <img src="https://img.shields.io/badge/-Download for Linux-grey.svg?style=for-the-badge&logo=linux" alt="Download for Linux" />
     </a>
-	    <br />
     <br />
 <img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/ss.png" alt="kftray" width=1024  />
  </div>
