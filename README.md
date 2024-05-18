@@ -1,13 +1,14 @@
 <div align="center">
-  <img src="./img/logo.png" alt="KFtray Logo" width="210" height="210">
-  <h1>KFtray</h1>
-  <h3>A cross-platform system tray app for Kubernetes port-forward management.</h3>
-   <br>
-  <img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/public/img/kftray.png" alt="kftray" width="400"  />
-   <br>
-    <br>
-
-  <a href="https://nodejs.org/en/">
+   <img align="center" width="160px" src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/logo.png" />
+	<h1 align="center"><b>Kftray</b></h1>
+	<p align="center">
+		A cross-platform system tray application for managing multiple kubectl port-forward commands
+    <br />
+    <a href="https://kftray.app"><strong>kftray.app»</strong></a>
+    <br />
+ <div align="center">
+<br />
+<a href="https://nodejs.org/en/">
     <img src="https://img.shields.io/badge/-Node.js-grey?style=for-the-badge&logo=node.js" alt="Node.js" />
   </a>
   <a href="https://tauri.app/">
@@ -19,17 +20,12 @@
   <a href="https://www.rust-lang.org/">
     <img src="https://img.shields.io/badge/-Rust-grey?style=for-the-badge&logo=rust" alt="Rust" />
   </a>
+
   <a href="https://github.com/hcavarsan/kftray/releases/latest">
     <img src="https://img.shields.io/github/downloads/hcavarsan/kftray/total.svg?style=for-the-badge" alt="downloads" />
   </a>
-  <div align="center">
-
-
-
-
-
-
-  <div>
+   </div>
+<div align="center">
     <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.10.5_universal.dmg">
       <img src="https://img.shields.io/badge/-Download for macOS-grey.svg?style=for-the-badge&logo=apple" alt="Download for macOS" />
     </a>
@@ -39,7 +35,24 @@
     <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.10.5_amd64.AppImage">
       <img src="https://img.shields.io/badge/-Download for Linux-grey.svg?style=for-the-badge&logo=linux" alt="Download for Linux" />
     </a>
-  </div>
+    <br />
+<br />
+<img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/ss.png" alt="kftray" width=1024  />
+ </div>
+  
+
+
+
+    
+
+  <div align="center">
+
+
+
+
+
+
+
 
   <br>
 
