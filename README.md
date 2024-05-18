@@ -1,5 +1,5 @@
 <div align="center">
-   <img align="center" width="160px" src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/logo.png" />
+   <img align="center" width="128px" src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/logo.png" />
 	<h1 align="center"><b>Kftray</b></h1>
  <div align="center">
 <a href="https://nodejs.org/en/">
