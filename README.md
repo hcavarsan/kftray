@@ -1,6 +1,7 @@
 <div align="center">
-  
-  <h3>kftray is a cross-platform system tray application for managing multiple kubectl port-forward commands</h3>
+  <h3>kftray<h3/>
+  <br/>
+  <h3>cross-platform system tray application for managing multiple kubectl port-forward commands</h3>
  
   <img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/ss.png" alt="kftray" width=1024  />
     <br />
