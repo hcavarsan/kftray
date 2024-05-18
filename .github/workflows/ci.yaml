@@ -57,6 +57,9 @@ jobs:
       - name: Install Rust nightly
         run: rustup toolchain install nightly
 
+      - name: Install rustfmt for nightly
+        run: rustup component add --toolchain nightly rustfmt
+
       - name: Run rustfmt
         run: cargo +nightly fmt --all -- --check
 
