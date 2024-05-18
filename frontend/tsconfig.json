@@ -21,6 +21,6 @@
     }
   },
   "include": ["src/**/*", "vite.config.ts"],
-  "exclude": ["node_modules", "src-tauri", "dist"],
+  "exclude": ["node_modules", "crates", "dist", "target"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

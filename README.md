@@ -244,7 +244,7 @@ To compile `kftray`, these steps should be followed:
 
 ### Server
 
-KFtray Server is a Rust application that relays UDP/TCP traffic to an upstream server. Check the source code [here](https://github.com/hcavarsan/kftray/tree/main/kftray-server).
+KFtray Server is a Rust application that relays UDP/TCP traffic to an upstream server. Check the source code [here](https://github.com/hcavarsan/kftray/tree/main/crates/kftray-server).
 
 ### Forwarding Flows
 
