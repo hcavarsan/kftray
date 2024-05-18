@@ -9,9 +9,7 @@
     <br />
 <br/>
  <div align="center">
-  <img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/ss.png" alt="kftray" width=1024  />
-    <br />
-    <br />
+
     <a href="https://nodejs.org/en/">
     <img src="https://img.shields.io/badge/-Node.js-grey?style=for-the-badge&logo=node.js" alt="Node.js" />
   </a>
@@ -24,11 +22,12 @@
   <a href="https://www.rust-lang.org/">
     <img src="https://img.shields.io/badge/-Rust-grey?style=for-the-badge&logo=rust" alt="Rust" />
   </a>
- </div>
-<div align="center">
+
   <a href="https://github.com/hcavarsan/kftray/releases/latest">
     <img src="https://img.shields.io/github/downloads/hcavarsan/kftray/total.svg?style=for-the-badge" alt="downloads" />
   </a>
+   </div>
+<div align="center">
     <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.10.5_universal.dmg">
       <img src="https://img.shields.io/badge/-Download for macOS-grey.svg?style=for-the-badge&logo=apple" alt="Download for macOS" />
     </a>
@@ -38,7 +37,9 @@
     <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.10.5_amd64.AppImage">
       <img src="https://img.shields.io/badge/-Download for Linux-grey.svg?style=for-the-badge&logo=linux" alt="Download for Linux" />
     </a>
-
+	    <br />
+    <br />
+<img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/ss.png" alt="kftray" width=1024  />
  </div>
   
 
