@@ -14,9 +14,12 @@ mod remote_config;
 mod tray;
 
 use std::sync::atomic::Ordering;
+#[cfg(target_os = "linux")]
 use std::thread;
+#[cfg(target_os = "linux")]
 use std::time::Duration;
 
+#[cfg(target_os = "linux")]
 use enigo::{
     Enigo,
     Mouse,
@@ -36,6 +39,7 @@ use tokio::runtime::Runtime;
 
 use crate::models::dialog::SaveDialogState;
 
+#[cfg(target_os = "linux")]
 fn move_window_to_mouse_position(window: &tauri::Window) {
     if let Ok(window_size) = window.inner_size() {
         let settings = Settings::default();
