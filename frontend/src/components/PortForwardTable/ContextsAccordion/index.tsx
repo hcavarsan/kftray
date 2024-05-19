@@ -1,6 +1,6 @@
 import React from 'react'
 
-import { CheckCircleIcon, InfoIcon } from '@chakra-ui/icons'
+import { InfoIcon, RepeatIcon } from '@chakra-ui/icons'
 import {
   AccordionButton,
   AccordionIcon,
@@ -9,11 +9,10 @@ import {
   Box,
   Checkbox,
   Flex,
+  Icon,
   Progress,
   Table,
   Tag,
-  TagLabel,
-  TagLeftIcon,
   Tbody,
   Text,
   Th,
@@ -107,17 +106,17 @@ const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
           >
             <Tag
               size='sm'
-              width='60px'
               colorScheme={contextTagColorScheme}
               borderRadius='full'
               mr={2}
             >
-              {contextRunningCount > 0 ? (
-                <TagLeftIcon as={CheckCircleIcon} />
-              ) : (
-                <TagLeftIcon as={InfoIcon} />
-              )}
-              <TagLabel>{`${contextRunningCount}/${contextTotalCount}`}</TagLabel>
+              <Flex alignItems='center' justifyContent='center' width='100%'>
+                {contextRunningCount > 0 ? (
+                  <Icon as={RepeatIcon} />
+                ) : (
+                  <Icon as={InfoIcon} />
+                )}
+              </Flex>
             </Tag>
           </Tooltip>
           <Progress
@@ -128,6 +127,7 @@ const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
             width='50px'
           />
         </Flex>
+
         <AccordionIcon color={textColor} />
       </AccordionButton>
       <AccordionPanel pb={4} borderColor={borderColor} fontFamily={fontFamily}>
