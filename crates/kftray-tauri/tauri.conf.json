@@ -8,7 +8,7 @@
   },
   "package": {
     "productName": "kftray",
-    "version": "0.10.6"
+    "version": "0.10.7"
   },
   "tauri": {
     "allowlist": {
@@ -35,7 +35,14 @@
       "identifier": "com.hcavarsan.kftray",
       "resources": [],
       "shortDescription": "",
-      "targets": ["app", "dmg", "appimage", "deb", "updater", "msi"],
+      "targets": [
+        "app",
+        "dmg",
+        "appimage",
+        "deb",
+        "updater",
+        "msi"
+      ],
       "windows": {
         "certificateThumbprint": null,
         "digestAlgorithm": "sha256",
