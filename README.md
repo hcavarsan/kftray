@@ -39,7 +39,7 @@
    <br />
    
    
-   <img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/ss.png" alt="kftray" width="600" />
+   <img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/ss2.png" alt="kftray" />
 </div>
 <br/>
 
