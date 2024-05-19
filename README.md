@@ -3,7 +3,14 @@
    <h3 align="center"><b>kftray</b></h1>
    <p align="center">
     A cross-platform system tray application for managing multiple kubectl port-forward commands, with support for UDP and proxy connections through k8s clusters.
+      <br />
+      <a href="https://kftray.app"><strong>kftray.app »</strong></a>
+    
    </p>
+
+---
+
+<img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/ss2.png" alt="kftray" />
 
 ---
 
@@ -39,9 +46,7 @@
    <br />
    
    
-   <img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/ss2.png" alt="kftray" />
 </div>
-<br/>
 
 
 
