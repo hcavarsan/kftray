@@ -70,6 +70,8 @@ const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
         boxShadow='lg'
         _hover={{ bg: bg }}
         _expanded={{ bg: accordionBg, boxShadow: 'lg' }}
+        width='full'
+        fontSize='10px'
       >
         <Box flex='1' textAlign='left' fontSize='sm' color={textColor}>
           <div onClick={event => event.stopPropagation()}>
@@ -91,7 +93,7 @@ const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
               }}
               isDisabled={contextConfigs.every(config => config.isRunning)}
             >
-              cluster: {context}
+              {context}
             </Checkbox>
           </div>
         </Box>
@@ -105,6 +107,7 @@ const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
           >
             <Tag
               size='sm'
+              width='60px'
               colorScheme={contextTagColorScheme}
               borderRadius='full'
               mr={2}
@@ -122,7 +125,7 @@ const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
             size='xs'
             colorScheme={contextTagColorScheme}
             borderRadius='lg'
-            width='85px'
+            width='50px'
           />
         </Flex>
         <AccordionIcon color={textColor} />
@@ -130,37 +133,37 @@ const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
       <AccordionPanel pb={4} borderColor={borderColor} fontFamily={fontFamily}>
         {contextConfigs.length > 0 ? (
           <Flex direction='column' width='100%' mt={0} p={0}>
-            <Table
-              variant='simple'
-              size='sm'
-              border='none'
-              style={{ tableLayout: 'fixed' }}
-            >
-              <Thead
-                position='sticky'
+            <Box>
+              <Table
+                size='sm'
+                border='none'
+                width='full'
+                alignItems='center'
+                justifyContent='center'
+                alignContent='center'
+                style={{ tableLayout: 'fixed' }}
+                variant='simple'
+                position='relative'
                 top='0'
-                zIndex='sticky'
                 fontFamily={fontFamily}
               >
-                <Tr boxShadow={boxShadow}>
-                  <Th fontFamily={fontFamily} fontSize='10px' width='40%'>
-                    Alias
-                  </Th>
-                  <Th fontFamily={fontFamily} fontSize='10px'>
-                    Port
-                  </Th>
-                  <Th fontFamily={fontFamily} fontSize='10px'>
-                    Status
-                  </Th>
-                  <Th fontFamily={fontFamily} fontSize='10px'>
-                    Action
-                  </Th>
-                </Tr>
-              </Thead>
-            </Table>
-            <Box>
-              <Table size='sm' border='none' style={{ tableLayout: 'fixed' }}>
-                <Tbody width='full' position='sticky' top='0' zIndex='sticky'>
+                <Thead>
+                  <Tr boxShadow={boxShadow}>
+                    <Th fontFamily={fontFamily} fontSize='10px' width='40%'>
+                      Alias
+                    </Th>
+                    <Th fontFamily={fontFamily} fontSize='10px'>
+                      Port
+                    </Th>
+                    <Th fontFamily={fontFamily} fontSize='10px'>
+                      On/Off
+                    </Th>
+                    <Th fontFamily={fontFamily} fontSize='10px'>
+                      Action
+                    </Th>
+                  </Tr>
+                </Thead>
+                <Tbody width='full'>
                   {contextConfigs.map(config => (
                     <PortForwardRow
                       key={config.id}

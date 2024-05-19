@@ -191,8 +191,7 @@ const PortForwardTable: React.FC<TableProps> = ({
   return (
     <Flex
       direction='column'
-      height='550px'
-      maxHeight='550px'
+      height='100%'
       overflow='hidden'
       width='100%'
       borderColor={borderColor}
@@ -243,10 +242,7 @@ const PortForwardTable: React.FC<TableProps> = ({
       </Flex>
       <Flex
         direction='column'
-        height='550px'
-        maxHeight='550px'
-        pb='90px'
-        flex='1'
+        maxHeight='100%'
         mt='5'
         overflowY='scroll'
         width='100%'
@@ -261,6 +257,7 @@ const PortForwardTable: React.FC<TableProps> = ({
           index={expandedIndices}
           onChange={handleAccordionChange}
           borderColor={borderColor}
+          width='full'
         >
           {Object.entries(configsByContext).map(
             ([context, contextConfigs], _contextIndex) => (
