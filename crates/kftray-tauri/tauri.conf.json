@@ -66,14 +66,14 @@
         "decorations": false,
         "focus": false,
         "fullscreen": false,
-        "height": 700,
+        "height": 500,
         "hiddenTitle": true,
         "resizable": false,
         "skipTaskbar": true,
         "title": "menubar",
         "transparent": true,
         "visible": false,
-        "width": 500
+        "width": 450
       }
     ]
   }

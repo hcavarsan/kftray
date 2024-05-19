@@ -70,6 +70,8 @@ const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
         boxShadow='lg'
         _hover={{ bg: bg }}
         _expanded={{ bg: accordionBg, boxShadow: 'lg' }}
+        width='full'
+        fontSize='10px'
       >
         <Box flex='1' textAlign='left' fontSize='sm' color={textColor}>
           <div onClick={event => event.stopPropagation()}>
@@ -91,7 +93,7 @@ const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
               }}
               isDisabled={contextConfigs.every(config => config.isRunning)}
             >
-              cluster: {context}
+              {context}
             </Checkbox>
           </div>
         </Box>
@@ -105,6 +107,7 @@ const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
           >
             <Tag
               size='sm'
+              width='60px'
               colorScheme={contextTagColorScheme}
               borderRadius='full'
               mr={2}
@@ -122,7 +125,7 @@ const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
             size='xs'
             colorScheme={contextTagColorScheme}
             borderRadius='lg'
-            width='85px'
+            width='50px'
           />
         </Flex>
         <AccordionIcon color={textColor} />
@@ -135,12 +138,14 @@ const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
               size='sm'
               border='none'
               style={{ tableLayout: 'fixed' }}
+              width='full'
             >
               <Thead
                 position='sticky'
                 top='0'
                 zIndex='sticky'
                 fontFamily={fontFamily}
+                width='full'
               >
                 <Tr boxShadow={boxShadow}>
                   <Th fontFamily={fontFamily} fontSize='10px' width='40%'>
@@ -159,7 +164,12 @@ const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
               </Thead>
             </Table>
             <Box>
-              <Table size='sm' border='none' style={{ tableLayout: 'fixed' }}>
+              <Table
+                size='sm'
+                border='none'
+                style={{ tableLayout: 'fixed' }}
+                width='full'
+              >
                 <Tbody width='full' position='sticky' top='0' zIndex='sticky'>
                   {contextConfigs.map(config => (
                     <PortForwardRow

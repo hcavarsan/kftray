@@ -13,6 +13,10 @@ import {
   Checkbox,
   Flex,
   IconButton,
+  Menu,
+  MenuButton,
+  MenuItem,
+  MenuList,
   Switch,
   Td,
   Tooltip,
@@ -20,7 +24,12 @@ import {
   useColorModeValue,
   useDisclosure,
 } from '@chakra-ui/react'
-import { faInfoCircle, faPen, faTrash } from '@fortawesome/free-solid-svg-icons'
+import {
+  faBars,
+  faInfoCircle,
+  faPen,
+  faTrash,
+} from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { open } from '@tauri-apps/api/shell'
 import { invoke } from '@tauri-apps/api/tauri'
@@ -44,7 +53,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   setIsInitiating,
 }) => {
   const { isOpen, onOpen } = useDisclosure()
-  const textColor = useColorModeValue('gray.100', 'gray.100')
+  const textColor = useColorModeValue('gray.300', 'gray.300')
   const cancelRef = React.useRef<HTMLButtonElement>(null)
   const toast = useCustomToast()
   const handleOpenLocalURL = () => {
@@ -207,14 +216,21 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
       <br />
     </>
   )
+  const fontFamily = '\'Open Sans\', sans-serif'
+  const fontSize = '14px'
 
-  const fontFamily = '"Inter", sans-serif'
 
+  
   return (
     <>
       <Tr key={config.id}>
         {showContext && <Td>{config.context}</Td>}
-        <Td color={textColor} fontFamily={fontFamily} width='40%'>
+        <Td
+          color={textColor}
+          fontFamily={fontFamily}
+          fontSize={fontSize}
+          width='40%'
+        >
           <Checkbox
             size='sm'
             isChecked={selected || config.isRunning}
@@ -246,12 +262,13 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
             </span>
           </Tooltip>
         </Td>
-        <Td color={textColor} fontFamily={fontFamily}>
+        <Td color={textColor} fontFamily={fontFamily} fontSize={fontSize}>
           {config.local_port}
         </Td>
         <Td>
           <Flex alignItems='center'>
             <Switch
+              ml={1}
               colorScheme='facebook'
               isChecked={config.isRunning && !isInitiating}
               size='sm'
@@ -283,27 +300,44 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
             )}
           </Flex>
         </Td>
-        <Td>
-          <IconButton
-            size='xs'
-            aria-label='Edit configuration'
-            icon={<FontAwesomeIcon icon={faPen} style={{ fontSize: '10px' }} />}
-            onClick={() => handleEditConfig(config.id)}
-            variant='ghost'
-          />
-          <IconButton
-            size='xs'
-            aria-label='Delete configuration'
-            icon={
-              <FontAwesomeIcon icon={faTrash} style={{ fontSize: '10px' }} />
-            }
-            onClick={() => {
-              setIsAlertOpen(true)
-              handleDeleteClick()
-              handleDeleteConfig(config.id)
-            }}
-            variant='ghost'
-          />
+        <Td fontSize={fontSize} align='center'>
+          <Menu>
+            <MenuButton
+              as={IconButton}
+              aria-label='Options'
+              icon={
+                <FontAwesomeIcon icon={faBars} style={{ fontSize: '10px' }} />
+              }
+              variant='ghost'
+              size='xs'
+              ml={2}
+            />
+            <MenuList>
+              <MenuItem
+                icon={
+                  <FontAwesomeIcon icon={faPen} style={{ fontSize: '10px' }} />
+                }
+                onClick={() => handleEditConfig(config.id)}
+              >
+                Edit
+              </MenuItem>
+              <MenuItem
+                icon={
+                  <FontAwesomeIcon
+                    icon={faTrash}
+                    style={{ fontSize: '10px' }}
+                  />
+                }
+                onClick={() => {
+                  setIsAlertOpen(true)
+                  handleDeleteClick()
+                  handleDeleteConfig(config.id)
+                }}
+              >
+                Delete
+              </MenuItem>
+            </MenuList>
+          </Menu>
         </Td>
       </Tr>
       {isAlertOpen && (
