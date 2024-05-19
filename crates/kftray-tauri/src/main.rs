@@ -102,7 +102,7 @@ fn main() {
                         move_window_to_mouse_position(&window);
 
                         #[cfg(target_os = "windows")]
-                        let _ = window.move_window(Position::BottomRight);
+                        let _ = window.move_window(Position::TrayCenter);
 
                         #[cfg(target_os = "macos")]
                         let _ = window.move_window(Position::TrayCenter);
@@ -134,7 +134,7 @@ fn main() {
                     move_window_to_mouse_position(&window);
 
                     #[cfg(target_os = "windows")]
-                    let _ = window.move_window(Position::BottomRight);
+                    let _ = window.move_window(Position::TrayCenter);
 
                     #[cfg(target_os = "macos")]
                     let _ = window.move_window(Position::TrayCenter);
