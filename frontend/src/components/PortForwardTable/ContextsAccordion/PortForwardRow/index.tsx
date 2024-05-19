@@ -19,6 +19,7 @@ import {
   MenuList,
   Switch,
   Td,
+  Text,
   Tooltip,
   Tr,
   useColorModeValue,
@@ -217,7 +218,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
     </>
   )
   const fontFamily = '\'Open Sans\', sans-serif'
-  const fontSize = '14px'
+  const fontSize = '13px'
 
   return (
     <>
@@ -227,7 +228,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
           color={textColor}
           fontFamily={fontFamily}
           fontSize={fontSize}
-          width='40%'
+          width='39%'
         >
           <Checkbox
             size='sm'
@@ -260,9 +261,16 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
             </span>
           </Tooltip>
         </Td>
-        <Td color={textColor} fontFamily={fontFamily} fontSize={fontSize}>
-          {config.local_port}
+
+        <Td
+          color={textColor}
+          fontFamily={fontFamily}
+          fontSize={fontSize}
+          textAlign='center'
+        >
+          <Text ml={-3}>{config.local_port}</Text>
         </Td>
+
         <Td>
           <Flex alignItems='center'>
             <Switch

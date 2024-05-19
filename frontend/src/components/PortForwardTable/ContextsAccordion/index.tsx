@@ -133,44 +133,37 @@ const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
       <AccordionPanel pb={4} borderColor={borderColor} fontFamily={fontFamily}>
         {contextConfigs.length > 0 ? (
           <Flex direction='column' width='100%' mt={0} p={0}>
-            <Table
-              variant='simple'
-              size='sm'
-              border='none'
-              style={{ tableLayout: 'fixed' }}
-              width='full'
-            >
-              <Thead
-                position='sticky'
-                top='0'
-                zIndex='sticky'
-                fontFamily={fontFamily}
-                width='full'
-              >
-                <Tr boxShadow={boxShadow}>
-                  <Th fontFamily={fontFamily} fontSize='10px' width='41%'>
-                    Alias
-                  </Th>
-                  <Th fontFamily={fontFamily} fontSize='10px'>
-                    Port
-                  </Th>
-                  <Th fontFamily={fontFamily} fontSize='10px'>
-                    Status
-                  </Th>
-                  <Th fontFamily={fontFamily} fontSize='10px'>
-                    Action
-                  </Th>
-                </Tr>
-              </Thead>
-            </Table>
             <Box>
               <Table
                 size='sm'
                 border='none'
-                style={{ tableLayout: 'fixed' }}
                 width='full'
+                alignItems='center'
+                justifyContent='center'
+                alignContent='center'
+                style={{ tableLayout: 'fixed' }}
+                variant='simple'
+                position='relative'
+                top='0'
+                fontFamily={fontFamily}
               >
-                <Tbody width='full' position='sticky' top='0' zIndex='sticky'>
+                <Thead>
+                  <Tr boxShadow={boxShadow}>
+                    <Th fontFamily={fontFamily} fontSize='10px' width='40%'>
+                      Alias
+                    </Th>
+                    <Th fontFamily={fontFamily} fontSize='10px'>
+                      Port
+                    </Th>
+                    <Th fontFamily={fontFamily} fontSize='10px'>
+                      On/Off
+                    </Th>
+                    <Th fontFamily={fontFamily} fontSize='10px'>
+                      Action
+                    </Th>
+                  </Tr>
+                </Thead>
+                <Tbody width='full'>
                   {contextConfigs.map(config => (
                     <PortForwardRow
                       key={config.id}
