@@ -569,21 +569,15 @@ const KFTray = () => {
     setIsStopping(false)
   }
 
-  useEffect(() => {
-    if (isModalOpen) {
-      document.body.style.overflow = 'hidden'
-    } else {
-      document.body.style.overflow = 'unset'
-    }
-  }, [isModalOpen])
   const cardBg = useColorModeValue('gray.800', 'gray.800')
 
   return (
     <Box
-      position='relative'
+      position='fixed'
       width='100%'
-      height='76vh'
-      maxW='600px'
+      height='100%'
+      maxHeight='100%'
+      maxW='100%'
       overflow='hidden'
       borderRadius='20px'
       bg={cardBg}
@@ -608,11 +602,13 @@ const KFTray = () => {
             background: '#666',
           },
         }}
-        height='78vh'
+        height='100%'
+        maxH='100%'
         w='100%'
         maxW='100%'
-        overflowY='auto'
+        overflow='hidden'
         padding='15px'
+        position='fixed'
         mt='2px'
       >
         <PortForwardTable
@@ -632,7 +628,6 @@ const KFTray = () => {
           selectedConfigs={selectedConfigs}
           setSelectedConfigs={setSelectedConfigs}
         />
-
         <GitSyncModal
           isGitSyncModalOpen={isGitSyncModalOpen}
           closeGitSyncModal={closeGitSyncModal}
@@ -641,6 +636,18 @@ const KFTray = () => {
           credentialsSaved={credentialsSaved}
           setPollingInterval={setPollingInterval}
           pollingInterval={pollingInterval}
+        />
+
+        <AddConfigModal
+          isModalOpen={isModalOpen}
+          closeModal={closeModal}
+          newConfig={newConfig}
+          handleInputChange={handleInputChange}
+          handleSaveConfig={handleSaveConfig}
+          isEdit={isEdit}
+          handleEditSubmit={handleEditSubmit}
+          cancelRef={cancelRef}
+          setNewConfig={setNewConfig}
         />
         <Footer
           openModal={openModal}
@@ -657,17 +664,6 @@ const KFTray = () => {
           setSelectedConfigs={setSelectedConfigs}
           configs={configs}
           setConfigs={setConfigs}
-        />
-        <AddConfigModal
-          isModalOpen={isModalOpen}
-          closeModal={closeModal}
-          newConfig={newConfig}
-          handleInputChange={handleInputChange}
-          handleSaveConfig={handleSaveConfig}
-          isEdit={isEdit}
-          handleEditSubmit={handleEditSubmit}
-          cancelRef={cancelRef}
-          setNewConfig={setNewConfig}
         />
       </VStack>
     </Box>

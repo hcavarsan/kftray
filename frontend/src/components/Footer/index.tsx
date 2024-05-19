@@ -43,20 +43,18 @@ const Footer: React.FC<FooterProps> = ({
   return (
     <Flex
       as='footer'
-      direction={{ base: 'column', sm: 'row' }}
+      direction='row'
       justifyContent='space-between'
       wrap='wrap'
       bg='gray.800'
-      py={{ base: 2, sm: 1 }}
-      px={{ base: 2, sm: 1 }}
       boxShadow='0px 0px 8px 3px rgba(0, 0, 0, 0.2)'
       borderRadius='lg'
       border='1px'
       borderColor={borderColor}
-      mb={3}
-      width='97%'
+      width='100%'
+      padding='0.3rem'
     >
-      <Flex align='center' mb={{ base: 2, sm: 0 }}>
+      <Flex justifyContent='flex-start'>
         <Menu placement='top-end'>
           <MenuButton
             as={IconButton}
@@ -67,7 +65,7 @@ const Footer: React.FC<FooterProps> = ({
             variant='outline'
             borderColor={borderColor}
           />
-          <MenuList zIndex='popover' fontSize='xs' minW='150px'>
+          <MenuList zIndex='popover' fontSize='sm' minW='150px'>
             <MenuItem icon={<MdFileUpload />} onClick={handleExportConfigs}>
               Export Local File
             </MenuItem>
@@ -79,25 +77,25 @@ const Footer: React.FC<FooterProps> = ({
               Import Local File
             </MenuItem>
           </MenuList>
-          <Tooltip
-            label='Add New Config'
-            placement='top'
-            fontSize='xs'
-            lineHeight='tight'
-          >
-            <IconButton
-              variant='outline'
-              icon={<MdAdd />}
-              colorScheme='facebook'
-              onClick={openModal}
-              isDisabled={credentialsSaved}
-              size='sm'
-              ml={2}
-              aria-label='Add New Config'
-              borderColor={borderColor}
-            />
-          </Tooltip>
         </Menu>
+        <Tooltip
+          label='Add New Config'
+          placement='top'
+          fontSize='sm'
+          lineHeight='tight'
+        >
+          <IconButton
+            variant='outline'
+            icon={<MdAdd />}
+            colorScheme='facebook'
+            onClick={openModal}
+            isDisabled={credentialsSaved}
+            size='sm'
+            ml={2}
+            aria-label='Add New Config'
+            borderColor={borderColor}
+          />
+        </Tooltip>
         <BulkDeleteButton
           setSelectedConfigs={setSelectedConfigs}
           selectedConfigs={selectedConfigs}
@@ -106,11 +104,11 @@ const Footer: React.FC<FooterProps> = ({
         />
       </Flex>
 
-      <Flex align='center' flexGrow={1} justifyContent={{ sm: 'flex-end' }}>
+      <Flex flexGrow={1} justifyContent='flex-end' alignItems='center'>
         <Tooltip
           label='Configure Git Sync'
           placement='top'
-          fontSize='xs'
+          fontSize='sm'
           lineHeight='tight'
         >
           <Button
@@ -119,7 +117,6 @@ const Footer: React.FC<FooterProps> = ({
             onClick={openGitSyncModal}
             size='sm'
             aria-label='Sync Configs'
-            justifyContent='center'
             borderColor='gray.700'
             mr={2}
           >
