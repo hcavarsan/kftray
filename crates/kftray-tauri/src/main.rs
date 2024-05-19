@@ -181,7 +181,14 @@ fn main() {
                     "toggle" => {
                         let window = app.get_window("main").unwrap();
 
+                        #[cfg(target_os = "linux")]
                         move_window_to_mouse_position(&window);
+
+                        #[cfg(target_os = "windows")]
+                        let _ = window.move_window(Position::TrayCenter);
+
+                        #[cfg(target_os = "macos")]
+                        let _ = window.move_window(Position::TrayCenter);
 
                         if window.is_visible().unwrap() {
                             window.hide().unwrap();
