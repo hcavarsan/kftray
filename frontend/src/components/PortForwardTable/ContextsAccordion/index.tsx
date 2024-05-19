@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useMemo } from 'react'
 
 import { InfoIcon, RepeatIcon } from '@chakra-ui/icons'
 import {
@@ -25,6 +25,23 @@ import {
 import { ContextsAccordionProps } from '../../../types'
 
 import PortForwardRow from './PortForwardRow'
+
+const getRandomColor = () => {
+  const colors = [
+    'red',
+    'green',
+    'blue',
+    'orange',
+    'purple',
+    'teal',
+    'pink',
+    'yellow',
+  ]
+
+
+  
+  return colors[Math.floor(Math.random() * colors.length)]
+}
 
 const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
   context,
@@ -57,6 +74,7 @@ const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
   const contextTotalCount = contextConfigs.length
   const contextTagColorScheme = contextRunningCount > 0 ? 'facebook' : 'gray'
   const contextProgressValue = (contextRunningCount / contextTotalCount) * 100
+  const randomColor = useMemo(getRandomColor, [])
 
   return (
     <AccordionItem key={context} border='none'>
@@ -87,15 +105,25 @@ const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
                   !selectedConfigsByContext[context],
                 )
               }}
-              onClick={event => {
-                event.stopPropagation()
-              }}
+              onClick={event => event.stopPropagation()}
               isDisabled={contextConfigs.every(config => config.isRunning)}
             >
-              {context}
+              <Tag
+                size='sm'
+                colorScheme='facebook'
+                mr={2}
+                p={1.5}
+                fontWeight='semibold'
+                fontSize='xs'
+                borderRadius='lg'
+                borderWidth='0px'
+              >
+                {context}
+              </Tag>
             </Checkbox>
           </div>
         </Box>
+
         <Flex alignItems='center'>
           <Tooltip
             hasArrow
