@@ -219,8 +219,6 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   const fontFamily = '\'Open Sans\', sans-serif'
   const fontSize = '14px'
 
-
-  
   return (
     <>
       <Tr key={config.id}>
@@ -268,7 +266,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
         <Td>
           <Flex alignItems='center'>
             <Switch
-              ml={1}
+              ml={2}
               colorScheme='facebook'
               isChecked={config.isRunning && !isInitiating}
               size='sm'

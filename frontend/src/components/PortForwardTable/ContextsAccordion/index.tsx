@@ -148,7 +148,7 @@ const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
                 width='full'
               >
                 <Tr boxShadow={boxShadow}>
-                  <Th fontFamily={fontFamily} fontSize='10px' width='40%'>
+                  <Th fontFamily={fontFamily} fontSize='10px' width='41%'>
                     Alias
                   </Th>
                   <Th fontFamily={fontFamily} fontSize='10px'>
