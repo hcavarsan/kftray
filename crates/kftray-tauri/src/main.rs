@@ -16,9 +16,8 @@ mod window;
 
 use tauri::{
     GlobalShortcutManager,
-    Manager
+    Manager,
 };
-
 use tauri_plugin_positioner::{
     Position,
     WindowExt,
@@ -62,7 +61,7 @@ fn main() {
 
             let window = app.get_window("main").unwrap();
 
-			#[cfg(debug_assertions)]
+            #[cfg(debug_assertions)]
             window.open_devtools();
 
             // Load window position
@@ -77,19 +76,19 @@ fn main() {
                     )))
                     .unwrap();
             } else {
-				#[cfg(target_os = "linux")]
-				{
-					if let Err(e) = window.move_window(Position::Center) {
-						eprintln!("Failed to move window to center: {}", e);
-					}
-				}
-				#[cfg(not(target_os = "linux"))]
-				{
-					if let Err(e) = window.move_window(Position::TrayCenter) {
-						eprintln!("Failed to move window to tray center: {}", e);
-					}
-				}
-			}
+                #[cfg(target_os = "linux")]
+                {
+                    if let Err(e) = window.move_window(Position::Center) {
+                        eprintln!("Failed to move window to center: {}", e);
+                    }
+                }
+                #[cfg(not(target_os = "linux"))]
+                {
+                    if let Err(e) = window.move_window(Position::TrayCenter) {
+                        eprintln!("Failed to move window to tray center: {}", e);
+                    }
+                }
+            }
 
             // register global shortcut to open the app
             let mut shortcut = app.global_shortcut_manager();
