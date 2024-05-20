@@ -23,10 +23,14 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
   }, [])
 
   useEffect(() => {
-    const dragHandleSelector = '.drag-handle'
+    const dragHandleSelector = '.drag-handle' // CSS selector for the drag handle
+
 
     document.addEventListener('mousedown', async e => {
-      if (e.target?.closest(dragHandleSelector)) {
+      const target = e.target as HTMLElement
+
+
+      if (target.closest(dragHandleSelector)) {
         await tauriWindow.appWindow.startDragging()
       }
     })
