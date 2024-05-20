@@ -1,5 +1,10 @@
 use std::sync::atomic::AtomicBool;
 
+use serde::{
+    Deserialize,
+    Serialize,
+};
+
 //  state for the save dialog
 pub struct SaveDialogState {
     pub is_open: AtomicBool,
@@ -12,4 +17,10 @@ impl Default for SaveDialogState {
             is_open: AtomicBool::new(false),
         }
     }
+}
+
+#[derive(Serialize, Deserialize)]
+pub struct WindowPosition {
+    pub x: f64,
+    pub y: f64,
 }

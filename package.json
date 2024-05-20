@@ -6,7 +6,7 @@
 		"check": "pnpm --filter @kftray/uirun check",
 		"dev": "pnpm --filter @kftray/ui run dev",
 		"format": "pnpm run format:front && pnpm run format:back",
-		"format:back": "cargo +nightly fmt",
+		"format:back": "cargo fmt",
 		"format:front": "pnpm --filter @kftray/ui run format",
 		"generate-icons": "cargo run --bin generate_icons",
 		"lint": "pnpm --filter @kftray/ui run lint && pnpm run lint:back",

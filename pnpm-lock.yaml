@@ -56,6 +56,9 @@ importers:
       tauri-plugin-log-api:
         specifier: github:tauri-apps/tauri-plugin-log#v1
         version: https://codeload.github.com/tauri-apps/tauri-plugin-log/tar.gz/752531f21f626c9f9f1716a28c4a37054c679657
+      tauri-plugin-window-state-api:
+        specifier: github:tauri-apps/tauri-plugin-window-state#v1
+        version: https://codeload.github.com/tauri-apps/tauri-plugin-window-state/tar.gz/002cf15f6a1e4969a678a4ade680cd60477a8a53
     devDependencies:
       '@tauri-apps/api':
         specifier: ^1.5.4
@@ -2654,6 +2657,10 @@ packages:
 
   tauri-plugin-log-api@https://codeload.github.com/tauri-apps/tauri-plugin-log/tar.gz/752531f21f626c9f9f1716a28c4a37054c679657:
     resolution: {tarball: https://codeload.github.com/tauri-apps/tauri-plugin-log/tar.gz/752531f21f626c9f9f1716a28c4a37054c679657}
+    version: 0.0.0
+
+  tauri-plugin-window-state-api@https://codeload.github.com/tauri-apps/tauri-plugin-window-state/tar.gz/002cf15f6a1e4969a678a4ade680cd60477a8a53:
+    resolution: {tarball: https://codeload.github.com/tauri-apps/tauri-plugin-window-state/tar.gz/002cf15f6a1e4969a678a4ade680cd60477a8a53}
     version: 0.0.0
 
   text-table@0.2.0:
@@ -5834,6 +5841,10 @@ snapshots:
   symbol-tree@3.2.4: {}
 
   tauri-plugin-log-api@https://codeload.github.com/tauri-apps/tauri-plugin-log/tar.gz/752531f21f626c9f9f1716a28c4a37054c679657:
+    dependencies:
+      '@tauri-apps/api': 1.5.3
+
+  tauri-plugin-window-state-api@https://codeload.github.com/tauri-apps/tauri-plugin-window-state/tar.gz/002cf15f6a1e4969a678a4ade680cd60477a8a53:
     dependencies:
       '@tauri-apps/api': 1.5.3
 

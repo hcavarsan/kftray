@@ -50,6 +50,8 @@ tempfile = "3.9"
 h2 = { optional = true, version = "0.4.4" }
 fix-path-env = { git = "https://github.com/tauri-apps/fix-path-env-rs" }
 enigo = { version = "0.2.0", features = ["x11rb"] }
+tauri-plugin-window-state = { git = "https://github.com/tauri-apps/plugins-workspace", branch = "v1" }
+libc = "0.2"
 
 [dev-dependencies]
 tempfile = "3.9"
