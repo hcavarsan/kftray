@@ -15,21 +15,32 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [macos-latest, ubuntu-20.04, windows-latest, linux-arm]
+        platform: [macos-latest, ubuntu-20.04, windows-latest, linux-arm, windows-arm]
+        include:
+          - platform: 'macos-latest'
+            args: '--target universal-apple-darwin --verbose'
+          - platform: 'ubuntu-20.04'
+            args: '--verbose'
+          - platform: 'windows-latest'
+            args: '--target x86_64-pc-windows-msvc --verbose'
+          - platform: 'windows-arm'
+            args: '--target aarch64-pc-windows-msvc --verbose --bundles nsis'
+          - platform: 'linux-arm'
+            args: '--verbose'
     runs-on: ${{ matrix.platform }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Add Rust target
+      - name: Add Rust target (macOS)
         if: matrix.platform == 'macos-latest'
         run: rustup target add x86_64-apple-darwin
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Install dependencies (Ubuntu only)
+      - name: Install dependencies (Ubuntu)
         if: matrix.platform == 'ubuntu-20.04'
         run: |
           sudo apt-get update
@@ -62,12 +73,20 @@ jobs:
           path: |
             $(pnpm store path --silent)
             **/node_modules
-          key: ${{ runner.OS }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
           restore-keys: |
-            ${{ runner.OS }}-pnpm-
+            ${{ runner.os }}-pnpm-
 
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
+
+      - name: Install Rust target (Windows ARM)
+        if: matrix.platform == 'windows-arm'
+        run: rustup target add aarch64-pc-windows-msvc
+
+      - name: Install frontend dependencies (Windows)
+        if: matrix.platform == 'windows-latest' || matrix.platform == 'windows-arm'
+        run: pnpm install
 
       - name: Build Tauri App
         uses: tauri-apps/tauri-action@v0
@@ -78,76 +97,10 @@ jobs:
           releaseDraft: true
           prerelease: false
           updaterJsonKeepUniversal: true
-          args: ${{ matrix.platform == 'macos-latest' && ' --target universal-apple-darwin --verbose' || '--verbose' }}
+          args: ${{ matrix.args }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NODE_OPTIONS: --max-old-space-size=6000
-
-  build-linux-arm:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pguyot/arm-runner-action@v2.5.2
-        with:
-          base_image: https://dietpi.com/downloads/images/DietPi_RPi-ARMv8-Bullseye.img.xz
-          cpu: cortex-a53
-          bind_mount_repository: true
-          image_additional_mb: 10240
-          optimize_image: false
-          commands: |
-            export HOME=/root
-            export CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
-            apt-get update -y --allow-releaseinfo-change
-            apt-get upgrade -y
-            apt-get autoremove -y
-            apt-get install curl
-            curl https://sh.rustup.rs -sSf | sh -s -- -y
-            . "$HOME/.cargo/env"
-            curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash
-            apt-get install -y nodejs
-            npm install next@latest react@latest react-dom@latest eslint-config-next@latest
-            apt-get install -y libwebkit2gtk-4.0-dev build-essential wget libssl-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
-            cargo install tauri-cli
-            npm install
-            cargo tauri build
-      - name: Upload deb bundle
-        uses: actions/upload-artifact@v3
-        with:
-          name: Debian Bundle
-          path: ${{ github.workspace }}/target/release/bundle/deb/tauri_1.4_arm64.deb
-
-  build-linux-appimage:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pguyot/arm-runner-action@v2.5.2
-        with:
-          base_image: https://dietpi.com/downloads/images/DietPi_RPi-ARMv8-Bullseye.img.xz
-          cpu: cortex-a53
-          bind_mount_repository: true
-          image_additional_mb: 10240
-          optimize_image: false
-          commands: |
-            export HOME=/root
-            export CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
-            apt-get update -y --allow-releaseinfo-change
-            apt-get upgrade -y
-            apt-get autoremove -y
-            apt-get install curl
-            curl https://sh.rustup.rs -sSf | sh -s -- -y
-            . "$HOME/.cargo/env"
-            curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash
-            apt-get install -y nodejs
-            npm install next@latest react@latest react-dom@latest eslint-config-next@latest
-            apt-get install -y libwebkit2gtk-4.0-dev build-essential wget libssl-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
-            cargo install tauri-cli
-            npm install
-            cargo tauri build
-      - name: Upload AppImage bundle
-        uses: actions/upload-artifact@v3
-        with:
-          name: AppImage Bundle
-          path: ${{ github.workspace }}/target/release/bundle/appimage/tauri_1.4_arm64.AppImage
 
   build-and-push-docker:
     permissions:

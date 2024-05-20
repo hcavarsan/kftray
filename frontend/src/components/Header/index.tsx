@@ -15,25 +15,20 @@ import { app, window as tauriWindow } from '@tauri-apps/api'
 import logo from '../../assets/logo.png'
 import { HeaderProps } from '../../types'
 
+document.addEventListener('mousedown', async e => {
+  const darag = '.drag-handle'
+  const target = e.target as HTMLElement
+
+  if (target.closest(darag)) {
+    await tauriWindow.appWindow.startDragging()
+  }
+})
+
 const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
   const [version, setVersion] = React.useState('')
 
   useEffect(() => {
     app.getVersion().then(setVersion).catch(console.error)
-  }, [])
-
-  useEffect(() => {
-    const dragHandleSelector = '.drag-handle' // CSS selector for the drag handle
-
-
-    document.addEventListener('mousedown', async e => {
-      const target = e.target as HTMLElement
-
-
-      if (target.closest(dragHandleSelector)) {
-        await tauriWindow.appWindow.startDragging()
-      }
-    })
   }, [])
 
   const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
