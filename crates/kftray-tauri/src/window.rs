@@ -6,6 +6,13 @@ use tauri_plugin_positioner::{
     WindowExt,
 };
 
+#[cfg(target_os = "linux")]
+use enigo::{
+    Enigo,
+    Mouse,
+    Settings,
+};
+
 use crate::models::window::WindowPosition;
 
 pub fn save_window_position(window: &tauri::Window) {

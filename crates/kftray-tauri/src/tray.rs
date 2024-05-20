@@ -9,12 +9,6 @@ use std::time::{
     UNIX_EPOCH,
 };
 
-#[cfg(target_os = "linux")]
-use enigo::{
-    Enigo,
-    Mouse,
-    Settings,
-};
 use tauri::GlobalWindowEvent;
 use tauri::Manager;
 use tauri::RunEvent;
