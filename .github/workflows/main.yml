@@ -24,7 +24,7 @@ jobs:
           - platform: 'windows-latest'
             args: '--target x86_64-pc-windows-msvc --verbose'
           - platform: 'windows-latest'
-            args: '--target aarch64-pc-windows-msvc --verbose --bundles nsis'
+            args: '--target aarch64-pc-windows-msvc --verbose'
     runs-on: ${{ matrix.platform }}
 
     steps:
@@ -85,10 +85,6 @@ jobs:
       - name: Install Rust target (Windows ARM)
         if: matrix.platform == 'windows-arm'
         run: rustup target add aarch64-pc-windows-msvc
-
-      - name: Install frontend dependencies (Windows)
-        if: matrix.platform == 'windows-latest' || matrix.platform == 'windows-arm'
-        run: pnpm install
 
       - name: Build Tauri App
         uses: tauri-apps/tauri-action@v0
