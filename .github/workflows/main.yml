@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [macos-latest, ubuntu-20.04, windows-latest, linux-arm, windows-arm]
+        platform: [macos-latest, ubuntu-20.04, windows-latest]
         include:
           - platform: 'macos-latest'
             args: '--target universal-apple-darwin --verbose'
@@ -34,6 +34,10 @@ jobs:
       - name: Add Rust target (macOS)
         if: matrix.platform == 'macos-latest'
         run: rustup target add x86_64-apple-darwin
+
+      - name: Add Rust target (Windows)
+        if: matrix.platform == 'windows-latest'
+        run: rustup target add x86_64-pc-windows-msvc && rustup target add aarch64-pc-windows-msvc
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
