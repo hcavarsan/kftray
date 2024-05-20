@@ -26,8 +26,15 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
     setSearch(event.target.value)
   }
 
-  const handleDragStart = () => {
-    tauriWindow.getCurrent().startDragging().catch(console.error)
+  const handleDragStart = async () => {
+    try {
+      const currentWindow = await tauriWindow.getCurrent()
+
+
+      await currentWindow.startDragging()
+    } catch (error) {
+      console.error('Failed to start dragging:', error)
+    }
   }
 
   return (
