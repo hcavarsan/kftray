@@ -16,7 +16,7 @@ mod window;
 
 use tauri::{
     GlobalShortcutManager,
-    Manager,
+    Manager
 };
 
 use crate::models::window::SaveDialogState;
@@ -54,8 +54,10 @@ fn main() {
             {
                 app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             }
-            #[cfg(debug_assertions)]
+
             let window = app.get_window("main").unwrap();
+
+			#[cfg(debug_assertions)]
             window.open_devtools();
 
             // Load window position
