@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [macos-latest, ubuntu-20.04, windows-latest]
+        platform: [macos-latest, ubuntu-20.04, windows-latest, linux-arm]
     runs-on: ${{ matrix.platform }}
 
     steps:
@@ -34,7 +34,6 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev
-
 
       - name: Rust cache
         uses: actions/cache@v4
@@ -83,6 +82,72 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NODE_OPTIONS: --max-old-space-size=6000
+
+  build-linux-arm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pguyot/arm-runner-action@v2.5.2
+        with:
+          base_image: https://dietpi.com/downloads/images/DietPi_RPi-ARMv8-Bullseye.img.xz
+          cpu: cortex-a53
+          bind_mount_repository: true
+          image_additional_mb: 10240
+          optimize_image: false
+          commands: |
+            export HOME=/root
+            export CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
+            apt-get update -y --allow-releaseinfo-change
+            apt-get upgrade -y
+            apt-get autoremove -y
+            apt-get install curl
+            curl https://sh.rustup.rs -sSf | sh -s -- -y
+            . "$HOME/.cargo/env"
+            curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash
+            apt-get install -y nodejs
+            npm install next@latest react@latest react-dom@latest eslint-config-next@latest
+            apt-get install -y libwebkit2gtk-4.0-dev build-essential wget libssl-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+            cargo install tauri-cli
+            npm install
+            cargo tauri build
+      - name: Upload deb bundle
+        uses: actions/upload-artifact@v3
+        with:
+          name: Debian Bundle
+          path: ${{ github.workspace }}/target/release/bundle/deb/tauri_1.4_arm64.deb
+
+  build-linux-appimage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pguyot/arm-runner-action@v2.5.2
+        with:
+          base_image: https://dietpi.com/downloads/images/DietPi_RPi-ARMv8-Bullseye.img.xz
+          cpu: cortex-a53
+          bind_mount_repository: true
+          image_additional_mb: 10240
+          optimize_image: false
+          commands: |
+            export HOME=/root
+            export CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
+            apt-get update -y --allow-releaseinfo-change
+            apt-get upgrade -y
+            apt-get autoremove -y
+            apt-get install curl
+            curl https://sh.rustup.rs -sSf | sh -s -- -y
+            . "$HOME/.cargo/env"
+            curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash
+            apt-get install -y nodejs
+            npm install next@latest react@latest react-dom@latest eslint-config-next@latest
+            apt-get install -y libwebkit2gtk-4.0-dev build-essential wget libssl-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+            cargo install tauri-cli
+            npm install
+            cargo tauri build
+      - name: Upload AppImage bundle
+        uses: actions/upload-artifact@v3
+        with:
+          name: AppImage Bundle
+          path: ${{ github.workspace }}/target/release/bundle/appimage/tauri_1.4_arm64.AppImage
 
   build-and-push-docker:
     permissions:
