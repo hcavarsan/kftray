@@ -53,26 +53,35 @@ pub fn toggle_window_visibility(window: &tauri::Window) {
     if window.is_visible().unwrap() {
         save_window_position(window);
         window.hide().unwrap();
-    } else if let Some(position) = load_window_position() {
-        println!(
-            "Setting window position to: x: {}, y: {}",
-            position.x, position.y
-        );
-        window
-            .set_position(tauri::Position::Logical(tauri::LogicalPosition::new(
-                position.x, position.y,
-            )))
-            .unwrap();
-    } else if cfg!(target_os = "linux") {
-        {
-            if let Err(e) = window.move_window(Position::TrayCenter) {
-                eprintln!("Failed to move window to tray center: {}", e);
+    } else {
+        if let Some(position) = load_window_position() {
+            println!(
+                "Setting window position to: x: {}, y: {}",
+                position.x, position.y
+            );
+            window
+                .set_position(tauri::Position::Logical(tauri::LogicalPosition::new(
+                    position.x, position.y,
+                )))
+                .unwrap();
+        } else {
+            #[cfg(target_os = "linux")]
+            {
+                if let Err(e) = window.move_window(Position::Center) {
+                    eprintln!("Failed to move window to center: {}", e);
+                }
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                if let Err(e) = window.move_window(Position::TrayCenter) {
+                    eprintln!("Failed to move window to tray center: {}", e);
+                }
             }
         }
-    }
 
-    window.show().unwrap();
-    window.set_focus().unwrap();
+        window.show().unwrap();
+        window.set_focus().unwrap();
+    }
 }
 
 pub fn reset_window_position(window: &tauri::Window) {
