@@ -1,11 +1,5 @@
 use std::fs;
 
-#[cfg(target_os = "linux")]
-use enigo::{
-    Enigo,
-    Mouse,
-    Settings,
-};
 #[cfg(not(target_os = "linux"))]
 use tauri_plugin_positioner::{
     Position,
@@ -56,35 +50,6 @@ pub fn load_window_position() -> Option<WindowPosition> {
     }
 }
 
-#[cfg(target_os = "linux")]
-pub fn move_window_to_mouse_position(window: &tauri::Window) {
-    if let Ok(window_size) = window.inner_size() {
-        let settings = Settings::default();
-        let enigo = Enigo::new(&settings).unwrap();
-        let mouse_position = enigo.location().unwrap();
-
-        println!("Mouse Position: {:#?}", mouse_position);
-        println!("Window Size: {:#?}", window_size);
-
-        let window_width = window_size.width as f64;
-
-        let offset_x = 50.0;
-
-        let new_x = mouse_position.0 as f64 - window_width + offset_x;
-        let new_y = mouse_position.1 as f64;
-
-        println!("New Window Position: x: {}, y: {}", new_x, new_y);
-
-        std::thread::sleep(Duration::from_millis(200));
-
-        if let Err(e) = window.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(
-            new_x, new_y,
-        ))) {
-            eprintln!("Failed to set window position: {}", e);
-        }
-    }
-}
-
 pub fn toggle_window_visibility(window: &tauri::Window) {
     if window.is_visible().unwrap() {
         save_window_position(window);
@@ -106,6 +71,19 @@ pub fn toggle_window_visibility(window: &tauri::Window) {
                 if let Err(e) = window.move_window(Position::TrayCenter) {
                     eprintln!("Failed to move window to tray center: {}", e);
                 }
+            }
+            #[cfg(target_os = "linux")]
+            {
+                let screen = window.current_monitor().unwrap().unwrap();
+                let screen_size = screen.size();
+                let window_size = window.outer_size().unwrap();
+                let center_x = (screen_size.width - window_size.width) / 2;
+                let center_y = (screen_size.height - window_size.height) / 2;
+                window
+                    .set_position(tauri::Position::Logical(tauri::LogicalPosition::new(
+                        center_x, center_y,
+                    )))
+                    .unwrap();
             }
         }
 

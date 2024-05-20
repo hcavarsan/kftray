@@ -22,8 +22,6 @@ use tokio::runtime::Runtime;
 
 use crate::kubeforward::port_forward;
 use crate::models::window::SaveDialogState;
-#[cfg(target_os = "linux")]
-use crate::window::move_window_to_mouse_position;
 use crate::window::{
     reset_window_position,
     save_window_position,

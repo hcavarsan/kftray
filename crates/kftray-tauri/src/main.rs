@@ -14,12 +14,6 @@ mod remote_config;
 mod tray;
 mod window;
 
-#[cfg(target_os = "linux")]
-use enigo::{
-    Enigo,
-    Mouse,
-    Settings,
-};
 use tauri::{
     GlobalShortcutManager,
     Manager,
@@ -32,8 +26,6 @@ use crate::tray::{
     handle_system_tray_event,
     handle_window_event,
 };
-#[cfg(target_os = "linux")]
-use crate::window::move_window_to_mouse_position;
 use crate::window::{
     load_window_position,
     toggle_window_visibility,
