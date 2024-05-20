@@ -54,8 +54,9 @@ fn main() {
             {
                 app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             }
-
+            #[cfg(debug_assertions)]
             let window = app.get_window("main").unwrap();
+            window.open_devtools();
 
             // Load window position
             if let Some(position) = load_window_position() {
