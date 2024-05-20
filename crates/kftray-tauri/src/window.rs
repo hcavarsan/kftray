@@ -1,16 +1,15 @@
 use std::fs;
 
-#[cfg(not(target_os = "linux"))]
-use tauri_plugin_positioner::{
-    Position,
-    WindowExt,
-};
-
 #[cfg(target_os = "linux")]
 use enigo::{
     Enigo,
     Mouse,
     Settings,
+};
+#[cfg(not(target_os = "linux"))]
+use tauri_plugin_positioner::{
+    Position,
+    WindowExt,
 };
 
 use crate::models::window::WindowPosition;
