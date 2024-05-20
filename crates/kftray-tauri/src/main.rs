@@ -19,6 +19,11 @@ use tauri::{
     Manager
 };
 
+use tauri_plugin_positioner::{
+    Position,
+    WindowExt,
+};
+
 use crate::models::window::SaveDialogState;
 use crate::tray::{
     create_tray_menu,
@@ -71,7 +76,20 @@ fn main() {
                         position.x, position.y,
                     )))
                     .unwrap();
-            }
+            } else {
+				#[cfg(target_os = "linux")]
+				{
+					if let Err(e) = window.move_window(Position::Center) {
+						eprintln!("Failed to move window to center: {}", e);
+					}
+				}
+				#[cfg(not(target_os = "linux"))]
+				{
+					if let Err(e) = window.move_window(Position::TrayCenter) {
+						eprintln!("Failed to move window to tray center: {}", e);
+					}
+				}
+			}
 
             // register global shortcut to open the app
             let mut shortcut = app.global_shortcut_manager();
