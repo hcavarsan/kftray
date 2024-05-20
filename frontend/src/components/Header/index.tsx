@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect } from 'react'
 
 import { DragHandleIcon, SearchIcon } from '@chakra-ui/icons'
 import {
@@ -18,23 +18,22 @@ import { HeaderProps } from '../../types'
 const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
   const [version, setVersion] = React.useState('')
 
-  React.useEffect(() => {
+  useEffect(() => {
     app.getVersion().then(setVersion).catch(console.error)
+  }, [])
+
+  useEffect(() => {
+    const dragHandleSelector = '.drag-handle'
+
+    document.addEventListener('mousedown', async e => {
+      if (e.target?.closest(dragHandleSelector)) {
+        await tauriWindow.appWindow.startDragging()
+      }
+    })
   }, [])
 
   const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     setSearch(event.target.value)
-  }
-
-  const handleDragStart = async () => {
-    try {
-      const currentWindow = await tauriWindow.getCurrent()
-
-
-      await currentWindow.startDragging()
-    } catch (error) {
-      console.error('Failed to start dragging:', error)
-    }
   }
 
   return (
@@ -84,11 +83,11 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
             aria-label='Drag window'
             icon={<DragHandleIcon />}
             size='xs'
-            onMouseDown={handleDragStart}
             variant='ghost'
             mt='1.5'
             ml='1'
             colorScheme='gray'
+            className='drag-handle'
           />
         </Tooltip>
       </Flex>
