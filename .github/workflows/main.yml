@@ -23,10 +23,8 @@ jobs:
             args: '--verbose'
           - platform: 'windows-latest'
             args: '--target x86_64-pc-windows-msvc --verbose'
-          - platform: 'windows-arm'
+          - platform: 'windows-latest'
             args: '--target aarch64-pc-windows-msvc --verbose --bundles nsis'
-          - platform: 'linux-arm'
-            args: '--verbose'
     runs-on: ${{ matrix.platform }}
 
     steps:
