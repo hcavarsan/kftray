@@ -1,6 +1,5 @@
 use std::fs;
 
-#[cfg(not(target_os = "linux"))]
 use tauri_plugin_positioner::{
     Position,
     WindowExt,
