@@ -112,10 +112,13 @@ jobs:
           ls -la ./target/release/bundle/
           ls -la ./target/release/bundle/deb/
           cd ./target/release/bundle/deb/
-          alien -r -g -k -v "kftray_v${{ github.ref_name }}_amd64.deb"
-          cd "kftray-${{ github.ref_name }}"
-          rpmbuild --target=x86_64 --buildroot "$(pwd)" -bb "$(pwd)/kftray-v${{ github.ref_name }}.spec"
-          mv kftray-${{ github.ref_name }}*.x86_64.rpm ../../rpm/
+          deb_file=$(ls kftray_*_amd64.deb | head -n 1)
+          deb_version=${deb_file#kftray_}
+          deb_version=${deb_version%_amd64.deb}
+          alien -r -g -k -v "$deb_file"
+          cd "kftray-$deb_version"
+          rpmbuild --target=x86_64 --buildroot "$(pwd)" -bb "$(pwd)/kftray-$deb_version.spec"
+          mv kftray-$deb_version*.x86_64.rpm ../../rpm/
           ls -la ../../rpm/
 
       - name: Upload RPM to Release
@@ -123,8 +126,8 @@ jobs:
         uses: actions/upload-release-asset@v1
         with:
           upload_url: ${{ steps.build-desktop-rpm.outputs.upload_url }}
-          asset_path: ./target/release/bundle/rpm/kftray-v${{ github.ref_name }}.x86_64.rpm
-          asset_name: kftray-${{ github.ref_name }}.x86_64.rpm
+          asset_path: ./target/release/bundle/rpm/kftray-*.x86_64.rpm
+          asset_name: kftray-*.x86_64.rpm
           asset_content_type: application/x-rpm
 
   build-and-push-docker:
