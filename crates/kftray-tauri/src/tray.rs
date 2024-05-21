@@ -88,17 +88,22 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
     if let tauri::WindowEvent::Moved { .. } = event.event() {
         let app_handle = event.window().app_handle();
         println!("Window moved, saving position");
+		let window = app_handle.get_window("main").unwrap();
+		window.set_focus().unwrap();
+		window.set_always_on_top(true).unwrap();
         {
             let mut is_moving = WINDOW_IS_MOVING.lock().unwrap();
             *is_moving = true;
         }
-		let window = app_handle.get_window("main").unwrap();
+
+
         save_window_position(&window);
-		window.set_focus().unwrap();
+
         {
             let mut is_moving = WINDOW_IS_MOVING.lock().unwrap();
             *is_moving = false;
         }
+		window.set_always_on_top(false).unwrap();
     }
 
     if let tauri::WindowEvent::CloseRequested { api, .. } = event.event() {
