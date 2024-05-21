@@ -72,6 +72,7 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
                             let window = event.window().clone();
                             move || {
                                 std::thread::sleep(Duration::from_millis(100));
+								println!("Hiding window after losing focus");
                                 window.hide().unwrap();
                             }
                         });
@@ -94,6 +95,7 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
             api.prevent_close();
             let app_handle = event.window().app_handle();
             save_window_position(&app_handle.get_window("main").unwrap());
+			println!("Hiding window after close requested");
             event.window().hide().unwrap();
         }
     }
