@@ -29,7 +29,6 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
       const target = e.target as HTMLElement
 
       if (target.closest(drag)) {
-        await tauriWindow.appWindow.setFocus()
         await tauriWindow.appWindow.startDragging()
         e.preventDefault()
       }
@@ -39,21 +38,6 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
 
     return () => {
       document.removeEventListener('mousedown', handleMouseDown)
-    }
-  }, [])
-
-  useEffect(() => {
-    const handleVisibilityChange = async () => {
-      if (document.hidden) {
-        await tauriWindow.appWindow.show()
-        await tauriWindow.appWindow.setFocus()
-      }
-    }
-
-    document.addEventListener('visibilitychange', handleVisibilityChange)
-
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
   }, [])
 
