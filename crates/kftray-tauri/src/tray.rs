@@ -58,26 +58,7 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
             let app_handle = event.window().app_handle();
 
             if let Some(state) = app_handle.try_state::<SaveDialogState>() {
-                if !state.is_open.load(Ordering::SeqCst) {
-                    // Check if the cooldown period has passed
-                    let last_reset_time = LAST_RESET_TIME.load(Ordering::SeqCst);
-                    let now = SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs();
-                    if now > last_reset_time + COOLDOWN_PERIOD.as_secs() {
-                        save_window_position(&app_handle.get_window("main").unwrap());
-                        // Delay hiding the window to avoid conflicts with dragging
-                        std::thread::spawn({
-                            let window = event.window().clone();
-                            move || {
-                                std::thread::sleep(Duration::from_millis(100));
-								println!("Hiding window after losing focus");
-                                window.hide().unwrap();
-                            }
-                        });
-                    }
-                }
+					return;
             }
         }
     }
