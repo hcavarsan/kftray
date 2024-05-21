@@ -56,7 +56,7 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
                     let app_handle_clone = app_handle.clone();
                     let runtime = app_state.runtime.clone();
                     runtime.spawn(async move {
-                        sleep(Duration::from_millis(100)).await;
+                        sleep(Duration::from_millis(200)).await;
                         if !app_handle_clone
                             .get_window("main")
                             .unwrap()
