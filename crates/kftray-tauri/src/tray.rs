@@ -51,7 +51,7 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
 
 	if let tauri::WindowEvent::Moved(_) = event.event() {
 			let win = event.window();
-			let _ = win.with_webview(|_webview| {
+			let _ = win.with_webview(|webview| {
 				#[cfg(target_os = "linux")]
 				{}
 
