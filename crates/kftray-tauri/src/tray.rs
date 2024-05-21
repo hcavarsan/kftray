@@ -6,6 +6,7 @@ use std::sync::atomic::{
 use std::sync::Mutex;
 use std::time::{
     Duration,
+    Instant,
     SystemTime,
     UNIX_EPOCH,
 };
@@ -41,6 +42,10 @@ lazy_static::lazy_static! {
     static ref WINDOW_IS_MOVING: Mutex<bool> = Mutex::new(false);
 }
 
+// Debounce duration for focus event
+const DEBOUNCE_DURATION: Duration = Duration::from_millis(500);
+static LAST_FOCUS_TIME: Mutex<Option<Instant>> = Mutex::new(None);
+
 pub fn create_tray_menu() -> SystemTray {
     let quit = CustomMenuItem::new("quit".to_string(), "Quit").accelerator("CmdOrCtrl+Shift+Q");
     let open = CustomMenuItem::new("toggle".to_string(), "Toggle App");
@@ -71,6 +76,15 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
                         .unwrap()
                         .as_secs();
                     if now > last_reset_time + COOLDOWN_PERIOD.as_secs() {
+                        // Debounce logic
+                        let mut last_focus_time = LAST_FOCUS_TIME.lock().unwrap();
+                        if let Some(last_time) = *last_focus_time {
+                            if last_time.elapsed() < DEBOUNCE_DURATION {
+                                return;
+                            }
+                        }
+                        *last_focus_time = Some(Instant::now());
+
                         save_window_position(&app_handle.get_window("main").unwrap());
                         // Delay hiding the window to avoid conflicts with dragging
                         std::thread::spawn({
