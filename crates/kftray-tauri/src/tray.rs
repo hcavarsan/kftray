@@ -9,7 +9,7 @@ use std::time::{
     UNIX_EPOCH,
 };
 use std::sync::Mutex;
-use tauri::GlobalWindowEvent;
+use tauri::{window, GlobalWindowEvent};
 use tauri::Manager;
 use tauri::RunEvent;
 use tauri::{
@@ -21,12 +21,12 @@ use tauri::{
 use tokio::runtime::Runtime;
 
 use crate::kubeforward::port_forward;
-use crate::main;
 use crate::models::window::SaveDialogState;
 use crate::window::{
     reset_window_position,
     save_window_position,
     toggle_window_visibility,
+	load_window_position,
 };
 
 // Atomic flag to track reset position action
@@ -89,8 +89,7 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
         let app_handle = event.window().app_handle();
         println!("Window moved, saving position");
 		let window = app_handle.get_window("main").unwrap();
-		window.set_focus().unwrap();
-		window.set_always_on_top(true).unwrap();
+
         {
             let mut is_moving = WINDOW_IS_MOVING.lock().unwrap();
             *is_moving = true;
@@ -98,19 +97,34 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
 
 
         save_window_position(&window);
+		if let Some(position) = load_window_position() {
+			println!(
+				"Setting window position to: x: {}, y: {}",
+				position.x, position.y
+			);
+			window
+				.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(
+					position.x, position.y,
+				)))
+				.unwrap();
+		}
+		window.set_focus().unwrap();
+		window.set_always_on_top(true).unwrap();
 
         {
             let mut is_moving = WINDOW_IS_MOVING.lock().unwrap();
             *is_moving = false;
         }
-		window.set_always_on_top(false).unwrap();
     }
 
     if let tauri::WindowEvent::CloseRequested { api, .. } = event.event() {
         if !*WINDOW_IS_MOVING.lock().unwrap() {
             api.prevent_close();
             let app_handle = event.window().app_handle();
-            save_window_position(&app_handle.get_window("main").unwrap());
+			let window = app_handle.get_window("main").unwrap();
+
+            save_window_position(&window);
+
             println!("Hiding window after close requested");
             event.window().hide().unwrap();
         }
