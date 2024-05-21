@@ -43,6 +43,7 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
       if (e.buttons === 1) {
 		e.preventDefault()
         await appWindow.startDragging()
+		e.preventDefault()
       }
     }
 
