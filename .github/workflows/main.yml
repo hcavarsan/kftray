@@ -119,31 +119,29 @@ jobs:
           cd "kftray-$deb_version"
           if [ ! -f "kftray-$deb_version.spec" ]; then
             echo "Creating missing .spec file"
-            cat <<EOF >kftray-$deb_version.spec
-            Name: kftray
-            Version: $deb_version
-            Release: 1%{?dist}
-            Summary: KFtray application
-            License: MIT
-            Source0: %{name}-%{version}.tar.gz
-
-            %description
-            KFtray application.
-
-            %prep
-            %setup -q
-
-            %build
-
-            %install
-            mkdir -p %{buildroot}/usr/bin
-            cp -a * %{buildroot}/usr/bin/
-
-            %files
-            /usr/bin/*
-
-            %changelog
-            EOF
+            echo "Name: kftray" > kftray-$deb_version.spec
+            echo "Version: $deb_version" >> kftray-$deb_version.spec
+            echo "Release: 1%{?dist}" >> kftray-$deb_version.spec
+            echo "Summary: KFtray application" >> kftray-$deb_version.spec
+            echo "License: MIT" >> kftray-$deb_version.spec
+            echo "Source0: %{name}-%{version}.tar.gz" >> kftray-$deb_version.spec
+            echo "" >> kftray-$deb_version.spec
+            echo "%description" >> kftray-$deb_version.spec
+            echo "KFtray application." >> kftray-$deb_version.spec
+            echo "" >> kftray-$deb_version.spec
+            echo "%prep" >> kftray-$deb_version.spec
+            echo "%setup -q" >> kftray-$deb_version.spec
+            echo "" >> kftray-$deb_version.spec
+            echo "%build" >> kftray-$deb_version.spec
+            echo "" >> kftray-$deb_version.spec
+            echo "%install" >> kftray-$deb_version.spec
+            echo "mkdir -p %{buildroot}/usr/bin" >> kftray-$deb_version.spec
+            echo "cp -a * %{buildroot}/usr/bin/" >> kftray-$deb_version.spec
+            echo "" >> kftray-$deb_version.spec
+            echo "%files" >> kftray-$deb_version.spec
+            echo "/usr/bin/*" >> kftray-$deb_version.spec
+            echo "" >> kftray-$deb_version.spec
+            echo "%changelog" >> kftray-$deb_version.spec
           fi
           rpmbuild --target=x86_64 --buildroot "$(pwd)" -bb "$(pwd)/kftray-$deb_version.spec"
           mv kftray-$deb_version*.x86_64.rpm ../../rpm/
