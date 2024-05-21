@@ -1,6 +1,5 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
-
-import { DragHandleIcon, SearchIcon } from '@chakra-ui/icons'
+import React, { useEffect, useRef, useState, useCallback } from 'react';
+import { DragHandleIcon, SearchIcon } from '@chakra-ui/icons';
 import {
   Box,
   Flex,
@@ -10,89 +9,87 @@ import {
   InputGroup,
   InputLeftElement,
   Tooltip,
-} from '@chakra-ui/react'
-import { appWindow } from '@tauri-apps/api/window'
-import { app } from '@tauri-apps/api'
-
-
-import logo from '../../assets/logo.png'
-import { HeaderProps } from '../../types'
+} from '@chakra-ui/react';
+import { appWindow } from '@tauri-apps/api/window';
+import { app } from '@tauri-apps/api';
+import logo from '../../assets/logo.png';
+import { HeaderProps } from '../../types';
 
 const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
-  const [version, setVersion] = useState('')
-  const [isDragging, setIsDragging] = useState(false)
-  const [tooltipOpen, setTooltipOpen] = useState(false)
+  const [version, setVersion] = useState('');
+  const [isDragging, setIsDragging] = useState(false);
+  const [tooltipOpen, setTooltipOpen] = useState(false);
 
   useEffect(() => {
     app.getVersion().then(setVersion).catch(console.error)
   }, [])
 
 
-  const ignoreDragTargetsRef = useRef<HTMLElement[]>([])
-  const dragHandleRef = useRef<HTMLDivElement | null>(null)
+  const ignoreDragTargetsRef = useRef<HTMLElement[]>([]);
+  const dragHandleRef = useRef<HTMLDivElement | null>(null);
 
   const addIgnoreDragTarget = useCallback((target: HTMLElement) => {
-    ignoreDragTargetsRef.current.push(target)
-  }, [])
+    ignoreDragTargetsRef.current.push(target);
+  }, []);
 
   const removeIgnoreDragTarget = useCallback((target: HTMLElement) => {
-    const index = ignoreDragTargetsRef.current.indexOf(target)
-
-
+    const index = ignoreDragTargetsRef.current.indexOf(target);
     if (index !== -1) {
-      ignoreDragTargetsRef.current.splice(index, 1)
+      ignoreDragTargetsRef.current.splice(index, 1);
     }
-  }, [])
+  }, []);
 
   const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    setSearch(event.target.value)
-  }
+    setSearch(event.target.value);
+  };
 
   useEffect(() => {
     if (!dragHandleRef.current) {
-      return
+      return;
     }
 
-    const handler = async (e: MouseEvent) => {
-      if (
-        ignoreDragTargetsRef.current.some(target =>
-          target.contains(e.target as Node),
-        )
-      ) {
-        return
+    const handleMouseMove = async (e: MouseEvent) => {
+      if (isDragging) {
+        await appWindow.startDragging();
+      }
+    };
+
+    const handleMouseDown = (e: MouseEvent) => {
+      if (ignoreDragTargetsRef.current.some(target => target.contains(e.target as Node))) {
+        return;
       }
 
-      console.log('Starting drag operation')
-      setIsDragging(true)
-      setTooltipOpen(false)
-      try {
-        await appWindow.startDragging()
-      } catch (error) {
-        console.error('Error during dragging:', error)
-      }
-      setIsDragging(false)
-      console.log('Drag operation ended')
-    }
+      console.log('Starting drag operation');
+      setIsDragging(true);
+      setTooltipOpen(false);
+      document.addEventListener('mousemove', handleMouseMove);
+    };
 
-    const currentDragHandle = dragHandleRef.current
+    const handleMouseUp = () => {
+      console.log('Drag operation ended');
+      setIsDragging(false);
+      document.removeEventListener('mousemove', handleMouseMove);
+    };
 
-
-    currentDragHandle.addEventListener('mousedown', handler)
+    const currentDragHandle = dragHandleRef.current;
+    currentDragHandle.addEventListener('mousedown', handleMouseDown);
+    document.addEventListener('mouseup', handleMouseUp);
 
     return () => {
-      currentDragHandle.removeEventListener('mousedown', handler)
-    }
-  }, [])
+      currentDragHandle.removeEventListener('mousedown', handleMouseDown);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isDragging]);
 
   const handleMouseEnter = () => {
     if (!isDragging) {
-      setTooltipOpen(true)
+      setTooltipOpen(true);
     }
-  }
+  };
 
   const handleMouseLeave = () => {
-    setTooltipOpen(false)
-  }
+    setTooltipOpen(false);
+  };
 
   return (
     <Flex
@@ -155,7 +152,7 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
         </InputGroup>
       </Flex>
     </Flex>
-  )
-}
+  );
+};
 
-export default Header
+export default Header;
