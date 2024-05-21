@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 
 import { DragHandleIcon, SearchIcon } from '@chakra-ui/icons'
 import {
@@ -28,18 +28,7 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
   const ignoreDragTargetsRef = useRef<HTMLElement[]>([])
   const dragHandleRef = useRef<HTMLDivElement | null>(null)
 
-  const addIgnoreDragTarget = useCallback((target: HTMLElement) => {
-    ignoreDragTargetsRef.current.push(target)
-  }, [])
 
-  const removeIgnoreDragTarget = useCallback((target: HTMLElement) => {
-    const index = ignoreDragTargetsRef.current.indexOf(target)
-
-
-    if (index !== -1) {
-      ignoreDragTargetsRef.current.splice(index, 1)
-    }
-  }, [])
 
   const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     setSearch(event.target.value)
@@ -52,7 +41,7 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
 
     const handleMouseMove = async (e: MouseEvent) => {
       if (e.buttons === 1) {
-        // Check if the left mouse button is pressed
+		e.preventDefault()
         await appWindow.startDragging()
       }
     }
