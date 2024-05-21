@@ -11,7 +11,11 @@ import {
   InputLeftElement,
   Tooltip,
 } from '@chakra-ui/react'
-import { app, window as tauriWindow } from '@tauri-apps/api'
+import {
+  app,
+  event as tauriEvent,
+  window as tauriWindow,
+} from '@tauri-apps/api'
 
 import logo from '../../assets/logo.png'
 import { HeaderProps } from '../../types'
@@ -31,7 +35,6 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
       if (target.closest(drag)) {
         await tauriWindow.appWindow.setFocus()
         await tauriWindow.appWindow.startDragging()
-        document.dispatchEvent(new PointerEvent('pointerup'))
         e.preventDefault()
       }
     }
@@ -40,6 +43,16 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
 
     return () => {
       document.removeEventListener('mousedown', handleMouseDown)
+    }
+  }, [])
+
+  useEffect(() => {
+    const unlisten = tauriEvent.listen('tauri://drag-window', async () => {
+      await tauriWindow.appWindow.setFocus()
+    })
+
+    return () => {
+      unlisten.then(f => f())
     }
   }, [])
 
