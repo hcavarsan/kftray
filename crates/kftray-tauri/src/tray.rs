@@ -6,7 +6,6 @@ use std::sync::atomic::{
 use std::sync::Mutex;
 use std::time::{
     Duration,
-    Instant,
     SystemTime,
     UNIX_EPOCH,
 };
@@ -42,9 +41,8 @@ lazy_static::lazy_static! {
     static ref WINDOW_IS_MOVING: Mutex<bool> = Mutex::new(false);
 }
 
-// Debounce duration for focus event
-const DEBOUNCE_DURATION: Duration = Duration::from_millis(500);
-static LAST_FOCUS_TIME: Mutex<Option<Instant>> = Mutex::new(None);
+// Atomic flag to track if the window is currently being moved
+static WINDOW_IS_BEING_MOVED: AtomicBool = AtomicBool::new(false);
 
 pub fn create_tray_menu() -> SystemTray {
     let quit = CustomMenuItem::new("quit".to_string(), "Quit").accelerator("CmdOrCtrl+Shift+Q");
@@ -63,7 +61,7 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
     if let tauri::WindowEvent::Focused(is_focused) = event.event() {
         if !is_focused
             && !RESET_POSITION_TRIGGERED.load(Ordering::SeqCst)
-            && !*WINDOW_IS_MOVING.lock().unwrap()
+            && !WINDOW_IS_BEING_MOVED.load(Ordering::SeqCst)
         {
             let app_handle = event.window().app_handle();
 
@@ -76,15 +74,6 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
                         .unwrap()
                         .as_secs();
                     if now > last_reset_time + COOLDOWN_PERIOD.as_secs() {
-                        // Debounce logic
-                        let mut last_focus_time = LAST_FOCUS_TIME.lock().unwrap();
-                        if let Some(last_time) = *last_focus_time {
-                            if last_time.elapsed() < DEBOUNCE_DURATION {
-                                return;
-                            }
-                        }
-                        *last_focus_time = Some(Instant::now());
-
                         save_window_position(&app_handle.get_window("main").unwrap());
                         // Delay hiding the window to avoid conflicts with dragging
                         std::thread::spawn({
@@ -106,21 +95,19 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
         println!("Window moved, saving position");
         let window = app_handle.get_window("main").unwrap();
 
-        {
-            let mut is_moving = WINDOW_IS_MOVING.lock().unwrap();
-            *is_moving = true;
-        }
+        WINDOW_IS_BEING_MOVED.store(true, Ordering::SeqCst);
 
         save_window_position(&window);
 
-        {
-            let mut is_moving = WINDOW_IS_MOVING.lock().unwrap();
-            *is_moving = false;
-        }
+        // Clear the moving flag after a short delay
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(500));
+            WINDOW_IS_BEING_MOVED.store(false, Ordering::SeqCst);
+        });
     }
 
     if let tauri::WindowEvent::CloseRequested { api, .. } = event.event() {
-        if !*WINDOW_IS_MOVING.lock().unwrap() {
+        if !WINDOW_IS_BEING_MOVED.load(Ordering::SeqCst) {
             api.prevent_close();
             let app_handle = event.window().app_handle();
             let window = app_handle.get_window("main").unwrap();

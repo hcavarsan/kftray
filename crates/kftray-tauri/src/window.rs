@@ -4,10 +4,6 @@ use std::sync::atomic::{
     Ordering,
 };
 use std::sync::Mutex;
-use std::time::{
-    Duration,
-    Instant,
-};
 
 use tauri_plugin_positioner::{
     Position,
