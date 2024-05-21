@@ -33,6 +33,8 @@ static RESET_POSITION_TRIGGERED: AtomicBool = AtomicBool::new(false);
 // Cooldown period after resetting the window position
 const COOLDOWN_PERIOD: Duration = Duration::from_secs(1);
 static LAST_RESET_TIME: AtomicU64 = AtomicU64::new(0);
+// Atomic flag to track if the window is being moved
+static WINDOW_IS_MOVING: AtomicBool = AtomicBool::new(false);
 
 pub fn create_tray_menu() -> SystemTray {
     let quit = CustomMenuItem::new("quit".to_string(), "Quit").accelerator("CmdOrCtrl+Shift+Q");
@@ -49,7 +51,10 @@ pub fn create_tray_menu() -> SystemTray {
 
 pub fn handle_window_event(event: GlobalWindowEvent) {
     if let tauri::WindowEvent::Focused(is_focused) = event.event() {
-        if !is_focused && !RESET_POSITION_TRIGGERED.load(Ordering::SeqCst) {
+        if !is_focused
+            && !RESET_POSITION_TRIGGERED.load(Ordering::SeqCst)
+            && !WINDOW_IS_MOVING.load(Ordering::SeqCst)
+        {
             let app_handle = event.window().app_handle();
 
             if let Some(state) = app_handle.try_state::<SaveDialogState>() {
@@ -61,27 +66,36 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
                         .unwrap()
                         .as_secs();
                     if now > last_reset_time + COOLDOWN_PERIOD.as_secs() {
-                        // Platform-specific check to avoid hiding the window during drag on Windows
-                        #[cfg(target_os = "windows")]
-                        {
-                            if event.window().is_dragging().unwrap_or(false) {
-                                return;
-                            }
-                        }
                         save_window_position(&app_handle.get_window("main").unwrap());
-                        event.window().hide().unwrap();
+                        // Delay hiding the window to avoid conflicts with dragging
+                        std::thread::spawn({
+                            let window = event.window().clone();
+                            move || {
+                                std::thread::sleep(Duration::from_millis(100));
+                                window.hide().unwrap();
+                            }
+                        });
                     }
                 }
             }
         }
     }
 
-    // Custom event to handle clicks outside the window
-    if let tauri::WindowEvent::CloseRequested { api, .. } = event.event() {
-        api.prevent_close();
+    if let tauri::WindowEvent::Moved { .. } = event.event() {
         let app_handle = event.window().app_handle();
+        println!("Window moved, saving position");
+        WINDOW_IS_MOVING.store(true, Ordering::SeqCst);
         save_window_position(&app_handle.get_window("main").unwrap());
-        event.window().hide().unwrap();
+        WINDOW_IS_MOVING.store(false, Ordering::SeqCst);
+    }
+
+    if let tauri::WindowEvent::CloseRequested { api, .. } = event.event() {
+        if !WINDOW_IS_MOVING.load(Ordering::SeqCst) {
+            api.prevent_close();
+            let app_handle = event.window().app_handle();
+            save_window_position(&app_handle.get_window("main").unwrap());
+            event.window().hide().unwrap();
+        }
     }
 }
 
