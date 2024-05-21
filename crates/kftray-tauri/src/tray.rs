@@ -43,21 +43,33 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
     if let tauri::WindowEvent::Focused(is_focused) = event.event() {
         println!("Focused event: {}", is_focused);
 		println!("Window event: {:?}", event.event());
-		println!("ismoving: {}", is_moving);
-		println!("isvisible: {}", event.window().is_visible().unwrap());
         if !is_focused && !*is_moving {
 
-
+			println!("ismoving: {}", is_moving);
+			println!("isvisible: {}", event.window().is_visible().unwrap());
             let app_handle = event.window().app_handle();
 
             if let Some(state) = app_handle.try_state::<SaveDialogState>() {
                 if !state.is_open.load(Ordering::SeqCst) {
-                    save_window_position(&app_handle.get_window("main").unwrap());
                     let window = event.window().clone();
                     println!("Hiding window after losing focus");
-                        sleep(Duration::from_millis(50));
+                    let app_handle_clone = app_handle.clone();
+                    let runtime = app_state.runtime.clone();
+                    runtime.spawn(async move {
+                        sleep(Duration::from_millis(200)).await;
+                        if !app_handle_clone
+                            .get_window("main")
+                            .unwrap()
+                            .is_focused()
+                            .unwrap()
+                        {
                             println!("Hiding window after delay");
-                            window.hide().unwrap();
+							save_window_position(&app_handle.get_window("main").unwrap());
+                            window.hide().unwrap()
+                        } else {
+                            println!("Window regained focus during delay");
+                        }
+                    });
                 }
             }
         }
