@@ -53,7 +53,6 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
 
     const currentDragHandle = dragHandleRef.current
 
-
     currentDragHandle.addEventListener('mousedown', handleMouseDown)
     document.addEventListener('mouseup', handleMouseUp)
 

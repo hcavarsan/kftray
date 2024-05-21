@@ -1,6 +1,5 @@
 use std::sync::atomic::Ordering;
 
-
 use tauri::{
     CustomMenuItem,
     GlobalWindowEvent,
@@ -20,7 +19,6 @@ use crate::window::{
     toggle_window_visibility,
 };
 
-
 pub fn create_tray_menu() -> SystemTray {
     let quit = CustomMenuItem::new("quit".to_string(), "Quit").accelerator("CmdOrCtrl+Shift+Q");
     let open = CustomMenuItem::new("toggle".to_string(), "Toggle App");
@@ -35,23 +33,17 @@ pub fn create_tray_menu() -> SystemTray {
 }
 
 pub fn handle_window_event(event: GlobalWindowEvent) {
-	println!("Window event: {:?}", event.event());
+    println!("Window event: {:?}", event.event());
     if let tauri::WindowEvent::Focused(is_focused) = event.event() {
-        if !is_focused
-			&& !matches!(event.event(), tauri::WindowEvent::Moved { .. })
-        {
+        if !is_focused && !matches!(event.event(), tauri::WindowEvent::Moved { .. }) {
             let app_handle = event.window().app_handle();
 
             if let Some(state) = app_handle.try_state::<SaveDialogState>() {
                 if !state.is_open.load(Ordering::SeqCst) {
-						app_handle.get_window("main").unwrap().show().unwrap();
-						app_handle.get_window("main").unwrap().set_focus().unwrap();
-
-                        save_window_position(&app_handle.get_window("main").unwrap());
-                            let window = event.window().clone();
-                                println!("Hiding window after losing focus");
-                                window.hide().unwrap();
-
+                    save_window_position(&app_handle.get_window("main").unwrap());
+                    let window = event.window().clone();
+                    println!("Hiding window after losing focus");
+                    window.hide().unwrap();
                 }
             }
         }
@@ -61,23 +53,19 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
         let app_handle = event.window().app_handle();
         println!("Window moved, saving position");
         let window = app_handle.get_window("main").unwrap();
-		app_handle.get_window("main").unwrap().show().unwrap();
-		app_handle.get_window("main").unwrap().set_focus().unwrap();
         save_window_position(&window);
-
     }
 
     if let tauri::WindowEvent::CloseRequested { api, .. } = event.event() {
-		println!("event: {:?}", event.event());
-            api.prevent_close();
-            let app_handle = event.window().app_handle();
-            let window = app_handle.get_window("main").unwrap();
+        println!("event: {:?}", event.event());
+        api.prevent_close();
+        let app_handle = event.window().app_handle();
+        let window = app_handle.get_window("main").unwrap();
 
-            save_window_position(&window);
+        save_window_position(&window);
 
-            println!("Hiding window after close requested");
-            event.window().hide().unwrap();
-
+        println!("Hiding window after close requested");
+        event.window().hide().unwrap();
     }
 }
 
