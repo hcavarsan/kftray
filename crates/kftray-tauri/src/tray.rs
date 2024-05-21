@@ -61,11 +61,11 @@ pub fn create_tray_menu() -> SystemTray {
 }
 
 pub fn handle_window_event(event: GlobalWindowEvent) {
-	println!("event: {:?}", event.event());
     if let tauri::WindowEvent::Focused(is_focused) = event.event() {
         if !is_focused
             && !RESET_POSITION_TRIGGERED.load(Ordering::SeqCst)
             && !WINDOW_IS_BEING_MOVED.load(Ordering::SeqCst)
+			&& !matches!(event.event(), tauri::WindowEvent::Moved { .. })
         {
             let app_handle = event.window().app_handle();
 
