@@ -1,4 +1,6 @@
 use std::fs;
+use std::thread;
+use std::time::Duration;
 
 use tauri_plugin_positioner::{
     Position,
@@ -103,6 +105,8 @@ pub fn toggle_window_visibility(window: &tauri::Window) {
 
         window.show().unwrap();
         window.set_focus().unwrap();
+        thread::sleep(Duration::from_millis(100));
+        window.set_always_on_top(false).unwrap();
     }
 }
 
