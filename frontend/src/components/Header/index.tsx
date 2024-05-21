@@ -18,10 +18,10 @@ import { HeaderProps } from '../../types';
 const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
   const [version, setVersion] = useState('');
   const [tooltipOpen, setTooltipOpen] = useState(false);
-  useEffect(() => {
-    app.getVersion().then(setVersion).catch(console.error)
-  }, [])
 
+  useEffect(() => {
+    app.getVersion().then(setVersion).catch(console.error);
+  }, []);
 
   const ignoreDragTargetsRef = useRef<HTMLElement[]>([]);
   const dragHandleRef = useRef<HTMLDivElement | null>(null);
