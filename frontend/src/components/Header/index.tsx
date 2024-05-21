@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 
 import { DragHandleIcon, SearchIcon } from '@chakra-ui/icons'
 import {
@@ -11,9 +11,8 @@ import {
   InputLeftElement,
   Tooltip,
 } from '@chakra-ui/react'
-import { app } from '@tauri-apps/api'
 import { appWindow } from '@tauri-apps/api/window'
-
+import { app } from '@tauri-apps/api'
 import logo from '../../assets/logo.png'
 import { HeaderProps } from '../../types'
 
@@ -26,23 +25,53 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
     app.getVersion().then(setVersion).catch(console.error)
   }, [])
 
+  const ignoreDragTargetsRef = useRef<HTMLElement[]>([])
+  const dragHandleRef = useRef<HTMLDivElement | null>(null)
+
+  const addIgnoreDragTarget = useCallback((target: HTMLElement) => {
+    ignoreDragTargetsRef.current.push(target)
+  }, [])
+
+  const removeIgnoreDragTarget = useCallback((target: HTMLElement) => {
+    const index = ignoreDragTargetsRef.current.indexOf(target)
+
+    if (index !== -1) {
+      ignoreDragTargetsRef.current.splice(index, 1)
+    }
+  }, [])
+
   const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     setSearch(event.target.value)
   }
 
-  const handleMouseDown = async (e: React.MouseEvent<HTMLOrSVGElement>) => {
-    if ((e.target as HTMLElement).hasAttribute('data-drag')) {
-      e.preventDefault()
-      e.stopPropagation()
+  useEffect(() => {
+    if (!dragHandleRef.current) {
+      return
+    }
+
+    const handler = async (e: MouseEvent) => {
+      if (
+        ignoreDragTargetsRef.current.some(target =>
+          target.contains(e.target as Node),
+        )
+      ) {
+        return
+      }
+
       setIsDragging(true)
       setTooltipOpen(false)
       await appWindow.startDragging()
+      setIsDragging(false)
     }
-  }
 
-  const handleMouseUp = () => {
-    setIsDragging(false)
-  }
+    const currentDragHandle = dragHandleRef.current
+
+    currentDragHandle.addEventListener('mousedown', handler)
+
+    return () => {
+      currentDragHandle.removeEventListener('mousedown', handler)
+    }
+  }, [])
 
   const handleMouseEnter = () => {
     if (!isDragging) {
@@ -66,8 +95,8 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
     >
       <Flex justifyContent='flex-start' alignItems='center'>
         <Box
+          ref={dragHandleRef}
           className='drag-handle'
-          onMouseUp={handleMouseUp}
           onMouseEnter={handleMouseEnter}
           onMouseLeave={handleMouseLeave}
         >
@@ -85,7 +114,6 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
               width='17px'
               color='gray.500'
               data-drag
-              onMouseDown={handleMouseDown}
             />
           </Tooltip>
         </Box>
