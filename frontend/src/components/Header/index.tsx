@@ -11,11 +11,7 @@ import {
   InputLeftElement,
   Tooltip,
 } from '@chakra-ui/react'
-import {
-  app,
-  event as tauriEvent,
-  window as tauriWindow,
-} from '@tauri-apps/api'
+import { app, window as tauriWindow } from '@tauri-apps/api'
 
 import logo from '../../assets/logo.png'
 import { HeaderProps } from '../../types'
@@ -47,12 +43,17 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
   }, [])
 
   useEffect(() => {
-    const unlisten = tauriEvent.listen('tauri://drag-window', async () => {
-      await tauriWindow.appWindow.setFocus()
-    })
+    const handleVisibilityChange = async () => {
+      if (document.hidden) {
+        await tauriWindow.appWindow.show()
+        await tauriWindow.appWindow.setFocus()
+      }
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
 
     return () => {
-      unlisten.then(f => f())
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
     }
   }, [])
 
