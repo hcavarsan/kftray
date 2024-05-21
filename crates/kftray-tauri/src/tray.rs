@@ -49,7 +49,14 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
                     save_window_position(&app_handle.get_window("main").unwrap());
                     let window = event.window().clone();
                     println!("Hiding window after losing focus");
-                    window.hide().unwrap();
+                    // Add a short delay before hiding the window
+                    let app_handle_clone = app_handle.clone();
+                    tokio::spawn(async move {
+                        sleep(Duration::from_millis(100)).await;
+                        if !app_handle_clone.get_window("main").unwrap().is_focused().unwrap() {
+                            window.hide().unwrap();
+                        }
+                    });
                 }
             }
         }
