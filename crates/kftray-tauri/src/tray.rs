@@ -80,23 +80,6 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
         if !*is_moving {
             *is_moving = true;
 
-            let win = event.window();
-            let _ = win.with_webview(|webview| {
-                #[cfg(target_os = "linux")]
-                {}
-
-                #[cfg(windows)]
-                unsafe {
-                    // https://github.com/MicrosoftEdge/WebView2Feedback/issues/780#issuecomment-808306938
-                    // https://docs.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/icorewebview2controller?view=webview2-1.0.774.44#notifyparentwindowpositionchanged
-                    if let Err(e) = webview.controller().NotifyParentWindowPositionChanged() {
-                        eprintln!("Failed to notify parent window position changed: {:?}", e);
-                    }
-                }
-
-                #[cfg(target_os = "macos")]
-                {}
-            });
 
             let app_handle = event.window().app_handle();
             println!("Window moved, saving position");
