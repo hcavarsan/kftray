@@ -83,12 +83,12 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
                         let mut last_focus_time = LAST_FOCUS_TIME.lock().unwrap();
                         if let Some(last_time) = *last_focus_time {
                             if last_time.elapsed() < DEBOUNCE_DURATION {
-								app_handle.get_window("main").unwrap().set_focus().unwrap();
+
                                 return;
                             }
                         }
                         *last_focus_time = Some(Instant::now());
-
+						app_handle.get_window("main").unwrap().set_focus().unwrap();
                         save_window_position(&app_handle.get_window("main").unwrap());
                         // Delay hiding the window to avoid conflicts with dragging
                         std::thread::spawn({
@@ -122,6 +122,7 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
     }
 
     if let tauri::WindowEvent::CloseRequested { api, .. } = event.event() {
+		println!("event: {:?}", event.event());
         if !WINDOW_IS_BEING_MOVED.load(Ordering::SeqCst) {
             api.prevent_close();
             let app_handle = event.window().app_handle();
