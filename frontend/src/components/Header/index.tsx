@@ -1,9 +1,10 @@
-import React, { useEffect } from 'react'
+import React, { useEffect, useState } from 'react'
 
 import { DragHandleIcon, SearchIcon } from '@chakra-ui/icons'
 import {
+  Box,
   Flex,
-  IconButton,
+  Icon,
   Image,
   Input,
   InputGroup,
@@ -16,16 +17,19 @@ import logo from '../../assets/logo.png'
 import { HeaderProps } from '../../types'
 
 document.addEventListener('mousedown', async e => {
-  const darag = '.drag-handle'
+  const drag = '.drag-handle'
   const target = e.target as HTMLElement
 
-  if (target.closest(darag)) {
+  if (target.closest(drag)) {
     await tauriWindow.appWindow.startDragging()
+    e.preventDefault()
   }
 })
 
 const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
-  const [version, setVersion] = React.useState('')
+  const [version, setVersion] = useState('')
+  const [isDragging, setIsDragging] = useState(false)
+  const [tooltipOpen, setTooltipOpen] = useState(false)
 
   useEffect(() => {
     app.getVersion().then(setVersion).catch(console.error)
@@ -33,6 +37,25 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
 
   const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     setSearch(event.target.value)
+  }
+
+  const handleMouseDown = () => {
+    setIsDragging(true)
+    setTooltipOpen(false)
+  }
+
+  const handleMouseUp = () => {
+    setIsDragging(false)
+  }
+
+  const handleMouseEnter = () => {
+    if (!isDragging) {
+      setTooltipOpen(true)
+    }
+  }
+
+  const handleMouseLeave = () => {
+    setTooltipOpen(false)
   }
 
   return (
@@ -45,7 +68,33 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
       borderColor='gray.200'
       padding='2px'
     >
-      <Flex alignItems='center'>
+      <Flex justifyContent='flex-start' alignItems='center'>
+        <Box
+          className='drag-handle'
+          onMouseDown={handleMouseDown}
+          onMouseUp={handleMouseUp}
+          onMouseEnter={handleMouseEnter}
+          onMouseLeave={handleMouseLeave}
+          justifyContent='center'
+          alignItems='center'
+        >
+          <Tooltip
+            label='Move Window Position'
+            aria-label='position'
+            fontSize='xs'
+            lineHeight='tight'
+            closeOnMouseDown={true}
+            isOpen={tooltipOpen}
+          >
+            <Icon
+              as={DragHandleIcon}
+              height='13px'
+              width='13px'
+              color='gray.400'
+            />
+          </Tooltip>
+        </Box>
+
         <Tooltip
           label={`Kftray v${version}`}
           aria-label='Kftray version'
@@ -56,7 +105,7 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
           <Image src={logo} alt='Kftray Logo' boxSize='32px' ml={3} mt={0.5} />
         </Tooltip>
       </Flex>
-      <Flex alignItems='center'>
+      <Flex alignItems='center' justifyContent='flex-end'>
         <InputGroup size='xs' width='250px' mt='1'>
           <InputLeftElement pointerEvents='none'>
             <SearchIcon color='gray.300' />
@@ -70,25 +119,6 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
             borderRadius='md'
           />
         </InputGroup>
-        <Tooltip
-          label='Move Window Position'
-          aria-label='position'
-          fontSize='xs'
-          lineHeight='tight'
-          placement='top-end'
-        >
-          <IconButton
-            height='25px'
-            aria-label='Drag window'
-            icon={<DragHandleIcon />}
-            size='xs'
-            variant='ghost'
-            mt='1.5'
-            ml='1'
-            colorScheme='gray'
-            className='drag-handle'
-          />
-        </Tooltip>
       </Flex>
     </Flex>
   )
