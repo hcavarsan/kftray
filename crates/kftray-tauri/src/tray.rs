@@ -1,8 +1,4 @@
-use std::sync::{
-    atomic::Ordering,
-    Arc,
-    Mutex,
-};
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use tauri::{
@@ -56,7 +52,8 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
                     println!("Hiding window after losing focus");
                     // Add a short delay before hiding the window
                     let app_handle_clone = app_handle.clone();
-                    tokio::spawn(async move {
+                    let runtime = app_state.runtime.clone();
+                    runtime.spawn(async move {
                         sleep(Duration::from_millis(100)).await;
                         if !app_handle_clone
                             .get_window("main")
