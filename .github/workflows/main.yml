@@ -106,11 +106,17 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y alien rpm
+          ls -la
+          ls -la ./target/
+          ls -la ./target/release/
+          ls -la ./target/release/bundle/
+          ls -la ./target/release/bundle/deb/
           cd ./target/release/bundle/deb/
           alien -r -g -k -v "kftray_${{ github.ref_name }}_amd64.deb"
           cd "kftray-${{ github.ref_name }}"
           rpmbuild --target=x86_64 --buildroot "$(pwd)" -bb "$(pwd)/kftray-${{ github.ref_name }}.spec"
           mv kftray-${{ github.ref_name }}*.x86_64.rpm ../../rpm/
+          ls -la ../../rpm/
 
       - name: Upload RPM to Release
         if: matrix.platform == 'ubuntu-20.04'
