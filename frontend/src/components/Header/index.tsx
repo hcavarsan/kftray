@@ -11,7 +11,7 @@ import {
   InputLeftElement,
   Tooltip,
 } from '@chakra-ui/react'
-import { app } from '@tauri-apps/api'
+import { app } from '@tauri-apps/api/app'
 import { appWindow } from '@tauri-apps/api/window'
 
 import logo from '../../assets/logo.png'
@@ -30,12 +30,14 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
     setSearch(event.target.value)
   }
 
-  const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
-    e.preventDefault()
-    e.stopPropagation()
-    setIsDragging(true)
-    setTooltipOpen(false)
-    appWindow.startDragging()
+  const handleMouseDown = (e: React.MouseEvent<HTMLOrSVGElement>) => {
+    if ((e.target as HTMLElement).hasAttribute('data-drag')) {
+      e.preventDefault()
+      e.stopPropagation()
+      setIsDragging(true)
+      setTooltipOpen(false)
+      appWindow.startDragging()
+    }
   }
 
   const handleMouseUp = () => {
@@ -65,11 +67,9 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
       <Flex justifyContent='flex-start' alignItems='center'>
         <Box
           className='drag-handle'
-          onMouseDown={handleMouseDown}
           onMouseUp={handleMouseUp}
           onMouseEnter={handleMouseEnter}
           onMouseLeave={handleMouseLeave}
-          data-drag
         >
           <Tooltip
             label='Move Window Position'
@@ -84,6 +84,8 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
               height='17px'
               width='17px'
               color='gray.500'
+              data-drag
+              onMouseDown={handleMouseDown}
             />
           </Tooltip>
         </Box>
