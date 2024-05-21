@@ -22,6 +22,7 @@ document.addEventListener('mousedown', async e => {
 
   if (target.closest(drag)) {
     await tauriWindow.appWindow.startDragging()
+    this.dispatchEvent(new PointerEvent('pointerup'))
     e.preventDefault()
   }
 })
@@ -75,8 +76,8 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
           onMouseUp={handleMouseUp}
           onMouseEnter={handleMouseEnter}
           onMouseLeave={handleMouseLeave}
-          justifyContent='center'
-          alignItems='center'
+          justifyContent='flex-start'
+          mt='-0.5'
         >
           <Tooltip
             label='Move Window Position'
@@ -88,9 +89,9 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
           >
             <Icon
               as={DragHandleIcon}
-              height='13px'
-              width='13px'
-              color='gray.400'
+              height='17px'
+              width='17px'
+              color='gray.500'
             />
           </Tooltip>
         </Box>
