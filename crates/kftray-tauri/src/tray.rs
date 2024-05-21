@@ -55,22 +55,9 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
                     save_window_position(&app_handle.get_window("main").unwrap());
                     let window = event.window().clone();
                     println!("Hiding window after losing focus");
-                    let app_handle_clone = app_handle.clone();
-                    let runtime = app_state.runtime.clone();
-                    runtime.spawn(async move {
-                        sleep(Duration::from_millis(50)).await;
-                        if !app_handle_clone
-                            .get_window("main")
-                            .unwrap()
-                            .is_focused()
-                            .unwrap()
-                        {
+                        sleep(Duration::from_millis(50));
                             println!("Hiding window after delay");
                             window.hide().unwrap();
-                        } else {
-                            println!("Window regained focus during delay");
-                        }
-                    });
                 }
             }
         }
