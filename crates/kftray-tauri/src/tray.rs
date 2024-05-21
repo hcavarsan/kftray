@@ -1,5 +1,5 @@
 use std::sync::atomic::Ordering;
-
+use std::time::Duration;
 use tauri::{
     CustomMenuItem,
     GlobalWindowEvent,
@@ -10,7 +10,7 @@ use tauri::{
     SystemTrayMenu,
 };
 use tokio::runtime::Runtime;
-
+use tokio::time::sleep;
 use crate::kubeforward::port_forward;
 use crate::models::window::SaveDialogState;
 use crate::window::{
