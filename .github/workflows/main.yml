@@ -18,9 +18,9 @@ jobs:
         platform: [macos-latest, ubuntu-20.04, windows-latest]
         include:
           - platform: 'macos-latest'
-            args: '--target universal-apple-darwin --verbose'
+            args: '--target universal-apple-darwin --verbose --bundles dmg,updater'
           - platform: 'ubuntu-20.04'
-            args: '--verbose'
+            args: --verbose --bundles appimage,updater'
           - platform: 'windows-latest'
             args: '--target x86_64-pc-windows-msvc --verbose --bundles nsis,updater'
           - platform: 'windows-latest'
@@ -99,62 +99,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NODE_OPTIONS: --max-old-space-size=6000
-
-      - name: Build RPM
-        if: matrix.platform == 'ubuntu-20.04'
-        id: build-desktop-rpm
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y alien rpm
-          ls -la
-          ls -la ./target/
-          ls -la ./target/release/
-          ls -la ./target/release/bundle/
-          ls -la ./target/release/bundle/deb/
-          cd ./target/release/bundle/deb/
-          deb_file=$(ls kftray_*_amd64.deb | head -n 1)
-          deb_version=${deb_file#kftray_}
-          deb_version=${deb_version%_amd64.deb}
-          alien -r -g -k -v "$deb_file"
-          cd "kftray-$deb_version"
-          if [ ! -f "kftray-$deb_version.spec" ]; then
-            echo "Creating missing .spec file"
-            echo "Name: kftray" > kftray-$deb_version.spec
-            echo "Version: $deb_version" >> kftray-$deb_version.spec
-            echo "Release: 1%{?dist}" >> kftray-$deb_version.spec
-            echo "Summary: KFtray application" >> kftray-$deb_version.spec
-            echo "License: MIT" >> kftray-$deb_version.spec
-            echo "Source0: %{name}-%{version}.tar.gz" >> kftray-$deb_version.spec
-            echo "" >> kftray-$deb_version.spec
-            echo "%description" >> kftray-$deb_version.spec
-            echo "KFtray application." >> kftray-$deb_version.spec
-            echo "" >> kftray-$deb_version.spec
-            echo "%prep" >> kftray-$deb_version.spec
-            echo "%setup -q" >> kftray-$deb_version.spec
-            echo "" >> kftray-$deb_version.spec
-            echo "%build" >> kftray-$deb_version.spec
-            echo "" >> kftray-$deb_version.spec
-            echo "%install" >> kftray-$deb_version.spec
-            echo "mkdir -p %{buildroot}/usr/bin" >> kftray-$deb_version.spec
-            echo "cp -a * %{buildroot}/usr/bin/" >> kftray-$deb_version.spec
-            echo "" >> kftray-$deb_version.spec
-            echo "%files" >> kftray-$deb_version.spec
-            echo "/usr/bin/*" >> kftray-$deb_version.spec
-            echo "" >> kftray-$deb_version.spec
-            echo "%changelog" >> kftray-$deb_version.spec
-          fi
-          rpmbuild --target=x86_64 --buildroot "$(pwd)" -bb "$(pwd)/kftray-$deb_version.spec"
-          mv kftray-$deb_version*.x86_64.rpm ../../rpm/
-          ls -la ../../rpm/
-
-      - name: Upload RPM to Release
-        if: matrix.platform == 'ubuntu-20.04'
-        uses: actions/upload-release-asset@v1
-        with:
-          upload_url: ${{ steps.build-desktop-rpm.outputs.upload_url }}
-          asset_path: ./target/release/bundle/rpm/kftray-*.x86_64.rpm
-          asset_name: kftray-*.x86_64.rpm
-          asset_content_type: application/x-rpm
 
   build-and-push-docker:
     permissions:
