@@ -20,8 +20,6 @@ pub fn save_window_position(window: &tauri::Window) {
         fs::create_dir_all(&home_path).unwrap();
         home_path.push("window_position.json");
 
-        // Ensure the file is empty before writing
-        fs::write(&home_path, "").unwrap();
         fs::write(&home_path, position_json).unwrap();
 
         println!("Window position saved to home directory: {:?}", home_path);
@@ -36,13 +34,37 @@ pub fn load_window_position() -> Option<WindowPosition> {
     home_path.push("window_position.json");
 
     if home_path.exists() {
-        let position_json = fs::read_to_string(&home_path).unwrap();
-        let position: WindowPosition = serde_json::from_str(&position_json).unwrap();
-        println!(
-            "Window position loaded from home directory: {:?}",
-            home_path
-        );
-        Some(position)
+        match fs::read_to_string(&home_path) {
+            Ok(position_json) => match serde_json::from_str(&position_json) {
+                Ok(position) => {
+                    println!(
+                        "Window position loaded from home directory: {:?}",
+                        home_path
+                    );
+                    Some(position)
+                }
+                Err(e) => {
+                    eprintln!("Failed to parse window position JSON: {}", e);
+                    if let Err(delete_err) = fs::remove_file(&home_path) {
+                        eprintln!(
+                            "Failed to delete corrupted window position file: {}",
+                            delete_err
+                        );
+                    }
+                    None
+                }
+            },
+            Err(e) => {
+                eprintln!("Failed to read window position file: {}", e);
+                if let Err(delete_err) = fs::remove_file(&home_path) {
+                    eprintln!(
+                        "Failed to delete corrupted window position file: {}",
+                        delete_err
+                    );
+                }
+                None
+            }
+        }
     } else {
         println!("No window position file found.");
         None
