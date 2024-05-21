@@ -13,6 +13,8 @@ import {
 } from '@chakra-ui/react'
 import { appWindow } from '@tauri-apps/api/window'
 import { app } from '@tauri-apps/api'
+
+
 import logo from '../../assets/logo.png'
 import { HeaderProps } from '../../types'
 
@@ -25,6 +27,7 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
     app.getVersion().then(setVersion).catch(console.error)
   }, [])
 
+
   const ignoreDragTargetsRef = useRef<HTMLElement[]>([])
   const dragHandleRef = useRef<HTMLDivElement | null>(null)
 
@@ -34,6 +37,7 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
 
   const removeIgnoreDragTarget = useCallback((target: HTMLElement) => {
     const index = ignoreDragTargetsRef.current.indexOf(target)
+
 
     if (index !== -1) {
       ignoreDragTargetsRef.current.splice(index, 1)
@@ -58,13 +62,20 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
         return
       }
 
+      console.log('Starting drag operation')
       setIsDragging(true)
       setTooltipOpen(false)
-      await appWindow.startDragging()
+      try {
+        await appWindow.startDragging()
+      } catch (error) {
+        console.error('Error during dragging:', error)
+      }
       setIsDragging(false)
+      console.log('Drag operation ended')
     }
 
     const currentDragHandle = dragHandleRef.current
+
 
     currentDragHandle.addEventListener('mousedown', handler)
 
