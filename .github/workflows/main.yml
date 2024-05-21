@@ -139,15 +139,18 @@ jobs:
       - name: Setup ARM build environment
         run: |
           rustup target add aarch64-unknown-linux-gnu
+          sudo apt install gcc-aarch64-linux-gnu
           sudo dpkg --add-architecture arm64
+          . /etc/os-release
+          echo "using Ubuntu with codename $VERSION_CODENAME"
           echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports focal main multiverse universe" | sudo tee -a /etc/apt/sources.list
           echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports focal-security main multiverse universe" | sudo tee -a /etc/apt/sources.list
           echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports focal-backports main multiverse universe" | sudo tee -a /etc/apt/sources.list
           echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports focal-updates main multiverse universe" | sudo tee -a /etc/apt/sources.list
-          sudo apt-get update
-          sudo apt-get install gcc-aarch64-linux-gnu
-          sudo apt-get install libwebkit2gtk-4.0-dev:arm64 -y
-          sudo apt-get install libssl-dev:arm64 -y
+          sudo apt update
+          sudo apt upgrade -y
+          sudo apt install libwebkit2gtk-4.0-dev:arm64 -y
+          sudo apt install libssl-dev:arm64 -y
           export PKG_CONFIG_SYSROOT_DIR=/usr/aarch64-linux-gnu/
           pnpm install
           pnpm rls --target aarch64-unknown-linux-gnu
@@ -170,7 +173,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ARM Debian File
-          path: src-tauri/target/release/bundle/deb/*arm64.deb
+          path: target/release/bundle/deb/*arm64.deb
 
   windows-x86_64:
     permissions:
