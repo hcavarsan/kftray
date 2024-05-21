@@ -75,6 +75,14 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
             }
         }
     }
+
+    // Custom event to handle clicks outside the window
+    if let tauri::WindowEvent::CloseRequested { api, .. } = event.event() {
+        api.prevent_close();
+        let app_handle = event.window().app_handle();
+        save_window_position(&app_handle.get_window("main").unwrap());
+        event.window().hide().unwrap();
+    }
 }
 
 pub fn handle_run_event(app_handle: &tauri::AppHandle, event: RunEvent) {
