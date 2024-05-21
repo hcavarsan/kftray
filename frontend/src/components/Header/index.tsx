@@ -30,13 +30,13 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
     setSearch(event.target.value)
   }
 
-  const handleMouseDown = (e: React.MouseEvent<HTMLOrSVGElement>) => {
+  const handleMouseDown = async (e: React.MouseEvent<HTMLOrSVGElement>) => {
     if ((e.target as HTMLElement).hasAttribute('data-drag')) {
       e.preventDefault()
       e.stopPropagation()
       setIsDragging(true)
       setTooltipOpen(false)
-      appWindow.startDragging()
+      await appWindow.startDragging()
     }
   }
 
