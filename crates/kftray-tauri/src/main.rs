@@ -3,6 +3,11 @@
     windows_subsystem = "windows"
 )]
 
+use std::sync::{
+    Arc,
+    Mutex,
+};
+
 mod commands;
 mod config;
 mod db;
@@ -14,16 +19,15 @@ mod remote_config;
 mod tray;
 mod window;
 
-#[cfg(target_os = "linux")]
-use enigo::{
-    Enigo,
-    Mouse,
-    Settings,
-};
 use tauri::{
     GlobalShortcutManager,
     Manager,
 };
+use tauri_plugin_positioner::{
+    Position,
+    WindowExt,
+};
+use tokio::runtime::Runtime;
 
 use crate::models::window::SaveDialogState;
 use crate::tray::{
@@ -32,12 +36,15 @@ use crate::tray::{
     handle_system_tray_event,
     handle_window_event,
 };
-#[cfg(target_os = "linux")]
-use crate::window::move_window_to_mouse_position;
 use crate::window::{
     load_window_position,
     toggle_window_visibility,
 };
+
+struct AppState {
+    is_moving: Arc<Mutex<bool>>,
+    runtime: Arc<Runtime>,
+}
 
 fn main() {
     logging::setup_logging();
@@ -46,9 +53,14 @@ fn main() {
 
     // configure tray menu
     let system_tray = create_tray_menu();
-
+    let is_moving = Arc::new(Mutex::new(false));
+    let runtime = Arc::new(Runtime::new().expect("Failed to create a Tokio runtime"));
     let app = tauri::Builder::default()
         .manage(SaveDialogState::default())
+        .manage(AppState {
+            is_moving: is_moving.clone(),
+            runtime: runtime.clone(),
+        })
         .setup(move |app| {
             let _ = config::clean_all_custom_hosts_entries();
 
@@ -65,19 +77,30 @@ fn main() {
 
             let window = app.get_window("main").unwrap();
 
-            // Load window position
-            if let Some(position) = load_window_position() {
-                println!(
-                    "Setting window position to: x: {}, y: {}",
-                    position.x, position.y
-                );
-                window
-                    .set_position(tauri::Position::Logical(tauri::LogicalPosition::new(
-                        position.x, position.y,
-                    )))
-                    .unwrap();
-            }
+            #[cfg(debug_assertions)]
+            window.open_devtools();
 
+            // Load window position
+            match load_window_position() {
+                Some(position) => {
+                    println!(
+                        "Setting window position to: x: {}, y: {}",
+                        position.x, position.y
+                    );
+                    window
+                        .set_position(tauri::Position::Logical(tauri::LogicalPosition::new(
+                            position.x, position.y,
+                        )))
+                        .unwrap_or_else(|e| eprintln!("Failed to set window position: {}", e));
+                }
+                None => {
+                    if let Err(e) = window.move_window(Position::Center) {
+                        eprintln!("Failed to move window to center: {}", e);
+                    }
+                }
+            }
+            window.show().unwrap();
+            window.set_focus().unwrap();
             // register global shortcut to open the app
             let mut shortcut = app.global_shortcut_manager();
 
