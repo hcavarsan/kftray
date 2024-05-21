@@ -42,7 +42,7 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
       }
     }
 
-    const handleMouseDown = (e: MouseEvent) => {
+    const handleMouseDown = (_e: MouseEvent) => {
       setTooltipOpen(false)
       document.addEventListener('mousemove', handleMouseMove)
     }

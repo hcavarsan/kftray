@@ -6,12 +6,12 @@ use std::sync::atomic::{
 use std::sync::Mutex;
 use std::time::{
     Duration,
+    Instant,
     SystemTime,
     UNIX_EPOCH,
 };
 
 use tauri::{
-    window,
     CustomMenuItem,
     GlobalWindowEvent,
     Manager,
@@ -25,7 +25,6 @@ use tokio::runtime::Runtime;
 use crate::kubeforward::port_forward;
 use crate::models::window::SaveDialogState;
 use crate::window::{
-    load_window_position,
     reset_window_position,
     save_window_position,
     toggle_window_visibility,
@@ -43,6 +42,10 @@ lazy_static::lazy_static! {
 
 // Atomic flag to track if the window is currently being moved
 static WINDOW_IS_BEING_MOVED: AtomicBool = AtomicBool::new(false);
+
+// Debounce duration for focus event
+const DEBOUNCE_DURATION: Duration = Duration::from_millis(500);
+static LAST_FOCUS_TIME: Mutex<Option<Instant>> = Mutex::new(None);
 
 pub fn create_tray_menu() -> SystemTray {
     let quit = CustomMenuItem::new("quit".to_string(), "Quit").accelerator("CmdOrCtrl+Shift+Q");
@@ -74,6 +77,16 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
                         .unwrap()
                         .as_secs();
                     if now > last_reset_time + COOLDOWN_PERIOD.as_secs() {
+                        // Debounce logic
+                        let mut last_focus_time = LAST_FOCUS_TIME.lock().unwrap();
+                        if let Some(last_time) = *last_focus_time {
+                            if last_time.elapsed() < DEBOUNCE_DURATION {
+								app_handle.get_window("main").unwrap().set_focus().unwrap();
+                                return;
+                            }
+                        }
+                        *last_focus_time = Some(Instant::now());
+
                         save_window_position(&app_handle.get_window("main").unwrap());
                         // Delay hiding the window to avoid conflicts with dragging
                         std::thread::spawn({

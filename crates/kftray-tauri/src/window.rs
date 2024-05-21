@@ -1,9 +1,4 @@
 use std::fs;
-use std::sync::atomic::{
-    AtomicBool,
-    Ordering,
-};
-use std::sync::Mutex;
 
 use tauri_plugin_positioner::{
     Position,
