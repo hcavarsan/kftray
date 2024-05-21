@@ -106,7 +106,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y alien rpm
-          cd ./crates/kftray-tauri/target/release/bundle/deb/
+          cd ./target/release/bundle/deb/
           alien -r -g -k -v "kftray_${{ github.ref_name }}_amd64.deb"
           cd "kftray-${{ github.ref_name }}"
           rpmbuild --target=x86_64 --buildroot "$(pwd)" -bb "$(pwd)/kftray-${{ github.ref_name }}.spec"
@@ -117,7 +117,7 @@ jobs:
         uses: actions/upload-release-asset@v1
         with:
           upload_url: ${{ steps.build-desktop-rpm.outputs.upload_url }}
-          asset_path: ./crates/kftray-tauri/target/release/kftray-${{ github.ref_name }}.x86_64.rpm
+          asset_path: ./target/release/kftray-${{ github.ref_name }}.x86_64.rpm
           asset_name: kftray-${{ github.ref_name }}.x86_64.rpm
           asset_content_type: application/x-rpm
 
