@@ -19,6 +19,9 @@ use crate::window::{
     toggle_window_visibility,
 };
 
+use crate::AppState;
+
+
 pub fn create_tray_menu() -> SystemTray {
     let quit = CustomMenuItem::new("quit".to_string(), "Quit").accelerator("CmdOrCtrl+Shift+Q");
     let open = CustomMenuItem::new("toggle".to_string(), "Toggle App");
@@ -33,9 +36,12 @@ pub fn create_tray_menu() -> SystemTray {
 }
 
 pub fn handle_window_event(event: GlobalWindowEvent) {
+    let app_state = event.window().state::<AppState>();
+    let mut is_moving = app_state.is_moving.lock().unwrap();
+
     println!("Window event: {:?}", event.event());
     if let tauri::WindowEvent::Focused(is_focused) = event.event() {
-        if !is_focused && !matches!(event.event(), tauri::WindowEvent::Moved { .. }) {
+        if !is_focused && !*is_moving {
             let app_handle = event.window().app_handle();
 
             if let Some(state) = app_handle.try_state::<SaveDialogState>() {
@@ -49,41 +55,39 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
         }
     }
 
-	if let tauri::WindowEvent::Moved(_) = event.event() {
-			let win = event.window();
-			let _ = win.with_webview(|webview| {
-				#[cfg(target_os = "linux")]
-				{}
+    if let tauri::WindowEvent::Moved(_) = event.event() {
+        if !*is_moving {
+            *is_moving = true;
 
-				#[cfg(windows)]
-				unsafe {
-					// https://github.com/MicrosoftEdge/WebView2Feedback/issues/780#issuecomment-808306938
-					// https://docs.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/icorewebview2controller?view=webview2-1.0.774.44#notifyparentwindowpositionchanged
-					if let Err(e) = webview.controller().NotifyParentWindowPositionChanged() {
-						eprintln!("Failed to notify parent window position changed: {:?}", e);
-					}
-				}
+            let win = event.window();
+            let _ = win.with_webview(|webview| {
+                #[cfg(target_os = "linux")]
+                {}
 
-				#[cfg(target_os = "macos")]
-				{}
-			});
+                #[cfg(windows)]
+                unsafe {
+                    // https://github.com/MicrosoftEdge/WebView2Feedback/issues/780#issuecomment-808306938
+                    // https://docs.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/icorewebview2controller?view=webview2-1.0.774.44#notifyparentwindowpositionchanged
+                    if let Err(e) = webview.controller().NotifyParentWindowPositionChanged() {
+                        eprintln!("Failed to notify parent window position changed: {:?}", e);
+                    }
+                }
 
-			let app_handle = event.window().app_handle();
-			println!("Window moved, saving position");
-			if let Some(window) = app_handle.get_window("main") {
-				save_window_position(&window);
-			} else {
-				eprintln!("Failed to get main window");
-			}
+                #[cfg(target_os = "macos")]
+                {}
+            });
 
-		let app_handle = event.window().app_handle();
-		println!("Window moved, saving position");
-		if let Some(window) = app_handle.get_window("main") {
-			save_window_position(&window);
-		} else {
-			eprintln!("Failed to get main window");
-		}
-	}
+            let app_handle = event.window().app_handle();
+            println!("Window moved, saving position");
+            if let Some(window) = app_handle.get_window("main") {
+                save_window_position(&window);
+            } else {
+                eprintln!("Failed to get main window");
+            }
+
+            *is_moving = false;
+        }
+    }
 
     if let tauri::WindowEvent::CloseRequested { api, .. } = event.event() {
         println!("event: {:?}", event.event());

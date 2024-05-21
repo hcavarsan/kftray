@@ -3,6 +3,8 @@
     windows_subsystem = "windows"
 )]
 
+use std::sync::{Arc, Mutex};
+
 mod commands;
 mod config;
 mod db;
@@ -35,7 +37,13 @@ use crate::window::{
     toggle_window_visibility,
 };
 
+struct AppState {
+    is_moving: Arc<Mutex<bool>>,
+}
+
+
 fn main() {
+	let is_moving = Arc::new(Mutex::new(false));
     logging::setup_logging();
 
     let _ = fix_path_env::fix();
@@ -45,6 +53,9 @@ fn main() {
 
     let app = tauri::Builder::default()
         .manage(SaveDialogState::default())
+		.manage(AppState {
+            is_moving: is_moving.clone(),
+        })
         .setup(move |app| {
             let _ = config::clean_all_custom_hosts_entries();
 
