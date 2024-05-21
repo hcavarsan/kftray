@@ -102,6 +102,7 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
         // Clear the moving flag after a short delay
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(500));
+            println!("Window move operation completed");
             WINDOW_IS_BEING_MOVED.store(false, Ordering::SeqCst);
         });
     }
