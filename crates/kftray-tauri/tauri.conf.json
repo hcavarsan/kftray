@@ -41,7 +41,8 @@
         "appimage",
         "deb",
         "updater",
-        "msi"
+        "msi",
+		"nsis"
       ],
       "windows": {
         "certificateThumbprint": null,
