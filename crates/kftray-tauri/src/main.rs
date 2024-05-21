@@ -19,7 +19,6 @@ mod remote_config;
 mod tray;
 mod window;
 
-use tokio::runtime::Runtime;
 use tauri::{
     GlobalShortcutManager,
     Manager,
@@ -28,6 +27,7 @@ use tauri_plugin_positioner::{
     Position,
     WindowExt,
 };
+use tokio::runtime::Runtime;
 
 use crate::models::window::SaveDialogState;
 use crate::tray::{
@@ -43,11 +43,10 @@ use crate::window::{
 
 struct AppState {
     is_moving: Arc<Mutex<bool>>,
-	runtime: Arc<Runtime>,
+    runtime: Arc<Runtime>,
 }
 
 fn main() {
-
     logging::setup_logging();
 
     let _ = fix_path_env::fix();
@@ -55,12 +54,12 @@ fn main() {
     // configure tray menu
     let system_tray = create_tray_menu();
     let is_moving = Arc::new(Mutex::new(false));
-	let runtime = Arc::new(Runtime::new().expect("Failed to create a Tokio runtime"));
+    let runtime = Arc::new(Runtime::new().expect("Failed to create a Tokio runtime"));
     let app = tauri::Builder::default()
         .manage(SaveDialogState::default())
         .manage(AppState {
             is_moving: is_moving.clone(),
-			runtime: runtime.clone(),
+            runtime: runtime.clone(),
         })
         .setup(move |app| {
             let _ = config::clean_all_custom_hosts_entries();

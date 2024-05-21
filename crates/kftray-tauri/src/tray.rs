@@ -42,7 +42,7 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
     println!("Window event: {:?}", event.event());
     if let tauri::WindowEvent::Focused(is_focused) = event.event() {
         println!("Focused event: {}", is_focused);
-        if !is_focused && !*is_moving && event.window().is_visible().unwrap() {
+        if !is_focused && !*is_moving && !event.window().is_visible().unwrap() {
             let app_handle = event.window().app_handle();
 
             if let Some(state) = app_handle.try_state::<SaveDialogState>() {
@@ -50,7 +50,6 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
                     save_window_position(&app_handle.get_window("main").unwrap());
                     let window = event.window().clone();
                     println!("Hiding window after losing focus");
-                    // Add a short delay before hiding the window
                     let app_handle_clone = app_handle.clone();
                     let runtime = app_state.runtime.clone();
                     runtime.spawn(async move {
@@ -160,7 +159,12 @@ pub fn handle_system_tray_event(app: &tauri::AppHandle, event: SystemTrayEvent) 
         SystemTrayEvent::LeftClick { .. } => {
             println!("System tray left click event");
             let window = app.get_window("main").unwrap();
-            toggle_window_visibility(&window);
+            if window.is_visible().unwrap() {
+                window.hide().unwrap();
+            } else {
+                window.show().unwrap();
+                window.set_focus().unwrap();
+            }
         }
         SystemTrayEvent::RightClick { .. } => {
             println!("System tray received a right click");
