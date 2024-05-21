@@ -92,10 +92,12 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
             *is_moving = true;
         }
         save_window_position(&app_handle.get_window("main").unwrap());
-        {
+        // Add a delay before resetting the moving flag
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(500));
             let mut is_moving = WINDOW_IS_MOVING.lock().unwrap();
             *is_moving = false;
-        }
+        });
     }
 
     if let tauri::WindowEvent::CloseRequested { api, .. } = event.event() {
