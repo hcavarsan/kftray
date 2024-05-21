@@ -17,9 +17,7 @@ import { HeaderProps } from '../../types';
 
 const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
   const [version, setVersion] = useState('');
-  const [isDragging, setIsDragging] = useState(false);
   const [tooltipOpen, setTooltipOpen] = useState(false);
-
   useEffect(() => {
     app.getVersion().then(setVersion).catch(console.error)
   }, [])
@@ -49,7 +47,7 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
     }
 
     const handleMouseMove = async (e: MouseEvent) => {
-      if (isDragging) {
+      if (e.buttons === 1) { // Check if the left mouse button is pressed
         await appWindow.startDragging();
       }
     };
@@ -60,14 +58,12 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
       }
 
       console.log('Starting drag operation');
-      setIsDragging(true);
       setTooltipOpen(false);
       document.addEventListener('mousemove', handleMouseMove);
     };
 
     const handleMouseUp = () => {
       console.log('Drag operation ended');
-      setIsDragging(false);
       document.removeEventListener('mousemove', handleMouseMove);
     };
 
@@ -79,12 +75,10 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
       currentDragHandle.removeEventListener('mousedown', handleMouseDown);
       document.removeEventListener('mouseup', handleMouseUp);
     };
-  }, [isDragging]);
+  }, []);
 
   const handleMouseEnter = () => {
-    if (!isDragging) {
-      setTooltipOpen(true);
-    }
+    setTooltipOpen(true);
   };
 
   const handleMouseLeave = () => {
