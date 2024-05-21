@@ -110,17 +110,16 @@ jobs:
           alien -r -g -k -v "kftray_${{ github.ref_name }}_amd64.deb"
           cd "kftray-${{ github.ref_name }}"
           rpmbuild --target=x86_64 --buildroot "$(pwd)" -bb "$(pwd)/kftray-${{ github.ref_name }}.spec"
-          mv kftray-${{ github.ref_name }}*.x86_64.rpm ../../
+          mv kftray-${{ github.ref_name }}*.x86_64.rpm ../../rpm/
 
       - name: Upload RPM to Release
         if: matrix.platform == 'ubuntu-20.04'
         uses: actions/upload-release-asset@v1
         with:
           upload_url: ${{ steps.build-desktop-rpm.outputs.upload_url }}
-          asset_path: ./target/release/kftray-${{ github.ref_name }}.x86_64.rpm
+          asset_path: ./target/release/bundle/rpm/kftray-${{ github.ref_name }}.x86_64.rpm
           asset_name: kftray-${{ github.ref_name }}.x86_64.rpm
           asset_content_type: application/x-rpm
-
 
   build-and-push-docker:
     permissions:
