@@ -9,21 +9,74 @@ env:
   TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
 
 jobs:
-  release:
+  macos-universal:
     permissions:
       contents: write
-    strategy:
-      fail-fast: false
-      matrix:
-        platform: [macos-latest, ubuntu-latest]
-    runs-on: ${{ matrix.platform }}
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Reconfigure for MacOS Universal
+        run: rustup target add aarch64-apple-darwin && rustup target add x86_64-apple-darwin
+
+      - name: Rust setup
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9.1.2
+
+      - name: Sync node version and setup cache
+        uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+          cache: "pnpm"
+
+      - name: Cache pnpm modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            $(pnpm store path --silent)
+            **/node_modules
+          key: ${{ runner.OS }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.OS }}-pnpm-
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Build the app for MacOS Universal
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NODE_OPTIONS: --max-old-space-size=6000
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "KFtray - ${{ github.ref_name }}"
+          releaseBody: "See the assets to download this version and install."
+          releaseDraft: true
+          prerelease: false
+          updaterJsonKeepUniversal: true
+          args: --target universal-apple-darwin --bundles dmg,updater
+
+  ubuntu-amd64:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Install dependencies for Linux
-        if: matrix.platform == 'ubuntu-latest'
         run: |
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev
@@ -61,7 +114,6 @@ jobs:
         run: pnpm install --no-frozen-lockfile
 
       - name: Build the app for Linux amd64
-        if: matrix.platform == 'ubuntu-latest'
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -75,12 +127,32 @@ jobs:
           updaterJsonKeepUniversal: true
           args: --target x86_64-unknown-linux-gnu --bundles appimage,deb,updater
 
-      - name: Reconfigure for MacOS Universal
-        if: matrix.platform == 'macos-latest'
-        run: rustup target add aarch64-apple-darwin && rustup target add x86_64-apple-darwin
+  ubuntu-arm64:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
 
-      - name: Build the app for MacOS Universal
-        if: matrix.platform == 'macos-latest'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup ARM build environment
+        run: |
+          rustup target add aarch64-unknown-linux-gnu
+          sudo dpkg --add-architecture arm64
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports focal main multiverse universe" | sudo tee -a /etc/apt/sources.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports focal-security main multiverse universe" | sudo tee -a /etc/apt/sources.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports focal-backports main multiverse universe" | sudo tee -a /etc/apt/sources.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports focal-updates main multiverse universe" | sudo tee -a /etc/apt/sources.list
+          sudo apt-get update
+          sudo apt-get install gcc-aarch64-linux-gnu
+          sudo apt-get install libwebkit2gtk-4.0-dev:arm64 -y
+          sudo apt-get install libssl-dev:arm64 -y
+          export PKG_CONFIG_SYSROOT_DIR=/usr/aarch64-linux-gnu/
+          pnpm install
+          pnpm rls --target aarch64-unknown-linux-gnu
+
+      - name: Build the app for Linux ARM64
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -92,15 +164,17 @@ jobs:
           releaseDraft: true
           prerelease: false
           updaterJsonKeepUniversal: true
-          args: --target universal-apple-darwin --bundles dmg,updater
+          args: --target aarch64-unknown-linux-gnu --bundles deb,updater
 
-  windows-release:
+      - name: Upload deb bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: ARM Debian File
+          path: src-tauri/target/release/bundle/deb/*arm64.deb
+
+  windows-x86_64:
     permissions:
       contents: write
-    strategy:
-      fail-fast: false
-      matrix:
-        arch: [x86_64, x86, arm64]
     runs-on: windows-latest
 
     steps:
@@ -140,11 +214,9 @@ jobs:
         run: pnpm install --no-frozen-lockfile
 
       - name: Reconfigure for Windows x86_64
-        if: matrix.arch == 'x86_64'
         run: rustup target add x86_64-pc-windows-msvc
 
       - name: Build the app for Windows x86_64
-        if: matrix.arch == 'x86_64'
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -158,12 +230,51 @@ jobs:
           updaterJsonKeepUniversal: true
           args: --target x86_64-pc-windows-msvc --bundles nsis,updater
 
+  windows-x86:
+    permissions:
+      contents: write
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Rust setup
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9.1.2
+
+      - name: Sync node version and setup cache
+        uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+          cache: "pnpm"
+
+      - name: Cache pnpm modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            $(pnpm store path --silent)
+            **/node_modules
+          key: ${{ runner.OS }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.OS }}-pnpm-
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
       - name: Reconfigure for Windows x86
-        if: matrix.arch == 'x86'
         run: rustup target add i686-pc-windows-msvc
 
       - name: Build the app for Windows x86
-        if: matrix.arch == 'x86'
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -177,18 +288,56 @@ jobs:
           updaterJsonKeepUniversal: true
           args: --target i686-pc-windows-msvc --bundles nsis,updater
 
+  windows-arm64:
+    permissions:
+      contents: write
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Rust setup
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "./src-tauri -> target"
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9.1.2
+
+      - name: Sync node version and setup cache
+        uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+          cache: "pnpm"
+
+      - name: Cache pnpm modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            $(pnpm store path --silent)
+            **/node_modules
+          key: ${{ runner.OS }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.OS }}-pnpm-
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
       - name: Install dependencies for Windows on ARM64
-        if: matrix.arch == 'arm64'
         uses: TheMrMilchmann/setup-msvc-dev@v3
         with:
           arch: amd64_arm64
 
       - name: Reconfigure for Windows on ARM64
-        if: matrix.arch == 'arm64'
         run: rustup target add aarch64-pc-windows-msvc
 
       - name: Build the app for Windows on ARM64
-        if: matrix.arch == 'arm64'
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -201,57 +350,6 @@ jobs:
           prerelease: false
           updaterJsonKeepUniversal: true
           args: --target aarch64-pc-windows-msvc --bundles nsis,updater
-
-  build-arm:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup ARM build environment
-        run: |
-          rustup target add aarch64-unknown-linux-gnu
-          sudo apt install gcc-aarch64-linux-gnu
-          sudo dpkg --add-architecture arm64
-          . /etc/os-release
-          echo "using Ubuntu with codename $VERSION_CODENAME"
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports $VERSION_CODENAME main restricted" | sudo tee -a /etc/apt/sources.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports $VERSION_CODENAME-updates main restricted" | sudo tee -a /etc/apt/sources.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports $VERSION_CODENAME universe" | sudo tee -a /etc/apt/sources.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports $VERSION_CODENAME-updates universe" | sudo tee -a /etc/apt/sources.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports $VERSION_CODENAME multiverse" | sudo tee -a /etc/apt/sources.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports $VERSION_CODENAME-updates multiverse" | sudo tee -a /etc/apt/sources.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports $VERSION_CODENAME-backports main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports $VERSION_CODENAME-security main restricted" | sudo tee -a /etc/apt/sources.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports $VERSION_CODENAME-security universe" | sudo tee -a /etc/apt/sources.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports $VERSION_CODENAME-security multiverse" | sudo tee -a /etc/apt/sources.list
-          sudo apt update
-          sudo apt upgrade -y
-          sudo apt install libwebkit2gtk-4.0-dev:arm64 -y
-          sudo apt install libssl-dev:arm64 -y
-          export PKG_CONFIG_SYSROOT_DIR=/usr/aarch64-linux-gnu/
-          pnpm install
-          pnpm rls --target aarch64-unknown-linux-gnu
-
-      - name: Build the app for Linux ARM64
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NODE_OPTIONS: --max-old-space-size=6000
-        with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "KFtray - ${{ github.ref_name }}"
-          releaseBody: "See the assets to download this version and install."
-          releaseDraft: true
-          prerelease: false
-          updaterJsonKeepUniversal: true
-          args: --target aarch64-unknown-linux-gnu --bundles deb,updater
-
-      - name: Upload deb bundle
-        uses: actions/upload-artifact@v4
-        with:
-          name: ARM Debian File
-          path: src-tauri/target/release/bundle/deb/*arm64.deb
 
   build-and-push-docker:
     permissions:
