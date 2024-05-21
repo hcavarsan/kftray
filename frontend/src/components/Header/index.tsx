@@ -20,15 +20,11 @@ import { HeaderProps } from '../../types'
 const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
   const [version, setVersion] = useState('')
   const [tooltipOpen, setTooltipOpen] = useState(false)
+  const dragHandleRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     app.getVersion().then(setVersion).catch(console.error)
   }, [])
-
-  const ignoreDragTargetsRef = useRef<HTMLElement[]>([])
-  const dragHandleRef = useRef<HTMLDivElement | null>(null)
-
-
 
   const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     setSearch(event.target.value)
@@ -41,28 +37,17 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
 
     const handleMouseMove = async (e: MouseEvent) => {
       if (e.buttons === 1) {
-		e.preventDefault()
+        e.preventDefault()
         await appWindow.startDragging()
-		e.preventDefault()
       }
     }
 
     const handleMouseDown = (e: MouseEvent) => {
-      if (
-        ignoreDragTargetsRef.current.some(target =>
-          target.contains(e.target as Node),
-        )
-      ) {
-        return
-      }
-
-      console.log('Starting drag operation')
       setTooltipOpen(false)
       document.addEventListener('mousemove', handleMouseMove)
     }
 
     const handleMouseUp = () => {
-      console.log('Drag operation ended')
       document.removeEventListener('mousemove', handleMouseMove)
     }
 
@@ -78,13 +63,8 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
     }
   }, [])
 
-  const handleMouseEnter = () => {
-    setTooltipOpen(true)
-  }
-
-  const handleMouseLeave = () => {
-    setTooltipOpen(false)
-  }
+  const handleMouseEnter = () => setTooltipOpen(true)
+  const handleMouseLeave = () => setTooltipOpen(false)
 
   return (
     <Flex
@@ -120,7 +100,6 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
             />
           </Tooltip>
         </Box>
-
         <Tooltip
           label={`Kftray v${version}`}
           aria-label='Kftray version'

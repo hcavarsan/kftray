@@ -3,17 +3,19 @@ use std::sync::atomic::{
     AtomicU64,
     Ordering,
 };
+use std::sync::Mutex;
 use std::time::{
     Duration,
     SystemTime,
     UNIX_EPOCH,
 };
-use std::sync::Mutex;
-use tauri::{window, GlobalWindowEvent};
-use tauri::Manager;
-use tauri::RunEvent;
+
 use tauri::{
+    window,
     CustomMenuItem,
+    GlobalWindowEvent,
+    Manager,
+    RunEvent,
     SystemTray,
     SystemTrayEvent,
     SystemTrayMenu,
@@ -23,10 +25,10 @@ use tokio::runtime::Runtime;
 use crate::kubeforward::port_forward;
 use crate::models::window::SaveDialogState;
 use crate::window::{
+    load_window_position,
     reset_window_position,
     save_window_position,
     toggle_window_visibility,
-	load_window_position,
 };
 
 // Atomic flag to track reset position action
@@ -86,30 +88,17 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
     }
 
     if let tauri::WindowEvent::Moved { .. } = event.event() {
-		event.window().set_always_on_top(true).unwrap();
-		event.window().set_focus().unwrap();
         let app_handle = event.window().app_handle();
         println!("Window moved, saving position");
-		let window = app_handle.get_window("main").unwrap();
+        let window = app_handle.get_window("main").unwrap();
 
         {
             let mut is_moving = WINDOW_IS_MOVING.lock().unwrap();
             *is_moving = true;
         }
 
-
         save_window_position(&window);
-		if let Some(position) = load_window_position() {
-			println!(
-				"Setting window position to: x: {}, y: {}",
-				position.x, position.y
-			);
-			window
-				.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(
-					position.x, position.y,
-				)))
-				.unwrap();
-		}
+
         {
             let mut is_moving = WINDOW_IS_MOVING.lock().unwrap();
             *is_moving = false;
@@ -120,7 +109,7 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
         if !*WINDOW_IS_MOVING.lock().unwrap() {
             api.prevent_close();
             let app_handle = event.window().app_handle();
-			let window = app_handle.get_window("main").unwrap();
+            let window = app_handle.get_window("main").unwrap();
 
             save_window_position(&window);
 

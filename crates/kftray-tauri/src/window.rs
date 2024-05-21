@@ -107,37 +107,21 @@ pub fn toggle_window_visibility(window: &tauri::Window) {
 }
 
 pub fn reset_window_position(window: &tauri::Window) {
-    if window.is_visible().unwrap() {
-        save_window_position(window);
-        println!("Hiding window before resetting position.");
-        window.hide().unwrap();
-        println!("Window hidden successfully.");
-        let mut home_path = dirs::home_dir().unwrap();
-        home_path.push(".kftray");
-        home_path.push("window_position.json");
+    save_window_position(window);
+    println!("Hiding window before resetting position.");
+    window.hide().unwrap();
+    println!("Window hidden successfully.");
+    let mut home_path = dirs::home_dir().unwrap();
+    home_path.push(".kftray");
+    home_path.push("window_position.json");
 
-        if home_path.exists() {
-            if let Err(e) = fs::remove_file(&home_path) {
-                eprintln!("Failed to delete window position file: {}", e);
-            } else {
-                println!("Window position file deleted successfully.");
-            }
+    if home_path.exists() {
+        if let Err(e) = fs::remove_file(&home_path) {
+            eprintln!("Failed to delete window position file: {}", e);
         } else {
-            println!("No window position file found to delete.");
+            println!("Window position file deleted successfully.");
         }
     } else {
-        let mut home_path = dirs::home_dir().unwrap();
-        home_path.push(".kftray");
-        home_path.push("window_position.json");
-
-        if home_path.exists() {
-            if let Err(e) = fs::remove_file(&home_path) {
-                eprintln!("Failed to delete window position file: {}", e);
-            } else {
-                println!("Window position file deleted successfully.");
-            }
-        } else {
-            println!("No window position file found to delete.");
-        }
+        println!("No window position file found to delete.");
     }
 }
