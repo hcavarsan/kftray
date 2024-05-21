@@ -88,7 +88,9 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
                             }
                         }
                         *last_focus_time = Some(Instant::now());
+						app_handle.get_window("main").unwrap().show().unwrap();
 						app_handle.get_window("main").unwrap().set_focus().unwrap();
+
                         save_window_position(&app_handle.get_window("main").unwrap());
                         // Delay hiding the window to avoid conflicts with dragging
                         std::thread::spawn({
@@ -109,7 +111,8 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
         let app_handle = event.window().app_handle();
         println!("Window moved, saving position");
         let window = app_handle.get_window("main").unwrap();
-
+		app_handle.get_window("main").unwrap().show().unwrap();
+		app_handle.get_window("main").unwrap().set_focus().unwrap();
         WINDOW_IS_BEING_MOVED.store(true, Ordering::SeqCst);
         save_window_position(&window);
 
