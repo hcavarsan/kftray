@@ -63,8 +63,6 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
                             .is_focused()
                             .unwrap()
                         {
-                            println!("Hiding window after delay");
-							save_window_position(&app_handle.get_window("main").unwrap());
                             window.hide().unwrap()
                         } else {
                             println!("Window regained focus during delay");
@@ -98,8 +96,6 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
         api.prevent_close();
         let app_handle = event.window().app_handle();
         let window = app_handle.get_window("main").unwrap();
-
-        save_window_position(&window);
 
         println!("Hiding window after close requested");
         event.window().hide().unwrap();
@@ -135,7 +131,6 @@ pub fn stop_all_port_forwards_and_exit(app_handle: &tauri::AppHandle) {
             }
         }
     });
-    save_window_position(&window);
     app_handle.exit(0);
 }
 
