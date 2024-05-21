@@ -65,18 +65,19 @@ fn main() {
             window.open_devtools();
 
             // Load window position
-            if let Some(position) = load_window_position() {
-                println!(
-                    "Setting window position to: x: {}, y: {}",
-                    position.x, position.y
-                );
-                window
-                    .set_position(tauri::Position::Logical(tauri::LogicalPosition::new(
-                        position.x, position.y,
-                    )))
-                    .unwrap();
-            } else {
-                {
+            match load_window_position() {
+                Some(position) => {
+                    println!(
+                        "Setting window position to: x: {}, y: {}",
+                        position.x, position.y
+                    );
+                    window
+                        .set_position(tauri::Position::Logical(tauri::LogicalPosition::new(
+                            position.x, position.y,
+                        )))
+                        .unwrap_or_else(|e| eprintln!("Failed to set window position: {}", e));
+                }
+                None => {
                     if let Err(e) = window.move_window(Position::Center) {
                         eprintln!("Failed to move window to center: {}", e);
                     }
