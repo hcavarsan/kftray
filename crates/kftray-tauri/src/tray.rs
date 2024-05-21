@@ -61,6 +61,7 @@ pub fn create_tray_menu() -> SystemTray {
 }
 
 pub fn handle_window_event(event: GlobalWindowEvent) {
+	println!("Window event: {:?}", event.event());
     if let tauri::WindowEvent::Focused(is_focused) = event.event() {
         if !is_focused
             && !RESET_POSITION_TRIGGERED.load(Ordering::SeqCst)
@@ -110,7 +111,6 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
         let window = app_handle.get_window("main").unwrap();
 
         WINDOW_IS_BEING_MOVED.store(true, Ordering::SeqCst);
-        println!("event: {:?}", event);
         save_window_position(&window);
 
         // Clear the moving flag after a short delay
