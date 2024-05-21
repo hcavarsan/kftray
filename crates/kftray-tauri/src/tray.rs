@@ -49,12 +49,41 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
         }
     }
 
-    if let tauri::WindowEvent::Moved { .. } = event.event() {
-        let app_handle = event.window().app_handle();
-        println!("Window moved, saving position");
-        let window = app_handle.get_window("main").unwrap();
-        save_window_position(&window);
-    }
+	if let tauri::WindowEvent::Moved(_) = event.event() {
+			let win = event.window();
+			let _ = win.with_webview(|_webview| {
+				#[cfg(target_os = "linux")]
+				{}
+
+				#[cfg(windows)]
+				unsafe {
+					// https://github.com/MicrosoftEdge/WebView2Feedback/issues/780#issuecomment-808306938
+					// https://docs.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/icorewebview2controller?view=webview2-1.0.774.44#notifyparentwindowpositionchanged
+					if let Err(e) = webview.controller().NotifyParentWindowPositionChanged() {
+						eprintln!("Failed to notify parent window position changed: {:?}", e);
+					}
+				}
+
+				#[cfg(target_os = "macos")]
+				{}
+			});
+
+			let app_handle = event.window().app_handle();
+			println!("Window moved, saving position");
+			if let Some(window) = app_handle.get_window("main") {
+				save_window_position(&window);
+			} else {
+				eprintln!("Failed to get main window");
+			}
+
+		let app_handle = event.window().app_handle();
+		println!("Window moved, saving position");
+		if let Some(window) = app_handle.get_window("main") {
+			save_window_position(&window);
+		} else {
+			eprintln!("Failed to get main window");
+		}
+	}
 
     if let tauri::WindowEvent::CloseRequested { api, .. } = event.event() {
         println!("event: {:?}", event.event());
