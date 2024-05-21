@@ -62,7 +62,6 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
                         .as_secs();
                     if now > last_reset_time + COOLDOWN_PERIOD.as_secs() {
                         save_window_position(&app_handle.get_window("main").unwrap());
-                        event.window().hide().unwrap();
                     }
                 }
             }
