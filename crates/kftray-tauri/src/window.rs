@@ -107,11 +107,11 @@ pub fn toggle_window_visibility(window: &tauri::Window) {
 }
 
 pub fn reset_window_position(window: &tauri::Window) {
-	if window.is_visible().unwrap() {
-    println!("Hiding window before resetting position.");
-    window.hide().unwrap();
-    println!("Window hidden successfully.");
-	}
+    if window.is_visible().unwrap() {
+        println!("Hiding window before resetting position.");
+        window.hide().unwrap();
+        println!("Window hidden successfully.");
+    }
     let mut home_path = dirs::home_dir().unwrap();
     home_path.push(".kftray");
     home_path.push("window_position.json");

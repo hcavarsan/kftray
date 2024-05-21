@@ -42,11 +42,10 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
     println!("Window event: {:?}", event.event());
     if let tauri::WindowEvent::Focused(is_focused) = event.event() {
         println!("Focused event: {}", is_focused);
-		println!("Window event: {:?}", event.event());
+        println!("Window event: {:?}", event.event());
         if !is_focused && !*is_moving {
-
-			println!("ismoving: {}", is_moving);
-			println!("isvisible: {}", event.window().is_visible().unwrap());
+            println!("ismoving: {}", is_moving);
+            println!("isvisible: {}", event.window().is_visible().unwrap());
             let app_handle = event.window().app_handle();
 
             if let Some(state) = app_handle.try_state::<SaveDialogState>() {
@@ -77,9 +76,8 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
         println!("Window moved event");
         if !*is_moving {
             *is_moving = true;
-
-
             let app_handle = event.window().app_handle();
+
             println!("Window moved, saving position");
             if let Some(window) = app_handle.get_window("main") {
                 save_window_position(&window);
@@ -94,8 +92,6 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
     if let tauri::WindowEvent::CloseRequested { api, .. } = event.event() {
         println!("Close requested event: {:?}", event.event());
         api.prevent_close();
-        let app_handle = event.window().app_handle();
-        let window = app_handle.get_window("main").unwrap();
 
         println!("Hiding window after close requested");
         event.window().hide().unwrap();
@@ -118,7 +114,6 @@ pub fn handle_run_event(app_handle: &tauri::AppHandle, event: RunEvent) {
 }
 
 pub fn stop_all_port_forwards_and_exit(app_handle: &tauri::AppHandle) {
-    let window = app_handle.get_window("main").unwrap();
     let runtime = Runtime::new().expect("Failed to create a Tokio runtime");
 
     runtime.block_on(async {
