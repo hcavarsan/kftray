@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [macos-latest, ubuntu-20.04]
+        platform: [macos-latest, ubuntu-latest]
     runs-on: ${{ matrix.platform }}
 
     steps:
@@ -23,7 +23,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Install dependencies for Linux
-        if: matrix.platform == 'ubuntu-20.04'
+        if: matrix.platform == 'ubuntu-latest'
         run: |
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev
@@ -61,7 +61,7 @@ jobs:
         run: pnpm install --no-frozen-lockfile
 
       - name: Build the app for Linux amd64
-        if: matrix.platform == 'ubuntu-20.04'
+        if: matrix.platform == 'ubuntu-latest'
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
