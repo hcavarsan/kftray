@@ -61,7 +61,15 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
                         .unwrap()
                         .as_secs();
                     if now > last_reset_time + COOLDOWN_PERIOD.as_secs() {
+                        // Platform-specific check to avoid hiding the window during drag on Windows
+                        #[cfg(target_os = "windows")]
+                        {
+                            if event.window().is_dragging().unwrap_or(false) {
+                                return;
+                            }
+                        }
                         save_window_position(&app_handle.get_window("main").unwrap());
+                        event.window().hide().unwrap();
                     }
                 }
             }
