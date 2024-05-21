@@ -23,32 +23,20 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
 
   useEffect(() => {
     app.getVersion().then(setVersion).catch(console.error)
-
-    const handleMouseDown = async (e: MouseEvent) => {
-      const drag = '.drag-handle'
-      const target = e.target as HTMLElement
-
-      if (target.closest(drag)) {
-        e.preventDefault()
-        e.stopPropagation()
-        appWindow.startDragging()
-      }
-    }
-
-    document.addEventListener('mousedown', handleMouseDown)
-
-    return () => {
-      document.removeEventListener('mousedown', handleMouseDown)
-    }
   }, [])
 
   const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
     setSearch(event.target.value)
   }
 
-  const handleMouseDown = () => {
-    setIsDragging(true)
-    setTooltipOpen(false)
+  const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
+    if ((e.target as HTMLDivElement).hasAttribute('data-drag')) {
+      e.preventDefault()
+      e.stopPropagation()
+      setIsDragging(true)
+      setTooltipOpen(false)
+      appWindow.startDragging()
+    }
   }
 
   const handleMouseUp = () => {
@@ -82,8 +70,7 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
           onMouseUp={handleMouseUp}
           onMouseEnter={handleMouseEnter}
           onMouseLeave={handleMouseLeave}
-          justifyContent='flex-start'
-          mt='-0.5'
+          data-drag
         >
           <Tooltip
             label='Move Window Position'
