@@ -11,6 +11,7 @@ import {
   InputLeftElement,
   Tooltip,
 } from '@chakra-ui/react'
+import { app } from '@tauri-apps/api'
 import { appWindow } from '@tauri-apps/api/window'
 
 import logo from '../../assets/logo.png'
@@ -30,13 +31,11 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
   }
 
   const handleMouseDown = (e: React.MouseEvent<HTMLDivElement>) => {
-    if ((e.target as HTMLDivElement).hasAttribute('data-drag')) {
-      e.preventDefault()
-      e.stopPropagation()
-      setIsDragging(true)
-      setTooltipOpen(false)
-      appWindow.startDragging()
-    }
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragging(true)
+    setTooltipOpen(false)
+    appWindow.startDragging()
   }
 
   const handleMouseUp = () => {
