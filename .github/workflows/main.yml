@@ -139,28 +139,25 @@ jobs:
       - name: Setup ARM build environment
         run: |
           rustup target add aarch64-unknown-linux-gnu
-          sudo apt install gcc-aarch64-linux-gnu
           sudo dpkg --add-architecture arm64
-          . /etc/os-release
-          sudo apt update
-          echo "using Ubuntu with codename $VERSION_CODENAME"
-          echo "deb [arch=armhf,arm64] http://ports.ubuntu.com/ubuntu-ports $VERSION_CODENAME main restricted" | sudo tee -a /etc/apt/sources.list
-          echo "deb [arch=armhf,arm64] http://ports.ubuntu.com/ubuntu-ports $VERSION_CODENAME-updates main restricted" | sudo tee -a /etc/apt/sources.list
-          echo "deb [arch=armhf,arm64] http://ports.ubuntu.com/ubuntu-ports $VERSION_CODENAME universe" | sudo tee -a /etc/apt/sources.list
-          echo "deb [arch=armhf,arm64] http://ports.ubuntu.com/ubuntu-ports $VERSION_CODENAME-updates universe" | sudo tee -a /etc/apt/sources.list
-          echo "deb [arch=armhf,arm64] http://ports.ubuntu.com/ubuntu-ports $VERSION_CODENAME multiverse" | sudo tee -a /etc/apt/sources.list
-          echo "deb [arch=armhf,arm64] http://ports.ubuntu.com/ubuntu-ports $VERSION_CODENAME-updates multiverse" | sudo tee -a /etc/apt/sources.list
-          echo "deb [arch=armhf,arm64] http://ports.ubuntu.com/ubuntu-ports $VERSION_CODENAME-backports main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
-          echo "deb [arch=armhf,arm64] http://ports.ubuntu.com/ubuntu-ports $VERSION_CODENAME-security main restricted" | sudo tee -a /etc/apt/sources.list
-          echo "deb [arch=armhf,arm64] http://ports.ubuntu.com/ubuntu-ports $VERSION_CODENAME-security universe" | sudo tee -a /etc/apt/sources.list
-          echo "deb [arch=armhf,arm64] http://ports.ubuntu.com/ubuntu-ports $VERSION_CODENAME-security multiverse" | sudo tee -a /etc/apt/sources.list
-          sudo apt update
-          sudo apt upgrade -y
-          sudo apt install libwebkit2gtk-4.0-dev:arm64 -y
-          sudo apt install libssl-dev:arm64 -y
+          sudo sed -i 's/^deb /deb [arch=amd64] /g' /etc/apt/sources.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy main restricted" | sudo tee -a /etc/apt/sources.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-updates main restricted" | sudo tee -a /etc/apt/sources.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy universe" | sudo tee -a /etc/apt/sources.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-updates universe" | sudo tee -a /etc/apt/sources.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy multiverse" | sudo tee -a /etc/apt/sources.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-updates multiverse" | sudo tee -a /etc/apt/sources.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-backports main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-security main restricted" | sudo tee -a /etc/apt/sources.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-security universe" | sudo tee -a /etc/apt/sources.list
+          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-security multiverse" | sudo tee -a /etc/apt/sources.list
+          sudo apt-get update
+          sudo apt-get install gcc-aarch64-linux-gnu
+          sudo apt-get install libwebkit2gtk-4.0-dev:arm64 -y
+          sudo apt-get install libssl-dev:arm64 -y
           export PKG_CONFIG_SYSROOT_DIR=/usr/aarch64-linux-gnu/
           pnpm install
-          pnpm rls --target aarch64-unknown-linux-gnu
+          pnpm run tauri build --target aarch64-unknown-linux-gnu --bundles deb,updater
 
       - name: Build the app for Linux ARM64
         uses: tauri-apps/tauri-action@v0
