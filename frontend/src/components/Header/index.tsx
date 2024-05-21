@@ -11,7 +11,7 @@ import {
   InputLeftElement,
   Tooltip,
 } from '@chakra-ui/react'
-import { app, window as tauriWindow } from '@tauri-apps/api'
+import { appWindow } from '@tauri-apps/api/window'
 
 import logo from '../../assets/logo.png'
 import { HeaderProps } from '../../types'
@@ -29,8 +29,9 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
       const target = e.target as HTMLElement
 
       if (target.closest(drag)) {
-        await tauriWindow.appWindow.startDragging()
         e.preventDefault()
+        e.stopPropagation()
+        appWindow.startDragging()
       }
     }
 
