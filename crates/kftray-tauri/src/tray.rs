@@ -1,5 +1,4 @@
 use std::sync::atomic::Ordering;
-use std::time::Duration;
 
 use tauri::{
     CustomMenuItem,
@@ -11,7 +10,6 @@ use tauri::{
     SystemTrayMenu,
 };
 use tokio::runtime::Runtime;
-use tokio::time::sleep;
 
 use crate::kubeforward::port_forward;
 use crate::models::window::SaveDialogState;
@@ -51,22 +49,8 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
                     let window = event.window().clone();
                     println!("Hiding window after losing focus");
                     // Add a short delay before hiding the window
-                    let app_handle_clone = app_handle.clone();
-                    let runtime = app_state.runtime.clone();
-                    runtime.spawn(async move {
-                        sleep(Duration::from_millis(100)).await;
-                        if !app_handle_clone
-                            .get_window("main")
-                            .unwrap()
-                            .is_focused()
-                            .unwrap()
-                        {
                             println!("Hiding window after delay");
                             window.hide().unwrap();
-                        } else {
-                            println!("Window regained focus during delay");
-                        }
-                    });
                 }
             }
         }
