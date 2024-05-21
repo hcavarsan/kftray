@@ -8,8 +8,7 @@ use std::time::{
     SystemTime,
     UNIX_EPOCH,
 };
-use std::thread;
-
+use std::sync::Mutex;
 use tauri::GlobalWindowEvent;
 use tauri::Manager;
 use tauri::RunEvent;
@@ -34,8 +33,10 @@ static RESET_POSITION_TRIGGERED: AtomicBool = AtomicBool::new(false);
 // Cooldown period after resetting the window position
 const COOLDOWN_PERIOD: Duration = Duration::from_secs(1);
 static LAST_RESET_TIME: AtomicU64 = AtomicU64::new(0);
-// Atomic flag to track if the window is being moved
-static WINDOW_IS_MOVING: AtomicBool = AtomicBool::new(false);
+// Mutex to track if the window is being moved
+lazy_static::lazy_static! {
+    static ref WINDOW_IS_MOVING: Mutex<bool> = Mutex::new(false);
+}
 
 pub fn create_tray_menu() -> SystemTray {
     let quit = CustomMenuItem::new("quit".to_string(), "Quit").accelerator("CmdOrCtrl+Shift+Q");
@@ -54,7 +55,7 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
     if let tauri::WindowEvent::Focused(is_focused) = event.event() {
         if !is_focused
             && !RESET_POSITION_TRIGGERED.load(Ordering::SeqCst)
-            && !WINDOW_IS_MOVING.load(Ordering::SeqCst)
+            && !*WINDOW_IS_MOVING.lock().unwrap()
         {
             let app_handle = event.window().app_handle();
 
@@ -86,17 +87,19 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
     if let tauri::WindowEvent::Moved { .. } = event.event() {
         let app_handle = event.window().app_handle();
         println!("Window moved, saving position");
-        WINDOW_IS_MOVING.store(true, Ordering::SeqCst);
+        {
+            let mut is_moving = WINDOW_IS_MOVING.lock().unwrap();
+            *is_moving = true;
+        }
         save_window_position(&app_handle.get_window("main").unwrap());
-        // Add a delay before resetting the moving flag
-        std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(500));
-            WINDOW_IS_MOVING.store(false, Ordering::SeqCst);
-        });
+        {
+            let mut is_moving = WINDOW_IS_MOVING.lock().unwrap();
+            *is_moving = false;
+        }
     }
 
     if let tauri::WindowEvent::CloseRequested { api, .. } = event.event() {
-        if !WINDOW_IS_MOVING.load(Ordering::SeqCst) {
+        if !*WINDOW_IS_MOVING.lock().unwrap() {
             api.prevent_close();
             let app_handle = event.window().app_handle();
             save_window_position(&app_handle.get_window("main").unwrap());
