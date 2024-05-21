@@ -16,17 +16,6 @@ import { app, window as tauriWindow } from '@tauri-apps/api'
 import logo from '../../assets/logo.png'
 import { HeaderProps } from '../../types'
 
-document.addEventListener('mousedown', async e => {
-  const drag = '.drag-handle'
-  const target = e.target as HTMLElement
-
-  if (target.closest(drag)) {
-    await tauriWindow.appWindow.startDragging()
-    document.dispatchEvent(new PointerEvent('pointerup'))
-    e.preventDefault()
-  }
-})
-
 const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
   const [version, setVersion] = useState('')
   const [isDragging, setIsDragging] = useState(false)
@@ -34,6 +23,23 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
 
   useEffect(() => {
     app.getVersion().then(setVersion).catch(console.error)
+
+    const handleMouseDown = async (e: MouseEvent) => {
+      const drag = '.drag-handle'
+      const target = e.target as HTMLElement
+
+      if (target.closest(drag)) {
+        await tauriWindow.appWindow.startDragging()
+        document.dispatchEvent(new PointerEvent('pointerup'))
+        e.preventDefault()
+      }
+    }
+
+    document.addEventListener('mousedown', handleMouseDown)
+
+    return () => {
+      document.removeEventListener('mousedown', handleMouseDown)
+    }
   }, [])
 
   const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
