@@ -72,7 +72,7 @@ pub fn load_window_position() -> Option<WindowPosition> {
 }
 
 pub fn toggle_window_visibility(window: &tauri::Window) {
-    if window.is_visible().unwrap() && window.is_focused().unwrap() {
+    if window.is_visible().unwrap() {
         save_window_position(window);
         println!("Hiding window after toggle");
         window.hide().unwrap();
