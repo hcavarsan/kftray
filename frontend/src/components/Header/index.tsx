@@ -11,7 +11,7 @@ import {
   InputLeftElement,
   Tooltip,
 } from '@chakra-ui/react'
-import { app } from '@tauri-apps/api/app'
+import { app } from '@tauri-apps/api'
 import { appWindow } from '@tauri-apps/api/window'
 
 import logo from '../../assets/logo.png'
