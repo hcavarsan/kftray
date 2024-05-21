@@ -117,6 +117,34 @@ jobs:
           deb_version=${deb_version%_amd64.deb}
           alien -r -g -k -v "$deb_file"
           cd "kftray-$deb_version"
+          if [ ! -f "kftray-$deb_version.spec" ]; then
+            echo "Creating missing .spec file"
+            cat <<EOF >kftray-$deb_version.spec
+            Name: kftray
+            Version: $deb_version
+            Release: 1%{?dist}
+            Summary: KFtray application
+            License: MIT
+            Source0: %{name}-%{version}.tar.gz
+
+            %description
+            KFtray application.
+
+            %prep
+            %setup -q
+
+            %build
+
+            %install
+            mkdir -p %{buildroot}/usr/bin
+            cp -a * %{buildroot}/usr/bin/
+
+            %files
+            /usr/bin/*
+
+            %changelog
+            EOF
+          fi
           rpmbuild --target=x86_64 --buildroot "$(pwd)" -bb "$(pwd)/kftray-$deb_version.spec"
           mv kftray-$deb_version*.x86_64.rpm ../../rpm/
           ls -la ../../rpm/
