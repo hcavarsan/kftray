@@ -1,5 +1,10 @@
-use std::sync::atomic::Ordering;
+use std::sync::{
+    atomic::Ordering,
+    Arc,
+    Mutex,
+};
 use std::time::Duration;
+
 use tauri::{
     CustomMenuItem,
     GlobalWindowEvent,
@@ -11,6 +16,7 @@ use tauri::{
 };
 use tokio::runtime::Runtime;
 use tokio::time::sleep;
+
 use crate::kubeforward::port_forward;
 use crate::models::window::SaveDialogState;
 use crate::window::{
@@ -18,9 +24,7 @@ use crate::window::{
     save_window_position,
     toggle_window_visibility,
 };
-
 use crate::AppState;
-
 
 pub fn create_tray_menu() -> SystemTray {
     let quit = CustomMenuItem::new("quit".to_string(), "Quit").accelerator("CmdOrCtrl+Shift+Q");
@@ -41,6 +45,7 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
 
     println!("Window event: {:?}", event.event());
     if let tauri::WindowEvent::Focused(is_focused) = event.event() {
+        println!("Focused event: {}", is_focused);
         if !is_focused && !*is_moving {
             let app_handle = event.window().app_handle();
 
@@ -53,8 +58,16 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
                     let app_handle_clone = app_handle.clone();
                     tokio::spawn(async move {
                         sleep(Duration::from_millis(100)).await;
-                        if !app_handle_clone.get_window("main").unwrap().is_focused().unwrap() {
+                        if !app_handle_clone
+                            .get_window("main")
+                            .unwrap()
+                            .is_focused()
+                            .unwrap()
+                        {
+                            println!("Hiding window after delay");
                             window.hide().unwrap();
+                        } else {
+                            println!("Window regained focus during delay");
                         }
                     });
                 }
@@ -63,6 +76,7 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
     }
 
     if let tauri::WindowEvent::Moved(_) = event.event() {
+        println!("Window moved event");
         if !*is_moving {
             *is_moving = true;
 
@@ -97,7 +111,7 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
     }
 
     if let tauri::WindowEvent::CloseRequested { api, .. } = event.event() {
-        println!("event: {:?}", event.event());
+        println!("Close requested event: {:?}", event.event());
         api.prevent_close();
         let app_handle = event.window().app_handle();
         let window = app_handle.get_window("main").unwrap();
@@ -111,11 +125,13 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
 
 pub fn handle_run_event(app_handle: &tauri::AppHandle, event: RunEvent) {
     match event {
-        RunEvent::ExitRequested { api, .. } => {
+        RunEvent::ExitRequested { ref api, .. } => {
+            println!("Exit requested event: {:?}", event);
             api.prevent_exit();
             stop_all_port_forwards_and_exit(app_handle);
         }
         RunEvent::Exit => {
+            println!("Exit event: {:?}", event);
             stop_all_port_forwards_and_exit(app_handle);
         }
         _ => {}
@@ -145,24 +161,28 @@ pub fn handle_system_tray_event(app: &tauri::AppHandle, event: SystemTrayEvent) 
 
     match event {
         SystemTrayEvent::LeftClick { .. } => {
+            println!("System tray left click event");
             let window = app.get_window("main").unwrap();
             toggle_window_visibility(&window);
         }
         SystemTrayEvent::RightClick { .. } => {
-            println!("system tray received a right click");
+            println!("System tray received a right click");
         }
         SystemTrayEvent::DoubleClick { .. } => {
-            println!("system tray received a double click");
+            println!("System tray received a double click");
         }
         SystemTrayEvent::MenuItemClick { id, .. } => match id.as_str() {
             "quit" => {
+                println!("System tray quit menu item click");
                 stop_all_port_forwards_and_exit(app);
             }
             "toggle" => {
+                println!("System tray toggle menu item click");
                 let window = app.get_window("main").unwrap();
                 toggle_window_visibility(&window);
             }
             "reset_position" => {
+                println!("System tray reset position menu item click");
                 let window = app.get_window("main").unwrap();
                 reset_window_position(&window);
             }

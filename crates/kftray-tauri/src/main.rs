@@ -3,7 +3,10 @@
     windows_subsystem = "windows"
 )]
 
-use std::sync::{Arc, Mutex};
+use std::sync::{
+    Arc,
+    Mutex,
+};
 
 mod commands;
 mod config;
@@ -41,9 +44,8 @@ struct AppState {
     is_moving: Arc<Mutex<bool>>,
 }
 
-
 fn main() {
-	let is_moving = Arc::new(Mutex::new(false));
+    let is_moving = Arc::new(Mutex::new(false));
     logging::setup_logging();
 
     let _ = fix_path_env::fix();
@@ -53,7 +55,7 @@ fn main() {
 
     let app = tauri::Builder::default()
         .manage(SaveDialogState::default())
-		.manage(AppState {
+        .manage(AppState {
             is_moving: is_moving.clone(),
         })
         .setup(move |app| {
