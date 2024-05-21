@@ -22,7 +22,7 @@ document.addEventListener('mousedown', async e => {
 
   if (target.closest(drag)) {
     await tauriWindow.appWindow.startDragging()
-    this.dispatchEvent(new PointerEvent('pointerup'))
+    document.dispatchEvent(new PointerEvent('pointerup'))
     e.preventDefault()
   }
 })
