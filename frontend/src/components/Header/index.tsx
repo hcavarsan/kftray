@@ -29,6 +29,7 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
       const target = e.target as HTMLElement
 
       if (target.closest(drag)) {
+        await tauriWindow.appWindow.setFocus()
         await tauriWindow.appWindow.startDragging()
         document.dispatchEvent(new PointerEvent('pointerup'))
         e.preventDefault()
