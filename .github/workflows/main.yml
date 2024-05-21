@@ -22,7 +22,7 @@ jobs:
           - platform: 'ubuntu-20.04'
             args: '--verbose'
           - platform: 'windows-latest'
-            args: '--target x86_64-pc-windows-msvc --verbose'
+            args: '--target x86_64-pc-windows-msvc --verbose --bundles nsis,updater'
           - platform: 'windows-latest'
             args: '--target aarch64-pc-windows-msvc --verbose --bundles nsis,updater'
     runs-on: ${{ matrix.platform }}
@@ -112,9 +112,9 @@ jobs:
           ls -la ./target/release/bundle/
           ls -la ./target/release/bundle/deb/
           cd ./target/release/bundle/deb/
-          alien -r -g -k -v "kftray_${{ github.ref_name }}_amd64.deb"
+          alien -r -g -k -v "kftray_v${{ github.ref_name }}_amd64.deb"
           cd "kftray-${{ github.ref_name }}"
-          rpmbuild --target=x86_64 --buildroot "$(pwd)" -bb "$(pwd)/kftray-${{ github.ref_name }}.spec"
+          rpmbuild --target=x86_64 --buildroot "$(pwd)" -bb "$(pwd)/kftray-v${{ github.ref_name }}.spec"
           mv kftray-${{ github.ref_name }}*.x86_64.rpm ../../rpm/
           ls -la ../../rpm/
 
@@ -123,7 +123,7 @@ jobs:
         uses: actions/upload-release-asset@v1
         with:
           upload_url: ${{ steps.build-desktop-rpm.outputs.upload_url }}
-          asset_path: ./target/release/bundle/rpm/kftray-${{ github.ref_name }}.x86_64.rpm
+          asset_path: ./target/release/bundle/rpm/kftray-v${{ github.ref_name }}.x86_64.rpm
           asset_name: kftray-${{ github.ref_name }}.x86_64.rpm
           asset_content_type: application/x-rpm
 
