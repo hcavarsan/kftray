@@ -42,7 +42,11 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
     println!("Window event: {:?}", event.event());
     if let tauri::WindowEvent::Focused(is_focused) = event.event() {
         println!("Focused event: {}", is_focused);
+		println!("Window event: {:?}", event.event());
         if !is_focused && !*is_moving && !event.window().is_visible().unwrap() {
+
+			println!("ismoving: {}", is_moving);
+			println!("isvisible: {}", event.window().is_visible().unwrap());
             let app_handle = event.window().app_handle();
 
             if let Some(state) = app_handle.try_state::<SaveDialogState>() {
