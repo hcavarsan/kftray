@@ -176,8 +176,16 @@ jobs:
           sudo apt-get install gcc-aarch64-linux-gnu
           sudo apt-get install libwebkit2gtk-4.0-dev:arm64 -y
           sudo apt-get install libssl-dev:arm64 -y
+          sudo apt-get install gcc-aarch64-linux-gnu
+          sudo apt-get install libwebkit2gtk-4.0-dev:arm64 -y
+          sudo apt-get install libssl-dev:arm64 -y
+          sudo apt-get install pkg-config:arm64 -y
+          sudo apt-get install gobject-introspection:arm64 -y
+          sudo apt-get install -y libgtk-3-dev:arm
+          sudo apt-get install -y libayatana-appindicator3-dev
+          sudo apt-get install -y librsvg2-dev
           export PKG_CONFIG_SYSROOT_DIR=/usr/aarch64-linux-gnu/
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev
+          export PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig
           pnpm install --no-frozen-lockfile
           pnpm run tauri build --target aarch64-unknown-linux-gnu --bundles deb,updater
 
