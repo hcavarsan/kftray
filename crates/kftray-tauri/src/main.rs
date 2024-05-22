@@ -23,10 +23,6 @@ use tauri::{
     GlobalShortcutManager,
     Manager,
 };
-use tauri_plugin_positioner::{
-    Position,
-    WindowExt,
-};
 use tokio::runtime::Runtime;
 
 use crate::models::window::SaveDialogState;
@@ -36,11 +32,7 @@ use crate::tray::{
     handle_system_tray_event,
     handle_window_event,
 };
-use crate::window::{
-    load_window_position,
-    toggle_window_visibility,
-};
-
+use crate::window::toggle_window_visibility;
 struct AppState {
     is_moving: Arc<Mutex<bool>>,
     runtime: Arc<Runtime>,
@@ -80,27 +72,6 @@ fn main() {
             #[cfg(debug_assertions)]
             window.open_devtools();
 
-            // Load window position
-            match load_window_position() {
-                Some(position) => {
-                    println!(
-                        "Setting window position to: x: {}, y: {}",
-                        position.x, position.y
-                    );
-                    window
-                        .set_position(tauri::Position::Logical(tauri::LogicalPosition::new(
-                            position.x, position.y,
-                        )))
-                        .unwrap_or_else(|e| eprintln!("Failed to set window position: {}", e));
-                }
-                None => {
-                    if let Err(e) = window.move_window(Position::Center) {
-                        eprintln!("Failed to move window to center: {}", e);
-                    }
-                }
-            }
-            window.show().unwrap();
-            window.set_focus().unwrap();
             // register global shortcut to open the app
             let mut shortcut = app.global_shortcut_manager();
 
