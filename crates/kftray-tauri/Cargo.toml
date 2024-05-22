@@ -1,6 +1,6 @@
 [package]
 name = "kftray"
-version = "0.10.7"
+version = "0.11.0"
 description = "A cross-platform system tray app for Kubernetes port-forward management"
 authors = [
     "Henrique Cavarsan <hencavarsan@gmail.com>",
@@ -49,7 +49,6 @@ whoami = "1.5.1"
 tempfile = "3.9"
 h2 = { optional = true, version = "0.4.4" }
 fix-path-env = { git = "https://github.com/tauri-apps/fix-path-env-rs" }
-enigo = { version = "0.2.0", features = ["x11rb"] }
 
 [dev-dependencies]
 tempfile = "3.9"

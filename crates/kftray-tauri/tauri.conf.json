@@ -8,7 +8,7 @@
   },
   "package": {
     "productName": "kftray",
-    "version": "0.10.7"
+    "version": "0.11.0"
   },
   "tauri": {
     "allowlist": {
@@ -41,7 +41,8 @@
         "appimage",
         "deb",
         "updater",
-        "msi"
+        "msi",
+        "nsis"
       ],
       "windows": {
         "certificateThumbprint": null,
