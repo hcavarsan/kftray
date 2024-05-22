@@ -176,14 +176,15 @@ jobs:
           sudo apt-get install gcc-aarch64-linux-gnu
           sudo apt-get install libwebkit2gtk-4.0-dev:arm64 -y
           sudo apt-get install libssl-dev:arm64 -y
-          sudo apt-get install gcc-aarch64-linux-gnu
-          sudo apt-get install libwebkit2gtk-4.0-dev:arm64 -y
-          sudo apt-get install libssl-dev:arm64 -y
           sudo apt-get install pkg-config:arm64 -y
-          sudo apt-get install gobject-introspection:arm64 -y
-          sudo apt-get install -y libgtk-3-dev:arm
-          sudo apt-get install -y libayatana-appindicator3-dev
-          sudo apt-get install -y librsvg2-dev
+          sudo apt-get install gobject-introspection:arm64 -y || true
+          sudo apt-get install python3:arm64 -y
+          sudo apt-get install build-essential:arm64 -y
+          sudo apt-get install python3-mako:arm64 -y
+          sudo apt-get install python3-markdown:arm64 -y
+          sudo apt-get install -y libgtk-3-dev:arm64
+          sudo apt-get install -y libayatana-appindicator3-dev:arm64
+          sudo apt-get install -y librsvg2-dev:arm64
           export PKG_CONFIG_SYSROOT_DIR=/usr/aarch64-linux-gnu/
           export PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig
           pnpm install --no-frozen-lockfile
