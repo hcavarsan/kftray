@@ -172,7 +172,15 @@ jobs:
             apt upgrade -y
             apt autoremove -y
             # install Tauri dependencies
-            xargs apt install -y < environment/apt_packages.txt
+            apt install -y libwebkit2gtk-4.0-dev
+            apt install -y build-essential
+            apt install -y curl
+            apt install -y wget
+            apt install -y file
+            apt install -y libssl-dev
+            apt install -y libgtk-3-dev
+            apt install -y libayatana-appindicator3-dev
+            apt install -y librsvg2-dev
             # install rust and cargo
             curl https://sh.rustup.rs -sSf | sh -s -- -y
             . "$HOME/.cargo/env"
@@ -186,24 +194,11 @@ jobs:
             # --bundles deb
             pnpm tauri build --target aarch64-unknown-linux-gnu --release --verbose
 
-      - name: Build the app for Linux ARM64
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NODE_OPTIONS: --max-old-space-size=6000
-        with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "KFtray - ${{ github.ref_name }}"
-          releaseBody: "See the assets to download this version and install."
-          releaseDraft: true
-          prerelease: false
-          updaterJsonKeepUniversal: true
-
       - name: Upload deb bundle
         uses: actions/upload-artifact@v4
         with:
             name: ARM Debian File
-            path: src-tauri/target/release/bundle/deb/*arm64.deb
+            path: target/release/bundle/deb/*arm64.deb
 
   windows-x86_64:
     permissions:
