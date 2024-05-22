@@ -136,6 +136,27 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9.1.2
+
+      - name: Sync node version and setup cache
+        uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+          cache: "pnpm"
+
+      - name: Cache pnpm modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            $(pnpm store path --silent)
+            **/node_modules
+          key: ${{ runner.OS }}-pnpm-${{ hashFiles('**/pnpm-lock.yaml') }}-arm64
+          restore-keys: |
+            ${{ runner.OS }}-pnpm-arm64
+
       - name: Setup ARM build environment
         run: |
           rustup target add aarch64-unknown-linux-gnu
@@ -156,7 +177,7 @@ jobs:
           sudo apt-get install libwebkit2gtk-4.0-dev:arm64 -y
           sudo apt-get install libssl-dev:arm64 -y
           export PKG_CONFIG_SYSROOT_DIR=/usr/aarch64-linux-gnu/
-          pnpm install
+          pnpm install --no-frozen-lockfile
           pnpm run tauri build --target aarch64-unknown-linux-gnu --bundles deb,updater
 
       - name: Build the app for Linux ARM64
