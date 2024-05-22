@@ -318,7 +318,12 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
               size='xs'
               ml={2}
             />
-            <MenuList>
+            <MenuList
+              zIndex='popover'
+              fontSize='xs'
+              minW='150px'
+              position='relative'
+            >
               <MenuItem
                 icon={
                   <FontAwesomeIcon icon={faPen} style={{ fontSize: '10px' }} />
