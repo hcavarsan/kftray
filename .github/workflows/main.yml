@@ -158,37 +158,33 @@ jobs:
             ${{ runner.OS }}-pnpm-arm64
 
       - name: Setup ARM build environment
-        run: |
-          rustup target add aarch64-unknown-linux-gnu
-          sudo dpkg --add-architecture arm64
-          sudo sed -i 's/^deb /deb [arch=amd64] /g' /etc/apt/sources.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy main restricted" | sudo tee -a /etc/apt/sources.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-updates main restricted" | sudo tee -a /etc/apt/sources.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy universe" | sudo tee -a /etc/apt/sources.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-updates universe" | sudo tee -a /etc/apt/sources.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy multiverse" | sudo tee -a /etc/apt/sources.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-updates multiverse" | sudo tee -a /etc/apt/sources.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-backports main restricted universe multiverse" | sudo tee -a /etc/apt/sources.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-security main restricted" | sudo tee -a /etc/apt/sources.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-security universe" | sudo tee -a /etc/apt/sources.list
-          echo "deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-security multiverse" | sudo tee -a /etc/apt/sources.list
-          sudo apt-get update
-          sudo apt-get install gcc-aarch64-linux-gnu
-          sudo apt-get install libwebkit2gtk-4.0-dev:arm64 -y
-          sudo apt-get install libssl-dev:arm64 -y
-          sudo apt-get install pkg-config:arm64 -y
-          sudo apt-get install gobject-introspection:arm64 -y || true
-          sudo apt-get install python3:arm64 -y  || true
-          sudo apt-get install build-essential:arm64 -y  || true
-          sudo apt-get install python3-mako:arm64 -y  || true
-          sudo apt-get install python3-markdown:arm64 -y  || true
-          sudo apt-get install -y libgtk-3-dev:arm64  || true
-          sudo apt-get install -y libayatana-appindicator3-dev:arm64  || true
-          sudo apt-get install -y librsvg2-dev:arm64  || true
-          export PKG_CONFIG_SYSROOT_DIR=/usr/aarch64-linux-gnu/
-          export PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig
-          pnpm install --no-frozen-lockfile
-          pnpm run tauri build --target aarch64-unknown-linux-gnu --bundles deb,updater
+        uses: pguyot/arm-runner-action@v2
+        with:
+          base_image: dietpi:rpi_armv8_bullseye
+          cpu: cortex-a53
+          bind_mount_repository: true
+          image_additional_mb: 10240
+          optimize_image: false
+          commands: |
+            export HOME=/root
+            export CARGO_REGISTRIES_CRATES_IO_PROTOCOL=sparse
+            apt update -y --allow-releaseinfo-change
+            apt upgrade -y
+            apt autoremove -y
+            # install Tauri dependencies
+            xargs apt install -y < environment/apt_packages.txt
+            # install rust and cargo
+            curl https://sh.rustup.rs -sSf | sh -s -- -y
+            . "$HOME/.cargo/env"
+            # install nodejs
+            curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash
+            apt install -y nodejs
+            # enable pnpm
+            corepack enable
+            cargo install tauri-cli
+            pnpm install --frozen-lockfile
+            # --bundles deb
+            pnpm tauri build --target aarch64-unknown-linux-gnu --release --verbose
 
       - name: Build the app for Linux ARM64
         uses: tauri-apps/tauri-action@v0
@@ -202,13 +198,12 @@ jobs:
           releaseDraft: true
           prerelease: false
           updaterJsonKeepUniversal: true
-          args: --target aarch64-unknown-linux-gnu --bundles deb,updater
 
       - name: Upload deb bundle
         uses: actions/upload-artifact@v4
         with:
-          name: ARM Debian File
-          path: target/release/bundle/deb/*arm64.deb
+            name: ARM Debian File
+            path: src-tauri/target/release/bundle/deb/*arm64.deb
 
   windows-x86_64:
     permissions:
