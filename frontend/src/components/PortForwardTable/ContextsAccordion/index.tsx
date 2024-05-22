@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react'
+import React from 'react'
 
 import { InfoIcon, RepeatIcon } from '@chakra-ui/icons'
 import {
@@ -25,23 +25,6 @@ import {
 import { ContextsAccordionProps } from '../../../types'
 
 import PortForwardRow from './PortForwardRow'
-
-const getRandomColor = () => {
-  const colors = [
-    'red',
-    'green',
-    'blue',
-    'orange',
-    'purple',
-    'teal',
-    'pink',
-    'yellow',
-  ]
-
-
-  
-  return colors[Math.floor(Math.random() * colors.length)]
-}
 
 const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
   context,
@@ -74,7 +57,6 @@ const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
   const contextTotalCount = contextConfigs.length
   const contextTagColorScheme = contextRunningCount > 0 ? 'facebook' : 'gray'
   const contextProgressValue = (contextRunningCount / contextTotalCount) * 100
-  const randomColor = useMemo(getRandomColor, [])
 
   return (
     <AccordionItem key={context} border='none'>

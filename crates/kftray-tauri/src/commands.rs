@@ -17,7 +17,7 @@ use crate::{
     },
     models::{
         config::Config,
-        dialog::SaveDialogState,
+        window::SaveDialogState,
     },
     remote_config::{
         build_github_api_url,
