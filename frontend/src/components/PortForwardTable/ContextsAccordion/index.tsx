@@ -145,17 +145,10 @@ const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
           <Flex direction='column' width='100%' mt={0} p={0}>
             <Box>
               <Table
+                variant='simple'
                 size='sm'
                 border='none'
-                width='full'
-                alignItems='center'
-                justifyContent='center'
-                alignContent='center'
                 style={{ tableLayout: 'fixed' }}
-                variant='simple'
-                position='relative'
-                top='0'
-                fontFamily={fontFamily}
               >
                 <Thead>
                   <Tr boxShadow={boxShadow}>

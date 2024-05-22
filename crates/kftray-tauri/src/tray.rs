@@ -99,6 +99,26 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
     }
 
     if let tauri::WindowEvent::Moved(_) = event.event() {
+        let win = event.window();
+        #[warn(unused_must_use)]
+        let _ = win.with_webview(|_webview| {
+            #[cfg(target_os = "linux")]
+            {}
+
+            #[cfg(windows)]
+            unsafe {
+                // https://github.com/MicrosoftEdge/WebView2Feedback/issues/780#issuecomment-808306938
+                // https://docs.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/icorewebview2controller?view=webview2-1.0.774.44#notifyparentwindowpositionchanged
+                _webview
+                    .controller()
+                    .NotifyParentWindowPositionChanged()
+                    .unwrap();
+            }
+
+            #[cfg(target_os = "macos")]
+            {}
+        });
+
         if !*is_moving {
             *is_moving = true;
             let app_handle = event.window().app_handle();
@@ -152,12 +172,7 @@ pub fn handle_system_tray_event(app: &tauri::AppHandle, event: SystemTrayEvent) 
     match event {
         SystemTrayEvent::LeftClick { .. } => {
             let window = app.get_window("main").unwrap();
-            if window.is_visible().unwrap() {
-                window.hide().unwrap();
-            } else {
-                window.show().unwrap();
-                window.set_focus().unwrap();
-            }
+            toggle_window_visibility(&window);
         }
         SystemTrayEvent::RightClick { .. } => {}
         SystemTrayEvent::DoubleClick { .. } => {}
