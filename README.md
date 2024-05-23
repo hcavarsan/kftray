@@ -10,7 +10,7 @@
 
 ---
 
-<img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/ss2.png" alt="kftray" />
+<img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/ss3.png" alt="kftray" />
 
 ---
 
