@@ -715,6 +715,10 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
         // Delete pods
         let pods: Api<Pod> = Api::all(client.clone());
         let lp = ListParams::default().labels(&format!("config_id={}", config_id_str));
+        log::info!(
+            "Listing pods with label selector: config_id={}",
+            config_id_str
+        );
         let pod_list = pods.list(&lp).await.map_err(|e| {
             log::error!("Error listing pods for config_id {}: {}", config_id_str, e);
             e.to_string()
@@ -725,11 +729,26 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
 
         for pod in pod_list.items.into_iter() {
             if let Some(pod_name) = pod.metadata.name {
+                log::info!("Found pod: {}", pod_name);
                 if pod_name.starts_with(&pod_prefix) {
                     log::info!("Deleting pod: {}", pod_name);
-                    let dp = DeleteParams::default();
-                    if let Err(e) = pods.delete(&pod_name, &dp).await {
-                        log::error!("Failed to delete pod {}: {}", pod_name, e);
+                    let namespace = pod
+                        .metadata
+                        .namespace
+                        .clone()
+                        .unwrap_or_else(|| "default".to_string());
+                    let pods_in_namespace: Api<Pod> = Api::namespaced(client.clone(), &namespace);
+                    let dp = DeleteParams {
+                        grace_period_seconds: Some(0),
+                        ..DeleteParams::default()
+                    };
+                    if let Err(e) = pods_in_namespace.delete(&pod_name, &dp).await {
+                        log::error!(
+                            "Failed to delete pod {} in namespace {}: {}",
+                            pod_name,
+                            namespace,
+                            e
+                        );
                     } else {
                         log::info!("Successfully deleted pod: {}", pod_name);
                     }
