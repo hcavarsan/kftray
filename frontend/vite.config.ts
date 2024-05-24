@@ -17,6 +17,13 @@ export default defineConfig({
     !process.env.TAURI_DEBUG && terser({
       compress: {
         drop_console: true,
+        drop_debugger: true,
+		module: true,
+        passes: 2,
+        pure_funcs: ['console.info', 'console.debug', 'console.warn'],
+      },
+      format: {
+        comments: false,
       },
     }),
   ].filter(Boolean),
@@ -37,7 +44,6 @@ export default defineConfig({
         manualChunks(id) {
           if (id.includes('node_modules')) {
             const chunks = id.toString().split('node_modules/')[1].split('/')
-
 
             if (chunks.length > 1 && chunks[0] !== '') {
               return chunks[0]
