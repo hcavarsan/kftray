@@ -141,9 +141,11 @@ pub async fn deploy_and_forward_pod(configs: Vec<Config>) -> Result<Vec<CustomRe
                 )
                 .await
                 {
-                    let _ = pods
-                        .delete(&hashed_name, &kube::api::DeleteParams::default())
-                        .await;
+                    let dp = DeleteParams {
+                        grace_period_seconds: Some(0),
+                        ..DeleteParams::default()
+                    };
+                    let _ = pods.delete(&hashed_name, &dp).await;
                     return Err(e.to_string());
                 }
 

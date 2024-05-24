@@ -14,7 +14,7 @@ import {
 import { app } from '@tauri-apps/api'
 import { appWindow } from '@tauri-apps/api/window'
 
-import logo from '../../assets/logo.png'
+import logo from '../../assets/logo.webp'
 import { HeaderProps } from '../../types'
 
 const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {

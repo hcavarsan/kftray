@@ -32,6 +32,7 @@
     "tauri-plugin-log-api": "github:tauri-apps/tauri-plugin-log#v1"
   },
   "devDependencies": {
+    "@rollup/plugin-terser": "^0.4.4",
     "@tauri-apps/api": "^1.5.4",
     "@tauri-apps/cli": "^1.5.13",
     "@testing-library/jest-dom": "^6.4.2",
