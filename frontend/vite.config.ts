@@ -18,7 +18,7 @@ export default defineConfig({
       compress: {
         drop_console: true,
         drop_debugger: true,
-		module: true,
+        module: true,
         passes: 2,
         pure_funcs: ['console.info', 'console.debug', 'console.warn'],
       },
