@@ -1,63 +1,54 @@
 <div align="center">
-   <img align="center" width="128px" src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/logo.png" />
-   <h3 align="center"><b>kftray</b></h1>
-   <p align="center">
-    A cross-platform system tray application for managing multiple kubectl port-forward commands, with support for UDP and proxy connections through k8s clusters.
-      <br />
-      <a href="https://kftray.app"><strong>kftray.app »</strong></a>
-    
-   </p>
-
----
-
-<img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/ss3.png" alt="kftray" width="800px" />
-
----
-
-   <div align="center">
-      <a href="https://nodejs.org/en/">
-         <img src="https://img.shields.io/badge/-Node.js-grey?style=for-the-badge&logo=node.js" alt="Node.js" />
-      </a>
-      <a href="https://tauri.app/">
-         <img src="https://img.shields.io/badge/-Tauri-grey?style=for-the-badge&logo=tauri" alt="Tauri" />
-      </a>
-      <a href="https://www.typescriptlang.org/">
-         <img src="https://img.shields.io/badge/-Typescript-grey?style=for-the-badge&logo=typescript" alt="Typescript" />
-      </a>
-      <a href="https://www.rust-lang.org/">
-         <img src="https://img.shields.io/badge/-Rust-grey?style=for-the-badge&logo=rust" alt="Rust" />
-      </a>
-      <a href="https://github.com/hcavarsan/kftray/releases/latest">
-         <img src="https://img.shields.io/github/downloads/hcavarsan/kftray/total.svg?style=for-the-badge" alt="downloads" />
-      </a>
-   </div>
-   <div align="center">
-      <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.11.1_universal.dmg">
-         <img src="https://img.shields.io/badge/-Download for macOS-grey.svg?style=for-the-badge&logo=apple" alt="Download for macOS" />
-      </a>
-      <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.11.1_x64-setup.exe">
-         <img src="https://img.shields.io/badge/-Download for Windows-grey.svg?style=for-the-badge&logo=windows" alt="Download for Windows" />
-      </a>
-      <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.11.1_amd64.AppImage">
-         <img src="https://img.shields.io/badge/-Download for Linux-grey.svg?style=for-the-badge&logo=linux" alt="Download for Linux" />
-      </a>
-   </div>
-   
    <br />
-   
-   
+   <img align="center" width="128px" src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/logo.png" />
+   <h1 align="center"><b>kftray</b></h1>
+   <p align="center">
+      A cross-platform system tray application for managing multiple kubectl port-forward commands, with support for UDP and proxy connections through k8s clusters.
+
+   </p>
+   <p align="center">
+   <a href="https://kftray.app"><strong>kftray.app »</strong></a>
+   <p />
+   <img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/ss3.png" alt="kftray" width="800px" />
+
+
+   </div>
+
+
+
+
+
+
+
+   <h2> Download latest release </h2>
+<div align="left">
+         <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.11.1_universal.dmg">
+            <img src="https://img.shields.io/badge/-macOS (Universal)-grey.svg?style=for-the-badge&logo=apple" alt="Download for macOS" />
+         </a>
+         <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.11.1_arm64-setup.exe">
+            <img src="https://img.shields.io/badge/-Windows (ARM64)-grey.svg?style=for-the-badge&logo=windows" alt="Download for Windows ARM64" />
+         </a>
+         <br />
+         <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.11.1_x64-setup.exe">
+            <img src="https://img.shields.io/badge/-Windows (x64)-grey.svg?style=for-the-badge&logo=windows" alt="Download for Windows x64" />
+         </a>
+         <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.11.1_x86-setup.exe">
+            <img src="https://img.shields.io/badge/-Windows (x86)-grey.svg?style=for-the-badge&logo=windows" alt="Download for Windows x86" />
+         </a>
+         <br />
+         <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.11.1_amd64.AppImage">
+            <img src="https://img.shields.io/badge/-Linux (x64)-grey.svg?style=for-the-badge&logo=linux" alt="Download for Linux AMD64" />
+         </a>
+         <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.11.1_aarch64.AppImage">
+            <img src="https://img.shields.io/badge/-Linux (ARM64)-grey.svg?style=for-the-badge&logo=linux" alt="Download for Linux AARCH64" />
+         </a>
 </div>
 
-
-
-
-
-
-  <h1>Overview</h1>
+<br/>
+  <h2>Overview</h1>
   <p>kftray is a cross-platform system tray app made with Tauri (Rust and TypeScript) for Kubernetes users. It simplifies setting up multiple kubectl port forward configurations through a user-friendly interface. Easily store and manage all configurations from local files or GitHub repositories.</p>
     <p><strong>Learn More:</strong> <a href="https://kftray.hashnode.dev/kubernetes-debugging-handling-multiple-kubectl-port-forward-from-tray">Blog Post - Kubernetes Debugging with KFtray</a></p>
 
-### Demo
 
   <table>
     <tr>
@@ -84,6 +75,9 @@
     </tr>
   </table>
   <br>
+<br/>
+
+
 
 ## Table of Contents
 
