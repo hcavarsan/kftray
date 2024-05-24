@@ -20,7 +20,7 @@
 
 
 
-   <h2> Download latest release </h1>
+   <h2> Download latest release </h2>
 <div align="left">
          <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.11.1_universal.dmg">
             <img src="https://img.shields.io/badge/-macOS (Universal)-grey.svg?style=for-the-badge&logo=apple" alt="Download for macOS" />

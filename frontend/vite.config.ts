@@ -1,4 +1,4 @@
-import path from 'path'
+import path from 'node:path'
 import { defineConfig } from 'vite'
 
 import terser from '@rollup/plugin-terser'
@@ -29,7 +29,7 @@ export default defineConfig({
   envPrefix: ['VITE_', 'TAURI_'],
   build: {
     chunkSizeWarningLimit: 600,
-    target: process.env.TAURI_PLATFORM == 'windows' ? 'chrome105' : 'safari13',
+    target: process.env.TAURI_PLATFORM === 'windows' ? 'chrome105' : 'safari13',
     minify: !process.env.TAURI_DEBUG ? 'terser' : false,
     sourcemap: !!process.env.TAURI_DEBUG,
     rollupOptions: {
