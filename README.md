@@ -16,10 +16,6 @@
 
 
 
-
-
-
-
    <h2> Download latest release </h2>
 <div align="left">
          <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.11.2_universal.dmg">
