@@ -19,6 +19,7 @@ use kube::{
     Client,
 };
 use lazy_static::lazy_static;
+use tauri::State;
 use tokio::{
     io::{
         AsyncReadExt,
@@ -32,6 +33,7 @@ use tokio::{
 };
 use tokio_stream::wrappers::TcpListenerStream;
 
+use crate::models::state::ConfigStates;
 use crate::{
     config,
     kubeforward::{
@@ -355,7 +357,9 @@ lazy_static! {
 }
 
 #[tauri::command]
-pub async fn start_port_udp_forward(configs: Vec<Config>) -> Result<Vec<CustomResponse>, String> {
+pub async fn start_port_udp_forward(
+    configs: Vec<Config>, state: State<'_, ConfigStates>, app_handle: tauri::AppHandle,
+) -> Result<Vec<CustomResponse>, String> {
     let mut responses = Vec::new();
     let mut errors = Vec::new();
     let mut child_handles = Vec::new();
@@ -446,7 +450,9 @@ pub async fn start_port_udp_forward(configs: Vec<Config>) -> Result<Vec<CustomRe
                             }
                         }
                     }
-
+                    state
+                        .set_running(&app_handle, config.id.unwrap(), true)
+                        .await;
                     responses.push(CustomResponse {
                         id: config.id,
                         service: config.service.clone().unwrap(),
@@ -505,7 +511,9 @@ pub async fn start_port_udp_forward(configs: Vec<Config>) -> Result<Vec<CustomRe
 }
 
 #[tauri::command]
-pub async fn start_port_forward(configs: Vec<Config>) -> Result<Vec<CustomResponse>, String> {
+pub async fn start_port_forward(
+    configs: Vec<Config>, state: State<'_, ConfigStates>, app_handle: tauri::AppHandle,
+) -> Result<Vec<CustomResponse>, String> {
     let mut responses = Vec::new();
     let mut errors = Vec::new();
     let mut child_handles = Vec::new();
@@ -593,6 +601,11 @@ pub async fn start_port_forward(configs: Vec<Config>) -> Result<Vec<CustomRespon
                         }
                     }
 
+                    // Set the running state to true
+                    state
+                        .set_running(&app_handle, config.id.unwrap(), true)
+                        .await;
+
                     responses.push(CustomResponse {
                         id: config.id,
                         service: config.service.clone().unwrap(),
@@ -642,7 +655,9 @@ pub async fn start_port_forward(configs: Vec<Config>) -> Result<Vec<CustomRespon
 }
 
 #[tauri::command]
-pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
+pub async fn stop_all_port_forward(
+    state: State<'_, ConfigStates>, app_handle: tauri::AppHandle,
+) -> Result<Vec<CustomResponse>, String> {
     log::info!("Attempting to stop all port forwards");
 
     let mut responses = Vec::new();
@@ -755,7 +770,9 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
                 }
             }
         }
-
+        state
+            .set_running(&app_handle, config_id_parsed, false)
+            .await;
         responses.push(CustomResponse {
             id: Some(config_id_parsed),
             service: service_id.to_string(),
@@ -780,7 +797,8 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
 
 #[tauri::command]
 pub async fn stop_port_forward(
-    _service_name: String, config_id: String,
+    _service_name: String, config_id: String, state: State<'_, ConfigStates>,
+    app_handle: tauri::AppHandle,
 ) -> Result<CustomResponse, String> {
     let composite_key = {
         let child_processes = CHILD_PROCESSES.lock().unwrap();
@@ -831,6 +849,11 @@ pub async fn stop_port_forward(
                     } else {
                         log::warn!("Config with id '{}' not found.", config_id_str);
                     }
+
+                    // Set the running state to false
+                    state
+                        .set_running(&app_handle, config_id_parsed, false)
+                        .await;
 
                     Ok(CustomResponse {
                         id: None,

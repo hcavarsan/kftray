@@ -35,6 +35,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { open } from '@tauri-apps/api/shell'
 import { invoke } from '@tauri-apps/api/tauri'
 
+import useConfigStore from '../../../../store'
 import { PortForwardRowProps } from '../../../../types'
 import useCustomToast from '../../../CustomToast'
 
@@ -45,18 +46,26 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   handleEditConfig,
   setIsAlertOpen,
   isAlertOpen,
-  updateConfigRunningState,
   showContext = false,
   selected,
   onSelectionChange,
-  updateSelectionState,
-  isInitiating,
-  setIsInitiating,
 }) => {
   const { isOpen, onOpen } = useDisclosure()
   const textColor = useColorModeValue('gray.300', 'gray.300')
   const cancelRef = React.useRef<HTMLButtonElement>(null)
   const toast = useCustomToast()
+  const {
+    configState,
+    updateConfigRunningState,
+    setIsInitiating,
+    isInitiating,
+  } = useConfigStore(state => ({
+    configState: state.configState,
+    updateConfigRunningState: state.updateConfigRunningState,
+    setIsInitiating: state.setIsInitiating,
+    isInitiating: state.isInitiating,
+  }))
+
   const handleOpenLocalURL = () => {
     const baseUrl = config.domain_enabled ? config.alias : config.local_address
 
@@ -80,7 +89,6 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
         throw new Error(`Unsupported workload type: ${config.workload_type}`)
       }
       updateConfigRunningState(config.id, true)
-      updateSelectionState(config.id, true)
     } catch (error) {
       console.error('An error occurred during port forwarding start:', error)
       const errorMessage =
@@ -129,8 +137,6 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
         description: errorMessage,
         status: 'error',
       })
-    } finally {
-      console.log('stopPortForwarding finally')
     }
   }
 
@@ -145,10 +151,10 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
     } catch (error) {
       console.error('Error toggling port-forwarding:', error)
     } finally {
-      console.log('togglePortForwarding finally')
       setIsInitiating(false)
     }
   }
+
   const handleDeleteClick = () => {
     onOpen()
   }
@@ -232,12 +238,12 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
         >
           <Checkbox
             size='sm'
-            isChecked={selected || config.isRunning}
+            isChecked={selected || configState[config.id]?.running}
             onChange={event => {
               event.stopPropagation()
               onSelectionChange(!selected)
             }}
-            disabled={config.isRunning}
+            disabled={configState[config.id]?.running}
             ml={-4}
             mr={2}
             mt={1}
@@ -276,12 +282,12 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
             <Switch
               ml={2}
               colorScheme='facebook'
-              isChecked={config.isRunning && !isInitiating}
+              isChecked={configState[config.id]?.running && !isInitiating}
               size='sm'
               onChange={e => togglePortForwarding(e.target.checked)}
               isDisabled={isInitiating}
             />
-            {config.isRunning && (
+            {configState[config.id]?.running && (
               <Tooltip
                 hasArrow
                 label='Open URL'

@@ -17,6 +17,7 @@ import {
   useColorModeValue,
 } from '@chakra-ui/react'
 
+import useConfigStore from '../../store'
 import { FooterProps } from '../../types'
 
 import BulkDeleteButton from './BulkDeleteButton'
@@ -35,10 +36,12 @@ const Footer: React.FC<FooterProps> = ({
   pollingInterval,
   selectedConfigs,
   setSelectedConfigs,
-  configs,
-  setConfigs,
 }) => {
   const borderColor = useColorModeValue('gray.500', 'gray.700')
+  const { configs, setConfigs } = useConfigStore(state => ({
+    configs: state.configs,
+    setConfigs: state.setConfigs,
+  }))
 
   return (
     <Flex

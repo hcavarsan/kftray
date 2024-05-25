@@ -95,7 +95,7 @@ export interface TableProps {
   updateConfigRunningState: (id: number, isRunning: boolean) => void
   selectedConfigs: Status[]
   setSelectedConfigs: React.Dispatch<React.SetStateAction<Status[]>>
-  setIsInitiating: React.Dispatch<React.SetStateAction<boolean>>
+  setIsInitiating: (isInitiating: boolean) => void
 }
 
 export interface PortForwardRowProps {
@@ -111,7 +111,7 @@ export interface PortForwardRowProps {
   updateSelectionState: (id: number, isRunning: boolean) => void
   selected: boolean
   isInitiating: boolean
-  setIsInitiating: React.Dispatch<React.SetStateAction<boolean>>
+  setIsInitiating: (isInitiating: boolean) => void
   isStopping: boolean
 }
 
@@ -129,7 +129,7 @@ export interface FooterProps {
   pollingInterval: number
   setSelectedConfigs: React.Dispatch<React.SetStateAction<Status[]>>
   configs: Status[]
-  setConfigs: React.Dispatch<React.SetStateAction<Status[]>>
+  setConfigs: (configs: Status[]) => void
 }
 
 export interface SyncConfigsButtonProps {
@@ -235,7 +235,7 @@ export interface BulkDeleteButtonProps {
   selectedConfigs: Status[]
   setSelectedConfigs: React.Dispatch<React.SetStateAction<Status[]>>
   configs: Status[]
-  setConfigs: React.Dispatch<React.SetStateAction<Status[]>>
+  setConfigs: (configs: Status[]) => void
 }
 
 export interface ContextsAccordionProps {
@@ -253,6 +253,6 @@ export interface ContextsAccordionProps {
   selectedConfigsByContext: Record<string, boolean>
   handleCheckboxChange: (context: string, isChecked: boolean) => void
   isInitiating: boolean
-  setIsInitiating: React.Dispatch<React.SetStateAction<boolean>>
+  setIsInitiating: (isInitiating: boolean) => void
   isStopping: boolean
 }

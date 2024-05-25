@@ -141,7 +141,7 @@ pub fn insert_config(config: Config) -> Result<(), String> {
 }
 
 // function to read configs from the database
-fn read_configs() -> Result<Vec<Config>, rusqlite::Error> {
+pub fn read_configs() -> Result<Vec<Config>, rusqlite::Error> {
     let home_dir = dirs::home_dir().unwrap();
 
     let db_dir = home_dir.to_str().unwrap().to_string() + "/.kftray/configs.db";

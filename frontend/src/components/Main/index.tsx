@@ -1,10 +1,11 @@
-import React, { useEffect, useState } from 'react'
+import React, { useRef, useState } from 'react'
 
 import { Box, useColorModeValue, VStack } from '@chakra-ui/react'
 import { open, save } from '@tauri-apps/api/dialog'
 import { readTextFile, writeTextFile } from '@tauri-apps/api/fs'
 import { invoke } from '@tauri-apps/api/tauri'
 
+import useConfigStore from '../../store'
 import { Config, Response, Status } from '../../types'
 import AddConfigModal from '../AddConfigModal'
 import useCustomToast from '../CustomToast'
@@ -12,29 +13,30 @@ import Footer from '../Footer'
 import GitSyncModal from '../GitSyncModal'
 import PortForwardTable from '../PortForwardTable'
 
-const initalRemotePort = 0
-const initialLocalPort = 0
-const initialId = 0
-const initialStatus = 0
 const KFTray = () => {
-  const toast = useCustomToast()
-  const [pollingInterval, setPollingInterval] = useState(0)
-  const [configs, setConfigs] = useState<Status[]>([])
+  const {
+    configs,
+    setConfigs,
+    isInitiating,
+    setIsInitiating,
+    isStopping,
+    setIsStopping,
+    isPortForwarding,
+    setIsPortForwarding,
+    syncConfigsAndUpdateState,
+    updateConfigRunningState,
+  } = useConfigStore()
+
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [isGitSyncModalOpen, setIsGitSyncModalOpen] = useState(false)
-  const [selectedConfigs, setSelectedConfigs] = useState<Status[]>([])
-  const [credentialsSaved, setCredentialsSaved] = useState(false)
-
-  const [isEdit, setIsEdit] = useState(false)
-
   const [newConfig, setNewConfig] = useState<Config>({
     id: 0,
     service: '',
     context: '',
     local_port: 0,
-    remote_port: 0,
     local_address: '127.0.0.1',
     domain_enabled: false,
+    remote_port: 0,
     namespace: '',
     workload_type: '',
     protocol: '',
@@ -42,120 +44,33 @@ const KFTray = () => {
     alias: '',
     kubeconfig: 'default',
   })
-
-  const updateConfigRunningState = (id: number, isRunning: boolean) => {
-    setConfigs(prevConfigs =>
-      prevConfigs.map(config =>
-        config.id === id ? { ...config, isRunning } : config,
-      ),
-    )
-
-    if (isRunning) {
-      setSelectedConfigs(prevSelectedConfigs =>
-        prevSelectedConfigs.filter(config => config.id !== id),
-      )
-    }
-  }
-  const syncConfigsAndUpdateState = async () => {
-    try {
-      const updatedConfigs = await invoke<Status[]>('get_configs')
-
-      if (!updatedConfigs) {
-        return
-      }
-
-      setConfigs(updatedConfigs)
-    } catch (error) {
-      console.error('Error syncing configs:', error)
-    }
-  }
-
-  const openModal = () => {
-    setNewConfig({
-      id: initialId,
-      service: '',
-      context: '',
-      local_port: initialLocalPort,
-      local_address: '127.0.0.1',
-      domain_enabled: false,
-      remote_port: initalRemotePort,
-      namespace: '',
-      workload_type: '',
-      protocol: '',
-      remote_address: '',
-      alias: '',
-      kubeconfig: 'default',
-    })
-    setIsEdit(false)
-    setIsModalOpen(true)
-  }
-  const closeModal = () => {
-    setIsModalOpen(false)
-    setIsEdit(false)
-  }
-
-  const closeGitSyncModal = () => {
-    setIsGitSyncModalOpen(false)
-  }
-
-  const openGitSyncModal = () => {
-    setIsGitSyncModalOpen(true)
-  }
+  const [isEdit, setIsEdit] = useState(false)
+  const toast = useCustomToast()
+  const cardBg = useColorModeValue('gray.800', 'gray.800')
+  const cancelRef = useRef<HTMLElement>(null)
+  const [isAlertOpen, setIsAlertOpen] = useState(false)
+  const [configToDelete, setConfigToDelete] = useState<number | undefined>()
+  const [selectedConfigs, setSelectedConfigs] = useState<Status[]>([])
+  const [credentialsSaved, setCredentialsSaved] = useState(false)
+  const [pollingInterval, setPollingInterval] = useState(0)
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target
-
-    let updatedValue: string | number
+    let updatedValue: string | number = value
 
     if (name === 'local_port' || name === 'remote_port') {
       updatedValue = value === '' ? '' : Number(value)
-    } else {
-      updatedValue = value
     }
 
-    setNewConfig(prev => ({
+    setNewConfig((prev: Config) => ({
       ...prev,
       [name]: updatedValue,
     }))
   }
-  const cancelRef = React.useRef<HTMLElement>(null)
-  const [isInitiating, setIsInitiating] = useState(false)
-  const [isStopping, setIsStopping] = useState(false)
-  const [isPortForwarding, setIsPortForwarding] = useState(false)
-  const [isAlertOpen, setIsAlertOpen] = useState(false)
-  const [configToDelete, setConfigToDelete] = useState<number | undefined>()
-
-  useEffect(() => {
-    let isMounted = true
-
-    const fetchConfigs = async () => {
-      try {
-        const configsResponse = await invoke<Status[]>('get_configs')
-
-        if (isMounted) {
-          setConfigs(
-            configsResponse.map(config => ({
-              ...config,
-              isRunning: false,
-            })),
-          )
-        }
-      } catch (error) {
-        console.error('Failed to fetch configs:', error)
-      }
-    }
-
-    fetchConfigs()
-
-    return () => {
-      isMounted = false
-    }
-  }, [])
 
   const handleExportConfigs = async () => {
     try {
       await invoke('open_save_dialog')
-
       const json = await invoke('export_configs')
 
       if (typeof json !== 'string') {
@@ -189,17 +104,12 @@ const KFTray = () => {
       })
     }
   }
+
   const handleImportConfigs = async () => {
     try {
       await invoke('open_save_dialog')
-
       const selected = await open({
-        filters: [
-          {
-            name: 'JSON',
-            extensions: ['json'],
-          },
-        ],
+        filters: [{ name: 'JSON', extensions: ['json'] }],
         multiple: false,
       })
 
@@ -232,25 +142,12 @@ const KFTray = () => {
       })
     }
   }
+
   const handleEditConfig = async (id: number) => {
     try {
       const configToEdit = await invoke<Config>('get_config', { id })
 
-      setNewConfig({
-        id: configToEdit.id,
-        service: configToEdit.service,
-        namespace: configToEdit.namespace,
-        local_port: configToEdit.local_port,
-        local_address: configToEdit.local_address,
-        domain_enabled: configToEdit.domain_enabled,
-        remote_port: configToEdit.remote_port,
-        context: configToEdit.context,
-        workload_type: configToEdit.workload_type,
-        protocol: configToEdit.protocol,
-        remote_address: configToEdit.remote_address,
-        alias: configToEdit.alias,
-        kubeconfig: configToEdit.kubeconfig,
-      })
+      setNewConfig(configToEdit)
       setIsEdit(true)
       setIsModalOpen(true)
     } catch (error) {
@@ -260,28 +157,11 @@ const KFTray = () => {
       )
     }
   }
+
   const handleEditSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-
     try {
-      const editedConfig = {
-        id: newConfig.id,
-        service: newConfig.service,
-        context: newConfig.context,
-        local_port: newConfig.local_port,
-        local_address: newConfig.local_address,
-        domain_enabled: newConfig.domain_enabled,
-        remote_port: newConfig.remote_port,
-        namespace: newConfig.namespace,
-        workload_type: newConfig.workload_type,
-        protocol: newConfig.protocol,
-        remote_address: newConfig.remote_address,
-        alias: newConfig.alias,
-        kubeconfig: newConfig.kubeconfig,
-      }
-
-      await invoke('update_config', { config: editedConfig })
-
+      await invoke('update_config', { config: newConfig })
       const updatedConfigs = await invoke<Status[]>('get_configs')
 
       setConfigs(updatedConfigs)
@@ -290,8 +170,7 @@ const KFTray = () => {
         description: 'Configuration updated successfully.',
         status: 'success',
       })
-
-      closeModal()
+      setIsModalOpen(false)
     } catch (error) {
       toast({
         title: 'Error',
@@ -301,127 +180,22 @@ const KFTray = () => {
     }
   }
 
-  const fetchAndUpdateConfigs = async () => {
-    try {
-      const updatedConfigs = await invoke<Status[]>('get_configs')
-
-      setConfigs(updatedConfigs)
-    } catch (error) {
-      console.error('Failed to fetch updated configs:', error)
-    }
-  }
-  // eslint-disable-next-line complexity
   const handleSaveConfig = async (_configToSave: Config) => {
-    const updatedConfigToSave: Config = {
-      id: isEdit ? newConfig.id : 0,
-      service: newConfig.service,
-      context: newConfig.context,
-      local_port: newConfig.local_port,
-      local_address: newConfig.local_address,
-      domain_enabled: newConfig.domain_enabled,
-      remote_port: newConfig.remote_port,
-      namespace: newConfig.namespace,
-      workload_type: newConfig.workload_type,
-      protocol: newConfig.protocol,
-      remote_address: newConfig.remote_address,
-      alias: newConfig.alias,
-      kubeconfig: newConfig.kubeconfig,
-    }
-
-    console.log('Sending config to save:', updatedConfigToSave)
     try {
-      let wasRunning = false
-      const originalConfigsRunningState = new Map()
-
-      configs.forEach(conf =>
-        originalConfigsRunningState.set(conf.id, conf.isRunning),
-      )
-
-      if (isEdit && originalConfigsRunningState.get(newConfig.id)) {
-        wasRunning = true
-
-        if (
-          newConfig.workload_type === 'service' &&
-          newConfig.protocol === 'tcp'
-        ) {
-          await invoke('stop_port_forward', {
-            serviceName: newConfig.service,
-            configId: newConfig.id.toString(),
-          })
-        } else if (
-          newConfig.workload_type.startsWith('proxy') ||
-          (newConfig.workload_type === 'service' &&
-            newConfig.protocol === 'udp')
-        ) {
-          await invoke('stop_proxy_forward', {
-            configId: newConfig.id.toString(),
-            namespace: newConfig.namespace,
-            serviceName: newConfig.service,
-            localPort: newConfig.local_port,
-            remoteAddress: newConfig.remote_address,
-            protocol: 'tcp',
-          })
-        } else {
-          throw new Error(
-            `Unsupported workload type: ${newConfig.workload_type}`,
-          )
-        }
-      }
-
       if (isEdit) {
-        await invoke('update_config', { config: updatedConfigToSave })
+        await invoke('update_config', { config: newConfig })
       } else {
-        await invoke('insert_config', { config: updatedConfigToSave })
+        await invoke('insert_config', { config: newConfig })
       }
-
-      let updatedConfigs = await invoke<Status[]>('get_configs')
-
-      updatedConfigs = updatedConfigs.map(conf => ({
-        ...conf,
-        isRunning:
-          conf.id === newConfig.id
-            ? wasRunning
-            : originalConfigsRunningState.get(conf.id) || false,
-      }))
-
-      if (wasRunning) {
-        const updatedConfig = updatedConfigs.find(
-          conf => conf.id === newConfig.id,
-        )
-
-        if (updatedConfig) {
-          if (
-            updatedConfig.workload_type === 'service' &&
-            updatedConfig.protocol === 'tcp'
-          ) {
-            await invoke('start_port_forward', { configs: [updatedConfig] })
-          } else if (
-            updatedConfig.workload_type.startsWith('proxy') ||
-            (updatedConfig.workload_type === 'service' &&
-              updatedConfig.protocol === 'udp')
-          ) {
-            await invoke('deploy_and_forward_pod', { configs: [updatedConfig] })
-          } else {
-            throw new Error(
-              `Unsupported workload type: ${updatedConfig.workload_type}`,
-            )
-          }
-          updatedConfigs = updatedConfigs.map(conf =>
-            conf.id === updatedConfig.id ? { ...conf, isRunning: true } : conf,
-          )
-        }
-      }
+      const updatedConfigs = await invoke<Status[]>('get_configs')
 
       setConfigs(updatedConfigs)
       toast({
         title: 'Success',
-        description: `Configuration ${
-          isEdit ? 'updated' : 'added'
-        } successfully.`,
+        description: `Configuration ${isEdit ? 'updated' : 'added'} successfully.`,
         status: 'success',
       })
-
-      closeModal()
+      setIsModalOpen(false)
     } catch (error) {
       console.error(`Failed to ${isEdit ? 'update' : 'add'} config:`, error)
       toast({
@@ -461,7 +235,7 @@ const KFTray = () => {
     setIsInitiating(false)
   }
 
-  async function handlePortForwarding(config: Status) {
+  const handlePortForwarding = async (config: Status) => {
     switch (config.workload_type) {
     case 'service':
       if (config.protocol === 'tcp') {
@@ -479,6 +253,7 @@ const KFTray = () => {
       throw new Error(`Unsupported workload type: ${config.workload_type}`)
     }
   }
+
   const handleDeleteConfig = (id: number) => {
     setConfigToDelete(id)
     setIsAlertOpen(true)
@@ -497,19 +272,9 @@ const KFTray = () => {
 
     try {
       await invoke('delete_config', { id: configToDelete })
-
       const configsAfterDeletion = await invoke<Status[]>('get_configs')
-      const runningStateMap = new Map(
-        configs.map(conf => [conf.id, conf.isRunning]),
-      )
 
-      const updatedConfigs = configsAfterDeletion.map(conf => ({
-        ...conf,
-        isRunning: runningStateMap.get(conf.id) ?? false,
-      }))
-
-      setConfigs(updatedConfigs)
-
+      setConfigs(configsAfterDeletion)
       toast({
         title: 'Success',
         description: 'Configuration deleted successfully.',
@@ -531,8 +296,7 @@ const KFTray = () => {
     setIsStopping(true)
     try {
       const responses = await invoke<Response[]>('stop_all_port_forward')
-
-      const allStopped = responses.every(res => res.status === initialStatus)
+      const allStopped = responses.every(res => res.status === 0)
 
       if (allStopped) {
         const updatedConfigs = configs.map(config => ({
@@ -550,7 +314,7 @@ const KFTray = () => {
         })
       } else {
         const errorMessages = responses
-        .filter(res => res.status !== initialStatus)
+        .filter(res => res.status !== 0)
         .map(res => `${res.service}: ${res.stderr}`)
         .join(', ')
 
@@ -571,8 +335,6 @@ const KFTray = () => {
     setIsStopping(false)
   }
 
-  const cardBg = useColorModeValue('gray.800', 'gray.800')
-
   return (
     <Box
       position='fixed'
@@ -584,10 +346,8 @@ const KFTray = () => {
       borderRadius='20px'
       bg={cardBg}
       boxShadow={`
-        /* Inset shadow for top & bottom inner border effect using dark gray */
         inset 0 2px 4px rgba(0, 0, 0, 0.3),
         inset 0 -2px 4px rgba(0, 0, 0, 0.3),
-        /* Inset shadow for an inner border all around using dark gray */
         inset 0 0 0 4px rgba(45, 57, 81, 0.9)
       `}
     >
@@ -632,17 +392,16 @@ const KFTray = () => {
         />
         <GitSyncModal
           isGitSyncModalOpen={isGitSyncModalOpen}
-          closeGitSyncModal={closeGitSyncModal}
-          onSettingsSaved={fetchAndUpdateConfigs}
+          closeGitSyncModal={() => setIsGitSyncModalOpen(false)}
+          onSettingsSaved={syncConfigsAndUpdateState}
           setCredentialsSaved={setCredentialsSaved}
           credentialsSaved={credentialsSaved}
           setPollingInterval={setPollingInterval}
           pollingInterval={pollingInterval}
         />
-
         <AddConfigModal
           isModalOpen={isModalOpen}
-          closeModal={closeModal}
+          closeModal={() => setIsModalOpen(false)}
           newConfig={newConfig}
           handleInputChange={handleInputChange}
           handleSaveConfig={handleSaveConfig}
@@ -652,8 +411,8 @@ const KFTray = () => {
           setNewConfig={setNewConfig}
         />
         <Footer
-          openModal={openModal}
-          openGitSyncModal={openGitSyncModal}
+          openModal={() => setIsModalOpen(true)}
+          openGitSyncModal={() => setIsGitSyncModalOpen(true)}
           handleExportConfigs={handleExportConfigs}
           handleImportConfigs={handleImportConfigs}
           onConfigsSynced={syncConfigsAndUpdateState}

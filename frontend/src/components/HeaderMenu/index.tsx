@@ -4,23 +4,30 @@ import { MdClose, MdRefresh } from 'react-icons/md'
 import { ChevronDownIcon, ChevronUpIcon } from '@chakra-ui/icons'
 import { Button, ButtonGroup, Checkbox } from '@chakra-ui/react'
 
+import useConfigStore from '../../store'
 import { HeaderMenuProps } from '../../types'
 
 const HeaderMenu: React.FC<HeaderMenuProps> = ({
   isSelectAllChecked,
   setIsSelectAllChecked,
-  configs,
   selectedConfigs,
   initiatePortForwarding,
   startSelectedPortForwarding,
   stopAllPortForwarding,
-  isInitiating,
-  isStopping,
   toggleExpandAll,
   expandedIndices,
   configsByContext,
   setSelectedConfigs,
 }) => {
+  const { configs, isInitiating, isStopping, configState } = useConfigStore(
+    state => ({
+      configs: state.configs,
+      isInitiating: state.isInitiating,
+      isStopping: state.isStopping,
+      configState: state.configState,
+    }),
+  )
+
   return (
     <>
       <ButtonGroup variant='outline'>
@@ -48,13 +55,13 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
               ? startSelectedPortForwarding
               : () =>
                 initiatePortForwarding(
-                  configs.filter(config => !config.isRunning),
+                  configs.filter(config => !configState[config.id]?.running),
                 )
           }
           isDisabled={
             isInitiating ||
             (!selectedConfigs.length &&
-              !configs.some(config => !config.isRunning))
+              !configs.some(config => !configState[config.id]?.running))
           }
           size='xs'
         >
@@ -66,7 +73,10 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
           isLoading={isStopping}
           loadingText='Stopping...'
           onClick={stopAllPortForwarding}
-          isDisabled={isStopping || !configs.some(config => config.isRunning)}
+          isDisabled={
+            isStopping ||
+            !Object.values(configState).some(config => config.running)
+          }
           size='xs'
         >
           Stop All

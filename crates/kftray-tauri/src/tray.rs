@@ -16,6 +16,7 @@ use tokio::runtime::Runtime;
 use tokio::time::sleep;
 
 use crate::kubeforward::port_forward;
+use crate::models::state::ConfigStates;
 use crate::models::window::SaveDialogState;
 use crate::window::{
     reset_window_position,
@@ -141,20 +142,23 @@ pub fn handle_run_event(app_handle: &tauri::AppHandle, event: RunEvent) {
     match event {
         RunEvent::ExitRequested { ref api, .. } => {
             api.prevent_exit();
-            stop_all_port_forwards_and_exit(app_handle);
+            stop_all_port_forwards_and_exit(app_handle.clone());
         }
         RunEvent::Exit => {
-            stop_all_port_forwards_and_exit(app_handle);
+            stop_all_port_forwards_and_exit(app_handle.clone());
         }
         _ => {}
     }
 }
 
-pub fn stop_all_port_forwards_and_exit(app_handle: &tauri::AppHandle) {
+pub fn stop_all_port_forwards_and_exit(app_handle: tauri::AppHandle) {
     let runtime = Runtime::new().expect("Failed to create a Tokio runtime");
+    let app_handle_clone = app_handle.clone();
+
+    let state = app_handle.state::<ConfigStates>();
 
     runtime.block_on(async {
-        match port_forward::stop_all_port_forward().await {
+        match port_forward::stop_all_port_forward(state, app_handle_clone).await {
             Ok(_) => {
                 println!("Successfully stopped all port forwards.");
             }
@@ -178,7 +182,7 @@ pub fn handle_system_tray_event(app: &tauri::AppHandle, event: SystemTrayEvent) 
         SystemTrayEvent::DoubleClick { .. } => {}
         SystemTrayEvent::MenuItemClick { id, .. } => match id.as_str() {
             "quit" => {
-                stop_all_port_forwards_and_exit(app);
+                stop_all_port_forwards_and_exit(app.clone());
             }
             "toggle" => {
                 let window = app.get_window("main").unwrap();

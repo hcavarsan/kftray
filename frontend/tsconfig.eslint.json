@@ -1,7 +1,12 @@
 {
 	"extends": "./tsconfig.json",
 	"include": [
-	  "src/**/*",
+		"src/**/*.ts",
+		"src/**/*.tsx",
+		"store/**/*.ts",
+		"store/**/*.tsx",
+		"hooks/**/*.ts",
+		"hooks/**/*.tsx",
 	  ".eslintrc.cjs",
 	  "prettier.config.cjs",
 	  "vite.config.ts"

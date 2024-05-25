@@ -29,7 +29,8 @@
     "react-dom": "^18.3.0",
     "react-icons": "^5.1.0",
     "react-select": "^5.8.0",
-    "tauri-plugin-log-api": "github:tauri-apps/tauri-plugin-log#v1"
+    "tauri-plugin-log-api": "github:tauri-apps/tauri-plugin-log#v1",
+    "zustand": "^4.5.2"
   },
   "devDependencies": {
     "@rollup/plugin-terser": "^0.4.4",

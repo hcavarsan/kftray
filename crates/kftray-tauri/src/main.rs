@@ -25,6 +25,7 @@ use tauri::{
 };
 use tokio::runtime::Runtime;
 
+use crate::models::state::ConfigStates;
 use crate::models::window::SaveDialogState;
 use crate::tray::{
     create_tray_menu,
@@ -33,6 +34,7 @@ use crate::tray::{
     handle_window_event,
 };
 use crate::window::toggle_window_visibility;
+
 struct AppState {
     is_moving: Arc<Mutex<bool>>,
     runtime: Arc<Runtime>,
@@ -53,6 +55,7 @@ fn main() {
             is_moving: is_moving.clone(),
             runtime: runtime.clone(),
         })
+        .manage(ConfigStates::default())
         .setup(move |app| {
             let _ = config::clean_all_custom_hosts_entries();
 

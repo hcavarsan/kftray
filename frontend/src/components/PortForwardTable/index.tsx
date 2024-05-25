@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 
 import { Accordion, Flex, useColorModeValue } from '@chakra-ui/react'
 
+import useConfigStore from '../../store'
 import { Status, TableProps } from '../../types'
 import Header from '../Header'
 import HeaderMenu from '../HeaderMenu'
@@ -10,10 +11,6 @@ import ContextsAccordion from './ContextsAccordion'
 import { useConfigsByContext } from './useConfigsByContext'
 
 const PortForwardTable: React.FC<TableProps> = ({
-  configs,
-  isInitiating,
-  setIsInitiating,
-  isStopping,
   initiatePortForwarding,
   stopPortForwarding,
   handleEditConfig,
@@ -29,11 +26,20 @@ const PortForwardTable: React.FC<TableProps> = ({
   const [expandedIndices, setExpandedIndices] = useState<number[]>([])
   const prevSelectedConfigsRef = useRef(selectedConfigs)
   const [isSelectAllChecked, setIsSelectAllChecked] = useState(false)
+  const [isCheckboxAction, setIsCheckboxAction] = useState(false)
+
+  const { configs, isInitiating, setIsInitiating, isStopping, configState } =
+    useConfigStore(state => ({
+      configs: state.configs,
+      isInitiating: state.isInitiating,
+      setIsInitiating: state.setIsInitiating,
+      isStopping: state.isStopping,
+      configState: state.configState,
+    }))
 
   const [selectedConfigsByContext, setSelectedConfigsByContext] = useState<
     Record<string, boolean>
   >({})
-  const [isCheckboxAction, setIsCheckboxAction] = useState(false)
 
   const updateSelectionState = (id: number, isRunning: boolean) => {
     if (isRunning) {

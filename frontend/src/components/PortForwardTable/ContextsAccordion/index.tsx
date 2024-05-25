@@ -22,13 +22,13 @@ import {
   useColorModeValue,
 } from '@chakra-ui/react'
 
+import useConfigStore from '../../../store'
 import { ContextsAccordionProps } from '../../../types'
 
 import PortForwardRow from './PortForwardRow'
 
 const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
   context,
-  contextConfigs,
   selectedConfigs,
   handleDeleteConfig,
   confirmDeleteConfig,
@@ -50,6 +50,10 @@ const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
   const textColor = useColorModeValue('gray.800', 'white')
   const boxShadow = useColorModeValue('base', 'lg')
   const fontFamily = '\'Inter\', sans-serif'
+
+  const contextConfigs = useConfigStore(state =>
+    state.configs.filter(config => config.context === context),
+  )
 
   const contextRunningCount = contextConfigs.filter(
     config => config.isRunning,

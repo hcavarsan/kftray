@@ -25,7 +25,9 @@ use rand::{
     distributions::Alphanumeric,
     Rng,
 };
+use tauri::State;
 
+use crate::models::state::ConfigStates;
 use crate::{
     kubeforward::{
         kubecontext::create_client_with_specific_context,
@@ -58,8 +60,9 @@ fn render_json_template(template: &str, values: &HashMap<&str, String>) -> Strin
 }
 
 #[tauri::command]
-
-pub async fn deploy_and_forward_pod(configs: Vec<Config>) -> Result<Vec<CustomResponse>, String> {
+pub async fn deploy_and_forward_pod(
+    configs: Vec<Config>, state: State<'_, ConfigStates>, app_handle: tauri::AppHandle,
+) -> Result<Vec<CustomResponse>, String> {
     let mut responses: Vec<CustomResponse> = Vec::new();
 
     for mut config in configs.into_iter() {
@@ -152,8 +155,18 @@ pub async fn deploy_and_forward_pod(configs: Vec<Config>) -> Result<Vec<CustomRe
                 config.service = Some(hashed_name.clone());
 
                 let start_response = match protocol.as_str() {
-                    "udp" => start_port_udp_forward(vec![config.clone()]).await,
-                    "tcp" => start_port_forward(vec![config.clone()]).await,
+                    "udp" => {
+                        start_port_udp_forward(
+                            vec![config.clone()],
+                            state.clone(),
+                            app_handle.clone(),
+                        )
+                        .await
+                    }
+                    "tcp" => {
+                        start_port_forward(vec![config.clone()], state.clone(), app_handle.clone())
+                            .await
+                    }
                     _ => {
                         let _ = pods
                             .delete(&hashed_name, &kube::api::DeleteParams::default())
@@ -185,9 +198,9 @@ pub async fn deploy_and_forward_pod(configs: Vec<Config>) -> Result<Vec<CustomRe
 }
 
 #[tauri::command]
-
 pub async fn stop_proxy_forward(
-    config_id: String, namespace: &str, service_name: String,
+    config_id: String, namespace: &str, service_name: String, state: State<'_, ConfigStates>,
+    app_handle: tauri::AppHandle,
 ) -> Result<CustomResponse, String> {
     log::info!(
         "Attempting to stop proxy forward for service: {}",
@@ -245,17 +258,22 @@ pub async fn stop_proxy_forward(
 
     log::info!("Stopping port forward for service: {}", service_name);
 
-    let stop_result = stop_port_forward(service_name.clone(), config_id)
-        .await
-        .map_err(|e| {
-            log::error!(
-                "Failed to stop port forwarding for service '{}': {}",
-                service_name,
-                e
-            );
-
+    let stop_result = stop_port_forward(
+        service_name.clone(),
+        config_id,
+        state.clone(),
+        app_handle.clone(),
+    )
+    .await
+    .map_err(|e| {
+        log::error!(
+            "Failed to stop port forwarding for service '{}': {}",
+            service_name,
             e
-        })?;
+        );
+
+        e
+    })?;
 
     log::info!("Proxy forward stopped for service: {}", service_name);
 
