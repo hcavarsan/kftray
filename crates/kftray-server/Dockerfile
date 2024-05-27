@@ -11,7 +11,7 @@ COPY . .
 RUN cargo build --release
 RUN cargo install --path .
 
-FROM alpine:3.19
+FROM alpine:3.20
 
 COPY --from=builder /usr/local/cargo/bin/kftray-server /kftray-server
 
