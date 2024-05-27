@@ -7,7 +7,7 @@ edition = "2021"
 regex = "1"
 log = "0.4"
 serde_json = "1.0"
-image = "0.25.0"
+image = "0.25.1"
 ico = "0.3.0"
 thiserror = "1"
 

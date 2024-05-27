@@ -14,7 +14,7 @@ rust-version = "1.78"
 [dependencies]
 ctrlc = "3.4.4"
 log = "0.4"
-env_logger = "0.11.2"
+env_logger = "0.11.3"
 byteorder = "1.4"
 tokio = { version = "1", features = ["full"] }
 
