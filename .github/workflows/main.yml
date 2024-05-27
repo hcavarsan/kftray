@@ -75,6 +75,7 @@ jobs:
           updaterJsonKeepUniversal: true
           args: --target universal-apple-darwin --bundles dmg,updater --verbose
 
+
   ubuntu-amd64:
     permissions:
       contents: write
