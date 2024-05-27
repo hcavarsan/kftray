@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>CFBundleURLName</key>
+			<string>com.hcavarsan.kftray</string>
+			<key>LSUIElement</key>
+			<true/>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>kftray</string>
+			</array>
+		</dict>
+	</array>
+</dict>
+</plist>
