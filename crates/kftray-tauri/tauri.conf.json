@@ -35,19 +35,18 @@
       "identifier": "com.hcavarsan.kftray",
       "resources": [],
       "shortDescription": "",
-      "targets": [
-        "app",
-        "dmg",
-        "appimage",
-        "deb",
-        "updater",
-        "msi",
-        "nsis"
-      ],
+      "targets": ["app", "dmg", "appimage", "deb", "updater", "msi", "nsis"],
       "windows": {
         "certificateThumbprint": null,
         "digestAlgorithm": "sha256",
         "timestampUrl": ""
+      },
+      "macOS": {
+        "entitlements": "./entitlements.plist",
+        "exceptionDomain": "",
+        "frameworks": [],
+        "providerShortName": null,
+        "signingIdentity": null
       }
     },
     "macOSPrivateApi": true,
@@ -84,3 +83,4 @@
     ]
   }
 }
+
