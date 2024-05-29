@@ -86,23 +86,36 @@ pub fn set_default_position(window: &tauri::Window) {
             "Setting window position to: x: {}, y: {}",
             position.x, position.y
         );
-        window
-            .set_position(tauri::Position::Logical(tauri::LogicalPosition::new(
-                position.x, position.y,
-            )))
-            .unwrap();
-    } else {
-        #[cfg(target_os = "linux")]
-        {
-            if let Err(e) = window.move_window(Position::Center) {
-                eprintln!("Failed to move window to center: {}", e);
-            }
+        if is_valid_position(position.x, position.y) {
+            window
+                .set_position(tauri::Position::Logical(tauri::LogicalPosition::new(
+                    position.x, position.y,
+                )))
+                .unwrap();
+        } else {
+            println!("Invalid window position. Resetting to default.");
+            reset_to_default_position(window);
         }
-        #[cfg(not(target_os = "linux"))]
-        {
-            if let Err(e) = window.move_window(Position::TrayCenter) {
-                eprintln!("Failed to move window to tray center: {}", e);
-            }
+    } else {
+        reset_to_default_position(window);
+    }
+}
+
+fn is_valid_position(x: f64, y: f64) -> bool {
+    x.is_finite() && y.is_finite() && x.abs() <= 10000.0 && y.abs() <= 10000.0
+}
+
+fn reset_to_default_position(window: &tauri::Window) {
+    #[cfg(target_os = "linux")]
+    {
+        if let Err(e) = window.move_window(Position::Center) {
+            eprintln!("Failed to move window to center: {}", e);
+        }
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        if let Err(e) = window.move_window(Position::TrayCenter) {
+            eprintln!("Failed to move window to tray center: {}", e);
         }
     }
 }
