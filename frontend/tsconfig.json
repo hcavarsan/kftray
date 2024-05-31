@@ -20,7 +20,7 @@
       "@/*": ["src/*"]
     }
   },
-  "include": ["src/**/*", "vite.config.ts"],
+  "include": ["src/**/*", "farm.config.ts"],
   "exclude": ["node_modules", "crates", "dist", "target"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }
