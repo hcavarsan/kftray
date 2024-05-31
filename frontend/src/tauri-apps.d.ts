@@ -31,15 +31,16 @@ declare module '@tauri-apps/api/tauri' {
 }
 
 declare module '*.webp' {
-	const value: string;
-	export default value;
-  }
+  const value: string
 
-  interface ImportMetaEnv {
-	readonly DEV: boolean;
-	readonly MODE: string;
-  }
+  export default value
+}
 
-  interface ImportMeta {
-	readonly env: ImportMetaEnv;
-  }
+interface ImportMetaEnv {
+  readonly DEV: boolean
+  readonly MODE: string
+}
+
+interface ImportMeta {
+  readonly env: ImportMetaEnv
+}

@@ -1,6 +1,6 @@
-import { defineConfig } from '@farmfe/core';
-
+import { defineConfig } from '@farmfe/core'
 import terser from '@rollup/plugin-terser'
+
 
 export default defineConfig({
   plugins: [
@@ -26,10 +26,10 @@ export default defineConfig({
   },
   envPrefix: ['FARM_', 'TAURI_'],
   compilation: {
-	minify: {
-		compress: true,
-		mangle: true
-	},
-	sourcemap: false,
-}
+    minify: {
+      compress: true,
+      mangle: true
+    },
+    sourcemap: !!process.env.TAURI_DEBUG,
+  }
 })

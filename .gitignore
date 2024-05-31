@@ -9,8 +9,6 @@ lerna-debug.log*
 
 node_modules
 */dist/assets/*
-dist
-dist-ssr
 *.local
 
 # Editor directories and files
@@ -27,6 +25,5 @@ dist-ssr
 target/*
 target*/*
 target*
-dist
-frontend/dist
+frontend/dist/** */
 
