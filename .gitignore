@@ -27,4 +27,6 @@ dist-ssr
 target/*
 target*/*
 target*
+dist
+frontend/dist
 

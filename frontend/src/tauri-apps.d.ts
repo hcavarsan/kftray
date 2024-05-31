@@ -29,3 +29,17 @@ declare module '@tauri-apps/api/tauri' {
     payload?: unknown,
   ): Promise<T>
 }
+
+declare module '*.webp' {
+	const value: string;
+	export default value;
+  }
+
+  interface ImportMetaEnv {
+	readonly DEV: boolean;
+	readonly MODE: string;
+  }
+
+  interface ImportMeta {
+	readonly env: ImportMetaEnv;
+  }
