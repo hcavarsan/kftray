@@ -4,7 +4,7 @@
 	  "src/**/*",
 	  ".eslintrc.cjs",
 	  "prettier.config.cjs",
-	  "vite.config.ts"
+	  "farm.config.ts"
 	],
 	"exclude": [
 	  "node_modules",
