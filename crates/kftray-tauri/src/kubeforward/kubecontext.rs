@@ -55,7 +55,8 @@ pub async fn create_client_with_specific_context(
                 default_path
             );
 
-            Kubeconfig::read().context("Failed to read kubeconfig from default location")?
+            Kubeconfig::read_from(default_path)
+                .context("Failed to read kubeconfig from default location")?
         } else {
             // Otherwise, try to read the kubeconfig from the specified path
             println!("Reading kubeconfig from specified path: {}", path);
@@ -71,7 +72,8 @@ pub async fn create_client_with_specific_context(
             default_path
         );
 
-        Kubeconfig::read().context("Failed to read kubeconfig from default location")?
+        Kubeconfig::read_from(default_path)
+            .context("Failed to read kubeconfig from default location")?
     };
 
     println!("create_client_with_specific_context2 {:?}", kubeconfig);
