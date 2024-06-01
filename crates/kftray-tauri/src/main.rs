@@ -19,6 +19,8 @@ mod remote_config;
 mod tray;
 mod window;
 
+use std::sync::atomic::AtomicBool;
+
 use tauri::{
     GlobalShortcutManager,
     Manager,
@@ -33,9 +35,10 @@ use crate::tray::{
     handle_window_event,
 };
 use crate::window::toggle_window_visibility;
-struct AppState {
-    is_moving: Arc<Mutex<bool>>,
-    runtime: Arc<Runtime>,
+pub struct AppState {
+    pub is_moving: Arc<Mutex<bool>>,
+    pub is_plugin_moving: Arc<AtomicBool>,
+    pub runtime: Arc<Runtime>,
 }
 
 fn main() {
@@ -46,11 +49,13 @@ fn main() {
     // configure tray menu
     let system_tray = create_tray_menu();
     let is_moving = Arc::new(Mutex::new(false));
+    let is_plugin_moving = Arc::new(AtomicBool::new(false));
     let runtime = Arc::new(Runtime::new().expect("Failed to create a Tokio runtime"));
     let app = tauri::Builder::default()
         .manage(SaveDialogState::default())
         .manage(AppState {
             is_moving: is_moving.clone(),
+            is_plugin_moving: is_plugin_moving.clone(),
             runtime: runtime.clone(),
         })
         .setup(move |app| {
