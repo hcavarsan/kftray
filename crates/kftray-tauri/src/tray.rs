@@ -18,8 +18,10 @@ use tokio::time::sleep;
 use crate::kubeforward::port_forward;
 use crate::models::window::SaveDialogState;
 use crate::window::{
+    adjust_window_size_and_position,
     reset_window_position,
     save_window_position,
+    set_default_position,
     set_window_position,
     toggle_window_visibility,
 };
@@ -70,6 +72,24 @@ pub fn create_tray_menu() -> SystemTray {
 }
 
 pub fn handle_window_event(event: GlobalWindowEvent) {
+    if let tauri::WindowEvent::ScaleFactorChanged {
+        scale_factor,
+        new_inner_size,
+        ..
+    } = event.event()
+    {
+        let window = event.window();
+        adjust_window_size_and_position(window, *scale_factor, *new_inner_size);
+        if !window.is_visible().unwrap() || !window.is_focused().unwrap() {
+            set_default_position(window);
+            window.show().unwrap();
+            window.set_focus().unwrap();
+        }
+
+        return;
+    }
+
+    println!("event: {:?}", event.event());
     let app_state = event.window().state::<AppState>();
     let mut is_moving = app_state.is_moving.lock().unwrap();
 
@@ -119,7 +139,11 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
             {}
         });
 
-        if !*is_moving {
+        if !*is_moving && !app_state.is_plugin_moving.load(Ordering::SeqCst) {
+            println!(
+                "is_plugin_moving: {}",
+                app_state.is_plugin_moving.load(Ordering::SeqCst)
+            );
             *is_moving = true;
             let app_handle = event.window().app_handle();
 
