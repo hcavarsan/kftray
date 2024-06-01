@@ -22,8 +22,8 @@ const POSITION_FILE: &str = "window_position.json";
 pub fn save_window_position(window: &Window) {
     if let Ok(position) = window.outer_position() {
         let position = WindowPosition {
-            x: position.x as i32,
-            y: position.y as i32,
+            x: position.x,
+            y: position.y,
         };
         let position_json = serde_json::to_string(&position).unwrap();
 
@@ -85,7 +85,7 @@ pub fn toggle_window_visibility(window: &Window) {
         window.hide().unwrap();
     } else {
         window.show().unwrap();
-        set_default_position(&window);
+        set_default_position(window);
         window.set_focus().unwrap();
     }
 }
