@@ -19,8 +19,8 @@ impl Default for SaveDialogState {
     }
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct WindowPosition {
-    pub x: f64,
-    pub y: f64,
+    pub x: i32,
+    pub y: i32,
 }
