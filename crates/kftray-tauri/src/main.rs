@@ -35,10 +35,7 @@ use crate::tray::{
     handle_system_tray_event,
     handle_window_event,
 };
-use crate::window::{
-    toggle_pin_state,
-    toggle_window_visibility,
-};
+use crate::window::toggle_window_visibility;
 
 pub struct AppState {
     pub is_moving: Arc<Mutex<bool>>,
@@ -85,7 +82,6 @@ fn main() {
             #[cfg(debug_assertions)]
             window.open_devtools();
 
-            // Ensure the window is always on top if pinned
             if is_pinned.load(Ordering::SeqCst) {
                 window.set_always_on_top(true).unwrap();
             }
@@ -130,7 +126,7 @@ fn main() {
             keychain::store_key,
             keychain::get_key,
             keychain::delete_key,
-            toggle_pin_state // Add the new command here
+            window::toggle_pin_state
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");
