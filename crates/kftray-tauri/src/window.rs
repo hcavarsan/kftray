@@ -81,15 +81,17 @@ fn handle_corrupted_file(path: &Path, error: impl std::fmt::Display) {
 }
 
 pub fn toggle_window_visibility(window: &Window) {
+    let app_state = window.state::<AppState>();
     if window.is_visible().unwrap() {
-        window.hide().unwrap();
+        if !app_state.is_pinned.load(Ordering::SeqCst) {
+            window.hide().unwrap();
+        }
     } else {
         window.show().unwrap();
         set_default_position(window);
         window.set_focus().unwrap();
     }
 }
-
 pub fn set_default_position(window: &Window) {
     let app_state = window.state::<AppState>();
     app_state.is_plugin_moving.store(true, Ordering::SeqCst);
@@ -206,4 +208,11 @@ pub fn adjust_window_size_and_position(
         .unwrap();
 
     reset_plugin_moving_state_after_delay(&app_state);
+}
+
+#[tauri::command]
+pub fn toggle_pin_state(app_state: tauri::State<AppState>, window: tauri::Window) {
+    let is_pinned = app_state.is_pinned.load(Ordering::SeqCst);
+    app_state.is_pinned.store(!is_pinned, Ordering::SeqCst);
+    window.set_always_on_top(!is_pinned).unwrap();
 }

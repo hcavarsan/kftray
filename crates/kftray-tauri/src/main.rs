@@ -20,6 +20,7 @@ mod tray;
 mod window;
 
 use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 
 use tauri::{
     GlobalShortcutManager,
@@ -34,10 +35,15 @@ use crate::tray::{
     handle_system_tray_event,
     handle_window_event,
 };
-use crate::window::toggle_window_visibility;
+use crate::window::{
+    toggle_pin_state,
+    toggle_window_visibility,
+};
+
 pub struct AppState {
     pub is_moving: Arc<Mutex<bool>>,
     pub is_plugin_moving: Arc<AtomicBool>,
+    pub is_pinned: Arc<AtomicBool>,
     pub runtime: Arc<Runtime>,
 }
 
@@ -50,12 +56,14 @@ fn main() {
     let system_tray = create_tray_menu();
     let is_moving = Arc::new(Mutex::new(false));
     let is_plugin_moving = Arc::new(AtomicBool::new(false));
+    let is_pinned = Arc::new(AtomicBool::new(false));
     let runtime = Arc::new(Runtime::new().expect("Failed to create a Tokio runtime"));
     let app = tauri::Builder::default()
         .manage(SaveDialogState::default())
         .manage(AppState {
             is_moving: is_moving.clone(),
             is_plugin_moving: is_plugin_moving.clone(),
+            is_pinned: is_pinned.clone(),
             runtime: runtime.clone(),
         })
         .setup(move |app| {
@@ -76,6 +84,11 @@ fn main() {
 
             #[cfg(debug_assertions)]
             window.open_devtools();
+
+            // Ensure the window is always on top if pinned
+            if is_pinned.load(Ordering::SeqCst) {
+                window.set_always_on_top(true).unwrap();
+            }
 
             // register global shortcut to open the app
             let mut shortcut = app.global_shortcut_manager();
@@ -116,7 +129,8 @@ fn main() {
             commands::import_configs_from_github,
             keychain::store_key,
             keychain::get_key,
-            keychain::delete_key
+            keychain::delete_key,
+            toggle_pin_state // Add the new command here
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");
