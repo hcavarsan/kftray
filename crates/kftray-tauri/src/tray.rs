@@ -70,7 +70,6 @@ pub fn create_tray_menu() -> SystemTray {
 
     SystemTray::new().with_menu(system_tray_menu)
 }
-
 pub fn handle_window_event(event: GlobalWindowEvent) {
     if let tauri::WindowEvent::ScaleFactorChanged {
         scale_factor,
@@ -94,7 +93,7 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
     let mut is_moving = app_state.is_moving.lock().unwrap();
 
     if let tauri::WindowEvent::Focused(is_focused) = event.event() {
-        if !is_focused && !*is_moving {
+        if !is_focused && !*is_moving && !app_state.is_pinned.load(Ordering::SeqCst) {
             let app_handle = event.window().app_handle();
 
             if let Some(state) = app_handle.try_state::<SaveDialogState>() {
@@ -156,8 +155,10 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
     }
 
     if let tauri::WindowEvent::CloseRequested { api, .. } = event.event() {
-        api.prevent_close();
-        event.window().hide().unwrap();
+        if !app_state.is_pinned.load(Ordering::SeqCst) {
+            api.prevent_close();
+            event.window().hide().unwrap();
+        }
     }
 }
 
