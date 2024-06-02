@@ -2642,7 +2642,7 @@ dependencies = [
 
 [[package]]
 name = "kftray"
-version = "0.11.5"
+version = "0.11.6"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2681,7 +2681,7 @@ dependencies = [
 
 [[package]]
 name = "kftray-server"
-version = "0.11.5"
+version = "0.11.6"
 dependencies = [
  "byteorder",
  "ctrlc",
