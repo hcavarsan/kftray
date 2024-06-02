@@ -151,6 +151,8 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
               size='sm'
               variant='ghost'
               color='gray.500'
+              _hover={{ backgroundColor: 'transparent' }}
+              _active={{ backgroundColor: 'transparent' }}
             />
           </Tooltip>
         </Box>
