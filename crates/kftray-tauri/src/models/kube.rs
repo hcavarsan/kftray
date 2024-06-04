@@ -42,6 +42,7 @@ pub struct PortForward {
     pub pod_api: Api<Pod>,
     pub svc_api: Api<Service>,
     pub context_name: Option<String>,
+    pub config_id: i64,
 }
 
 #[derive(Clone)]

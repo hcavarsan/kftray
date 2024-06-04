@@ -1,3 +1,9 @@
+use std::fs::{
+    self,
+    OpenOptions,
+};
+use std::io::Write;
+use std::path::PathBuf;
 use std::{
     collections::HashMap,
     net::SocketAddr,
@@ -53,14 +59,12 @@ use crate::{
         response::CustomResponse,
     },
 };
-
 impl PortForward {
     pub async fn new(
         target: Target, local_port: impl Into<Option<u16>>,
         local_address: impl Into<Option<String>>, context_name: Option<String>,
-        kubeconfig: Option<String>,
+        kubeconfig: Option<String>, config_id: i64,
     ) -> anyhow::Result<Self> {
-        // Check if context_name was provided and create a Kubernetes client
         let client = if let Some(ref context_name) = context_name {
             crate::kubeforward::kubecontext::create_client_with_specific_context(
                 kubeconfig,
@@ -68,7 +72,6 @@ impl PortForward {
             )
             .await?
         } else {
-            // Use default context (or whatever client creation logic you prefer)
             Client::try_default().await?
         };
 
@@ -80,7 +83,8 @@ impl PortForward {
             local_address: local_address.into(),
             pod_api: Api::namespaced(client.clone(), &namespace),
             svc_api: Api::namespaced(client, &namespace),
-            context_name, // Store the context name if provided
+            context_name,
+            config_id,
         })
     }
 
@@ -91,8 +95,6 @@ impl PortForward {
     fn local_address(&self) -> Option<String> {
         self.local_address.clone()
     }
-
-    /// Runs the port forwarding proxy until a SIGINT signal is received.
 
     pub async fn port_forward(self) -> anyhow::Result<(u16, tokio::task::JoinHandle<()>)> {
         let local_addr = self
@@ -142,30 +144,77 @@ impl PortForward {
         ))
     }
 
-    async fn forward_connection(
-        self, mut client_conn: tokio::net::TcpStream,
-    ) -> anyhow::Result<()> {
+    async fn forward_connection(self, client_conn: tokio::net::TcpStream) -> anyhow::Result<()> {
         let target = self.finder().find(&self.target).await?;
 
         let (pod_name, pod_port) = target.into_parts();
 
         let mut forwarder = self.pod_api.portforward(&pod_name, &[pod_port]).await?;
 
-        let mut upstream_conn = forwarder
+        let upstream_conn = forwarder
             .take_stream(pod_port)
             .context("port not found in forwarder")?;
 
         let local_port = self.local_port();
+        let config_id = self.config_id;
 
         tracing::debug!(local_port, pod_port, pod_name, "forwarding connections");
 
-        if let Err(error) =
-            tokio::io::copy_bidirectional(&mut client_conn, &mut upstream_conn).await
-        {
-            tracing::trace!(local_port, pod_port, pod_name, ?error, "connection error");
-        }
+        let log_file_path = {
+            let mut path = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()));
+            path.push(".kftray/sniff");
+            fs::create_dir_all(&path)?;
+            path.push(format!("{}_{}.log", config_id, local_port));
+            path
+        };
 
-        drop(upstream_conn);
+        let log_file = Arc::new(tokio::sync::Mutex::new(
+            OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(log_file_path)?,
+        ));
+
+        let (mut client_reader, mut client_writer) = tokio::io::split(client_conn);
+        let (mut upstream_reader, mut upstream_writer) = tokio::io::split(upstream_conn);
+
+        let log_file_clone = Arc::clone(&log_file);
+        let client_to_upstream = async move {
+            let mut buffer = [0; 1024];
+            loop {
+                let n = client_reader.read(&mut buffer).await?;
+                if n == 0 {
+                    break;
+                }
+                if let Ok(request) = std::str::from_utf8(&buffer[..n]) {
+                    let mut log_file = log_file_clone.lock().await;
+                    writeln!(log_file, "HTTP Request: {}", request)
+                        .expect("Failed to write to log file");
+                }
+                upstream_writer.write_all(&buffer[..n]).await?;
+            }
+            Ok::<(), anyhow::Error>(())
+        };
+
+        let log_file_clone = Arc::clone(&log_file);
+        let upstream_to_client = async move {
+            let mut buffer = [0; 1024];
+            loop {
+                let n = upstream_reader.read(&mut buffer).await?;
+                if n == 0 {
+                    break;
+                }
+                if let Ok(response) = std::str::from_utf8(&buffer[..n]) {
+                    let mut log_file = log_file_clone.lock().await;
+                    writeln!(log_file, "HTTP Response: {}", response)
+                        .expect("Failed to write to log file");
+                }
+                client_writer.write_all(&buffer[..n]).await?;
+            }
+            Ok::<(), anyhow::Error>(())
+        };
+
+        tokio::try_join!(client_to_upstream, upstream_to_client)?;
 
         forwarder.join().await?;
 
@@ -380,6 +429,7 @@ pub async fn start_port_udp_forward(configs: Vec<Config>) -> Result<Vec<CustomRe
             local_address_clone,
             context_name,
             kubeconfig.flatten(),
+            config.id.unwrap_or_default(),
         )
         .await
         {
@@ -528,6 +578,7 @@ pub async fn start_port_forward(configs: Vec<Config>) -> Result<Vec<CustomRespon
             config.local_address.clone(),
             context_name.clone(),
             kubeconfig.clone().flatten(),
+            config.id.unwrap_or_default(),
         )
         .await
         {
