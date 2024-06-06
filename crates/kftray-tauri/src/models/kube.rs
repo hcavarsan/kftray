@@ -42,6 +42,8 @@ pub struct PortForward {
     pub pod_api: Api<Pod>,
     pub svc_api: Api<Service>,
     pub context_name: Option<String>,
+    pub config_id: i64,
+    pub workload_type: String,
 }
 
 #[derive(Clone)]
@@ -75,14 +77,6 @@ pub struct TargetPod {
     pub pod_name: String,
     pub port_number: u16,
 }
-
-#[derive(Clone)]
-
-pub struct TargetPodFinder<'a> {
-    pub pod_api: &'a Api<Pod>,
-    pub svc_api: &'a Api<Service>,
-}
-
 /// Pod selection according to impl specific criteria.
 
 pub(crate) trait PodSelection {

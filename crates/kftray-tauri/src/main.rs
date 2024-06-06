@@ -102,15 +102,15 @@ fn main() {
         .on_system_tray_event(handle_system_tray_event)
         .on_window_event(handle_window_event)
         .invoke_handler(tauri::generate_handler![
-            kubeforward::port_forward::start_port_forward,
-            kubeforward::port_forward::stop_port_forward,
-            kubeforward::port_forward::stop_all_port_forward,
+            kubeforward::commands::start_port_forward_tcp,
+            kubeforward::commands::stop_port_forward,
+            kubeforward::commands::stop_all_port_forward,
             kubeforward::kubecontext::list_kube_contexts,
             kubeforward::kubecontext::list_namespaces,
             kubeforward::kubecontext::list_services,
             kubeforward::kubecontext::list_service_ports,
-            kubeforward::proxy::deploy_and_forward_pod,
-            kubeforward::proxy::stop_proxy_forward,
+            kubeforward::commands::deploy_and_forward_pod,
+            kubeforward::commands::stop_proxy_forward,
             config::get_configs,
             config::insert_config,
             config::delete_config,
@@ -123,6 +123,7 @@ fn main() {
             commands::open_save_dialog,
             commands::close_save_dialog,
             commands::import_configs_from_github,
+            commands::open_log_file,
             keychain::store_key,
             keychain::get_key,
             keychain::delete_key,

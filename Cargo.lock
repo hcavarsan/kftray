@@ -2649,6 +2649,7 @@ dependencies = [
  "dirs",
  "env_logger",
  "fix-path-env",
+ "flate2",
  "futures",
  "h2 0.4.5",
  "hostsfile",
@@ -2660,6 +2661,7 @@ dependencies = [
  "lazy_static",
  "log",
  "mockall",
+ "open 1.7.1",
  "openssl",
  "openssl-sys",
  "rand 0.8.5",
@@ -2878,7 +2880,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c2a198fb6b0eada2a8df47933734e6d35d350665a33a3593d7164fa52c75c19"
 dependencies = [
  "cfg-if",
- "windows-targets 0.48.5",
+ "windows-targets 0.52.5",
 ]
 
 [[package]]
@@ -3483,6 +3485,16 @@ name = "opaque-debug"
 version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08d65885ee38876c4f86fa503fb49d7b507c2b62552df7c70b2fce627e06381"
+
+[[package]]
+name = "open"
+version = "1.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dcea7a30d6b81a2423cc59c43554880feff7b57d12916f231a79f8d6d9470201"
+dependencies = [
+ "pathdiff",
+ "winapi",
+]
 
 [[package]]
 name = "open"
@@ -5297,7 +5309,7 @@ dependencies = [
  "notify-rust",
  "objc",
  "once_cell",
- "open",
+ "open 3.2.0",
  "os_info",
  "os_pipe",
  "percent-encoding",

@@ -49,6 +49,8 @@ whoami = "1.5.1"
 tempfile = "3.9"
 h2 = { optional = true, version = "0.4.5" }
 fix-path-env = { git = "https://github.com/tauri-apps/fix-path-env-rs" }
+open = "1.5"
+flate2 = "1.0"
 
 [dev-dependencies]
 tempfile = "3.9"
