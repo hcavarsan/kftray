@@ -1,8 +1,11 @@
 use std::fs::{
     self,
+    File,
 };
-use std::io::Read;
-use std::io::Write;
+use std::io::{
+    Read,
+    Write,
+};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -19,9 +22,7 @@ pub fn create_log_file_path(config_id: i64, local_port: u16) -> anyhow::Result<P
     Ok(path)
 }
 
-pub async fn log_request(
-    buffer: &[u8], log_file: &Arc<Mutex<std::fs::File>>,
-) -> anyhow::Result<()> {
+pub async fn log_request(buffer: &[u8], log_file: &Arc<Mutex<File>>) -> anyhow::Result<()> {
     let mut log_file = log_file.lock().await;
     writeln!(log_file, "\n----------------------------------------")?;
     if let Ok(request) = std::str::from_utf8(buffer) {
@@ -39,13 +40,10 @@ pub async fn log_request(
     Ok(())
 }
 
-pub async fn log_response(
-    buffer: &[u8], log_file: &Arc<Mutex<std::fs::File>>,
-) -> anyhow::Result<()> {
+pub async fn log_response(buffer: &[u8], log_file: &Arc<Mutex<File>>) -> anyhow::Result<()> {
     let mut log_file = log_file.lock().await;
     writeln!(log_file, "\n----------------------------------------")?;
 
-    // Separate headers and body
     if let Some((headers, body)) = separate_headers_and_body(buffer) {
         if let Ok(headers_str) = std::str::from_utf8(headers) {
             let (protocol, headers) = headers_str.split_once("\r\n").unwrap_or(("", headers_str));
@@ -55,7 +53,6 @@ pub async fn log_response(
             writeln!(log_file, "\nHeaders:")?;
             writeln!(log_file, "{}", headers.trim_end())?;
 
-            // Check if the response is compressed
             if headers_str.contains("content-encoding: gzip") {
                 match decompress_gzip(body) {
                     Ok(decompressed_body) => log_body(&decompressed_body, &mut log_file).await?,
@@ -77,7 +74,7 @@ pub async fn log_response(
 }
 
 async fn log_body(
-    body: &[u8], log_file: &mut tokio::sync::MutexGuard<'_, std::fs::File>,
+    body: &[u8], log_file: &mut tokio::sync::MutexGuard<'_, File>,
 ) -> anyhow::Result<()> {
     if !body.is_empty() {
         writeln!(log_file, "\nBody:")?;
@@ -102,15 +99,10 @@ fn decompress_gzip(data: &[u8]) -> anyhow::Result<Vec<u8>> {
 }
 
 fn separate_headers_and_body(buffer: &[u8]) -> Option<(&[u8], &[u8])> {
-    let mut headers_end = None;
-    for i in 0..buffer.len() - 3 {
-        if &buffer[i..i + 4] == b"\r\n\r\n" {
-            headers_end = Some(i + 4);
-            break;
-        }
-    }
-
-    headers_end.map(|end| buffer.split_at(end))
+    buffer
+        .windows(4)
+        .position(|window| window == b"\r\n\r\n")
+        .map(|pos| buffer.split_at(pos + 4))
 }
 
 fn parse_request_line(request_line: &str) -> (&str, &str, &str) {
