@@ -27,11 +27,13 @@ import {
 } from '@chakra-ui/react'
 import {
   faBars,
+  faFileAlt,
   faInfoCircle,
   faPen,
   faTrash,
 } from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { homeDir } from '@tauri-apps/api/path'
 import { open } from '@tauri-apps/api/shell'
 import { invoke } from '@tauri-apps/api/tauri'
 
@@ -57,6 +59,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   const textColor = useColorModeValue('gray.300', 'gray.300')
   const cancelRef = React.useRef<HTMLButtonElement>(null)
   const toast = useCustomToast()
+
   const handleOpenLocalURL = () => {
     const baseUrl = config.domain_enabled ? config.alias : config.local_address
 
@@ -149,10 +152,31 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
       setIsInitiating(false)
     }
   }
+
   const handleDeleteClick = () => {
     onOpen()
   }
 
+  const handleInspectLogs = async () => {
+    try {
+      const homePath = await homeDir()
+      const logFilePath = `${config.id}_${config.local_port}.log`
+      const fullPath = `${homePath}/.kftray/sniff/${logFilePath}`
+      const sanitizedFullPath = fullPath.replace(/\\/g, '/')
+
+      await invoke('open_log_file', { logFilePath: sanitizedFullPath })
+    } catch (error) {
+      console.error('Error opening log file:', error)
+      const errorMessage =
+        error instanceof Error ? error.message : String(error)
+
+      toast({
+        title: 'Error opening log file',
+        description: errorMessage,
+        status: 'error',
+      })
+    }
+  }
   const infoIcon = (
     <FontAwesomeIcon icon={faInfoCircle} style={{ fontSize: '10px' }} />
   )
@@ -295,6 +319,36 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
                   aria-label='Open local URL'
                   icon={openLocalURLIcon}
                   onClick={handleOpenLocalURL}
+                  size='xs'
+                  variant='ghost'
+                  _hover={{
+                    background: 'none',
+                    transform: 'none',
+                  }}
+                />
+              </Tooltip>
+            )}
+            {config.isRunning &&
+              config.workload_type === 'service' &&
+              config.protocol === 'tcp' && (
+              <Tooltip
+                hasArrow
+                label='HTTP trace logs'
+                placement='top-start'
+                bg='gray.300'
+                p={1}
+                size='xs'
+                fontSize='xs'
+              >
+                <IconButton
+                  aria-label='HTTP trace logs'
+                  icon={
+                    <FontAwesomeIcon
+                      icon={faFileAlt}
+                      style={{ fontSize: '10px' }}
+                    />
+                  }
+                  onClick={handleInspectLogs}
                   size='xs'
                   variant='ghost'
                   _hover={{

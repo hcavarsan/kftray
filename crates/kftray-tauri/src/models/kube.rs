@@ -76,14 +76,6 @@ pub struct TargetPod {
     pub pod_name: String,
     pub port_number: u16,
 }
-
-#[derive(Clone)]
-
-pub struct TargetPodFinder<'a> {
-    pub pod_api: &'a Api<Pod>,
-    pub svc_api: &'a Api<Service>,
-}
-
 /// Pod selection according to impl specific criteria.
 
 pub(crate) trait PodSelection {

@@ -4,6 +4,7 @@ use base64::{
     engine::general_purpose,
     Engine as _,
 };
+use open;
 use reqwest::header::{
     AUTHORIZATION,
     USER_AGENT,
@@ -107,4 +108,12 @@ pub async fn import_configs_from_github(
     }
 
     Ok(())
+}
+
+#[tauri::command]
+pub async fn open_log_file(log_file_path: String) -> Result<(), String> {
+    println!("Opening log file: {}", log_file_path);
+    open::that(&log_file_path)
+        .map(|_| ())
+        .map_err(|err| format!("Error opening log file: {}", err))
 }
