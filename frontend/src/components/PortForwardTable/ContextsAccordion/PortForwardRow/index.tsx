@@ -73,7 +73,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   const startPortForwarding = async () => {
     try {
       if (config.workload_type === 'service' && config.protocol === 'tcp') {
-        await invoke('start_port_forward', { configs: [config] })
+        await invoke('start_port_forward_tcp', { configs: [config] })
       } else if (
         config.workload_type.startsWith('proxy') ||
         (config.workload_type === 'service' && config.protocol === 'udp')
