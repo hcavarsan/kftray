@@ -27,7 +27,7 @@ use crate::kubeforward::logging::{
     log_request,
     log_response,
 };
-use crate::kubeforward::target_pod_finder::TargetPodFinder;
+use crate::kubeforward::pod_finder::TargetPodFinder;
 use crate::models::kube::{
     PortForward,
     Target,

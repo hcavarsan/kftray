@@ -1,9 +1,9 @@
 pub mod commands;
 pub mod kubecontext;
 pub mod logging;
+pub mod pod_finder;
 pub mod pod_selection;
 pub mod port_forward;
-pub mod target_pod_finder;
 
 use anyhow::Context;
 pub use k8s_openapi::api::core::v1 as vx;
