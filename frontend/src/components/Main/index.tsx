@@ -394,7 +394,7 @@ const KFTray = () => {
             updatedConfig.workload_type === 'service' &&
             updatedConfig.protocol === 'tcp'
           ) {
-            await invoke('start_port_forward', { configs: [updatedConfig] })
+            await invoke('start_port_forward_tcp', { configs: [updatedConfig] })
           } else if (
             updatedConfig.workload_type.startsWith('proxy') ||
             (updatedConfig.workload_type === 'service' &&
@@ -465,7 +465,9 @@ const KFTray = () => {
     switch (config.workload_type) {
     case 'service':
       if (config.protocol === 'tcp') {
-        await invoke<Response>('start_port_forward', { configs: [config] })
+        await invoke<Response>('start_port_forward_tcp', {
+          configs: [config],
+        })
       } else if (config.protocol === 'udp') {
         await invoke<Response>('deploy_and_forward_pod', {
           configs: [config],

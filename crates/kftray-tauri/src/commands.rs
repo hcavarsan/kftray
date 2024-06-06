@@ -108,3 +108,40 @@ pub async fn import_configs_from_github(
 
     Ok(())
 }
+
+#[tauri::command]
+pub async fn open_log_file(log_file_path: String) -> Result<(), String> {
+    use std::env;
+    use std::process::Command;
+
+    println!("Opening log file: {}", log_file_path);
+
+    let editor = env::var("EDITOR").unwrap_or_else(|_| "nano".to_string());
+    let editor_command: Vec<&str> = editor.split_whitespace().collect();
+
+    let result = if editor_command.len() > 1 {
+        Command::new(editor_command[0])
+            .args(&editor_command[1..])
+            .arg(&log_file_path)
+            .spawn()
+    } else {
+        Command::new(&editor).arg(&log_file_path).spawn()
+    };
+
+    match result {
+        Ok(mut child) => match child.wait() {
+            Ok(status) if status.success() => Ok(()),
+            Ok(status) => Err(format!("Editor exited with status: {}", status)),
+            Err(err) => Err(format!("Failed to wait on editor process: {}", err)),
+        },
+        Err(err) => {
+            println!(
+                "Error opening with editor '{}': {}. Trying default method...",
+                editor, err
+            );
+            open::that(&log_file_path)
+                .map(|_| ())
+                .map_err(|err| format!("Error opening log file with default method: {}", err))
+        }
+    }
+}
