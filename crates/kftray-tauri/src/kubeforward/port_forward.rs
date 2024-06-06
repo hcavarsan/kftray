@@ -1,4 +1,3 @@
-// port_forward.rs:
 use std::fs::OpenOptions;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -174,62 +173,55 @@ impl PortForward {
         Ok(())
     }
 
-    fn create_client_to_upstream_task<'a>(
+    async fn create_client_to_upstream_task<'a>(
         &'a self, client_reader: &'a mut tokio::io::ReadHalf<tokio::net::TcpStream>,
         upstream_writer: &'a mut tokio::io::WriteHalf<
             impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
         >,
         log_file: Option<Arc<tokio::sync::Mutex<std::fs::File>>>,
-    ) -> impl std::future::Future<Output = anyhow::Result<()>> + 'a {
-        async move {
-            let mut buffer = [0; 8192];
-            loop {
-                let n = match timeout(Duration::from_secs(5), client_reader.read(&mut buffer)).await
-                {
-                    Ok(Ok(n)) => n,
-                    Ok(Err(e)) => return Err(e.into()),
-                    Err(_) => return Err(anyhow::anyhow!("Timeout reading from client")),
-                };
-                if n == 0 {
-                    break;
-                }
-                if let Some(log_file) = &log_file {
-                    log_request(&buffer[..n], log_file).await?;
-                }
-                upstream_writer.write_all(&buffer[..n]).await?;
+    ) -> anyhow::Result<()> {
+        let mut buffer = [0; 8192];
+        loop {
+            let n = match timeout(Duration::from_secs(5), client_reader.read(&mut buffer)).await {
+                Ok(Ok(n)) => n,
+                Ok(Err(e)) => return Err(e.into()),
+                Err(_) => return Err(anyhow::anyhow!("Timeout reading from client")),
+            };
+            if n == 0 {
+                break;
             }
-            Ok(())
+            if let Some(log_file) = &log_file {
+                log_request(&buffer[..n], log_file).await?;
+            }
+            upstream_writer.write_all(&buffer[..n]).await?;
         }
+        Ok(())
     }
 
-    fn create_upstream_to_client_task<'a>(
+    async fn create_upstream_to_client_task<'a>(
         &'a self,
         upstream_reader: &'a mut tokio::io::ReadHalf<
             impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
         >,
         client_writer: &'a mut tokio::io::WriteHalf<tokio::net::TcpStream>,
         log_file: Option<Arc<tokio::sync::Mutex<std::fs::File>>>,
-    ) -> impl std::future::Future<Output = anyhow::Result<()>> + 'a {
-        async move {
-            let mut buffer = [0; 8192]; // Increased buffer size
-            loop {
-                let n = match timeout(Duration::from_secs(5), upstream_reader.read(&mut buffer))
-                    .await
-                {
-                    Ok(Ok(n)) => n,
-                    Ok(Err(e)) => return Err(e.into()),
-                    Err(_) => return Err(anyhow::anyhow!("Timeout reading from upstream")),
-                };
-                if n == 0 {
-                    break;
-                }
-                if let Some(log_file) = &log_file {
-                    log_response(&buffer[..n], log_file).await?;
-                }
-                client_writer.write_all(&buffer[..n]).await?;
+    ) -> anyhow::Result<()> {
+        let mut buffer = [0; 8192]; // Increased buffer size
+        loop {
+            let n = match timeout(Duration::from_secs(5), upstream_reader.read(&mut buffer)).await {
+                Ok(Ok(n)) => n,
+                Ok(Err(e)) => return Err(e.into()),
+                Err(_) => return Err(anyhow::anyhow!("Timeout reading from upstream")),
+            };
+            if n == 0 {
+                break;
             }
-            Ok(())
+            if let Some(log_file) = &log_file {
+                log_response(&buffer[..n], log_file).await?;
+            }
+            client_writer.write_all(&buffer[..n]).await?;
         }
+        Ok(())
     }
 
     pub fn finder(&self) -> TargetPodFinder {
