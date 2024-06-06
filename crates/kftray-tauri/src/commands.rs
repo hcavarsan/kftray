@@ -4,7 +4,6 @@ use base64::{
     engine::general_purpose,
     Engine as _,
 };
-use open;
 use reqwest::header::{
     AUTHORIZATION,
     USER_AGENT,
