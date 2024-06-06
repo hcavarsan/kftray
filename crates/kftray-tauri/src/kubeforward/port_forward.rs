@@ -1,6 +1,8 @@
+// port_forward.rs:
 use std::fs::OpenOptions;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Context;
 use futures::TryStreamExt;
@@ -16,6 +18,7 @@ use tokio::{
     },
     net::TcpListener,
     task::JoinHandle,
+    time::timeout,
 };
 use tokio_stream::wrappers::TcpListenerStream;
 
@@ -34,7 +37,7 @@ impl PortForward {
     pub async fn new(
         target: Target, local_port: impl Into<Option<u16>>,
         local_address: impl Into<Option<String>>, context_name: Option<String>,
-        kubeconfig: Option<String>, config_id: i64,
+        kubeconfig: Option<String>, config_id: i64, workload_type: String,
     ) -> anyhow::Result<Self> {
         let client = if let Some(ref context_name) = context_name {
             crate::kubeforward::kubecontext::create_client_with_specific_context(
@@ -56,6 +59,7 @@ impl PortForward {
             svc_api: Api::namespaced(client, &namespace),
             context_name,
             config_id,
+            workload_type,
         })
     }
 
@@ -67,7 +71,7 @@ impl PortForward {
         self.local_address.clone()
     }
 
-    pub async fn port_forward(self) -> anyhow::Result<(u16, tokio::task::JoinHandle<()>)> {
+    pub async fn port_forward_tcp(self) -> anyhow::Result<(u16, tokio::task::JoinHandle<()>)> {
         let local_addr = self
             .local_address()
             .unwrap_or_else(|| "127.0.0.1".to_string());
@@ -130,33 +134,35 @@ impl PortForward {
 
         let local_port = self.local_port();
         let config_id = self.config_id;
+        let workload_type = self.workload_type.clone();
 
         tracing::debug!(local_port, pod_port, pod_name = %pod_name, "forwarding connections");
 
-        let log_file_path = create_log_file_path(config_id, local_port)?;
-
-        let log_file = Arc::new(tokio::sync::Mutex::new(
-            OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(log_file_path)?,
-        ));
+        let log_file = if workload_type == "service" {
+            let log_file_path = create_log_file_path(config_id, local_port)?;
+            Some(Arc::new(tokio::sync::Mutex::new(
+                OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(log_file_path)?,
+            )))
+        } else {
+            None
+        };
 
         let (mut client_reader, mut client_writer) = tokio::io::split(client_conn);
         let (mut upstream_reader, mut upstream_writer) = tokio::io::split(upstream_conn);
 
-        let log_file_clone = Arc::clone(&log_file);
         let client_to_upstream = self.create_client_to_upstream_task(
             &mut client_reader,
             &mut upstream_writer,
-            log_file_clone,
+            log_file.clone(),
         );
 
-        let log_file_clone = Arc::clone(&log_file);
         let upstream_to_client = self.create_upstream_to_client_task(
             &mut upstream_reader,
             &mut client_writer,
-            log_file_clone,
+            log_file.clone(),
         );
 
         tokio::try_join!(client_to_upstream, upstream_to_client)?;
@@ -173,16 +179,23 @@ impl PortForward {
         upstream_writer: &'a mut tokio::io::WriteHalf<
             impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
         >,
-        log_file: Arc<tokio::sync::Mutex<std::fs::File>>,
+        log_file: Option<Arc<tokio::sync::Mutex<std::fs::File>>>,
     ) -> impl std::future::Future<Output = anyhow::Result<()>> + 'a {
         async move {
-            let mut buffer = [0; 4096]; // Increased buffer size
+            let mut buffer = [0; 8192];
             loop {
-                let n = client_reader.read(&mut buffer).await?;
+                let n = match timeout(Duration::from_secs(5), client_reader.read(&mut buffer)).await
+                {
+                    Ok(Ok(n)) => n,
+                    Ok(Err(e)) => return Err(e.into()),
+                    Err(_) => return Err(anyhow::anyhow!("Timeout reading from client")),
+                };
                 if n == 0 {
                     break;
                 }
-                log_request(&buffer[..n], &log_file).await?;
+                if let Some(log_file) = &log_file {
+                    log_request(&buffer[..n], log_file).await?;
+                }
                 upstream_writer.write_all(&buffer[..n]).await?;
             }
             Ok(())
@@ -195,16 +208,24 @@ impl PortForward {
             impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
         >,
         client_writer: &'a mut tokio::io::WriteHalf<tokio::net::TcpStream>,
-        log_file: Arc<tokio::sync::Mutex<std::fs::File>>,
+        log_file: Option<Arc<tokio::sync::Mutex<std::fs::File>>>,
     ) -> impl std::future::Future<Output = anyhow::Result<()>> + 'a {
         async move {
-            let mut buffer = [0; 4096]; // Increased buffer size
+            let mut buffer = [0; 8192]; // Increased buffer size
             loop {
-                let n = upstream_reader.read(&mut buffer).await?;
+                let n = match timeout(Duration::from_secs(5), upstream_reader.read(&mut buffer))
+                    .await
+                {
+                    Ok(Ok(n)) => n,
+                    Ok(Err(e)) => return Err(e.into()),
+                    Err(_) => return Err(anyhow::anyhow!("Timeout reading from upstream")),
+                };
                 if n == 0 {
                     break;
                 }
-                log_response(&buffer[..n], &log_file).await?;
+                if let Some(log_file) = &log_file {
+                    log_response(&buffer[..n], log_file).await?;
+                }
                 client_writer.write_all(&buffer[..n]).await?;
             }
             Ok(())

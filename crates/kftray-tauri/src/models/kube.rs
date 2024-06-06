@@ -43,6 +43,7 @@ pub struct PortForward {
     pub svc_api: Api<Service>,
     pub context_name: Option<String>,
     pub config_id: i64,
+    pub workload_type: String,
 }
 
 #[derive(Clone)]

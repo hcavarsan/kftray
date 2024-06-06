@@ -102,7 +102,7 @@ fn main() {
         .on_system_tray_event(handle_system_tray_event)
         .on_window_event(handle_window_event)
         .invoke_handler(tauri::generate_handler![
-            kubeforward::commands::start_port_forward,
+            kubeforward::commands::start_port_forward_tcp,
             kubeforward::commands::stop_port_forward,
             kubeforward::commands::stop_all_port_forward,
             kubeforward::kubecontext::list_kube_contexts,
