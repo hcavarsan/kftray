@@ -250,6 +250,8 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
     }
     let configs = configs_result.unwrap();
 
+    let mut pod_deletion_tasks = Vec::new();
+
     for (composite_key, handle) in handle_map.iter() {
         let ids: Vec<&str> = composite_key.split('_').collect();
         if ids.len() != 2 {
@@ -300,48 +302,57 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
         );
         handle.abort();
 
-        let pods: Api<Pod> = Api::all(client.clone());
-        let lp = ListParams::default().labels(&format!("config_id={}", config_id_str));
-        log::info!(
-            "Listing pods with label selector: config_id={}",
-            config_id_str
-        );
-        let pod_list = pods.list(&lp).await.map_err(|e| {
-            log::error!("Error listing pods for config_id {}: {}", config_id_str, e);
-            e.to_string()
-        })?;
+        let client_clone = client.clone();
+        let pod_deletion_task = async move {
+            let pods: Api<Pod> = Api::all(client_clone.clone());
+            let lp = ListParams::default().labels(&format!("config_id={}", config_id_str));
+            log::info!(
+                "Listing pods with label selector: config_id={}",
+                config_id_str
+            );
 
-        let username = whoami::username();
-        let pod_prefix = format!("kftray-forward-{}", username);
+            let pod_list = pods.list(&lp).await.map_err(|e| {
+                log::error!("Error listing pods for config_id {}: {}", config_id_str, e);
+                e.to_string()
+            })?;
 
-        for pod in pod_list.items.into_iter() {
-            if let Some(pod_name) = pod.metadata.name {
-                log::info!("Found pod: {}", pod_name);
-                if pod_name.starts_with(&pod_prefix) {
-                    log::info!("Deleting pod: {}", pod_name);
-                    let namespace = pod
-                        .metadata
-                        .namespace
-                        .clone()
-                        .unwrap_or_else(|| "default".to_string());
-                    let pods_in_namespace: Api<Pod> = Api::namespaced(client.clone(), &namespace);
-                    let dp = DeleteParams {
-                        grace_period_seconds: Some(0),
-                        ..DeleteParams::default()
-                    };
-                    if let Err(e) = pods_in_namespace.delete(&pod_name, &dp).await {
-                        log::error!(
-                            "Failed to delete pod {} in namespace {}: {}",
-                            pod_name,
-                            namespace,
-                            e
-                        );
-                    } else {
-                        log::info!("Successfully deleted pod: {}", pod_name);
+            let username = whoami::username();
+            let pod_prefix = format!("kftray-forward-{}", username);
+
+            for pod in pod_list.items.into_iter() {
+                if let Some(pod_name) = pod.metadata.name {
+                    log::info!("Found pod: {}", pod_name);
+                    if pod_name.starts_with(&pod_prefix) {
+                        log::info!("Deleting pod: {}", pod_name);
+                        let namespace = pod
+                            .metadata
+                            .namespace
+                            .clone()
+                            .unwrap_or_else(|| "default".to_string());
+                        let pods_in_namespace: Api<Pod> =
+                            Api::namespaced(client_clone.clone(), &namespace);
+                        let dp = DeleteParams {
+                            grace_period_seconds: Some(0),
+                            ..DeleteParams::default()
+                        };
+                        if let Err(e) = pods_in_namespace.delete(&pod_name, &dp).await {
+                            log::error!(
+                                "Failed to delete pod {} in namespace {}: {}",
+                                pod_name,
+                                namespace,
+                                e
+                            );
+                        } else {
+                            log::info!("Successfully deleted pod: {}", pod_name);
+                        }
                     }
                 }
             }
-        }
+
+            Ok::<(), String>(())
+        };
+
+        pod_deletion_tasks.push(pod_deletion_task);
 
         responses.push(CustomResponse {
             id: Some(config_id_parsed),
@@ -356,6 +367,8 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
             status: 0,
         });
     }
+
+    futures::future::join_all(pod_deletion_tasks).await;
 
     log::info!(
         "Port forward stopping process completed with {} responses",
