@@ -180,12 +180,18 @@ impl PortForward {
         >,
         log_file: Option<Arc<tokio::sync::Mutex<std::fs::File>>>,
     ) -> anyhow::Result<()> {
-        let mut buffer = [0; 8192];
+        let mut buffer = [0; 65536];
         loop {
-            let n = match timeout(Duration::from_secs(5), client_reader.read(&mut buffer)).await {
+            let n = match timeout(Duration::from_secs(30), client_reader.read(&mut buffer)).await {
                 Ok(Ok(n)) => n,
-                Ok(Err(e)) => return Err(e.into()),
-                Err(_) => return Err(anyhow::anyhow!("Timeout reading from client")),
+                Ok(Err(e)) => {
+                    tracing::error!("Error reading from client: {:?}", e);
+                    return Err(e.into());
+                }
+                Err(_) => {
+                    tracing::error!("Timeout reading from client");
+                    return Err(anyhow::anyhow!("Timeout reading from client"));
+                }
             };
             if n == 0 {
                 break;
@@ -193,7 +199,10 @@ impl PortForward {
             if let Some(log_file) = &log_file {
                 log_request(&buffer[..n], log_file).await?;
             }
-            upstream_writer.write_all(&buffer[..n]).await?;
+            if let Err(e) = upstream_writer.write_all(&buffer[..n]).await {
+                tracing::error!("Error writing to upstream: {:?}", e);
+                return Err(e.into());
+            }
         }
         Ok(())
     }
@@ -206,12 +215,19 @@ impl PortForward {
         client_writer: &'a mut tokio::io::WriteHalf<tokio::net::TcpStream>,
         log_file: Option<Arc<tokio::sync::Mutex<std::fs::File>>>,
     ) -> anyhow::Result<()> {
-        let mut buffer = [0; 8192]; // Increased buffer size
+        let mut buffer = [0; 65536]; // Increased buffer size
         loop {
-            let n = match timeout(Duration::from_secs(5), upstream_reader.read(&mut buffer)).await {
+            let n = match timeout(Duration::from_secs(30), upstream_reader.read(&mut buffer)).await
+            {
                 Ok(Ok(n)) => n,
-                Ok(Err(e)) => return Err(e.into()),
-                Err(_) => return Err(anyhow::anyhow!("Timeout reading from upstream")),
+                Ok(Err(e)) => {
+                    tracing::error!("Error reading from upstream: {:?}", e);
+                    return Err(e.into());
+                }
+                Err(_) => {
+                    tracing::error!("Timeout reading from upstream");
+                    return Err(anyhow::anyhow!("Timeout reading from upstream"));
+                }
             };
             if n == 0 {
                 break;
@@ -219,7 +235,10 @@ impl PortForward {
             if let Some(log_file) = &log_file {
                 log_response(&buffer[..n], log_file).await?;
             }
-            client_writer.write_all(&buffer[..n]).await?;
+            if let Err(e) = client_writer.write_all(&buffer[..n]).await {
+                tracing::error!("Error writing to client: {:?}", e);
+                return Err(e.into());
+            }
         }
         Ok(())
     }
