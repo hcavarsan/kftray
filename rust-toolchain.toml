@@ -1,4 +1,17 @@
 [toolchain]
 channel = "nightly"
-components = ["rustfmt", "rustc-dev", "clippy", "rust-src", "llvm-tools-preview", "rust-std"]
+components = [
+	"rustfmt",
+	"rustc-dev",
+	"clippy",
+	"rust-src",
+	"llvm-tools-preview",
+	"rust-std",
+]
 profile = "minimal"
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "z"
+strip = true
+debug = false
