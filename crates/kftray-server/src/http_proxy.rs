@@ -169,15 +169,7 @@ pub async fn start_http_proxy(
 
 mod tests {
 
-    use std::time::Duration;
-
-    use tokio::{
-        net::TcpListener,
-        sync::watch,
-        time::{
-            self,
-        },
-    };
+    use tokio::sync::watch;
 
     use super::*;
 

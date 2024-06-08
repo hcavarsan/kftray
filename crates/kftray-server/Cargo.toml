@@ -9,7 +9,6 @@ license = "MIT"
 homepage = "https://kftray.app"
 repository = "https://github.com/hcavarsan/kftray"
 edition = "2021"
-rust-version = "1.78"
 
 [dependencies]
 ctrlc = "3.4.4"

@@ -151,8 +151,6 @@ pub fn get_db_path() -> String {
 
 mod tests {
 
-    use std::fs;
-
     use tempfile::TempDir;
 
     use super::*;
