@@ -28,7 +28,7 @@ use tokio::{
 };
 
 const MAX_RETRIES: u32 = 5;
-const INITIAL_RETRY_DELAY: Duration = Duration::from_millis(100); // Initial retry delay for exponential backoff
+const INITIAL_RETRY_DELAY: Duration = Duration::from_millis(100);
 const BUFFER_SIZE: usize = 65536;
 
 #[derive(Debug)]
@@ -125,7 +125,7 @@ async fn retryable_write(
                 );
                 attempts += 1;
                 time::sleep(delay).await;
-                delay *= 2; // Exponential backoff
+                delay *= 2;
             }
             Err(e) => {
                 error!(
