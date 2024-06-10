@@ -114,6 +114,7 @@ pub async fn open_log_file(log_file_path: String) -> Result<(), String> {
     use std::env;
     use std::ffi::OsStr;
     use std::fs;
+    use std::process::Command;
 
     use open::that_in_background;
     use open::with_in_background;
@@ -131,7 +132,7 @@ pub async fn open_log_file(log_file_path: String) -> Result<(), String> {
         if editor_parts.len() > 1 {
             let app = editor_parts[0];
             let args: Vec<&OsStr> = editor_parts[1..].iter().map(OsStr::new).collect();
-            let mut command = std::process::Command::new(app);
+            let mut command = Command::new(app);
             command.args(&args).arg(log_file_path);
             match command.spawn() {
                 Ok(mut child) => match child.wait() {
@@ -150,6 +151,20 @@ pub async fn open_log_file(log_file_path: String) -> Result<(), String> {
         }
     }
 
+    fn fallback_methods(log_file_path: &str) -> Result<(), String> {
+        if cfg!(target_os = "windows") {
+            try_open_with_editor(log_file_path, "notepad")
+        } else if cfg!(target_os = "macos") {
+            try_open_with_editor(log_file_path, "open -t")
+                .or_else(|_| try_open_with_editor(log_file_path, "nano"))
+                .or_else(|_| try_open_with_editor(log_file_path, "vim"))
+        } else {
+            try_open_with_editor(log_file_path, "xdg-open")
+                .or_else(|_| try_open_with_editor(log_file_path, "nano"))
+                .or_else(|_| try_open_with_editor(log_file_path, "vim"))
+        }
+    }
+
     match try_open_with_editor(&log_file_path, &editor) {
         Ok(_) => Ok(()),
         Err(err) => {
@@ -162,18 +177,7 @@ pub async fn open_log_file(log_file_path: String) -> Result<(), String> {
                 Ok(Ok(_)) => Ok(()),
                 Ok(Err(err)) => {
                     println!("Error opening log file with default method: {}. Trying fallback methods...", err);
-
-                    if cfg!(target_os = "windows") {
-                        try_open_with_editor(&log_file_path, "notepad")
-                    } else if cfg!(target_os = "macos") {
-                        try_open_with_editor(&log_file_path, "open -t")
-                            .or_else(|_| try_open_with_editor(&log_file_path, "nano"))
-                            .or_else(|_| try_open_with_editor(&log_file_path, "vim"))
-                    } else {
-                        try_open_with_editor(&log_file_path, "xdg-open")
-                            .or_else(|_| try_open_with_editor(&log_file_path, "nano"))
-                            .or_else(|_| try_open_with_editor(&log_file_path, "vim"))
-                    }
+                    fallback_methods(&log_file_path)
                 }
                 Err(err) => Err(format!("Failed to join thread: {:?}", err)),
             }
