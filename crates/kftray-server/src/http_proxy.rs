@@ -28,7 +28,7 @@ use tokio::{
 };
 
 const MAX_RETRIES: u32 = 5;
-const RETRY_DELAY: Duration = Duration::from_millis(100); // Reduced retry delay for faster recovery
+const INITIAL_RETRY_DELAY: Duration = Duration::from_millis(100); // Initial retry delay for exponential backoff
 const BUFFER_SIZE: usize = 65536;
 
 #[derive(Debug)]
@@ -40,20 +40,24 @@ pub struct ProxyConfig {
 
 #[derive(Debug)]
 pub enum ProxyError {
-    IoError(std::io::Error),
+    Io(std::io::Error),
+    ClientToServer(std::io::Error),
+    ServerToClient(std::io::Error),
 }
 
 impl std::fmt::Display for ProxyError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ProxyError::IoError(err) => write!(f, "IO Error: {}", err),
+            ProxyError::Io(err) => write!(f, "IO Error: {}", err),
+            ProxyError::ClientToServer(err) => write!(f, "Client to Server Error: {}", err),
+            ProxyError::ServerToClient(err) => write!(f, "Server to Client Error: {}", err),
         }
     }
 }
 
 impl From<std::io::Error> for ProxyError {
     fn from(err: std::io::Error) -> Self {
-        ProxyError::IoError(err)
+        ProxyError::Io(err)
     }
 }
 
@@ -67,8 +71,8 @@ async fn handle_client(
     let server_to_client = relay_stream(server_reader, client_writer, shutdown_notify);
 
     tokio::select! {
-        result = client_to_server => result?,
-        result = server_to_client => result?,
+        result = client_to_server => result.map_err(ProxyError::ClientToServer)?,
+        result = server_to_client => result.map_err(ProxyError::ServerToClient)?,
     }
 
     Ok(())
@@ -77,7 +81,7 @@ async fn handle_client(
 async fn relay_stream(
     mut read_stream: impl AsyncReadExt + Unpin, mut write_stream: impl AsyncWriteExt + Unpin,
     shutdown_notify: Arc<Notify>,
-) -> Result<(), ProxyError> {
+) -> Result<(), std::io::Error> {
     let mut buffer = vec![0u8; BUFFER_SIZE];
 
     loop {
@@ -88,7 +92,7 @@ async fn relay_stream(
                     Ok(n) => retryable_write(&mut write_stream, &buffer[..n]).await?,
                     Err(e) => {
                         error!("Failed to read from stream: {}", e);
-                        return Err(ProxyError::IoError(e));
+                        return Err(e);
                     },
                 }
             },
@@ -105,8 +109,9 @@ async fn relay_stream(
 
 async fn retryable_write(
     writer: &mut (impl AsyncWriteExt + Unpin), buf: &[u8],
-) -> Result<(), ProxyError> {
+) -> Result<(), std::io::Error> {
     let mut attempts = 0;
+    let mut delay = INITIAL_RETRY_DELAY;
 
     loop {
         match writer.write_all(buf).await {
@@ -116,17 +121,18 @@ async fn retryable_write(
                     "Failed to write to stream, attempt {}: {}. Retrying in {} milliseconds...",
                     attempts + 1,
                     e,
-                    RETRY_DELAY.as_millis()
+                    delay.as_millis()
                 );
                 attempts += 1;
-                time::sleep(RETRY_DELAY).await;
+                time::sleep(delay).await;
+                delay *= 2; // Exponential backoff
             }
             Err(e) => {
                 error!(
                     "Failed to write to stream after {} attempts: {}.",
                     attempts, e
                 );
-                return Err(ProxyError::IoError(e));
+                return Err(e);
             }
         }
     }
@@ -150,26 +156,10 @@ async fn setup_ctrlc_handler(is_running: Arc<AtomicBool>, shutdown_notify: Arc<N
     shutdown_notify.notify_waiters();
 }
 
-pub async fn start_http_proxy(
-    config: ProxyConfig, is_running: Arc<AtomicBool>, shutdown_notify: Arc<Notify>,
+async fn accept_connections(
+    tcp_listener: TcpListener, config: ProxyConfig, is_running: Arc<AtomicBool>,
+    shutdown_notify: Arc<Notify>,
 ) -> Result<(), ProxyError> {
-    let tcp_listener = TcpListener::bind(format!("0.0.0.0:{}", config.proxy_port)).await?;
-    info!("HTTP Proxy started on port {}", config.proxy_port);
-
-    let is_running_clone = is_running.clone();
-    let shutdown_notify_clone = shutdown_notify.clone();
-
-    tokio::spawn(async move {
-        monitor_connections(is_running_clone, shutdown_notify_clone).await;
-    });
-
-    let is_running_ctrlc = is_running.clone();
-    let shutdown_notify_ctrlc = shutdown_notify.clone();
-
-    tokio::spawn(async move {
-        setup_ctrlc_handler(is_running_ctrlc, shutdown_notify_ctrlc).await;
-    });
-
     while is_running.load(Ordering::SeqCst) {
         let (client_stream, peer_addr) = match tcp_listener.accept().await {
             Ok((stream, addr)) => (stream, addr),
@@ -210,6 +200,31 @@ pub async fn start_http_proxy(
             }
         });
     }
+
+    Ok(())
+}
+
+pub async fn start_http_proxy(
+    config: ProxyConfig, is_running: Arc<AtomicBool>, shutdown_notify: Arc<Notify>,
+) -> Result<(), ProxyError> {
+    let tcp_listener = TcpListener::bind(format!("0.0.0.0:{}", config.proxy_port)).await?;
+    info!("HTTP Proxy started on port {}", config.proxy_port);
+
+    let is_running_clone = is_running.clone();
+    let shutdown_notify_clone = shutdown_notify.clone();
+
+    tokio::spawn(async move {
+        monitor_connections(is_running_clone, shutdown_notify_clone).await;
+    });
+
+    let is_running_ctrlc = is_running.clone();
+    let shutdown_notify_ctrlc = shutdown_notify.clone();
+
+    tokio::spawn(async move {
+        setup_ctrlc_handler(is_running_ctrlc, shutdown_notify_ctrlc).await;
+    });
+
+    accept_connections(tcp_listener, config, is_running, shutdown_notify).await?;
 
     info!("HTTP Proxy stopped.");
     Ok(())
