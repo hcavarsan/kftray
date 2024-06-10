@@ -47,7 +47,6 @@ const Footer: React.FC<FooterProps> = ({
     try {
       const size = await invoke<number>('get_http_log_size')
 
-
       setLogSize(size)
       setFetchError(false)
     } catch (error) {

@@ -1,4 +1,3 @@
-use std::fs::OpenOptions;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -30,8 +29,7 @@ use tracing::{
 
 use crate::kubeforward::logging::{
     create_log_file_path,
-    log_request,
-    log_response,
+    Logger,
 };
 use crate::kubeforward::pod_finder::TargetPodFinder;
 use crate::models::kube::HttpLogState;
@@ -39,7 +37,6 @@ use crate::models::kube::{
     PortForward,
     Target,
 };
-
 const INITIAL_TIMEOUT: Duration = Duration::from_secs(600);
 const MAX_RETRIES: usize = 5;
 const BUFFER_SIZE: usize = 65536;
@@ -185,14 +182,10 @@ impl PortForward {
 
         trace!(local_port, pod_port, pod_name = %pod_name, "forwarding connections");
 
-        let log_file = if workload_type == "service" {
+        let logger = if workload_type == "service" {
             let log_file_path = create_log_file_path(config_id, local_port)?;
-            Some(Arc::new(Mutex::new(
-                OpenOptions::new()
-                    .create(true)
-                    .append(true)
-                    .open(log_file_path)?,
-            )))
+            let logger = Logger::new(log_file_path)?;
+            Some(logger)
         } else {
             None
         };
@@ -204,14 +197,14 @@ impl PortForward {
         let client_to_upstream = self.create_client_to_upstream_task(
             &mut client_reader,
             &mut upstream_writer,
-            log_file.clone(),
+            logger.clone(),
             &http_log_state,
         );
 
         let upstream_to_client = self.create_upstream_to_client_task(
             &mut upstream_reader,
             &mut client_writer,
-            log_file.clone(),
+            logger.clone(),
             &http_log_state,
         );
 
@@ -234,6 +227,10 @@ impl PortForward {
                     "connection closed with error"
                 );
             }
+        }
+
+        if let Some(logger) = logger {
+            logger.join_handle().await;
         }
 
         drop(client_conn_guard);
@@ -291,7 +288,7 @@ impl PortForward {
         upstream_writer: &'a mut tokio::io::WriteHalf<
             impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
         >,
-        log_file: Option<Arc<Mutex<std::fs::File>>>, http_log_state: &HttpLogState,
+        logger: Option<Logger>, http_log_state: &HttpLogState,
     ) -> anyhow::Result<()> {
         let mut buffer = [0; BUFFER_SIZE];
         let mut timeout_duration = INITIAL_TIMEOUT;
@@ -311,9 +308,9 @@ impl PortForward {
             if n == 0 {
                 break;
             }
-            if let Some(log_file) = &log_file {
-                if http_log_state.get_http_logs(self.config_id).await {
-                    log_request(&buffer[..n], log_file).await?;
+            if http_log_state.get_http_logs(self.config_id).await {
+                if let Some(logger) = &logger {
+                    logger.log_request(buffer[..n].to_vec()).await;
                 }
             }
             if http_log_state.get_http_logs(self.config_id).await {
@@ -339,8 +336,8 @@ impl PortForward {
         upstream_reader: &'a mut tokio::io::ReadHalf<
             impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
         >,
-        client_writer: &'a mut tokio::io::WriteHalf<&mut TcpStream>,
-        log_file: Option<Arc<Mutex<std::fs::File>>>, http_log_state: &HttpLogState,
+        client_writer: &'a mut tokio::io::WriteHalf<&mut TcpStream>, logger: Option<Logger>,
+        http_log_state: &HttpLogState,
     ) -> anyhow::Result<()> {
         let mut buffer = [0; BUFFER_SIZE];
         let mut timeout_duration = INITIAL_TIMEOUT;
@@ -360,9 +357,9 @@ impl PortForward {
             if n == 0 {
                 break;
             }
-            if let Some(log_file) = &log_file {
-                if http_log_state.get_http_logs(self.config_id).await {
-                    log_response(&buffer[..n], log_file).await?;
+            if http_log_state.get_http_logs(self.config_id).await {
+                if let Some(logger) = &logger {
+                    logger.log_response(buffer[..n].to_vec()).await;
                 }
             }
             if http_log_state.get_http_logs(self.config_id).await {
@@ -382,6 +379,7 @@ impl PortForward {
 
         Ok(())
     }
+
     pub fn finder(&self) -> TargetPodFinder {
         TargetPodFinder {
             pod_api: &self.pod_api,

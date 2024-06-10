@@ -1,20 +1,86 @@
 use std::fs::{
     self,
     File,
+    OpenOptions,
 };
-use std::io::{
-    Read,
-    Write,
-};
+use std::io::Read;
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use flate2::read::GzDecoder;
+use httparse::{
+    Request,
+    Response,
+    Status,
+};
 use image::DynamicImage;
 use image_ascii::TextGenerator;
 use k8s_openapi::chrono::Utc;
 use serde_json::Value;
-use tokio::sync::Mutex;
+use tokio::sync::mpsc;
+use tokio::task::JoinHandle;
+
+#[derive(Clone)]
+pub struct Logger {
+    sender: mpsc::Sender<LogEntry>,
+    handle: Arc<JoinHandle<()>>,
+}
+
+enum LogEntry {
+    Request(Vec<u8>),
+    Response(Vec<u8>),
+}
+
+impl Logger {
+    pub fn new(log_file_path: PathBuf) -> anyhow::Result<Self> {
+        let (sender, mut receiver) = mpsc::channel(100);
+        let log_file_path = Arc::new(log_file_path);
+
+        let handle = tokio::spawn(async move {
+            while let Some(entry) = receiver.recv().await {
+                let log_file_path = log_file_path.clone();
+                match entry {
+                    LogEntry::Request(buffer) => {
+                        if let Err(e) = log_request(&buffer, &log_file_path).await {
+                            eprintln!("Failed to log request: {:?}", e);
+                        }
+                    }
+                    LogEntry::Response(buffer) => {
+                        if let Err(e) = log_response(&buffer, &log_file_path).await {
+                            eprintln!("Failed to log response: {:?}", e);
+                        }
+                    }
+                }
+            }
+        });
+
+        Ok(Self {
+            sender,
+            handle: Arc::new(handle),
+        })
+    }
+
+    pub async fn log_request(&self, buffer: Vec<u8>) {
+        let _ = self.sender.send(LogEntry::Request(buffer)).await;
+    }
+
+    pub async fn log_response(&self, buffer: Vec<u8>) {
+        let _ = self.sender.send(LogEntry::Response(buffer)).await;
+    }
+
+    pub async fn join_handle(&self) {
+        let handle = Arc::clone(&self.handle);
+        match Arc::try_unwrap(handle) {
+            Ok(join_handle) => {
+                join_handle.await.unwrap();
+            }
+            Err(_) => {
+                eprintln!("Failed to join handle: multiple references to Arc");
+            }
+        }
+    }
+}
 
 pub fn create_log_file_path(config_id: i64, local_port: u16) -> anyhow::Result<PathBuf> {
     let mut path = dirs::home_dir().unwrap();
@@ -25,61 +91,101 @@ pub fn create_log_file_path(config_id: i64, local_port: u16) -> anyhow::Result<P
     Ok(path)
 }
 
-pub async fn log_request(buffer: &[u8], log_file: &Arc<Mutex<File>>) -> anyhow::Result<()> {
-    let mut log_file = log_file.lock().await;
+async fn log_request(buffer: &[u8], log_file_path: &PathBuf) -> anyhow::Result<()> {
+    let mut log_file = OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(log_file_path)?;
     writeln!(log_file, "\n----------------------------------------")?;
-    if let Ok(request) = std::str::from_utf8(buffer) {
-        let (protocol, headers_body) = request.split_once("\r\n").unwrap_or(("", request));
-        let (method, path, version) = parse_request_line(protocol);
-        writeln!(log_file, "\nRequest:")?;
-        writeln!(log_file, "{} - {} | {}", method, path, version)?;
-        writeln!(log_file, "{}", Utc::now().to_rfc3339())?;
-        writeln!(log_file, "\nHeaders:")?;
-        writeln!(log_file, "{}", headers_body.trim_end())?;
-    } else {
-        writeln!(log_file, "Binary data: {:?}", buffer)?;
-    }
-    log_file.flush()?;
-    Ok(())
-}
+    writeln!(log_file, "Request at: {}", Utc::now().to_rfc3339())?;
 
-pub async fn log_response(buffer: &[u8], log_file: &Arc<Mutex<File>>) -> anyhow::Result<()> {
-    let mut log_file = log_file.lock().await;
-    writeln!(log_file, "\n----------------------------------------")?;
-
-    if let Some((headers, body)) = separate_headers_and_body(buffer) {
-        if let Ok(headers_str) = std::str::from_utf8(headers) {
-            let (protocol, headers) = headers_str.split_once("\r\n").unwrap_or(("", headers_str));
-            writeln!(log_file, "\nResponse:")?;
-            writeln!(log_file, "{}", protocol)?;
-            writeln!(log_file, "{}", Utc::now().to_rfc3339())?;
+    let mut headers = [httparse::EMPTY_HEADER; 64];
+    let mut req = Request::new(&mut headers);
+    match req.parse(buffer) {
+        Ok(Status::Complete(_)) => {
+            writeln!(log_file, "Method: {}", req.method.unwrap_or(""))?;
+            writeln!(log_file, "Path: {}", req.path.unwrap_or(""))?;
+            writeln!(log_file, "Version: {}", req.version.unwrap_or(0))?;
             writeln!(log_file, "\nHeaders:")?;
-            writeln!(log_file, "{}", headers.trim_end())?;
-
-            if headers_str.contains("content-encoding: gzip") {
-                match decompress_gzip(body) {
-                    Ok(decompressed_body) => {
-                        log_body(&decompressed_body, &mut log_file, headers_str).await?
-                    }
-                    Err(e) => writeln!(log_file, "Failed to decompress body: {:?}", e)?,
-                }
-            } else {
-                log_body(body, &mut log_file, headers_str).await?;
+            for header in req.headers.iter() {
+                writeln!(
+                    log_file,
+                    "{}: {}",
+                    header.name,
+                    std::str::from_utf8(header.value).unwrap_or("")
+                )?;
             }
-        } else {
-            writeln!(log_file, "\nBinary headers: {:?}", headers)?;
-            log_body(body, &mut log_file, "").await?;
         }
-    } else {
-        writeln!(log_file, "\nBinary data: {:?}", buffer)?;
+        Ok(Status::Partial) => {
+            writeln!(log_file, "Incomplete request")?;
+        }
+        Err(e) => {
+            writeln!(log_file, "Failed to parse request: {:?}", e)?;
+        }
     }
 
     log_file.flush()?;
     Ok(())
 }
 
-async fn log_body(
-    body: &[u8], log_file: &mut tokio::sync::MutexGuard<'_, File>, headers: &str,
+async fn log_response(buffer: &[u8], log_file_path: &PathBuf) -> anyhow::Result<()> {
+    let mut log_file = OpenOptions::new()
+        .append(true)
+        .create(true)
+        .open(log_file_path)?;
+
+    let mut headers = [httparse::EMPTY_HEADER; 64];
+    let mut res = Response::new(&mut headers);
+    match res.parse(buffer) {
+        Ok(Status::Complete(_)) => {
+            writeln!(log_file, "\n----------------------------------------")?;
+            writeln!(log_file, "Response at: {}", Utc::now().to_rfc3339())?;
+            writeln!(log_file, "Status: {}", res.code.unwrap_or(0))?;
+            writeln!(log_file, "\nHeaders:")?;
+            for header in res.headers.iter() {
+                writeln!(
+                    log_file,
+                    "{}: {}",
+                    header.name,
+                    std::str::from_utf8(header.value).unwrap_or("")
+                )?;
+            }
+
+            let headers_len = buffer
+                .iter()
+                .position(|&b| b == b'\r')
+                .unwrap_or(buffer.len())
+                + 4;
+            if let Some(body) = buffer.get(headers_len..) {
+                if res.headers.iter().any(|h| {
+                    h.name.eq_ignore_ascii_case("content-encoding")
+                        && h.value.eq_ignore_ascii_case(b"gzip")
+                }) {
+                    match decompress_gzip(body) {
+                        Ok(decompressed_body) => {
+                            log_body(&decompressed_body, &mut log_file, res.headers).await?;
+                        }
+                        Err(e) => writeln!(log_file, "Failed to decompress body: {:?}", e)?,
+                    }
+                } else {
+                    log_body(body, &mut log_file, res.headers).await?;
+                }
+            }
+        }
+        Ok(Status::Partial) => {
+            return Ok(());
+        }
+        Err(_) => {
+            return Ok(());
+        }
+    }
+
+    log_file.flush()?;
+    Ok(())
+}
+
+async fn log_body<'a>(
+    body: &[u8], log_file: &mut File, headers: &[httparse::Header<'a>],
 ) -> anyhow::Result<()> {
     if !body.is_empty() {
         writeln!(log_file, "\nBody:")?;
@@ -94,11 +200,13 @@ async fn log_body(
                 let ascii_art = convert_image_to_ascii(&image)?;
                 writeln!(log_file, "{}", ascii_art)?;
             } else {
-                println!("Failed to convert image to ascii");
+                writeln!(log_file, "Failed to convert image to ascii")?;
             }
         } else {
-            println!("Failed to convert body to string");
+            writeln!(log_file, "Body (as bytes): {:?}", body)?;
         }
+    } else {
+        writeln!(log_file, "Body is empty")?;
     }
     Ok(())
 }
@@ -110,24 +218,13 @@ fn decompress_gzip(data: &[u8]) -> anyhow::Result<Vec<u8>> {
     Ok(decompressed_data)
 }
 
-fn separate_headers_and_body(buffer: &[u8]) -> Option<(&[u8], &[u8])> {
-    buffer
-        .windows(4)
-        .position(|window| window == b"\r\n\r\n")
-        .map(|pos| buffer.split_at(pos + 4))
-}
-
-fn parse_request_line(request_line: &str) -> (&str, &str, &str) {
-    let parts: Vec<&str> = request_line.split_whitespace().collect();
-    if parts.len() == 3 {
-        (parts[0], parts[1], parts[2])
-    } else {
-        ("", "", "")
-    }
-}
-
-fn is_image(headers: &str) -> bool {
-    headers.contains("Accept: image/") || headers.contains("content-type: image/")
+fn is_image(headers: &[httparse::Header<'_>]) -> bool {
+    headers
+        .iter()
+        .any(|h| h.name.eq_ignore_ascii_case("Accept") && h.value.starts_with(b"image/"))
+        || headers
+            .iter()
+            .any(|h| h.name.eq_ignore_ascii_case("content-type") && h.value.starts_with(b"image/"))
 }
 
 fn convert_image_to_ascii(image: &DynamicImage) -> anyhow::Result<String> {

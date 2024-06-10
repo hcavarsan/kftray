@@ -61,6 +61,7 @@ open = "5.1.4"
 flate2 = "1.0"
 image = "0.24.9"
 image_ascii = "0.1.1"
+httparse = "1.9.2"
 
 [dev-dependencies]
 tempfile = "3.9"
