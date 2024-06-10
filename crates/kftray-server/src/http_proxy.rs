@@ -142,6 +142,14 @@ async fn monitor_connections(is_running: Arc<AtomicBool>, shutdown_notify: Arc<N
     }
 }
 
+async fn setup_ctrlc_handler(is_running: Arc<AtomicBool>, shutdown_notify: Arc<Notify>) {
+    tokio::signal::ctrl_c()
+        .await
+        .expect("Failed to listen for Ctrl+C");
+    is_running.store(false, Ordering::SeqCst);
+    shutdown_notify.notify_waiters();
+}
+
 pub async fn start_http_proxy(
     config: ProxyConfig, is_running: Arc<AtomicBool>, shutdown_notify: Arc<Notify>,
 ) -> Result<(), ProxyError> {
@@ -153,6 +161,13 @@ pub async fn start_http_proxy(
 
     tokio::spawn(async move {
         monitor_connections(is_running_clone, shutdown_notify_clone).await;
+    });
+
+    let is_running_ctrlc = is_running.clone();
+    let shutdown_notify_ctrlc = shutdown_notify.clone();
+
+    tokio::spawn(async move {
+        setup_ctrlc_handler(is_running_ctrlc, shutdown_notify_ctrlc).await;
     });
 
     while is_running.load(Ordering::SeqCst) {
@@ -199,6 +214,7 @@ pub async fn start_http_proxy(
     info!("HTTP Proxy stopped.");
     Ok(())
 }
+
 #[cfg(test)]
 mod tests {
     use tokio::sync::watch;
