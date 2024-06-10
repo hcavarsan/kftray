@@ -9,7 +9,9 @@ use kube::{
     api::Api,
     Client,
 };
+use tokio::net::TcpStream;
 use tokio::net::UdpSocket as TokioUdpSocket;
+use tokio::sync::Mutex;
 use tokio::{
     io::{
         AsyncReadExt,
@@ -20,6 +22,11 @@ use tokio::{
     time::timeout,
 };
 use tokio_stream::wrappers::TcpListenerStream;
+use tracing::{
+    error,
+    info,
+    trace,
+};
 
 use crate::kubeforward::logging::{
     create_log_file_path,
@@ -27,10 +34,15 @@ use crate::kubeforward::logging::{
     log_response,
 };
 use crate::kubeforward::pod_finder::TargetPodFinder;
+use crate::models::kube::HttpLogState;
 use crate::models::kube::{
     PortForward,
     Target,
 };
+
+const INITIAL_TIMEOUT: Duration = Duration::from_secs(120);
+const MAX_RETRIES: usize = 5;
+const BUFFER_SIZE: usize = 65536;
 
 impl PortForward {
     pub async fn new(
@@ -59,6 +71,7 @@ impl PortForward {
             context_name,
             config_id,
             workload_type,
+            connection: Arc::new(Mutex::new(None)),
         })
     }
 
@@ -70,7 +83,9 @@ impl PortForward {
         self.local_address.clone()
     }
 
-    pub async fn port_forward_tcp(self) -> anyhow::Result<(u16, tokio::task::JoinHandle<()>)> {
+    pub async fn port_forward_tcp(
+        self, http_log_state: tauri::State<'_, HttpLogState>,
+    ) -> anyhow::Result<(u16, tokio::task::JoinHandle<()>)> {
         let local_addr = self
             .local_address()
             .unwrap_or_else(|| "127.0.0.1".to_string());
@@ -83,43 +98,76 @@ impl PortForward {
 
         let port = bind.local_addr()?.port();
 
-        tracing::trace!(port, "Bound to local address and port");
+        trace!(port, "Bound to local address and port");
 
-        let server = TcpListenerStream::new(bind).try_for_each(move |client_conn| {
-            let pf = self.clone();
+        let server = {
+            let http_log_state = http_log_state.inner().clone();
+            TcpListenerStream::new(bind).try_for_each(move |client_conn| {
+                let pf = self.clone();
+                let client_conn = Arc::new(Mutex::new(client_conn));
+                let http_log_state = http_log_state.clone();
 
-            async move {
-                let client_conn = client_conn;
-
-                if let Ok(peer_addr) = client_conn.peer_addr() {
-                    tracing::trace!(%peer_addr, "new connection");
-                }
-
-                tokio::spawn(async move {
-                    if let Err(e) = pf.forward_connection(client_conn).await {
-                        tracing::error!(
-                            error = e.as_ref() as &dyn std::error::Error,
-                            "failed to forward connection"
-                        );
+                async move {
+                    if let Ok(peer_addr) = client_conn.lock().await.peer_addr() {
+                        trace!(%peer_addr, "new connection");
                     }
-                });
 
-                Ok(())
-            }
-        });
+                    tokio::spawn(async move {
+                        if let Err(e) = pf
+                            .forward_connection_with_retries(client_conn, Arc::new(http_log_state))
+                            .await
+                        {
+                            error!(
+                                error = e.as_ref() as &dyn std::error::Error,
+                                "failed to forward connection"
+                            );
+                        }
+                    });
+
+                    Ok(())
+                }
+            })
+        };
 
         Ok((
             port,
             tokio::spawn(async {
                 if let Err(e) = server.await {
-                    tracing::error!(error = &e as &dyn std::error::Error, "server error");
+                    error!(error = &e as &dyn std::error::Error, "server error");
                 }
             }),
         ))
     }
 
-    pub async fn forward_connection(
-        self, client_conn: tokio::net::TcpStream,
+    async fn forward_connection_with_retries(
+        self, client_conn: Arc<Mutex<TcpStream>>, http_log_state: Arc<HttpLogState>,
+    ) -> anyhow::Result<()> {
+        let mut retries = 0;
+        let mut timeout_duration = INITIAL_TIMEOUT;
+
+        loop {
+            match self
+                .clone()
+                .forward_connection(client_conn.clone(), http_log_state.clone())
+                .await
+            {
+                Ok(_) => return Ok(()),
+                Err(e) if retries < MAX_RETRIES => {
+                    retries += 1;
+                    timeout_duration *= 2;
+                    error!(
+                        error = e.as_ref() as &dyn std::error::Error,
+                        retries, "retrying connection"
+                    );
+                    tokio::time::sleep(timeout_duration).await;
+                }
+                Err(e) => return Err(e),
+            }
+        }
+    }
+
+    async fn forward_connection(
+        self, client_conn: Arc<Mutex<TcpStream>>, http_log_state: Arc<HttpLogState>,
     ) -> anyhow::Result<()> {
         let target = self.finder().find(&self.target).await?;
 
@@ -135,11 +183,11 @@ impl PortForward {
         let config_id = self.config_id;
         let workload_type = self.workload_type.clone();
 
-        tracing::debug!(local_port, pod_port, pod_name = %pod_name, "forwarding connections");
+        trace!(local_port, pod_port, pod_name = %pod_name, "forwarding connections");
 
         let log_file = if workload_type == "service" {
             let log_file_path = create_log_file_path(config_id, local_port)?;
-            Some(Arc::new(tokio::sync::Mutex::new(
+            Some(Arc::new(Mutex::new(
                 OpenOptions::new()
                     .create(true)
                     .append(true)
@@ -149,47 +197,114 @@ impl PortForward {
             None
         };
 
-        let (mut client_reader, mut client_writer) = tokio::io::split(client_conn);
+        let mut client_conn_guard = client_conn.lock().await;
+        let (mut client_reader, mut client_writer) = tokio::io::split(&mut *client_conn_guard);
         let (mut upstream_reader, mut upstream_writer) = tokio::io::split(upstream_conn);
 
         let client_to_upstream = self.create_client_to_upstream_task(
             &mut client_reader,
             &mut upstream_writer,
             log_file.clone(),
+            &http_log_state,
         );
 
         let upstream_to_client = self.create_upstream_to_client_task(
             &mut upstream_reader,
             &mut client_writer,
             log_file.clone(),
+            &http_log_state,
         );
 
-        tokio::try_join!(client_to_upstream, upstream_to_client)?;
+        let join_result = tokio::try_join!(client_to_upstream, upstream_to_client);
 
-        forwarder.join().await?;
+        let result = tokio::select! {
+            res = async { join_result } => res,
+            _ = self.detect_connection_close(client_conn.clone(), &mut upstream_reader) => {
+                Err(anyhow::anyhow!("Connection closed"))
+            }
+        };
 
-        tracing::debug!(local_port, pod_port, pod_name = %pod_name, "connection closed");
+        match result {
+            Ok(_) => {
+                trace!(local_port, pod_port, pod_name = %pod_name, "connection closed normally");
+            }
+            Err(e) => {
+                error!(
+                    error = e.as_ref() as &dyn std::error::Error,
+                    "connection closed with error"
+                );
+            }
+        }
+
+        drop(client_conn_guard);
+        drop(forwarder);
+
+        trace!(local_port, pod_port, pod_name = %pod_name, "connection fully closed");
 
         Ok(())
     }
 
+    async fn detect_connection_close(
+        &self, client_conn: Arc<Mutex<TcpStream>>,
+        upstream_reader: &mut (impl tokio::io::AsyncRead + Unpin),
+    ) -> anyhow::Result<()> {
+        let mut client_buffer = [0; 1];
+        let mut upstream_buffer = [0; 1];
+
+        let mut client_conn_guard = client_conn.lock().await;
+        let (mut client_reader, _) = tokio::io::split(&mut *client_conn_guard);
+
+        loop {
+            tokio::select! {
+                result = client_reader.read(&mut client_buffer) => {
+                    match result {
+                        Ok(0) => {
+                            trace!("Client connection closed");
+                            return Ok(());
+                        }
+                        Ok(_) => continue,
+                        Err(e) => {
+                            error!("Error reading from client: {:?}", e);
+                            return Err(e.into());
+                        }
+                    }
+                }
+                result = upstream_reader.read(&mut upstream_buffer) => {
+                    match result {
+                        Ok(0) => {
+                            trace!("Upstream connection closed");
+                            return Ok(());
+                        }
+                        Ok(_) => continue,
+                        Err(e) => {
+                            error!("Error reading from upstream: {:?}", e);
+                            return Err(e.into());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     async fn create_client_to_upstream_task<'a>(
-        &'a self, client_reader: &'a mut tokio::io::ReadHalf<tokio::net::TcpStream>,
+        &'a self, client_reader: &'a mut tokio::io::ReadHalf<&mut TcpStream>,
         upstream_writer: &'a mut tokio::io::WriteHalf<
             impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
         >,
-        log_file: Option<Arc<tokio::sync::Mutex<std::fs::File>>>,
+        log_file: Option<Arc<Mutex<std::fs::File>>>, http_log_state: &HttpLogState,
     ) -> anyhow::Result<()> {
-        let mut buffer = [0; 65536];
+        let mut buffer = [0; BUFFER_SIZE];
+        let mut timeout_duration = INITIAL_TIMEOUT;
+
         loop {
-            let n = match timeout(Duration::from_secs(30), client_reader.read(&mut buffer)).await {
+            let n = match timeout(timeout_duration, client_reader.read(&mut buffer)).await {
                 Ok(Ok(n)) => n,
                 Ok(Err(e)) => {
-                    tracing::error!("Error reading from client: {:?}", e);
+                    error!("Error reading from client: {:?}", e);
                     return Err(e.into());
                 }
                 Err(_) => {
-                    tracing::error!("Timeout reading from client");
+                    error!("Timeout reading from client");
                     return Err(anyhow::anyhow!("Timeout reading from client"));
                 }
             };
@@ -197,13 +312,25 @@ impl PortForward {
                 break;
             }
             if let Some(log_file) = &log_file {
-                log_request(&buffer[..n], log_file).await?;
+                if http_log_state.get_http_logs(self.config_id).await {
+                    log_request(&buffer[..n], log_file).await?;
+                }
+            }
+            if http_log_state.get_http_logs(self.config_id).await {
+                trace!("HTTP Request: {:?}", &buffer[..n]);
             }
             if let Err(e) = upstream_writer.write_all(&buffer[..n]).await {
-                tracing::error!("Error writing to upstream: {:?}", e);
+                error!("Error writing to upstream: {:?}", e);
                 return Err(e.into());
             }
+            timeout_duration = INITIAL_TIMEOUT;
         }
+
+        // Ensure the upstream_writer is properly shut down
+        if let Err(e) = upstream_writer.shutdown().await {
+            error!("Error shutting down upstream writer: {:?}", e);
+        }
+
         Ok(())
     }
 
@@ -212,20 +339,21 @@ impl PortForward {
         upstream_reader: &'a mut tokio::io::ReadHalf<
             impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
         >,
-        client_writer: &'a mut tokio::io::WriteHalf<tokio::net::TcpStream>,
-        log_file: Option<Arc<tokio::sync::Mutex<std::fs::File>>>,
+        client_writer: &'a mut tokio::io::WriteHalf<&mut TcpStream>,
+        log_file: Option<Arc<Mutex<std::fs::File>>>, http_log_state: &HttpLogState,
     ) -> anyhow::Result<()> {
-        let mut buffer = [0; 65536]; // Increased buffer size
+        let mut buffer = [0; BUFFER_SIZE];
+        let mut timeout_duration = INITIAL_TIMEOUT;
+
         loop {
-            let n = match timeout(Duration::from_secs(30), upstream_reader.read(&mut buffer)).await
-            {
+            let n = match timeout(timeout_duration, upstream_reader.read(&mut buffer)).await {
                 Ok(Ok(n)) => n,
                 Ok(Err(e)) => {
-                    tracing::error!("Error reading from upstream: {:?}", e);
+                    error!("Error reading from upstream: {:?}", e);
                     return Err(e.into());
                 }
                 Err(_) => {
-                    tracing::error!("Timeout reading from upstream");
+                    error!("Timeout reading from upstream");
                     return Err(anyhow::anyhow!("Timeout reading from upstream"));
                 }
             };
@@ -233,16 +361,27 @@ impl PortForward {
                 break;
             }
             if let Some(log_file) = &log_file {
-                log_response(&buffer[..n], log_file).await?;
+                if http_log_state.get_http_logs(self.config_id).await {
+                    log_response(&buffer[..n], log_file).await?;
+                }
+            }
+            if http_log_state.get_http_logs(self.config_id).await {
+                trace!("HTTP Response: {:?}", &buffer[..n]);
             }
             if let Err(e) = client_writer.write_all(&buffer[..n]).await {
-                tracing::error!("Error writing to client: {:?}", e);
+                error!("Error writing to client: {:?}", e);
                 return Err(e.into());
             }
+            timeout_duration = INITIAL_TIMEOUT;
         }
+
+        // Ensure the client_writer is properly shut down
+        if let Err(e) = client_writer.shutdown().await {
+            error!("Error shutting down client writer: {:?}", e);
+        }
+
         Ok(())
     }
-
     pub fn finder(&self) -> TargetPodFinder {
         TargetPodFinder {
             pod_api: &self.pod_api,
@@ -265,7 +404,7 @@ impl PortForward {
 
         let local_port = local_udp_socket.local_addr()?.port();
 
-        tracing::info!("Local UDP socket bound to {}", local_udp_addr);
+        info!("Local UDP socket bound to {}", local_udp_addr);
 
         let target = self.finder().find(&self.target).await?;
 
@@ -289,7 +428,7 @@ impl PortForward {
         let local_udp_socket_write = local_udp_socket;
 
         let handle = tokio::spawn(async move {
-            let mut udp_buffer = [0u8; 65535]; // Maximum UDP packet size
+            let mut udp_buffer = [0u8; BUFFER_SIZE];
             let mut peer: Option<std::net::SocketAddr> = None;
 
             loop {
@@ -298,25 +437,25 @@ impl PortForward {
                     result = local_udp_socket_read.recv_from(&mut udp_buffer) => {
                         match result {
                             Ok((len, src)) => {
-                                peer = Some(src); // Store the peer address
+                                peer = Some(src);
 
                                 // Encapsulate the UDP packet in a custom protocol for sending over TCP
                                 let packet_len = (len as u32).to_be_bytes();
                                 if let Err(e) = tcp_write.write_all(&packet_len).await {
-                                    tracing::error!("Failed to write packet length to TCP stream: {:?}", e);
+                                    error!("Failed to write packet length to TCP stream: {:?}", e);
                                     break;
                                 }
                                 if let Err(e) = tcp_write.write_all(&udp_buffer[..len]).await {
-                                    tracing::error!("Failed to write UDP packet to TCP stream: {:?}", e);
+                                    error!("Failed to write UDP packet to TCP stream: {:?}", e);
                                     break;
                                 }
                                 if let Err(e) = tcp_write.flush().await {
-                                    tracing::error!("Failed to flush TCP stream: {:?}", e);
+                                    error!("Failed to flush TCP stream: {:?}", e);
                                     break;
                                 }
                             },
                             Err(e) => {
-                                tracing::error!("Failed to receive from UDP socket: {:?}", e);
+                                error!("Failed to receive from UDP socket: {:?}", e);
                                 break;
                             }
                         }
@@ -327,11 +466,11 @@ impl PortForward {
                             Ok(Some(packet)) => {
                                 if let Some(peer) = peer {
                                     if let Err(e) = local_udp_socket_write.send_to(&packet, &peer).await {
-                                        tracing::error!("Failed to send UDP packet to peer: {:?}", e);
+                                        error!("Failed to send UDP packet to peer: {:?}", e);
                                         break;
                                     }
                                 } else {
-                                    tracing::error!("No UDP peer to send to");
+                                    error!("No UDP peer to send to");
                                     break;
                                 }
                             },
@@ -339,12 +478,17 @@ impl PortForward {
                                 break;
                             }
                             Err(e) => {
-                                tracing::error!("Failed to read from TCP stream or send to UDP socket: {:?}", e);
+                                error!("Failed to read from TCP stream or send to UDP socket: {:?}", e);
                                 break;
                             }
                         }
                     }
                 }
+            }
+
+            // Ensure the tcp_write is properly shut down
+            if let Err(e) = tcp_write.shutdown().await {
+                error!("Error shutting down TCP writer: {:?}", e);
             }
         });
 

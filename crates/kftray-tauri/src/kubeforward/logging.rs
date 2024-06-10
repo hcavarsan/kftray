@@ -10,6 +10,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use flate2::read::GzDecoder;
+use image::DynamicImage;
+use image_ascii::TextGenerator;
 use k8s_openapi::chrono::Utc;
 use serde_json::Value;
 use tokio::sync::Mutex;
@@ -30,7 +32,7 @@ pub async fn log_request(buffer: &[u8], log_file: &Arc<Mutex<File>>) -> anyhow::
         let (method, path, version) = parse_request_line(protocol);
         writeln!(log_file, "\nRequest:")?;
         writeln!(log_file, "{} - {} | {}", method, path, version)?;
-        writeln!(log_file, "\n{}", Utc::now().to_rfc3339())?;
+        writeln!(log_file, "{}", Utc::now().to_rfc3339())?;
         writeln!(log_file, "\nHeaders:")?;
         writeln!(log_file, "{}", headers_body.trim_end())?;
     } else {
@@ -49,21 +51,23 @@ pub async fn log_response(buffer: &[u8], log_file: &Arc<Mutex<File>>) -> anyhow:
             let (protocol, headers) = headers_str.split_once("\r\n").unwrap_or(("", headers_str));
             writeln!(log_file, "\nResponse:")?;
             writeln!(log_file, "{}", protocol)?;
-            writeln!(log_file, "\n{}", Utc::now().to_rfc3339())?;
+            writeln!(log_file, "{}", Utc::now().to_rfc3339())?;
             writeln!(log_file, "\nHeaders:")?;
             writeln!(log_file, "{}", headers.trim_end())?;
 
             if headers_str.contains("content-encoding: gzip") {
                 match decompress_gzip(body) {
-                    Ok(decompressed_body) => log_body(&decompressed_body, &mut log_file).await?,
+                    Ok(decompressed_body) => {
+                        log_body(&decompressed_body, &mut log_file, headers_str).await?
+                    }
                     Err(e) => writeln!(log_file, "Failed to decompress body: {:?}", e)?,
                 }
             } else {
-                log_body(body, &mut log_file).await?;
+                log_body(body, &mut log_file, headers_str).await?;
             }
         } else {
             writeln!(log_file, "\nBinary headers: {:?}", headers)?;
-            log_body(body, &mut log_file).await?;
+            log_body(body, &mut log_file, "").await?;
         }
     } else {
         writeln!(log_file, "\nBinary data: {:?}", buffer)?;
@@ -74,7 +78,7 @@ pub async fn log_response(buffer: &[u8], log_file: &Arc<Mutex<File>>) -> anyhow:
 }
 
 async fn log_body(
-    body: &[u8], log_file: &mut tokio::sync::MutexGuard<'_, File>,
+    body: &[u8], log_file: &mut tokio::sync::MutexGuard<'_, File>, headers: &str,
 ) -> anyhow::Result<()> {
     if !body.is_empty() {
         writeln!(log_file, "\nBody:")?;
@@ -83,6 +87,13 @@ async fn log_body(
                 writeln!(log_file, "{}", serde_json::to_string_pretty(&json_value)?)?;
             } else {
                 writeln!(log_file, "{}", body_str.trim_end())?;
+            }
+        } else if is_image(headers) {
+            if let Ok(image) = image::load_from_memory(body) {
+                let ascii_art = convert_image_to_ascii(&image)?;
+                writeln!(log_file, "{}", ascii_art)?;
+            } else {
+                writeln!(log_file, "Binary body: {:?}", body)?;
             }
         } else {
             writeln!(log_file, "Binary body: {:?}", body)?;
@@ -112,4 +123,13 @@ fn parse_request_line(request_line: &str) -> (&str, &str, &str) {
     } else {
         ("", "", "")
     }
+}
+
+fn is_image(headers: &str) -> bool {
+    headers.contains("Accept: image/") || headers.contains("content-type: image/")
+}
+
+fn convert_image_to_ascii(image: &DynamicImage) -> anyhow::Result<String> {
+    let ascii_art = TextGenerator::new(image).generate();
+    Ok(ascii_art)
 }

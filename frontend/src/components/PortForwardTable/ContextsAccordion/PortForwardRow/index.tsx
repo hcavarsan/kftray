@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect, useState } from 'react'
 
 import { ExternalLinkIcon } from '@chakra-ui/icons'
 import {
@@ -59,6 +59,26 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   const textColor = useColorModeValue('gray.300', 'gray.300')
   const cancelRef = React.useRef<HTMLButtonElement>(null)
   const toast = useCustomToast()
+  const [httpLogsEnabled, setHttpLogsEnabled] = useState<{
+    [key: string]: boolean
+  }>({})
+
+  useEffect(() => {
+    const fetchHttpLogState = async () => {
+      try {
+        const enabled = await invoke('get_http_logs', { configId: config.id })
+
+        setHttpLogsEnabled(prevState => ({
+          ...prevState,
+          [config.id]: enabled,
+        }))
+      } catch (error) {
+        console.error('Error fetching HTTP log state:', error)
+      }
+    }
+
+    fetchHttpLogState()
+  }, [config.id])
 
   const handleOpenLocalURL = () => {
     const baseUrl = config.domain_enabled ? config.alias : config.local_address
@@ -177,6 +197,26 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
       })
     }
   }
+
+  const handleToggleHttpLogs = async () => {
+    try {
+      const newState = !httpLogsEnabled[config.id]
+
+      await invoke('set_http_logs', { configId: config.id, enable: newState })
+      setHttpLogsEnabled(prevState => ({ ...prevState, [config.id]: newState }))
+    } catch (error) {
+      console.error('Error toggling HTTP logs:', error)
+      const errorMessage =
+        error instanceof Error ? error.message : String(error)
+
+      toast({
+        title: 'Error toggling HTTP logs',
+        description: errorMessage,
+        status: 'error',
+      })
+    }
+  }
+
   const infoIcon = (
     <FontAwesomeIcon icon={faInfoCircle} style={{ fontSize: '10px' }} />
   )
@@ -330,7 +370,8 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
             )}
             {config.isRunning &&
               config.workload_type === 'service' &&
-              config.protocol === 'tcp' && (
+              config.protocol === 'tcp' &&
+              httpLogsEnabled[config.id] && (
               <Tooltip
                 hasArrow
                 label='HTTP trace logs'
@@ -401,6 +442,21 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
               >
                 Delete
               </MenuItem>
+              {config.protocol === 'tcp' && (
+                <MenuItem
+                  icon={
+                    <FontAwesomeIcon
+                      icon={faFileAlt}
+                      style={{ fontSize: '10px' }}
+                    />
+                  }
+                  onClick={handleToggleHttpLogs}
+                >
+                  {httpLogsEnabled[config.id]
+                    ? 'Disable HTTP Logs'
+                    : 'Enable HTTP Logs'}
+                </MenuItem>
+              )}
             </MenuList>
           </Menu>
         </Td>
