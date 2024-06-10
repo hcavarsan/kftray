@@ -180,8 +180,11 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   const handleInspectLogs = async () => {
     try {
       const homePath = await homeDir()
+
       const logFilePath = `${config.id}_${config.local_port}.log`
+
       const fullPath = `${homePath}/.kftray/http_logs/${logFilePath}`
+
       const sanitizedFullPath = fullPath.replace(/\\/g, '/')
 
       await invoke('open_log_file', { logFilePath: sanitizedFullPath })
@@ -194,6 +197,8 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
         title: 'Error opening log file',
         description: errorMessage,
         status: 'error',
+        duration: 3000,
+        isClosable: true,
       })
     }
   }
