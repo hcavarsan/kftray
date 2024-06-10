@@ -40,12 +40,13 @@ const Footer: React.FC<FooterProps> = ({
   setConfigs,
 }) => {
   const borderColor = useColorModeValue('gray.500', 'gray.700')
-  const [logSize, setLogSize] = useState(0)
-  const [fetchError, setFetchError] = useState(false)
+  const [logSize, setLogSize] = useState<number>(0)
+  const [fetchError, setFetchError] = useState<boolean>(false)
 
   const fetchLogSize = async () => {
     try {
-      const size = await invoke('get_http_log_size')
+      const size = await invoke<number>('get_http_log_size')
+
 
       setLogSize(size)
       setFetchError(false)
@@ -106,7 +107,7 @@ const Footer: React.FC<FooterProps> = ({
               onClick={handleClearLogs}
               isDisabled={logSize === 0 || fetchError}
             >
-              Prune HTTP Logs ({(logSize / (1024 * 1024)).toFixed(2)} MB)
+              Prune Logs ({(logSize / (1024 * 1024)).toFixed(2)} MB)
             </MenuItem>
           </MenuList>
         </Menu>
