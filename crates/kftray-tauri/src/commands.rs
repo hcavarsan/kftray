@@ -125,7 +125,13 @@ pub async fn open_log_file(log_file_path: String) -> Result<(), String> {
         return Err(format!("Log file does not exist: {}", log_file_path));
     }
 
-    let editor = env::var("EDITOR").unwrap_or_else(|_| "nano".to_string());
+    let editor = env::var("EDITOR").unwrap_or_else(|_| {
+        if cfg!(target_os = "windows") {
+            "notepad".to_string()
+        } else {
+            "nano".to_string()
+        }
+    });
 
     fn try_open_with_editor(log_file_path: &str, editor: &str) -> Result<(), String> {
         let editor_parts: Vec<&str> = editor.split_whitespace().collect();

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 
 import { ExternalLinkIcon } from '@chakra-ui/icons'
 import {
@@ -63,21 +63,32 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
     [key: string]: boolean
   }>({})
 
+  const prevConfigIdRef = useRef<number | null>(null)
+
   useEffect(() => {
-    const fetchHttpLogState = async () => {
-      try {
-        const enabled = await invoke('get_http_logs', { configId: config.id })
+    if (prevConfigIdRef.current !== config.id) {
+      prevConfigIdRef.current = config.id
 
-        setHttpLogsEnabled(prevState => ({
-          ...prevState,
-          [config.id]: enabled,
-        }))
-      } catch (error) {
-        console.error('Error fetching HTTP log state:', error)
+      const fetchHttpLogState = async () => {
+        try {
+          const enabled = await invoke('get_http_logs', { configId: config.id })
+
+          setHttpLogsEnabled(prevState => ({
+            ...prevState,
+            [config.id]: enabled,
+          }))
+        } catch (error) {
+          console.error('Error fetching HTTP log state:', error)
+        }
       }
-    }
 
-    fetchHttpLogState()
+      setHttpLogsEnabled(prevState => ({
+        ...prevState,
+        [config.id]: false,
+      }))
+
+      fetchHttpLogState()
+    }
   }, [config.id])
 
   const handleOpenLocalURL = () => {
