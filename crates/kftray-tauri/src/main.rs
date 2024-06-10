@@ -130,6 +130,8 @@ fn main() {
             commands::close_save_dialog,
             commands::import_configs_from_github,
             commands::open_log_file,
+            commands::clear_http_logs,
+            commands::get_http_log_size,
             keychain::store_key,
             keychain::get_key,
             keychain::delete_key,

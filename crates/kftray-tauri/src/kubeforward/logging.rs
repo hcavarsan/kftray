@@ -94,10 +94,10 @@ async fn log_body(
                 let ascii_art = convert_image_to_ascii(&image)?;
                 writeln!(log_file, "{}", ascii_art)?;
             } else {
-                writeln!(log_file, "Binary body: {:?}", body)?;
+                println!("Failed to convert image to ascii");
             }
         } else {
-            writeln!(log_file, "Binary body: {:?}", body)?;
+            println!("Failed to convert body to string");
         }
     }
     Ok(())

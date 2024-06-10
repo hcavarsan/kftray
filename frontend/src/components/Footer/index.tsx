@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useState } from 'react'
 import { FaGithub } from 'react-icons/fa'
 import { MdAdd, MdFileDownload, MdFileUpload, MdSettings } from 'react-icons/md'
 
@@ -16,6 +16,7 @@ import {
   Tooltip,
   useColorModeValue,
 } from '@chakra-ui/react'
+import { invoke } from '@tauri-apps/api/tauri'
 
 import { FooterProps } from '../../types'
 
@@ -39,6 +40,29 @@ const Footer: React.FC<FooterProps> = ({
   setConfigs,
 }) => {
   const borderColor = useColorModeValue('gray.500', 'gray.700')
+  const [logSize, setLogSize] = useState(0)
+  const [fetchError, setFetchError] = useState(false)
+
+  const fetchLogSize = async () => {
+    try {
+      const size = await invoke('get_http_log_size')
+
+      setLogSize(size)
+      setFetchError(false)
+    } catch (error) {
+      console.error('Failed to fetch log size:', error)
+      setFetchError(true)
+    }
+  }
+
+  const handleClearLogs = async () => {
+    try {
+      await invoke('clear_http_logs')
+      setLogSize(0)
+    } catch (error) {
+      console.error('Failed to clear logs:', error)
+    }
+  }
 
   return (
     <Flex
@@ -64,6 +88,7 @@ const Footer: React.FC<FooterProps> = ({
             colorScheme='facebook'
             variant='outline'
             borderColor={borderColor}
+            onClick={fetchLogSize}
           />
           <MenuList zIndex='popover' fontSize='sm' minW='150px'>
             <MenuItem icon={<MdFileUpload />} onClick={handleExportConfigs}>
@@ -75,6 +100,13 @@ const Footer: React.FC<FooterProps> = ({
               onClick={handleImportConfigs}
             >
               Import Local File
+            </MenuItem>
+            <MenuItem
+              icon={<MdSettings />}
+              onClick={handleClearLogs}
+              isDisabled={logSize === 0 || fetchError}
+            >
+              Prune HTTP Logs ({(logSize / (1024 * 1024)).toFixed(2)} MB)
             </MenuItem>
           </MenuList>
         </Menu>

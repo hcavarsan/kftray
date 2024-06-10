@@ -102,21 +102,12 @@ impl HttpLogState {
         logs.entry(config_id)
             .or_insert_with(|| AtomicBool::new(enable))
             .store(enable, Ordering::SeqCst);
-        println!(
-            "HTTP logs state set to: {} for config_id: {}",
-            enable, config_id
-        );
     }
 
     pub async fn get_http_logs(&self, config_id: i64) -> bool {
         let logs = self.enable_http_logs.lock().await;
         if let Some(state) = logs.get(&config_id) {
-            let current_state = state.load(Ordering::SeqCst);
-            println!(
-                "HTTP logs state: {} for config_id: {}",
-                current_state, config_id
-            );
-            current_state
+            state.load(Ordering::SeqCst)
         } else {
             false
         }

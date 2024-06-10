@@ -190,3 +190,91 @@ pub async fn open_log_file(log_file_path: String) -> Result<(), String> {
         }
     }
 }
+
+#[tauri::command]
+pub async fn clear_http_logs() -> Result<(), String> {
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn get_log_folder_path() -> PathBuf {
+        let mut path = dirs::home_dir().unwrap();
+        path.push(".kftray/http_logs");
+        path
+    }
+
+    fn delete_files_in_folder(path: &PathBuf) -> Result<(), String> {
+        if path.is_dir() {
+            for entry in
+                fs::read_dir(path).map_err(|e| format!("Failed to read directory: {}", e))?
+            {
+                let entry = entry.map_err(|e| format!("Failed to read directory entry: {}", e))?;
+                let path = entry.path();
+                if path.is_file() {
+                    fs::remove_file(&path).map_err(|e| format!("Failed to delete file: {}", e))?;
+                }
+            }
+        } else {
+            return Err(format!("Path is not a directory: {}", path.display()));
+        }
+
+        Ok(())
+    }
+
+    let log_folder_path = get_log_folder_path();
+
+    if !log_folder_path.exists() {
+        return Err(format!(
+            "Log folder does not exist: {}",
+            log_folder_path.display()
+        ));
+    }
+
+    delete_files_in_folder(&log_folder_path)
+}
+
+#[tauri::command]
+pub async fn get_http_log_size() -> Result<u64, String> {
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn get_log_folder_path() -> PathBuf {
+        let mut path = dirs::home_dir().unwrap();
+        path.push(".kftray/http_logs");
+        path
+    }
+
+    fn calculate_folder_size(path: &PathBuf) -> Result<u64, String> {
+        let mut size = 0;
+
+        if path.is_dir() {
+            for entry in
+                fs::read_dir(path).map_err(|e| format!("Failed to read directory: {}", e))?
+            {
+                let entry = entry.map_err(|e| format!("Failed to read directory entry: {}", e))?;
+                let path = entry.path();
+                if path.is_file() {
+                    size += fs::metadata(&path)
+                        .map_err(|e| format!("Failed to get file metadata: {}", e))?
+                        .len();
+                } else if path.is_dir() {
+                    size += calculate_folder_size(&path)?;
+                }
+            }
+        } else {
+            return Err(format!("Path is not a directory: {}", path.display()));
+        }
+
+        Ok(size)
+    }
+
+    let log_folder_path = get_log_folder_path();
+
+    if !log_folder_path.exists() {
+        return Err(format!(
+            "Log folder does not exist: {}",
+            log_folder_path.display()
+        ));
+    }
+
+    calculate_folder_size(&log_folder_path)
+}
