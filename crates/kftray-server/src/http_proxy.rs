@@ -91,7 +91,7 @@ async fn relay_stream(
                     Ok(0) => break,
                     Ok(n) => retryable_write(&mut write_stream, &buffer[..n]).await?,
                     Err(e) => {
-                        error!("Failed to read from stream: {}", e);
+                        error!("Failed to read from stream during relay: {}", e);
                         return Err(e);
                     },
                 }
