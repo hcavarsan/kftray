@@ -40,7 +40,7 @@ use crate::models::kube::{
     Target,
 };
 
-const INITIAL_TIMEOUT: Duration = Duration::from_secs(120);
+const INITIAL_TIMEOUT: Duration = Duration::from_secs(600);
 const MAX_RETRIES: usize = 5;
 const BUFFER_SIZE: usize = 65536;
 

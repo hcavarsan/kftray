@@ -18,7 +18,7 @@ use tokio::sync::Mutex;
 
 pub fn create_log_file_path(config_id: i64, local_port: u16) -> anyhow::Result<PathBuf> {
     let mut path = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".to_string()));
-    path.push(".kftray/sniff");
+    path.push(".kftray/http_logs");
     fs::create_dir_all(&path)?;
     path.push(format!("{}_{}.log", config_id, local_port));
     Ok(path)

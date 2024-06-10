@@ -181,7 +181,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
     try {
       const homePath = await homeDir()
       const logFilePath = `${config.id}_${config.local_port}.log`
-      const fullPath = `${homePath}/.kftray/sniff/${logFilePath}`
+      const fullPath = `${homePath}/.kftray/http_logs/${logFilePath}`
       const sanitizedFullPath = fullPath.replace(/\\/g, '/')
 
       await invoke('open_log_file', { logFilePath: sanitizedFullPath })
