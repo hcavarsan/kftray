@@ -183,12 +183,14 @@ impl PortForward {
         trace!(local_port, pod_port, pod_name = %pod_name, "forwarding connections");
 
         let logger = if workload_type == "service" {
-            let log_file_path = create_log_file_path(config_id, local_port)?;
-            let logger = Logger::new(log_file_path)?;
+            let log_file_path = create_log_file_path(config_id, local_port).await?;
+            let logger = Logger::new(log_file_path).await?;
             Some(logger)
         } else {
             None
         };
+
+        let request_id = Arc::new(Mutex::new(None));
 
         let mut client_conn_guard = client_conn.lock().await;
         let (mut client_reader, mut client_writer) = tokio::io::split(&mut *client_conn_guard);
@@ -199,6 +201,7 @@ impl PortForward {
             &mut upstream_writer,
             logger.clone(),
             &http_log_state,
+            Arc::clone(&request_id),
         );
 
         let upstream_to_client = self.create_upstream_to_client_task(
@@ -206,6 +209,7 @@ impl PortForward {
             &mut client_writer,
             logger.clone(),
             &http_log_state,
+            Arc::clone(&request_id),
         );
 
         let join_result = tokio::try_join!(client_to_upstream, upstream_to_client);
@@ -289,6 +293,7 @@ impl PortForward {
             impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
         >,
         logger: Option<Logger>, http_log_state: &HttpLogState,
+        request_id: Arc<Mutex<Option<String>>>,
     ) -> anyhow::Result<()> {
         let mut buffer = [0; BUFFER_SIZE];
         let mut timeout_duration = INITIAL_TIMEOUT;
@@ -310,7 +315,12 @@ impl PortForward {
             }
             if http_log_state.get_http_logs(self.config_id).await {
                 if let Some(logger) = &logger {
-                    logger.log_request(buffer[..n].to_vec()).await;
+                    let mut req_id_guard = request_id.lock().await;
+                    if req_id_guard.is_none() {
+                        *req_id_guard = Some(logger.log_request(buffer[..n].to_vec().into()).await);
+                    } else {
+                        logger.log_request(buffer[..n].to_vec().into()).await;
+                    }
                 }
             }
             if http_log_state.get_http_logs(self.config_id).await {
@@ -337,7 +347,7 @@ impl PortForward {
             impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
         >,
         client_writer: &'a mut tokio::io::WriteHalf<&mut TcpStream>, logger: Option<Logger>,
-        http_log_state: &HttpLogState,
+        http_log_state: &HttpLogState, request_id: Arc<Mutex<Option<String>>>,
     ) -> anyhow::Result<()> {
         let mut buffer = [0; BUFFER_SIZE];
         let mut timeout_duration = INITIAL_TIMEOUT;
@@ -359,7 +369,14 @@ impl PortForward {
             }
             if http_log_state.get_http_logs(self.config_id).await {
                 if let Some(logger) = &logger {
-                    logger.log_response(buffer[..n].to_vec()).await;
+                    let req_id_guard = request_id.lock().await;
+                    if let Some(req_id) = &*req_id_guard {
+                        logger
+                            .log_response(buffer[..n].to_vec().into(), req_id.clone())
+                            .await;
+                    } else {
+                        eprintln!("Request ID not found for logging response");
+                    }
                 }
             }
             if http_log_state.get_http_logs(self.config_id).await {
@@ -379,7 +396,6 @@ impl PortForward {
 
         Ok(())
     }
-
     pub fn finder(&self) -> TargetPodFinder {
         TargetPodFinder {
             pod_api: &self.pod_api,

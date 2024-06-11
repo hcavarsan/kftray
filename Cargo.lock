@@ -2804,6 +2804,7 @@ version = "0.11.6"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
+ "bytes",
  "dirs",
  "env_logger",
  "fix-path-env",
@@ -2839,6 +2840,7 @@ dependencies = [
  "tower",
  "tracing",
  "tracing-subscriber",
+ "uuid",
  "whoami",
 ]
 
