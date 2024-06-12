@@ -15,24 +15,24 @@
 
    <h2> Download latest release </h2>
 <div align="left">
-         <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.11.6_universal.dmg">
+         <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.11.7_universal.dmg">
             <img src="https://img.shields.io/badge/-macOS (Universal)-grey.svg?style=for-the-badge&logo=apple" alt="Download for macOS" />
          </a>
-         <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.11.6_arm64-setup.exe">
+         <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.11.7_arm64-setup.exe">
             <img src="https://img.shields.io/badge/-Windows (ARM64)-grey.svg?style=for-the-badge&logo=windows" alt="Download for Windows ARM64" />
          </a>
          <br />
-         <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.11.6_x64-setup.exe">
+         <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.11.7_x64-setup.exe">
             <img src="https://img.shields.io/badge/-Windows (x64)-grey.svg?style=for-the-badge&logo=windows" alt="Download for Windows x64" />
          </a>
-         <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.11.6_x86-setup.exe">
+         <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.11.7_x86-setup.exe">
             <img src="https://img.shields.io/badge/-Windows (x86)-grey.svg?style=for-the-badge&logo=windows" alt="Download for Windows x86" />
          </a>
          <br />
-         <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.11.6_amd64.AppImage">
+         <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.11.7_amd64.AppImage">
             <img src="https://img.shields.io/badge/-Linux (x64)-grey.svg?style=for-the-badge&logo=linux" alt="Download for Linux AMD64" />
          </a>
-         <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.11.6_aarch64.AppImage">
+         <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.11.7_aarch64.AppImage">
             <img src="https://img.shields.io/badge/-Linux (ARM64)-grey.svg?style=for-the-badge&logo=linux" alt="Download for Linux AARCH64" />
          </a>
 </div>
