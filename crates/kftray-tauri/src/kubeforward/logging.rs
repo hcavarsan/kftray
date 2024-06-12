@@ -1,10 +1,10 @@
-use std::collections::HashMap;
 use std::io::Read;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Context;
 use bytes::Bytes;
+use dashmap::DashMap;
 use flate2::read::GzDecoder;
 use httparse::Status;
 use k8s_openapi::chrono::{
@@ -17,7 +17,11 @@ use tokio::fs::{
     File,
     OpenOptions,
 };
-use tokio::io::AsyncWriteExt;
+use tokio::io::{
+    AsyncWriteExt,
+    BufWriter,
+};
+use tokio::spawn;
 use tokio::sync::mpsc::{
     self,
     Sender,
@@ -36,19 +40,24 @@ pub struct Logger {
     trace_map: TraceMap,
 }
 
-type TraceMap = Arc<RwLock<HashMap<String, (String, DateTime<Utc>)>>>;
+type TraceMap = Arc<DashMap<String, TraceInfo>>;
+
+struct TraceInfo {
+    trace_id: String,
+    timestamp: DateTime<Utc>,
+}
 
 impl Logger {
     pub async fn new(log_file_path: PathBuf) -> anyhow::Result<Self> {
         let (log_sender, mut log_receiver) = mpsc::channel(100);
-        let log_file = Arc::new(RwLock::new(
+        let log_file = Arc::new(RwLock::new(BufWriter::new(
             OpenOptions::new()
                 .append(true)
                 .create(true)
                 .open(&log_file_path)
                 .await?,
-        ));
-        let trace_map: TraceMap = Arc::new(RwLock::new(HashMap::new()));
+        )));
+        let trace_map: TraceMap = Arc::new(DashMap::new());
 
         tokio::spawn(async move {
             while let Some(log_message) = log_receiver.recv().await {
@@ -74,10 +83,13 @@ impl Logger {
             "Generated trace ID: {} for request ID: {}",
             trace_id, request_id
         );
-        self.trace_map
-            .write()
-            .await
-            .insert(request_id.clone(), (trace_id.clone(), timestamp));
+        self.trace_map.insert(
+            request_id.clone(),
+            TraceInfo {
+                trace_id: trace_id.clone(),
+                timestamp,
+            },
+        );
 
         let log_sender = self.log_sender.clone();
         tokio::spawn(async move {
@@ -93,27 +105,14 @@ impl Logger {
         let timestamp = Utc::now();
         debug!("Logging response for request ID: {}", request_id);
 
-        let trace_info = {
-            let trace_map = self.trace_map.read().await;
-            trace_map.get(&request_id).cloned()
-        };
-
-        if let Some((trace_id, request_timestamp)) = trace_info {
-            debug!("2 Logging response for request ID: {}", request_id);
-            let took = (timestamp - request_timestamp).num_milliseconds();
+        if let Some((_, trace_info)) = self.trace_map.remove(&request_id) {
+            let took = calculate_time_diff(trace_info.timestamp, timestamp);
             let log_sender = self.log_sender.clone();
-            debug!("3 Logging response for request ID: {}", request_id);
-            tokio::spawn(async move {
-                log_response(buffer, log_sender, trace_id, timestamp, took)
+            spawn(async move {
+                log_response(buffer, log_sender, trace_info.trace_id, timestamp, took)
                     .await
                     .unwrap_or_else(|e| error!("Failed to log response: {:?}", e));
             });
-            debug!("4 Logging response for request ID: {}", request_id);
-            {
-                let mut trace_map = self.trace_map.write().await;
-                trace_map.remove(&request_id);
-            }
-            debug!("5 Logging response for request ID: {}", request_id);
         } else {
             error!("Trace ID not found for request ID: {}", request_id);
         }
@@ -134,12 +133,7 @@ async fn log_request(
     debug!("Logging request with trace ID: {}", trace_id);
     let mut headers = [httparse::EMPTY_HEADER; 64];
     let mut req = httparse::Request::new(&mut headers);
-    if let Ok(httparse::Status::Complete(_)) = req.parse(&buffer) {
-        if is_image(req.headers) {
-            debug!("Skipping logging for image request");
-            return Ok(());
-        }
-    }
+    req.parse(&buffer)?;
 
     let log_entry = format_request_log(&buffer, &trace_id, timestamp).await?;
     if log_sender.try_send(LogMessage::Request(log_entry)).is_err() {
@@ -149,18 +143,13 @@ async fn log_request(
 }
 
 async fn log_response(
-    buffer: Bytes, log_sender: Sender<LogMessage>, trace_id: String, timestamp: DateTime<Utc>,
-    took: i64,
+    buffer: Bytes, log_sender: tokio::sync::mpsc::Sender<LogMessage>, trace_id: String,
+    timestamp: DateTime<Utc>, took: i64,
 ) -> anyhow::Result<()> {
     debug!("Logging response with trace ID: {}", trace_id);
     let mut headers = [httparse::EMPTY_HEADER; 64];
     let mut res = httparse::Response::new(&mut headers);
-    if let Ok(httparse::Status::Complete(_)) = res.parse(&buffer) {
-        if is_image(res.headers) {
-            debug!("Skipping logging for image response");
-            return Ok(());
-        }
-    }
+    res.parse(&buffer)?;
 
     let log_entry = format_response_log(&buffer, &trace_id, timestamp, took).await?;
     if log_sender
@@ -252,11 +241,7 @@ async fn format_response_log(
         timestamp.to_rfc3339(),
         took
     );
-    println!(
-        "logging Response at: {}\nTook: {} ms\n",
-        timestamp.to_rfc3339(),
-        took
-    );
+
     let mut headers = [httparse::EMPTY_HEADER; 64];
     let mut res = httparse::Response::new(&mut headers);
     if let Ok(Status::Complete(_)) = res.parse(buffer) {
@@ -323,12 +308,12 @@ async fn log_body(
                 log_entry.push_str(&format!("{}\n", body_str.trim_end()));
             }
         } else if is_image(headers) {
-            log_entry.push_str("Body is an image\n");
+            log_entry.push_str("<image>\n");
         } else {
-            log_entry.push_str("Body is binary or non-UTF-8 data\n");
+            log_entry.push_str("<binary>\n");
         }
     } else {
-        log_entry.push_str("Body is empty\n");
+        log_entry.push_str("\n\nBody:\n<empty>\n");
     }
     Ok(())
 }
@@ -350,14 +335,22 @@ fn is_image(headers: &[httparse::Header<'_>]) -> bool {
         .any(|h| h.name.eq_ignore_ascii_case("content-type") && h.value.starts_with(b"image/"))
 }
 
-async fn write_log(log_file: &Arc<RwLock<File>>, log_message: LogMessage) -> anyhow::Result<()> {
+async fn write_log(
+    log_file: &Arc<RwLock<BufWriter<File>>>, log_message: LogMessage,
+) -> anyhow::Result<()> {
     let mut log_file = log_file.write().await;
     debug!("Acquired write lock for log file");
 
-    log_file.write_all(log_message.as_bytes()).await?;
+    log_file
+        .write_all(log_message.as_bytes())
+        .await
+        .context("Failed to write log entry to file")?;
     debug!("Wrote log entry to file");
 
-    log_file.flush().await?;
+    log_file
+        .flush()
+        .await
+        .context("Failed to flush log entry to file")?;
     debug!("Flushed log entry to file");
 
     Ok(())
@@ -375,4 +368,8 @@ impl LogMessage {
             LogMessage::Response(log) => log.as_bytes(),
         }
     }
+}
+
+fn calculate_time_diff(start: DateTime<Utc>, end: DateTime<Utc>) -> i64 {
+    (end - start).num_milliseconds()
 }
