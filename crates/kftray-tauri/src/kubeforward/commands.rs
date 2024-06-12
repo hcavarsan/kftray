@@ -37,6 +37,7 @@ use crate::{
     models::{
         config::Config,
         kube::{
+            HttpLogState,
             Port,
             PortForward,
             Target,
@@ -51,17 +52,21 @@ lazy_static! {
         Arc::new(Mutex::new(HashMap::new()));
 }
 
-pub async fn start_port_forward_udp(configs: Vec<Config>) -> Result<Vec<CustomResponse>, String> {
-    start_port_forward(configs, "udp").await
+pub async fn start_port_forward_udp(
+    configs: Vec<Config>, http_log_state: tauri::State<'_, HttpLogState>,
+) -> Result<Vec<CustomResponse>, String> {
+    start_port_forward(configs, "udp", http_log_state).await
 }
 
 #[tauri::command]
-pub async fn start_port_forward_tcp(configs: Vec<Config>) -> Result<Vec<CustomResponse>, String> {
-    start_port_forward(configs, "tcp").await
+pub async fn start_port_forward_tcp(
+    configs: Vec<Config>, http_log_state: tauri::State<'_, HttpLogState>,
+) -> Result<Vec<CustomResponse>, String> {
+    start_port_forward(configs, "tcp", http_log_state).await
 }
 
 async fn start_port_forward(
-    configs: Vec<Config>, protocol: &str,
+    configs: Vec<Config>, protocol: &str, http_log_state: tauri::State<'_, HttpLogState>,
 ) -> Result<Vec<CustomResponse>, String> {
     let mut responses = Vec::new();
     let mut errors = Vec::new();
@@ -96,7 +101,7 @@ async fn start_port_forward(
             Ok(port_forward) => {
                 let forward_result = match protocol {
                     "udp" => port_forward.port_forward_udp().await,
-                    "tcp" => port_forward.port_forward_tcp().await,
+                    "tcp" => port_forward.port_forward_tcp(http_log_state.clone()).await,
                     _ => Err(anyhow::anyhow!("Unsupported protocol")),
                 };
 
@@ -478,7 +483,9 @@ fn render_json_template(template: &str, values: &HashMap<&str, String>) -> Strin
 }
 
 #[tauri::command]
-pub async fn deploy_and_forward_pod(configs: Vec<Config>) -> Result<Vec<CustomResponse>, String> {
+pub async fn deploy_and_forward_pod(
+    configs: Vec<Config>, http_log_state: tauri::State<'_, HttpLogState>,
+) -> Result<Vec<CustomResponse>, String> {
     let mut responses: Vec<CustomResponse> = Vec::new();
 
     for mut config in configs.into_iter() {
@@ -571,8 +578,12 @@ pub async fn deploy_and_forward_pod(configs: Vec<Config>) -> Result<Vec<CustomRe
                 config.service = Some(hashed_name.clone());
 
                 let start_response = match protocol.as_str() {
-                    "udp" => start_port_forward_udp(vec![config.clone()]).await,
-                    "tcp" => start_port_forward_tcp(vec![config.clone()]).await,
+                    "udp" => {
+                        start_port_forward_udp(vec![config.clone()], http_log_state.clone()).await
+                    }
+                    "tcp" => {
+                        start_port_forward_tcp(vec![config.clone()], http_log_state.clone()).await
+                    }
                     _ => {
                         let _ = pods
                             .delete(&hashed_name, &kube::api::DeleteParams::default())
@@ -674,4 +685,20 @@ pub async fn stop_proxy_forward(
     log::info!("Proxy forward stopped for service: {}", service_name);
 
     Ok(stop_result)
+}
+
+#[tauri::command]
+pub async fn set_http_logs(
+    state: tauri::State<'_, HttpLogState>, config_id: i64, enable: bool,
+) -> Result<(), String> {
+    state.set_http_logs(config_id, enable).await;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_http_logs(
+    state: tauri::State<'_, HttpLogState>, config_id: i64,
+) -> Result<bool, String> {
+    let current_state = state.get_http_logs(config_id).await;
+    Ok(current_state)
 }

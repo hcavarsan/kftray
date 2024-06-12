@@ -2,6 +2,7 @@ use anyhow::{
     Context,
     Result,
 };
+use hyper_util::rt::TokioExecutor;
 use k8s_openapi::{
     api::core::v1::{
         Namespace,
@@ -95,7 +96,10 @@ pub async fn create_client_with_specific_context(
     let service = ServiceBuilder::new()
         .layer(config.base_uri_layer())
         .option_layer(config.auth_layer()?)
-        .service(hyper::Client::builder().build(https_connector));
+        .service(
+            hyper_util::client::legacy::Client::builder(TokioExecutor::new())
+                .build(https_connector),
+        );
 
     let client = Client::new(service, config.default_namespace);
 
