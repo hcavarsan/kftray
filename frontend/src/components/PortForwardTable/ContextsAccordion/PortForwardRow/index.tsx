@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 
 import { ExternalLinkIcon } from '@chakra-ui/icons'
 import {
@@ -59,6 +59,37 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   const textColor = useColorModeValue('gray.300', 'gray.300')
   const cancelRef = React.useRef<HTMLButtonElement>(null)
   const toast = useCustomToast()
+  const [httpLogsEnabled, setHttpLogsEnabled] = useState<{
+    [key: string]: boolean
+  }>({})
+
+  const prevConfigIdRef = useRef<number | null>(null)
+
+  useEffect(() => {
+    if (prevConfigIdRef.current !== config.id) {
+      prevConfigIdRef.current = config.id
+
+      const fetchHttpLogState = async () => {
+        try {
+          const enabled = await invoke('get_http_logs', { configId: config.id })
+
+          setHttpLogsEnabled(prevState => ({
+            ...prevState,
+            [config.id]: enabled,
+          }))
+        } catch (error) {
+          console.error('Error fetching HTTP log state:', error)
+        }
+      }
+
+      setHttpLogsEnabled(prevState => ({
+        ...prevState,
+        [config.id]: false,
+      }))
+
+      fetchHttpLogState()
+    }
+  }, [config.id])
 
   const handleOpenLocalURL = () => {
     const baseUrl = config.domain_enabled ? config.alias : config.local_address
@@ -160,8 +191,11 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   const handleInspectLogs = async () => {
     try {
       const homePath = await homeDir()
+
       const logFilePath = `${config.id}_${config.local_port}.log`
-      const fullPath = `${homePath}/.kftray/sniff/${logFilePath}`
+
+      const fullPath = `${homePath}/.kftray/http_logs/${logFilePath}`
+
       const sanitizedFullPath = fullPath.replace(/\\/g, '/')
 
       await invoke('open_log_file', { logFilePath: sanitizedFullPath })
@@ -174,9 +208,31 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
         title: 'Error opening log file',
         description: errorMessage,
         status: 'error',
+        duration: 3000,
+        isClosable: true,
       })
     }
   }
+
+  const handleToggleHttpLogs = async () => {
+    try {
+      const newState = !httpLogsEnabled[config.id]
+
+      await invoke('set_http_logs', { configId: config.id, enable: newState })
+      setHttpLogsEnabled(prevState => ({ ...prevState, [config.id]: newState }))
+    } catch (error) {
+      console.error('Error toggling HTTP logs:', error)
+      const errorMessage =
+        error instanceof Error ? error.message : String(error)
+
+      toast({
+        title: 'Error toggling HTTP logs',
+        description: errorMessage,
+        status: 'error',
+      })
+    }
+  }
+
   const infoIcon = (
     <FontAwesomeIcon icon={faInfoCircle} style={{ fontSize: '10px' }} />
   )
@@ -330,7 +386,8 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
             )}
             {config.isRunning &&
               config.workload_type === 'service' &&
-              config.protocol === 'tcp' && (
+              config.protocol === 'tcp' &&
+              httpLogsEnabled[config.id] && (
               <Tooltip
                 hasArrow
                 label='HTTP trace logs'
@@ -401,6 +458,21 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
               >
                 Delete
               </MenuItem>
+              {config.protocol === 'tcp' && (
+                <MenuItem
+                  icon={
+                    <FontAwesomeIcon
+                      icon={faFileAlt}
+                      style={{ fontSize: '10px' }}
+                    />
+                  }
+                  onClick={handleToggleHttpLogs}
+                >
+                  {httpLogsEnabled[config.id]
+                    ? 'Disable HTTP Logs'
+                    : 'Enable HTTP Logs'}
+                </MenuItem>
+              )}
             </MenuList>
           </Menu>
         </Td>

@@ -28,6 +28,7 @@ use tauri::{
 };
 use tokio::runtime::Runtime;
 
+use crate::models::kube::HttpLogState;
 use crate::models::window::SaveDialogState;
 use crate::tray::{
     create_tray_menu,
@@ -55,6 +56,8 @@ fn main() {
     let is_plugin_moving = Arc::new(AtomicBool::new(false));
     let is_pinned = Arc::new(AtomicBool::new(false));
     let runtime = Arc::new(Runtime::new().expect("Failed to create a Tokio runtime"));
+    let http_log_state = HttpLogState::new();
+
     let app = tauri::Builder::default()
         .manage(SaveDialogState::default())
         .manage(AppState {
@@ -63,6 +66,7 @@ fn main() {
             is_pinned: is_pinned.clone(),
             runtime: runtime.clone(),
         })
+        .manage(http_log_state.clone()) // Ensure the state is shared
         .setup(move |app| {
             let _ = config::clean_all_custom_hosts_entries();
 
@@ -111,6 +115,8 @@ fn main() {
             kubeforward::kubecontext::list_service_ports,
             kubeforward::commands::deploy_and_forward_pod,
             kubeforward::commands::stop_proxy_forward,
+            kubeforward::commands::set_http_logs,
+            kubeforward::commands::get_http_logs,
             config::get_configs,
             config::insert_config,
             config::delete_config,
@@ -124,6 +130,8 @@ fn main() {
             commands::close_save_dialog,
             commands::import_configs_from_github,
             commands::open_log_file,
+            commands::clear_http_logs,
+            commands::get_http_log_size,
             keychain::store_key,
             keychain::get_key,
             keychain::delete_key,

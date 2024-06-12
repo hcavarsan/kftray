@@ -112,36 +112,169 @@ pub async fn import_configs_from_github(
 #[tauri::command]
 pub async fn open_log_file(log_file_path: String) -> Result<(), String> {
     use std::env;
+    use std::ffi::OsStr;
+    use std::fs;
     use std::process::Command;
+
+    use open::that_in_background;
+    use open::with_in_background;
 
     println!("Opening log file: {}", log_file_path);
 
-    let editor = env::var("EDITOR").unwrap_or_else(|_| "nano".to_string());
-    let editor_command: Vec<&str> = editor.split_whitespace().collect();
+    if fs::metadata(&log_file_path).is_err() {
+        return Err(format!("Log file does not exist: {}", log_file_path));
+    }
 
-    let result = if editor_command.len() > 1 {
-        Command::new(editor_command[0])
-            .args(&editor_command[1..])
-            .arg(&log_file_path)
-            .spawn()
-    } else {
-        Command::new(&editor).arg(&log_file_path).spawn()
-    };
+    let editor = env::var("EDITOR").unwrap_or_else(|_| {
+        if cfg!(target_os = "windows") {
+            "notepad".to_string()
+        } else {
+            "nano".to_string()
+        }
+    });
 
-    match result {
-        Ok(mut child) => match child.wait() {
-            Ok(status) if status.success() => Ok(()),
-            Ok(status) => Err(format!("Editor exited with status: {}", status)),
-            Err(err) => Err(format!("Failed to wait on editor process: {}", err)),
-        },
+    fn try_open_with_editor(log_file_path: &str, editor: &str) -> Result<(), String> {
+        let editor_parts: Vec<&str> = editor.split_whitespace().collect();
+        if editor_parts.len() > 1 {
+            let app = editor_parts[0];
+            let args: Vec<&OsStr> = editor_parts[1..].iter().map(OsStr::new).collect();
+            let mut command = Command::new(app);
+            command.args(&args).arg(log_file_path);
+            match command.spawn() {
+                Ok(mut child) => match child.wait() {
+                    Ok(status) if status.success() => Ok(()),
+                    Ok(status) => Err(format!("Editor exited with status: {}", status)),
+                    Err(err) => Err(format!("Failed to wait on editor process: {}", err)),
+                },
+                Err(err) => Err(format!("Failed to start editor: {}", err)),
+            }
+        } else {
+            match with_in_background(log_file_path, editor).join() {
+                Ok(Ok(_)) => Ok(()),
+                Ok(Err(err)) => Err(format!("Failed to open with {}: {}", editor, err)),
+                Err(err) => Err(format!("Failed to join thread: {:?}", err)),
+            }
+        }
+    }
+
+    fn fallback_methods(log_file_path: &str) -> Result<(), String> {
+        if cfg!(target_os = "windows") {
+            try_open_with_editor(log_file_path, "notepad")
+        } else if cfg!(target_os = "macos") {
+            try_open_with_editor(log_file_path, "open -t")
+                .or_else(|_| try_open_with_editor(log_file_path, "nano"))
+                .or_else(|_| try_open_with_editor(log_file_path, "vim"))
+        } else {
+            try_open_with_editor(log_file_path, "xdg-open")
+                .or_else(|_| try_open_with_editor(log_file_path, "nano"))
+                .or_else(|_| try_open_with_editor(log_file_path, "vim"))
+        }
+    }
+
+    match try_open_with_editor(&log_file_path, &editor) {
+        Ok(_) => Ok(()),
         Err(err) => {
             println!(
                 "Error opening with editor '{}': {}. Trying default method...",
                 editor, err
             );
-            open::that(&log_file_path)
-                .map(|_| ())
-                .map_err(|err| format!("Error opening log file with default method: {}", err))
+
+            match that_in_background(&log_file_path).join() {
+                Ok(Ok(_)) => Ok(()),
+                Ok(Err(err)) => {
+                    println!("Error opening log file with default method: {}. Trying fallback methods...", err);
+                    fallback_methods(&log_file_path)
+                }
+                Err(err) => Err(format!("Failed to join thread: {:?}", err)),
+            }
         }
     }
+}
+
+#[tauri::command]
+pub async fn clear_http_logs() -> Result<(), String> {
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn get_log_folder_path() -> PathBuf {
+        let mut path = dirs::home_dir().unwrap();
+        path.push(".kftray/http_logs");
+        path
+    }
+
+    fn delete_files_in_folder(path: &PathBuf) -> Result<(), String> {
+        if path.is_dir() {
+            for entry in
+                fs::read_dir(path).map_err(|e| format!("Failed to read directory: {}", e))?
+            {
+                let entry = entry.map_err(|e| format!("Failed to read directory entry: {}", e))?;
+                let path = entry.path();
+                if path.is_file() {
+                    fs::remove_file(&path).map_err(|e| format!("Failed to delete file: {}", e))?;
+                }
+            }
+        } else {
+            return Err(format!("Path is not a directory: {}", path.display()));
+        }
+
+        Ok(())
+    }
+
+    let log_folder_path = get_log_folder_path();
+
+    if !log_folder_path.exists() {
+        return Err(format!(
+            "Log folder does not exist: {}",
+            log_folder_path.display()
+        ));
+    }
+
+    delete_files_in_folder(&log_folder_path)
+}
+
+#[tauri::command]
+pub async fn get_http_log_size() -> Result<u64, String> {
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn get_log_folder_path() -> PathBuf {
+        let mut path = dirs::home_dir().unwrap();
+        path.push(".kftray/http_logs");
+        path
+    }
+
+    fn calculate_folder_size(path: &PathBuf) -> Result<u64, String> {
+        let mut size = 0;
+
+        if path.is_dir() {
+            for entry in
+                fs::read_dir(path).map_err(|e| format!("Failed to read directory: {}", e))?
+            {
+                let entry = entry.map_err(|e| format!("Failed to read directory entry: {}", e))?;
+                let path = entry.path();
+                if path.is_file() {
+                    size += fs::metadata(&path)
+                        .map_err(|e| format!("Failed to get file metadata: {}", e))?
+                        .len();
+                } else if path.is_dir() {
+                    size += calculate_folder_size(&path)?;
+                }
+            }
+        } else {
+            return Err(format!("Path is not a directory: {}", path.display()));
+        }
+
+        Ok(size)
+    }
+
+    let log_folder_path = get_log_folder_path();
+
+    if !log_folder_path.exists() {
+        return Err(format!(
+            "Log folder does not exist: {}",
+            log_folder_path.display()
+        ));
+    }
+
+    calculate_folder_size(&log_folder_path)
 }
