@@ -39,7 +39,7 @@ use crate::models::kube::{
     Target,
 };
 
-const BUFFER_SIZE: usize = 65536;
+const BUFFER_SIZE: usize = 131072;
 
 impl PortForward {
     pub async fn new(
@@ -109,6 +109,12 @@ impl PortForward {
                         trace!(%peer_addr, "new connection");
                     }
 
+                    // Set TCP_NODELAY for the client connection
+                    {
+                        let conn = client_conn.lock().await;
+                        conn.set_nodelay(true)?;
+                    }
+
                     tokio::spawn(async move {
                         if let Err(e) = pf
                             .forward_connection(client_conn, Arc::new(http_log_state))
@@ -165,8 +171,11 @@ impl PortForward {
 
         let request_id = Arc::new(Mutex::new(None));
 
+        // Lock the client connection and set TCP_NODELAY before splitting
         let mut client_conn_guard = client_conn.lock().await;
+        client_conn_guard.set_nodelay(true)?;
         let (mut client_reader, mut client_writer) = tokio::io::split(&mut *client_conn_guard);
+
         let (mut upstream_reader, mut upstream_writer) = tokio::io::split(upstream_conn);
 
         let client_to_upstream = self.create_client_to_upstream_task(
@@ -244,7 +253,7 @@ impl PortForward {
 
             request_buffer.extend_from_slice(&buffer[..n]);
 
-            if is_complete_request(&request_buffer) {
+            if is_complete_request(&request_buffer).await {
                 if http_log_state.get_http_logs(self.config_id).await {
                     if let Some(logger) = &logger {
                         let mut req_id_guard = request_id.lock().await;
@@ -305,7 +314,7 @@ impl PortForward {
 
             response_buffer.extend_from_slice(&buffer[..n]);
 
-            if is_complete_response(&response_buffer) {
+            if is_complete_response(&response_buffer).await {
                 debug!("Complete response found");
                 if http_log_state.get_http_logs(self.config_id).await {
                     debug!("HTTP Response after complete response");
@@ -341,6 +350,7 @@ impl PortForward {
 
         Ok(())
     }
+
     async fn detect_connection_close(
         &self, client_conn: Arc<Mutex<TcpStream>>,
         upstream_reader: &mut (impl tokio::io::AsyncRead + Unpin),
@@ -515,7 +525,7 @@ impl PortForward {
         Ok(Some(packet))
     }
 }
-fn is_complete_request(buffer: &[u8]) -> bool {
+pub async fn is_complete_request(buffer: &[u8]) -> bool {
     if let Some(headers_end) = buffer.windows(4).position(|window| window == b"\r\n\r\n") {
         let body_start = headers_end + 4;
 
@@ -541,7 +551,7 @@ fn is_complete_request(buffer: &[u8]) -> bool {
     false
 }
 
-fn is_complete_response(buffer: &[u8]) -> bool {
+pub async fn is_complete_response(buffer: &[u8]) -> bool {
     if let Some(headers_end) = buffer.windows(4).position(|window| window == b"\r\n\r\n") {
         let body_start = headers_end + 4;
 

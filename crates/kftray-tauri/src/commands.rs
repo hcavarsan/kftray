@@ -112,12 +112,9 @@ pub async fn import_configs_from_github(
 #[tauri::command]
 pub async fn open_log_file(log_file_path: String) -> Result<(), String> {
     use std::env;
-    use std::ffi::OsStr;
     use std::fs;
-    use std::process::Command;
 
     use open::that_in_background;
-    use open::with_in_background;
 
     println!("Opening log file: {}", log_file_path);
 
@@ -125,51 +122,7 @@ pub async fn open_log_file(log_file_path: String) -> Result<(), String> {
         return Err(format!("Log file does not exist: {}", log_file_path));
     }
 
-    let editor = env::var("EDITOR").unwrap_or_else(|_| {
-        if cfg!(target_os = "windows") {
-            "notepad".to_string()
-        } else {
-            "nano".to_string()
-        }
-    });
-
-    fn try_open_with_editor(log_file_path: &str, editor: &str) -> Result<(), String> {
-        let editor_parts: Vec<&str> = editor.split_whitespace().collect();
-        if editor_parts.len() > 1 {
-            let app = editor_parts[0];
-            let args: Vec<&OsStr> = editor_parts[1..].iter().map(OsStr::new).collect();
-            let mut command = Command::new(app);
-            command.args(&args).arg(log_file_path);
-            match command.spawn() {
-                Ok(mut child) => match child.wait() {
-                    Ok(status) if status.success() => Ok(()),
-                    Ok(status) => Err(format!("Editor exited with status: {}", status)),
-                    Err(err) => Err(format!("Failed to wait on editor process: {}", err)),
-                },
-                Err(err) => Err(format!("Failed to start editor: {}", err)),
-            }
-        } else {
-            match with_in_background(log_file_path, editor).join() {
-                Ok(Ok(_)) => Ok(()),
-                Ok(Err(err)) => Err(format!("Failed to open with {}: {}", editor, err)),
-                Err(err) => Err(format!("Failed to join thread: {:?}", err)),
-            }
-        }
-    }
-
-    fn fallback_methods(log_file_path: &str) -> Result<(), String> {
-        if cfg!(target_os = "windows") {
-            try_open_with_editor(log_file_path, "notepad")
-        } else if cfg!(target_os = "macos") {
-            try_open_with_editor(log_file_path, "open -t")
-                .or_else(|_| try_open_with_editor(log_file_path, "nano"))
-                .or_else(|_| try_open_with_editor(log_file_path, "vim"))
-        } else {
-            try_open_with_editor(log_file_path, "xdg-open")
-                .or_else(|_| try_open_with_editor(log_file_path, "nano"))
-                .or_else(|_| try_open_with_editor(log_file_path, "vim"))
-        }
-    }
+    let editor = env::var("EDITOR").unwrap_or_else(|_| default_editor());
 
     match try_open_with_editor(&log_file_path, &editor) {
         Ok(_) => Ok(()),
@@ -188,6 +141,59 @@ pub async fn open_log_file(log_file_path: String) -> Result<(), String> {
                 Err(err) => Err(format!("Failed to join thread: {:?}", err)),
             }
         }
+    }
+}
+
+fn default_editor() -> String {
+    if cfg!(target_os = "macos") {
+        "open".to_string()
+    } else if cfg!(target_os = "windows") {
+        "notepad".to_string()
+    } else {
+        "nano".to_string()
+    }
+}
+
+fn try_open_with_editor(log_file_path: &str, editor: &str) -> Result<(), String> {
+    use std::ffi::OsStr;
+    use std::process::Command;
+
+    use open::with_in_background;
+
+    let editor_parts: Vec<&str> = editor.split_whitespace().collect();
+    if editor_parts.len() > 1 {
+        let app = editor_parts[0];
+        let args: Vec<&OsStr> = editor_parts[1..].iter().map(OsStr::new).collect();
+        let mut command = Command::new(app);
+        command.args(&args).arg(log_file_path);
+        match command.spawn() {
+            Ok(mut child) => match child.wait() {
+                Ok(status) if status.success() => Ok(()),
+                Ok(status) => Err(format!("Editor exited with status: {}", status)),
+                Err(err) => Err(format!("Failed to wait on editor process: {}", err)),
+            },
+            Err(err) => Err(format!("Failed to start editor: {}", err)),
+        }
+    } else {
+        match with_in_background(log_file_path, editor).join() {
+            Ok(Ok(_)) => Ok(()),
+            Ok(Err(err)) => Err(format!("Failed to open with {}: {}", editor, err)),
+            Err(err) => Err(format!("Failed to join thread: {:?}", err)),
+        }
+    }
+}
+
+fn fallback_methods(log_file_path: &str) -> Result<(), String> {
+    if cfg!(target_os = "windows") {
+        try_open_with_editor(log_file_path, "notepad")
+    } else if cfg!(target_os = "macos") {
+        try_open_with_editor(log_file_path, "open")
+            .or_else(|_| try_open_with_editor(log_file_path, "nano"))
+            .or_else(|_| try_open_with_editor(log_file_path, "vim"))
+    } else {
+        try_open_with_editor(log_file_path, "xdg-open")
+            .or_else(|_| try_open_with_editor(log_file_path, "nano"))
+            .or_else(|_| try_open_with_editor(log_file_path, "vim"))
     }
 }
 
