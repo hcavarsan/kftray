@@ -177,15 +177,17 @@ Example Json configuration File:
 
 ## Sharing the configurations through Git
 
-now, with the local json saved, you can share your configurations with your team members by committing the JSON file to a Github repository. This allows for easy collaboration and synchronization of KFtray configurations across your team.
+now, with the local json saved, you can share your configurations with your team members by committing the JSON file to a GitHub repository. This allows for easy collaboration and synchronization of KFtray configurations across your team.
 
-To import and sync your github configs in kftray:
+To import and sync your GitHub configs in kftray:
 
-1. Open the application's main menu
-2. Select the button with github icon in the footer menu
-3. Enter the URL of your Git repository and path containing the JSON file
-4. If your GitHub repository is private, you will need to enter the private token. Credentials are securely saved in the SO keyring (Keychain on macOS). Kftray does not store or save credentials in any local file; they are only stored in the local keyring.
-5. Select the polling time for when Kftray will synchronize configurations and retrieve them from GitHub.
+
+1.  Open the application's main menu
+2.  Select the button with GitHub icon in the footer menu
+4.  Enter the URL of your Git repository and path containing the JSON file
+5.  If your GitHub repository is private, you will need to enter the private token. Credentials are securely saved in the SO keyring (Keychain on macOS). Kftray does not store or save credentials in any local file; they are only stored in the local keyring.
+6.  Select the polling time for when Kftray will synchronize configurations and retrieve them from GitHub.
+
 
 6. KFtray will now sync with the Git repository to automatically import any new configurations or changes committed to the JSON file.
 
