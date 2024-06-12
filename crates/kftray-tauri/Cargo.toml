@@ -64,6 +64,7 @@ image_ascii = "0.1.1"
 httparse = "1.9.2"
 uuid = { version = "1.8.0", features = ["v4"] }
 bytes = "1.6.0"
+tracing-subscriber = "0.3.18"
 
 [dev-dependencies]
 tempfile = "3.9"

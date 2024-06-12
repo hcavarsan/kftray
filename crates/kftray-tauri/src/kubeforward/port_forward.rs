@@ -21,6 +21,7 @@ use tokio::{
     time::timeout,
 };
 use tokio_stream::wrappers::TcpListenerStream;
+use tracing::debug;
 use tracing::{
     error,
     info,
@@ -37,8 +38,7 @@ use crate::models::kube::{
     PortForward,
     Target,
 };
-const INITIAL_TIMEOUT: Duration = Duration::from_secs(600);
-const MAX_RETRIES: usize = 5;
+
 const BUFFER_SIZE: usize = 65536;
 
 impl PortForward {
@@ -111,7 +111,7 @@ impl PortForward {
 
                     tokio::spawn(async move {
                         if let Err(e) = pf
-                            .forward_connection_with_retries(client_conn, Arc::new(http_log_state))
+                            .forward_connection(client_conn, Arc::new(http_log_state))
                             .await
                         {
                             error!(
@@ -134,33 +134,6 @@ impl PortForward {
                 }
             }),
         ))
-    }
-
-    async fn forward_connection_with_retries(
-        self, client_conn: Arc<Mutex<TcpStream>>, http_log_state: Arc<HttpLogState>,
-    ) -> anyhow::Result<()> {
-        let mut retries = 0;
-        let mut timeout_duration = INITIAL_TIMEOUT;
-
-        loop {
-            match self
-                .clone()
-                .forward_connection(client_conn.clone(), http_log_state.clone())
-                .await
-            {
-                Ok(_) => return Ok(()),
-                Err(e) if retries < MAX_RETRIES => {
-                    retries += 1;
-                    timeout_duration *= 2;
-                    error!(
-                        error = e.as_ref() as &dyn std::error::Error,
-                        retries, "retrying connection"
-                    );
-                    tokio::time::sleep(timeout_duration).await;
-                }
-                Err(e) => return Err(e),
-            }
-        }
     }
 
     async fn forward_connection(
@@ -233,58 +206,11 @@ impl PortForward {
             }
         }
 
-        if let Some(logger) = logger {
-            logger.join_handle().await;
-        }
-
         drop(client_conn_guard);
-        drop(forwarder);
-
+        drop(upstream_reader);
         trace!(local_port, pod_port, pod_name = %pod_name, "connection fully closed");
 
         Ok(())
-    }
-
-    async fn detect_connection_close(
-        &self, client_conn: Arc<Mutex<TcpStream>>,
-        upstream_reader: &mut (impl tokio::io::AsyncRead + Unpin),
-    ) -> anyhow::Result<()> {
-        let mut client_buffer = [0; 1];
-        let mut upstream_buffer = [0; 1];
-
-        let mut client_conn_guard = client_conn.lock().await;
-        let (mut client_reader, _) = tokio::io::split(&mut *client_conn_guard);
-
-        loop {
-            tokio::select! {
-                result = client_reader.read(&mut client_buffer) => {
-                    match result {
-                        Ok(0) => {
-                            trace!("Client connection closed");
-                            return Ok(());
-                        }
-                        Ok(_) => continue,
-                        Err(e) => {
-                            error!("Error reading from client: {:?}", e);
-                            return Err(e.into());
-                        }
-                    }
-                }
-                result = upstream_reader.read(&mut upstream_buffer) => {
-                    match result {
-                        Ok(0) => {
-                            trace!("Upstream connection closed");
-                            return Ok(());
-                        }
-                        Ok(_) => continue,
-                        Err(e) => {
-                            error!("Error reading from upstream: {:?}", e);
-                            return Err(e.into());
-                        }
-                    }
-                }
-            }
-        }
     }
 
     async fn create_client_to_upstream_task<'a>(
@@ -296,7 +222,8 @@ impl PortForward {
         request_id: Arc<Mutex<Option<String>>>,
     ) -> anyhow::Result<()> {
         let mut buffer = [0; BUFFER_SIZE];
-        let mut timeout_duration = INITIAL_TIMEOUT;
+        let mut timeout_duration = Duration::from_secs(600);
+        let mut request_buffer = Vec::new();
 
         loop {
             let n = match timeout(timeout_duration, client_reader.read(&mut buffer)).await {
@@ -313,27 +240,33 @@ impl PortForward {
             if n == 0 {
                 break;
             }
-            if http_log_state.get_http_logs(self.config_id).await {
-                if let Some(logger) = &logger {
-                    let mut req_id_guard = request_id.lock().await;
-                    if req_id_guard.is_none() {
-                        *req_id_guard = Some(logger.log_request(buffer[..n].to_vec().into()).await);
-                    } else {
-                        logger.log_request(buffer[..n].to_vec().into()).await;
+            trace!("Read {} bytes from client", n);
+
+            request_buffer.extend_from_slice(&buffer[..n]);
+
+            if is_complete_request(&request_buffer) {
+                if http_log_state.get_http_logs(self.config_id).await {
+                    if let Some(logger) = &logger {
+                        let mut req_id_guard = request_id.lock().await;
+                        let new_request_id =
+                            logger.log_request(request_buffer.clone().into()).await;
+                        trace!("Generated new request ID: {}", new_request_id);
+                        *req_id_guard = Some(new_request_id);
                     }
                 }
+                if http_log_state.get_http_logs(self.config_id).await {
+                    trace!("HTTP Request: {:?}", &request_buffer);
+                }
+                if let Err(e) = upstream_writer.write_all(&request_buffer).await {
+                    error!("Error writing to upstream: {:?}", e);
+                    return Err(e.into());
+                }
+                request_buffer.clear();
             }
-            if http_log_state.get_http_logs(self.config_id).await {
-                trace!("HTTP Request: {:?}", &buffer[..n]);
-            }
-            if let Err(e) = upstream_writer.write_all(&buffer[..n]).await {
-                error!("Error writing to upstream: {:?}", e);
-                return Err(e.into());
-            }
-            timeout_duration = INITIAL_TIMEOUT;
+
+            timeout_duration = Duration::from_secs(600);
         }
 
-        // Ensure the upstream_writer is properly shut down
         if let Err(e) = upstream_writer.shutdown().await {
             error!("Error shutting down upstream writer: {:?}", e);
         }
@@ -350,7 +283,8 @@ impl PortForward {
         http_log_state: &HttpLogState, request_id: Arc<Mutex<Option<String>>>,
     ) -> anyhow::Result<()> {
         let mut buffer = [0; BUFFER_SIZE];
-        let mut timeout_duration = INITIAL_TIMEOUT;
+        let mut timeout_duration = Duration::from_secs(600);
+        let mut response_buffer = Vec::new();
 
         loop {
             let n = match timeout(timeout_duration, upstream_reader.read(&mut buffer)).await {
@@ -367,34 +301,88 @@ impl PortForward {
             if n == 0 {
                 break;
             }
-            if http_log_state.get_http_logs(self.config_id).await {
-                if let Some(logger) = &logger {
-                    let req_id_guard = request_id.lock().await;
-                    if let Some(req_id) = &*req_id_guard {
-                        logger
-                            .log_response(buffer[..n].to_vec().into(), req_id.clone())
-                            .await;
-                    } else {
-                        eprintln!("Request ID not found for logging response");
+            trace!("Read {} bytes from upstream", n);
+
+            response_buffer.extend_from_slice(&buffer[..n]);
+
+            if is_complete_response(&response_buffer) {
+                debug!("Complete response found");
+                if http_log_state.get_http_logs(self.config_id).await {
+                    debug!("HTTP Response after complete response");
+                    if let Some(logger) = &logger {
+                        debug!("Logging response await");
+                        let req_id_guard = request_id.lock().await;
+                        if let Some(req_id) = &*req_id_guard {
+                            trace!("Logging response for request ID: {}", req_id);
+                            logger
+                                .log_response(response_buffer.clone().into(), req_id.clone())
+                                .await;
+                        } else {
+                            eprintln!("Request ID not found for logging response");
+                        }
                     }
                 }
+                if http_log_state.get_http_logs(self.config_id).await {
+                    trace!("HTTP Response: {:?}", &response_buffer);
+                }
+                if let Err(e) = client_writer.write_all(&response_buffer).await {
+                    error!("Error writing to client: {:?}", e);
+                    return Err(e.into());
+                }
+                debug!("Response written to client, clearing buffer");
+                response_buffer.clear();
             }
-            if http_log_state.get_http_logs(self.config_id).await {
-                trace!("HTTP Response: {:?}", &buffer[..n]);
-            }
-            if let Err(e) = client_writer.write_all(&buffer[..n]).await {
-                error!("Error writing to client: {:?}", e);
-                return Err(e.into());
-            }
-            timeout_duration = INITIAL_TIMEOUT;
-        }
 
-        // Ensure the client_writer is properly shut down
+            timeout_duration = Duration::from_secs(600);
+        }
         if let Err(e) = client_writer.shutdown().await {
             error!("Error shutting down client writer: {:?}", e);
         }
 
         Ok(())
+    }
+    async fn detect_connection_close(
+        &self, client_conn: Arc<Mutex<TcpStream>>,
+        upstream_reader: &mut (impl tokio::io::AsyncRead + Unpin),
+    ) -> anyhow::Result<()> {
+        let mut client_buffer = [0; 1];
+        let mut upstream_buffer = [0; 1];
+
+        let mut client_conn_guard = client_conn.lock().await;
+        let (mut client_reader, _) = tokio::io::split(&mut *client_conn_guard);
+
+        loop {
+            tokio::select! {
+                result = client_reader.read(&mut client_buffer) => {
+                    match result {
+                        Ok(0) => {
+                            debug!("Client connection closed");
+                            return Ok(());
+                        }
+                        Ok(_) => continue,
+                        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => continue,
+                        Err(e) => {
+                            error!("Error reading from client: {:?}", e);
+                            return Err(e.into());
+                        }
+                    }
+                }
+                result = upstream_reader.read(&mut upstream_buffer) => {
+                    match result {
+                        Ok(0) => {
+                            debug!("Upstream connection closed");
+                            return Ok(());
+                        }
+                        Ok(_) => continue,
+                        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => continue,
+                        Err(e) => {
+                            error!("Error reading from upstream: {:?}", e);
+                            return Err(e.into());
+                        }
+                    }
+                }
+            }
+        }
     }
     pub fn finder(&self) -> TargetPodFinder {
         TargetPodFinder {
@@ -424,7 +412,6 @@ impl PortForward {
 
         let (pod_name, pod_port) = target.into_parts();
 
-        // Start port forwarding to the pod via TCP
         let mut port_forwarder = self
             .pod_api
             .portforward(&pod_name, &[pod_port])
@@ -447,13 +434,11 @@ impl PortForward {
 
             loop {
                 tokio::select! {
-                    // Handle incoming UDP packets and forward them to the pod via TCP
                     result = local_udp_socket_read.recv_from(&mut udp_buffer) => {
                         match result {
                             Ok((len, src)) => {
                                 peer = Some(src);
 
-                                // Encapsulate the UDP packet in a custom protocol for sending over TCP
                                 let packet_len = (len as u32).to_be_bytes();
                                 if let Err(e) = tcp_write.write_all(&packet_len).await {
                                     error!("Failed to write packet length to TCP stream: {:?}", e);
@@ -500,7 +485,6 @@ impl PortForward {
                 }
             }
 
-            // Ensure the tcp_write is properly shut down
             if let Err(e) = tcp_write.shutdown().await {
                 error!("Error shutting down TCP writer: {:?}", e);
             }
@@ -530,4 +514,115 @@ impl PortForward {
 
         Ok(Some(packet))
     }
+}
+fn is_complete_request(buffer: &[u8]) -> bool {
+    if let Some(headers_end) = buffer.windows(4).position(|window| window == b"\r\n\r\n") {
+        let body_start = headers_end + 4;
+
+        let mut headers = [httparse::EMPTY_HEADER; 64];
+        let mut req = httparse::Request::new(&mut headers);
+        if let Ok(httparse::Status::Complete(_)) = req.parse(buffer) {
+            // Find Content-Length header
+            if let Some(content_length) = req.headers.iter().find_map(|h| {
+                if h.name.eq_ignore_ascii_case("content-length") {
+                    std::str::from_utf8(h.value)
+                        .ok()
+                        .and_then(|v| v.parse::<usize>().ok())
+                } else {
+                    None
+                }
+            }) {
+                return buffer.len() >= body_start + content_length;
+            } else {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn is_complete_response(buffer: &[u8]) -> bool {
+    if let Some(headers_end) = buffer.windows(4).position(|window| window == b"\r\n\r\n") {
+        let body_start = headers_end + 4;
+
+        let mut headers = [httparse::EMPTY_HEADER; 64];
+        let mut res = httparse::Response::new(&mut headers);
+        if let Ok(httparse::Status::Complete(_)) = res.parse(buffer) {
+            if let Some(content_length) = res.headers.iter().find_map(|h| {
+                if h.name.eq_ignore_ascii_case("content-length") {
+                    std::str::from_utf8(h.value)
+                        .ok()
+                        .and_then(|v| v.parse::<usize>().ok())
+                } else {
+                    None
+                }
+            }) {
+                let complete = buffer.len() >= body_start + content_length;
+                debug!(
+                    "Content-Length: {}, Buffer Length: {}, Complete: {}",
+                    content_length,
+                    buffer.len(),
+                    complete
+                );
+                return complete;
+            }
+
+            if res.headers.iter().any(|h| {
+                h.name.eq_ignore_ascii_case("transfer-encoding")
+                    && h.value.eq_ignore_ascii_case(b"chunked")
+            }) {
+                let mut pos = body_start;
+                loop {
+                    if let Some(chunk_size_end) = buffer[pos..]
+                        .windows(2)
+                        .position(|window| window == b"\r\n")
+                    {
+                        let chunk_size_start = pos;
+                        pos += chunk_size_end + 2;
+
+                        let chunk_size_str = match std::str::from_utf8(
+                            &buffer[chunk_size_start..chunk_size_start + chunk_size_end],
+                        ) {
+                            Ok(s) => s,
+                            Err(_) => return false,
+                        };
+                        let chunk_size = match usize::from_str_radix(chunk_size_str.trim(), 16) {
+                            Ok(size) => size,
+                            Err(_) => return false,
+                        };
+
+                        if chunk_size == 0 {
+                            let complete = buffer.len() >= pos + 2;
+                            debug!(
+                                "Last Chunk Found. Buffer Length: {}, Complete: {}",
+                                buffer.len(),
+                                complete
+                            );
+                            return complete;
+                        }
+
+                        pos += chunk_size + 2;
+
+                        if buffer.len() < pos {
+                            trace!(
+                                "Incomplete Chunk. Buffer Length: {}, Position: {}",
+                                buffer.len(),
+                                pos
+                            );
+                            return false;
+                        }
+                    } else {
+                        trace!(
+                            "Incomplete Chunk Size Line. Buffer Length: {}",
+                            buffer.len()
+                        );
+                        return false;
+                    }
+                }
+            }
+
+            return true;
+        }
+    }
+    false
 }

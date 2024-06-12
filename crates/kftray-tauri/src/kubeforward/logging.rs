@@ -6,14 +6,11 @@ use std::sync::Arc;
 use anyhow::Context;
 use bytes::Bytes;
 use flate2::read::GzDecoder;
-use httparse::{
-    Request,
-    Response,
-    Status,
+use httparse::Status;
+use k8s_openapi::chrono::{
+    DateTime,
+    Utc,
 };
-use image::DynamicImage;
-use image_ascii::TextGenerator;
-use k8s_openapi::chrono::Utc;
 use serde_json::Value;
 use tokio::fs::{
     self,
@@ -21,29 +18,29 @@ use tokio::fs::{
     OpenOptions,
 };
 use tokio::io::AsyncWriteExt;
-use tokio::sync::{
-    mpsc,
-    RwLock,
+use tokio::sync::mpsc::{
+    self,
+    Sender,
 };
-use tokio::task::JoinHandle;
+use tokio::sync::RwLock;
+use tokio::task;
+use tracing::{
+    debug,
+    error,
+};
 use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct Logger {
-    sender: mpsc::Sender<LogEntry>,
-    handle: Arc<JoinHandle<()>>,
-    #[allow(dead_code)]
-    trace_map: Arc<RwLock<HashMap<String, String>>>,
+    log_sender: Sender<LogMessage>,
+    trace_map: TraceMap,
 }
 
-enum LogEntry {
-    Request(Bytes, String),
-    Response(Bytes, String),
-}
+type TraceMap = Arc<RwLock<HashMap<String, (String, DateTime<Utc>)>>>;
 
 impl Logger {
     pub async fn new(log_file_path: PathBuf) -> anyhow::Result<Self> {
-        let (sender, mut receiver) = mpsc::channel(100);
+        let (log_sender, mut log_receiver) = mpsc::channel(100);
         let log_file = Arc::new(RwLock::new(
             OpenOptions::new()
                 .append(true)
@@ -51,81 +48,80 @@ impl Logger {
                 .open(&log_file_path)
                 .await?,
         ));
-        let trace_map = Arc::new(RwLock::new(HashMap::new()));
+        let trace_map: TraceMap = Arc::new(RwLock::new(HashMap::new()));
 
-        let handle = tokio::spawn({
-            let log_file = log_file.clone();
-            let trace_map = trace_map.clone();
-            async move {
-                while let Some(entry) = receiver.recv().await {
-                    let log_file = log_file.clone();
-                    let trace_map = trace_map.clone();
-                    match entry {
-                        LogEntry::Request(buffer, request_id) => {
-                            let trace_id = Uuid::new_v4().to_string();
-                            trace_map
-                                .write()
-                                .await
-                                .insert(request_id.clone(), trace_id.clone());
-                            if let Err(e) = log_request(&buffer, &log_file, &trace_id).await {
-                                eprintln!("Failed to log request: {:?}", e);
-                            }
-                        }
-                        LogEntry::Response(buffer, request_id) => {
-                            if let Some(trace_id) = trace_map.read().await.get(&request_id).cloned()
-                            {
-                                if let Err(e) = log_response(&buffer, &log_file, &trace_id).await {
-                                    eprintln!("Failed to log response: {:?}", e);
-                                }
-                                trace_map.write().await.remove(&request_id);
-                            } else {
-                                eprintln!("Trace ID not found for request ID: {}", request_id);
-                            }
-                        }
-                    }
+        tokio::spawn(async move {
+            while let Some(log_message) = log_receiver.recv().await {
+                if let Err(e) = write_log(&log_file, log_message).await {
+                    error!("Failed to write log: {:?}", e);
                 }
             }
         });
 
         Ok(Self {
-            sender,
-            handle: Arc::new(handle),
+            log_sender,
             trace_map,
         })
     }
 
     pub async fn log_request(&self, buffer: Bytes) -> String {
         let request_id = Uuid::new_v4().to_string();
-        let _ = self
-            .sender
-            .send(LogEntry::Request(buffer, request_id.clone()))
-            .await;
+        let timestamp = Utc::now();
+        debug!("Generated request ID: {}", request_id);
+
+        let trace_id = request_id.clone();
+        debug!(
+            "Generated trace ID: {} for request ID: {}",
+            trace_id, request_id
+        );
+        self.trace_map
+            .write()
+            .await
+            .insert(request_id.clone(), (trace_id.clone(), timestamp));
+
+        let log_sender = self.log_sender.clone();
+        tokio::spawn(async move {
+            if let Err(e) = log_request(buffer, log_sender, trace_id, timestamp).await {
+                error!("Failed to log request: {:?}", e);
+            }
+        });
+
         request_id
     }
 
     pub async fn log_response(&self, buffer: Bytes, request_id: String) {
-        let _ = self
-            .sender
-            .send(LogEntry::Response(buffer, request_id))
-            .await;
-    }
+        let timestamp = Utc::now();
+        debug!("Logging response for request ID: {}", request_id);
 
-    pub async fn join_handle(&self) {
-        let handle = Arc::clone(&self.handle);
-        match Arc::try_unwrap(handle) {
-            Ok(join_handle) => {
-                join_handle.await.unwrap();
+        let trace_info = {
+            let trace_map = self.trace_map.read().await;
+            trace_map.get(&request_id).cloned()
+        };
+
+        if let Some((trace_id, request_timestamp)) = trace_info {
+            debug!("2 Logging response for request ID: {}", request_id);
+            let took = (timestamp - request_timestamp).num_milliseconds();
+            let log_sender = self.log_sender.clone();
+            debug!("3 Logging response for request ID: {}", request_id);
+            tokio::spawn(async move {
+                if let Err(e) = log_response(buffer, log_sender, trace_id, timestamp, took).await {
+                    error!("Failed to log response: {:?}", e);
+                }
+            });
+            debug!("4 Logging response for request ID: {}", request_id);
+            {
+                let mut trace_map = self.trace_map.write().await;
+                trace_map.remove(&request_id);
             }
-            Err(_) => {
-                eprintln!("Failed to unwrap join handle");
-            }
+            debug!("5 Logging response for request ID: {}", request_id);
+        } else {
+            error!("Trace ID not found for request ID: {}", request_id);
         }
     }
 }
 
 pub async fn create_log_file_path(config_id: i64, local_port: u16) -> anyhow::Result<PathBuf> {
     let mut path = dirs::home_dir().context("Failed to get home directory")?;
-
     path.push(".kftray/http_logs");
     fs::create_dir_all(&path).await?;
     path.push(format!("{}_{}.log", config_id, local_port));
@@ -133,83 +129,176 @@ pub async fn create_log_file_path(config_id: i64, local_port: u16) -> anyhow::Re
 }
 
 async fn log_request(
-    buffer: &[u8], log_file: &Arc<RwLock<File>>, trace_id: &str,
+    buffer: Bytes, log_sender: Sender<LogMessage>, trace_id: String, timestamp: DateTime<Utc>,
 ) -> anyhow::Result<()> {
-    let mut log_entry = String::new();
-    log_entry.push_str("\n----------------------------------------\n");
-    log_entry.push_str(&format!("Trace ID: {}\n", trace_id));
-    log_entry.push_str(&format!("Request at: {}\n", Utc::now().to_rfc3339()));
-
+    debug!("Logging request with trace ID: {}", trace_id);
     let mut headers = [httparse::EMPTY_HEADER; 64];
-    let mut req = Request::new(&mut headers);
-    match req.parse(buffer) {
-        Ok(Status::Complete(_)) => {
-            log_entry.push_str(&format!("Method: {}\n", req.method.unwrap_or("")));
-            log_entry.push_str(&format!("Path: {}\n", req.path.unwrap_or("")));
-            log_entry.push_str(&format!("Version: {}\n", req.version.unwrap_or(0)));
-            log_entry.push_str("\n\nHeaders:\n");
-            for header in req.headers.iter() {
-                log_entry.push_str(&format!(
-                    "{}: {}\n",
-                    header.name,
-                    std::str::from_utf8(header.value).unwrap_or("")
-                ));
-            }
-        }
-        Ok(Status::Partial) => {
-            // Do nothing if the request is incomplete
-            return Ok(());
-        }
-        Err(_) => {
-            // Do nothing if there's an error parsing the request
+    let mut req = httparse::Request::new(&mut headers);
+    if let Ok(httparse::Status::Complete(_)) = req.parse(&buffer) {
+        if is_image(req.headers) {
+            debug!("Skipping logging for image request");
             return Ok(());
         }
     }
 
-    let mut log_file = log_file.write().await;
-    log_file.write_all(log_entry.as_bytes()).await?;
-    log_file.flush().await?;
+    let log_entry = format_request_log(&buffer, &trace_id, timestamp).await?;
+    if log_sender.try_send(LogMessage::Request(log_entry)).is_err() {
+        error!("Log channel is full, dropping log message");
+    }
     Ok(())
 }
 
 async fn log_response(
-    buffer: &[u8], log_file: &Arc<RwLock<File>>, trace_id: &str,
+    buffer: Bytes, log_sender: Sender<LogMessage>, trace_id: String, timestamp: DateTime<Utc>,
+    took: i64,
 ) -> anyhow::Result<()> {
-    let mut log_entry = String::new();
-    log_entry.push_str("\n----------------------------------------\n");
-    log_entry.push_str(&format!("Trace ID: {}\n", trace_id));
-    log_entry.push_str(&format!("Response at: {}\n", Utc::now().to_rfc3339()));
+    debug!("Logging response with trace ID: {}", trace_id);
+    let mut headers = [httparse::EMPTY_HEADER; 64];
+    let mut res = httparse::Response::new(&mut headers);
+    if let Ok(httparse::Status::Complete(_)) = res.parse(&buffer) {
+        if is_image(res.headers) {
+            debug!("Skipping logging for image response");
+            return Ok(());
+        }
+    }
+
+    let log_entry = format_response_log(&buffer, &trace_id, timestamp, took).await?;
+    if log_sender
+        .try_send(LogMessage::Response(log_entry))
+        .is_err()
+    {
+        error!("Log channel is full, dropping log message");
+    }
+    Ok(())
+}
+
+async fn format_request_log(
+    buffer: &[u8], trace_id: &str, timestamp: DateTime<Utc>,
+) -> anyhow::Result<String> {
+    let mut log_entry = format!(
+        "\n----------------------------------------\n\
+         Trace ID: {}\n\
+         Request at: {}\n",
+        trace_id,
+        timestamp.to_rfc3339()
+    );
 
     let mut headers = [httparse::EMPTY_HEADER; 64];
-    let mut res = Response::new(&mut headers);
-    match res.parse(buffer) {
-        Ok(Status::Complete(_)) => {
-            log_entry.push_str(&format!("Status: {}\n", res.code.unwrap_or(0)));
-            log_entry.push_str("\n\nHeaders:\n");
-            for header in res.headers.iter() {
-                log_entry.push_str(&format!(
-                    "{}: {}\n",
-                    header.name,
-                    std::str::from_utf8(header.value).unwrap_or("")
-                ));
-            }
+    let mut req = httparse::Request::new(&mut headers);
+    if let Ok(Status::Complete(_)) = req.parse(buffer) {
+        log_entry.push_str(&format!(
+            "Method: {}\nPath: {}\nVersion: {}\n\nHeaders:\n",
+            req.method.unwrap_or(""),
+            req.path.unwrap_or(""),
+            req.version.unwrap_or(0)
+        ));
+        for header in req.headers.iter() {
+            log_entry.push_str(&format!(
+                "{}: {}\n",
+                header.name,
+                std::str::from_utf8(header.value).unwrap_or("")
+            ));
+        }
 
-            let headers_len = buffer
+        if let Some(headers_end) = buffer.windows(4).position(|window| window == b"\r\n\r\n") {
+            let body_start = headers_end + 4;
+            let content_length = req
+                .headers
                 .iter()
-                .position(|&b| b == b'\r')
-                .unwrap_or(buffer.len())
-                + 4;
-            if let Some(body) = buffer.get(headers_len..) {
+                .find_map(|h| {
+                    if h.name.eq_ignore_ascii_case("content-length") {
+                        std::str::from_utf8(h.value)
+                            .ok()
+                            .and_then(|v| v.parse::<usize>().ok())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(0);
+
+            if let Some(body) = buffer.get(body_start..body_start + content_length) {
+                if req.headers.iter().any(|h| {
+                    h.name.eq_ignore_ascii_case("content-encoding")
+                        && h.value.eq_ignore_ascii_case(b"gzip")
+                }) {
+                    match decompress_gzip(body).await {
+                        Ok(decompressed_body) => {
+                            log_body(&decompressed_body, &mut log_entry, req.headers).await?;
+                        }
+                        Err(e) => {
+                            log_entry
+                                .push_str(&format!("Failed to decompress request body: {:?}\n", e));
+                        }
+                    }
+                } else {
+                    log_body(body, &mut log_entry, req.headers).await?;
+                }
+            }
+        }
+    }
+
+    Ok(log_entry)
+}
+
+async fn format_response_log(
+    buffer: &[u8], trace_id: &str, timestamp: DateTime<Utc>, took: i64,
+) -> anyhow::Result<String> {
+    let mut log_entry = format!(
+        "\n----------------------------------------\n\
+         Trace ID: {}\n\
+         Response at: {}\n\
+         Took: {} ms\n",
+        trace_id,
+        timestamp.to_rfc3339(),
+        took
+    );
+    println!(
+        "logging Response at: {}\nTook: {} ms\n",
+        timestamp.to_rfc3339(),
+        took
+    );
+    let mut headers = [httparse::EMPTY_HEADER; 64];
+    let mut res = httparse::Response::new(&mut headers);
+    if let Ok(Status::Complete(_)) = res.parse(buffer) {
+        log_entry.push_str(&format!("Status: {}\n\nHeaders:\n", res.code.unwrap_or(0)));
+        for header in res.headers.iter() {
+            log_entry.push_str(&format!(
+                "{}: {}\n",
+                header.name,
+                std::str::from_utf8(header.value).unwrap_or("")
+            ));
+        }
+
+        if let Some(headers_end) = buffer.windows(4).position(|window| window == b"\r\n\r\n") {
+            let body_start = headers_end + 4;
+            let content_length = res
+                .headers
+                .iter()
+                .find_map(|h| {
+                    if h.name.eq_ignore_ascii_case("content-length") {
+                        std::str::from_utf8(h.value)
+                            .ok()
+                            .and_then(|v| v.parse::<usize>().ok())
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(0);
+
+            if let Some(body) = buffer.get(body_start..body_start + content_length) {
                 if res.headers.iter().any(|h| {
                     h.name.eq_ignore_ascii_case("content-encoding")
                         && h.value.eq_ignore_ascii_case(b"gzip")
                 }) {
-                    match decompress_gzip(body) {
+                    match decompress_gzip(body).await {
                         Ok(decompressed_body) => {
                             log_body(&decompressed_body, &mut log_entry, res.headers).await?;
                         }
                         Err(e) => {
-                            log_entry.push_str(&format!("Failed to decompress body: {:?}\n", e))
+                            log_entry.push_str(&format!(
+                                "Failed to decompress response body: {:?}\n",
+                                e
+                            ));
                         }
                     }
                 } else {
@@ -217,27 +306,16 @@ async fn log_response(
                 }
             }
         }
-        Ok(Status::Partial) => {
-            // Do nothing if the response is incomplete
-            return Ok(());
-        }
-        Err(_) => {
-            // Do nothing if there's an error parsing the response
-            return Ok(());
-        }
     }
 
-    let mut log_file = log_file.write().await;
-    log_file.write_all(log_entry.as_bytes()).await?;
-    log_file.flush().await?;
-    Ok(())
+    Ok(log_entry)
 }
 
-async fn log_body<'a>(
-    body: &[u8], log_entry: &mut String, headers: &[httparse::Header<'a>],
+async fn log_body(
+    body: &[u8], log_entry: &mut String, headers: &[httparse::Header<'_>],
 ) -> anyhow::Result<()> {
     if !body.is_empty() {
-        log_entry.push_str("\nBody:\n");
+        log_entry.push_str("\n\nBody:\n");
         if let Ok(body_str) = std::str::from_utf8(body) {
             if let Ok(json_value) = serde_json::from_str::<Value>(body_str) {
                 log_entry.push_str(&format!("{}\n", serde_json::to_string_pretty(&json_value)?));
@@ -245,14 +323,9 @@ async fn log_body<'a>(
                 log_entry.push_str(&format!("{}\n", body_str.trim_end()));
             }
         } else if is_image(headers) {
-            if let Ok(image) = image::load_from_memory(body) {
-                let ascii_art = convert_image_to_ascii(&image)?;
-                log_entry.push_str(&format!("{}\n", ascii_art));
-            } else {
-                log_entry.push_str("Failed to convert image to ascii\n");
-            }
+            log_entry.push_str("Body is an image\n");
         } else {
-            log_entry.push_str(&format!("Body (as bytes): {:?}\n", body));
+            log_entry.push_str("Body is binary or non-UTF-8 data\n");
         }
     } else {
         log_entry.push_str("Body is empty\n");
@@ -260,23 +333,46 @@ async fn log_body<'a>(
     Ok(())
 }
 
-fn decompress_gzip(data: &[u8]) -> anyhow::Result<Vec<u8>> {
-    let mut decoder = GzDecoder::new(data);
-    let mut decompressed_data = Vec::new();
-    decoder.read_to_end(&mut decompressed_data)?;
-    Ok(decompressed_data)
+async fn decompress_gzip(data: &[u8]) -> anyhow::Result<Vec<u8>> {
+    let data = data.to_vec();
+    task::spawn_blocking(move || {
+        let mut decoder = GzDecoder::new(&data[..]);
+        let mut decompressed_data = Vec::new();
+        decoder.read_to_end(&mut decompressed_data)?;
+        Ok(decompressed_data)
+    })
+    .await?
 }
 
 fn is_image(headers: &[httparse::Header<'_>]) -> bool {
     headers
         .iter()
-        .any(|h| h.name.eq_ignore_ascii_case("Accept") && h.value.starts_with(b"image/"))
-        || headers
-            .iter()
-            .any(|h| h.name.eq_ignore_ascii_case("content-type") && h.value.starts_with(b"image/"))
+        .any(|h| h.name.eq_ignore_ascii_case("content-type") && h.value.starts_with(b"image/"))
 }
 
-fn convert_image_to_ascii(image: &DynamicImage) -> anyhow::Result<String> {
-    let ascii_art = TextGenerator::new(image).generate();
-    Ok(ascii_art)
+async fn write_log(log_file: &Arc<RwLock<File>>, log_message: LogMessage) -> anyhow::Result<()> {
+    let mut log_file = log_file.write().await;
+    debug!("Acquired write lock for log file");
+
+    log_file.write_all(log_message.as_bytes()).await?;
+    debug!("Wrote log entry to file");
+
+    log_file.flush().await?;
+    debug!("Flushed log entry to file");
+
+    Ok(())
+}
+
+enum LogMessage {
+    Request(String),
+    Response(String),
+}
+
+impl LogMessage {
+    fn as_bytes(&self) -> &[u8] {
+        match self {
+            LogMessage::Request(log) => log.as_bytes(),
+            LogMessage::Response(log) => log.as_bytes(),
+        }
+    }
 }
