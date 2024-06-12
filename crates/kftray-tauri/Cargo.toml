@@ -22,7 +22,7 @@ tauri = { version = "1.6", default-features = false, features = [
 	"devtools",
 ] }
 tauri-plugin-positioner = { version = "1.0.5", features = ["system-tray"] }
-tokio = { version = "1.37.0", features = ["rt-multi-thread", "macros", "full"] }
+tokio = { version = "1.38.0", features = ["rt-multi-thread", "macros", "full"] }
 rusqlite = { version = "0.31.0", features = ["bundled"] }
 dirs = "5.0.1"
 reqwest = "0.12.4"
@@ -59,7 +59,7 @@ h2 = { optional = true, version = "0.4.5" }
 fix-path-env = { git = "https://github.com/tauri-apps/fix-path-env-rs" }
 open = "5.1.4"
 flate2 = "1.0"
-image = "0.24.9"
+image = "0.25.0"
 image_ascii = "0.1.1"
 httparse = "1.9.2"
 uuid = { version = "1.8.0", features = ["v4"] }
