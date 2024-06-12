@@ -81,9 +81,9 @@ impl Logger {
 
         let log_sender = self.log_sender.clone();
         tokio::spawn(async move {
-            if let Err(e) = log_request(buffer, log_sender, trace_id, timestamp).await {
-                error!("Failed to log request: {:?}", e);
-            }
+            log_request(buffer, log_sender, trace_id, timestamp)
+                .await
+                .unwrap_or_else(|e| error!("Failed to log request: {:?}", e));
         });
 
         request_id
@@ -104,9 +104,9 @@ impl Logger {
             let log_sender = self.log_sender.clone();
             debug!("3 Logging response for request ID: {}", request_id);
             tokio::spawn(async move {
-                if let Err(e) = log_response(buffer, log_sender, trace_id, timestamp, took).await {
-                    error!("Failed to log response: {:?}", e);
-                }
+                log_response(buffer, log_sender, trace_id, timestamp, took)
+                    .await
+                    .unwrap_or_else(|e| error!("Failed to log response: {:?}", e));
             });
             debug!("4 Logging response for request ID: {}", request_id);
             {
