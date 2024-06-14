@@ -96,19 +96,15 @@ jobs:
       packages: write
     runs-on: ubuntu-latest
     steps:
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
       - name: Checkout repository
         uses: actions/checkout@v4
-      - name: Build and push Docker image
+
+      - name: Build Docker image
         uses: docker/build-push-action@v5
         with:
           context: ./crates/kftray-server
           file: ./crates/kftray-server/Dockerfile
-          push: true
+          push: false
           tags: |
             ghcr.io/${{ github.repository_owner }}/kftray-server:${{ github.sha }}
+
