@@ -149,6 +149,8 @@ jobs:
       - name: Rust cache
         uses: swatinem/rust-cache@v2
 
+      - name: Reconfigure for Linux ARM64
+        run: rustup target add aarch64-unknown-linux-gnu
 
       - name: Install pnpm
         uses: pnpm/action-setup@v3
