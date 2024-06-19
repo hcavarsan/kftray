@@ -36,6 +36,11 @@ pub struct KubeServicePortInfo {
     pub port: Option<IntOrString>,
 }
 
+#[derive(Serialize, Debug)]
+pub struct PodInfo {
+    pub labels_str: String,
+}
+
 #[derive(Clone)]
 #[allow(dead_code)]
 pub struct PortForward {
@@ -53,6 +58,7 @@ pub struct PortForward {
 #[derive(Clone)]
 pub enum TargetSelector {
     ServiceName(String),
+    PodLabel(String),
 }
 
 #[derive(Clone)]

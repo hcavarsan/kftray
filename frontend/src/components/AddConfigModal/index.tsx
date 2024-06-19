@@ -1,3 +1,5 @@
+/* eslint-disable complexity */
+
 import React, { useEffect, useState } from 'react'
 import { useQuery } from 'react-query'
 import ReactSelect, { ActionMeta } from 'react-select'
@@ -48,7 +50,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     value: string | number
     label: string
   } | null>(null)
-  const [selectedService, setSelectedService] = useState<{
+  const [selectedServiceOrTarget, setSelectedServiceOrTarget] = useState<{
     name?: string
     value: string | number
     label: string
@@ -78,7 +80,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     const isValid = [
       selectedContext,
       selectedNamespace,
-      selectedService ?? newConfig.remote_address,
+      selectedServiceOrTarget ?? newConfig.remote_address,
       selectedPort ?? newConfig.remote_port,
       selectedWorkloadType,
       selectedProtocol,
@@ -90,7 +92,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
   }, [
     selectedContext,
     selectedNamespace,
-    selectedService,
+    selectedServiceOrTarget,
     selectedPort,
     selectedWorkloadType,
     selectedProtocol,
@@ -99,6 +101,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     newConfig.remote_port,
     newConfig.local_port,
     newConfig.workload_type,
+    newConfig.target,
   ])
 
   const [isFormValid, setIsFormValid] = useState(false)
@@ -139,8 +142,6 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
   const namespaceQuery = useQuery(
     ['kube-namespaces', newConfig.context],
     () => {
-      console.log('Invoking namespaces with:', newConfig.context)
-
       return invoke<{ name: string }[]>('list_namespaces', {
         contextName: newConfig.context,
         kubeconfig: kubeConfig,
@@ -151,12 +152,26 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
       enabled: !!newConfig.context,
     },
   )
-
-  const serviceQuery = useQuery(
-    ['kube-services', newConfig.context, newConfig.namespace],
+  const podsQuery = useQuery(
+    ['kube-pods', newConfig.context, newConfig.namespace],
     () => {
-      console.log('Invoking list_services with:', newConfig)
+      return invoke<{ labels_str: string }[]>('list_pods', {
+        contextName: newConfig.context,
+        namespace: newConfig.namespace,
+        kubeconfig: kubeConfig,
+      })
+    },
+    {
+      enabled:
+        !!newConfig.context &&
+        !!newConfig.namespace &&
+        newConfig.workload_type === 'pod',
+    },
+  )
 
+  const serviceOrTargetQuery = useQuery(
+    ['kube-services-or-targets', newConfig.context, newConfig.namespace],
+    () => {
       return invoke<{ name: string }[]>('list_services', {
         contextName: newConfig.context,
         namespace: newConfig.namespace,
@@ -180,8 +195,6 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
       newConfig.service,
     ],
     () => {
-      console.log('Invoking list_service_ports with:', newConfig)
-
       return invoke<{ name: string; port: number }[]>('list_service_ports', {
         contextName: newConfig.context,
         namespace: newConfig.namespace,
@@ -192,7 +205,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     {
       initialData:
         configData?.ports?.map(port => ({
-          name: port.name ?? 'default', // Provide a default name if undefined
+          name: port.name ?? 'default',
           port: port.port,
         })) ?? [],
       enabled:
@@ -235,12 +248,13 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
           ? { label: newConfig.namespace, value: newConfig.namespace }
           : null,
       )
-      setSelectedService(
+      setSelectedServiceOrTarget(
         newConfig.service
           ? { label: newConfig.service, value: newConfig.service }
-          : null,
+          : newConfig.target
+            ? { label: newConfig.target, value: newConfig.target }
+            : null,
       )
-      // Corrected part: Set selectedPort based on newConfig.remote_port
       setSelectedPort(
         newConfig.remote_port
           ? {
@@ -261,6 +275,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     newConfig.remote_port,
     newConfig.workload_type,
     newConfig.kubeconfig,
+    newConfig.target,
   ])
 
   useEffect(() => {
@@ -272,7 +287,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
   const resetState = () => {
     setSelectedContext(null)
     setSelectedNamespace(null)
-    setSelectedService(null)
+    setSelectedServiceOrTarget(null)
     setSelectedPort(null)
     setSelectedWorkloadType(null)
     setSelectedProtocol(null)
@@ -291,7 +306,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
           selectedContext?.value !== selectedOption?.value
       ) {
         setSelectedNamespace(null)
-        setSelectedService(null)
+        setSelectedServiceOrTarget(null)
         setSelectedPort(null)
         handleInputChange({
           target: { name: 'namespace', value: '' },
@@ -310,7 +325,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
         !selectedOption ||
           selectedNamespace?.value !== selectedOption?.value
       ) {
-        setSelectedService(null)
+        setSelectedServiceOrTarget(null)
         setSelectedPort(null)
         handleInputChange({
           target: { name: 'service', value: '' },
@@ -321,10 +336,11 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
       }
       break
     case 'service':
-      setSelectedService(selectedOption)
+    case 'target':
+      setSelectedServiceOrTarget(selectedOption)
       if (
         !selectedOption ||
-          selectedService?.value !== selectedOption?.value
+          selectedServiceOrTarget?.value !== selectedOption?.value
       ) {
         setSelectedPort(null)
         handleInputChange({
@@ -353,7 +369,6 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
 
   useEffect(() => {
     if (setNewConfig) {
-      // Check if setNewConfig is not undefined
       setNewConfig((prevConfig: Config) => ({
         ...prevConfig,
         kubeconfig: kubeConfig ?? '',
@@ -398,12 +413,12 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                 borderRadius='20px'
                 bg='gray.800'
                 boxShadow={`
-				/* Inset shadow for top & bottom inner border effect using dark gray */
-				inset 0 2px 6px rgba(0, 0, 0, 0.6),
-				inset 0 -2px 6px rgba(0, 0, 0, 0.6),
-				/* Inset shadow for an inner border all around using dark gray */
-				inset 0 0 0 4px rgba(45, 60, 81, 0.9)
-			  `}
+                /* Inset shadow for top & bottom inner border effect using dark gray */
+                inset 0 2px 6px rgba(0, 0, 0, 0.6),
+                inset 0 -2px 6px rgba(0, 0, 0, 0.6),
+                /* Inset shadow for an inner border all around using dark gray */
+                inset 0 0 0 4px rgba(45, 60, 81, 0.9)
+              `}
               >
                 <Flex justifyContent='space-between' alignItems='center'>
                   <Text fontSize='sm' fontWeight='bold'>
@@ -510,6 +525,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                       options={[
                         { label: 'service', value: 'service' },
                         { label: 'proxy', value: 'proxy' },
+                        { label: 'pod', value: 'pod' }, // Add pod option
                       ]}
                       value={selectedWorkloadType}
                       onChange={selectedOption =>
@@ -641,23 +657,50 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                   <>
                     <SimpleGrid columns={2} spacing={3} mt='2'>
                       <FormControl>
-                        <FormLabel htmlFor='service' fontSize='12px' mb='0'>
-                          Service
+                        <FormLabel
+                          htmlFor={
+                            newConfig.workload_type === 'pod'
+                              ? 'target'
+                              : 'service'
+                          }
+                          fontSize='12px'
+                          mb='0'
+                        >
+                          {newConfig.workload_type === 'pod'
+                            ? 'Target'
+                            : 'Service'}
                         </FormLabel>
                         <ReactSelect
                           styles={customStyles}
                           name='service'
-                          options={serviceQuery.data?.map(service => ({
-                            label: service.name,
-                            value: service.name,
-                          }))}
-                          value={selectedService}
+                          options={
+                            newConfig.workload_type === 'pod'
+                              ? podsQuery.data?.map(pod => ({
+                                label: pod.labels_str,
+                                value: pod.labels_str,
+                              }))
+                              : serviceOrTargetQuery.data?.map(service => ({
+                                label: service.name,
+                                value: service.name,
+                              }))
+                          }
+                          value={selectedServiceOrTarget}
                           onChange={selectedOption =>
                             handleSelectChange(
                               selectedOption as Option,
                               { name: 'service' } as ActionMeta<Option>,
                             )
                           }
+                          menuPlacement='auto'
+                          theme={theme => ({
+                            ...theme,
+                            borderRadius: 4,
+                            colors: {
+                              ...theme.colors,
+                              primary25: 'lightgrey',
+                              primary: 'grey',
+                            },
+                          })}
                         />
                       </FormControl>
 

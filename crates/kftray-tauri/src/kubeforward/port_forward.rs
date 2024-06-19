@@ -11,6 +11,7 @@ use kube::{
 use tokio::net::TcpStream;
 use tokio::net::UdpSocket as TokioUdpSocket;
 use tokio::sync::Mutex;
+use tokio::sync::Notify;
 use tokio::{
     io::{
         AsyncReadExt,
@@ -28,6 +29,7 @@ use tracing::{
     trace,
 };
 
+use crate::kubeforward::commands::CANCEL_NOTIFIER;
 use crate::kubeforward::logging::{
     create_log_file_path,
     Logger,
@@ -98,12 +100,13 @@ impl PortForward {
         trace!(port, "Bound to local address and port");
 
         let server = {
+            let cancel_notifier = CANCEL_NOTIFIER.clone(); // Clone the cancel_notifier here
             let http_log_state = http_log_state.inner().clone();
             TcpListenerStream::new(bind).try_for_each(move |client_conn| {
                 let pf = self.clone();
                 let client_conn = Arc::new(Mutex::new(client_conn));
                 let http_log_state = http_log_state.clone();
-
+                let cancel_notifier = cancel_notifier.clone();
                 async move {
                     if let Ok(peer_addr) = client_conn.lock().await.peer_addr() {
                         trace!(%peer_addr, "new connection");
@@ -115,9 +118,15 @@ impl PortForward {
                         conn.set_nodelay(true)?;
                     }
 
+                    let cancel_notifier_clone = cancel_notifier.clone();
+
                     tokio::spawn(async move {
                         if let Err(e) = pf
-                            .forward_connection(client_conn, Arc::new(http_log_state))
+                            .forward_connection(
+                                client_conn,
+                                Arc::new(http_log_state),
+                                cancel_notifier_clone,
+                            )
                             .await
                         {
                             error!(
@@ -144,6 +153,7 @@ impl PortForward {
 
     async fn forward_connection(
         self, client_conn: Arc<Mutex<TcpStream>>, http_log_state: Arc<HttpLogState>,
+        cancel_notifier: Arc<Notify>,
     ) -> anyhow::Result<()> {
         let target = self.finder().find(&self.target).await?;
 
@@ -184,6 +194,7 @@ impl PortForward {
             logger.clone(),
             &http_log_state,
             Arc::clone(&request_id),
+            cancel_notifier.clone(),
         );
 
         let upstream_to_client = self.create_upstream_to_client_task(
@@ -192,13 +203,14 @@ impl PortForward {
             logger.clone(),
             &http_log_state,
             Arc::clone(&request_id),
+            cancel_notifier.clone(),
         );
 
         let join_result = tokio::try_join!(client_to_upstream, upstream_to_client);
 
         let result = tokio::select! {
             res = async { join_result } => res,
-            _ = self.detect_connection_close(client_conn.clone(), &mut upstream_reader) => {
+            _ = self.detect_connection_close(client_conn.clone(), &mut upstream_reader, cancel_notifier) => {
                 Err(anyhow::anyhow!("Connection closed"))
             }
         };
@@ -228,49 +240,57 @@ impl PortForward {
             impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
         >,
         logger: Option<Logger>, http_log_state: &HttpLogState,
-        request_id: Arc<Mutex<Option<String>>>,
+        request_id: Arc<Mutex<Option<String>>>, cancel_notifier: Arc<Notify>,
     ) -> anyhow::Result<()> {
         let mut buffer = [0; BUFFER_SIZE];
         let mut timeout_duration = Duration::from_secs(600);
         let mut request_buffer = Vec::new();
 
         loop {
-            let n = match timeout(timeout_duration, client_reader.read(&mut buffer)).await {
-                Ok(Ok(n)) => n,
-                Ok(Err(e)) => {
-                    error!("Error reading from client: {:?}", e);
-                    return Err(e.into());
-                }
-                Err(_) => {
-                    error!("Timeout reading from client");
-                    return Err(anyhow::anyhow!("Timeout reading from client"));
-                }
-            };
-            if n == 0 {
-                break;
-            }
-            trace!("Read {} bytes from client", n);
+            tokio::select! {
+                n = timeout(timeout_duration, client_reader.read(&mut buffer)) => {
+                    let n = match n {
+                        Ok(Ok(n)) => n,
+                        Ok(Err(e)) => {
+                            error!("Error reading from client: {:?}", e);
+                            return Err(e.into());
+                        }
+                        Err(_) => {
+                            error!("Timeout reading from client");
+                            return Err(anyhow::anyhow!("Timeout reading from client"));
+                        }
+                    };
 
-            request_buffer.extend_from_slice(&buffer[..n]);
-
-            if is_complete_request(&request_buffer).await {
-                if http_log_state.get_http_logs(self.config_id).await {
-                    if let Some(logger) = &logger {
-                        let mut req_id_guard = request_id.lock().await;
-                        let new_request_id =
-                            logger.log_request(request_buffer.clone().into()).await;
-                        trace!("Generated new request ID: {}", new_request_id);
-                        *req_id_guard = Some(new_request_id);
+                    if n == 0 {
+                        break;
                     }
+
+                    trace!("Read {} bytes from client", n);
+                    request_buffer.extend_from_slice(&buffer[..n]);
+
+                    if is_complete_request(&request_buffer).await {
+                        if http_log_state.get_http_logs(self.config_id).await {
+                            if let Some(logger) = &logger {
+                                let mut req_id_guard = request_id.lock().await;
+                                let new_request_id =
+                                    logger.log_request(request_buffer.clone().into()).await;
+                                trace!("Generated new request ID: {}", new_request_id);
+                                *req_id_guard = Some(new_request_id);
+                            }
+                        }
+
+                        if let Err(e) = upstream_writer.write_all(&request_buffer).await {
+                            error!("Error writing to upstream: {:?}", e);
+                            return Err(e.into());
+                        }
+                        request_buffer.clear();
+                    }
+                },
+
+                _ = cancel_notifier.notified() => {
+                    trace!("Client to upstream task cancelled");
+                    break;
                 }
-                if http_log_state.get_http_logs(self.config_id).await {
-                    trace!("HTTP Request: {:?}", &request_buffer);
-                }
-                if let Err(e) = upstream_writer.write_all(&request_buffer).await {
-                    error!("Error writing to upstream: {:?}", e);
-                    return Err(e.into());
-                }
-                request_buffer.clear();
             }
 
             timeout_duration = Duration::from_secs(600);
@@ -290,70 +310,74 @@ impl PortForward {
         >,
         client_writer: &'a mut tokio::io::WriteHalf<&mut TcpStream>, logger: Option<Logger>,
         http_log_state: &HttpLogState, request_id: Arc<Mutex<Option<String>>>,
+        cancel_notifier: Arc<Notify>,
     ) -> anyhow::Result<()> {
         let mut buffer = [0; BUFFER_SIZE];
         let mut timeout_duration = Duration::from_secs(600);
         let mut response_buffer = Vec::new();
 
         loop {
-            let n = match timeout(timeout_duration, upstream_reader.read(&mut buffer)).await {
-                Ok(Ok(n)) => n,
-                Ok(Err(e)) => {
-                    error!("Error reading from upstream: {:?}", e);
-                    return Err(e.into());
-                }
-                Err(_) => {
-                    error!("Timeout reading from upstream");
-                    return Err(anyhow::anyhow!("Timeout reading from upstream"));
-                }
-            };
-            if n == 0 {
-                break;
-            }
-            trace!("Read {} bytes from upstream", n);
-
-            response_buffer.extend_from_slice(&buffer[..n]);
-
-            if is_complete_response(&response_buffer).await {
-                debug!("Complete response found");
-                if http_log_state.get_http_logs(self.config_id).await {
-                    debug!("HTTP Response after complete response");
-                    if let Some(logger) = &logger {
-                        debug!("Logging response await");
-                        let req_id_guard = request_id.lock().await;
-                        if let Some(req_id) = &*req_id_guard {
-                            trace!("Logging response for request ID: {}", req_id);
-                            logger
-                                .log_response(response_buffer.clone().into(), req_id.clone())
-                                .await;
-                        } else {
-                            eprintln!("Request ID not found for logging response");
+            tokio::select! {
+                n = timeout(timeout_duration, upstream_reader.read(&mut buffer)) => {
+                    let n = match n {
+                        Ok(Ok(n)) => n,
+                        Ok(Err(e)) => {
+                            error!("Error reading from upstream: {:?}", e);
+                            return Err(e.into());
                         }
-                    }
-                }
-                if http_log_state.get_http_logs(self.config_id).await {
-                    trace!("HTTP Response: {:?}", &response_buffer);
-                }
-                if let Err(e) = client_writer.write_all(&response_buffer).await {
-                    error!("Error writing to client: {:?}", e);
-                    return Err(e.into());
-                }
-                debug!("Response written to client, clearing buffer");
-                response_buffer.clear();
-            }
+                        Err(_) => {
+                            error!("Timeout reading from upstream");
+                            return Err(anyhow::anyhow!("Timeout reading from upstream"));
+                        }
+                    };
 
-            timeout_duration = Duration::from_secs(600);
+                    if n == 0 {
+                        break;
+                    }
+
+                    trace!("Read {} bytes from upstream", n);
+                    response_buffer.extend_from_slice(&buffer[..n]);
+
+                    if is_complete_response(&response_buffer).await {
+                        if http_log_state.get_http_logs(self.config_id).await {
+                            if let Some(logger) = &logger {
+                                let req_id_guard = request_id.lock().await;
+                                if let Some(req_id) = &*req_id_guard {
+                                    trace!("Logging response for request ID: {}", req_id);
+                                    logger
+                                        .log_response(response_buffer.clone().into(), req_id.clone())
+                                        .await;
+                                }
+                            }
+                        }
+
+                        if let Err(e) = client_writer.write_all(&response_buffer).await {
+                            error!("Error writing to client: {:?}", e);
+                            return Err(e.into());
+                        }
+
+                        response_buffer.clear();
+                    }
+
+                    timeout_duration = Duration::from_secs(600);
+                },
+
+                _ = cancel_notifier.notified() => {
+                    trace!("Upstream to client task cancelled");
+                    break;
+                }
+            }
         }
+
         if let Err(e) = client_writer.shutdown().await {
             error!("Error shutting down client writer: {:?}", e);
         }
 
         Ok(())
     }
-
     async fn detect_connection_close(
         &self, client_conn: Arc<Mutex<TcpStream>>,
-        upstream_reader: &mut (impl tokio::io::AsyncRead + Unpin),
+        upstream_reader: &mut (impl tokio::io::AsyncRead + Unpin), cancel_notifier: Arc<Notify>,
     ) -> anyhow::Result<()> {
         let mut client_buffer = [0; 1];
         let mut upstream_buffer = [0; 1];
@@ -390,6 +414,10 @@ impl PortForward {
                             return Err(e.into());
                         }
                     }
+                }
+                _ = cancel_notifier.notified() => {
+                    debug!("Cancellation signal received");
+                    return Ok(());
                 }
             }
         }

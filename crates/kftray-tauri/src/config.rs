@@ -7,7 +7,6 @@ use rusqlite::{
 };
 use serde_json::{
     json,
-    to_value,
     Value as JsonValue,
 };
 
@@ -20,12 +19,21 @@ fn is_value_blank(value: &JsonValue) -> bool {
     }
 }
 
-fn remove_blank_fields(value: &mut JsonValue) {
+fn is_value_default(value: &serde_json::Value, default_config: &serde_json::Value) -> bool {
+    *value == *default_config
+}
+
+fn remove_blank_or_default_fields(value: &mut JsonValue, default_config: &JsonValue) {
     match value {
         JsonValue::Object(map) => {
             let keys_to_remove: Vec<String> = map
                 .iter()
-                .filter(|(_, v)| is_value_blank(v))
+                .filter(|(k, v)| {
+                    let default_v = &default_config[k];
+                    is_value_blank(v)
+                        || (default_v != &JsonValue::Array(vec![])
+                            && is_value_default(v, default_v))
+                })
                 .map(|(k, _)| k.clone())
                 .collect();
 
@@ -34,12 +42,12 @@ fn remove_blank_fields(value: &mut JsonValue) {
             }
 
             for value in map.values_mut() {
-                remove_blank_fields(value);
+                remove_blank_or_default_fields(value, default_config);
             }
         }
         JsonValue::Array(arr) => {
             for value in arr {
-                remove_blank_fields(value);
+                remove_blank_or_default_fields(value, default_config);
             }
         }
         _ => (),
@@ -278,7 +286,6 @@ pub fn update_config(config: Config) -> Result<(), String> {
 
 // function to export configs to a json file
 #[tauri::command]
-
 pub async fn export_configs() -> Result<String, String> {
     let mut configs = read_configs().map_err(|e| e.to_string())?;
 
@@ -286,9 +293,9 @@ pub async fn export_configs() -> Result<String, String> {
         config.id = None; // Ensure that the id is None before exporting
     }
 
-    let mut json_config = to_value(configs).map_err(|e| e.to_string())?;
-
-    remove_blank_fields(&mut json_config);
+    let mut json_config = serde_json::to_value(configs).map_err(|e| e.to_string())?;
+    let default_config = serde_json::to_value(Config::default()).map_err(|e| e.to_string())?;
+    remove_blank_or_default_fields(&mut json_config, &default_config);
 
     let json = serde_json::to_string(&json_config).map_err(|e| e.to_string())?;
 
@@ -415,8 +422,7 @@ mod tests {
 
     // Test `remove_blank_fields` function
     #[test]
-
-    fn test_remove_blank_fields() {
+    fn test_remove_blank_or_default_fields() {
         let mut obj = json!({
             "name": "Test",
             "empty_string": "   ",
@@ -431,7 +437,22 @@ mod tests {
             ]
         });
 
-        remove_blank_fields(&mut obj);
+        // Define the default configuration for comparison
+        let default_config = json!({
+            "name": "",
+            "empty_string": "",
+            "nested": {
+                "blank": "",
+                "non_blank": ""
+            },
+            "array": [
+                {
+                    "blank_field": ""
+                }
+            ]
+        });
+
+        remove_blank_or_default_fields(&mut obj, &default_config);
 
         assert!(obj.get("empty_string").is_none());
 
@@ -442,12 +463,8 @@ mod tests {
             Some(&json!("value"))
         );
 
-        assert_eq!(
-            obj.get("array").unwrap().as_array().unwrap()[0]["blank_field"],
-            json!(null)
-        );
+        assert!(obj.get("array").unwrap()[0].get("blank_field").is_none());
     }
-
     #[test]
 
     fn test_merge_json_values() {

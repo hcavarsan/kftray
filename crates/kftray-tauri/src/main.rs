@@ -112,6 +112,7 @@ fn main() {
             kubeforward::kubecontext::list_kube_contexts,
             kubeforward::kubecontext::list_namespaces,
             kubeforward::kubecontext::list_services,
+            kubeforward::kubecontext::list_pods,
             kubeforward::kubecontext::list_service_ports,
             kubeforward::commands::deploy_and_forward_pod,
             kubeforward::commands::stop_proxy_forward,
