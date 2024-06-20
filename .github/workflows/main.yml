@@ -137,7 +137,7 @@ jobs:
   ubuntu-arm64:
     permissions:
       contents: write
-    runs-on: ubicloud
+    runs-on: ubicloud-standard-2-arm
 
     steps:
       - name: Checkout repository
