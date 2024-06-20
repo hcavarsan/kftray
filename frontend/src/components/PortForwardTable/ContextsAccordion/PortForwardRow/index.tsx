@@ -111,7 +111,9 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
         await invoke('start_port_forward_tcp', { configs: [config] })
       } else if (
         config.workload_type.startsWith('proxy') ||
-        (config.workload_type === 'service' && config.protocol === 'udp')
+        ((config.workload_type === 'service' ||
+          config.workload_type === 'pod') &&
+          config.protocol === 'udp')
       ) {
         await invoke('deploy_and_forward_pod', { configs: [config] })
       } else {
@@ -147,7 +149,9 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
         })
       } else if (
         config.workload_type.startsWith('proxy') ||
-        (config.workload_type === 'service' && config.protocol === 'udp')
+        ((config.workload_type === 'service' ||
+          config.workload_type === 'pod') &&
+          config.protocol === 'udp')
       ) {
         await invoke('stop_proxy_forward', {
           configId: config.id.toString(),
