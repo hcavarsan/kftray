@@ -36,13 +36,13 @@
       "resources": [],
       "shortDescription": "",
       "targets": [
-        "app",
-        "dmg",
-        "appimage",
-        "deb",
-        "updater",
-        "msi",
-        "nsis"
+          "app",
+          "dmg",
+          "appimage",
+          "deb",
+          "updater",
+          "msi",
+          "nsis"  
       ],
       "windows": {
         "certificateThumbprint": null,

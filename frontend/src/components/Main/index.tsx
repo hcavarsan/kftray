@@ -37,6 +37,7 @@ const KFTray = () => {
     domain_enabled: false,
     namespace: '',
     workload_type: '',
+    target: '',
     protocol: '',
     remote_address: '',
     alias: '',
@@ -81,6 +82,7 @@ const KFTray = () => {
       remote_port: initalRemotePort,
       namespace: '',
       workload_type: '',
+      target: '',
       protocol: '',
       remote_address: '',
       alias: '',
@@ -246,6 +248,7 @@ const KFTray = () => {
         remote_port: configToEdit.remote_port,
         context: configToEdit.context,
         workload_type: configToEdit.workload_type,
+        target: configToEdit.target,
         protocol: configToEdit.protocol,
         remote_address: configToEdit.remote_address,
         alias: configToEdit.alias,
@@ -274,6 +277,7 @@ const KFTray = () => {
         remote_port: newConfig.remote_port,
         namespace: newConfig.namespace,
         workload_type: newConfig.workload_type,
+        target: newConfig.target,
         protocol: newConfig.protocol,
         remote_address: newConfig.remote_address,
         alias: newConfig.alias,
@@ -322,6 +326,7 @@ const KFTray = () => {
       remote_port: newConfig.remote_port,
       namespace: newConfig.namespace,
       workload_type: newConfig.workload_type,
+      target: newConfig.target,
       protocol: newConfig.protocol,
       remote_address: newConfig.remote_address,
       alias: newConfig.alias,
@@ -341,7 +346,8 @@ const KFTray = () => {
         wasRunning = true
 
         if (
-          newConfig.workload_type === 'service' &&
+          (newConfig.workload_type === 'service' ||
+            newConfig.workload_type === 'pod') &&
           newConfig.protocol === 'tcp'
         ) {
           await invoke('stop_port_forward', {
@@ -391,7 +397,8 @@ const KFTray = () => {
 
         if (updatedConfig) {
           if (
-            updatedConfig.workload_type === 'service' &&
+            (updatedConfig.workload_type === 'service' ||
+              updatedConfig.workload_type === 'pod') &&
             updatedConfig.protocol === 'tcp'
           ) {
             await invoke('start_port_forward_tcp', { configs: [updatedConfig] })
@@ -464,6 +471,7 @@ const KFTray = () => {
   async function handlePortForwarding(config: Status) {
     switch (config.workload_type) {
     case 'service':
+    case 'pod':
       if (config.protocol === 'tcp') {
         await invoke<Response>('start_port_forward_tcp', {
           configs: [config],

@@ -11,6 +11,7 @@ export interface Status {
   local_address: string
   domain_enabled: boolean
   workload_type: string
+  target: string
   protocol: string
   alias: string
   remote_address: string
@@ -30,6 +31,7 @@ export interface Config {
   alias: string
   remote_address: string
   workload_type: string
+  target: string
   protocol: string
   kubeconfig: string
 }
@@ -44,6 +46,7 @@ export interface Response {
   remote_port: number
   alias: string
   workload_type: string
+  target: string
   protocol: string
   remote_address: string
   stdout: string
