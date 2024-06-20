@@ -103,7 +103,11 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
 
   const startPortForwarding = async () => {
     try {
-      if (config.workload_type === 'service' && config.protocol === 'tcp') {
+      if (
+        (config.workload_type === 'service' ||
+          config.workload_type === 'pod') &&
+        config.protocol === 'tcp'
+      ) {
         await invoke('start_port_forward_tcp', { configs: [config] })
       } else if (
         config.workload_type.startsWith('proxy') ||
@@ -132,7 +136,11 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
 
   const stopPortForwarding = async () => {
     try {
-      if (config.workload_type === 'service' && config.protocol === 'tcp') {
+      if (
+        (config.workload_type === 'service' ||
+          config.workload_type === 'pod') &&
+        config.protocol === 'tcp'
+      ) {
         await invoke('stop_port_forward', {
           serviceName: config.service,
           configId: config.id.toString(),
@@ -244,16 +252,22 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
       </Box>{' '}
       {config.workload_type.startsWith('proxy')
         ? config.workload_type
-        : 'Service'}
+        : config.workload_type === 'pod'
+          ? 'Pod'
+          : 'Service'}
       <br />
       <Box as='span' fontWeight='semibold'>
         {config.workload_type.startsWith('proxy')
           ? 'Remote Address:'
-          : 'Service:'}
+          : config.workload_type === 'pod'
+            ? 'Pod Label:'
+            : 'Service:'}
       </Box>{' '}
       {config.workload_type.startsWith('proxy')
         ? config.remote_address
-        : config.service}
+        : config.workload_type === 'pod'
+          ? config.target
+          : config.service}
       <br />
       <Box as='span' fontWeight='semibold'>
         Context:
@@ -297,6 +311,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
       <br />
     </>
   )
+
   const fontFamily = '\'Open Sans\', sans-serif'
   const fontSize = '13px'
 
@@ -385,7 +400,8 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
               </Tooltip>
             )}
             {config.isRunning &&
-              config.workload_type === 'service' &&
+              (config.workload_type === 'service' ||
+                config.workload_type === 'pod') &&
               config.protocol === 'tcp' &&
               httpLogsEnabled[config.id] && (
               <Tooltip
