@@ -178,7 +178,7 @@ impl PortForward {
 
         trace!(local_port, pod_port, pod_name = %pod_name, "forwarding connections");
 
-        let logger = if workload_type == "service" {
+        let logger = if workload_type == "service" || workload_type == "pod" {
             let log_file_path = create_log_file_path(config_id, local_port).await?;
             let logger = Logger::new(log_file_path).await?;
             Some(logger)

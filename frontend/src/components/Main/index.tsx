@@ -356,7 +356,8 @@ const KFTray = () => {
           })
         } else if (
           newConfig.workload_type.startsWith('proxy') ||
-          (newConfig.workload_type === 'service' &&
+          ((newConfig.workload_type === 'service' ||
+            newConfig.workload_type === 'pod') &&
             newConfig.protocol === 'udp')
         ) {
           await invoke('stop_proxy_forward', {
@@ -404,7 +405,8 @@ const KFTray = () => {
             await invoke('start_port_forward_tcp', { configs: [updatedConfig] })
           } else if (
             updatedConfig.workload_type.startsWith('proxy') ||
-            (updatedConfig.workload_type === 'service' &&
+            ((newConfig.workload_type === 'service' ||
+              newConfig.workload_type === 'pod') &&
               updatedConfig.protocol === 'udp')
           ) {
             await invoke('deploy_and_forward_pod', { configs: [updatedConfig] })
