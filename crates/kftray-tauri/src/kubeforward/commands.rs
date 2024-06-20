@@ -75,12 +75,8 @@ async fn start_port_forward(
     let mut child_handles = Vec::new();
 
     for config in configs.iter() {
-        // Determine the selector based on the workload type
         let selector = match config.workload_type.as_str() {
-            "pod" => {
-                // Using `target` field as the pod label
-                TargetSelector::PodLabel(config.target.clone().unwrap_or_default())
-            }
+            "pod" => TargetSelector::PodLabel(config.target.clone().unwrap_or_default()),
             _ => TargetSelector::ServiceName(config.service.clone().unwrap_or_default()),
         };
 
@@ -453,7 +449,6 @@ pub async fn stop_port_forward(
         let (config_id_str, service_name) = composite_key.split_once('_').unwrap_or(("", ""));
         let config_id_parsed = config_id_str.parse::<i64>().unwrap_or_default();
 
-        // Retrieve configs and perform necessary updates
         match config::get_configs().await {
             Ok(configs) => {
                 if let Some(config) = configs

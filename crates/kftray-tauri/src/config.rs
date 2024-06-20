@@ -437,7 +437,6 @@ mod tests {
             ]
         });
 
-        // Define the default configuration for comparison
         let default_config = json!({
             "name": "",
             "empty_string": "",

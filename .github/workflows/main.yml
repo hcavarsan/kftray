@@ -385,7 +385,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
       - name: Build and push Docker image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: ./crates/kftray-server
           file: ./crates/kftray-server/Dockerfile

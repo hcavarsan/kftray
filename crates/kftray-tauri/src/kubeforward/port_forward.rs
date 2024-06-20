@@ -100,7 +100,7 @@ impl PortForward {
         trace!(port, "Bound to local address and port");
 
         let server = {
-            let cancel_notifier = CANCEL_NOTIFIER.clone(); // Clone the cancel_notifier here
+            let cancel_notifier = CANCEL_NOTIFIER.clone();
             let http_log_state = http_log_state.inner().clone();
             TcpListenerStream::new(bind).try_for_each(move |client_conn| {
                 let pf = self.clone();

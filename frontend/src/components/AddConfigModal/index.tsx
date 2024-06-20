@@ -202,7 +202,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
           serviceName: newConfig.target,
         })
       }
-      
+
       return invoke<{ name: string; port: number }[]>('list_ports', {
         contextName: newConfig.context,
         namespace: newConfig.namespace,
