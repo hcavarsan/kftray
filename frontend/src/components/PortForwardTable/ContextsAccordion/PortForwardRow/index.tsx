@@ -33,7 +33,6 @@ import {
   faTrash,
 } from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { homeDir } from '@tauri-apps/api/path'
 import { open } from '@tauri-apps/api/shell'
 import { invoke } from '@tauri-apps/api/tauri'
 
@@ -202,15 +201,9 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
 
   const handleInspectLogs = async () => {
     try {
-      const homePath = await homeDir()
+      const logFileName = `${config.id}_${config.local_port}.log`
 
-      const logFilePath = `${config.id}_${config.local_port}.log`
-
-      const fullPath = `${homePath}/.kftray/http_logs/${logFilePath}`
-
-      const sanitizedFullPath = fullPath.replace(/\\/g, '/')
-
-      await invoke('open_log_file', { logFilePath: sanitizedFullPath })
+      await invoke('open_log_file', { logFileName: logFileName })
     } catch (error) {
       console.error('Error opening log file:', error)
       const errorMessage =

@@ -111,21 +111,34 @@ pub async fn import_configs_from_github(
 }
 
 #[tauri::command]
-pub async fn open_log_file(log_file_path: String) -> Result<(), String> {
+pub async fn open_log_file(log_file_name: String) -> Result<(), String> {
     use std::env;
     use std::fs;
 
     use open::that_in_background;
 
-    println!("Opening log file: {}", log_file_path);
+    let log_folder_path = get_log_folder_path()?;
+    let log_file_path = log_folder_path.join(log_file_name);
+
+    if !log_file_path.exists() {
+        return Err(format!(
+            "Log file does not exist: {}",
+            log_file_path.display()
+        ));
+    }
+
+    println!("Opening log file: {}", log_file_path.display());
 
     if fs::metadata(&log_file_path).is_err() {
-        return Err(format!("Log file does not exist: {}", log_file_path));
+        return Err(format!(
+            "Log file does not exist: {}",
+            log_file_path.display()
+        ));
     }
 
     let editor = env::var("EDITOR").unwrap_or_else(|_| default_editor());
 
-    match try_open_with_editor(&log_file_path, &editor) {
+    match try_open_with_editor(log_file_path.to_str().unwrap(), &editor) {
         Ok(_) => Ok(()),
         Err(err) => {
             println!(
@@ -137,7 +150,7 @@ pub async fn open_log_file(log_file_path: String) -> Result<(), String> {
                 Ok(Ok(_)) => Ok(()),
                 Ok(Err(err)) => {
                     println!("Error opening log file with default method: {}. Trying fallback methods...", err);
-                    fallback_methods(&log_file_path)
+                    fallback_methods(log_file_path.to_str().unwrap())
                 }
                 Err(err) => Err(format!("Failed to join thread: {:?}", err)),
             }
