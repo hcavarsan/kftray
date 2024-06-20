@@ -77,7 +77,7 @@ async fn start_port_forward(
     for config in configs.iter() {
         // Determine the selector based on the workload type
         let selector = match config.workload_type.as_str() {
-            "pod_label" => {
+            "pod" => {
                 // Using `target` field as the pod label
                 TargetSelector::PodLabel(config.target.clone().unwrap_or_default())
             }
@@ -94,7 +94,7 @@ async fn start_port_forward(
         log::info!("Local Port: {}", config.local_port);
         log::debug!(
             "Attempting to forward to {}: {:?}",
-            if config.workload_type.as_str() == "pod_label" {
+            if config.workload_type.as_str() == "pod" {
                 "pod label"
             } else {
                 "service"
@@ -129,7 +129,7 @@ async fn start_port_forward(
                             "{} port forwarding is set up on local port: {:?} for {}: {:?}",
                             protocol.to_uppercase(),
                             actual_local_port,
-                            if config.workload_type.as_str() == "pod_label" {
+                            if config.workload_type.as_str() == "pod" {
                                 "pod label"
                             } else {
                                 "service"
@@ -219,7 +219,7 @@ async fn start_port_forward(
                         let error_message = format!(
                             "Failed to start {} port forwarding for {} {}: {}",
                             protocol.to_uppercase(),
-                            if config.workload_type.as_str() == "pod_label" {
+                            if config.workload_type.as_str() == "pod" {
                                 "pod label"
                             } else {
                                 "service"
@@ -235,7 +235,7 @@ async fn start_port_forward(
             Err(e) => {
                 let error_message = format!(
                     "Failed to create PortForward for {} {}: {}",
-                    if config.workload_type.as_str() == "pod_label" {
+                    if config.workload_type.as_str() == "pod" {
                         "pod label"
                     } else {
                         "service"

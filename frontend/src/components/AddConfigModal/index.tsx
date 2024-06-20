@@ -192,14 +192,21 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
       'kube-service-ports',
       newConfig.context,
       newConfig.namespace,
-      newConfig.service,
+      newConfig.workload_type === 'pod' ? newConfig.target : newConfig.service,
     ],
     () => {
-      return invoke<{ name: string; port: number }[]>('list_service_ports', {
+      if (newConfig.workload_type === 'pod') {
+        return invoke<{ name: string; port: number }[]>('list_ports', {
+          contextName: newConfig.context,
+          namespace: newConfig.namespace,
+          serviceName: newConfig.target,
+        })
+      }
+      
+      return invoke<{ name: string; port: number }[]>('list_ports', {
         contextName: newConfig.context,
         namespace: newConfig.namespace,
-        serviceName: newConfig.service,
-        kubeconfig: kubeConfig,
+        serviceName: newConfig.service ?? newConfig.target,
       })
     },
     {
@@ -211,7 +218,9 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
       enabled:
         !!newConfig.context &&
         !!newConfig.namespace &&
-        !!newConfig.service &&
+        !!(newConfig.workload_type === 'pod'
+          ? newConfig.target
+          : newConfig.service) &&
         newConfig.workload_type !== 'proxy',
       onSuccess: ports => {
         console.log('Ports fetched successfully:', ports)
@@ -667,12 +676,16 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                           mb='0'
                         >
                           {newConfig.workload_type === 'pod'
-                            ? 'Target'
+                            ? 'Pod Label'
                             : 'Service'}
                         </FormLabel>
                         <ReactSelect
                           styles={customStyles}
-                          name='service'
+                          name={
+                            newConfig.workload_type === 'pod'
+                              ? 'target'
+                              : 'service'
+                          }
                           options={
                             newConfig.workload_type === 'pod'
                               ? podsQuery.data?.map(pod => ({
@@ -688,7 +701,12 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                           onChange={selectedOption =>
                             handleSelectChange(
                               selectedOption as Option,
-                              { name: 'service' } as ActionMeta<Option>,
+                              {
+                                name:
+                                  newConfig.workload_type === 'pod'
+                                    ? 'target'
+                                    : 'service',
+                              } as ActionMeta<Option>,
                             )
                           }
                           menuPlacement='auto'

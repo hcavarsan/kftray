@@ -151,6 +151,13 @@ impl PortForward {
         ))
     }
 
+    pub fn finder(&self) -> TargetPodFinder {
+        TargetPodFinder {
+            pod_api: &self.pod_api,
+            svc_api: &self.svc_api,
+        }
+    }
+
     async fn forward_connection(
         self, client_conn: Arc<Mutex<TcpStream>>, http_log_state: Arc<HttpLogState>,
         cancel_notifier: Arc<Notify>,
@@ -420,12 +427,6 @@ impl PortForward {
                     return Ok(());
                 }
             }
-        }
-    }
-    pub fn finder(&self) -> TargetPodFinder {
-        TargetPodFinder {
-            pod_api: &self.pod_api,
-            svc_api: &self.svc_api,
         }
     }
 

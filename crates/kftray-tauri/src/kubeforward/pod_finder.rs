@@ -3,6 +3,7 @@ use kube::api::{
     Api,
     ListParams,
 };
+use tracing::debug;
 
 use crate::models::kube::{
     AnyReady,
@@ -11,7 +12,6 @@ use crate::models::kube::{
     TargetPod,
     TargetSelector,
 };
-
 pub struct TargetPodFinder<'a> {
     pub pod_api: &'a Api<k8s_openapi::api::core::v1::Pod>,
     pub svc_api: &'a Api<k8s_openapi::api::core::v1::Service>,
@@ -44,29 +44,44 @@ impl<'a> TargetPodFinder<'a> {
                         .collect::<Vec<_>>()
                         .join(",");
 
+                    debug!("Selector for service '{}': {}", name, label_selector_str);
+
                     let pods = self
                         .pod_api
                         .list(&ListParams::default().labels(&label_selector_str))
                         .await?;
 
-                    let pod = ready_pod.select(&pods.items, &label_selector_str)?;
+                    debug!(
+                        "Pods found for selector '{}': {:?}",
+                        label_selector_str, pods.items
+                    );
 
+                    let pod = ready_pod.select(&pods.items, &label_selector_str)?;
                     target.find(pod, None)
                 } else {
                     Err(anyhow::anyhow!("No selector found for service '{}'", name))
                 }
             }
             Err(kube::Error::Api(kube::error::ErrorResponse { code: 404, .. })) => {
-                // Attempt to use the name as a label selector directly
-                let label_selector_str = name.to_string();
+                // Fallback using name as label selector directly
+                let label_selector_str = format!("app={}", name);
+
+                debug!(
+                    "Using service name as label selector: {}",
+                    label_selector_str
+                );
 
                 let pods = self
                     .pod_api
                     .list(&ListParams::default().labels(&label_selector_str))
                     .await?;
 
-                let pod = ready_pod.select(&pods.items, &label_selector_str)?;
+                debug!(
+                    "Pods found for label '{}': {:?}",
+                    label_selector_str, pods.items
+                );
 
+                let pod = ready_pod.select(&pods.items, &label_selector_str)?;
                 target.find(pod, None)
             }
             Err(e) => Err(anyhow::anyhow!("Error finding service '{}': {}", name, e)),

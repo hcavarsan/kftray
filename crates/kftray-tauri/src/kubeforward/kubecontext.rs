@@ -261,7 +261,7 @@ pub async fn list_services(
 }
 
 #[tauri::command]
-pub async fn list_service_ports(
+pub async fn list_ports(
     context_name: &str, namespace: &str, service_name: &str, kubeconfig: Option<String>,
 ) -> Result<Vec<KubeServicePortInfo>, String> {
     let client = create_client_with_specific_context(kubeconfig, context_name)

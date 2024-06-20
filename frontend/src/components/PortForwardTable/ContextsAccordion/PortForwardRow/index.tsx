@@ -260,7 +260,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
         {config.workload_type.startsWith('proxy')
           ? 'Remote Address:'
           : config.workload_type === 'pod'
-            ? 'Target:'
+            ? 'Pod Label:'
             : 'Service:'}
       </Box>{' '}
       {config.workload_type.startsWith('proxy')
