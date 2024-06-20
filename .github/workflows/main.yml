@@ -137,7 +137,7 @@ jobs:
   ubuntu-arm64:
     permissions:
       contents: write
-    runs-on: self-hosted
+    runs-on: ubicloud
 
     steps:
       - name: Checkout repository
