@@ -4,8 +4,9 @@ use crate::utils::config_dir::get_db_file_path;
 
 //  function to clear existing configs from the database
 pub fn clear_existing_configs() -> Result<(), rusqlite::Error> {
-    let db_dir = get_db_file_path()
-        .map_err(|e| rusqlite::Error::InvalidPath(std::path::PathBuf::from(e)))?;
+    let db_dir = get_db_file_path().map_err(|e| {
+        rusqlite::Error::InvalidPath(format!("Failed to get DB path: {}", e).into())
+    })?;
 
     let conn = Connection::open(db_dir)?;
 

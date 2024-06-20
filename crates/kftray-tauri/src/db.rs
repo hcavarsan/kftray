@@ -37,8 +37,9 @@ pub fn init() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn create_db_table() -> Result<(), rusqlite::Error> {
-    let db_dir = get_db_file_path()
-        .map_err(|e| rusqlite::Error::InvalidPath(std::path::PathBuf::from(e)))?;
+    let db_dir = get_db_file_path().map_err(|e| {
+        rusqlite::Error::InvalidPath(format!("Failed to get DB path: {}", e).into())
+    })?;
 
     let conn = Connection::open(db_dir)?;
 

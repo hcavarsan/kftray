@@ -1,8 +1,9 @@
-extern crate native_dialog;
 extern crate dirs;
+extern crate native_dialog;
 
 use std::env;
 use std::path::PathBuf;
+
 use native_dialog::MessageDialog;
 use native_dialog::MessageType;
 
@@ -59,13 +60,18 @@ fn detect_multiple_configs() -> (Vec<ConfigLocation>, Option<ConfigLocation>) {
 }
 
 fn show_alert_dialog(configs: Vec<ConfigLocation>, active_config: Option<ConfigLocation>) {
-    let msg = configs.into_iter()
+    let msg = configs
+        .into_iter()
         .map(|config| format!(" * {}: {}", config.origin, config.path.display()))
         .collect::<Vec<_>>()
         .join("\n");
 
     let active_config_msg = if let Some(active) = active_config {
-        format!("Active Configuration:\n * {}: {}\n\n", active.origin, active.path.display())
+        format!(
+            "Active Configuration:\n * {}: {}\n\n",
+            active.origin,
+            active.path.display()
+        )
     } else {
         "Active Configuration:\n * No active configuration detected.\n\n".to_string()
     };
