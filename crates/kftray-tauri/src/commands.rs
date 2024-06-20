@@ -10,6 +10,7 @@ use reqwest::header::{
 };
 use tauri::State;
 
+use crate::utils::config_dir::get_log_folder_path;
 use crate::{
     config::{
         import_configs,
@@ -202,12 +203,6 @@ pub async fn clear_http_logs() -> Result<(), String> {
     use std::fs;
     use std::path::PathBuf;
 
-    fn get_log_folder_path() -> PathBuf {
-        let mut path = dirs::home_dir().unwrap();
-        path.push(".kftray/http_logs");
-        path
-    }
-
     fn delete_files_in_folder(path: &PathBuf) -> Result<(), String> {
         if path.is_dir() {
             for entry in
@@ -226,7 +221,7 @@ pub async fn clear_http_logs() -> Result<(), String> {
         Ok(())
     }
 
-    let log_folder_path = get_log_folder_path();
+    let log_folder_path = get_log_folder_path()?;
 
     if !log_folder_path.exists() {
         return Err(format!(
@@ -242,12 +237,6 @@ pub async fn clear_http_logs() -> Result<(), String> {
 pub async fn get_http_log_size() -> Result<u64, String> {
     use std::fs;
     use std::path::PathBuf;
-
-    fn get_log_folder_path() -> PathBuf {
-        let mut path = dirs::home_dir().unwrap();
-        path.push(".kftray/http_logs");
-        path
-    }
 
     fn calculate_folder_size(path: &PathBuf) -> Result<u64, String> {
         let mut size = 0;
@@ -273,7 +262,7 @@ pub async fn get_http_log_size() -> Result<u64, String> {
         Ok(size)
     }
 
-    let log_folder_path = get_log_folder_path();
+    let log_folder_path = get_log_folder_path()?;
 
     if !log_folder_path.exists() {
         return Err(format!(

@@ -8,6 +8,7 @@ use std::sync::{
     Mutex,
 };
 
+use crate::utils::validate_configs::alert_multiple_configs;
 mod commands;
 mod config;
 mod db;
@@ -17,6 +18,7 @@ mod logging;
 mod models;
 mod remote_config;
 mod tray;
+mod utils;
 mod window;
 
 use std::sync::atomic::AtomicBool;
@@ -46,7 +48,7 @@ pub struct AppState {
 }
 
 fn main() {
-    logging::setup_logging();
+    let _ = logging::setup_logging();
 
     let _ = fix_path_env::fix();
 
@@ -68,6 +70,7 @@ fn main() {
         })
         .manage(http_log_state.clone()) // Ensure the state is shared
         .setup(move |app| {
+            alert_multiple_configs();
             let _ = config::clean_all_custom_hosts_entries();
 
             let _ = db::init();

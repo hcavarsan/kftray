@@ -1,5 +1,4 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
 use std::sync::{
     Arc,
     Mutex,
@@ -32,6 +31,7 @@ use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
 use crate::kubeforward::kubecontext::create_client_with_specific_context;
+use crate::utils::config_dir::get_pod_manifest_path;
 use crate::{
     config,
     kubeforward::vx::Pod,
@@ -47,7 +47,6 @@ use crate::{
         response::CustomResponse,
     },
 };
-
 lazy_static! {
     pub static ref CHILD_PROCESSES: Arc<Mutex<HashMap<String, JoinHandle<()>>>> =
         Arc::new(Mutex::new(HashMap::new()));
@@ -498,11 +497,6 @@ pub async fn stop_port_forward(
         ))
     }
 }
-fn get_pod_manifest_path() -> PathBuf {
-    let home_dir = dirs::home_dir().expect("Failed to resolve home directory");
-
-    home_dir.join(".kftray/proxy_manifest.json")
-}
 
 fn render_json_template(template: &str, values: &HashMap<&str, String>) -> String {
     let mut rendered_template = template.to_string();
@@ -580,7 +574,8 @@ pub async fn deploy_and_forward_pod(
         values.insert("local_port", config.remote_port.to_string());
         values.insert("protocol", protocol.clone());
 
-        let mut file = File::open(get_pod_manifest_path()).map_err(|e| e.to_string())?;
+        let manifest_path = get_pod_manifest_path().map_err(|e| e.to_string())?;
+        let mut file = File::open(manifest_path).map_err(|e| e.to_string())?;
         let mut contents = String::new();
         file.read_to_string(&mut contents)
             .map_err(|e| e.to_string())?;

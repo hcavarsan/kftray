@@ -1,10 +1,11 @@
 use rusqlite::Connection;
 
+use crate::utils::config_dir::get_db_file_path;
+
 //  function to clear existing configs from the database
 pub fn clear_existing_configs() -> Result<(), rusqlite::Error> {
-    let home_dir = dirs::home_dir().expect("Unable to find the home directory");
-
-    let db_dir = home_dir.join(".kftray/configs.db");
+    let db_dir = get_db_file_path()
+        .map_err(|e| rusqlite::Error::InvalidPath(std::path::PathBuf::from(e)))?;
 
     let conn = Connection::open(db_dir)?;
 
