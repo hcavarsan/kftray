@@ -68,11 +68,15 @@ fn main() {
             is_pinned: is_pinned.clone(),
             runtime: runtime.clone(),
         })
-        .manage(http_log_state.clone()) // Ensure the state is shared
+        .manage(http_log_state.clone())
         .setup(move |app| {
-            alert_multiple_configs();
-            let _ = config::clean_all_custom_hosts_entries();
+            let app_handle = app.app_handle();
 
+            tauri::async_runtime::spawn(async move {
+                alert_multiple_configs(app_handle).await;
+            });
+
+            let _ = config::clean_all_custom_hosts_entries();
             let _ = db::init();
 
             if let Err(e) = config::migrate_configs() {

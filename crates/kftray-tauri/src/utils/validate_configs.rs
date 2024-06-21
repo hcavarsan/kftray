@@ -1,12 +1,17 @@
 extern crate dirs;
-extern crate native_dialog;
+extern crate tauri;
 
 use std::env;
 use std::path::PathBuf;
 
-use native_dialog::MessageDialog;
-use native_dialog::MessageType;
-
+use tauri::api::dialog::{
+    MessageDialogBuilder,
+    MessageDialogKind,
+};
+use tauri::{
+    async_runtime::spawn_blocking,
+    AppHandle,
+};
 #[derive(Clone)]
 struct ConfigLocation {
     path: PathBuf,
@@ -59,7 +64,9 @@ fn detect_multiple_configs() -> (Vec<ConfigLocation>, Option<ConfigLocation>) {
     (config_locations, active_config)
 }
 
-fn show_alert_dialog(configs: Vec<ConfigLocation>, active_config: Option<ConfigLocation>) {
+async fn show_alert_dialog(
+    app_handle: AppHandle, configs: Vec<ConfigLocation>, active_config: Option<ConfigLocation>,
+) {
     let msg = configs
         .into_iter()
         .map(|config| format!(" * {}: {}", config.origin, config.path.display()))
@@ -96,17 +103,21 @@ fn show_alert_dialog(configs: Vec<ConfigLocation>, active_config: Option<ConfigL
         dirs::home_dir().map_or("<home_directory_not_found>".to_string(), |p| p.join(".kftray").display().to_string())
     );
 
-    MessageDialog::new()
-        .set_type(MessageType::Warning)
-        .set_title("Multiple Configuration Directories Detected")
-        .set_text(&full_message)
-        .show_alert()
-        .unwrap();
+    // Use the app handle to trigger the dialog on the main thread
+    spawn_blocking(move || {
+        let _ = app_handle.run_on_main_thread(move || {
+            MessageDialogBuilder::new("Multiple Configuration Directories Detected", &full_message)
+                .kind(MessageDialogKind::Warning)
+                .show(|_| {});
+        });
+    })
+    .await
+    .unwrap();
 }
 
-pub fn alert_multiple_configs() {
+pub async fn alert_multiple_configs(app_handle: AppHandle) {
     let (configs, active_config) = detect_multiple_configs();
     if configs.len() > 1 {
-        show_alert_dialog(configs, active_config);
+        show_alert_dialog(app_handle, configs, active_config).await;
     }
 }
