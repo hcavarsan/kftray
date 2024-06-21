@@ -8,6 +8,7 @@ use std::sync::{
     Mutex,
 };
 
+use crate::utils::validate_configs::alert_multiple_configs;
 mod commands;
 mod config;
 mod db;
@@ -17,6 +18,7 @@ mod logging;
 mod models;
 mod remote_config;
 mod tray;
+mod utils;
 mod window;
 
 use std::sync::atomic::AtomicBool;
@@ -46,7 +48,7 @@ pub struct AppState {
 }
 
 fn main() {
-    logging::setup_logging();
+    let _ = logging::setup_logging();
 
     let _ = fix_path_env::fix();
 
@@ -66,10 +68,15 @@ fn main() {
             is_pinned: is_pinned.clone(),
             runtime: runtime.clone(),
         })
-        .manage(http_log_state.clone()) // Ensure the state is shared
+        .manage(http_log_state.clone())
         .setup(move |app| {
-            let _ = config::clean_all_custom_hosts_entries();
+            let app_handle = app.app_handle();
 
+            tauri::async_runtime::spawn(async move {
+                alert_multiple_configs(app_handle).await;
+            });
+
+            let _ = config::clean_all_custom_hosts_entries();
             let _ = db::init();
 
             if let Err(e) = config::migrate_configs() {

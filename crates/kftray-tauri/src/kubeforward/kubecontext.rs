@@ -29,6 +29,7 @@ use kube::{
 };
 use tower::ServiceBuilder;
 
+use crate::utils::config_dir::get_default_kubeconfig_path;
 use crate::{
     kubeforward::vx::Pod,
     models::kube::{
@@ -39,7 +40,6 @@ use crate::{
         PodInfo,
     },
 };
-
 pub async fn create_client_with_specific_context(
     kubeconfig: Option<String>, context_name: &str,
 ) -> Result<Client> {
@@ -53,7 +53,7 @@ pub async fn create_client_with_specific_context(
     // Determine the kubeconfig based on the input
     let kubeconfig = if let Some(path) = kubeconfig {
         if path == "default" {
-            let default_path = dirs::home_dir().unwrap().join(".kube/config");
+            let default_path = get_default_kubeconfig_path()?;
 
             println!(
                 "Reading kubeconfig from default location: {:?}",
@@ -70,7 +70,7 @@ pub async fn create_client_with_specific_context(
         }
     } else {
         // If no kubeconfig is specified, read the default kubeconfig
-        let default_path = dirs::home_dir().unwrap().join(".kube/config");
+        let default_path = get_default_kubeconfig_path()?;
 
         println!(
             "Reading kubeconfig from default location: {:?}",
@@ -155,7 +155,6 @@ pub async fn list_pods(
 }
 
 #[tauri::command]
-
 pub async fn list_kube_contexts(
     kubeconfig: Option<String>,
 ) -> Result<Vec<KubeContextInfo>, String> {
@@ -163,32 +162,38 @@ pub async fn list_kube_contexts(
 
     let kubeconfig = if let Some(path) = &kubeconfig {
         if path == "default" {
-            let default_path = dirs::home_dir()
-                .ok_or_else(|| "Failed to locate home directory".to_string())?
-                .join(".kube/config");
+            let default_path = get_default_kubeconfig_path()
+                .context("Couldn't get default kubeconfig path")
+                .map_err(|err| err.to_string())?;
 
             println!(
                 "Reading kubeconfig from default location: {:?}",
                 default_path
             );
 
-            Kubeconfig::read_from(default_path.to_str().unwrap()).map_err(|e| e.to_string())?
+            Kubeconfig::read_from(default_path.to_str().unwrap())
+                .context("Failed to read kubeconfig from default path")
+                .map_err(|err| err.to_string())?
         } else {
             println!("Reading kubeconfig from specified path: {}", path);
 
-            Kubeconfig::read_from(path).map_err(|e| e.to_string())?
+            Kubeconfig::read_from(path)
+                .context("Failed to read kubeconfig from specified path")
+                .map_err(|err| err.to_string())?
         }
     } else {
-        let default_path = dirs::home_dir()
-            .ok_or_else(|| "Failed to locate home directory".to_string())?
-            .join(".kube/config");
+        let default_path = get_default_kubeconfig_path()
+            .context("Couldn't get default kubeconfig path")
+            .map_err(|err| err.to_string())?;
 
         println!(
             "Reading kubeconfig from default location: {:?}",
             default_path
         );
 
-        Kubeconfig::read_from(default_path.to_str().unwrap()).map_err(|e| e.to_string())?
+        Kubeconfig::read_from(default_path.to_str().unwrap())
+            .context("Failed to read kubeconfig from default path")
+            .map_err(|err| err.to_string())?
     };
 
     Ok(kubeconfig

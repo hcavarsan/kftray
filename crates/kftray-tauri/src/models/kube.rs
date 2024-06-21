@@ -7,7 +7,10 @@ use std::sync::Arc;
 
 use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
 use kube::api::Api;
-use serde::Serialize;
+use serde::{
+    Deserialize,
+    Serialize,
+};
 use tokio::sync::Mutex;
 
 use crate::kubeforward::vx::{
@@ -15,7 +18,7 @@ use crate::kubeforward::vx::{
     Service,
 };
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct KubeContextInfo {
     pub name: String,
 }
