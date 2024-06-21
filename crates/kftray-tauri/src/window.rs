@@ -14,58 +14,68 @@ use tauri_plugin_positioner::{
 use tokio::time::sleep;
 
 use crate::models::window::WindowPosition;
+use crate::utils::config_dir::get_window_state_path;
 use crate::AppState;
 
-const CONFIG_DIR: &str = ".kftray";
-const POSITION_FILE: &str = "window_position.json";
-
+/// Saves the current window position to the configuration file.
 pub fn save_window_position(window: &Window) {
     if let Ok(position) = window.outer_position() {
-        let position = WindowPosition {
+        let position_data = WindowPosition {
             x: position.x,
             y: position.y,
         };
-        let position_json = serde_json::to_string(&position).unwrap();
+        let position_json = serde_json::to_string(&position_data).unwrap();
 
-        let mut home_path = dirs::home_dir().unwrap();
-        home_path.push(CONFIG_DIR);
-        fs::create_dir_all(&home_path).unwrap();
-        home_path.push(POSITION_FILE);
+        match get_window_state_path() {
+            Ok(path) => {
+                if let Some(parent_dir) = path.parent() {
+                    if let Err(e) = fs::create_dir_all(parent_dir) {
+                        println!("Failed to create config directory: {}", e);
+                        return;
+                    }
+                }
 
-        fs::write(&home_path, position_json).unwrap();
-        println!("Window position saved: {:?}", position);
+                if fs::write(&path, position_json).is_ok() {
+                    println!("Window position saved: {:?}", position_data);
+                } else {
+                    println!("Failed to save window position.");
+                }
+            }
+            Err(err) => println!("Failed to get window state path: {}", err),
+        }
     } else {
         println!("Failed to get window position.");
     }
 }
 
 pub fn load_window_position() -> Option<WindowPosition> {
-    let mut home_path = dirs::home_dir().unwrap();
-    home_path.push(CONFIG_DIR);
-    home_path.push(POSITION_FILE);
-
-    if home_path.exists() {
-        match fs::read_to_string(&home_path) {
-            Ok(position_json) => match serde_json::from_str(&position_json) {
-                Ok(position) => {
-                    println!(
-                        "Window position loaded from home directory: {:?}",
-                        home_path
-                    );
-                    Some(position)
-                }
+    if let Ok(home_path) = get_window_state_path() {
+        if home_path.exists() {
+            match fs::read_to_string(&home_path) {
+                Ok(position_json) => match serde_json::from_str(&position_json) {
+                    Ok(position) => {
+                        println!(
+                            "Window position loaded from home directory: {:?}",
+                            home_path
+                        );
+                        Some(position)
+                    }
+                    Err(e) => {
+                        handle_corrupted_file(&home_path, e);
+                        None
+                    }
+                },
                 Err(e) => {
                     handle_corrupted_file(&home_path, e);
                     None
                 }
-            },
-            Err(e) => {
-                handle_corrupted_file(&home_path, e);
-                None
             }
+        } else {
+            println!("No window position file found.");
+            None
         }
     } else {
-        println!("No window position file found.");
+        println!("Could not determine window state path.");
         None
     }
 }
@@ -92,6 +102,7 @@ pub fn toggle_window_visibility(window: &Window) {
         window.set_focus().unwrap();
     }
 }
+
 pub fn set_default_position(window: &Window) {
     let app_state = window.state::<AppState>();
     app_state.is_plugin_moving.store(true, Ordering::SeqCst);
@@ -163,18 +174,18 @@ pub fn reset_window_position(window: &Window) {
 }
 
 fn remove_position_file() {
-    let mut home_path = dirs::home_dir().unwrap();
-    home_path.push(CONFIG_DIR);
-    home_path.push(POSITION_FILE);
-
-    if home_path.exists() {
-        if let Err(e) = fs::remove_file(&home_path) {
-            eprintln!("Failed to delete window position file: {}", e);
+    if let Ok(path) = get_window_state_path() {
+        if path.exists() {
+            if let Err(e) = fs::remove_file(&path) {
+                eprintln!("Failed to delete window position file: {}", e);
+            } else {
+                println!("Window position file deleted successfully.");
+            }
         } else {
-            println!("Window position file deleted successfully.");
+            println!("No window position file found to delete.");
         }
     } else {
-        println!("No window position file found to delete.");
+        println!("Could not determine window state path.");
     }
 }
 

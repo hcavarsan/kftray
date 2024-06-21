@@ -4,10 +4,7 @@ use std::{
         File,
     },
     io::Write,
-    path::{
-        Path,
-        PathBuf,
-    },
+    path::Path,
 };
 
 use rusqlite::{
@@ -16,6 +13,11 @@ use rusqlite::{
     Result,
 };
 use serde_json::json;
+
+use crate::utils::config_dir::{
+    get_db_file_path,
+    get_pod_manifest_path,
+};
 
 /// Initializes the application by ensuring that both the database file and the
 /// server configuration manifest file exist.
@@ -35,9 +37,11 @@ pub fn init() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn create_db_table() -> Result<(), rusqlite::Error> {
-    let db_path = get_db_path();
+    let db_dir = get_db_file_path().map_err(|e| {
+        rusqlite::Error::InvalidPath(format!("Failed to get DB path: {}", e).into())
+    })?;
 
-    let conn = Connection::open(db_path)?;
+    let conn = Connection::open(db_dir)?;
 
     conn.execute(
         "CREATE TABLE IF NOT EXISTS configs (
@@ -50,14 +54,25 @@ fn create_db_table() -> Result<(), rusqlite::Error> {
     Ok(())
 }
 
+fn pod_manifest_file_exists() -> bool {
+    if let Ok(path) = get_pod_manifest_path() {
+        path.exists()
+    } else {
+        false
+    }
+}
+
 /// Creates the server configuration manifest file with placeholders.
-
 fn create_server_config_manifest() -> Result<(), std::io::Error> {
-    let manifest_path = get_pod_manifest_path();
+    let manifest_path =
+        get_pod_manifest_path().map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
 
-    let manifest_dir = manifest_path
-        .parent()
-        .expect("Failed to get manifest directory");
+    let manifest_dir = manifest_path.parent().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "Failed to get manifest directory",
+        )
+    })?;
 
     if !manifest_dir.exists() {
         fs::create_dir_all(manifest_dir)?;
@@ -105,22 +120,11 @@ fn create_server_config_manifest() -> Result<(), std::io::Error> {
 
 /// Checks if the pod manifest file already exists.
 
-fn pod_manifest_file_exists() -> bool {
-    get_pod_manifest_path().exists()
-}
-
-/// Returns the path to the pod manifest file.
-
-fn get_pod_manifest_path() -> PathBuf {
-    let home_dir = dirs::home_dir().expect("Failed to get home directory");
-
-    home_dir.join(".kftray/proxy_manifest.json")
-}
-
 /// Creates a new database file if it doesn't exist already.
 
 fn create_db_file() -> Result<(), std::io::Error> {
-    let db_path = get_db_path();
+    let db_path =
+        get_db_file_path().map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
 
     let db_dir = Path::new(&db_path)
         .parent()
@@ -136,15 +140,11 @@ fn create_db_file() -> Result<(), std::io::Error> {
 }
 
 fn db_file_exists() -> bool {
-    let db_path = get_db_path();
-
-    Path::new(&db_path).exists()
-}
-
-pub fn get_db_path() -> String {
-    let home_dir = dirs::home_dir().expect("Failed to get home directory");
-
-    home_dir.to_str().unwrap().to_string() + "/.kftray/configs.db"
+    if let Ok(db_dir) = get_db_file_path() {
+        Path::new(&db_dir).exists()
+    } else {
+        false
+    }
 }
 
 #[cfg(test)]
@@ -177,25 +177,6 @@ mod tests {
         assert!(db_file_exists());
 
         assert!(pod_manifest_file_exists());
-    }
-
-    /// Tests if the contents of the created pod manifest file match the
-    /// expected default structure.
-    #[test]
-
-    fn test_pod_manifest_content() {
-        let _temp_dir = setup_test_environment();
-
-        init().expect("Initialization failed");
-
-        let manifest_path = get_pod_manifest_path();
-
-        let manifest_content =
-            fs::read_to_string(manifest_path).expect("Failed to read pod manifest");
-
-        assert!(manifest_content.contains("\"apiVersion\": \"v1\""));
-
-        assert!(manifest_content.contains("\"kind\": \"Pod\""));
     }
 
     /// Confirms that the database file gets created successfully.

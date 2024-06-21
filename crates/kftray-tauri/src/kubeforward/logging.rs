@@ -34,6 +34,8 @@ use tracing::{
 };
 use uuid::Uuid;
 
+use crate::utils::config_dir::get_log_folder_path;
+
 #[derive(Clone)]
 pub struct Logger {
     log_sender: Sender<LogMessage>,
@@ -119,11 +121,19 @@ impl Logger {
     }
 }
 
-pub async fn create_log_file_path(config_id: i64, local_port: u16) -> anyhow::Result<PathBuf> {
-    let mut path = dirs::home_dir().context("Failed to get home directory")?;
-    path.push(".kftray/http_logs");
-    fs::create_dir_all(&path).await?;
+pub async fn create_log_file_path(
+    config_id: i64, local_port: u16,
+) -> Result<PathBuf, anyhow::Error> {
+    let mut path = get_log_folder_path()
+        .map_err(|e| anyhow::anyhow!(e))
+        .context("Failed to get log folder path")?;
+
+    fs::create_dir_all(&path)
+        .await
+        .context("Failed to create log directory")?;
+
     path.push(format!("{}_{}.log", config_id, local_port));
+
     Ok(path)
 }
 
