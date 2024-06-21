@@ -11,6 +11,7 @@ use serde_json::{
 };
 
 use crate::models::config::Config;
+use crate::utils::config_dir::get_db_file_path;
 
 fn is_value_blank(value: &JsonValue) -> bool {
     match value {
@@ -60,9 +61,7 @@ fn remove_blank_or_default_fields(value: &mut JsonValue, default_config: &JsonVa
 pub async fn delete_config(id: i64) -> Result<(), String> {
     println!("Deleting config with id: {}", id);
 
-    let home_dir = dirs::home_dir().unwrap();
-
-    let db_dir = home_dir.to_str().unwrap().to_string() + "/.kftray/configs.db";
+    let db_dir = get_db_file_path()?;
 
     let conn = match Connection::open(db_dir) {
         Ok(conn) => conn,
@@ -81,10 +80,7 @@ pub async fn delete_config(id: i64) -> Result<(), String> {
 pub async fn delete_configs(ids: Vec<i64>) -> Result<(), String> {
     println!("Deleting configs with ids: {:?}", ids);
 
-    let home_dir =
-        dirs::home_dir().ok_or_else(|| "Unable to determine home directory".to_owned())?;
-
-    let db_dir = format!("{}/.kftray/configs.db", home_dir.to_string_lossy());
+    let db_dir = get_db_file_path()?;
 
     let mut conn = Connection::open(db_dir).map_err(|e| e.to_string())?;
 
@@ -107,10 +103,7 @@ pub async fn delete_configs(ids: Vec<i64>) -> Result<(), String> {
 pub async fn delete_all_configs() -> Result<(), String> {
     println!("Deleting all configs");
 
-    let home_dir =
-        dirs::home_dir().ok_or_else(|| "Unable to determine home directory".to_owned())?;
-
-    let db_dir = format!("{}/.kftray/configs.db", home_dir.to_string_lossy());
+    let db_dir = get_db_file_path()?;
 
     let conn = Connection::open(db_dir).map_err(|e| e.to_string())?;
 
@@ -124,9 +117,7 @@ pub async fn delete_all_configs() -> Result<(), String> {
 #[tauri::command]
 
 pub fn insert_config(config: Config) -> Result<(), String> {
-    let home_dir = dirs::home_dir().unwrap();
-
-    let db_dir = home_dir.to_str().unwrap().to_string() + "/.kftray/configs.db";
+    let db_dir = get_db_file_path()?;
 
     let conn = Connection::open(db_dir).map_err(|e| e.to_string())?;
 
@@ -149,9 +140,7 @@ pub fn insert_config(config: Config) -> Result<(), String> {
 
 // function to read configs from the database
 fn read_configs() -> Result<Vec<Config>, rusqlite::Error> {
-    let home_dir = dirs::home_dir().unwrap();
-
-    let db_dir = home_dir.to_str().unwrap().to_string() + "/.kftray/configs.db";
+    let db_dir = get_db_file_path().map_err(|e| rusqlite::Error::InvalidPath(e.into()))?;
 
     let conn = Connection::open(db_dir)?;
 
@@ -223,9 +212,7 @@ pub async fn get_configs() -> Result<Vec<Config>, String> {
 pub async fn get_config(id: i64) -> Result<Config, String> {
     println!("get_config called with id: {}", id);
 
-    let home_dir = dirs::home_dir().ok_or("Unable to determine home directory")?;
-
-    let db_dir = format!("{}/.kftray/configs.db", home_dir.to_string_lossy());
+    let db_dir = get_db_file_path()?;
 
     let conn = Connection::open(db_dir).map_err(|e| e.to_string())?;
 
@@ -267,9 +254,7 @@ pub async fn get_config(id: i64) -> Result<Config, String> {
 #[tauri::command]
 
 pub fn update_config(config: Config) -> Result<(), String> {
-    let home_dir = dirs::home_dir().unwrap();
-
-    let db_dir = home_dir.to_str().unwrap().to_string() + "/.kftray/configs.db";
+    let db_dir = get_db_file_path()?;
 
     let conn = Connection::open(db_dir).map_err(|e| e.to_string())?;
 
@@ -330,10 +315,7 @@ pub async fn import_configs(json: String) -> Result<(), String> {
 }
 
 pub fn migrate_configs() -> Result<(), String> {
-    let home_dir =
-        dirs::home_dir().ok_or_else(|| "Unable to determine home directory".to_owned())?;
-
-    let db_dir = format!("{}/.kftray/configs.db", home_dir.to_string_lossy());
+    let db_dir = get_db_file_path()?;
 
     let mut conn = Connection::open(db_dir).map_err(|e| e.to_string())?;
 
