@@ -86,10 +86,10 @@ async fn show_alert_dialog(
     let full_message = format!(
         "Multiple configuration directories have been detected in the following locations:\n\n{}\n\n\
         {}\n\
-        Environment Variables Checked:\n\
-        - HOME: {}\n\
+        Environment Variables Checked (in order of precedence):\n\
+        - XDG_CONFIG_HOME: {}\n\
         - KFTRAY_CONFIG: {}\n\
-        - XDG_CONFIG_HOME: {}\n\n\
+        - HOME: {}\n\n\
         To resolve this issue, please:\n\
         1. Move or delete the extra configuration directories.\n\
         2. Ensure that the remaining directory is in the correct location.\n\n\
@@ -97,9 +97,9 @@ async fn show_alert_dialog(
         * {}\n",
         msg,
         active_config_msg,
-        env::var("HOME").unwrap_or_else(|_| "Not set".to_string()),
-        env::var("KFTRAY_CONFIG").unwrap_or_else(|_| "Not set".to_string()),
         env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| "Not set".to_string()),
+        env::var("KFTRAY_CONFIG").unwrap_or_else(|_| "Not set".to_string()),
+        env::var("HOME").unwrap_or_else(|_| "Not set".to_string()),
         dirs::home_dir().map_or("<home_directory_not_found>".to_string(), |p| p.join(".kftray").display().to_string())
     );
 
