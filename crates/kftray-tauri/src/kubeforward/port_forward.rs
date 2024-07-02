@@ -22,8 +22,8 @@ use tokio::{
     time::timeout,
 };
 use tokio_stream::wrappers::TcpListenerStream;
-use tracing::debug;
 use tracing::{
+    debug,
     error,
     info,
     trace,
@@ -188,7 +188,6 @@ impl PortForward {
 
         let request_id = Arc::new(Mutex::new(None));
 
-        // Lock the client connection and set TCP_NODELAY before splitting
         let mut client_conn_guard = client_conn.lock().await;
         client_conn_guard.set_nodelay(true)?;
         let (mut client_reader, mut client_writer) = tokio::io::split(&mut *client_conn_guard);
@@ -275,7 +274,6 @@ impl PortForward {
                     trace!("Read {} bytes from client", n);
                     request_buffer.extend_from_slice(&buffer[..n]);
 
-                    if is_complete_request(&request_buffer).await {
                         if http_log_state.get_http_logs(self.config_id).await {
                             if let Some(logger) = &logger {
                                 let mut req_id_guard = request_id.lock().await;
@@ -291,7 +289,6 @@ impl PortForward {
                             return Err(e.into());
                         }
                         request_buffer.clear();
-                    }
                 },
 
                 _ = cancel_notifier.notified() => {
@@ -345,7 +342,6 @@ impl PortForward {
                     trace!("Read {} bytes from upstream", n);
                     response_buffer.extend_from_slice(&buffer[..n]);
 
-                    if is_complete_response(&response_buffer).await {
                         if http_log_state.get_http_logs(self.config_id).await {
                             if let Some(logger) = &logger {
                                 let req_id_guard = request_id.lock().await;
@@ -364,11 +360,10 @@ impl PortForward {
                         }
 
                         response_buffer.clear();
-                    }
+
 
                     timeout_duration = Duration::from_secs(600);
                 },
-
                 _ = cancel_notifier.notified() => {
                     trace!("Upstream to client task cancelled");
                     break;
@@ -553,115 +548,4 @@ impl PortForward {
 
         Ok(Some(packet))
     }
-}
-pub async fn is_complete_request(buffer: &[u8]) -> bool {
-    if let Some(headers_end) = buffer.windows(4).position(|window| window == b"\r\n\r\n") {
-        let body_start = headers_end + 4;
-
-        let mut headers = [httparse::EMPTY_HEADER; 64];
-        let mut req = httparse::Request::new(&mut headers);
-        if let Ok(httparse::Status::Complete(_)) = req.parse(buffer) {
-            // Find Content-Length header
-            if let Some(content_length) = req.headers.iter().find_map(|h| {
-                if h.name.eq_ignore_ascii_case("content-length") {
-                    std::str::from_utf8(h.value)
-                        .ok()
-                        .and_then(|v| v.parse::<usize>().ok())
-                } else {
-                    None
-                }
-            }) {
-                return buffer.len() >= body_start + content_length;
-            } else {
-                return true;
-            }
-        }
-    }
-    false
-}
-
-pub async fn is_complete_response(buffer: &[u8]) -> bool {
-    if let Some(headers_end) = buffer.windows(4).position(|window| window == b"\r\n\r\n") {
-        let body_start = headers_end + 4;
-
-        let mut headers = [httparse::EMPTY_HEADER; 64];
-        let mut res = httparse::Response::new(&mut headers);
-        if let Ok(httparse::Status::Complete(_)) = res.parse(buffer) {
-            if let Some(content_length) = res.headers.iter().find_map(|h| {
-                if h.name.eq_ignore_ascii_case("content-length") {
-                    std::str::from_utf8(h.value)
-                        .ok()
-                        .and_then(|v| v.parse::<usize>().ok())
-                } else {
-                    None
-                }
-            }) {
-                let complete = buffer.len() >= body_start + content_length;
-                debug!(
-                    "Content-Length: {}, Buffer Length: {}, Complete: {}",
-                    content_length,
-                    buffer.len(),
-                    complete
-                );
-                return complete;
-            }
-
-            if res.headers.iter().any(|h| {
-                h.name.eq_ignore_ascii_case("transfer-encoding")
-                    && h.value.eq_ignore_ascii_case(b"chunked")
-            }) {
-                let mut pos = body_start;
-                loop {
-                    if let Some(chunk_size_end) = buffer[pos..]
-                        .windows(2)
-                        .position(|window| window == b"\r\n")
-                    {
-                        let chunk_size_start = pos;
-                        pos += chunk_size_end + 2;
-
-                        let chunk_size_str = match std::str::from_utf8(
-                            &buffer[chunk_size_start..chunk_size_start + chunk_size_end],
-                        ) {
-                            Ok(s) => s,
-                            Err(_) => return false,
-                        };
-                        let chunk_size = match usize::from_str_radix(chunk_size_str.trim(), 16) {
-                            Ok(size) => size,
-                            Err(_) => return false,
-                        };
-
-                        if chunk_size == 0 {
-                            let complete = buffer.len() >= pos + 2;
-                            debug!(
-                                "Last Chunk Found. Buffer Length: {}, Complete: {}",
-                                buffer.len(),
-                                complete
-                            );
-                            return complete;
-                        }
-
-                        pos += chunk_size + 2;
-
-                        if buffer.len() < pos {
-                            trace!(
-                                "Incomplete Chunk. Buffer Length: {}, Position: {}",
-                                buffer.len(),
-                                pos
-                            );
-                            return false;
-                        }
-                    } else {
-                        trace!(
-                            "Incomplete Chunk Size Line. Buffer Length: {}",
-                            buffer.len()
-                        );
-                        return false;
-                    }
-                }
-            }
-
-            return true;
-        }
-    }
-    false
 }
