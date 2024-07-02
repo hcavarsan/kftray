@@ -106,7 +106,7 @@ async fn show_alert_dialog(
     // Use the app handle to trigger the dialog on the main thread
     spawn_blocking(move || {
         let _ = app_handle.run_on_main_thread(move || {
-            MessageDialogBuilder::new("Multiple Configuration Directories Detected", &full_message)
+            MessageDialogBuilder::new("Multiple Configuration Directories Detected", full_message)
                 .kind(MessageDialogKind::Warning)
                 .show(|_| {});
         });
