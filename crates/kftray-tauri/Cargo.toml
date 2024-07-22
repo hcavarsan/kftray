@@ -27,7 +27,7 @@ rusqlite = { version = "0.31.0", features = ["bundled"] }
 dirs = "5.0.1"
 reqwest = "0.12.4"
 base64 = "0.22.1"
-keyring = "2.3.3"
+keyring = "3.0.0"
 hostsfile = { git = "https://github.com/tonarino/innernet", branch = "main" }
 log = "0.4"
 env_logger = "0.11.3"
