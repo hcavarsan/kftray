@@ -25,5 +25,5 @@ node_modules
 target/*
 target*/*
 target*
-frontend/dist
-
+frontend/dist/*
+!frontend/dist/.gitkeep
