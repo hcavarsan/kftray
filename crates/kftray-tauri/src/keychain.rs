@@ -8,7 +8,6 @@ use tauri::{
 };
 
 #[derive(Debug)]
-
 pub enum CustomError {
     Keyring(KeyringError),
     Tauri(TauriError),
@@ -39,7 +38,6 @@ impl From<CustomError> for InvokeError {
 
 /// Stores a key using the `keyring` crate.
 #[tauri::command]
-
 pub fn store_key(
     service: &str, name: &str, password: &str,
 ) -> std::result::Result<(), CustomError> {
@@ -52,7 +50,6 @@ pub fn store_key(
 
 /// Retrieves a key using the `keyring` crate.
 #[tauri::command]
-
 pub fn get_key(service: &str, name: &str) -> std::result::Result<String, CustomError> {
     let entry = Entry::new(service, name).map_err(CustomError::from)?;
 
@@ -63,11 +60,10 @@ pub fn get_key(service: &str, name: &str) -> std::result::Result<String, CustomE
 
 /// Deletes a key using the `keyring` crate.
 #[tauri::command]
-
 pub fn delete_key(service: &str, name: &str) -> std::result::Result<(), CustomError> {
     let entry = Entry::new(service, name).map_err(CustomError::from)?;
 
-    entry.delete_password().map_err(CustomError::from)?;
+    entry.delete_credential().map_err(CustomError::from)?;
 
     Ok(())
 }
@@ -97,7 +93,7 @@ mod tests {
 
         let entry = Entry::new(SERVICE, ACCOUNT).unwrap();
 
-        let delete_result = entry.delete_password();
+        let delete_result = entry.delete_credential();
 
         println!("Tried to delete password: {:?}", delete_result);
 
@@ -119,7 +115,7 @@ mod tests {
 
         assert_eq!(res.unwrap(), PASSWORD);
 
-        let _ = entry.delete_password();
+        let _ = entry.delete_credential();
     }
 
     #[test]

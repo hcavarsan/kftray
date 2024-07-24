@@ -26,4 +26,4 @@ target/*
 target*/*
 target*
 frontend/dist/*
-
+!frontend/dist/.gitkeep

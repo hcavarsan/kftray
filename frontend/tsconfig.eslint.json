@@ -2,12 +2,16 @@
 	"extends": "./tsconfig.json",
 	"include": [
 	  "src/**/*",
+	  "frontend/src/**/*",
 	  ".eslintrc.cjs",
 	  "prettier.config.cjs",
-	  "farm.config.ts"
+	  "vite.config.ts",
+	  "frontend/vite.config.ts"
 	],
 	"exclude": [
 	  "node_modules",
+	  "frontend/dist",
+	  "frontend/node_modules",
 	  "**/*.spec.ts",
 	  "**/*.test.ts",
 	  "crates/**/*",
