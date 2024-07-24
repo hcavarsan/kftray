@@ -12,10 +12,10 @@ use std::{
 };
 
 use image::{
-    io::Reader as ImageReader,
     DynamicImage,
     ImageError,
     ImageFormat,
+    ImageReader,
 };
 use thiserror::Error;
 
