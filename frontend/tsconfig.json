@@ -5,7 +5,7 @@
     "lib": ["DOM", "DOM.Iterable", "ESNext"],
     "allowJs": false,
     "skipLibCheck": true,
-    "esModuleInterop": false,
+    "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
     "strict": true,
     "forceConsistentCasingInFileNames": true,
@@ -16,11 +16,12 @@
     "noEmit": true,
     "jsx": "react-jsx",
     "baseUrl": ".",
+	"composite": true,
     "paths": {
       "@/*": ["src/*"]
     }
   },
-  "include": ["src/**/*", "farm.config.ts"],
-  "exclude": ["node_modules", "crates", "dist", "target"],
+  "include": ["frontend/src/**/*", "frontend/vite.config.ts"],
+  "exclude": ["frontend/node_modules", "crates", "frontend/dist", "target", "node_modules"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }
