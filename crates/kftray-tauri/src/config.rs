@@ -1,4 +1,8 @@
 use hostsfile::HostsBuilder;
+use log::{
+    error,
+    info,
+};
 use rusqlite::{
     params,
     types::ToSql,
@@ -59,7 +63,7 @@ fn remove_blank_or_default_fields(value: &mut JsonValue, default_config: &JsonVa
 #[tauri::command]
 
 pub async fn delete_config(id: i64) -> Result<(), String> {
-    println!("Deleting config with id: {}", id);
+    info!("Deleting config with id: {}", id);
 
     let db_dir = get_db_file_path()?;
 
@@ -78,7 +82,7 @@ pub async fn delete_config(id: i64) -> Result<(), String> {
 #[tauri::command]
 
 pub async fn delete_configs(ids: Vec<i64>) -> Result<(), String> {
-    println!("Deleting configs with ids: {:?}", ids);
+    info!("Deleting configs with ids: {:?}", ids);
 
     let db_dir = get_db_file_path()?;
 
@@ -101,7 +105,7 @@ pub async fn delete_configs(ids: Vec<i64>) -> Result<(), String> {
 #[tauri::command]
 
 pub async fn delete_all_configs() -> Result<(), String> {
-    println!("Deleting all configs");
+    info!("Deleting all configs");
 
     let db_dir = get_db_file_path()?;
 
@@ -165,7 +169,7 @@ fn read_configs() -> Result<Vec<Config>, rusqlite::Error> {
         configs.push(row?);
     }
 
-    println!("Reading configs {:?}", configs);
+    info!("Reading configs {:?}", configs);
 
     Ok(configs)
 }
@@ -197,11 +201,11 @@ pub fn clean_all_custom_hosts_entries() -> Result<(), String> {
 #[tauri::command]
 
 pub async fn get_configs() -> Result<Vec<Config>, String> {
-    println!("get_configs called");
+    info!("get_configs called");
 
     let configs = read_configs().map_err(|e| e.to_string())?;
 
-    println!("{:?}", configs);
+    info!("{:?}", configs);
 
     Ok(configs)
 }
@@ -210,7 +214,7 @@ pub async fn get_configs() -> Result<Vec<Config>, String> {
 #[tauri::command]
 
 pub async fn get_config(id: i64) -> Result<Config, String> {
-    println!("get_config called with id: {}", id);
+    info!("get_config called with id: {}", id);
 
     let db_dir = get_db_file_path()?;
 
@@ -242,7 +246,7 @@ pub async fn get_config(id: i64) -> Result<Config, String> {
 
             config.id = Some(id);
 
-            println!("{:?}", config);
+            info!("{:?}", config);
 
             Ok(config)
         }
@@ -306,7 +310,7 @@ pub async fn import_configs(json: String) -> Result<(), String> {
     }
 
     if let Err(e) = migrate_configs() {
-        eprintln!("Error migrating configs: {}. Please check if the configurations are valid and compatible with the current system/version.", e);
+        error!("Error migrating configs: {}. Please check if the configurations are valid and compatible with the current system/version.", e);
 
         return Err(format!("Error migrating configs: {}", e));
     }

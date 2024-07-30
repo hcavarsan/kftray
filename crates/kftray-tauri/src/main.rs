@@ -8,6 +8,8 @@ use std::sync::{
     Mutex,
 };
 
+use log::error;
+
 use crate::utils::validate_configs::alert_multiple_configs;
 mod commands;
 mod config;
@@ -80,7 +82,7 @@ fn main() {
             let _ = db::init();
 
             if let Err(e) = config::migrate_configs() {
-                eprintln!("Failed to migrate configs: {}", e);
+                error!("Failed to migrate configs: {}", e);
             }
 
             #[cfg(target_os = "macos")]
@@ -104,7 +106,7 @@ fn main() {
                 .register("CmdOrCtrl+Shift+F1", move || {
                     toggle_window_visibility(&window);
                 })
-                .unwrap_or_else(|err| println!("{:?}", err));
+                .unwrap_or_else(|err| error!("{:?}", err));
 
             Ok(())
         })

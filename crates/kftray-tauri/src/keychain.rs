@@ -83,23 +83,15 @@ mod tests {
     #[test]
 
     fn test_store_key_success() {
-        println!("Starting test_store_key_success");
-
         let res = store_key(SERVICE, ACCOUNT, PASSWORD);
 
         assert!(res.is_ok());
-
-        println!("store_key succeeded");
 
         let entry = Entry::new(SERVICE, ACCOUNT).unwrap();
 
         let delete_result = entry.delete_credential();
 
-        println!("Tried to delete password: {:?}", delete_result);
-
         assert!(delete_result.is_ok());
-
-        println!("Password deleted successfully");
     }
 
     #[test]

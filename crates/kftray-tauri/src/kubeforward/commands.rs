@@ -23,6 +23,7 @@ use kube::{
 };
 use kube_runtime::wait::conditions;
 use lazy_static::lazy_static;
+use log::info;
 use rand::{
     distributions::Alphanumeric,
     Rng,
@@ -435,12 +436,12 @@ pub async fn stop_port_forward(
         // Remove and retrieve child process handle
         let join_handle = {
             let mut child_processes = CHILD_PROCESSES.lock().unwrap();
-            println!("child_processes: {:?}", child_processes);
+            info!("child_processes: {:?}", child_processes);
             child_processes.remove(&composite_key)
         };
 
         if let Some(join_handle) = join_handle {
-            println!("Join handle: {:?}", join_handle);
+            info!("Join handle: {:?}", join_handle);
             join_handle.abort();
         }
 
@@ -540,7 +541,7 @@ pub async fn deploy_and_forward_pod(
         let username = whoami::username().to_lowercase();
         let clean_username: String = username.chars().filter(|c| c.is_alphanumeric()).collect();
 
-        println!("Cleaned username: {}", clean_username);
+        info!("Cleaned username: {}", clean_username);
 
         let protocol = config.protocol.to_string().to_lowercase();
 

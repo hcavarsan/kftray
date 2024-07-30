@@ -27,6 +27,7 @@ use kube::{
     Client,
     ResourceExt,
 };
+use log::info;
 use tower::ServiceBuilder;
 
 use crate::utils::config_dir::get_default_kubeconfig_path;
@@ -43,19 +44,19 @@ use crate::{
 pub async fn create_client_with_specific_context(
     kubeconfig: Option<String>, context_name: &str,
 ) -> Result<Client> {
-    println!(
+    info!(
         "create_client_with_specific_context {}",
         kubeconfig.as_deref().unwrap_or("")
     );
 
-    println!("create_client_with_specific_context {}", context_name);
+    info!("create_client_with_specific_context {}", context_name);
 
     // Determine the kubeconfig based on the input
     let kubeconfig = if let Some(path) = kubeconfig {
         if path == "default" {
             let default_path = get_default_kubeconfig_path()?;
 
-            println!(
+            info!(
                 "Reading kubeconfig from default location: {:?}",
                 default_path
             );
@@ -64,7 +65,7 @@ pub async fn create_client_with_specific_context(
                 .context("Failed to read kubeconfig from default location")?
         } else {
             // Otherwise, try to read the kubeconfig from the specified path
-            println!("Reading kubeconfig from specified path: {}", path);
+            info!("Reading kubeconfig from specified path: {}", path);
 
             Kubeconfig::read_from(path).context("Failed to read kubeconfig from specified path")?
         }
@@ -72,7 +73,7 @@ pub async fn create_client_with_specific_context(
         // If no kubeconfig is specified, read the default kubeconfig
         let default_path = get_default_kubeconfig_path()?;
 
-        println!(
+        info!(
             "Reading kubeconfig from default location: {:?}",
             default_path
         );
@@ -81,7 +82,7 @@ pub async fn create_client_with_specific_context(
             .context("Failed to read kubeconfig from default location")?
     };
 
-    println!("create_client_with_specific_context2 {:?}", kubeconfig);
+    info!("create_client_with_specific_context2 {:?}", kubeconfig);
 
     let config = Config::from_custom_kubeconfig(
         kubeconfig,
@@ -158,7 +159,7 @@ pub async fn list_pods(
 pub async fn list_kube_contexts(
     kubeconfig: Option<String>,
 ) -> Result<Vec<KubeContextInfo>, String> {
-    println!("list_kube_contexts {}", kubeconfig.as_deref().unwrap_or(""));
+    info!("list_kube_contexts {}", kubeconfig.as_deref().unwrap_or(""));
 
     let kubeconfig = if let Some(path) = &kubeconfig {
         if path == "default" {
@@ -166,7 +167,7 @@ pub async fn list_kube_contexts(
                 .context("Couldn't get default kubeconfig path")
                 .map_err(|err| err.to_string())?;
 
-            println!(
+            info!(
                 "Reading kubeconfig from default location: {:?}",
                 default_path
             );
@@ -175,7 +176,7 @@ pub async fn list_kube_contexts(
                 .context("Failed to read kubeconfig from default path")
                 .map_err(|err| err.to_string())?
         } else {
-            println!("Reading kubeconfig from specified path: {}", path);
+            info!("Reading kubeconfig from specified path: {}", path);
 
             Kubeconfig::read_from(path)
                 .context("Failed to read kubeconfig from specified path")
@@ -186,7 +187,7 @@ pub async fn list_kube_contexts(
             .context("Couldn't get default kubeconfig path")
             .map_err(|err| err.to_string())?;
 
-        println!(
+        info!(
             "Reading kubeconfig from default location: {:?}",
             default_path
         );

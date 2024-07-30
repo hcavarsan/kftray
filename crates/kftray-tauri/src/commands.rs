@@ -4,6 +4,10 @@ use base64::{
     engine::general_purpose,
     Engine as _,
 };
+use log::{
+    error,
+    info,
+};
 use reqwest::header::{
     AUTHORIZATION,
     USER_AGENT,
@@ -28,21 +32,18 @@ use crate::{
 
 //  command to save the dialog state when is open
 #[tauri::command]
-
 pub fn open_save_dialog(state: State<SaveDialogState>) {
     state.is_open.store(true, Ordering::SeqCst);
 }
 
 // command to save the dialog state when is closed
 #[tauri::command]
-
 pub fn close_save_dialog(state: State<SaveDialogState>) {
     state.is_open.store(false, Ordering::SeqCst);
 }
 
 // command to import configs from github
 #[tauri::command]
-
 pub async fn import_configs_from_github(
     repo_url: String, config_path: String, is_private: bool, flush: bool, token: Option<String>,
 ) -> Result<(), String> {
@@ -76,7 +77,7 @@ pub async fn import_configs_from_github(
         .ok_or("Failed to extract content from response")?
         .trim();
 
-    println!("base64_content: {}", base64_content);
+    info!("base64_content: {}", base64_content);
 
     let base64_content_cleaned = base64_content.replace(['\n', '\r'], "");
 
@@ -87,7 +88,7 @@ pub async fn import_configs_from_github(
     let decoded_str = String::from_utf8(decoded_content)
         .map_err(|e| format!("Failed to convert decoded content to string: {}", e))?;
 
-    println!("decoded_str: {}", decoded_str);
+    info!("decoded_str: {}", decoded_str);
 
     let configs: Vec<Config> = serde_json::from_str(&decoded_str)
         .map_err(|e| format!("Failed to parse configs: {}", e))?;
@@ -104,7 +105,7 @@ pub async fn import_configs_from_github(
     }
 
     if let Err(e) = migrate_configs() {
-        eprintln!("Error migrating configs: {}. Please check if the configurations are valid and compatible with the current system/version.", e);
+        error!("Error migrating configs: {}. Please check if the configurations are valid and compatible with the current system/version.", e);
     }
 
     Ok(())
@@ -127,7 +128,7 @@ pub async fn open_log_file(log_file_name: String) -> Result<(), String> {
         ));
     }
 
-    println!("Opening log file: {}", log_file_path.display());
+    info!("Opening log file: {}", log_file_path.display());
 
     if fs::metadata(&log_file_path).is_err() {
         return Err(format!(
@@ -141,7 +142,7 @@ pub async fn open_log_file(log_file_name: String) -> Result<(), String> {
     match try_open_with_editor(log_file_path.to_str().unwrap(), &editor) {
         Ok(_) => Ok(()),
         Err(err) => {
-            println!(
+            error!(
                 "Error opening with editor '{}': {}. Trying default method...",
                 editor, err
             );
@@ -149,7 +150,7 @@ pub async fn open_log_file(log_file_name: String) -> Result<(), String> {
             match that_in_background(&log_file_path).join() {
                 Ok(Ok(_)) => Ok(()),
                 Ok(Err(err)) => {
-                    println!("Error opening log file with default method: {}. Trying fallback methods...", err);
+                    error!("Error opening log file with default method: {}. Trying fallback methods...", err);
                     fallback_methods(log_file_path.to_str().unwrap())
                 }
                 Err(err) => Err(format!("Failed to join thread: {:?}", err)),

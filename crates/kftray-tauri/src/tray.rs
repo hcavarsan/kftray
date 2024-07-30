@@ -1,6 +1,10 @@
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
+use log::{
+    error,
+    info,
+};
 use tauri::{
     CustomMenuItem,
     GlobalWindowEvent,
@@ -88,7 +92,7 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
         return;
     }
 
-    println!("event: {:?}", event.event());
+    info!("event: {:?}", event.event());
     let app_state = event.window().state::<AppState>();
     let mut is_moving = app_state.is_moving.lock().unwrap();
 
@@ -139,7 +143,7 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
         });
 
         if !*is_moving && !app_state.is_plugin_moving.load(Ordering::SeqCst) {
-            println!(
+            info!(
                 "is_plugin_moving: {}",
                 app_state.is_plugin_moving.load(Ordering::SeqCst)
             );
@@ -181,10 +185,10 @@ pub fn stop_all_port_forwards_and_exit(app_handle: &tauri::AppHandle) {
     runtime.block_on(async {
         match commands::stop_all_port_forward().await {
             Ok(_) => {
-                println!("Successfully stopped all port forwards.");
+                info!("Successfully stopped all port forwards.");
             }
             Err(err) => {
-                eprintln!("Failed to stop port forwards: {}", err);
+                error!("Failed to stop port forwards: {}", err);
             }
         }
     });

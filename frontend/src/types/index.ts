@@ -2,21 +2,7 @@ import { RefObject } from 'react'
 
 export interface Status {
   id: number
-  service: string
-  context: string
-  local_port: number
   isRunning: boolean
-  namespace: string
-  remote_port: number
-  local_address: string
-  domain_enabled: boolean
-  workload_type: string
-  target: string
-  protocol: string
-  alias: string
-  remote_address: string
-  cancelRef?: RefObject<HTMLButtonElement>
-  kubeconfig?: string
 }
 
 export interface Config {
