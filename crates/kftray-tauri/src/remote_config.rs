@@ -1,21 +1,20 @@
-use rusqlite::Connection;
+use crate::db::get_db_pool;
 
-use crate::utils::config_dir::get_db_file_path;
+// Function to clear existing configs from the database
+pub async fn clear_existing_configs() -> Result<(), sqlx::Error> {
+    let pool = get_db_pool()
+        .await
+        .map_err(|e| sqlx::Error::Configuration(e.into()))?;
+    let mut conn = pool.acquire().await?;
 
-//  function to clear existing configs from the database
-pub fn clear_existing_configs() -> Result<(), rusqlite::Error> {
-    let db_dir = get_db_file_path().map_err(|e| {
-        rusqlite::Error::InvalidPath(format!("Failed to get DB path: {}", e).into())
-    })?;
-
-    let conn = Connection::open(db_dir)?;
-
-    conn.execute("DELETE FROM configs", ())?;
+    sqlx::query("DELETE FROM configs")
+        .execute(&mut *conn)
+        .await?;
 
     Ok(())
 }
 
-//  function to build the github api url
+// Function to build the GitHub API URL
 pub fn build_github_api_url(repo_url: &str, config_path: &str) -> String {
     let base_api_url = "https://api.github.com/repos";
 
@@ -29,7 +28,6 @@ pub fn build_github_api_url(repo_url: &str, config_path: &str) -> String {
     }
 
     let owner = url_parts[0];
-
     let repo = url_parts[1];
 
     format!(
@@ -39,18 +37,13 @@ pub fn build_github_api_url(repo_url: &str, config_path: &str) -> String {
 }
 
 #[cfg(test)]
-
 mod tests {
-
     use super::*;
 
     #[test]
-
     fn test_build_github_api_url() {
         let repo_url = "https://github.com/exampleUser/exampleRepo";
-
         let config_path = "path/to/config.json";
-
         let expected_url =
             "https://api.github.com/repos/exampleUser/exampleRepo/contents/path/to/config.json";
 

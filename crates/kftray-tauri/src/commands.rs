@@ -16,10 +16,8 @@ use tauri::State;
 
 use crate::utils::config_dir::get_log_folder_path;
 use crate::{
-    config::{
-        import_configs,
-        migrate_configs,
-    },
+    config::import_configs,
+    migration::migrate_configs,
     models::{
         config::Config,
         window::SaveDialogState,
@@ -94,7 +92,7 @@ pub async fn import_configs_from_github(
         .map_err(|e| format!("Failed to parse configs: {}", e))?;
 
     if flush {
-        clear_existing_configs().map_err(|e| e.to_string())?;
+        clear_existing_configs().await.map_err(|e| e.to_string())?;
     }
 
     for config in configs {
@@ -104,7 +102,7 @@ pub async fn import_configs_from_github(
         import_configs(config_json).await?;
     }
 
-    if let Err(e) = migrate_configs() {
+    if let Err(e) = migrate_configs().await {
         error!("Error migrating configs: {}. Please check if the configurations are valid and compatible with the current system/version.", e);
     }
 

@@ -13,10 +13,12 @@ use log::error;
 use crate::utils::validate_configs::alert_multiple_configs;
 mod commands;
 mod config;
+mod config_state;
 mod db;
 mod keychain;
 mod kubeforward;
 mod logging;
+mod migration;
 mod models;
 mod remote_config;
 mod tray;
@@ -78,12 +80,19 @@ fn main() {
                 alert_multiple_configs(app_handle).await;
             });
 
-            let _ = config::clean_all_custom_hosts_entries();
-            let _ = db::init();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = config::clean_all_custom_hosts_entries().await {
+                    error!("Failed to clean custom hosts entries: {}", e);
+                }
 
-            if let Err(e) = config::migrate_configs() {
-                error!("Failed to migrate configs: {}", e);
-            }
+                if let Err(e) = db::init().await {
+                    error!("Failed to initialize database: {}", e);
+                }
+
+                if let Err(e) = migration::migrate_configs().await {
+                    error!("Failed to migrate configs: {}", e);
+                }
+            });
 
             #[cfg(target_os = "macos")]
             {
@@ -145,7 +154,12 @@ fn main() {
             keychain::store_key,
             keychain::get_key,
             keychain::delete_key,
-            window::toggle_pin_state
+            window::toggle_pin_state,
+            config_state::get_config_states,
+            config_state::get_config_state_by_config_id,
+            config_state::insert_config_state,
+            config_state::delete_config_state,
+            config_state::update_config_state,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");

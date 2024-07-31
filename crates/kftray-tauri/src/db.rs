@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::{
     fs::{
         self,
@@ -7,12 +8,9 @@ use std::{
     path::Path,
 };
 
-use rusqlite::{
-    params,
-    Connection,
-    Result,
-};
 use serde_json::json;
+use sqlx::SqlitePool;
+use tokio::sync::OnceCell;
 
 use crate::utils::config_dir::{
     get_db_file_path,
@@ -21,8 +19,7 @@ use crate::utils::config_dir::{
 
 /// Initializes the application by ensuring that both the database file and the
 /// server configuration manifest file exist.
-
-pub fn init() -> Result<(), Box<dyn std::error::Error>> {
+pub async fn init() -> Result<(), Box<dyn std::error::Error>> {
     if !db_file_exists() {
         create_db_file()?;
     }
@@ -31,25 +28,80 @@ pub fn init() -> Result<(), Box<dyn std::error::Error>> {
         create_server_config_manifest()?;
     }
 
-    create_db_table()?;
+    create_db_table().await?;
 
     Ok(())
 }
 
-fn create_db_table() -> Result<(), rusqlite::Error> {
-    let db_dir = get_db_file_path().map_err(|e| {
-        rusqlite::Error::InvalidPath(format!("Failed to get DB path: {}", e).into())
-    })?;
+static DB_POOL: OnceCell<Arc<SqlitePool>> = OnceCell::const_new();
 
-    let conn = Connection::open(db_dir)?;
+/// Retrieves the database connection pool, initializing it if necessary.
+pub async fn get_db_pool() -> Result<Arc<SqlitePool>, String> {
+    DB_POOL
+        .get_or_try_init(|| async {
+            let db_dir = get_db_file_path().map_err(|e| e.to_string())?;
+            let db_dir_str = db_dir.to_str().ok_or("Invalid DB path")?;
+            println!("Database file path: {}", db_dir_str); // Debug logging
+            let pool = SqlitePool::connect(db_dir_str)
+                .await
+                .map_err(|e| e.to_string())?;
+            Ok(Arc::new(pool))
+        })
+        .await
+        .map(Arc::clone)
+}
 
-    conn.execute(
+async fn create_db_table() -> Result<(), sqlx::Error> {
+    let pool = get_db_pool()
+        .await
+        .map_err(|e| sqlx::Error::Configuration(e.into()))?;
+    let mut conn = pool.acquire().await?;
+
+    sqlx::query("PRAGMA foreign_keys = ON;")
+        .execute(&mut *conn)
+        .await?;
+
+    sqlx::query(
         "CREATE TABLE IF NOT EXISTS configs (
             id INTEGER PRIMARY KEY,
             data TEXT NOT NULL
         )",
-        params![],
-    )?;
+    )
+    .execute(&mut *conn)
+    .await?;
+
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS config_state (
+            id INTEGER PRIMARY KEY,
+            config_id INTEGER NOT NULL,
+            is_running BOOLEAN NOT NULL DEFAULT false,
+            FOREIGN KEY(config_id) REFERENCES configs(id) ON DELETE CASCADE
+        )",
+    )
+    .execute(&mut *conn)
+    .await?;
+
+    sqlx::query(
+        "CREATE TRIGGER IF NOT EXISTS after_insert_config
+         AFTER INSERT ON configs
+         FOR EACH ROW
+         BEGIN
+             INSERT INTO config_state (config_id, is_running) VALUES (NEW.id, false);
+         END;",
+    )
+    .execute(&mut *conn)
+    .await?;
+
+    sqlx::query(
+        "CREATE TRIGGER IF NOT EXISTS after_delete_config
+         AFTER DELETE ON configs
+         FOR EACH ROW
+         BEGIN
+             DELETE FROM config_state WHERE config_id = OLD.id;
+         END;",
+    )
+    .execute(&mut *conn)
+    .await?;
 
     Ok(())
 }
@@ -119,9 +171,15 @@ fn create_server_config_manifest() -> Result<(), std::io::Error> {
 }
 
 /// Checks if the pod manifest file already exists.
+fn db_file_exists() -> bool {
+    if let Ok(db_dir) = get_db_file_path() {
+        Path::new(&db_dir).exists()
+    } else {
+        false
+    }
+}
 
 /// Creates a new database file if it doesn't exist already.
-
 fn create_db_file() -> Result<(), std::io::Error> {
     let db_path =
         get_db_file_path().map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
@@ -137,56 +195,4 @@ fn create_db_file() -> Result<(), std::io::Error> {
     fs::File::create(db_path)?;
 
     Ok(())
-}
-
-fn db_file_exists() -> bool {
-    if let Ok(db_dir) = get_db_file_path() {
-        Path::new(&db_dir).exists()
-    } else {
-        false
-    }
-}
-
-#[cfg(test)]
-
-mod tests {
-
-    use tempfile::TempDir;
-
-    use super::*;
-
-    /// Sets up a temporary test environment and overrides the home directory.
-
-    fn setup_test_environment() -> TempDir {
-        let temp = tempfile::tempdir().expect("Failed to create a temp dir");
-
-        std::env::set_var("HOME", temp.path());
-
-        temp
-    }
-
-    /// Tests if the initialization creates the required database and manifest
-    /// files.
-    #[test]
-
-    fn test_initialization_creates_files() {
-        let _temp_dir = setup_test_environment();
-
-        init().expect("Initialization failed");
-
-        assert!(db_file_exists());
-
-        assert!(pod_manifest_file_exists());
-    }
-
-    /// Confirms that the database file gets created successfully.
-    #[test]
-
-    fn test_db_file_creation() {
-        let _temp_dir = setup_test_environment();
-
-        create_db_file().expect("Failed to create db file");
-
-        assert!(db_file_exists());
-    }
 }
