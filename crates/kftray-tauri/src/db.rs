@@ -8,6 +8,10 @@ use std::{
     path::Path,
 };
 
+use log::{
+    error,
+    info,
+};
 use serde_json::json;
 use sqlx::SqlitePool;
 use tokio::sync::OnceCell;
@@ -35,16 +39,19 @@ pub async fn init() -> Result<(), Box<dyn std::error::Error>> {
 
 static DB_POOL: OnceCell<Arc<SqlitePool>> = OnceCell::const_new();
 
-/// Retrieves the database connection pool, initializing it if necessary.
 pub async fn get_db_pool() -> Result<Arc<SqlitePool>, String> {
     DB_POOL
         .get_or_try_init(|| async {
-            let db_dir = get_db_file_path().map_err(|e| e.to_string())?;
+            let db_dir = get_db_file_path().map_err(|e| {
+                error!("Failed to get DB file path: {}", e);
+                e.to_string()
+            })?;
             let db_dir_str = db_dir.to_str().ok_or("Invalid DB path")?;
-            println!("Database file path: {}", db_dir_str); // Debug logging
-            let pool = SqlitePool::connect(db_dir_str)
-                .await
-                .map_err(|e| e.to_string())?;
+            info!("Database file path: {}", db_dir_str); // Debug logging
+            let pool = SqlitePool::connect(db_dir_str).await.map_err(|e| {
+                error!("Failed to connect to DB: {}", e);
+                e.to_string()
+            })?;
             Ok(Arc::new(pool))
         })
         .await
@@ -52,14 +59,23 @@ pub async fn get_db_pool() -> Result<Arc<SqlitePool>, String> {
 }
 
 async fn create_db_table() -> Result<(), sqlx::Error> {
-    let pool = get_db_pool()
-        .await
-        .map_err(|e| sqlx::Error::Configuration(e.into()))?;
-    let mut conn = pool.acquire().await?;
+    info!("Creating database tables and triggers.");
+    let pool = get_db_pool().await.map_err(|e| {
+        error!("Failed to get DB pool: {}", e);
+        sqlx::Error::Configuration(e.into())
+    })?;
+    let mut conn = pool.acquire().await.map_err(|e| {
+        error!("Failed to acquire connection: {}", e);
+        e
+    })?;
 
     sqlx::query("PRAGMA foreign_keys = ON;")
         .execute(&mut *conn)
-        .await?;
+        .await
+        .map_err(|e| {
+            error!("Failed to set PRAGMA foreign_keys: {}", e);
+            e
+        })?;
 
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS configs (
@@ -68,7 +84,11 @@ async fn create_db_table() -> Result<(), sqlx::Error> {
         )",
     )
     .execute(&mut *conn)
-    .await?;
+    .await
+    .map_err(|e| {
+        error!("Failed to create configs table: {}", e);
+        e
+    })?;
 
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS config_state (
@@ -79,7 +99,11 @@ async fn create_db_table() -> Result<(), sqlx::Error> {
         )",
     )
     .execute(&mut *conn)
-    .await?;
+    .await
+    .map_err(|e| {
+        error!("Failed to create config_state table: {}", e);
+        e
+    })?;
 
     sqlx::query(
         "CREATE TRIGGER IF NOT EXISTS after_insert_config
@@ -90,7 +114,11 @@ async fn create_db_table() -> Result<(), sqlx::Error> {
          END;",
     )
     .execute(&mut *conn)
-    .await?;
+    .await
+    .map_err(|e| {
+        error!("Failed to create after_insert_config trigger: {}", e);
+        e
+    })?;
 
     sqlx::query(
         "CREATE TRIGGER IF NOT EXISTS after_delete_config
@@ -101,8 +129,13 @@ async fn create_db_table() -> Result<(), sqlx::Error> {
          END;",
     )
     .execute(&mut *conn)
-    .await?;
+    .await
+    .map_err(|e| {
+        error!("Failed to create after_delete_config trigger: {}", e);
+        e
+    })?;
 
+    info!("Database tables and triggers created successfully.");
     Ok(())
 }
 
