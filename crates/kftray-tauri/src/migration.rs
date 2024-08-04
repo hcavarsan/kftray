@@ -77,46 +77,18 @@ pub async fn migrate_configs() -> Result<(), String> {
     })?;
 
     sqlx::query(
-        "CREATE TABLE IF NOT EXISTS config_state_new (
-            id INTEGER PRIMARY KEY,
-            config_id INTEGER NOT NULL,
-            is_running BOOLEAN NOT NULL DEFAULT false,
-            FOREIGN KEY(config_id) REFERENCES configs(id) ON DELETE CASCADE
-        )",
+        "INSERT INTO config_state (id, config_id, is_running)
+         SELECT c.id, c.id, false
+         FROM configs c
+         LEFT JOIN config_state cs ON c.id = cs.config_id
+         WHERE cs.config_id IS NULL",
     )
     .execute(&mut *transaction)
     .await
     .map_err(|e| {
-        error!("Failed to create new config_state table: {}", e);
+        error!("Failed to insert into config_state: {}", e);
         e.to_string()
     })?;
-
-    sqlx::query(
-        "INSERT INTO config_state_new (id, config_id, is_running)
-         SELECT id, config_id, is_running FROM config_state",
-    )
-    .execute(&mut *transaction)
-    .await
-    .map_err(|e| {
-        error!("Failed to insert into config_state_new: {}", e);
-        e.to_string()
-    })?;
-
-    sqlx::query("DROP TABLE IF EXISTS config_state")
-        .execute(&mut *transaction)
-        .await
-        .map_err(|e| {
-            error!("Failed to drop config_state table: {}", e);
-            e.to_string()
-        })?;
-
-    sqlx::query("ALTER TABLE config_state_new RENAME TO config_state")
-        .execute(&mut *transaction)
-        .await
-        .map_err(|e| {
-            error!("Failed to rename config_state_new to config_state: {}", e);
-            e.to_string()
-        })?;
 
     transaction.commit().await.map_err(|e| {
         error!("Failed to commit transaction: {}", e);

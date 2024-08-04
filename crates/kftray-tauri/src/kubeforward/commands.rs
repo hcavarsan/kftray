@@ -1,3 +1,4 @@
+// portforward/commands.rs:
 use std::collections::HashMap;
 use std::sync::{
     Arc,
@@ -35,9 +36,11 @@ use crate::kubeforward::kubecontext::create_client_with_specific_context;
 use crate::utils::config_dir::get_pod_manifest_path;
 use crate::{
     config,
+    config_state::update_config_state,
     kubeforward::vx::Pod,
     models::{
         config::Config,
+        config_state::ConfigState,
         kube::{
             HttpLogState,
             Port,
@@ -192,6 +195,16 @@ async fn start_port_forward(
                             }
                         }
 
+                        // Update config state to running
+                        let config_state = ConfigState {
+                            id: None,
+                            config_id: config.id.unwrap(),
+                            is_running: true,
+                        };
+                        if let Err(e) = update_config_state(config_state).await {
+                            log::error!("Failed to update config state: {}", e);
+                        }
+
                         responses.push(CustomResponse {
                             id: config.id,
                             service: config.service.clone().unwrap(),
@@ -263,6 +276,7 @@ async fn start_port_forward(
 
     Ok(responses)
 }
+
 #[tauri::command]
 pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
     log::info!("Attempting to stop all port forwards");
@@ -392,6 +406,15 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
 
         pod_deletion_tasks.push(pod_deletion_task);
 
+        // Update config state to not running
+        let config_state = ConfigState {
+            id: None,
+            config_id: config_id_parsed,
+            is_running: false,
+        };
+        if let Err(e) = update_config_state(config_state).await {
+            log::error!("Failed to update config state: {}", e);
+        }
         responses.push(CustomResponse {
             id: Some(config_id_parsed),
             service: service_id.to_string(),
@@ -474,6 +497,16 @@ pub async fn stop_port_forward(
                     }
                 } else {
                     log::warn!("Config with id '{}' not found.", config_id_str);
+                }
+
+                // Update config state to not running
+                let config_state = ConfigState {
+                    id: None,
+                    config_id: config_id_parsed,
+                    is_running: false,
+                };
+                if let Err(e) = update_config_state(config_state).await {
+                    log::error!("Failed to update config state: {}", e);
                 }
 
                 Ok(CustomResponse {
@@ -699,7 +732,7 @@ pub async fn stop_proxy_forward(
 
     log::info!("Stopping port forward for service: {}", service_name);
 
-    let stop_result = stop_port_forward(service_name.clone(), config_id)
+    let stop_result = stop_port_forward(service_name.clone(), config_id.clone())
         .await
         .map_err(|e| {
             log::error!(
@@ -709,6 +742,17 @@ pub async fn stop_proxy_forward(
             );
             e
         })?;
+
+    // Update config state to not running
+    let config_id_parsed = config_id.parse::<i64>().unwrap_or_default();
+    let config_state = ConfigState {
+        id: None,
+        config_id: config_id_parsed,
+        is_running: false,
+    };
+    if let Err(e) = update_config_state(config_state).await {
+        log::error!("Failed to update config state: {}", e);
+    }
 
     log::info!("Proxy forward stopped for service: {}", service_name);
 
