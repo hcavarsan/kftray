@@ -1,0 +1,8 @@
+[tools]
+node = '22'
+pnpm = '9.6.0'
+rust = '1.8.0'
+
+
+[env]
+RUST_LOG = "info"
