@@ -299,7 +299,7 @@ const KFTray = () => {
     } catch (error) {
       toast({
         title: 'Error',
-        description: 'Failed to update configuration.',
+        description: `Failed to update configuration. ${error.message}`,
         status: 'error',
       })
     }
