@@ -5,4 +5,4 @@ rust = '1.8.0'
 
 
 [env]
-RUST_LOG = "info"
+RUST_LOG = "debug"
