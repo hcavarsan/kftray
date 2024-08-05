@@ -46,11 +46,9 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   handleEditConfig,
   setIsAlertOpen,
   isAlertOpen,
-  updateConfigRunningState,
   showContext = false,
   selected,
   onSelectionChange,
-  updateSelectionState,
   isInitiating,
   setIsInitiating,
 }) => {
@@ -118,8 +116,6 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
       } else {
         throw new Error(`Unsupported workload type: ${config.workload_type}`)
       }
-      updateConfigRunningState(config.id, true)
-      updateSelectionState(config.id, true)
     } catch (error) {
       console.error('An error occurred during port forwarding start:', error)
       const errorMessage =
@@ -130,8 +126,6 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
         description: errorMessage,
         status: 'error',
       })
-
-      updateConfigRunningState(config.id, false)
     }
   }
 
@@ -163,7 +157,6 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
       } else {
         throw new Error(`Unsupported workload type: ${config.workload_type}`)
       }
-      updateConfigRunningState(config.id, false)
     } catch (error) {
       console.error('An error occurred during port forwarding stop:', error)
       const errorMessage =

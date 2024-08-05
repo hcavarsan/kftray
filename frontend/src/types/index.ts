@@ -73,15 +73,13 @@ export interface TableProps {
   configs: Status[]
   isInitiating: boolean
   isStopping: boolean
-  isPortForwarding: boolean
   initiatePortForwarding: (configs: Status[]) => Promise<void>
-  stopPortForwarding: (configs: Status[]) => Promise<void>
+  stopAllPortForwarding: (configs: Status[]) => Promise<void>
   confirmDeleteConfig: () => void
   handleDeleteConfig: (id: number) => void
   handleEditConfig: (id: number) => void
   isAlertOpen: boolean
   setIsAlertOpen: (isOpen: boolean) => void
-  updateConfigRunningState: (id: number, isRunning: boolean) => void
   selectedConfigs: Status[]
   setSelectedConfigs: React.Dispatch<React.SetStateAction<Status[]>>
   setIsInitiating: React.Dispatch<React.SetStateAction<boolean>>
@@ -94,10 +92,8 @@ export interface PortForwardRowProps {
   handleEditConfig: (id: number) => void
   isAlertOpen: boolean
   setIsAlertOpen: (isOpen: boolean) => void
-  updateConfigRunningState: (id: number, isRunning: boolean) => void
   showContext?: boolean
   onSelectionChange: (isSelected: boolean) => void
-  updateSelectionState: (id: number, isRunning: boolean) => void
   selected: boolean
   isInitiating: boolean
   setIsInitiating: React.Dispatch<React.SetStateAction<boolean>>
@@ -111,20 +107,19 @@ export interface FooterProps {
   handleImportConfigs: () => void
   credentialsSaved: boolean
   setCredentialsSaved: React.Dispatch<React.SetStateAction<boolean>>
-  onConfigsSynced: () => void
+  updateConfigsWithState: () => void
   isGitSyncModalOpen: boolean
   selectedConfigs: Status[]
   setPollingInterval: React.Dispatch<React.SetStateAction<number>>
   pollingInterval: number
   setSelectedConfigs: React.Dispatch<React.SetStateAction<Status[]>>
   configs: Status[]
-  setConfigs: React.Dispatch<React.SetStateAction<Status[]>>
 }
 
 export interface SyncConfigsButtonProps {
   serviceName: string
   accountName: string
-  onConfigsSynced?: () => void
+  updateConfigsWithState?: () => void
   onSyncFailure?: (error: Error) => void
   credentialsSaved: boolean
   setCredentialsSaved: React.Dispatch<React.SetStateAction<boolean>>
@@ -224,7 +219,7 @@ export interface BulkDeleteButtonProps {
   selectedConfigs: Status[]
   setSelectedConfigs: React.Dispatch<React.SetStateAction<Status[]>>
   configs: Status[]
-  setConfigs: React.Dispatch<React.SetStateAction<Status[]>>
+  updateConfigsWithState: () => void
 }
 
 export interface ContextsAccordionProps {
@@ -236,9 +231,7 @@ export interface ContextsAccordionProps {
   handleEditConfig: (id: number) => void
   isAlertOpen: boolean
   setIsAlertOpen: (isOpen: boolean) => void
-  updateConfigRunningState: (id: number, isRunning: boolean) => void
   handleSelectionChange: (config: Status, isSelected: boolean) => void
-  updateSelectionState: (id: number, isRunning: boolean) => void
   selectedConfigsByContext: Record<string, boolean>
   handleCheckboxChange: (context: string, isChecked: boolean) => void
   isInitiating: boolean

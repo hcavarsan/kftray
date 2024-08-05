@@ -183,7 +183,7 @@ pub fn stop_all_port_forwards_and_exit(app_handle: &tauri::AppHandle) {
     let runtime = Runtime::new().expect("Failed to create a Tokio runtime");
 
     runtime.block_on(async {
-        match commands::stop_all_port_forward().await {
+        match commands::stop_all_port_forward(app_handle.clone()).await {
             Ok(_) => {
                 info!("Successfully stopped all port forwards.");
             }

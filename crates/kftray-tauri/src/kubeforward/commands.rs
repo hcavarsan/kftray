@@ -29,6 +29,7 @@ use rand::{
     distributions::Alphanumeric,
     Rng,
 };
+use tauri::Manager;
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
 
@@ -58,20 +59,21 @@ lazy_static! {
 }
 
 pub async fn start_port_forward_udp(
-    configs: Vec<Config>, http_log_state: tauri::State<'_, HttpLogState>,
+    configs: Vec<Config>, http_log_state: tauri::State<'_, HttpLogState>, app: tauri::AppHandle,
 ) -> Result<Vec<CustomResponse>, String> {
-    start_port_forward(configs, "udp", http_log_state).await
+    start_port_forward(configs, "udp", http_log_state, app).await
 }
 
 #[tauri::command]
 pub async fn start_port_forward_tcp(
-    configs: Vec<Config>, http_log_state: tauri::State<'_, HttpLogState>,
+    configs: Vec<Config>, http_log_state: tauri::State<'_, HttpLogState>, app: tauri::AppHandle,
 ) -> Result<Vec<CustomResponse>, String> {
-    start_port_forward(configs, "tcp", http_log_state).await
+    start_port_forward(configs, "tcp", http_log_state, app).await
 }
 
 async fn start_port_forward(
     configs: Vec<Config>, protocol: &str, http_log_state: tauri::State<'_, HttpLogState>,
+    app_handle: tauri::AppHandle,
 ) -> Result<Vec<CustomResponse>, String> {
     let mut responses = Vec::new();
     let mut errors = Vec::new();
@@ -201,9 +203,13 @@ async fn start_port_forward(
                             config_id: config.id.unwrap(),
                             is_running: true,
                         };
-                        if let Err(e) = update_config_state(config_state).await {
+                        if let Err(e) = update_config_state(&config_state).await {
                             log::error!("Failed to update config state: {}", e);
                         }
+
+                        app_handle
+                            .emit_all("config_state_changed", &config_state)
+                            .map_err(|e| e.to_string())?;
 
                         responses.push(CustomResponse {
                             id: config.id,
@@ -278,7 +284,9 @@ async fn start_port_forward(
 }
 
 #[tauri::command]
-pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
+pub async fn stop_all_port_forward(
+    app_handle: tauri::AppHandle,
+) -> Result<Vec<CustomResponse>, String> {
     log::info!("Attempting to stop all port forwards");
 
     let mut responses = Vec::new();
@@ -412,9 +420,13 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
             config_id: config_id_parsed,
             is_running: false,
         };
-        if let Err(e) = update_config_state(config_state).await {
+        if let Err(e) = update_config_state(&config_state).await {
             log::error!("Failed to update config state: {}", e);
         }
+        app_handle
+            .emit_all("config_state_changed", &config_state)
+            .map_err(|e| e.to_string())?;
+
         responses.push(CustomResponse {
             id: Some(config_id_parsed),
             service: service_id.to_string(),
@@ -441,7 +453,7 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
 
 #[tauri::command]
 pub async fn stop_port_forward(
-    _service_name: String, config_id: String,
+    _service_name: String, config_id: String, app_handle: tauri::AppHandle,
 ) -> Result<CustomResponse, String> {
     let cancellation_notifier = CANCEL_NOTIFIER.clone();
     cancellation_notifier.notify_waiters();
@@ -492,6 +504,16 @@ pub async fn stop_port_forward(
                                 service_name,
                                 e
                             );
+                            app_handle
+                                .emit_all(
+                                    "config_state_changed",
+                                    &ConfigState {
+                                        id: None,
+                                        config_id: config_id_parsed,
+                                        is_running: false,
+                                    },
+                                )
+                                .map_err(|e| e.to_string())?;
                             return Err(e.to_string());
                         }
                     }
@@ -505,9 +527,12 @@ pub async fn stop_port_forward(
                     config_id: config_id_parsed,
                     is_running: false,
                 };
-                if let Err(e) = update_config_state(config_state).await {
+                if let Err(e) = update_config_state(&config_state).await {
                     log::error!("Failed to update config state: {}", e);
                 }
+                app_handle
+                    .emit_all("config_state_changed", &config_state)
+                    .map_err(|e| e.to_string())?;
 
                 Ok(CustomResponse {
                     id: None,
@@ -522,9 +547,31 @@ pub async fn stop_port_forward(
                     status: 0,
                 })
             }
-            Err(e) => Err(format!("Failed to retrieve configs: {}", e)),
+            Err(e) => {
+                app_handle
+                    .emit_all(
+                        "config_state_changed",
+                        &ConfigState {
+                            id: None,
+                            config_id: config_id_parsed,
+                            is_running: false,
+                        },
+                    )
+                    .map_err(|e| e.to_string())?;
+                Err(format!("Failed to retrieve configs: {}", e))
+            }
         }
     } else {
+        app_handle
+            .emit_all(
+                "config_state_changed",
+                &ConfigState {
+                    id: None,
+                    config_id: config_id.parse::<i64>().unwrap_or_default(),
+                    is_running: false,
+                },
+            )
+            .map_err(|e| e.to_string())?;
         Err(format!(
             "No port forwarding process found for config_id '{}'",
             config_id
@@ -544,7 +591,7 @@ fn render_json_template(template: &str, values: &HashMap<&str, String>) -> Strin
 
 #[tauri::command]
 pub async fn deploy_and_forward_pod(
-    configs: Vec<Config>, http_log_state: tauri::State<'_, HttpLogState>,
+    configs: Vec<Config>, http_log_state: tauri::State<'_, HttpLogState>, app: tauri::AppHandle,
 ) -> Result<Vec<CustomResponse>, String> {
     let mut responses: Vec<CustomResponse> = Vec::new();
 
@@ -640,10 +687,20 @@ pub async fn deploy_and_forward_pod(
 
                 let start_response = match protocol.as_str() {
                     "udp" => {
-                        start_port_forward_udp(vec![config.clone()], http_log_state.clone()).await
+                        start_port_forward_udp(
+                            vec![config.clone()],
+                            http_log_state.clone(),
+                            app.clone(),
+                        )
+                        .await
                     }
                     "tcp" => {
-                        start_port_forward_tcp(vec![config.clone()], http_log_state.clone()).await
+                        start_port_forward_tcp(
+                            vec![config.clone()],
+                            http_log_state.clone(),
+                            app.clone(),
+                        )
+                        .await
                     }
                     _ => {
                         let _ = pods
@@ -677,7 +734,7 @@ pub async fn deploy_and_forward_pod(
 
 #[tauri::command]
 pub async fn stop_proxy_forward(
-    config_id: String, namespace: &str, service_name: String,
+    config_id: String, namespace: &str, service_name: String, app_handle: tauri::AppHandle,
 ) -> Result<CustomResponse, String> {
     log::info!(
         "Attempting to stop proxy forward for service: {}",
@@ -732,7 +789,7 @@ pub async fn stop_proxy_forward(
 
     log::info!("Stopping port forward for service: {}", service_name);
 
-    let stop_result = stop_port_forward(service_name.clone(), config_id.clone())
+    let stop_result = stop_port_forward(service_name.clone(), config_id.clone(), app_handle)
         .await
         .map_err(|e| {
             log::error!(
@@ -750,7 +807,7 @@ pub async fn stop_proxy_forward(
         config_id: config_id_parsed,
         is_running: false,
     };
-    if let Err(e) = update_config_state(config_state).await {
+    if let Err(e) = update_config_state(&config_state).await {
         log::error!("Failed to update config state: {}", e);
     }
 

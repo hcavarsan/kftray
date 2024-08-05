@@ -156,10 +156,7 @@ fn main() {
             keychain::delete_key,
             window::toggle_pin_state,
             config_state::get_config_states,
-            config_state::get_config_state_by_config_id,
-            config_state::insert_config_state,
-            config_state::delete_config_state,
-            config_state::update_config_state,
+            config_state::get_config_state_by_config_id
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -15,14 +15,13 @@ import {
 } from '@chakra-ui/react'
 import { invoke } from '@tauri-apps/api/tauri'
 
-import { BulkDeleteButtonProps, Status } from '../../../types'
+import { BulkDeleteButtonProps } from '../../../types'
 import useCustomToast from '../../CustomToast'
 
 const BulkDeleteButton: React.FC<BulkDeleteButtonProps> = ({
   selectedConfigs,
   setSelectedConfigs,
-  configs,
-  setConfigs,
+  updateConfigsWithState
 }) => {
   const cancelRef = React.useRef<HTMLButtonElement>(null)
   const [isBulkAlertOpen, setIsBulkAlertOpen] = useState(false)
@@ -48,18 +47,9 @@ const BulkDeleteButton: React.FC<BulkDeleteButtonProps> = ({
     try {
       await invoke('delete_configs', { ids: configsToDelete })
 
-      const configsAfterDeletion = await invoke<Status[]>('get_configs')
-      const runningStateMap = new Map(
-        configs.map(conf => [conf.id, conf.isRunning]),
-      )
-
-      const updatedConfigs = configsAfterDeletion.map(conf => ({
-        ...conf,
-        isRunning: runningStateMap.get(conf.id) ?? false,
-      }))
-
-      setConfigs(updatedConfigs)
       setSelectedConfigs([])
+
+	  await updateConfigsWithState()
 
       toast({
         title: 'Success',
