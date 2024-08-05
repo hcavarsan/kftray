@@ -35,6 +35,7 @@ use tauri::{
 use tokio::runtime::Runtime;
 
 use crate::models::kube::HttpLogState;
+use crate::models::window::AppState;
 use crate::models::window::SaveDialogState;
 use crate::tray::{
     create_tray_menu,
@@ -43,13 +44,6 @@ use crate::tray::{
     handle_window_event,
 };
 use crate::window::toggle_window_visibility;
-
-pub struct AppState {
-    pub is_moving: Arc<Mutex<bool>>,
-    pub is_plugin_moving: Arc<AtomicBool>,
-    pub is_pinned: Arc<AtomicBool>,
-    pub runtime: Arc<Runtime>,
-}
 
 fn main() {
     let _ = logging::setup_logging();

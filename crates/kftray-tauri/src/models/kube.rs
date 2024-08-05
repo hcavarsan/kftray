@@ -122,3 +122,9 @@ impl HttpLogState {
         }
     }
 }
+
+impl Default for HttpLogState {
+    fn default() -> Self {
+        Self::new()
+    }
+}

@@ -21,7 +21,7 @@ import useCustomToast from '../../CustomToast'
 const BulkDeleteButton: React.FC<BulkDeleteButtonProps> = ({
   selectedConfigs,
   setSelectedConfigs,
-  updateConfigsWithState
+  updateConfigsWithState,
 }) => {
   const cancelRef = React.useRef<HTMLButtonElement>(null)
   const [isBulkAlertOpen, setIsBulkAlertOpen] = useState(false)
@@ -49,7 +49,7 @@ const BulkDeleteButton: React.FC<BulkDeleteButtonProps> = ({
 
       setSelectedConfigs([])
 
-	  await updateConfigsWithState()
+      await updateConfigsWithState()
 
       toast({
         title: 'Success',

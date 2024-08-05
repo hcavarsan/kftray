@@ -304,7 +304,20 @@ pub async fn stop_all_port_forward(
 
     let configs_result = config::get_configs().await;
     if let Err(e) = configs_result {
-        return Err(format!("Failed to retrieve configs: {}", e));
+        let error_message = format!("Failed to retrieve configs: {}", e);
+        log::error!("{}", error_message);
+
+        app_handle
+            .emit_all(
+                "config_state_changed",
+                &ConfigState {
+                    id: None,
+                    config_id: 0,
+                    is_running: false,
+                },
+            )
+            .map_err(|emit_err| emit_err.to_string())?;
+        return Err(error_message);
     }
     let configs = configs_result.unwrap();
 
@@ -347,6 +360,24 @@ pub async fn stop_all_port_forward(
                         stderr: e.to_string(),
                         status: 1,
                     });
+                    let config_state = ConfigState {
+                        id: None,
+                        config_id: config_id_parsed,
+                        is_running: false,
+                    };
+                    if let Err(e) = update_config_state(&config_state).await {
+                        log::error!("Failed to update config state: {}", e);
+                    }
+                    app_handle
+                        .emit_all(
+                            "config_state_changed",
+                            &ConfigState {
+                                id: None,
+                                config_id: config_id_parsed,
+                                is_running: false,
+                            },
+                        )
+                        .map_err(|emit_err| emit_err.to_string())?;
                     continue;
                 }
             }
@@ -504,6 +535,15 @@ pub async fn stop_port_forward(
                                 service_name,
                                 e
                             );
+
+                            let config_state = ConfigState {
+                                id: None,
+                                config_id: config_id_parsed,
+                                is_running: false,
+                            };
+                            if let Err(e) = update_config_state(&config_state).await {
+                                log::error!("Failed to update config state: {}", e);
+                            }
                             app_handle
                                 .emit_all(
                                     "config_state_changed",
@@ -548,6 +588,15 @@ pub async fn stop_port_forward(
                 })
             }
             Err(e) => {
+                let config_id_parsed = config_id.parse::<i64>().unwrap_or_default();
+                let config_state = ConfigState {
+                    id: None,
+                    config_id: config_id_parsed,
+                    is_running: false,
+                };
+                if let Err(e) = update_config_state(&config_state).await {
+                    log::error!("Failed to update config state: {}", e);
+                }
                 app_handle
                     .emit_all(
                         "config_state_changed",
@@ -562,12 +611,21 @@ pub async fn stop_port_forward(
             }
         }
     } else {
+        let config_id_parsed = config_id.parse::<i64>().unwrap_or_default();
+        let config_state = ConfigState {
+            id: None,
+            config_id: config_id_parsed,
+            is_running: false,
+        };
+        if let Err(e) = update_config_state(&config_state).await {
+            log::error!("Failed to update config state: {}", e);
+        }
         app_handle
             .emit_all(
                 "config_state_changed",
                 &ConfigState {
                     id: None,
-                    config_id: config_id.parse::<i64>().unwrap_or_default(),
+                    config_id: config_id_parsed,
                     is_running: false,
                 },
             )

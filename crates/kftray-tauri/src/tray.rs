@@ -20,6 +20,7 @@ use tokio::runtime::Runtime;
 use tokio::time::sleep;
 
 use crate::kubeforward::commands;
+use crate::models::window::AppState;
 use crate::models::window::SaveDialogState;
 use crate::window::{
     adjust_window_size_and_position,
@@ -29,7 +30,6 @@ use crate::window::{
     set_window_position,
     toggle_window_visibility,
 };
-use crate::AppState;
 
 pub fn create_tray_menu() -> SystemTray {
     let quit = CustomMenuItem::new("quit".to_string(), "Quit").accelerator("CmdOrCtrl+Shift+Q");

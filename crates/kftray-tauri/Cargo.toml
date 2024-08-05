@@ -8,6 +8,10 @@ homepage = "https://kftray.app"
 repository = "https://github.com/hcavarsan/kftray"
 edition = "2021"
 
+[lib]
+name = "kftray"
+path = "src/lib.rs"
+
 [build-dependencies]
 tauri-build = { version = "1.5", features = [] }
 

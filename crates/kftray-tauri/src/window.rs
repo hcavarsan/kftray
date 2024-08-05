@@ -17,9 +17,9 @@ use tauri_plugin_positioner::{
 };
 use tokio::time::sleep;
 
+use crate::models::window::AppState;
 use crate::models::window::WindowPosition;
 use crate::utils::config_dir::get_window_state_path;
-use crate::AppState;
 /// Saves the current window position to the configuration file.
 pub fn save_window_position(window: &Window) {
     if let Ok(position) = window.outer_position() {

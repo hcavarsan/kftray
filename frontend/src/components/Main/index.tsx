@@ -422,7 +422,7 @@ const KFTray = () => {
         description: 'Configuration deleted successfully.',
         status: 'success',
       })
-	  await updateConfigsWithState()
+      await updateConfigsWithState()
     } catch (error) {
       console.error('Failed to delete configuration:', error)
       toast({

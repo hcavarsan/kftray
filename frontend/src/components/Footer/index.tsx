@@ -130,7 +130,7 @@ const Footer: React.FC<FooterProps> = ({
         <BulkDeleteButton
           setSelectedConfigs={setSelectedConfigs}
           selectedConfigs={selectedConfigs}
-		  updateConfigsWithState={updateConfigsWithState}
+          updateConfigsWithState={updateConfigsWithState}
           configs={configs}
         />
       </Flex>
