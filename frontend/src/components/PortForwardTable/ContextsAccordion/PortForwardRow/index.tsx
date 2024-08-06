@@ -68,7 +68,9 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
 
       const fetchHttpLogState = async () => {
         try {
-          const enabled = await invoke('get_http_logs', { configId: config.id })
+          const enabled = await invoke('get_http_logs_cmd', {
+            configId: config.id,
+          })
 
           setHttpLogsEnabled(prevState => ({
             ...prevState,
@@ -105,14 +107,14 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
           config.workload_type === 'pod') &&
         config.protocol === 'tcp'
       ) {
-        await invoke('start_port_forward_tcp', { configs: [config] })
+        await invoke('start_port_forward_tcp_cmd', { configs: [config] })
       } else if (
         config.workload_type.startsWith('proxy') ||
         ((config.workload_type === 'service' ||
           config.workload_type === 'pod') &&
           config.protocol === 'udp')
       ) {
-        await invoke('deploy_and_forward_pod', { configs: [config] })
+        await invoke('deploy_and_forward_pod_cmd', { configs: [config] })
       } else {
         throw new Error(`Unsupported workload type: ${config.workload_type}`)
       }
@@ -136,7 +138,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
           config.workload_type === 'pod') &&
         config.protocol === 'tcp'
       ) {
-        await invoke('stop_port_forward', {
+        await invoke('stop_port_forward_cmd', {
           serviceName: config.service,
           configId: config.id.toString(),
         })
@@ -146,7 +148,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
           config.workload_type === 'pod') &&
           config.protocol === 'udp')
       ) {
-        await invoke('stop_proxy_forward', {
+        await invoke('stop_proxy_forward_cmd', {
           configId: config.id.toString(),
           namespace: config.namespace,
           serviceName: config.service,
@@ -216,7 +218,10 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
     try {
       const newState = !httpLogsEnabled[config.id]
 
-      await invoke('set_http_logs', { configId: config.id, enable: newState })
+      await invoke('set_http_logs_cmd', {
+        configId: config.id,
+        enable: newState,
+      })
       setHttpLogsEnabled(prevState => ({ ...prevState, [config.id]: newState }))
     } catch (error) {
       console.error('Error toggling HTTP logs:', error)

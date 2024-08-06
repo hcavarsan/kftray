@@ -136,7 +136,7 @@ pub async fn insert_config(config: Config) -> Result<(), String> {
     Ok(())
 }
 
-async fn read_configs() -> Result<Vec<Config>, String> {
+pub async fn read_configs() -> Result<Vec<Config>, String> {
     let pool = get_db_pool().await.map_err(|e| e.to_string())?;
     let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
 

@@ -1,4 +1,5 @@
 pub mod commands;
+pub mod core;
 pub mod kubecontext;
 pub mod logging;
 pub mod pod_finder;

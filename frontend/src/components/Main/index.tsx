@@ -308,7 +308,7 @@ const KFTray = () => {
       (config.workload_type === 'service' || config.workload_type === 'pod') &&
       config.protocol === 'tcp'
     ) {
-      await invoke('stop_port_forward', {
+      await invoke('stop_port_forward_cmd', {
         serviceName: config.service,
         configId: config.id.toString(),
       })
@@ -317,7 +317,7 @@ const KFTray = () => {
       ((config.workload_type === 'service' || config.workload_type === 'pod') &&
         config.protocol === 'udp')
     ) {
-      await invoke('stop_proxy_forward', {
+      await invoke('stop_proxy_forward_cmd', {
         configId: config.id.toString(),
         namespace: config.namespace,
         serviceName: config.service,
@@ -335,13 +335,13 @@ const KFTray = () => {
       (config.workload_type === 'service' || config.workload_type === 'pod') &&
       config.protocol === 'tcp'
     ) {
-      await invoke('start_port_forward_tcp', { configs: [config] })
+      await invoke('start_port_forward_tcp_cmd', { configs: [config] })
     } else if (
       config.workload_type.startsWith('proxy') ||
       ((config.workload_type === 'service' || config.workload_type === 'pod') &&
         config.protocol === 'udp')
     ) {
-      await invoke('deploy_and_forward_pod', { configs: [config] })
+      await invoke('deploy_and_forward_pod_cmd', { configs: [config] })
     } else {
       throw new Error(`Unsupported workload type: ${config.workload_type}`)
     }
@@ -379,17 +379,19 @@ const KFTray = () => {
     case 'service':
     case 'pod':
       if (config.protocol === 'tcp') {
-        await invoke<Response>('start_port_forward_tcp', {
+        await invoke<Response>('start_port_forward_tcp_cmd', {
           configs: [config],
         })
       } else if (config.protocol === 'udp') {
-        await invoke<Response>('deploy_and_forward_pod', {
+        await invoke<Response>('deploy_and_forward_pod_cmd', {
           configs: [config],
         })
       }
       break
     case 'proxy':
-      await invoke<Response>('deploy_and_forward_pod', { configs: [config] })
+      await invoke<Response>('deploy_and_forward_pod_cmd', {
+        configs: [config],
+      })
       break
     default:
       throw new Error(`Unsupported workload type: ${config.workload_type}`)
@@ -437,7 +439,7 @@ const KFTray = () => {
   const stopAllPortForwarding = async () => {
     setIsStopping(true)
     try {
-      const responses = await invoke<Response[]>('stop_all_port_forward')
+      const responses = await invoke<Response[]>('stop_all_port_forward_cmd')
       const allStopped = responses.every(res => res.status === initialStatus)
 
       if (allStopped) {

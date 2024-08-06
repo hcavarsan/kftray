@@ -19,7 +19,7 @@ use tauri_plugin_positioner::Position;
 use tokio::runtime::Runtime;
 use tokio::time::sleep;
 
-use crate::kubeforward::commands;
+use crate::kubeforward::core;
 use crate::models::window::AppState;
 use crate::models::window::SaveDialogState;
 use crate::window::{
@@ -183,7 +183,7 @@ pub fn stop_all_port_forwards_and_exit(app_handle: &tauri::AppHandle) {
     let runtime = Runtime::new().expect("Failed to create a Tokio runtime");
 
     runtime.block_on(async {
-        match commands::stop_all_port_forward(app_handle.clone()).await {
+        match core::stop_all_port_forward().await {
             Ok(_) => {
                 info!("Successfully stopped all port forwards.");
             }

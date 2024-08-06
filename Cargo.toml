@@ -3,6 +3,7 @@ members = [
     "crates/kftray-server",
     "crates/kftray-utils",
     "crates/kftray-tauri",
+	"crates/kftray-tui",
 ]
 
 resolver = "2"

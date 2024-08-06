@@ -29,7 +29,7 @@ use tracing::{
     trace,
 };
 
-use crate::kubeforward::commands::CANCEL_NOTIFIER;
+use crate::kubeforward::core::CANCEL_NOTIFIER;
 use crate::kubeforward::logging::{
     create_log_file_path,
     Logger,
@@ -83,7 +83,7 @@ impl PortForward {
     }
 
     pub async fn port_forward_tcp(
-        self, http_log_state: tauri::State<'_, HttpLogState>,
+        self, http_log_state: Arc<HttpLogState>,
     ) -> anyhow::Result<(u16, tokio::task::JoinHandle<()>)> {
         let local_addr = self
             .local_address()
@@ -101,7 +101,7 @@ impl PortForward {
 
         let server = {
             let cancel_notifier = CANCEL_NOTIFIER.clone();
-            let http_log_state = http_log_state.inner().clone();
+            let http_log_state = http_log_state.clone();
             TcpListenerStream::new(bind).try_for_each(move |client_conn| {
                 let pf = self.clone();
                 let client_conn = Arc::new(Mutex::new(client_conn));
@@ -122,11 +122,7 @@ impl PortForward {
 
                     tokio::spawn(async move {
                         if let Err(e) = pf
-                            .forward_connection(
-                                client_conn,
-                                Arc::new(http_log_state),
-                                cancel_notifier_clone,
-                            )
+                            .forward_connection(client_conn, http_log_state, cancel_notifier_clone)
                             .await
                         {
                             error!(

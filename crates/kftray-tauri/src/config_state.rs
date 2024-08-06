@@ -4,7 +4,7 @@ use crate::db::get_db_pool;
 use crate::models::config_state::ConfigState;
 
 // Function to read config states from the database
-async fn read_config_states() -> Result<Vec<ConfigState>, sqlx::Error> {
+pub async fn read_config_states() -> Result<Vec<ConfigState>, sqlx::Error> {
     let pool = get_db_pool()
         .await
         .map_err(|e| sqlx::Error::Configuration(e.into()))?;
