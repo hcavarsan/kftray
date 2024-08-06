@@ -1,6 +1,13 @@
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
+use kftray_commons::models::window::AppState;
+use kftray_commons::models::window::SaveDialogState;
+use kftray_portforward::core;
+use log::{
+    error,
+    info,
+};
 use tauri::{
     CustomMenuItem,
     GlobalWindowEvent,
@@ -15,8 +22,6 @@ use tauri_plugin_positioner::Position;
 use tokio::runtime::Runtime;
 use tokio::time::sleep;
 
-use crate::kubeforward::commands;
-use crate::models::window::SaveDialogState;
 use crate::window::{
     adjust_window_size_and_position,
     reset_window_position,
@@ -25,7 +30,6 @@ use crate::window::{
     set_window_position,
     toggle_window_visibility,
 };
-use crate::AppState;
 
 pub fn create_tray_menu() -> SystemTray {
     let quit = CustomMenuItem::new("quit".to_string(), "Quit").accelerator("CmdOrCtrl+Shift+Q");
@@ -88,7 +92,7 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
         return;
     }
 
-    println!("event: {:?}", event.event());
+    info!("event: {:?}", event.event());
     let app_state = event.window().state::<AppState>();
     let mut is_moving = app_state.is_moving.lock().unwrap();
 
@@ -139,7 +143,7 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
         });
 
         if !*is_moving && !app_state.is_plugin_moving.load(Ordering::SeqCst) {
-            println!(
+            info!(
                 "is_plugin_moving: {}",
                 app_state.is_plugin_moving.load(Ordering::SeqCst)
             );
@@ -179,12 +183,12 @@ pub fn stop_all_port_forwards_and_exit(app_handle: &tauri::AppHandle) {
     let runtime = Runtime::new().expect("Failed to create a Tokio runtime");
 
     runtime.block_on(async {
-        match commands::stop_all_port_forward().await {
+        match core::stop_all_port_forward().await {
             Ok(_) => {
-                println!("Successfully stopped all port forwards.");
+                info!("Successfully stopped all port forwards.");
             }
             Err(err) => {
-                eprintln!("Failed to stop port forwards: {}", err);
+                error!("Failed to stop port forwards: {}", err);
             }
         }
     });

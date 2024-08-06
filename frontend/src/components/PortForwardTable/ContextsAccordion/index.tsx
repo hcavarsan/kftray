@@ -35,9 +35,7 @@ const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
   handleEditConfig,
   isAlertOpen,
   setIsAlertOpen,
-  updateConfigRunningState,
   handleSelectionChange,
-  updateSelectionState,
   selectedConfigsByContext,
   handleCheckboxChange,
   isInitiating,
@@ -181,9 +179,7 @@ const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
                       onSelectionChange={isSelected =>
                         handleSelectionChange(config, isSelected)
                       }
-                      updateSelectionState={updateSelectionState}
                       setIsAlertOpen={setIsAlertOpen}
-                      updateConfigRunningState={updateConfigRunningState}
                       isInitiating={isInitiating}
                       setIsInitiating={setIsInitiating}
                       isStopping={isStopping}

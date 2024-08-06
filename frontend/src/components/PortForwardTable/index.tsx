@@ -15,13 +15,12 @@ const PortForwardTable: React.FC<TableProps> = ({
   setIsInitiating,
   isStopping,
   initiatePortForwarding,
-  stopPortForwarding,
+  stopAllPortForwarding,
   handleEditConfig,
   handleDeleteConfig,
   confirmDeleteConfig,
   isAlertOpen,
   setIsAlertOpen,
-  updateConfigRunningState,
   selectedConfigs,
   setSelectedConfigs,
 }) => {
@@ -34,12 +33,6 @@ const PortForwardTable: React.FC<TableProps> = ({
     Record<string, boolean>
   >({})
   const [isCheckboxAction, setIsCheckboxAction] = useState(false)
-
-  const updateSelectionState = (id: number, isRunning: boolean) => {
-    if (isRunning) {
-      setSelectedConfigs(prev => prev.filter(config => config.id !== id))
-    }
-  }
 
   useEffect(() => {
     const isConfigRunning = (selectedConfig: Status) =>
@@ -89,12 +82,6 @@ const PortForwardTable: React.FC<TableProps> = ({
     if (configsToStart.length > 0) {
       await initiatePortForwarding(configsToStart)
     }
-  }
-
-  const stopAllPortForwarding = () => {
-    const runningConfigs = configs.filter(config => config.isRunning)
-
-    stopPortForwarding(runningConfigs)
   }
 
   const configsByContext = useConfigsByContext(filteredConfigs)
@@ -271,9 +258,7 @@ const PortForwardTable: React.FC<TableProps> = ({
                 handleEditConfig={handleEditConfig}
                 isAlertOpen={isAlertOpen}
                 setIsAlertOpen={setIsAlertOpen}
-                updateConfigRunningState={updateConfigRunningState}
                 handleSelectionChange={handleSelectionChange}
-                updateSelectionState={updateSelectionState}
                 selectedConfigsByContext={selectedConfigsByContext}
                 handleCheckboxChange={handleCheckboxChange}
                 isInitiating={isInitiating}

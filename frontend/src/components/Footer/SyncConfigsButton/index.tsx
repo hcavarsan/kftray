@@ -10,7 +10,7 @@ import useCustomToast from '../../CustomToast'
 const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
   serviceName,
   accountName,
-  onConfigsSynced,
+  updateConfigsWithState,
   onSyncFailure,
   credentialsSaved,
   setCredentialsSaved,
@@ -134,7 +134,7 @@ const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
       setLastSync(lastSyncDate)
       setNextSync(nextSyncDate)
 
-      onConfigsSynced?.()
+      updateConfigsWithState?.()
       toast({
         title: 'Configs synced successfully',
         status: 'success',

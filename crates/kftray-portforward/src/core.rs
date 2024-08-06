@@ -1,18 +1,22 @@
+// core.rs
 use std::collections::HashMap;
-use std::sync::{
-    Arc,
-    Mutex,
-};
-use std::{
-    fs::File,
-    io::Read,
-    time::{
-        SystemTime,
-        UNIX_EPOCH,
-    },
+use std::fs::File;
+use std::io::Read;
+use std::sync::Arc;
+use std::time::{
+    SystemTime,
+    UNIX_EPOCH,
 };
 
 use hostsfile::HostsBuilder;
+use k8s_openapi::api::core::v1::Pod;
+use kftray_commons::models::{
+    config_model::Config,
+    config_state_model::ConfigState,
+    response::CustomResponse,
+};
+use kftray_commons::utils::config_dir::get_pod_manifest_path;
+use kftray_commons::utils::config_state::update_config_state;
 use kube::{
     api::{
         Api,
@@ -22,52 +26,25 @@ use kube::{
     Client,
 };
 use kube_runtime::wait::conditions;
-use lazy_static::lazy_static;
+use log::info;
 use rand::{
     distributions::Alphanumeric,
     Rng,
 };
-use tokio::sync::Notify;
-use tokio::task::JoinHandle;
 
-use crate::kubeforward::kubecontext::create_client_with_specific_context;
-use crate::utils::config_dir::get_pod_manifest_path;
-use crate::{
-    config,
-    kubeforward::vx::Pod,
-    models::{
-        config::Config,
-        kube::{
-            HttpLogState,
-            Port,
-            PortForward,
-            Target,
-            TargetSelector,
-        },
-        response::CustomResponse,
-    },
+use crate::client::create_client_with_specific_context;
+use crate::models::kube::{
+    HttpLogState,
+    Port,
+    PortForward,
+    Target,
+    TargetSelector,
 };
-lazy_static! {
-    pub static ref CHILD_PROCESSES: Arc<Mutex<HashMap<String, JoinHandle<()>>>> =
-        Arc::new(Mutex::new(HashMap::new()));
-    pub static ref CANCEL_NOTIFIER: Arc<Notify> = Arc::new(Notify::new());
-}
+use crate::port_forward::CANCEL_NOTIFIER;
+use crate::port_forward::CHILD_PROCESSES;
 
-pub async fn start_port_forward_udp(
-    configs: Vec<Config>, http_log_state: tauri::State<'_, HttpLogState>,
-) -> Result<Vec<CustomResponse>, String> {
-    start_port_forward(configs, "udp", http_log_state).await
-}
-
-#[tauri::command]
-pub async fn start_port_forward_tcp(
-    configs: Vec<Config>, http_log_state: tauri::State<'_, HttpLogState>,
-) -> Result<Vec<CustomResponse>, String> {
-    start_port_forward(configs, "tcp", http_log_state).await
-}
-
-async fn start_port_forward(
-    configs: Vec<Config>, protocol: &str, http_log_state: tauri::State<'_, HttpLogState>,
+pub async fn start_port_forward(
+    configs: Vec<Config>, protocol: &str, http_log_state: Arc<HttpLogState>,
 ) -> Result<Vec<CustomResponse>, String> {
     let mut responses = Vec::new();
     let mut errors = Vec::new();
@@ -191,6 +168,16 @@ async fn start_port_forward(
                             }
                         }
 
+                        // Update config state to running
+                        let config_state = ConfigState {
+                            id: None,
+                            config_id: config.id.unwrap(),
+                            is_running: true,
+                        };
+                        if let Err(e) = update_config_state(&config_state).await {
+                            log::error!("Failed to update config state: {}", e);
+                        }
+
                         responses.push(CustomResponse {
                             id: config.id,
                             service: config.service.clone().unwrap(),
@@ -262,7 +249,7 @@ async fn start_port_forward(
 
     Ok(responses)
 }
-#[tauri::command]
+
 pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
     log::info!("Attempting to stop all port forwards");
 
@@ -279,9 +266,11 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
     let handle_map: HashMap<String, tokio::task::JoinHandle<()>> =
         CHILD_PROCESSES.lock().unwrap().drain().collect();
 
-    let configs_result = config::get_configs().await;
+    let configs_result = kftray_commons::utils::config::get_configs().await;
     if let Err(e) = configs_result {
-        return Err(format!("Failed to retrieve configs: {}", e));
+        let error_message = format!("Failed to retrieve configs: {}", e);
+        log::error!("{}", error_message);
+        return Err(error_message);
     }
     let configs = configs_result.unwrap();
 
@@ -324,6 +313,14 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
                         stderr: e.to_string(),
                         status: 1,
                     });
+                    let config_state = ConfigState {
+                        id: None,
+                        config_id: config_id_parsed,
+                        is_running: false,
+                    };
+                    if let Err(e) = update_config_state(&config_state).await {
+                        log::error!("Failed to update config state: {}", e);
+                    }
                     continue;
                 }
             }
@@ -391,6 +388,16 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
 
         pod_deletion_tasks.push(pod_deletion_task);
 
+        // Update config state to not running
+        let config_state = ConfigState {
+            id: None,
+            config_id: config_id_parsed,
+            is_running: false,
+        };
+        if let Err(e) = update_config_state(&config_state).await {
+            log::error!("Failed to update config state: {}", e);
+        }
+
         responses.push(CustomResponse {
             id: Some(config_id_parsed),
             service: service_id.to_string(),
@@ -415,10 +422,7 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
     Ok(responses)
 }
 
-#[tauri::command]
-pub async fn stop_port_forward(
-    _service_name: String, config_id: String,
-) -> Result<CustomResponse, String> {
+pub async fn stop_port_forward(config_id: String) -> Result<CustomResponse, String> {
     let cancellation_notifier = CANCEL_NOTIFIER.clone();
     cancellation_notifier.notify_waiters();
 
@@ -435,12 +439,12 @@ pub async fn stop_port_forward(
         // Remove and retrieve child process handle
         let join_handle = {
             let mut child_processes = CHILD_PROCESSES.lock().unwrap();
-            println!("child_processes: {:?}", child_processes);
+            info!("child_processes: {:?}", child_processes);
             child_processes.remove(&composite_key)
         };
 
         if let Some(join_handle) = join_handle {
-            println!("Join handle: {:?}", join_handle);
+            info!("Join handle: {:?}", join_handle);
             join_handle.abort();
         }
 
@@ -448,7 +452,7 @@ pub async fn stop_port_forward(
         let (config_id_str, service_name) = composite_key.split_once('_').unwrap_or(("", ""));
         let config_id_parsed = config_id_str.parse::<i64>().unwrap_or_default();
 
-        match config::get_configs().await {
+        match kftray_commons::config::get_configs().await {
             Ok(configs) => {
                 if let Some(config) = configs
                     .iter()
@@ -468,11 +472,30 @@ pub async fn stop_port_forward(
                                 service_name,
                                 e
                             );
+
+                            let config_state = ConfigState {
+                                id: None,
+                                config_id: config_id_parsed,
+                                is_running: false,
+                            };
+                            if let Err(e) = update_config_state(&config_state).await {
+                                log::error!("Failed to update config state: {}", e);
+                            }
                             return Err(e.to_string());
                         }
                     }
                 } else {
                     log::warn!("Config with id '{}' not found.", config_id_str);
+                }
+
+                // Update config state to not running
+                let config_state = ConfigState {
+                    id: None,
+                    config_id: config_id_parsed,
+                    is_running: false,
+                };
+                if let Err(e) = update_config_state(&config_state).await {
+                    log::error!("Failed to update config state: {}", e);
                 }
 
                 Ok(CustomResponse {
@@ -488,9 +511,29 @@ pub async fn stop_port_forward(
                     status: 0,
                 })
             }
-            Err(e) => Err(format!("Failed to retrieve configs: {}", e)),
+            Err(e) => {
+                let config_id_parsed = config_id.parse::<i64>().unwrap_or_default();
+                let config_state = ConfigState {
+                    id: None,
+                    config_id: config_id_parsed,
+                    is_running: false,
+                };
+                if let Err(e) = update_config_state(&config_state).await {
+                    log::error!("Failed to update config state: {}", e);
+                }
+                Err(format!("Failed to retrieve configs: {}", e))
+            }
         }
     } else {
+        let config_id_parsed = config_id.parse::<i64>().unwrap_or_default();
+        let config_state = ConfigState {
+            id: None,
+            config_id: config_id_parsed,
+            is_running: false,
+        };
+        if let Err(e) = update_config_state(&config_state).await {
+            log::error!("Failed to update config state: {}", e);
+        }
         Err(format!(
             "No port forwarding process found for config_id '{}'",
             config_id
@@ -508,9 +551,8 @@ fn render_json_template(template: &str, values: &HashMap<&str, String>) -> Strin
     rendered_template
 }
 
-#[tauri::command]
 pub async fn deploy_and_forward_pod(
-    configs: Vec<Config>, http_log_state: tauri::State<'_, HttpLogState>,
+    configs: Vec<Config>, http_log_state: Arc<HttpLogState>,
 ) -> Result<Vec<CustomResponse>, String> {
     let mut responses: Vec<CustomResponse> = Vec::new();
 
@@ -540,7 +582,7 @@ pub async fn deploy_and_forward_pod(
         let username = whoami::username().to_lowercase();
         let clean_username: String = username.chars().filter(|c| c.is_alphanumeric()).collect();
 
-        println!("Cleaned username: {}", clean_username);
+        info!("Cleaned username: {}", clean_username);
 
         let protocol = config.protocol.to_string().to_lowercase();
 
@@ -606,10 +648,12 @@ pub async fn deploy_and_forward_pod(
 
                 let start_response = match protocol.as_str() {
                     "udp" => {
-                        start_port_forward_udp(vec![config.clone()], http_log_state.clone()).await
+                        start_port_forward(vec![config.clone()], "udp", http_log_state.clone())
+                            .await
                     }
                     "tcp" => {
-                        start_port_forward_tcp(vec![config.clone()], http_log_state.clone()).await
+                        start_port_forward(vec![config.clone()], "tcp", http_log_state.clone())
+                            .await
                     }
                     _ => {
                         let _ = pods
@@ -641,7 +685,6 @@ pub async fn deploy_and_forward_pod(
     Ok(responses)
 }
 
-#[tauri::command]
 pub async fn stop_proxy_forward(
     config_id: String, namespace: &str, service_name: String,
 ) -> Result<CustomResponse, String> {
@@ -698,34 +741,16 @@ pub async fn stop_proxy_forward(
 
     log::info!("Stopping port forward for service: {}", service_name);
 
-    let stop_result = stop_port_forward(service_name.clone(), config_id)
-        .await
-        .map_err(|e| {
-            log::error!(
-                "Failed to stop port forwarding for service '{}': {}",
-                service_name,
-                e
-            );
+    let stop_result = stop_port_forward(config_id.clone()).await.map_err(|e| {
+        log::error!(
+            "Failed to stop port forwarding for service '{}': {}",
+            service_name,
             e
-        })?;
+        );
+        e
+    })?;
 
     log::info!("Proxy forward stopped for service: {}", service_name);
 
     Ok(stop_result)
-}
-
-#[tauri::command]
-pub async fn set_http_logs(
-    state: tauri::State<'_, HttpLogState>, config_id: i64, enable: bool,
-) -> Result<(), String> {
-    state.set_http_logs(config_id, enable).await;
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn get_http_logs(
-    state: tauri::State<'_, HttpLogState>, config_id: i64,
-) -> Result<bool, String> {
-    let current_state = state.get_http_logs(config_id).await;
-    Ok(current_state)
 }
