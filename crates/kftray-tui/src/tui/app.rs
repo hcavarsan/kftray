@@ -9,8 +9,8 @@ use crossterm::{
         LeaveAlternateScreen,
     },
 };
-use kftray_tauri::config::read_configs;
-use kftray_tauri::config_state::read_config_states;
+use kftray_commons::utils::config::read_configs;
+use kftray_tauri::commands::config_state::read_config_states;
 use log::error;
 use ratatui::{
     backend::CrosstermBackend,
@@ -23,7 +23,7 @@ use crate::tui::ui::draw_ui;
 /// Entry point for running the TUI application.
 pub async fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize the database
-    kftray_tauri::db::init().await?;
+    kftray_commons::utils::db::init().await?;
 
     // Set up Crossterm
     enable_raw_mode()?;

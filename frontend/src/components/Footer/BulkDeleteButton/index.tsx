@@ -45,7 +45,7 @@ const BulkDeleteButton: React.FC<BulkDeleteButtonProps> = ({
     }
 
     try {
-      await invoke('delete_configs', { ids: configsToDelete })
+      await invoke('delete_configs_cmd', { ids: configsToDelete })
 
       setSelectedConfigs([])
 

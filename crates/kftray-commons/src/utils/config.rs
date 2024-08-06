@@ -1,8 +1,4 @@
 use hostsfile::HostsBuilder;
-use log::{
-    error,
-    info,
-};
 use serde_json::{
     json,
     Value as JsonValue,
@@ -11,55 +7,9 @@ use sqlx::Row;
 
 use crate::db::get_db_pool;
 use crate::migration::migrate_configs;
-use crate::models::config::Config;
+use crate::models::config_model::Config;
 
-fn is_value_blank(value: &JsonValue) -> bool {
-    match value {
-        JsonValue::String(s) => s.trim().is_empty(),
-        _ => false,
-    }
-}
-
-fn is_value_default(value: &serde_json::Value, default_config: &serde_json::Value) -> bool {
-    *value == *default_config
-}
-
-fn remove_blank_or_default_fields(value: &mut JsonValue, default_config: &JsonValue) {
-    match value {
-        JsonValue::Object(map) => {
-            let keys_to_remove: Vec<String> = map
-                .iter()
-                .filter(|(k, v)| {
-                    let default_v = &default_config[k];
-                    is_value_blank(v)
-                        || (default_v != &JsonValue::Array(vec![])
-                            && is_value_default(v, default_v))
-                })
-                .map(|(k, _)| k.clone())
-                .collect();
-
-            for key in keys_to_remove {
-                map.remove(&key);
-            }
-
-            for value in map.values_mut() {
-                remove_blank_or_default_fields(value, default_config);
-            }
-        }
-        JsonValue::Array(arr) => {
-            for value in arr {
-                remove_blank_or_default_fields(value, default_config);
-            }
-        }
-        _ => (),
-    }
-}
-
-// Function to delete a config from the database
-#[tauri::command]
 pub async fn delete_config(id: i64) -> Result<(), String> {
-    info!("Deleting config with id: {}", id);
-
     let pool = get_db_pool().await.map_err(|e| e.to_string())?;
     let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
 
@@ -72,11 +22,7 @@ pub async fn delete_config(id: i64) -> Result<(), String> {
     Ok(())
 }
 
-// Function to delete multiple configs from the database
-#[tauri::command]
 pub async fn delete_configs(ids: Vec<i64>) -> Result<(), String> {
-    info!("Deleting configs with ids: {:?}", ids);
-
     let pool = get_db_pool().await.map_err(|e| e.to_string())?;
     let mut transaction = pool.begin().await.map_err(|e| e.to_string())?;
 
@@ -93,11 +39,7 @@ pub async fn delete_configs(ids: Vec<i64>) -> Result<(), String> {
     Ok(())
 }
 
-// Function to delete all configs from the database
-#[tauri::command]
 pub async fn delete_all_configs() -> Result<(), String> {
-    info!("Deleting all configs");
-
     let pool = get_db_pool().await.map_err(|e| e.to_string())?;
     let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
 
@@ -109,8 +51,6 @@ pub async fn delete_all_configs() -> Result<(), String> {
     Ok(())
 }
 
-// Function to insert a config into the database
-#[tauri::command]
 pub async fn insert_config(config: Config) -> Result<(), String> {
     let pool = get_db_pool().await.map_err(|e| e.to_string())?;
     let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
@@ -156,8 +96,6 @@ pub async fn read_configs() -> Result<Vec<Config>, String> {
         configs.push(config);
     }
 
-    info!("Reading configs {:?}", configs);
-
     Ok(configs)
 }
 
@@ -184,23 +122,11 @@ pub async fn clean_all_custom_hosts_entries() -> Result<(), String> {
     Ok(())
 }
 
-// Function to get all configs from the database
-#[tauri::command]
 pub async fn get_configs() -> Result<Vec<Config>, String> {
-    info!("get_configs called");
-
-    let configs = read_configs().await.map_err(|e| e.to_string())?;
-
-    info!("{:?}", configs);
-
-    Ok(configs)
+    read_configs().await
 }
 
-// Function to get a config from the database
-#[tauri::command]
 pub async fn get_config(id: i64) -> Result<Config, String> {
-    info!("get_config called with id: {}", id);
-
     let pool = get_db_pool().await.map_err(|e| e.to_string())?;
     let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
 
@@ -217,15 +143,12 @@ pub async fn get_config(id: i64) -> Result<Config, String> {
             let mut config: Config = serde_json::from_str(&data)
                 .map_err(|e| format!("Failed to parse config: {}", e))?;
             config.id = Some(id);
-            info!("{:?}", config);
             Ok(config)
         }
         None => Err(format!("No config found with id: {}", id)),
     }
 }
 
-// Function to update a config in the database
-#[tauri::command]
 pub async fn update_config(config: Config) -> Result<(), String> {
     let pool = get_db_pool().await.map_err(|e| e.to_string())?;
     let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
@@ -242,8 +165,6 @@ pub async fn update_config(config: Config) -> Result<(), String> {
     Ok(())
 }
 
-// Function to export configs to a JSON file
-#[tauri::command]
 pub async fn export_configs() -> Result<String, String> {
     let mut configs = read_configs().await.map_err(|e| e.to_string())?;
 
@@ -260,8 +181,6 @@ pub async fn export_configs() -> Result<String, String> {
     Ok(json)
 }
 
-// Function to import configs from a JSON file
-#[tauri::command]
 pub async fn import_configs(json: String) -> Result<(), String> {
     match serde_json::from_str::<Vec<Config>>(&json) {
         Ok(configs) => {
@@ -281,73 +200,50 @@ pub async fn import_configs(json: String) -> Result<(), String> {
     }
 
     if let Err(e) = migrate_configs().await {
-        error!("Error migrating configs: {}. Please check if the configurations are valid and compatible with the current system/version.", e);
         return Err(format!("Error migrating configs: {}", e));
     }
 
     Ok(())
 }
 
-#[cfg(test)]
-
-mod tests {
-
-    use super::*;
-
-    #[test]
-
-    fn test_is_value_blank() {
-        assert!(is_value_blank(&json!("")));
-
-        assert!(!is_value_blank(&json!("not blank")));
-
-        assert!(!is_value_blank(&json!(0)));
-
-        assert!(!is_value_blank(&json!(false)));
+fn is_value_blank(value: &JsonValue) -> bool {
+    match value {
+        JsonValue::String(s) => s.trim().is_empty(),
+        _ => false,
     }
+}
 
-    // Test `remove_blank_fields` function
-    #[test]
-    fn test_remove_blank_or_default_fields() {
-        let mut obj = json!({
-            "name": "Test",
-            "empty_string": "   ",
-            "nested": {
-                "blank": "",
-                "non_blank": "value"
-            },
-            "array": [
-                {
-                    "blank_field": "  "
-                }
-            ]
-        });
+fn is_value_default(value: &serde_json::Value, default_config: &serde_json::Value) -> bool {
+    *value == *default_config
+}
 
-        let default_config = json!({
-            "name": "",
-            "empty_string": "",
-            "nested": {
-                "blank": "",
-                "non_blank": ""
-            },
-            "array": [
-                {
-                    "blank_field": ""
-                }
-            ]
-        });
+fn remove_blank_or_default_fields(value: &mut JsonValue, default_config: &JsonValue) {
+    match value {
+        JsonValue::Object(map) => {
+            let keys_to_remove: Vec<String> = map
+                .iter()
+                .filter(|(k, v)| {
+                    let default_v = &default_config[k];
+                    is_value_blank(v)
+                        || (default_v != &JsonValue::Array(vec![])
+                            && is_value_default(v, default_v))
+                })
+                .map(|(k, _)| k.clone())
+                .collect();
 
-        remove_blank_or_default_fields(&mut obj, &default_config);
+            for key in keys_to_remove {
+                map.remove(&key);
+            }
 
-        assert!(obj.get("empty_string").is_none());
-
-        assert!(obj.get("nested").unwrap().get("blank").is_none());
-
-        assert_eq!(
-            obj.get("nested").unwrap().get("non_blank"),
-            Some(&json!("value"))
-        );
-
-        assert!(obj.get("array").unwrap()[0].get("blank_field").is_none());
+            for value in map.values_mut() {
+                remove_blank_or_default_fields(value, default_config);
+            }
+        }
+        JsonValue::Array(arr) => {
+            for value in arr {
+                remove_blank_or_default_fields(value, default_config);
+            }
+        }
+        _ => (),
     }
 }

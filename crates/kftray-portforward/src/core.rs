@@ -2,16 +2,21 @@
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
-use std::sync::{
-    Arc,
-    Mutex,
-};
+use std::sync::Arc;
 use std::time::{
     SystemTime,
     UNIX_EPOCH,
 };
 
 use hostsfile::HostsBuilder;
+use k8s_openapi::api::core::v1::Pod;
+use kftray_commons::models::{
+    config_model::Config,
+    config_state_model::ConfigState,
+    response::CustomResponse,
+};
+use kftray_commons::utils::config_dir::get_pod_manifest_path;
+use kftray_commons::utils::config_state::update_config_state;
 use kube::{
     api::{
         Api,
@@ -21,40 +26,22 @@ use kube::{
     Client,
 };
 use kube_runtime::wait::conditions;
-use lazy_static::lazy_static;
 use log::info;
 use rand::{
     distributions::Alphanumeric,
     Rng,
 };
-use tokio::sync::Notify;
-use tokio::task::JoinHandle;
 
-use crate::kubeforward::kubecontext::create_client_with_specific_context;
-use crate::utils::config_dir::get_pod_manifest_path;
-use crate::{
-    config,
-    config_state::update_config_state,
-    kubeforward::vx::Pod,
-    models::{
-        config::Config,
-        config_state::ConfigState,
-        kube::{
-            HttpLogState,
-            Port,
-            PortForward,
-            Target,
-            TargetSelector,
-        },
-        response::CustomResponse,
-    },
+use crate::client::create_client_with_specific_context;
+use crate::models::kube::{
+    HttpLogState,
+    Port,
+    PortForward,
+    Target,
+    TargetSelector,
 };
-
-lazy_static! {
-    pub static ref CHILD_PROCESSES: Arc<Mutex<HashMap<String, JoinHandle<()>>>> =
-        Arc::new(Mutex::new(HashMap::new()));
-    pub static ref CANCEL_NOTIFIER: Arc<Notify> = Arc::new(Notify::new());
-}
+use crate::port_forward::CANCEL_NOTIFIER;
+use crate::port_forward::CHILD_PROCESSES;
 
 pub async fn start_port_forward(
     configs: Vec<Config>, protocol: &str, http_log_state: Arc<HttpLogState>,
@@ -279,7 +266,7 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
     let handle_map: HashMap<String, tokio::task::JoinHandle<()>> =
         CHILD_PROCESSES.lock().unwrap().drain().collect();
 
-    let configs_result = config::get_configs().await;
+    let configs_result = kftray_commons::utils::config::get_configs().await;
     if let Err(e) = configs_result {
         let error_message = format!("Failed to retrieve configs: {}", e);
         log::error!("{}", error_message);
@@ -465,7 +452,7 @@ pub async fn stop_port_forward(config_id: String) -> Result<CustomResponse, Stri
         let (config_id_str, service_name) = composite_key.split_once('_').unwrap_or(("", ""));
         let config_id_parsed = config_id_str.parse::<i64>().unwrap_or_default();
 
-        match config::get_configs().await {
+        match kftray_commons::config::get_configs().await {
             Ok(configs) => {
                 if let Some(config) = configs
                     .iter()

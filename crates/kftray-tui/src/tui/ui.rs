@@ -1,5 +1,5 @@
-use kftray_tauri::models::config::Config;
-use kftray_tauri::models::config_state::ConfigState;
+use kftray_commons::models::config_model::Config;
+use kftray_commons::models::config_state_model::ConfigState;
 use ratatui::{
     layout::{
         Constraint,

@@ -1,6 +1,9 @@
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
+use kftray_commons::models::window::AppState;
+use kftray_commons::models::window::SaveDialogState;
+use kftray_portforward::core;
 use log::{
     error,
     info,
@@ -19,9 +22,6 @@ use tauri_plugin_positioner::Position;
 use tokio::runtime::Runtime;
 use tokio::time::sleep;
 
-use crate::kubeforward::core;
-use crate::models::window::AppState;
-use crate::models::window::SaveDialogState;
 use crate::window::{
     adjust_window_size_and_position,
     reset_window_position,

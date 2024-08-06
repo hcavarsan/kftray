@@ -4,7 +4,7 @@ use std::{
     io,
 };
 
-use crate::utils::config_dir::get_app_log_path;
+use kftray_commons::utils::config_dir::get_app_log_path;
 
 pub fn setup_logging() -> Result<(), Box<dyn std::error::Error>> {
     let log_filter = match env::var("RUST_LOG") {

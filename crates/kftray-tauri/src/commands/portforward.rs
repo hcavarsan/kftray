@@ -1,18 +1,17 @@
 use std::sync::Arc;
 
-use tauri::Manager; // Import the Manager trait
-
-use crate::kubeforward::core::{
+use kftray_commons::models::config_model::Config;
+use kftray_commons::models::config_state_model::ConfigState;
+use kftray_commons::models::response::CustomResponse;
+use kftray_portforward::core::{
     deploy_and_forward_pod,
     start_port_forward,
     stop_all_port_forward,
     stop_port_forward,
     stop_proxy_forward,
 };
-use crate::models::config::Config;
-use crate::models::config_state::ConfigState;
-use crate::models::kube::HttpLogState;
-use crate::models::response::CustomResponse;
+use kftray_portforward::models::kube::HttpLogState;
+use tauri::Manager;
 
 async fn emit_config_state(
     app_handle: &tauri::AppHandle, config_id: i64, is_running: bool,
@@ -111,20 +110,4 @@ pub async fn stop_proxy_forward_cmd(
     let result = stop_proxy_forward(config_id.clone(), namespace, service_name).await;
     emit_config_state(&app_handle, config_id_i64, false).await?;
     result
-}
-
-#[tauri::command]
-pub async fn set_http_logs_cmd(
-    state: tauri::State<'_, HttpLogState>, config_id: i64, enable: bool,
-) -> Result<(), String> {
-    state.set_http_logs(config_id, enable).await;
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn get_http_logs_cmd(
-    state: tauri::State<'_, HttpLogState>, config_id: i64,
-) -> Result<bool, String> {
-    let current_state = state.get_http_logs(config_id).await;
-    Ok(current_state)
 }

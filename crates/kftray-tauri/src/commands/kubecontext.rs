@@ -4,7 +4,7 @@ use anyhow::{
     Context,
     Result,
 };
-use hyper_util::rt::TokioExecutor;
+use k8s_openapi::api::core::v1::Pod;
 use k8s_openapi::{
     api::core::v1::{
         Namespace,
@@ -12,104 +12,25 @@ use k8s_openapi::{
     },
     apimachinery::pkg::util::intstr::IntOrString,
 };
+use kftray_commons::utils::config_dir::get_default_kubeconfig_path;
+use kftray_portforward::client::create_client_with_specific_context;
+use kftray_portforward::models::kube::{
+    KubeContextInfo,
+    KubeNamespaceInfo,
+    KubeServiceInfo,
+    KubeServicePortInfo,
+    PodInfo,
+};
 use kube::Resource;
 use kube::{
     api::{
         Api,
         ListParams,
     },
-    client::ConfigExt,
-    config::{
-        Config,
-        KubeConfigOptions,
-        Kubeconfig,
-    },
-    Client,
+    config::Kubeconfig,
     ResourceExt,
 };
 use log::info;
-use tower::ServiceBuilder;
-
-use crate::utils::config_dir::get_default_kubeconfig_path;
-use crate::{
-    kubeforward::vx::Pod,
-    models::kube::{
-        KubeContextInfo,
-        KubeNamespaceInfo,
-        KubeServiceInfo,
-        KubeServicePortInfo,
-        PodInfo,
-    },
-};
-pub async fn create_client_with_specific_context(
-    kubeconfig: Option<String>, context_name: &str,
-) -> Result<Client> {
-    info!(
-        "create_client_with_specific_context {}",
-        kubeconfig.as_deref().unwrap_or("")
-    );
-
-    info!("create_client_with_specific_context {}", context_name);
-
-    // Determine the kubeconfig based on the input
-    let kubeconfig = if let Some(path) = kubeconfig {
-        if path == "default" {
-            let default_path = get_default_kubeconfig_path()?;
-
-            info!(
-                "Reading kubeconfig from default location: {:?}",
-                default_path
-            );
-
-            Kubeconfig::read_from(default_path)
-                .context("Failed to read kubeconfig from default location")?
-        } else {
-            // Otherwise, try to read the kubeconfig from the specified path
-            info!("Reading kubeconfig from specified path: {}", path);
-
-            Kubeconfig::read_from(path).context("Failed to read kubeconfig from specified path")?
-        }
-    } else {
-        // If no kubeconfig is specified, read the default kubeconfig
-        let default_path = get_default_kubeconfig_path()?;
-
-        info!(
-            "Reading kubeconfig from default location: {:?}",
-            default_path
-        );
-
-        Kubeconfig::read_from(default_path)
-            .context("Failed to read kubeconfig from default location")?
-    };
-
-    info!("create_client_with_specific_context2 {:?}", kubeconfig);
-
-    let config = Config::from_custom_kubeconfig(
-        kubeconfig,
-        &KubeConfigOptions {
-            context: Some(context_name.to_owned()),
-            ..Default::default()
-        },
-    )
-    .await
-    .context("Failed to create configuration from kubeconfig")?;
-
-    let https_connector = config
-        .rustls_https_connector()
-        .context("Failed to create Rustls HTTPS connector")?;
-
-    let service = ServiceBuilder::new()
-        .layer(config.base_uri_layer())
-        .option_layer(config.auth_layer()?)
-        .service(
-            hyper_util::client::legacy::Client::builder(TokioExecutor::new())
-                .build(https_connector),
-        );
-
-    let client = Client::new(service, config.default_namespace);
-
-    Ok(client)
-}
 
 #[tauri::command]
 pub async fn list_pods(

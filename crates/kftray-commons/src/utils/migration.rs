@@ -12,7 +12,7 @@ use sqlx::{
 };
 
 use crate::db::get_db_pool;
-use crate::models::config::Config;
+use crate::models::config_model::Config;
 
 pub async fn migrate_configs() -> Result<(), String> {
     info!("Starting configuration migration.");

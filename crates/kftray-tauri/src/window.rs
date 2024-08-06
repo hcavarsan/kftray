@@ -3,6 +3,9 @@ use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
+use kftray_commons::models::window::AppState;
+use kftray_commons::models::window::WindowPosition;
+use kftray_commons::utils::config_dir::get_window_state_path;
 use log::{
     info,
     warn,
@@ -16,10 +19,6 @@ use tauri_plugin_positioner::{
     WindowExt,
 };
 use tokio::time::sleep;
-
-use crate::models::window::AppState;
-use crate::models::window::WindowPosition;
-use crate::utils::config_dir::get_window_state_path;
 /// Saves the current window position to the configuration file.
 pub fn save_window_position(window: &Window) {
     if let Ok(position) = window.outer_position() {
@@ -222,11 +221,4 @@ pub fn adjust_window_size_and_position(
         .unwrap();
 
     reset_plugin_moving_state_after_delay(&app_state);
-}
-
-#[tauri::command]
-pub fn toggle_pin_state(app_state: tauri::State<AppState>, window: tauri::Window) {
-    let is_pinned = app_state.is_pinned.load(Ordering::SeqCst);
-    app_state.is_pinned.store(!is_pinned, Ordering::SeqCst);
-    window.set_always_on_top(!is_pinned).unwrap();
 }

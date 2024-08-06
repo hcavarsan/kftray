@@ -1,13 +1,20 @@
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::Mutex as StdMutex;
 use std::time::Duration;
 
 use anyhow::Context;
 use futures::TryStreamExt;
+use kftray_commons::logging::{
+    create_log_file_path,
+    Logger,
+};
 use kube::{
     api::Api,
     Client,
 };
+use lazy_static::lazy_static;
 use tokio::net::TcpStream;
 use tokio::net::UdpSocket as TokioUdpSocket;
 use tokio::sync::Mutex;
@@ -29,17 +36,18 @@ use tracing::{
     trace,
 };
 
-use crate::kubeforward::core::CANCEL_NOTIFIER;
-use crate::kubeforward::logging::{
-    create_log_file_path,
-    Logger,
-};
-use crate::kubeforward::pod_finder::TargetPodFinder;
 use crate::models::kube::HttpLogState;
 use crate::models::kube::{
     PortForward,
     Target,
 };
+use crate::pod_finder::TargetPodFinder;
+
+lazy_static! {
+    pub static ref CHILD_PROCESSES: Arc<StdMutex<HashMap<String, JoinHandle<()>>>> =
+        Arc::new(StdMutex::new(HashMap::new()));
+    pub static ref CANCEL_NOTIFIER: Arc<Notify> = Arc::new(Notify::new());
+}
 
 const BUFFER_SIZE: usize = 131072;
 
@@ -50,11 +58,7 @@ impl PortForward {
         kubeconfig: Option<String>, config_id: i64, workload_type: String,
     ) -> anyhow::Result<Self> {
         let client = if let Some(ref context_name) = context_name {
-            crate::kubeforward::kubecontext::create_client_with_specific_context(
-                kubeconfig,
-                context_name,
-            )
-            .await?
+            crate::client::create_client_with_specific_context(kubeconfig, context_name).await?
         } else {
             Client::try_default().await?
         };

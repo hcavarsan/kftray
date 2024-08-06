@@ -1,7 +1,6 @@
+use kftray_commons::models::config_state_model::ConfigState;
+use kftray_commons::utils::db::get_db_pool;
 use sqlx::Row;
-
-use crate::db::get_db_pool;
-use crate::models::config_state::ConfigState;
 
 // Function to read config states from the database
 pub async fn read_config_states() -> Result<Vec<ConfigState>, sqlx::Error> {
@@ -57,18 +56,4 @@ pub async fn get_config_state_by_config_id(config_id: i64) -> Result<ConfigState
             config_id
         )),
     }
-}
-
-pub async fn update_config_state(config_state: &ConfigState) -> Result<(), String> {
-    let pool = get_db_pool().await.map_err(|e| e.to_string())?;
-    let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
-
-    sqlx::query("UPDATE config_state SET is_running = ?1 WHERE config_id = ?2")
-        .bind(config_state.is_running)
-        .bind(config_state.config_id)
-        .execute(&mut *conn)
-        .await
-        .map_err(|e| e.to_string())?;
-
-    Ok(())
 }

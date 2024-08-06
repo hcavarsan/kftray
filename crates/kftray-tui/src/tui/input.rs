@@ -7,14 +7,14 @@ use crossterm::event::{
     KeyCode,
     KeyModifiers,
 };
-use kftray_tauri::kubeforward::core::{
+use kftray_commons::models::config_model::Config;
+use kftray_commons::models::config_state_model::ConfigState;
+use kftray_portforward::core::{
     deploy_and_forward_pod,
     start_port_forward,
     stop_port_forward,
     stop_proxy_forward,
 };
-use kftray_tauri::models::config::Config;
-use kftray_tauri::models::config_state::ConfigState;
 
 /// Handles user input.
 pub async fn handle_input(

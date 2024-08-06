@@ -35,18 +35,3 @@ pub fn build_github_api_url(repo_url: &str, config_path: &str) -> String {
         base_api_url, owner, repo, config_path
     )
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_build_github_api_url() {
-        let repo_url = "https://github.com/exampleUser/exampleRepo";
-        let config_path = "path/to/config.json";
-        let expected_url =
-            "https://api.github.com/repos/exampleUser/exampleRepo/contents/path/to/config.json";
-
-        assert_eq!(build_github_api_url(repo_url, config_path), expected_url);
-    }
-}

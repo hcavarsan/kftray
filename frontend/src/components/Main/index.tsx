@@ -51,7 +51,7 @@ const KFTray = () => {
 
   const fetchConfigsWithState = useCallback(async () => {
     try {
-      const configsResponse = await invoke<Status[]>('get_configs')
+      const configsResponse = await invoke<Status[]>('get_configs_cmd')
       const configStates = await invoke<Status[]>('get_config_states')
 
       return configsResponse.map(config => ({
@@ -154,7 +154,7 @@ const KFTray = () => {
   const handleExportConfigs = async () => {
     try {
       await invoke('open_save_dialog')
-      const json = await invoke('export_configs')
+      const json = await invoke('export_configs_cmd')
 
       if (typeof json !== 'string') {
         throw new Error('The exported config is not a string')
@@ -201,7 +201,7 @@ const KFTray = () => {
       if (typeof selected === 'string') {
         const jsonContent = await readTextFile(selected)
 
-        await invoke('import_configs', { json: jsonContent })
+        await invoke('import_configs_cmd', { json: jsonContent })
         toast({
           title: 'Success',
           description: 'Configuration imported successfully.',
@@ -226,7 +226,7 @@ const KFTray = () => {
 
   const handleEditConfig = async (id: number) => {
     try {
-      const configToEdit = await invoke<Config>('get_config', { id })
+      const configToEdit = await invoke<Config>('get_config_cmd', { id })
 
       setNewConfig(configToEdit)
       setIsEdit(true)
@@ -242,7 +242,7 @@ const KFTray = () => {
   const handleEditSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     try {
-      await invoke('update_config', { config: newConfig })
+      await invoke('update_config_cmd', { config: newConfig })
       await updateConfigsWithState()
       toast({
         title: 'Success',
@@ -276,9 +276,9 @@ const KFTray = () => {
       }
 
       if (isEdit) {
-        await invoke('update_config', { config: updatedConfigToSave })
+        await invoke('update_config_cmd', { config: updatedConfigToSave })
       } else {
-        await invoke('insert_config', { config: updatedConfigToSave })
+        await invoke('insert_config_cmd', { config: updatedConfigToSave })
       }
 
       await updateConfigsWithState()
@@ -417,7 +417,7 @@ const KFTray = () => {
     }
 
     try {
-      await invoke('delete_config', { id: configToDelete })
+      await invoke('delete_config_cmd', { id: configToDelete })
 
       toast({
         title: 'Success',
