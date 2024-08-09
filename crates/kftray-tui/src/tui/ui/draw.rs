@@ -1,4 +1,6 @@
 use kftray_commons::models::config_state_model::ConfigState;
+use ratatui::prelude::Alignment;
+use ratatui::widgets::Clear;
 use ratatui::{
     layout::{
         Constraint,
@@ -6,8 +8,15 @@ use ratatui::{
         Layout,
         Rect,
     },
-    style::{Color, Modifier, Style},
-    text::{Line, Span, Text},
+    style::{
+        Modifier,
+        Style,
+    },
+    text::{
+        Line,
+        Span,
+        Text,
+    },
     widgets::{
         Block,
         Borders,
@@ -17,6 +26,7 @@ use ratatui::{
     Frame,
 };
 
+use crate::tui::input::ActiveComponent;
 use crate::tui::input::App;
 use crate::tui::ui::{
     centered_rect,
@@ -27,15 +37,10 @@ use crate::tui::ui::{
     render_input_prompt,
     render_legend,
     BASE,
-    TEXT,
     RED,
+    TEXT,
     YELLOW,
-    MAUVE,
 };
-use ratatui::widgets::Clear;
-use ratatui::prelude::Alignment;
-
-use crate::tui::input::ActiveComponent;
 
 pub fn draw_ui(f: &mut Frame, app: &mut App, config_states: &[ConfigState]) {
     let size = f.size();
@@ -89,18 +94,18 @@ pub fn draw_ui(f: &mut Frame, app: &mut App, config_states: &[ConfigState]) {
     }
 }
 
-
 pub fn draw_header(f: &mut Frame, app: &App, area: Rect) {
-    let menu_titles = vec!["Import", "Export", "Help", "Quit"];
+    let menu_titles = ["Import", "Export", "Help", "Quit"];
     let menu: Vec<Line> = menu_titles
         .iter()
         .enumerate()
         .map(|(i, t)| {
-            let style = if app.active_component == ActiveComponent::Menu && app.selected_menu_item == i {
-                Style::default().fg(YELLOW).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(TEXT)
-            };
+            let style =
+                if app.active_component == ActiveComponent::Menu && app.selected_menu_item == i {
+                    Style::default().fg(YELLOW).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(TEXT)
+                };
             Line::from(Span::styled(*t, style))
         })
         .collect();
@@ -112,14 +117,18 @@ pub fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     };
 
     let menu_titles = Tabs::new(menu)
-        .block(Block::default().title("Menu").borders(Borders::ALL).border_style(border_style))
+        .block(
+            Block::default()
+                .title("Menu")
+                .borders(Borders::ALL)
+                .border_style(border_style),
+        )
         .style(Style::default().fg(TEXT))
         .highlight_style(Style::default().fg(YELLOW))
         .divider(Span::raw(" | "));
 
     f.render_widget(menu_titles, area);
 }
-
 
 pub fn render_error_popup(f: &mut Frame, error_message: &str, area: Rect) {
     let error_paragraph = Paragraph::new(Text::raw(error_message))

@@ -29,7 +29,6 @@ impl log::Log for AppLogger {
 
     fn log(&self, record: &Record) {
         if self.enabled(record.metadata()) {
-
             let target = record.target();
             if target.starts_with("sqlx") {
                 return;

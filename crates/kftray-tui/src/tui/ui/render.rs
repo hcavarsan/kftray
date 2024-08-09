@@ -121,13 +121,7 @@ pub fn draw_file_explorer_popup(f: &mut Frame, app: &mut App, area: Rect) {
 pub fn draw_configs_tab(f: &mut Frame, app: &mut App, config_states: &[ConfigState], area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints(
-            [
-                Constraint::Min(0),
-                Constraint::Length(10),
-            ]
-            .as_ref(),
-        )
+        .constraints([Constraint::Min(0), Constraint::Length(10)].as_ref())
         .split(area);
 
     draw_main_tab(f, app, config_states, chunks[0]);

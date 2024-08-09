@@ -65,7 +65,6 @@ pub fn draw_main_tab(f: &mut Frame, app: &mut App, config_states: &[ConfigState]
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
         .split(chunks[0]);
 
-
     draw_configs_table(
         f,
         TableConfig {

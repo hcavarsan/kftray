@@ -68,12 +68,13 @@ pub async fn handle_navigation_input(
 
             if app.active_table == ActiveTable::Stopped {
                 app.running_configs.extend(selected_configs.clone());
-                app.stopped_configs.retain(|config| !selected_configs.contains(config));
+                app.stopped_configs
+                    .retain(|config| !selected_configs.contains(config));
             } else {
                 app.stopped_configs.extend(selected_configs.clone());
-                app.running_configs.retain(|config| !selected_configs.contains(config));
+                app.running_configs
+                    .retain(|config| !selected_configs.contains(config));
             }
-
 
             match app.active_table {
                 ActiveTable::Stopped => app.selected_rows_stopped.clear(),
@@ -149,11 +150,12 @@ pub async fn handle_navigation_input(
     Ok(())
 }
 
-
 pub async fn start_port_forwarding(app: &mut App, config: Config) {
     match config.workload_type.as_str() {
         "proxy" => {
-            if let Err(e) = deploy_and_forward_pod(vec![config.clone()], Arc::new(HttpLogState::new())).await {
+            if let Err(e) =
+                deploy_and_forward_pod(vec![config.clone()], Arc::new(HttpLogState::new())).await
+            {
                 error!("Failed to start proxy forward: {:?}", e);
                 app.error_message = Some(format!("Failed to start proxy forward: {:?}", e));
                 app.show_error_popup = true;
@@ -161,7 +163,10 @@ pub async fn start_port_forwarding(app: &mut App, config: Config) {
         }
         "service" | "pod" => match config.protocol.as_str() {
             "tcp" => {
-                info!("Attempting to start TCP port forward for config: {:?}", config);
+                info!(
+                    "Attempting to start TCP port forward for config: {:?}",
+                    config
+                );
                 let log_state = Arc::new(HttpLogState::new());
                 let result = start_port_forward(vec![config.clone()], "tcp", log_state).await;
                 info!("Result: {:?}", result);
@@ -170,19 +175,30 @@ pub async fn start_port_forwarding(app: &mut App, config: Config) {
                     app.error_message = Some(format!("Failed to start TCP port forward: {:?}", e));
                     app.show_error_popup = true;
                 } else {
-                    info!("TCP port forward started successfully for config: {:?}", config);
+                    info!(
+                        "TCP port forward started successfully for config: {:?}",
+                        config
+                    );
                 }
             }
             "udp" => {
-                info!("Attempting to start UDP port forward for config: {:?}", config);
-                let result = deploy_and_forward_pod(vec![config.clone()], Arc::new(HttpLogState::new())).await;
+                info!(
+                    "Attempting to start UDP port forward for config: {:?}",
+                    config
+                );
+                let result =
+                    deploy_and_forward_pod(vec![config.clone()], Arc::new(HttpLogState::new()))
+                        .await;
                 info!("Result: {:?}", result);
                 if let Err(e) = result {
                     error!("Failed to start UDP port forward: {:?}", e);
                     app.error_message = Some(format!("Failed to start UDP port forward: {:?}", e));
                     app.show_error_popup = true;
                 } else {
-                    info!("UDP port forward started successfully for config: {:?}", config);
+                    info!(
+                        "UDP port forward started successfully for config: {:?}",
+                        config
+                    );
                 }
             }
             _ => {}
@@ -198,7 +214,9 @@ pub async fn stop_port_forwarding(app: &mut App, config: Config) {
                 config.id.unwrap_or_default().to_string(),
                 &config.namespace,
                 config.service.clone().unwrap_or_default(),
-            ).await {
+            )
+            .await
+            {
                 error!("Failed to stop proxy forward: {:?}", e);
                 app.error_message = Some(format!("Failed to stop proxy forward: {:?}", e));
                 app.show_error_popup = true;

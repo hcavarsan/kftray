@@ -12,19 +12,20 @@ use crossterm::event::{
     KeyCode,
     KeyModifiers,
 };
-
-use log::info;
 pub use file_explorer::*;
 use kftray_commons::models::config_model::Config;
 use kftray_commons::models::config_state_model::ConfigState;
+use log::info;
 pub use popup::*;
 use ratatui_explorer::{
     FileExplorer,
     Theme,
 };
 
-use crate::tui::input::navigation::{start_port_forwarding, stop_port_forwarding};
-
+use crate::tui::input::navigation::{
+    start_port_forwarding,
+    stop_port_forwarding,
+};
 use crate::tui::input::popup::handle_search_input;
 use crate::tui::logging::LOGGER;
 
@@ -123,7 +124,6 @@ impl App {
         self.filtered_running_configs = self.running_configs.clone();
     }
 }
-
 
 #[derive(PartialEq)]
 pub enum ActiveTable {
@@ -256,8 +256,12 @@ pub async fn handle_input(app: &mut App, config_states: &mut [ConfigState]) -> i
                         }
                         KeyCode::Char('f') => {
                             let (selected_rows, configs) = match app.active_table {
-                                ActiveTable::Stopped => (&app.selected_rows_stopped, &app.stopped_configs),
-                                ActiveTable::Running => (&app.selected_rows_running, &app.running_configs),
+                                ActiveTable::Stopped => {
+                                    (&app.selected_rows_stopped, &app.stopped_configs)
+                                }
+                                ActiveTable::Running => {
+                                    (&app.selected_rows_running, &app.running_configs)
+                                }
                             };
 
                             let selected_configs: Vec<Config> = selected_rows
@@ -295,10 +299,12 @@ pub async fn handle_input(app: &mut App, config_states: &mut [ConfigState]) -> i
 
                             if app.active_table == ActiveTable::Stopped {
                                 app.running_configs.extend(selected_configs.clone());
-                                app.stopped_configs.retain(|config| !selected_configs.contains(config));
+                                app.stopped_configs
+                                    .retain(|config| !selected_configs.contains(config));
                             } else {
                                 app.stopped_configs.extend(selected_configs.clone());
-                                app.running_configs.retain(|config| !selected_configs.contains(config));
+                                app.running_configs
+                                    .retain(|config| !selected_configs.contains(config));
                             }
 
                             match app.active_table {

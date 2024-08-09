@@ -67,9 +67,18 @@ pub fn render_help_popup(f: &mut Frame, area: Rect) {
     let help_message = vec![
         Line::from(Span::styled("CtrlC: Quit", Style::default().fg(YELLOW))),
         Line::from(Span::styled("↑/↓: Navigate", Style::default().fg(YELLOW))),
-        Line::from(Span::styled("←/→: Switch Table", Style::default().fg(YELLOW))),
-        Line::from(Span::styled("f: Start/Stop Port Forward", Style::default().fg(YELLOW))),
-        Line::from(Span::styled("Space: Select/Deselect", Style::default().fg(YELLOW))),
+        Line::from(Span::styled(
+            "←/→: Switch Table",
+            Style::default().fg(YELLOW),
+        )),
+        Line::from(Span::styled(
+            "f: Start/Stop Port Forward",
+            Style::default().fg(YELLOW),
+        )),
+        Line::from(Span::styled(
+            "Space: Select/Deselect",
+            Style::default().fg(YELLOW),
+        )),
         Line::from(Span::styled("h: Show Help", Style::default().fg(YELLOW))),
         Line::from(Span::styled("i: Import", Style::default().fg(YELLOW))),
         Line::from(Span::styled("e: Export", Style::default().fg(YELLOW))),
@@ -87,4 +96,3 @@ pub fn render_help_popup(f: &mut Frame, area: Rect) {
     f.render_widget(Clear, area);
     f.render_widget(help_paragraph, area);
 }
-

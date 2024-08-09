@@ -46,7 +46,8 @@ pub async fn handle_file_explorer_input(app: &mut App, key: KeyCode) -> Result<(
                     Err(e) => {
                         println!("Failed to read file content: {}", e);
                         app.file_content = None;
-                        app.import_export_message = Some(format!("Failed to read file content: {}", e));
+                        app.import_export_message =
+                            Some(format!("Failed to read file content: {}", e));
                         app.error_message = Some(format!("Failed to read file content: {}", e));
                         app.show_error_popup = true;
                     }
@@ -64,7 +65,8 @@ pub async fn handle_file_explorer_input(app: &mut App, key: KeyCode) -> Result<(
                     }
                     Err(e) => {
                         app.file_content = None;
-                        app.import_export_message = Some(format!("Failed to read file content: {}", e));
+                        app.import_export_message =
+                            Some(format!("Failed to read file content: {}", e));
                         app.error_message = Some(format!("Failed to read file content: {}", e));
                         app.show_error_popup = true;
                     }
@@ -76,4 +78,3 @@ pub async fn handle_file_explorer_input(app: &mut App, key: KeyCode) -> Result<(
     }
     Ok(())
 }
-

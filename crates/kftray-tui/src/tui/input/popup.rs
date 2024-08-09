@@ -111,7 +111,6 @@ fn filter_configs(app: &mut App) {
         .collect();
 }
 
-
 pub fn handle_error_popup_input(app: &mut App, key: KeyCode) {
     if key == KeyCode::Enter || key == KeyCode::Esc {
         app.error_message = None;
