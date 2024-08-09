@@ -10,17 +10,19 @@ use crossterm::{
     },
 };
 use kftray_commons::utils::config::read_configs;
-use kftray_tauri::commands::config_state::read_config_states;
+use kftray_tauri::config_state::read_config_states;
 use log::error;
 use ratatui::{
     backend::CrosstermBackend,
     Terminal,
 };
 
-use crate::tui::input::handle_input;
+use crate::tui::input::{
+    handle_input,
+    App,
+};
 use crate::tui::ui::draw_ui;
 
-/// Entry point for running the TUI application.
 pub async fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize the database
     kftray_commons::utils::db::init().await?;
@@ -32,10 +34,12 @@ pub async fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    // Run the TUI application
-    let res = run_app(&mut terminal).await;
+    // Create the app with the file explorer
+    let mut app = App::new();
 
-    // Restore the terminal
+    // Run the TUI application
+    let res = run_app(&mut terminal, &mut app).await;
+
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
@@ -47,31 +51,22 @@ pub async fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Main loop for running the TUI application.
-async fn run_app<B: ratatui::backend::Backend>(terminal: &mut Terminal<B>) -> io::Result<()> {
-    let mut selected_row = 0;
-    let mut show_details = false;
-
+async fn run_app<B: ratatui::backend::Backend>(
+    terminal: &mut Terminal<B>, app: &mut App,
+) -> io::Result<()> {
     loop {
-        // Fetch configs and states
         let configs = read_configs().await.unwrap_or_default();
         let mut config_states = read_config_states().await.unwrap_or_default();
 
-        // Draw the UI
+        if !app.show_search {
+            app.update_configs(&configs, &config_states);
+        }
+
         terminal.draw(|f| {
-            draw_ui(f, &configs, &config_states, selected_row, show_details);
+            draw_ui(f, app, &config_states);
         })?;
 
-        // Handle input
-        if handle_input(
-            &mut selected_row,
-            &mut show_details,
-            configs.len(),
-            &configs,
-            &mut config_states,
-        )
-        .await?
-        {
+        if handle_input(app, &mut config_states).await? {
             break;
         }
     }

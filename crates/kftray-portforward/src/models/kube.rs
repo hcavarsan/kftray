@@ -81,7 +81,7 @@ impl Target {
         };
 
         TargetPod::new(
-            self.namespace.name_any(),
+            pod.metadata.name.clone().context("Pod Name is None")?,
             match port {
                 Port::Number(port) => *port,
                 Port::Name(name) => {
@@ -141,7 +141,7 @@ pub struct PodInfo {
     pub labels_str: String,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 #[allow(dead_code)]
 pub struct PortForward {
     pub target: Target,
@@ -155,35 +155,35 @@ pub struct PortForward {
     pub connection: Arc<Mutex<Option<tokio::net::TcpStream>>>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum TargetSelector {
     ServiceName(String),
     PodLabel(String),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub enum Port {
     Number(i32),
     Name(String),
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Target {
     pub selector: TargetSelector,
     pub port: Port,
     pub namespace: NameSpace,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct NameSpace(pub Option<String>);
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TargetPod {
     pub pod_name: String,
     pub port_number: u16,
 }
 
-/// Pod selection according to impl specific criteria.
+/// Pod selection
 pub trait PodSelection {
     fn select<'p>(&self, pods: &'p [Pod], selector: &str) -> anyhow::Result<&'p Pod>;
 }
@@ -228,7 +228,6 @@ impl Default for HttpLogState {
 
 impl PodSelection for AnyReady {
     fn select<'p>(&self, pods: &'p [Pod], selector: &str) -> anyhow::Result<&'p Pod> {
-        // todo: randomly select from the ready pods
         let pod = pods.iter().find(is_pod_ready).context(anyhow::anyhow!(
             "No ready pods found matching the selector '{}'",
             selector

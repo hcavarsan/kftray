@@ -19,13 +19,6 @@ use tower::ServiceBuilder;
 pub async fn create_client_with_specific_context(
     kubeconfig: Option<String>, context_name: &str,
 ) -> Result<Client> {
-    info!(
-        "create_client_with_specific_context {}",
-        kubeconfig.as_deref().unwrap_or("")
-    );
-
-    info!("create_client_with_specific_context {}", context_name);
-
     // Determine the kubeconfig based on the input
     let kubeconfig = if let Some(path) = kubeconfig {
         if path == "default" {
@@ -56,8 +49,6 @@ pub async fn create_client_with_specific_context(
         Kubeconfig::read_from(default_path)
             .context("Failed to read kubeconfig from default location")?
     };
-
-    info!("create_client_with_specific_context2 {:?}", kubeconfig);
 
     let config = Config::from_custom_kubeconfig(
         kubeconfig,

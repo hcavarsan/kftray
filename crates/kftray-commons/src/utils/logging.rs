@@ -36,7 +36,7 @@ use uuid::Uuid;
 
 use crate::utils::config_dir::get_log_folder_path;
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Logger {
     log_sender: Sender<LogMessage>,
     trace_map: TraceMap,
@@ -44,6 +44,7 @@ pub struct Logger {
 
 type TraceMap = Arc<DashMap<String, TraceInfo>>;
 
+#[derive(Clone, Debug)]
 struct TraceInfo {
     trace_id: String,
     timestamp: DateTime<Utc>,

@@ -164,17 +164,28 @@ impl PortForward {
     ) -> anyhow::Result<()> {
         let target = self.finder().find(&self.target).await?;
 
+        debug!("Forwarding connection to target pod");
+        debug!("Target pod: {:?}", target);
+
         let (pod_name, pod_port) = target.into_parts();
 
+        debug!("Pod name: {}", pod_name);
+        debug!("Pod port: {}", pod_port);
+
         let mut forwarder = self.pod_api.portforward(&pod_name, &[pod_port]).await?;
+
+        debug!("Forwarder created");
 
         let upstream_conn = forwarder
             .take_stream(pod_port)
             .context("port not found in forwarder")?;
 
         let local_port = self.local_port();
+        debug!("Local port: {}", local_port);
         let config_id = self.config_id;
+        debug!("Config ID: {}", config_id);
         let workload_type = self.workload_type.clone();
+        debug!("Workload type: {}", workload_type);
 
         trace!(local_port, pod_port, pod_name = %pod_name, "forwarding connections");
 
@@ -186,7 +197,13 @@ impl PortForward {
             None
         };
 
+        debug!("Logger created");
+        debug!("Logger: {:?}", logger);
+
         let request_id = Arc::new(Mutex::new(None));
+
+        debug!("Request ID created");
+        debug!("Request ID: {:?}", request_id);
 
         let mut client_conn_guard = client_conn.lock().await;
         client_conn_guard.set_nodelay(true)?;

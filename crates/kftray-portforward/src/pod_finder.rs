@@ -57,6 +57,7 @@ impl<'a> TargetPodFinder<'a> {
                     );
 
                     let pod = ready_pod.select(&pods.items, &label_selector_str)?;
+                    debug!("Pod found for service '{}': {:?}", name, pod);
                     target.find(pod, None)
                 } else {
                     Err(anyhow::anyhow!("No selector found for service '{}'", name))

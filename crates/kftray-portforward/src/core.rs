@@ -1,4 +1,3 @@
-// core.rs
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Read;
@@ -26,7 +25,10 @@ use kube::{
     Client,
 };
 use kube_runtime::wait::conditions;
-use log::info;
+use log::{
+    error,
+    info,
+};
 use rand::{
     distributions::Alphanumeric,
     Rng,
@@ -90,8 +92,13 @@ pub async fn start_port_forward(
         match port_forward_result {
             Ok(port_forward) => {
                 let forward_result = match protocol {
-                    "udp" => port_forward.port_forward_udp().await,
-                    "tcp" => port_forward.port_forward_tcp(http_log_state.clone()).await,
+                    "udp" => port_forward.clone().port_forward_udp().await,
+                    "tcp" => {
+                        port_forward
+                            .clone()
+                            .port_forward_tcp(http_log_state.clone())
+                            .await
+                    }
                     _ => Err(anyhow::anyhow!("Unsupported protocol")),
                 };
 
@@ -108,6 +115,9 @@ pub async fn start_port_forward(
                             },
                             &config.service
                         );
+
+                        error!("Port forwarding details: {:?}", port_forward);
+                        error!("Actual local port: {:?}", actual_local_port);
 
                         let handle_key = format!(
                             "{}_{}",
@@ -333,7 +343,6 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
             config_id_str
         );
 
-        // Abort the handle, which should naturally be cancelled now
         handle.abort();
 
         let client_clone = client.clone();

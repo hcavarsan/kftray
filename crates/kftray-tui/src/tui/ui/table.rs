@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use kftray_commons::models::config_model::Config;
 use kftray_commons::models::config_state_model::ConfigState;
 use ratatui::{
@@ -5,9 +7,9 @@ use ratatui::{
         Constraint,
         Direction,
         Layout,
+        Rect,
     },
     style::{
-        Color,
         Modifier,
         Style,
     },
@@ -27,30 +29,80 @@ use ratatui::{
     Frame,
 };
 
-/// Draws the UI components.
-pub fn draw_ui(
-    f: &mut Frame, configs: &[Config], config_states: &[ConfigState], selected_row: usize,
-    show_details: bool,
-) {
-    let size = f.size();
-    let chunks = if show_details {
-        Layout::default()
-            .direction(Direction::Vertical)
-            .constraints(
-                [
-                    Constraint::Percentage(60),
-                    Constraint::Percentage(30),
-                    Constraint::Percentage(10),
-                ]
-                .as_ref(),
-            )
-            .split(size)
-    } else {
-        Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Percentage(85), Constraint::Percentage(15)].as_ref())
-            .split(size)
-    };
+use crate::tui::input::{
+    ActiveTable,
+    App,
+};
+use crate::tui::ui::{
+    BASE,
+    GREEN,
+    RED,
+    SURFACE0,
+    SURFACE1,
+    SURFACE2,
+    TEXT,
+    YELLOW,
+};
+
+pub struct TableConfig<'a> {
+    pub configs: &'a [Config],
+    pub config_states: &'a [ConfigState],
+    pub selected_row: usize,
+    pub selected_rows: &'a HashSet<usize>,
+    pub area: Rect,
+    pub title: &'a str,
+    pub is_active: bool,
+}
+
+pub fn draw_main_tab(f: &mut Frame, app: &mut App, config_states: &[ConfigState], area: Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Percentage(100)].as_ref())
+        .split(area);
+
+    let tables_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
+        .split(chunks[0]);
+
+
+    draw_configs_table(
+        f,
+        TableConfig {
+            configs: &app.filtered_stopped_configs,
+            config_states,
+            selected_row: app.selected_row_stopped,
+            selected_rows: &app.selected_rows_stopped,
+            area: tables_chunks[0],
+            title: "Stopped Configs",
+            is_active: app.active_table == ActiveTable::Stopped,
+        },
+    );
+
+    draw_configs_table(
+        f,
+        TableConfig {
+            configs: &app.filtered_running_configs,
+            config_states,
+            selected_row: app.selected_row_running,
+            selected_rows: &app.selected_rows_running,
+            area: tables_chunks[1],
+            title: " Running Configs",
+            is_active: app.active_table == ActiveTable::Running,
+        },
+    );
+}
+
+pub fn draw_configs_table(f: &mut Frame, table_config: TableConfig) {
+    let TableConfig {
+        configs,
+        config_states,
+        selected_row,
+        selected_rows,
+        area,
+        title,
+        is_active,
+    } = table_config;
 
     let rows: Vec<Row> = configs
         .iter()
@@ -62,10 +114,14 @@ pub fn draw_ui(
                 .map(|s| s.is_running)
                 .unwrap_or(false);
 
-            let style = if row_index == selected_row {
-                Style::default().fg(Color::White).bg(Color::Blue)
+            let style = if selected_rows.contains(&row_index) {
+                Style::default().fg(TEXT).bg(SURFACE2)
+            } else if is_active && row_index == selected_row {
+                Style::default().fg(TEXT).bg(SURFACE1)
             } else {
-                Style::default().fg(if state { Color::Green } else { Color::Red })
+                Style::default()
+                    .fg(if state { GREEN } else { RED })
+                    .bg(BASE)
             };
 
             let remote_target = match config.workload_type.as_str() {
@@ -81,7 +137,6 @@ pub fn draw_ui(
                 Cell::from(remote_target),
                 Cell::from(config.local_address.clone().unwrap_or_default()),
                 Cell::from(config.local_port.to_string()),
-                Cell::from(state.to_string()),
                 Cell::from(config.context.clone()),
             ])
             .style(style)
@@ -96,7 +151,6 @@ pub fn draw_ui(
             Constraint::Length(50),
             Constraint::Length(30),
             Constraint::Length(15),
-            Constraint::Length(30),
             Constraint::Length(30),
         ],
     )
@@ -123,33 +177,33 @@ pub fn draw_ui(
                 Style::default().add_modifier(Modifier::BOLD),
             )),
             Cell::from(Span::styled(
-                "Is Running",
-                Style::default().add_modifier(Modifier::BOLD),
-            )),
-            Cell::from(Span::styled(
                 "Context",
                 Style::default().add_modifier(Modifier::BOLD),
             )),
         ])
-        .style(Style::default().bg(Color::DarkGray)),
+        .style(Style::default().bg(SURFACE0)),
     )
-    .block(Block::default().borders(Borders::ALL).title("kftray tui"))
-    .highlight_style(Style::default().add_modifier(Modifier::REVERSED))
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title(title)
+            .style(if is_active {
+                Style::default().fg(YELLOW).bg(BASE)
+            } else {
+                Style::default().bg(BASE)
+            }),
+    )
+    .highlight_style(if is_active {
+        Style::default().add_modifier(Modifier::REVERSED)
+    } else {
+        Style::default()
+    })
     .highlight_symbol(">> ");
 
-    f.render_widget(table, chunks[0]);
-
-    if show_details {
-        render_details(f, &configs[selected_row], config_states, chunks[1]);
-    }
-
-    render_help(f, chunks[chunks.len() - 1]);
+    f.render_widget(table, area);
 }
 
-/// Renders the details section.
-fn render_details(
-    f: &mut Frame, config: &Config, config_states: &[ConfigState], area: ratatui::layout::Rect,
-) {
+pub fn render_details(f: &mut Frame, config: &Config, config_states: &[ConfigState], area: Rect) {
     let state = config_states
         .iter()
         .find(|s| s.config_id == config.id.unwrap_or_default())
@@ -235,42 +289,14 @@ fn render_details(
             Span::raw(config.target.clone().unwrap_or_default()),
         ]),
         Line::from(vec![
-            Span::styled(
-                "Is Running: ",
-                Style::default().add_modifier(Modifier::BOLD),
-            ),
+            Span::styled("Status: ", Style::default().add_modifier(Modifier::BOLD)),
             Span::raw(state.to_string()),
         ]),
     ];
 
     let paragraph = Paragraph::new(Text::from(details))
         .block(Block::default().borders(Borders::ALL).title("Details"))
-        .style(Style::default().fg(Color::White));
+        .style(Style::default().fg(TEXT).bg(BASE));
 
     f.render_widget(paragraph, area);
-}
-
-/// Renders the help section.
-fn render_help(f: &mut Frame, area: ratatui::layout::Rect) {
-    let help_message = vec![
-        Line::from(Span::styled("q: Quit", Style::default().fg(Color::Yellow))),
-        Line::from(Span::styled(
-            "↑/↓: Navigate",
-            Style::default().fg(Color::Yellow),
-        )),
-        Line::from(Span::styled(
-            "Enter: Toggle Details",
-            Style::default().fg(Color::Yellow),
-        )),
-        Line::from(Span::styled(
-            "f: Toggle Port Forward",
-            Style::default().fg(Color::Yellow),
-        )),
-    ];
-
-    let help_paragraph = Paragraph::new(Text::from(help_message))
-        .block(Block::default().borders(Borders::ALL).title("Help"))
-        .style(Style::default().fg(Color::White));
-
-    f.render_widget(help_paragraph, area);
 }
