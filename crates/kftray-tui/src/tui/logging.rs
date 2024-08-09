@@ -43,9 +43,7 @@ impl log::Log for AppLogger {
 
             {
                 let mut file = self.file.lock().unwrap();
-                if let Err(e) = file.write_all(log_entry.as_bytes()) {
-                    eprintln!("Failed to write log to file: {}", e);
-                }
+                if let Err(_e) = file.write_all(log_entry.as_bytes()) {}
             }
         }
     }

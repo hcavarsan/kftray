@@ -40,11 +40,9 @@ pub async fn handle_file_explorer_input(app: &mut App, key: KeyCode) -> Result<(
 
                 match get_file_content(selected_path) {
                     Ok(content) => {
-                        println!("File content read successfully");
                         app.file_content = Some(content);
                     }
                     Err(e) => {
-                        println!("Failed to read file content: {}", e);
                         app.file_content = None;
                         app.import_export_message =
                             Some(format!("Failed to read file content: {}", e));

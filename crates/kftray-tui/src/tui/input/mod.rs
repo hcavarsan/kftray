@@ -15,7 +15,6 @@ use crossterm::event::{
 pub use file_explorer::*;
 use kftray_commons::models::config_model::Config;
 use kftray_commons::models::config_state_model::ConfigState;
-use log::info;
 pub use popup::*;
 use ratatui_explorer::{
     FileExplorer,
@@ -28,7 +27,6 @@ use crate::tui::input::navigation::{
 };
 use crate::tui::input::popup::handle_search_input;
 use crate::tui::logging::LOGGER;
-
 pub struct App {
     pub selected_rows_stopped: std::collections::HashSet<usize>,
     pub selected_rows_running: std::collections::HashSet<usize>,
@@ -276,7 +274,6 @@ pub async fn handle_input(app: &mut App, config_states: &mut [ConfigState]) -> i
                                         .find(|s| s.config_id == config.id.unwrap_or_default())
                                     {
                                         if !state.is_running {
-                                            info!("Starting port forward for config: {:?}", config);
                                             start_port_forwarding(app, config.clone()).await;
                                             state.is_running = true;
                                         }
@@ -289,7 +286,6 @@ pub async fn handle_input(app: &mut App, config_states: &mut [ConfigState]) -> i
                                         .find(|s| s.config_id == config.id.unwrap_or_default())
                                     {
                                         if state.is_running {
-                                            info!("Stopping port forward for config: {:?}", config);
                                             stop_port_forwarding(app, config.clone()).await;
                                             state.is_running = false;
                                         }
