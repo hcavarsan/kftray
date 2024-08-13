@@ -243,7 +243,6 @@ const KFTray = () => {
     e.preventDefault()
     try {
       await invoke('update_config_cmd', { config: newConfig })
-      await updateConfigsWithState()
       toast({
         title: 'Success',
         description: 'Configuration updated successfully.',
@@ -280,8 +279,6 @@ const KFTray = () => {
       } else {
         await invoke('insert_config_cmd', { config: updatedConfigToSave })
       }
-
-      await updateConfigsWithState()
 
       if (wasRunning) {
         await startPortForwardingForConfig(newConfig)
@@ -402,7 +399,6 @@ const KFTray = () => {
     setConfigToDelete(id)
 
     setIsAlertOpen(true)
-    await updateConfigsWithState()
   }
 
   const confirmDeleteConfig = async () => {
@@ -424,7 +420,6 @@ const KFTray = () => {
         description: 'Configuration deleted successfully.',
         status: 'success',
       })
-      await updateConfigsWithState()
     } catch (error) {
       console.error('Failed to delete configuration:', error)
       toast({
@@ -443,7 +438,6 @@ const KFTray = () => {
       const allStopped = responses.every(res => res.status === initialStatus)
 
       if (allStopped) {
-        await updateConfigsWithState()
         toast({
           title: 'Success',
           description:
@@ -470,7 +464,6 @@ const KFTray = () => {
         status: 'error',
       })
     }
-    await updateConfigsWithState()
     setIsStopping(false)
   }
 
@@ -534,7 +527,6 @@ const KFTray = () => {
         <GitSyncModal
           isGitSyncModalOpen={isGitSyncModalOpen}
           closeGitSyncModal={closeGitSyncModal}
-          onSettingsSaved={updateConfigsWithState}
           setCredentialsSaved={setCredentialsSaved}
           credentialsSaved={credentialsSaved}
           setPollingInterval={setPollingInterval}
@@ -556,7 +548,6 @@ const KFTray = () => {
           openGitSyncModal={openGitSyncModal}
           handleExportConfigs={handleExportConfigs}
           handleImportConfigs={handleImportConfigs}
-          updateConfigsWithState={updateConfigsWithState}
           setCredentialsSaved={setCredentialsSaved}
           credentialsSaved={credentialsSaved}
           isGitSyncModalOpen={isGitSyncModalOpen}

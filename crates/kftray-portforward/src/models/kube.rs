@@ -60,7 +60,6 @@ impl TargetPod {
         (self.pod_name, self.port_number)
     }
 }
-
 impl Target {
     pub fn new<I: Into<Option<T>>, T: Into<String>, P: Into<Port>>(
         selector: TargetSelector, port: P, namespace: I,
@@ -73,28 +72,27 @@ impl Target {
     }
 
     pub fn find(&self, pod: &Pod, port: Option<Port>) -> anyhow::Result<TargetPod> {
-        let port = match &port {
-            None => &self.port,
-            Some(port) => port,
+        let port = port.as_ref().unwrap_or(&self.port);
+
+        let pod_name = pod.metadata.name.clone().context("Pod Name is None")?;
+
+        let port_number = match port {
+            Port::Number(port) => *port,
+            Port::Name(name) => {
+                let spec = pod.spec.as_ref().context("Pod Spec is None")?;
+                let containers = &spec.containers;
+
+                // Find the port by name within the container ports
+                containers
+                    .iter()
+                    .flat_map(|c| c.ports.as_ref().map_or(Vec::new(), |v| v.clone()))
+                    .find(|p| p.name.as_ref() == Some(name))
+                    .context("Port not found")?
+                    .container_port
+            }
         };
 
-        TargetPod::new(
-            pod.metadata.name.clone().context("Pod Name is None")?,
-            match port {
-                Port::Number(port) => *port,
-                Port::Name(name) => {
-                    let spec = pod.spec.as_ref().context("Pod Spec is None")?;
-
-                    let containers = &spec.containers;
-
-                    let mut ports = containers.iter().filter_map(|c| c.ports.as_ref()).flatten();
-
-                    let port = ports.find(|p| p.name.as_ref() == Some(name));
-
-                    port.context("Port not found")?.container_port
-                }
-            },
-        )
+        TargetPod::new(pod_name, port_number)
     }
 }
 

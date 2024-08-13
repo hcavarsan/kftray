@@ -18,5 +18,8 @@ pub fn close_save_dialog(state: State<SaveDialogState>) {
 pub fn toggle_pin_state(app_state: tauri::State<AppState>, window: tauri::Window) {
     let is_pinned = app_state.is_pinned.load(Ordering::SeqCst);
     app_state.is_pinned.store(!is_pinned, Ordering::SeqCst);
-    window.set_always_on_top(!is_pinned).unwrap();
+
+    if let Err(e) = window.set_always_on_top(!is_pinned) {
+        eprintln!("Failed to toggle pin state: {:?}", e);
+    }
 }

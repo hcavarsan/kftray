@@ -55,36 +55,29 @@ pub fn render_legend(f: &mut Frame, area: Rect) {
     f.render_widget(legend_paragraph, area);
 }
 
+fn calculate_center_constraints(percent: u16) -> [Constraint; 3] {
+    [
+        Constraint::Percentage((100 - percent) / 2),
+        Constraint::Percentage(percent),
+        Constraint::Percentage((100 - percent) / 2),
+    ]
+}
+
 pub fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
     let popup_layout = Layout::default()
         .direction(Direction::Vertical)
-        .constraints(
-            [
-                Constraint::Percentage((100 - percent_y) / 2),
-                Constraint::Percentage(percent_y),
-                Constraint::Percentage((100 - percent_y) / 2),
-            ]
-            .as_ref(),
-        )
+        .constraints(calculate_center_constraints(percent_y).as_ref())
         .split(r);
 
     let vertical_center = popup_layout[1];
 
     let horizontal_layout = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints(
-            [
-                Constraint::Percentage((100 - percent_x) / 2),
-                Constraint::Percentage(percent_x),
-                Constraint::Percentage((100 - percent_x) / 2),
-            ]
-            .as_ref(),
-        )
+        .constraints(calculate_center_constraints(percent_x).as_ref())
         .split(vertical_center);
 
     horizontal_layout[1]
 }
-
 pub fn draw_file_explorer_popup(f: &mut Frame, app: &mut App, area: Rect, is_import: bool) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)

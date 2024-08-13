@@ -10,7 +10,7 @@ pub async fn import_configs_from_file(file_path: &str) -> Result<(), String> {
         log::error!("{}", err_msg);
         err_msg
     })?;
-    log::debug!("File content read successfully: {}", json);
+    log::debug!("File content read successfully. Size: {} bytes", json.len());
 
     import_configs(json).await.map_err(|e| {
         let err_msg = format!("Failed to import configs: {}", e);

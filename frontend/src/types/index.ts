@@ -62,7 +62,6 @@ export interface ConfigProps {
 export interface GitSyncModalProps {
   isGitSyncModalOpen: boolean
   closeGitSyncModal: () => void
-  onSettingsSaved: () => void
   credentialsSaved: boolean
   setCredentialsSaved: React.Dispatch<React.SetStateAction<boolean>>
   setPollingInterval: React.Dispatch<React.SetStateAction<number>>
@@ -107,7 +106,6 @@ export interface FooterProps {
   handleImportConfigs: () => void
   credentialsSaved: boolean
   setCredentialsSaved: React.Dispatch<React.SetStateAction<boolean>>
-  updateConfigsWithState: () => void
   isGitSyncModalOpen: boolean
   selectedConfigs: Status[]
   setPollingInterval: React.Dispatch<React.SetStateAction<number>>
@@ -119,7 +117,6 @@ export interface FooterProps {
 export interface SyncConfigsButtonProps {
   serviceName: string
   accountName: string
-  updateConfigsWithState?: () => void
   onSyncFailure?: (error: Error) => void
   credentialsSaved: boolean
   setCredentialsSaved: React.Dispatch<React.SetStateAction<boolean>>
@@ -219,7 +216,6 @@ export interface BulkDeleteButtonProps {
   selectedConfigs: Status[]
   setSelectedConfigs: React.Dispatch<React.SetStateAction<Status[]>>
   configs: Status[]
-  updateConfigsWithState: () => void
 }
 
 export interface ContextsAccordionProps {

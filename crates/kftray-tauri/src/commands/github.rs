@@ -23,6 +23,7 @@ use reqwest::header::{
     AUTHORIZATION,
     USER_AGENT,
 };
+use serde_json::Value;
 use tauri::{
     Error as TauriError,
     InvokeError,
@@ -90,13 +91,13 @@ pub async fn import_configs_from_github(
 ) -> Result<(), String> {
     let client = reqwest::Client::new();
 
-    let url = build_github_api_url(&repo_url, &config_path);
+    let url = build_github_api_url(&repo_url, &config_path)
+        .map_err(|e| format!("Failed to build GitHub API URL: {}", e))?;
 
-    let mut request_builder = client.get(url);
+    let mut request_builder = client.get(&url);
 
     if is_private {
         let token = token.ok_or("Token is required for private repositories")?;
-
         request_builder = request_builder.header(AUTHORIZATION, format!("token {}", token));
     }
 
@@ -110,7 +111,7 @@ pub async fn import_configs_from_github(
 
     let json_content = response.text().await.map_err(|e| e.to_string())?;
 
-    let json_obj: serde_json::Value = serde_json::from_str(&json_content)
+    let json_obj: Value = serde_json::from_str(&json_content)
         .map_err(|e| format!("Failed to parse response: {}", e))?;
 
     let base64_content = json_obj["content"]

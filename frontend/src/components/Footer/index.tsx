@@ -28,7 +28,6 @@ const Footer: React.FC<FooterProps> = ({
   openGitSyncModal,
   handleExportConfigs,
   handleImportConfigs,
-  updateConfigsWithState,
   credentialsSaved,
   setCredentialsSaved,
   isGitSyncModalOpen,
@@ -130,7 +129,6 @@ const Footer: React.FC<FooterProps> = ({
         <BulkDeleteButton
           setSelectedConfigs={setSelectedConfigs}
           selectedConfigs={selectedConfigs}
-          updateConfigsWithState={updateConfigsWithState}
           configs={configs}
         />
       </Flex>
@@ -160,7 +158,6 @@ const Footer: React.FC<FooterProps> = ({
         <SyncConfigsButton
           serviceName='kftray'
           accountName='github_config'
-          updateConfigsWithState={updateConfigsWithState}
           onSyncFailure={error => console.error('Sync failed:', error)}
           credentialsSaved={credentialsSaved}
           setCredentialsSaved={setCredentialsSaved}
