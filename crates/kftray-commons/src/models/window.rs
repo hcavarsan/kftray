@@ -9,12 +9,11 @@ use serde::{
     Serialize,
 };
 use tokio::runtime::Runtime;
-//  state for the save dialog
+
 pub struct SaveDialogState {
     pub is_open: AtomicBool,
 }
 
-//  default implementation for the SaveDialogState
 impl Default for SaveDialogState {
     fn default() -> Self {
         SaveDialogState {

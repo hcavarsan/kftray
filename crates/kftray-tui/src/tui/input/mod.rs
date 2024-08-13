@@ -1,10 +1,12 @@
 mod file_explorer;
 mod navigation;
 mod popup;
-
+use std::collections::HashSet;
 use std::io;
-use std::sync::Arc;
-use std::sync::Mutex;
+use std::sync::{
+    Arc,
+    Mutex,
+};
 
 use crossterm::event::{
     self,
@@ -12,85 +14,120 @@ use crossterm::event::{
     KeyCode,
     KeyModifiers,
 };
+use crossterm::terminal::size;
 pub use file_explorer::*;
-use kftray_commons::models::config_model::Config;
-use kftray_commons::models::config_state_model::ConfigState;
+use kftray_commons::models::{
+    config_model::Config,
+    config_state_model::ConfigState,
+};
 pub use popup::*;
+use ratatui::widgets::TableState;
 use ratatui_explorer::{
     FileExplorer,
     Theme,
 };
 
-use crate::tui::input::navigation::{
-    start_port_forwarding,
-    stop_port_forwarding,
-};
-use crate::tui::input::popup::handle_search_input;
-use crate::tui::logging::LOGGER;
-pub struct App {
-    pub selected_rows_stopped: std::collections::HashSet<usize>,
-    pub selected_rows_running: std::collections::HashSet<usize>,
-    pub file_explorer: FileExplorer,
-    pub file_explorer_open: bool,
-    pub selected_row_stopped: usize,
-    pub selected_row_running: usize,
-    pub active_table: ActiveTable,
-    pub import_export_message: Option<String>,
-    pub show_input_prompt: bool,
-    pub input_buffer: String,
-    pub selected_file_path: Option<std::path::PathBuf>,
-    pub show_confirmation_popup: bool,
-    pub file_content: Option<String>,
-    pub show_help: bool,
-    pub stopped_configs: Vec<Config>,
-    pub running_configs: Vec<Config>,
-    pub filtered_stopped_configs: Vec<Config>,
-    pub filtered_running_configs: Vec<Config>,
-    pub stdout_output: Arc<Mutex<String>>,
-    pub show_search: bool,
-    pub show_error_popup: bool,
-    pub error_message: Option<String>,
-    pub active_component: ActiveComponent,
-    pub selected_menu_item: usize,
+use crate::core::logging::LOGGER;
+use crate::tui::input::navigation::handle_port_forward;
+
+#[derive(PartialEq, Clone, Copy)]
+pub enum DeleteButton {
+    Confirm,
+    Close,
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Clone, Copy)]
 pub enum ActiveComponent {
     Menu,
     Table,
 }
 
+#[derive(PartialEq)]
+pub enum ActiveTable {
+    Stopped,
+    Running,
+}
+
+#[derive(PartialEq)]
+pub enum AppState {
+    Normal,
+    ShowErrorPopup,
+    ShowConfirmationPopup,
+    ImportFileExplorerOpen,
+    ExportFileExplorerOpen,
+    ShowInputPrompt,
+    ShowHelp,
+    ShowDeleteConfirmation,
+}
+
+pub struct App {
+    pub selected_rows_stopped: HashSet<usize>,
+    pub selected_rows_running: HashSet<usize>,
+    pub import_file_explorer: FileExplorer,
+    pub export_file_explorer: FileExplorer,
+    pub state: AppState,
+    pub selected_row_stopped: usize,
+    pub selected_row_running: usize,
+    pub active_table: ActiveTable,
+    pub import_export_message: Option<String>,
+    pub input_buffer: String,
+    pub selected_file_path: Option<std::path::PathBuf>,
+    pub file_content: Option<String>,
+    pub stopped_configs: Vec<Config>,
+    pub running_configs: Vec<Config>,
+    pub stdout_output: Arc<Mutex<String>>,
+    pub error_message: Option<String>,
+    pub active_component: ActiveComponent,
+    pub selected_menu_item: usize,
+    pub delete_confirmation_message: Option<String>,
+    pub selected_delete_button: DeleteButton,
+    pub visible_rows: usize,
+    pub table_state_stopped: TableState,
+    pub table_state_running: TableState,
+}
+
 impl App {
     pub fn new() -> Self {
         let theme = Theme::default().add_default_title();
-        let file_explorer = FileExplorer::with_theme(theme).unwrap();
+        let import_file_explorer = FileExplorer::with_theme(theme.clone()).unwrap();
+        let export_file_explorer = FileExplorer::with_theme(theme).unwrap();
         let stdout_output = LOGGER.buffer.clone();
-        Self {
-            file_explorer,
-            file_explorer_open: false,
+
+        let mut app = Self {
+            import_file_explorer,
+            export_file_explorer,
+            state: AppState::Normal,
             selected_row_stopped: 0,
             selected_row_running: 0,
             active_table: ActiveTable::Stopped,
-            selected_rows_stopped: std::collections::HashSet::new(),
-            selected_rows_running: std::collections::HashSet::new(),
+            selected_rows_stopped: HashSet::new(),
+            selected_rows_running: HashSet::new(),
             import_export_message: None,
-            show_input_prompt: false,
             input_buffer: String::new(),
             selected_file_path: None,
-            show_confirmation_popup: false,
             file_content: None,
-            show_help: false,
             stopped_configs: Vec::new(),
             running_configs: Vec::new(),
-            filtered_stopped_configs: Vec::new(),
-            filtered_running_configs: Vec::new(),
             stdout_output,
-            show_search: false,
-            show_error_popup: false,
             error_message: None,
-            active_component: ActiveComponent::Menu,
+            active_component: ActiveComponent::Table,
             selected_menu_item: 0,
+            delete_confirmation_message: None,
+            selected_delete_button: DeleteButton::Confirm,
+            visible_rows: 0,
+            table_state_stopped: TableState::default(),
+            table_state_running: TableState::default(),
+        };
+
+        if let Ok((_, height)) = size() {
+            app.update_visible_rows(height);
         }
+
+        app
+    }
+
+    pub fn update_visible_rows(&mut self, terminal_height: u16) {
+        self.visible_rows = (terminal_height.saturating_sub(19)) as usize;
     }
 
     pub fn update_configs(&mut self, configs: &[Config], config_states: &[ConfigState]) {
@@ -117,211 +154,289 @@ impl App {
             })
             .cloned()
             .collect();
+    }
 
-        self.filtered_stopped_configs = self.stopped_configs.clone();
-        self.filtered_running_configs = self.running_configs.clone();
+    pub fn scroll_up(&mut self) {
+        match self.active_table {
+            ActiveTable::Stopped => {
+                if let Some(selected) = self.table_state_stopped.selected() {
+                    if selected > 0 {
+                        self.table_state_stopped.select(Some(selected - 1));
+                    }
+                }
+            }
+            ActiveTable::Running => {
+                if let Some(selected) = self.table_state_running.selected() {
+                    if selected > 0 {
+                        self.table_state_running.select(Some(selected - 1));
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn scroll_down(&mut self) {
+        match self.active_table {
+            ActiveTable::Stopped => {
+                if let Some(selected) = self.table_state_stopped.selected() {
+                    if selected < self.stopped_configs.len() - 1 {
+                        self.table_state_stopped.select(Some(selected + 1));
+                    }
+                } else {
+                    self.table_state_stopped.select(Some(0));
+                }
+            }
+            ActiveTable::Running => {
+                if let Some(selected) = self.table_state_running.selected() {
+                    if selected < self.running_configs.len() - 1 {
+                        self.table_state_running.select(Some(selected + 1));
+                    }
+                } else {
+                    self.table_state_running.select(Some(0));
+                }
+            }
+        }
+    }
+
+    pub fn reset_scroll(&mut self) {
+        self.table_state_stopped.select(Some(0));
+        self.table_state_running.select(Some(0));
     }
 }
 
-#[derive(PartialEq)]
-pub enum ActiveTable {
-    Stopped,
-    Running,
+fn toggle_select_all(app: &mut App) {
+    let (selected_rows, configs) = match app.active_table {
+        ActiveTable::Stopped => (&mut app.selected_rows_stopped, &app.stopped_configs),
+        ActiveTable::Running => (&mut app.selected_rows_running, &app.running_configs),
+    };
+
+    if selected_rows.len() == configs.len() {
+        selected_rows.clear();
+    } else {
+        selected_rows.clear();
+        for i in 0..configs.len() {
+            selected_rows.insert(i);
+        }
+    }
 }
 
-pub async fn handle_input(app: &mut App, config_states: &mut [ConfigState]) -> io::Result<bool> {
+pub async fn handle_input(app: &mut App, _config_states: &mut [ConfigState]) -> io::Result<bool> {
     if event::poll(std::time::Duration::from_millis(100))? {
         if let Event::Key(key) = event::read()? {
             if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
                 return Ok(true);
             }
 
-            if app.show_error_popup {
-                handle_error_popup_input(app, key.code);
-            } else if app.show_confirmation_popup {
-                handle_confirmation_popup_input(app, key.code).await;
-            } else if app.file_explorer_open {
-                handle_file_explorer_input(app, key.code).await?;
-            } else if app.show_input_prompt {
-                handle_input_prompt_input(app, key.code).await;
-            } else if app.show_help {
-                handle_help_input(app, key.code);
-            } else if app.show_search {
-                handle_search_input(app, key.code).await;
-            } else {
-                match app.active_component {
-                    ActiveComponent::Menu => match key.code {
-                        KeyCode::Tab => {
-                            app.active_component = ActiveComponent::Table;
-                        }
-                        KeyCode::Left => {
-                            if app.selected_menu_item > 0 {
-                                app.selected_menu_item -= 1;
-                            }
-                        }
-                        KeyCode::Right => {
-                            if app.selected_menu_item < 3 {
-                                app.selected_menu_item += 1;
-                            }
-                        }
-                        KeyCode::Enter => match app.selected_menu_item {
-                            0 => {
-                                app.file_explorer_open = true;
-                                app.selected_file_path = None;
-                                app.show_input_prompt = false;
-                            }
-                            1 => {
-                                app.file_explorer_open = true;
-                                app.selected_file_path = None;
-                                app.show_input_prompt = true;
-                            }
-                            2 => {
-                                app.show_help = true;
-                            }
-                            3 => {
-                                return Ok(true);
-                            }
-                            _ => {}
-                        },
-                        _ => {}
-                    },
-                    ActiveComponent::Table => match key.code {
-                        KeyCode::Tab => {
-                            app.active_component = ActiveComponent::Menu;
-                        }
-                        KeyCode::Up => match app.active_table {
-                            ActiveTable::Stopped => {
-                                if !app.stopped_configs.is_empty() {
-                                    app.selected_row_stopped = if app.selected_row_stopped == 0 {
-                                        app.stopped_configs.len() - 1
-                                    } else {
-                                        app.selected_row_stopped - 1
-                                    };
-                                }
-                            }
-                            ActiveTable::Running => {
-                                if !app.running_configs.is_empty() {
-                                    app.selected_row_running = if app.selected_row_running == 0 {
-                                        app.running_configs.len() - 1
-                                    } else {
-                                        app.selected_row_running - 1
-                                    };
-                                }
-                            }
-                        },
-                        KeyCode::Down => match app.active_table {
-                            ActiveTable::Stopped => {
-                                if !app.stopped_configs.is_empty() {
-                                    app.selected_row_stopped =
-                                        (app.selected_row_stopped + 1) % app.stopped_configs.len();
-                                }
-                            }
-                            ActiveTable::Running => {
-                                if !app.running_configs.is_empty() {
-                                    app.selected_row_running =
-                                        (app.selected_row_running + 1) % app.running_configs.len();
-                                }
-                            }
-                        },
-                        KeyCode::Left => {
-                            app.active_table = ActiveTable::Stopped;
-                            app.selected_rows_running.clear();
-                        }
-                        KeyCode::Right => {
-                            app.active_table = ActiveTable::Running;
-                            app.selected_rows_stopped.clear();
-                        }
-                        KeyCode::Char(' ') => {
-                            let selected_row = match app.active_table {
-                                ActiveTable::Stopped => app.selected_row_stopped,
-                                ActiveTable::Running => app.selected_row_running,
-                            };
-
-                            let selected_rows = match app.active_table {
-                                ActiveTable::Stopped => &mut app.selected_rows_stopped,
-                                ActiveTable::Running => &mut app.selected_rows_running,
-                            };
-
-                            if selected_rows.contains(&selected_row) {
-                                selected_rows.remove(&selected_row);
-                            } else {
-                                selected_rows.insert(selected_row);
-                            }
-                        }
-                        KeyCode::Char('c') => {
-                            let mut stdout_output = app.stdout_output.lock().unwrap();
-                            stdout_output.clear();
-                        }
-                        KeyCode::Char('f') => {
-                            let (selected_rows, configs) = match app.active_table {
-                                ActiveTable::Stopped => {
-                                    (&app.selected_rows_stopped, &app.stopped_configs)
-                                }
-                                ActiveTable::Running => {
-                                    (&app.selected_rows_running, &app.running_configs)
-                                }
-                            };
-
-                            let selected_configs: Vec<Config> = selected_rows
-                                .iter()
-                                .filter_map(|&row| configs.get(row).cloned())
-                                .collect();
-
-                            if app.active_table == ActiveTable::Stopped {
-                                for config in selected_configs.clone() {
-                                    if let Some(state) = config_states
-                                        .iter_mut()
-                                        .find(|s| s.config_id == config.id.unwrap_or_default())
-                                    {
-                                        if !state.is_running {
-                                            start_port_forwarding(app, config.clone()).await;
-                                            state.is_running = true;
-                                        }
-                                    }
-                                }
-                            } else if app.active_table == ActiveTable::Running {
-                                for config in selected_configs.clone() {
-                                    if let Some(state) = config_states
-                                        .iter_mut()
-                                        .find(|s| s.config_id == config.id.unwrap_or_default())
-                                    {
-                                        if state.is_running {
-                                            stop_port_forwarding(app, config.clone()).await;
-                                            state.is_running = false;
-                                        }
-                                    }
-                                }
-                            }
-
-                            if app.active_table == ActiveTable::Stopped {
-                                app.running_configs.extend(selected_configs.clone());
-                                app.stopped_configs
-                                    .retain(|config| !selected_configs.contains(config));
-                            } else {
-                                app.stopped_configs.extend(selected_configs.clone());
-                                app.running_configs
-                                    .retain(|config| !selected_configs.contains(config));
-                            }
-
-                            match app.active_table {
-                                ActiveTable::Stopped => app.selected_rows_stopped.clear(),
-                                ActiveTable::Running => app.selected_rows_running.clear(),
-                            }
-                        }
-                        KeyCode::Char('s') => {
-                            app.show_search = true;
-                        }
-                        KeyCode::Char('h') => {
-                            app.show_help = true;
-                        }
-                        KeyCode::Char('q') => {
-                            return Ok(true);
-                        }
-                        _ => {}
-                    },
+            match app.state {
+                AppState::ShowErrorPopup => {
+                    handle_error_popup_input(app, key.code)?;
+                }
+                AppState::ShowConfirmationPopup => {
+                    handle_confirmation_popup_input(app, key.code).await?;
+                }
+                AppState::ImportFileExplorerOpen => {
+                    handle_import_file_explorer_input(app, key.code).await?;
+                }
+                AppState::ExportFileExplorerOpen => {
+                    handle_export_file_explorer_input(app, key.code).await?;
+                }
+                AppState::ShowInputPrompt => {
+                    handle_export_input_prompt(app, key.code).await?;
+                }
+                AppState::ShowHelp => {
+                    handle_help_input(app, key.code)?;
+                }
+                AppState::ShowDeleteConfirmation => {
+                    handle_delete_confirmation_input(app, key.code).await?;
+                }
+                AppState::Normal => {
+                    handle_normal_input(app, key.code).await?;
                 }
             }
+        } else if let Event::Resize(_, height) = event::read()? {
+            app.update_visible_rows(height);
         }
     }
     Ok(false)
+}
+
+async fn handle_normal_input(app: &mut App, key: KeyCode) -> io::Result<()> {
+    match app.active_component {
+        ActiveComponent::Menu => match key {
+            KeyCode::Tab => app.active_component = ActiveComponent::Table,
+            KeyCode::Left => {
+                if app.selected_menu_item > 0 {
+                    app.selected_menu_item -= 1
+                }
+            }
+            KeyCode::Right => {
+                if app.selected_menu_item < 3 {
+                    app.selected_menu_item += 1
+                }
+            }
+            KeyCode::Enter => match app.selected_menu_item {
+                0 => app.state = AppState::ShowHelp,
+                1 => open_import_file_explorer(app),
+                2 => open_export_file_explorer(app),
+                3 => return Ok(()),
+                _ => {}
+            },
+            _ => {}
+        },
+        ActiveComponent::Table => match key {
+            KeyCode::Tab => app.active_component = ActiveComponent::Menu,
+            KeyCode::Left => switch_to_stopped_table(app),
+            KeyCode::Right => switch_to_running_table(app),
+            KeyCode::Char(' ') => toggle_row_selection(app),
+            KeyCode::Char('c') => clear_stdout_output(app),
+            KeyCode::Char('f') => handle_port_forwarding(app).await?,
+            KeyCode::Char('i') => open_import_file_explorer(app),
+            KeyCode::Char('e') => open_export_file_explorer(app),
+            KeyCode::Char('h') => app.state = AppState::ShowHelp,
+            KeyCode::Char('q') => return Ok(()),
+            KeyCode::Char('d') => show_delete_confirmation(app),
+            KeyCode::Up => app.scroll_up(),
+            KeyCode::Down => app.scroll_down(),
+            KeyCode::Char('a') => toggle_select_all(app),
+            _ => {}
+        },
+    }
+    Ok(())
+}
+
+fn switch_to_stopped_table(app: &mut App) {
+    app.active_table = ActiveTable::Stopped;
+    app.reset_scroll();
+    app.selected_rows_running.clear();
+}
+
+fn switch_to_running_table(app: &mut App) {
+    app.active_table = ActiveTable::Running;
+    app.reset_scroll();
+    app.selected_rows_stopped.clear();
+}
+
+fn toggle_row_selection(app: &mut App) {
+    let selected_row = match app.active_table {
+        ActiveTable::Stopped => app.table_state_stopped.selected().unwrap_or(0),
+        ActiveTable::Running => app.table_state_running.selected().unwrap_or(0),
+    };
+
+    let selected_rows = match app.active_table {
+        ActiveTable::Stopped => &mut app.selected_rows_stopped,
+        ActiveTable::Running => &mut app.selected_rows_running,
+    };
+
+    if selected_rows.contains(&selected_row) {
+        selected_rows.remove(&selected_row);
+    } else {
+        selected_rows.insert(selected_row);
+    }
+}
+
+fn clear_stdout_output(app: &mut App) {
+    let mut stdout_output = app.stdout_output.lock().unwrap();
+    stdout_output.clear();
+}
+
+async fn handle_port_forwarding(app: &mut App) -> io::Result<()> {
+    let (selected_rows, configs, selected_row) = match app.active_table {
+        ActiveTable::Stopped => (
+            &mut app.selected_rows_stopped,
+            &app.stopped_configs,
+            app.selected_row_stopped,
+        ),
+        ActiveTable::Running => (
+            &mut app.selected_rows_running,
+            &app.running_configs,
+            app.selected_row_running,
+        ),
+    };
+
+    if selected_rows.is_empty() {
+        selected_rows.insert(selected_row);
+    }
+
+    let selected_configs: Vec<Config> = selected_rows
+        .iter()
+        .filter_map(|&row| configs.get(row).cloned())
+        .collect();
+
+    for config in selected_configs.clone() {
+        handle_port_forward(app, config).await;
+    }
+
+    if app.active_table == ActiveTable::Stopped {
+        app.running_configs.extend(selected_configs.clone());
+        app.stopped_configs
+            .retain(|config| !selected_configs.contains(config));
+    } else {
+        app.stopped_configs.extend(selected_configs.clone());
+        app.running_configs
+            .retain(|config| !selected_configs.contains(config));
+    }
+
+    match app.active_table {
+        ActiveTable::Stopped => app.selected_rows_stopped.clear(),
+        ActiveTable::Running => app.selected_rows_running.clear(),
+    }
+
+    Ok(())
+}
+
+fn show_delete_confirmation(app: &mut App) {
+    if !app.selected_rows_stopped.is_empty() {
+        app.state = AppState::ShowDeleteConfirmation;
+        app.delete_confirmation_message =
+            Some("Are you sure you want to delete the selected configs?".to_string());
+    }
+}
+
+async fn handle_delete_confirmation_input(app: &mut App, key: KeyCode) -> io::Result<()> {
+    match key {
+        KeyCode::Left | KeyCode::Right => {
+            app.selected_delete_button = match app.selected_delete_button {
+                DeleteButton::Confirm => DeleteButton::Close,
+                DeleteButton::Close => DeleteButton::Confirm,
+            };
+        }
+        KeyCode::Enter => {
+            if app.selected_delete_button == DeleteButton::Confirm {
+                let ids_to_delete: Vec<i64> = app
+                    .selected_rows_stopped
+                    .iter()
+                    .filter_map(|&row| app.stopped_configs.get(row).and_then(|config| config.id))
+                    .collect();
+
+                match kftray_commons::utils::config::delete_configs(ids_to_delete.clone()).await {
+                    Ok(_) => {
+                        app.delete_confirmation_message =
+                            Some("Configs deleted successfully.".to_string());
+                        app.stopped_configs.retain(|config| {
+                            !ids_to_delete.contains(&config.id.unwrap_or_default())
+                        });
+                    }
+                    Err(e) => {
+                        app.delete_confirmation_message =
+                            Some(format!("Failed to delete configs: {}", e));
+                    }
+                }
+            }
+            app.selected_rows_stopped.clear();
+            app.state = AppState::Normal;
+        }
+        KeyCode::Esc => app.state = AppState::Normal,
+        _ => {}
+    }
+    Ok(())
+}
+
+fn open_import_file_explorer(app: &mut App) {
+    app.state = AppState::ImportFileExplorerOpen;
+    app.selected_file_path = std::env::current_dir().ok();
+}
+
+fn open_export_file_explorer(app: &mut App) {
+    app.state = AppState::ExportFileExplorerOpen;
+    app.selected_file_path = std::env::current_dir().ok();
 }

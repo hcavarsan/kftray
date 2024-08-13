@@ -19,7 +19,7 @@ use tauri_plugin_positioner::{
     WindowExt,
 };
 use tokio::time::sleep;
-/// Saves the current window position to the configuration file.
+
 pub fn save_window_position(window: &Window) {
     if let Ok(position) = window.outer_position() {
         let position_data = WindowPosition {

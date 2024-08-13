@@ -1,6 +1,4 @@
 use kftray_commons::models::config_state_model::ConfigState;
-use ratatui::prelude::Alignment;
-use ratatui::widgets::Clear;
 use ratatui::{
     layout::{
         Constraint,
@@ -15,29 +13,33 @@ use ratatui::{
     text::{
         Line,
         Span,
-        Text,
     },
     widgets::{
         Block,
+        BorderType,
         Borders,
-        Paragraph,
         Tabs,
     },
     Frame,
 };
 
-use crate::tui::input::ActiveComponent;
-use crate::tui::input::App;
+use crate::tui::input::{
+    ActiveComponent,
+    App,
+    AppState,
+};
+use crate::tui::ui::render_delete_confirmation_popup;
 use crate::tui::ui::{
     centered_rect,
     draw_configs_tab,
     draw_file_explorer_popup,
+    render_background_overlay,
     render_confirmation_popup,
+    render_error_popup,
     render_help_popup,
     render_input_prompt,
     render_legend,
     BASE,
-    RED,
     TEXT,
     YELLOW,
 };
@@ -68,34 +70,55 @@ pub fn draw_ui(f: &mut Frame, app: &mut App, config_states: &[ConfigState]) {
     draw_configs_tab(f, app, config_states, chunks[1]);
     render_legend(f, chunks[2]);
 
-    if app.show_help {
-        let help_area = centered_rect(60, 40, size);
-        render_help_popup(f, help_area);
-    }
-
-    if app.file_explorer_open {
-        let popup_area = centered_rect(60, 40, size);
-        draw_file_explorer_popup(f, app, popup_area);
-    }
-
-    if app.show_input_prompt {
-        let input_area = centered_rect(60, 10, size);
-        render_input_prompt(f, &app.input_buffer, input_area);
-    }
-
-    if app.show_confirmation_popup {
-        let confirmation_area = centered_rect(60, 10, size);
-        render_confirmation_popup(f, &app.import_export_message, confirmation_area);
-    }
-
-    if let Some(error_message) = &app.error_message {
-        let error_area = centered_rect(60, 10, size);
-        render_error_popup(f, error_message, error_area);
+    match app.state {
+        AppState::ShowHelp => {
+            let help_area = centered_rect(20, 20, size);
+            render_background_overlay(f, size);
+            render_help_popup(f, help_area);
+        }
+        AppState::ImportFileExplorerOpen => {
+            let popup_area = centered_rect(40, 80, size);
+            render_background_overlay(f, size);
+            draw_file_explorer_popup(f, app, popup_area, true);
+        }
+        AppState::ExportFileExplorerOpen => {
+            let popup_area = centered_rect(40, 80, size);
+            render_background_overlay(f, size);
+            draw_file_explorer_popup(f, app, popup_area, false);
+        }
+        AppState::ShowInputPrompt => {
+            let input_area = centered_rect(20, 20, size);
+            render_background_overlay(f, size);
+            render_input_prompt(f, &app.input_buffer, input_area);
+        }
+        AppState::ShowConfirmationPopup => {
+            let confirmation_area = centered_rect(30, 20, size);
+            render_background_overlay(f, size);
+            render_confirmation_popup(f, &app.import_export_message, confirmation_area);
+        }
+        AppState::ShowErrorPopup => {
+            if let Some(error_message) = &app.error_message {
+                let error_area = centered_rect(30, 60, size);
+                render_background_overlay(f, size);
+                render_error_popup(f, error_message, error_area, 1);
+            }
+        }
+        AppState::ShowDeleteConfirmation => {
+            let delete_area = centered_rect(30, 20, size);
+            render_background_overlay(f, size);
+            render_delete_confirmation_popup(
+                f,
+                &app.delete_confirmation_message,
+                delete_area,
+                app.selected_delete_button,
+            );
+        }
+        _ => {}
     }
 }
 
 pub fn draw_header(f: &mut Frame, app: &App, area: Rect) {
-    let menu_titles = ["Import", "Export", "Help", "Quit"];
+    let menu_titles = ["Help", "Import", "Export", "Quit"];
     let menu: Vec<Line> = menu_titles
         .iter()
         .enumerate()
@@ -121,6 +144,7 @@ pub fn draw_header(f: &mut Frame, app: &App, area: Rect) {
             Block::default()
                 .title("Menu")
                 .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
                 .border_style(border_style),
         )
         .style(Style::default().fg(TEXT))
@@ -128,33 +152,4 @@ pub fn draw_header(f: &mut Frame, app: &App, area: Rect) {
         .divider(Span::raw(" | "));
 
     f.render_widget(menu_titles, area);
-}
-
-pub fn render_error_popup(f: &mut Frame, error_message: &str, area: Rect) {
-    let error_paragraph = Paragraph::new(Text::raw(error_message))
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title("Error")
-                .style(Style::default().bg(BASE).fg(RED)),
-        )
-        .style(Style::default().fg(TEXT));
-
-    let close_button = Paragraph::new("<Close>")
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .style(Style::default().bg(BASE).fg(TEXT)),
-        )
-        .alignment(Alignment::Center);
-    let button_area = Rect::new(
-        area.x + (area.width / 2) - 5,
-        area.y + area.height - 3,
-        10,
-        3,
-    );
-
-    f.render_widget(Clear, area);
-    f.render_widget(error_paragraph, area);
-    f.render_widget(close_button, button_area);
 }

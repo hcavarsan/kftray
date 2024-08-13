@@ -102,8 +102,6 @@ async fn show_alert_dialog(
         active_config_msg,
         dirs::home_dir().map_or("<home_directory_not_found>".to_string(), |p| p.join(".kftray").display().to_string())
     );
-
-    // Use the app handle to trigger the dialog on the main thread
     spawn_blocking(move || {
         let _ = app_handle.run_on_main_thread(move || {
             MessageDialogBuilder::new("Multiple Configuration Directories Detected", full_message)

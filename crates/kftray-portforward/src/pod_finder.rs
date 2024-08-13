@@ -64,7 +64,6 @@ impl<'a> TargetPodFinder<'a> {
                 }
             }
             Err(kube::Error::Api(kube::error::ErrorResponse { code: 404, .. })) => {
-                // Fallback using name as label selector directly
                 let label_selector_str = format!("app={}", name);
 
                 debug!(

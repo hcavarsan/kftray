@@ -21,8 +21,6 @@ use crate::utils::config_dir::{
     get_pod_manifest_path,
 };
 
-/// Initializes the application by ensuring that both the database file and the
-/// server configuration manifest file exist.
 pub async fn init() -> Result<(), Box<dyn std::error::Error>> {
     if !db_file_exists() {
         create_db_file()?;
@@ -47,7 +45,7 @@ pub async fn get_db_pool() -> Result<Arc<SqlitePool>, String> {
                 e.to_string()
             })?;
             let db_dir_str = db_dir.to_str().ok_or("Invalid DB path")?;
-            info!("Database file path: {}", db_dir_str); // Debug logging
+            info!("Database file path: {}", db_dir_str);
             let pool = SqlitePool::connect(db_dir_str).await.map_err(|e| {
                 error!("Failed to connect to DB: {}", e);
                 e.to_string()
@@ -147,7 +145,6 @@ fn pod_manifest_file_exists() -> bool {
     }
 }
 
-/// Creates the server configuration manifest file with placeholders.
 fn create_server_config_manifest() -> Result<(), std::io::Error> {
     let manifest_path =
         get_pod_manifest_path().map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
@@ -203,7 +200,6 @@ fn create_server_config_manifest() -> Result<(), std::io::Error> {
     File::create(&manifest_path)?.write_all(manifest_json.as_bytes())
 }
 
-/// Checks if the pod manifest file already exists.
 fn db_file_exists() -> bool {
     if let Ok(db_dir) = get_db_file_path() {
         Path::new(&db_dir).exists()
@@ -212,7 +208,6 @@ fn db_file_exists() -> bool {
     }
 }
 
-/// Creates a new database file if it doesn't exist already.
 fn create_db_file() -> Result<(), std::io::Error> {
     let db_path =
         get_db_file_path().map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;

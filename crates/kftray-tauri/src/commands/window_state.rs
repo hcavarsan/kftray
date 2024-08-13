@@ -4,13 +4,11 @@ use kftray_commons::models::window::AppState;
 use kftray_commons::models::window::SaveDialogState;
 use tauri::State;
 
-//  command to save the dialog state when is open
 #[tauri::command]
 pub fn open_save_dialog(state: State<SaveDialogState>) {
     state.is_open.store(true, Ordering::SeqCst);
 }
 
-// command to save the dialog state when is closed
 #[tauri::command]
 pub fn close_save_dialog(state: State<SaveDialogState>) {
     state.is_open.store(false, Ordering::SeqCst);

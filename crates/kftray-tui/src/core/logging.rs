@@ -62,3 +62,7 @@ pub static LOGGER: Lazy<AppLogger> = Lazy::new(|| {
     ));
     AppLogger::new(buffer, file)
 });
+
+pub fn init_logger() -> Result<(), Box<dyn std::error::Error>> {
+    Ok(log::set_logger(&*LOGGER).map(|()| log::set_max_level(log::LevelFilter::Trace))?)
+}

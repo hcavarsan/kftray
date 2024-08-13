@@ -1,9 +1,13 @@
+mod core;
 mod tui;
-use log::LevelFilter;
+mod utils;
+
+use core::logging::init_logger;
+
+use tui::run_tui;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    log::set_logger(&*tui::logging::LOGGER).map(|()| log::set_max_level(LevelFilter::Trace))?;
-
-    tui::run_tui().await
+    init_logger()?;
+    run_tui().await
 }

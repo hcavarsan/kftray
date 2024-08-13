@@ -1,6 +1,5 @@
 use crate::db::get_db_pool;
 
-// Function to clear existing configs from the database
 pub async fn clear_existing_configs() -> Result<(), sqlx::Error> {
     let pool = get_db_pool()
         .await
@@ -14,7 +13,6 @@ pub async fn clear_existing_configs() -> Result<(), sqlx::Error> {
     Ok(())
 }
 
-// Function to build the GitHub API URL
 pub fn build_github_api_url(repo_url: &str, config_path: &str) -> String {
     let base_api_url = "https://api.github.com/repos";
 

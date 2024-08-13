@@ -69,8 +69,7 @@ pub async fn stop_all_port_forward_cmd(
     app_handle: tauri::AppHandle,
 ) -> Result<Vec<CustomResponse>, String> {
     let result = stop_all_port_forward().await;
-    // Assuming you have a way to get all config IDs
-    let all_config_ids: Vec<i64> = vec![]; // Replace with actual logic to get all config IDs
+    let all_config_ids: Vec<i64> = vec![];
     for config_id in all_config_ids {
         emit_config_state(&app_handle, config_id, false).await?;
     }

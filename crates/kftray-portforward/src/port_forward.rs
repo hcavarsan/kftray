@@ -116,7 +116,6 @@ impl PortForward {
                         trace!(%peer_addr, "new connection");
                     }
 
-                    // Set TCP_NODELAY for the client connection
                     {
                         let conn = client_conn.lock().await;
                         conn.set_nodelay(true)?;
@@ -550,7 +549,6 @@ impl PortForward {
         let mut len_bytes = [0u8; 4];
 
         if tcp_read.read_exact(&mut len_bytes).await.is_err() {
-            // If there's an error reading (which includes EOF), return None
             return Ok(None);
         }
 
@@ -559,7 +557,6 @@ impl PortForward {
         let mut packet = vec![0u8; len];
 
         if tcp_read.read_exact(&mut packet).await.is_err() {
-            // If there's an error reading the packet (which includes EOF), return None
             return Ok(None);
         }
 

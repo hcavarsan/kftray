@@ -178,7 +178,6 @@ pub async fn start_port_forward(
                             }
                         }
 
-                        // Update config state to running
                         let config_state = ConfigState {
                             id: None,
                             config_id: config.id.unwrap(),
@@ -270,7 +269,6 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
         e.to_string()
     })?;
 
-    // Notify all port forwarding tasks to cancel
     CANCEL_NOTIFIER.notify_waiters();
 
     let handle_map: HashMap<String, tokio::task::JoinHandle<()>> =
@@ -397,7 +395,6 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
 
         pod_deletion_tasks.push(pod_deletion_task);
 
-        // Update config state to not running
         let config_state = ConfigState {
             id: None,
             config_id: config_id_parsed,
@@ -435,7 +432,6 @@ pub async fn stop_port_forward(config_id: String) -> Result<CustomResponse, Stri
     let cancellation_notifier = CANCEL_NOTIFIER.clone();
     cancellation_notifier.notify_waiters();
 
-    // Retrieve composite key representing the child process
     let composite_key = {
         let child_processes = CHILD_PROCESSES.lock().unwrap();
         child_processes
@@ -445,7 +441,6 @@ pub async fn stop_port_forward(config_id: String) -> Result<CustomResponse, Stri
     };
 
     if let Some(composite_key) = composite_key {
-        // Remove and retrieve child process handle
         let join_handle = {
             let mut child_processes = CHILD_PROCESSES.lock().unwrap();
             info!("child_processes: {:?}", child_processes);
@@ -457,7 +452,6 @@ pub async fn stop_port_forward(config_id: String) -> Result<CustomResponse, Stri
             join_handle.abort();
         }
 
-        // Split the composite key to get config_id and service_name
         let (config_id_str, service_name) = composite_key.split_once('_').unwrap_or(("", ""));
         let config_id_parsed = config_id_str.parse::<i64>().unwrap_or_default();
 
@@ -497,7 +491,6 @@ pub async fn stop_port_forward(config_id: String) -> Result<CustomResponse, Stri
                     log::warn!("Config with id '{}' not found.", config_id_str);
                 }
 
-                // Update config state to not running
                 let config_state = ConfigState {
                     id: None,
                     config_id: config_id_parsed,

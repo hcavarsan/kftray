@@ -2,6 +2,10 @@ use std::collections::HashSet;
 
 use kftray_commons::models::config_model::Config;
 use kftray_commons::models::config_state_model::ConfigState;
+use ratatui::prelude::Alignment;
+use ratatui::prelude::Color;
+use ratatui::widgets::BorderType;
+use ratatui::widgets::TableState;
 use ratatui::{
     layout::{
         Constraint,
@@ -24,6 +28,9 @@ use ratatui::{
         Cell,
         Paragraph,
         Row,
+        Scrollbar,
+        ScrollbarOrientation,
+        ScrollbarState,
         Table,
     },
     Frame,
@@ -36,23 +43,15 @@ use crate::tui::input::{
 use crate::tui::ui::{
     BASE,
     GREEN,
+    MAUVE,
     RED,
+    SUBTEXT0,
     SURFACE0,
     SURFACE1,
     SURFACE2,
     TEXT,
     YELLOW,
 };
-
-pub struct TableConfig<'a> {
-    pub configs: &'a [Config],
-    pub config_states: &'a [ConfigState],
-    pub selected_row: usize,
-    pub selected_rows: &'a HashSet<usize>,
-    pub area: Rect,
-    pub title: &'a str,
-    pub is_active: bool,
-}
 
 pub fn draw_main_tab(f: &mut Frame, app: &mut App, config_states: &[ConfigState], area: Rect) {
     let chunks = Layout::default()
@@ -67,139 +66,121 @@ pub fn draw_main_tab(f: &mut Frame, app: &mut App, config_states: &[ConfigState]
 
     draw_configs_table(
         f,
-        TableConfig {
-            configs: &app.filtered_stopped_configs,
-            config_states,
-            selected_row: app.selected_row_stopped,
-            selected_rows: &app.selected_rows_stopped,
-            area: tables_chunks[0],
-            title: "Stopped Configs",
-            is_active: app.active_table == ActiveTable::Stopped,
-        },
+        tables_chunks[0],
+        &app.stopped_configs,
+        config_states,
+        &mut app.table_state_stopped,
+        "Stopped Configs",
+        app.active_table == ActiveTable::Stopped,
+        &app.selected_rows_stopped,
     );
 
     draw_configs_table(
         f,
-        TableConfig {
-            configs: &app.filtered_running_configs,
-            config_states,
-            selected_row: app.selected_row_running,
-            selected_rows: &app.selected_rows_running,
-            area: tables_chunks[1],
-            title: " Running Configs",
-            is_active: app.active_table == ActiveTable::Running,
-        },
+        tables_chunks[1],
+        &app.running_configs,
+        config_states,
+        &mut app.table_state_running,
+        "Running Configs",
+        app.active_table == ActiveTable::Running,
+        &app.selected_rows_running,
     );
 }
 
-pub fn draw_configs_table(f: &mut Frame, table_config: TableConfig) {
-    let TableConfig {
-        configs,
-        config_states,
-        selected_row,
-        selected_rows,
-        area,
-        title,
-        is_active,
-    } = table_config;
-
+#[allow(clippy::too_many_arguments)]
+pub fn draw_configs_table(
+    frame: &mut Frame, area: Rect, configs: &[Config], config_states: &[ConfigState],
+    state: &mut TableState, title: &str, has_focus: bool, selected_rows: &HashSet<usize>,
+) {
     let rows: Vec<Row> = configs
         .iter()
         .enumerate()
-        .map(|(row_index, config)| {
+        .map(|(i, config)| {
             let state = config_states
                 .iter()
                 .find(|s| s.config_id == config.id.unwrap_or_default())
                 .map(|s| s.is_running)
                 .unwrap_or(false);
 
-            let style = if selected_rows.contains(&row_index) {
-                Style::default().fg(TEXT).bg(SURFACE2)
-            } else if is_active && row_index == selected_row {
-                Style::default().fg(TEXT).bg(SURFACE1)
+            let base_style = if state {
+                Style::default().fg(GREEN)
             } else {
-                Style::default()
-                    .fg(if state { GREEN } else { RED })
-                    .bg(BASE)
+                Style::default().fg(RED)
             };
 
-            let remote_target = match config.workload_type.as_str() {
-                "proxy" => config.remote_address.clone().unwrap_or_default(),
-                "service" => config.service.clone().unwrap_or_default(),
-                "pod" => config.target.clone().unwrap_or_default(),
-                _ => String::new(),
+            let row_style = if selected_rows.contains(&i) {
+                base_style.bg(SURFACE0).fg(SUBTEXT0)
+            } else {
+                base_style
             };
 
             Row::new(vec![
                 Cell::from(config.alias.clone().unwrap_or_default()),
                 Cell::from(config.workload_type.clone()),
-                Cell::from(remote_target),
-                Cell::from(config.local_address.clone().unwrap_or_default()),
                 Cell::from(config.local_port.to_string()),
                 Cell::from(config.context.clone()),
             ])
-            .style(style)
+            .style(row_style)
         })
         .collect();
 
+    let focus_color = focus_color(has_focus);
+
     let table = Table::new(
         rows,
-        &[
-            Constraint::Length(30),
-            Constraint::Length(30),
-            Constraint::Length(50),
-            Constraint::Length(30),
-            Constraint::Length(15),
-            Constraint::Length(30),
+        [
+            Constraint::Percentage(25),
+            Constraint::Percentage(25),
+            Constraint::Percentage(25),
+            Constraint::Percentage(25),
         ],
     )
     .header(
         Row::new(vec![
-            Cell::from(Span::styled(
-                "Alias",
-                Style::default().add_modifier(Modifier::BOLD),
-            )),
-            Cell::from(Span::styled(
-                "Workload",
-                Style::default().add_modifier(Modifier::BOLD),
-            )),
-            Cell::from(Span::styled(
-                "Remote Target",
-                Style::default().add_modifier(Modifier::BOLD),
-            )),
-            Cell::from(Span::styled(
-                "Local Address",
-                Style::default().add_modifier(Modifier::BOLD),
-            )),
-            Cell::from(Span::styled(
-                "Local Port",
-                Style::default().add_modifier(Modifier::BOLD),
-            )),
-            Cell::from(Span::styled(
-                "Context",
-                Style::default().add_modifier(Modifier::BOLD),
-            )),
+            Cell::from("Alias"),
+            Cell::from("Workload"),
+            Cell::from("Local Port"),
+            Cell::from("Context"),
         ])
-        .style(Style::default().bg(SURFACE0)),
+        .style(style_bold().fg(MAUVE)),
     )
     .block(
         Block::default()
+            .border_type(BorderType::Rounded)
             .borders(Borders::ALL)
-            .title(title)
-            .style(if is_active {
-                Style::default().fg(YELLOW).bg(BASE)
-            } else {
-                Style::default().bg(BASE)
-            }),
+            .title_alignment(Alignment::Left)
+            .border_style(Style::default().fg(focus_color))
+            .title(title),
     )
-    .highlight_style(if is_active {
-        Style::default().add_modifier(Modifier::REVERSED)
-    } else {
-        Style::default()
-    })
-    .highlight_symbol(">> ");
+    .highlight_style(Style::default().bg(SURFACE1).fg(TEXT));
 
-    f.render_widget(table, area);
+    frame.render_stateful_widget(table, area, state);
+
+    let height = area.height.saturating_sub(2);
+    let offset_with_last_in_view = configs.len().saturating_sub(height as usize);
+    if let Some(selection) = state.selected() {
+        if selection >= offset_with_last_in_view {
+            *state.offset_mut() = offset_with_last_in_view;
+        }
+    } else {
+        *state.offset_mut() = offset_with_last_in_view;
+    }
+
+    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .begin_symbol(None)
+        .track_symbol(None)
+        .end_symbol(None)
+        .style(Style::default().fg(SURFACE2).bg(BASE));
+    let mut scrollbar_state = ScrollbarState::new(configs.len().saturating_sub(height as usize))
+        .position(state.offset())
+        .viewport_content_length(height as usize);
+    let scrollbar_area = Rect {
+        x: area.x + area.width - 1,
+        y: area.y.saturating_add(2),
+        height: area.height.saturating_sub(2),
+        width: 1,
+    };
+    frame.render_stateful_widget(scrollbar, scrollbar_area, &mut scrollbar_state);
 }
 
 pub fn render_details(f: &mut Frame, config: &Config, config_states: &[ConfigState], area: Rect) {
@@ -298,4 +279,16 @@ pub fn render_details(f: &mut Frame, config: &Config, config_states: &[ConfigSta
         .style(Style::default().fg(TEXT).bg(BASE));
 
     f.render_widget(paragraph, area);
+}
+
+pub fn style_bold() -> Style {
+    Style::default().add_modifier(Modifier::BOLD)
+}
+
+pub fn focus_color(has_focus: bool) -> Color {
+    if has_focus {
+        YELLOW
+    } else {
+        TEXT
+    }
 }

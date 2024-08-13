@@ -203,7 +203,6 @@ pub async fn list_ports(
     let api_svc: Api<Service> = Api::namespaced(client.clone(), namespace);
     let api_pod: Api<Pod> = Api::namespaced(client.clone(), namespace);
 
-    // Try to get the service first
     match api_svc.get(service_name).await {
         Ok(service) => {
             let mut service_port_infos = Vec::new();
@@ -212,7 +211,6 @@ pub async fn list_ports(
                 if let Some(service_ports) = spec.ports {
                     for sp in service_ports {
                         if let Some(IntOrString::String(ref name)) = sp.target_port {
-                            // Construct a selector string from the pod's labels, if available.
                             let selector_string =
                                 spec.selector.as_ref().map_or_else(String::new, |s| {
                                     s.iter()
@@ -221,21 +219,16 @@ pub async fn list_ports(
                                         .join(", ")
                                 });
 
-                            // Attempt to list pods using the constructed label selector.
                             let pods = api_pod
                                 .list(&ListParams::default().labels(selector_string.as_str()))
                                 .await
                                 .map_err(|e| format!("Failed to list pods: {}", e))?;
 
-                            // Iterate through the list of pods to find a matching container port
-                            // name.
                             'port_search: for pod in pods {
                                 if let Some(spec) = &pod.spec {
                                     for container in &spec.containers {
                                         if let Some(ports) = &container.ports {
                                             for cp in ports {
-                                                // Match the port name and add the port info to the
-                                                // service_port_infos vector if found.
                                                 if cp.name.as_deref() == Some(name) {
                                                     service_port_infos.push(KubeServicePortInfo {
                                                         name: cp.name.clone(),
@@ -271,8 +264,6 @@ pub async fn list_ports(
             }
         }
         Err(_) => {
-            // If service is not found, treat service_name as a label and search for
-            // matching pods
             let pods = api_pod
                 .list(&ListParams::default().labels(service_name))
                 .await

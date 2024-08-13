@@ -5,8 +5,6 @@ use std::{
 
 use anyhow::Result;
 
-/// Determines and returns the configuration directory path.
-/// Tries environment variables and defaults to home directory if needed.
 pub fn get_config_dir() -> Result<PathBuf, String> {
     if let Ok(config_dir) = env::var("KFTRAY_CONFIG") {
         return Ok(PathBuf::from(config_dir));
@@ -27,35 +25,30 @@ pub fn get_config_dir() -> Result<PathBuf, String> {
     Err("Unable to determine the configuration directory".to_string())
 }
 
-/// Gets the log folder path within the configuration directory.
 pub fn get_log_folder_path() -> Result<PathBuf, String> {
     let mut config_path = get_config_dir()?;
     config_path.push("http_logs");
     Ok(config_path)
 }
 
-/// Gets the database file path within the configuration directory.
 pub fn get_db_file_path() -> Result<PathBuf, String> {
     let mut config_path = get_config_dir()?;
     config_path.push("configs.db");
     Ok(config_path)
 }
 
-/// Returns the path to the pod manifest file within the home directory.
 pub fn get_pod_manifest_path() -> Result<PathBuf, String> {
     let mut config_path = get_config_dir()?;
     config_path.push("proxy_manifest.json");
     Ok(config_path)
 }
 
-/// Gets the path to the application log file within the home directory.
 pub fn get_app_log_path() -> Result<PathBuf, String> {
     let mut config_path = get_config_dir()?;
     config_path.push("app.log");
     Ok(config_path)
 }
 
-/// Gets the path to the window state file within the configuration directory.
 pub fn get_window_state_path() -> Result<PathBuf, String> {
     let mut config_path = get_config_dir()?;
     config_path.push("window_position.json");
@@ -63,17 +56,13 @@ pub fn get_window_state_path() -> Result<PathBuf, String> {
 }
 
 pub fn get_default_kubeconfig_path() -> Result<PathBuf> {
-    // Check the KUBECONFIG environment variable
     if let Ok(kubeconfig_path) = env::var("KUBECONFIG") {
         Ok(PathBuf::from(kubeconfig_path))
+    } else if let Some(mut config_path) = dirs::home_dir() {
+        config_path.push(".kube/config");
+        Ok(config_path)
     } else {
-        // Fallback to the default home directory path
-        if let Some(mut config_path) = dirs::home_dir() {
-            config_path.push(".kube/config");
-            Ok(config_path)
-        } else {
-            Err(anyhow::anyhow!("Unable to determine home directory"))
-        }
+        Err(anyhow::anyhow!("Unable to determine home directory"))
     }
 }
 
@@ -83,7 +72,6 @@ mod tests {
 
     use super::*;
 
-    // Utility function to preserve environment variables during tests.
     fn preserve_env_vars(keys: &[&str]) -> Vec<(String, Option<String>)> {
         keys.iter()
             .map(|&key| {
@@ -93,7 +81,6 @@ mod tests {
             .collect()
     }
 
-    // Utility function to restore environment variables after tests.
     fn restore_env_vars(vars: Vec<(String, Option<String>)>) {
         for (key, value) in vars {
             match value {

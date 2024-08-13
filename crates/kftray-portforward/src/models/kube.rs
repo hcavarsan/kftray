@@ -20,8 +20,6 @@ use tokio::sync::Mutex;
 use tracing::debug;
 
 impl NameSpace {
-    /// Returns the configured namespace or the default.
-
     pub fn name_any(&self) -> String {
         self.0.clone().unwrap_or_else(|| "default".to_string())
     }
@@ -183,12 +181,10 @@ pub struct TargetPod {
     pub port_number: u16,
 }
 
-/// Pod selection
 pub trait PodSelection {
     fn select<'p>(&self, pods: &'p [Pod], selector: &str) -> anyhow::Result<&'p Pod>;
 }
 
-/// Selects any pod so long as it's ready.
 pub struct AnyReady {}
 
 #[derive(Clone, Debug)]

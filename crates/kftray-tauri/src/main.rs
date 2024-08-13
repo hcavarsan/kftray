@@ -40,7 +40,6 @@ fn main() {
 
     let _ = fix_path_env::fix();
 
-    // configure tray menu
     let system_tray = create_tray_menu();
     let is_moving = Arc::new(Mutex::new(false));
     let is_plugin_moving = Arc::new(AtomicBool::new(false));
@@ -94,7 +93,6 @@ fn main() {
                 window.set_always_on_top(true).unwrap();
             }
 
-            // register global shortcut to open the app
             let mut shortcut = app.global_shortcut_manager();
 
             shortcut
