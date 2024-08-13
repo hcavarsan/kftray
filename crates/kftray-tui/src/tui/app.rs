@@ -10,8 +10,8 @@ use crossterm::{
     },
 };
 use kftray_commons::config::read_configs;
+use kftray_commons::utils::config_state::read_config_states;
 use kftray_commons::utils::db::init;
-use kftray_tauri::config_state::read_config_states;
 use log::error;
 use ratatui::{
     backend::CrosstermBackend,

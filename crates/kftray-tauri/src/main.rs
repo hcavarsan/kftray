@@ -27,6 +27,7 @@ use tauri::{
 };
 use tokio::runtime::Runtime;
 
+use crate::commands::portforward::check_and_emit_changes;
 use crate::tray::{
     create_tray_menu,
     handle_run_event,
@@ -59,8 +60,9 @@ fn main() {
         .setup(move |app| {
             let app_handle = app.app_handle();
 
+            let app_handle_clone = app_handle.clone();
             tauri::async_runtime::spawn(async move {
-                alert_multiple_configs(app_handle).await;
+                alert_multiple_configs(app_handle_clone).await;
             });
 
             tauri::async_runtime::spawn(async move {
@@ -77,6 +79,11 @@ fn main() {
                 if let Err(e) = kftray_commons::utils::migration::migrate_configs().await {
                     error!("Failed to migrate configs: {}", e);
                 }
+            });
+
+            let app_handle_clone = app_handle.clone();
+            tauri::async_runtime::spawn(async move {
+                check_and_emit_changes(app_handle_clone).await;
             });
 
             #[cfg(target_os = "macos")]
@@ -141,7 +148,6 @@ fn main() {
             commands::github::delete_key,
             commands::window_state::toggle_pin_state,
             commands::config_state::get_config_states,
-            commands::config_state::get_config_state_by_config_id
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");
