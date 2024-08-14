@@ -58,7 +58,7 @@ const KFTray = () => {
         ...config,
         isRunning:
           configStates.find(state => state.config_id === config.id)
-          ?.is_running || false,
+            ?.is_running || false,
       }))
     } catch (error) {
       console.error('Failed to fetch configs:', error)
@@ -286,7 +286,9 @@ const KFTray = () => {
 
       toast({
         title: 'Success',
-        description: `Configuration ${isEdit ? 'updated' : 'added'} successfully.`,
+        description: `Configuration ${
+          isEdit ? 'updated' : 'added'
+        } successfully.`,
         status: 'success',
       })
       closeModal()
@@ -358,8 +360,8 @@ const KFTray = () => {
 
     if (errors.length > 0) {
       const errorMessage = errors
-      .map(e => `Config ID: ${e.id}, Error: ${e.error}`)
-      .join(', ')
+        .map(e => `Config ID: ${e.id}, Error: ${e.error}`)
+        .join(', ')
 
       toast({
         title: 'Error Starting Port Forwarding',
@@ -373,25 +375,25 @@ const KFTray = () => {
 
   const handlePortForwarding = async (config: Status) => {
     switch (config.workload_type) {
-    case 'service':
-    case 'pod':
-      if (config.protocol === 'tcp') {
-        await invoke<Response>('start_port_forward_tcp_cmd', {
-          configs: [config],
-        })
-      } else if (config.protocol === 'udp') {
+      case 'service':
+      case 'pod':
+        if (config.protocol === 'tcp') {
+          await invoke<Response>('start_port_forward_tcp_cmd', {
+            configs: [config],
+          })
+        } else if (config.protocol === 'udp') {
+          await invoke<Response>('deploy_and_forward_pod_cmd', {
+            configs: [config],
+          })
+        }
+        break
+      case 'proxy':
         await invoke<Response>('deploy_and_forward_pod_cmd', {
           configs: [config],
         })
-      }
-      break
-    case 'proxy':
-      await invoke<Response>('deploy_and_forward_pod_cmd', {
-        configs: [config],
-      })
-      break
-    default:
-      throw new Error(`Unsupported workload type: ${config.workload_type}`)
+        break
+      default:
+        throw new Error(`Unsupported workload type: ${config.workload_type}`)
     }
   }
 
@@ -446,9 +448,9 @@ const KFTray = () => {
         })
       } else {
         const errorMessages = responses
-        .filter(res => res.status !== initialStatus)
-        .map(res => `${res.service}: ${res.stderr}`)
-        .join(', ')
+          .filter(res => res.status !== initialStatus)
+          .map(res => `${res.service}: ${res.stderr}`)
+          .join(', ')
 
         toast({
           title: 'Error',

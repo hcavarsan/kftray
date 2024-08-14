@@ -23,6 +23,7 @@ use ratatui::{
 };
 
 use crate::tui::input::DeleteButton;
+use crate::tui::ui::centered_rect;
 use crate::tui::ui::{
     BASE,
     CRUST,
@@ -35,7 +36,6 @@ use crate::tui::ui::{
     TEXT,
     YELLOW,
 };
-use crate::tui::ui::centered_rect;
 
 fn create_common_popup_style(title: &str, title_color: Color) -> Block<'_> {
     Block::default()
@@ -187,8 +187,14 @@ pub fn render_about_popup(f: &mut Frame, area: Rect) {
 
     // Define the about message
     let about_message = vec![
-        Line::from(Span::styled("App Version: 1.0.0", Style::default().fg(YELLOW))),
-        Line::from(Span::styled("Author: Your Name", Style::default().fg(YELLOW))),
+        Line::from(Span::styled(
+            "App Version: 1.0.0",
+            Style::default().fg(YELLOW),
+        )),
+        Line::from(Span::styled(
+            "Author: Your Name",
+            Style::default().fg(YELLOW),
+        )),
         Line::from(Span::styled("License: MIT", Style::default().fg(YELLOW))),
     ];
 
@@ -218,8 +224,6 @@ pub fn render_about_popup(f: &mut Frame, area: Rect) {
     f.render_widget(Clear, popup_area);
     f.render_widget(about_paragraph, popup_area);
 }
-
-
 
 pub fn render_error_popup(f: &mut Frame, error_message: &str, area: Rect, top_padding: usize) {
     let max_text_width = area.width.saturating_sub(4) as usize;

@@ -47,7 +47,7 @@ const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
   const borderColor = useColorModeValue('gray.200', 'gray.700')
   const textColor = useColorModeValue('gray.800', 'white')
   const boxShadow = useColorModeValue('base', 'lg')
-  const fontFamily = '\'Inter\', sans-serif'
+  const fontFamily = "'Inter', sans-serif"
 
   const contextRunningCount = contextConfigs.filter(
     config => config.isRunning,

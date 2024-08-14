@@ -248,21 +248,21 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
       {config.workload_type.startsWith('proxy')
         ? config.workload_type
         : config.workload_type === 'pod'
-          ? 'Pod'
-          : 'Service'}
+        ? 'Pod'
+        : 'Service'}
       <br />
       <Box as='span' fontWeight='semibold'>
         {config.workload_type.startsWith('proxy')
           ? 'Remote Address:'
           : config.workload_type === 'pod'
-            ? 'Pod Label:'
-            : 'Service:'}
+          ? 'Pod Label:'
+          : 'Service:'}
       </Box>{' '}
       {config.workload_type.startsWith('proxy')
         ? config.remote_address
         : config.workload_type === 'pod'
-          ? config.target
-          : config.service}
+        ? config.target
+        : config.service}
       <br />
       <Box as='span' fontWeight='semibold'>
         Context:
@@ -307,7 +307,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
     </>
   )
 
-  const fontFamily = '\'Open Sans\', sans-serif'
+  const fontFamily = "'Open Sans', sans-serif"
   const fontSize = '13px'
 
   return (
@@ -399,33 +399,33 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
                 config.workload_type === 'pod') &&
               config.protocol === 'tcp' &&
               httpLogsEnabled[config.id] && (
-              <Tooltip
-                hasArrow
-                label='HTTP trace logs'
-                placement='top-start'
-                bg='gray.300'
-                p={1}
-                size='xs'
-                fontSize='xs'
-              >
-                <IconButton
-                  aria-label='HTTP trace logs'
-                  icon={
-                    <FontAwesomeIcon
-                      icon={faFileAlt}
-                      style={{ fontSize: '10px' }}
-                    />
-                  }
-                  onClick={handleInspectLogs}
+                <Tooltip
+                  hasArrow
+                  label='HTTP trace logs'
+                  placement='top-start'
+                  bg='gray.300'
+                  p={1}
                   size='xs'
-                  variant='ghost'
-                  _hover={{
-                    background: 'none',
-                    transform: 'none',
-                  }}
-                />
-              </Tooltip>
-            )}
+                  fontSize='xs'
+                >
+                  <IconButton
+                    aria-label='HTTP trace logs'
+                    icon={
+                      <FontAwesomeIcon
+                        icon={faFileAlt}
+                        style={{ fontSize: '10px' }}
+                      />
+                    }
+                    onClick={handleInspectLogs}
+                    size='xs'
+                    variant='ghost'
+                    _hover={{
+                      background: 'none',
+                      transform: 'none',
+                    }}
+                  />
+                </Tooltip>
+              )}
           </Flex>
         </Td>
         <Td fontSize={fontSize} align='center'>
@@ -500,7 +500,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
                 Delete Configuration
               </AlertDialogHeader>
               <AlertDialogBody>
-                {'Are you sure? You can\'t undo this action afterwards.'}
+                {"Are you sure? You can't undo this action afterwards."}
               </AlertDialogBody>
               <AlertDialogFooter>
                 <Button onClick={() => setIsAlertOpen(false)}>Cancel</Button>

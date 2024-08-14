@@ -261,15 +261,15 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
         newConfig.service
           ? { label: newConfig.service, value: newConfig.service }
           : newConfig.target
-            ? { label: newConfig.target, value: newConfig.target }
-            : null,
+          ? { label: newConfig.target, value: newConfig.target }
+          : null,
       )
       setSelectedPort(
         newConfig.remote_port
           ? {
-            label: newConfig.remote_port.toString(),
-            value: newConfig.remote_port,
-          }
+              label: newConfig.remote_port.toString(),
+              value: newConfig.remote_port,
+            }
           : null,
       )
       setKubeConfig(newConfig.kubeconfig ?? 'default')
@@ -308,64 +308,64 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     { name }: ActionMeta<Option>,
   ) => {
     switch (name) {
-    case 'context':
-      setSelectedContext(selectedOption)
-      if (
-        !selectedOption ||
+      case 'context':
+        setSelectedContext(selectedOption)
+        if (
+          !selectedOption ||
           selectedContext?.value !== selectedOption?.value
-      ) {
-        setSelectedNamespace(null)
-        setSelectedServiceOrTarget(null)
-        setSelectedPort(null)
-        handleInputChange({
-          target: { name: 'namespace', value: '' },
-        } as unknown as React.ChangeEvent<HTMLInputElement>)
-        handleInputChange({
-          target: { name: 'service', value: '' },
-        } as unknown as React.ChangeEvent<HTMLInputElement>)
-        handleInputChange({
-          target: { name: 'remote_port', value: '' },
-        } as unknown as React.ChangeEvent<HTMLInputElement>)
-      }
-      break
-    case 'namespace':
-      setSelectedNamespace(selectedOption)
-      if (
-        !selectedOption ||
+        ) {
+          setSelectedNamespace(null)
+          setSelectedServiceOrTarget(null)
+          setSelectedPort(null)
+          handleInputChange({
+            target: { name: 'namespace', value: '' },
+          } as unknown as React.ChangeEvent<HTMLInputElement>)
+          handleInputChange({
+            target: { name: 'service', value: '' },
+          } as unknown as React.ChangeEvent<HTMLInputElement>)
+          handleInputChange({
+            target: { name: 'remote_port', value: '' },
+          } as unknown as React.ChangeEvent<HTMLInputElement>)
+        }
+        break
+      case 'namespace':
+        setSelectedNamespace(selectedOption)
+        if (
+          !selectedOption ||
           selectedNamespace?.value !== selectedOption?.value
-      ) {
-        setSelectedServiceOrTarget(null)
-        setSelectedPort(null)
-        handleInputChange({
-          target: { name: 'service', value: '' },
-        } as unknown as React.ChangeEvent<HTMLInputElement>)
-        handleInputChange({
-          target: { name: 'remote_port', value: '' },
-        } as unknown as React.ChangeEvent<HTMLInputElement>)
-      }
-      break
-    case 'service':
-    case 'target':
-      setSelectedServiceOrTarget(selectedOption)
-      if (
-        !selectedOption ||
+        ) {
+          setSelectedServiceOrTarget(null)
+          setSelectedPort(null)
+          handleInputChange({
+            target: { name: 'service', value: '' },
+          } as unknown as React.ChangeEvent<HTMLInputElement>)
+          handleInputChange({
+            target: { name: 'remote_port', value: '' },
+          } as unknown as React.ChangeEvent<HTMLInputElement>)
+        }
+        break
+      case 'service':
+      case 'target':
+        setSelectedServiceOrTarget(selectedOption)
+        if (
+          !selectedOption ||
           selectedServiceOrTarget?.value !== selectedOption?.value
-      ) {
-        setSelectedPort(null)
-        handleInputChange({
-          target: { name: 'remote_port', value: '' },
-        } as unknown as React.ChangeEvent<HTMLInputElement>)
-      }
-      break
-    case 'remote_port':
-      setSelectedPort(selectedOption)
-      break
-    case 'workload_type':
-      setSelectedWorkloadType(selectedOption)
-      break
-    case 'protocol':
-      setSelectedProtocol(selectedOption)
-      break
+        ) {
+          setSelectedPort(null)
+          handleInputChange({
+            target: { name: 'remote_port', value: '' },
+          } as unknown as React.ChangeEvent<HTMLInputElement>)
+        }
+        break
+      case 'remote_port':
+        setSelectedPort(selectedOption)
+        break
+      case 'workload_type':
+        setSelectedWorkloadType(selectedOption)
+        break
+      case 'protocol':
+        setSelectedProtocol(selectedOption)
+        break
     }
 
     handleInputChange({
@@ -689,13 +689,13 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                           options={
                             newConfig.workload_type === 'pod'
                               ? podsQuery.data?.map(pod => ({
-                                label: pod.labels_str,
-                                value: pod.labels_str,
-                              }))
+                                  label: pod.labels_str,
+                                  value: pod.labels_str,
+                                }))
                               : serviceOrTargetQuery.data?.map(service => ({
-                                label: service.name,
-                                value: service.name,
-                              }))
+                                  label: service.name,
+                                  value: service.name,
+                                }))
                           }
                           value={selectedServiceOrTarget}
                           onChange={selectedOption =>
@@ -761,9 +761,9 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                           value={
                             selectedPort
                               ? {
-                                label: selectedPort.label,
-                                value: selectedPort.value,
-                              }
+                                  label: selectedPort.label,
+                                  value: selectedPort.value,
+                                }
                               : null
                           }
                           onChange={selectedOption =>

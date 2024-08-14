@@ -47,9 +47,9 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
             selectedConfigs.length > 0
               ? startSelectedPortForwarding
               : () =>
-                initiatePortForwarding(
-                  configs.filter(config => !config.isRunning),
-                )
+                  initiatePortForwarding(
+                    configs.filter(config => !config.isRunning),
+                  )
           }
           isDisabled={
             isInitiating ||
