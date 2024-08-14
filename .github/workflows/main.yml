@@ -133,7 +133,15 @@ jobs:
         shell: bash
 
       - name: List target/release directory contents
-        run: ls -la target/release
+        run: |
+          echo "Listing root directory:"
+          ls -la
+          echo "Listing target directory:"
+          ls -la target/
+          echo "Listing target/release directory:"
+          ls -la target/release
+          echo "Listing target/release subdirectories:"
+          find target/release -type d -print
         shell: bash
 
       - name: Rename and upload release asset
