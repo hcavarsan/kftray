@@ -96,6 +96,7 @@ jobs:
               rustup target add aarch64-pc-windows-msvc
             fi
           fi
+        shell: bash
 
       - name: Build the app
         uses: tauri-apps/tauri-action@v0
@@ -119,13 +120,24 @@ jobs:
           args: ${{ matrix.os == 'macos-latest' && '--target universal-apple-darwin --bundles dmg,updater --verbose' || matrix.os == 'ubuntu-latest' && '--target x86_64-unknown-linux-gnu --bundles appimage,updater --verbose' || matrix.os == 'windows-latest' && '--target x86_64-pc-windows-msvc --bundles nsis,updater --verbose' }}
 
       - name: Build kftray-tui
-        run: cargo build --release --bin kftray-tui --target ${{ matrix.arch == 'universal' && 'universal-apple-darwin' || matrix.arch == 'amd64' && 'x86_64-unknown-linux-gnu' || matrix.arch == 'arm64' && 'aarch64-unknown-linux-gnu' || matrix.arch == 'x86_64' && 'x86_64-pc-windows-msvc' || matrix.arch == 'x86' && 'i686-pc-windows-msvc' || matrix.arch == 'arm64' && 'aarch64-pc-windows-msvc' }}
+        run: |
+          if [ "${{ matrix.os }}" == "macos-latest" ]; then
+            cargo build --release --bin kftray-tui --target aarch64-apple-darwin
+            cargo build --release --bin kftray-tui --target x86_64-apple-darwin
+            lipo -create -output ./target/release/kftray-tui ./target/x86_64-apple-darwin/release/kftray-tui ./target/aarch64-apple-darwin/release/kftray-tui
+          else
+            cargo build --release --bin kftray-tui --target ${{ matrix.arch == 'amd64' && 'x86_64-unknown-linux-gnu' || matrix.arch == 'arm64' && 'aarch64-unknown-linux-gnu' || matrix.arch == 'x86_64' && 'x86_64-pc-windows-msvc' || matrix.arch == 'x86' && 'i686-pc-windows-msvc' || matrix.arch == 'arm64' && 'aarch64-pc-windows-msvc' }}
+          fi
+        shell: bash
 
-      - name: Upload kftray-tui artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: kftray-tui-${{ matrix.os }}-${{ matrix.arch }}-${{ github.ref_name }}
-          path: ./target/release/kftray-tui
+      - name: Rename and upload release asset
+        run: |
+          cd target/release
+          mv kftray-tui kftray-tui-${{ matrix.os }}-${{ matrix.arch }}-${{ github.ref_name }}
+          gh release upload ${{ github.event.release.tag_name }} kftray-tui-${{ matrix.os }}-${{ matrix.arch }}-${{ github.ref_name }} --clobber
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
 
   build-and-push-docker:
     permissions:
@@ -152,22 +164,3 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/kftray-server:${{ github.sha }}
             ghcr.io/${{ github.repository_owner }}/kftray-server:${{ github.ref_name }}
             ghcr.io/${{ github.repository_owner }}/kftray-server:latest
-
-  upload-release-assets:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - name: Download artifacts
-        uses: actions/download-artifact@v3
-        with:
-          path: ./artifacts
-
-      - name: Upload release assets
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.check_release.outputs.release_id != '' && steps.check_release.outputs.release_id || steps.create_release.outputs.upload_url }}
-          asset_path: ./artifacts/
-          asset_name: kftray-tui-${{ matrix.os }}-${{ matrix.arch }}-${{ github.ref_name }}
-          asset_content_type: application/octet-stream
