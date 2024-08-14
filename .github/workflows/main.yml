@@ -133,16 +133,17 @@ jobs:
         shell: bash
 
       - name: List target/release directory contents
-        run: ls-lha && ls -la target/release
+        run: ls -la target/release
         shell: bash
 
       - name: Rename and upload release asset
         run: |
-          cd target/release
           if [ "${{ matrix.os }}" == "macos-latest" ]; then
+            cd target/release
             mv kftray-tui kftray-tui-macos-universal-${{ github.ref_name }}
             gh release upload ${{ github.event.release.tag_name }} kftray-tui-macos-universal-${{ github.ref_name }} --clobber
           else
+            cd target/release/${{ matrix.arch == 'amd64' && 'x86_64-unknown-linux-gnu' || matrix.arch == 'arm64' && 'aarch64-unknown-linux-gnu' || matrix.arch == 'x86_64' && 'x86_64-pc-windows-msvc' || matrix.arch == 'x86' && 'i686-pc-windows-msvc' || matrix.arch == 'arm64' && 'aarch64-pc-windows-msvc' }}
             mv kftray-tui kftray-tui-${{ matrix.os }}-${{ matrix.arch }}-${{ github.ref_name }}
             gh release upload ${{ github.event.release.tag_name }} kftray-tui-${{ matrix.os }}-${{ matrix.arch }}-${{ github.ref_name }} --clobber
           fi
