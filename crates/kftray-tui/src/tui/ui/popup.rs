@@ -174,6 +174,27 @@ pub fn render_help_popup(f: &mut Frame, area: Rect) {
     f.render_widget(help_paragraph, area);
 }
 
+pub fn render_about_popup(f: &mut Frame, area: Rect) {
+    let about_message = vec![
+        Line::from(Span::styled("App Version: 1.0.0", Style::default().fg(YELLOW))),
+        Line::from(Span::styled("Author: Your Name", Style::default().fg(YELLOW))),
+        Line::from(Span::styled("License: MIT", Style::default().fg(YELLOW))),
+    ];
+
+    let about_paragraph = Paragraph::new(Text::from(about_message))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(Span::styled("About", Style::default().fg(TEAL)))
+                .style(Style::default().bg(BASE).fg(TEXT)),
+        )
+        .alignment(Alignment::Left)
+        .wrap(ratatui::widgets::Wrap { trim: true });
+
+    f.render_widget(Clear, area);
+    f.render_widget(about_paragraph, area);
+}
+
 pub fn render_error_popup(f: &mut Frame, error_message: &str, area: Rect, top_padding: usize) {
     let max_text_width = area.width.saturating_sub(4) as usize;
     let wrapped_text = wrap_text(error_message, max_text_width);

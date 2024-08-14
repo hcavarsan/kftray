@@ -20,6 +20,13 @@ pub fn handle_help_input(app: &mut App, key: KeyCode) -> std::io::Result<()> {
     Ok(())
 }
 
+pub fn handle_about_input(app: &mut App, key: KeyCode) -> std::io::Result<()> {
+    if key == KeyCode::Esc || key == KeyCode::Char('i') {
+        app.state = AppState::Normal;
+    }
+    Ok(())
+}
+
 pub fn handle_error_popup_input(app: &mut App, key: KeyCode) -> std::io::Result<()> {
     if key == KeyCode::Enter || key == KeyCode::Esc {
         app.error_message = None;

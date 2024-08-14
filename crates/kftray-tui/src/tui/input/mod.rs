@@ -57,6 +57,7 @@ pub enum AppState {
     ExportFileExplorerOpen,
     ShowInputPrompt,
     ShowHelp,
+    ShowAbout,
     ShowDeleteConfirmation,
 }
 
@@ -246,6 +247,9 @@ pub async fn handle_input(app: &mut App, _config_states: &mut [ConfigState]) -> 
                 AppState::ShowHelp => {
                     handle_help_input(app, key.code)?;
                 }
+                AppState::ShowAbout => {
+                    handle_about_input(app, key.code)?;
+                }
                 AppState::ShowDeleteConfirmation => {
                     handle_delete_confirmation_input(app, key.code).await?;
                 }
@@ -270,7 +274,7 @@ async fn handle_normal_input(app: &mut App, key: KeyCode) -> io::Result<()> {
                 }
             }
             KeyCode::Right => {
-                if app.selected_menu_item < 3 {
+                if app.selected_menu_item < 4 {
                     app.selected_menu_item += 1
                 }
             }
@@ -278,7 +282,8 @@ async fn handle_normal_input(app: &mut App, key: KeyCode) -> io::Result<()> {
                 0 => app.state = AppState::ShowHelp,
                 1 => open_import_file_explorer(app),
                 2 => open_export_file_explorer(app),
-                3 => return Ok(()),
+                3 => app.state = AppState::ShowAbout,
+                4 => return Ok(()),
                 _ => {}
             },
             _ => {}
@@ -290,7 +295,7 @@ async fn handle_normal_input(app: &mut App, key: KeyCode) -> io::Result<()> {
             KeyCode::Char(' ') => toggle_row_selection(app),
             KeyCode::Char('c') => clear_stdout_output(app),
             KeyCode::Char('f') => handle_port_forwarding(app).await?,
-            KeyCode::Char('i') => open_import_file_explorer(app),
+            KeyCode::Char('i') => app.state = AppState::ShowAbout,
             KeyCode::Char('e') => open_export_file_explorer(app),
             KeyCode::Char('h') => app.state = AppState::ShowHelp,
             KeyCode::Char('q') => return Ok(()),

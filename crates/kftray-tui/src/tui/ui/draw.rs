@@ -37,6 +37,7 @@ use crate::tui::ui::{
     render_confirmation_popup,
     render_error_popup,
     render_help_popup,
+    render_about_popup,
     render_input_prompt,
     render_legend,
     BASE,
@@ -75,6 +76,11 @@ pub fn draw_ui(f: &mut Frame, app: &mut App, config_states: &[ConfigState]) {
             let help_area = centered_rect(20, 20, size);
             render_background_overlay(f, size);
             render_help_popup(f, help_area);
+        }
+        AppState::ShowAbout => {
+            let about_area = centered_rect(20, 20, size);
+            render_background_overlay(f, size);
+            render_about_popup(f, about_area);
         }
         AppState::ImportFileExplorerOpen => {
             let popup_area = centered_rect(40, 80, size);
@@ -118,7 +124,7 @@ pub fn draw_ui(f: &mut Frame, app: &mut App, config_states: &[ConfigState]) {
 }
 
 pub fn draw_header(f: &mut Frame, app: &App, area: Rect) {
-    let menu_titles = ["Help", "Import", "Export", "Quit"];
+    let menu_titles = ["Help", "Import", "Export", "About", "Quit"];
     let menu: Vec<Line> = menu_titles
         .iter()
         .enumerate()

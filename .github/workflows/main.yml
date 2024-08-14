@@ -20,16 +20,28 @@ jobs:
           - os: ubuntu-latest
             arch: arm64
             runner: ubicloud-standard-4-arm
+            rust_target: aarch64-unknown-linux-gnu
+            tauri_args: '--target aarch64-unknown-linux-gnu --bundles appimage,updater --verbose'
           - os: ubuntu-latest
             arch: amd64
+            rust_target: x86_64-unknown-linux-gnu
+            tauri_args: '--target x86_64-unknown-linux-gnu --bundles appimage,updater --verbose'
           - os: macos-latest
             arch: universal
+            rust_target: universal-apple-darwin
+            tauri_args: '--target universal-apple-darwin --bundles dmg,updater --verbose'
           - os: windows-latest
             arch: arm64
+            rust_target: aarch64-pc-windows-msvc
+            tauri_args: '--target aarch64-pc-windows-msvc --bundles nsis,updater --verbose'
           - os: windows-latest
             arch: x86
+            rust_target: i686-pc-windows-msvc
+            tauri_args: '--target i686-pc-windows-msvc --bundles nsis,updater --verbose'
           - os: windows-latest
             arch: x86_64
+            rust_target: x86_64-pc-windows-msvc
+            tauri_args: '--target x86_64-pc-windows-msvc --bundles nsis,updater --verbose'
 
     runs-on: ${{ matrix.runner || matrix.os }}
 
@@ -80,24 +92,7 @@ jobs:
           arch: amd64_arm64
 
       - name: Reconfigure Rust targets
-        run: |
-          if [ "${{ matrix.os }}" == "macos-latest" ]; then
-            rustup target add aarch64-apple-darwin x86_64-apple-darwin
-          elif [ "${{ matrix.os }}" == "ubuntu-latest" ]; then
-            if [ "${{ matrix.arch }}" == "arm64" ]; then
-              rustup target add aarch64-unknown-linux-gnu
-            elif [ "${{ matrix.arch }}" == "amd64" ]; then
-              rustup target add x86_64-unknown-linux-gnu
-            fi
-          elif [ "${{ matrix.os }}" == "windows-latest" ]; then
-            if [ "${{ matrix.arch }}" == "x86_64" ]; then
-              rustup target add x86_64-pc-windows-msvc
-            elif [ "${{ matrix.arch }}" == "x86" ]; then
-              rustup target add i686-pc-windows-msvc
-            elif [ "${{ matrix.arch }}" == "arm64" ]; then
-              rustup target add aarch64-pc-windows-msvc
-            fi
-          fi
+        run: rustup target add ${{ matrix.rust_target }}
         shell: bash
 
       - name: Build the app
@@ -119,7 +114,7 @@ jobs:
           releaseDraft: true
           prerelease: false
           updaterJsonKeepUniversal: true
-          args: ${{ matrix.os == 'macos-latest' && '--target universal-apple-darwin --bundles dmg,updater --verbose' || matrix.os == 'ubuntu-latest' && matrix.arch == 'amd64' && '--target x86_64-unknown-linux-gnu --bundles appimage,updater --verbose' || matrix.os == 'ubuntu-latest' && matrix.arch == 'arm64' && '--target aarch64-unknown-linux-gnu --bundles appimage,updater --verbose' || matrix.os == 'windows-latest' && matrix.arch == 'x86_64' && '--target x86_64-pc-windows-msvc --bundles nsis,updater --verbose' || matrix.os == 'windows-latest' && matrix.arch == 'x86' && '--target i686-pc-windows-msvc --bundles nsis,updater --verbose' || matrix.os == 'windows-latest' && matrix.arch == 'arm64' && '--target aarch64-pc-windows-msvc --bundles nsis,updater --verbose' }}
+          args: ${{ matrix.tauri_args }}
 
       - name: Build kftray-tui
         run: |
@@ -128,21 +123,20 @@ jobs:
             cargo build --release --bin kftray-tui --target x86_64-apple-darwin
             lipo -create -output ./target/release/kftray-tui ./target/x86_64-apple-darwin/release/kftray-tui ./target/aarch64-apple-darwin/release/kftray-tui
           else
-            cargo build --release --bin kftray-tui  ${{ matrix.os == 'ubuntu-latest' && matrix.arch == 'amd64' && '--target x86_64-unknown-linux-gnu' || matrix.os == 'ubuntu-latest' && matrix.arch == 'arm64' && '--target aarch64-unknown-linux-gnu' || matrix.os == 'windows-latest' && matrix.arch == 'x86_64' && '--target x86_64-pc-windows-msvc' || matrix.os == 'windows-latest' && matrix.arch == 'x86' && '--target i686-pc-windows-msvc' || matrix.os == 'windows-latest' && matrix.arch == 'arm64' && '--target aarch64-pc-windows-msvc' }}
+            cargo build --release --bin kftray-tui --target ${{ matrix.rust_target }}
           fi
         shell: bash
-
 
       - name: Rename and upload release asset
         run: |
           if [ "${{ matrix.os }}" == "macos-latest" ]; then
             cd target/release
-            mv kftray-tui kftray-tui-macos-universal-${{ github.ref_name }}
-            gh release upload ${{ github.ref_name }} kftray-tui-macos-universal-${{ github.ref_name }} --clobber
+            mv kftray-tui kftray-tui_${{ github.ref_name }}_macos-universal
+            gh release upload ${{ github.ref_name }} kftray-tui_${{ github.ref_name }}_macos-universal --clobber
           else
-            cd target/${{ matrix.os == 'ubuntu-latest' && matrix.arch == 'amd64' && 'x86_64-unknown-linux-gnu' || matrix.os == 'ubuntu-latest' && matrix.arch == 'arm64' && 'aarch64-unknown-linux-gnu' || matrix.os == 'windows-latest' && matrix.arch == 'x86_64' && 'x86_64-pc-windows-msvc' || matrix.os == 'windows-latest' && matrix.arch == 'x86' && 'i686-pc-windows-msvc' || matrix.os == 'windows-latest' && matrix.arch == 'arm64' && 'aarch64-pc-windows-msvc' }}/release
-            mv kftray-tui kftray-tui-${{ github.ref_name }}-${{ matrix.os }}-${{ matrix.arch }}
-            gh release upload ${{ github.ref_name }} kftray-tui-${{ github.ref_name }}-${{ matrix.os }}-${{ matrix.arch }} --clobber
+            cd target/${{ matrix.rust_target }}/release
+            mv kftray-tui kftray-tui_${{ github.ref_name }}_${{ matrix.os }}_${{ matrix.arch }}
+            gh release upload ${{ github.ref_name }} kftray-tui_${{ github.ref_name }}_${{ matrix.os }}_${{ matrix.arch }} --clobber
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
