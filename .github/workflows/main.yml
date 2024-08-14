@@ -84,7 +84,11 @@ jobs:
           if [ "${{ matrix.os }}" == "macos-latest" ]; then
             rustup target add aarch64-apple-darwin x86_64-apple-darwin
           elif [ "${{ matrix.os }}" == "ubuntu-latest" ]; then
-            rustup target add aarch64-unknown-linux-gnu x86_64-unknown-linux-gnu
+            if [ "${{ matrix.arch }}" == "arm64" ]; then
+              rustup target add aarch64-unknown-linux-gnu
+            elif [ "${{ matrix.arch }}" == "amd64" ]; then
+              rustup target add x86_64-unknown-linux-gnu
+            fi
           elif [ "${{ matrix.os }}" == "windows-latest" ]; then
             if [ "${{ matrix.arch }}" == "x86_64" ]; then
               rustup target add x86_64-pc-windows-msvc
@@ -115,7 +119,7 @@ jobs:
           releaseDraft: true
           prerelease: false
           updaterJsonKeepUniversal: true
-          args: ${{ matrix.os == 'macos-latest' && '--target universal-apple-darwin --bundles dmg,updater --verbose' || matrix.os == 'ubuntu-latest' && '--target x86_64-unknown-linux-gnu --bundles appimage,updater --verbose' || matrix.os == 'windows-latest' && '--target x86_64-pc-windows-msvc --bundles nsis,updater --verbose' }}
+          args: ${{ matrix.os == 'macos-latest' && '--target universal-apple-darwin --bundles dmg,updater --verbose' || matrix.os == 'ubuntu-latest' && matrix.arch == 'amd64' && '--target x86_64-unknown-linux-gnu --bundles appimage,updater --verbose' || matrix.os == 'ubuntu-latest' && matrix.arch == 'arm64' && '--target aarch64-unknown-linux-gnu --bundles appimage,updater --verbose' || matrix.os == 'windows-latest' && matrix.arch == 'x86_64' && '--target x86_64-pc-windows-msvc --bundles nsis,updater --verbose' || matrix.os == 'windows-latest' && matrix.arch == 'x86' && '--target i686-pc-windows-msvc --bundles nsis,updater --verbose' || matrix.os == 'windows-latest' && matrix.arch == 'arm64' && '--target aarch64-pc-windows-msvc --bundles nsis,updater --verbose' }}
 
       - name: Build kftray-tui
         run: |
