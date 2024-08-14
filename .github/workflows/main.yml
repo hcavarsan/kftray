@@ -84,7 +84,7 @@ jobs:
           if [ "${{ matrix.os }}" == "macos-latest" ]; then
             rustup target add aarch64-apple-darwin x86_64-apple-darwin
           elif [ "${{ matrix.os }}" == "ubuntu-latest" ]; then
-            rustup target add aarch64-unknown-linux-gnu
+            rustup target add aarch64-unknown-linux-gnu x86_64-unknown-linux-gnu
           elif [ "${{ matrix.os }}" == "windows-latest" ]; then
             if [ "${{ matrix.arch }}" == "x86_64" ]; then
               rustup target add x86_64-pc-windows-msvc
