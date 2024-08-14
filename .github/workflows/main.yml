@@ -128,7 +128,7 @@ jobs:
             cargo build --release --bin kftray-tui --target x86_64-apple-darwin
             lipo -create -output ./target/release/kftray-tui ./target/x86_64-apple-darwin/release/kftray-tui ./target/aarch64-apple-darwin/release/kftray-tui
           else
-            cargo build --release --bin kftray-tui  ${{ matrix.os == 'macos-latest' && '--target universal-apple-darwin --bundles dmg,updater --verbose' || matrix.os == 'ubuntu-latest' && matrix.arch == 'amd64' && '--target x86_64-unknown-linux-gnu --bundles appimage,updater --verbose' || matrix.os == 'ubuntu-latest' && matrix.arch == 'arm64' && '--target aarch64-unknown-linux-gnu --bundles appimage,updater --verbose' || matrix.os == 'windows-latest' && matrix.arch == 'x86_64' && '--target x86_64-pc-windows-msvc --bundles nsis,updater --verbose' || matrix.os == 'windows-latest' && matrix.arch == 'x86' && '--target i686-pc-windows-msvc --bundles nsis,updater --verbose' || matrix.os == 'windows-latest' && matrix.arch == 'arm64' && '--target aarch64-pc-windows-msvc --bundles nsis,updater --verbose' }}
+            cargo build --release --bin kftray-tui  ${{ matrix.os == 'ubuntu-latest' && matrix.arch == 'amd64' && '--target x86_64-unknown-linux-gnu' || matrix.os == 'ubuntu-latest' && matrix.arch == 'arm64' && '--target aarch64-unknown-linux-gnu' || matrix.os == 'windows-latest' && matrix.arch == 'x86_64' && '--target x86_64-pc-windows-msvc' || matrix.os == 'windows-latest' && matrix.arch == 'x86' && '--target i686-pc-windows-msvc' || matrix.os == 'windows-latest' && matrix.arch == 'arm64' && '--target aarch64-pc-windows-msvc' }}
           fi
         shell: bash
 
@@ -140,7 +140,7 @@ jobs:
             mv kftray-tui kftray-tui-macos-universal-${{ github.ref_name }}
             gh release upload ${{ github.ref_name }} kftray-tui-macos-universal-${{ github.ref_name }} --clobber
           else
-            cd target/${{ matrix.os == 'macos-latest' && '--target universal-apple-darwin --bundles dmg,updater --verbose' || matrix.os == 'ubuntu-latest' && matrix.arch == 'amd64' && '--target x86_64-unknown-linux-gnu --bundles appimage,updater --verbose' || matrix.os == 'ubuntu-latest' && matrix.arch == 'arm64' && '--target aarch64-unknown-linux-gnu --bundles appimage,updater --verbose' || matrix.os == 'windows-latest' && matrix.arch == 'x86_64' && '--target x86_64-pc-windows-msvc --bundles nsis,updater --verbose' || matrix.os == 'windows-latest' && matrix.arch == 'x86' && '--target i686-pc-windows-msvc --bundles nsis,updater --verbose' || matrix.os == 'windows-latest' && matrix.arch == 'arm64' && '--target aarch64-pc-windows-msvc --bundles nsis,updater --verbose' }}/release
+            cd target/${{ matrix.os == 'ubuntu-latest' && matrix.arch == 'amd64' && 'x86_64-unknown-linux-gnu' || matrix.os == 'ubuntu-latest' && matrix.arch == 'arm64' && 'aarch64-unknown-linux-gnu' || matrix.os == 'windows-latest' && matrix.arch == 'x86_64' && 'x86_64-pc-windows-msvc' || matrix.os == 'windows-latest' && matrix.arch == 'x86' && 'i686-pc-windows-msvc' || matrix.os == 'windows-latest' && matrix.arch == 'arm64' && 'aarch64-pc-windows-msvc' }}/release
             mv kftray-tui kftray-tui-${{ github.ref_name }}-${{ matrix.os }}-${{ matrix.arch }}
             gh release upload ${{ github.ref_name }} kftray-tui-${{ github.ref_name }}-${{ matrix.os }}-${{ matrix.arch }} -clobber
           fi
