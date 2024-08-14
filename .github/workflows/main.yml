@@ -133,8 +133,13 @@ jobs:
       - name: Rename and upload release asset
         run: |
           cd target/release
-          mv kftray-tui kftray-tui-${{ matrix.os }}-${{ matrix.arch }}-${{ github.ref_name }}
-          gh release upload ${{ github.event.release.tag_name }} kftray-tui-${{ matrix.os }}-${{ matrix.arch }}-${{ github.ref_name }} --clobber
+          if [ "${{ matrix.os }}" == "macos-latest" ]; then
+            mv kftray-tui kftray-tui-macos-universal-${{ github.ref_name }}
+            gh release upload ${{ github.event.release.tag_name }} kftray-tui-macos-universal-${{ github.ref_name }} --clobber
+          else
+            mv kftray-tui kftray-tui-${{ matrix.os }}-${{ matrix.arch }}-${{ github.ref_name }}
+            gh release upload ${{ github.event.release.tag_name }} kftray-tui-${{ matrix.os }}-${{ matrix.arch }}-${{ github.ref_name }} --clobber
+          fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
