@@ -132,17 +132,6 @@ jobs:
           fi
         shell: bash
 
-      - name: List target/release directory contents
-        run: |
-          echo "Listing root directory:"
-          ls -la
-          echo "Listing target directory:"
-          ls -la target/
-          echo "Listing target/release directory:"
-          ls -la target/release
-          echo "Listing target/release subdirectories:"
-          find target/release -type d -print
-        shell: bash
 
       - name: Rename and upload release asset
         run: |
@@ -151,7 +140,7 @@ jobs:
             mv kftray-tui kftray-tui-macos-universal-${{ github.ref_name }}
             gh release upload ${{ github.event.release.tag_name }} kftray-tui-macos-universal-${{ github.ref_name }} --clobber
           else
-            cd target/release/${{ matrix.arch == 'amd64' && 'x86_64-unknown-linux-gnu' || matrix.arch == 'arm64' && 'aarch64-unknown-linux-gnu' || matrix.arch == 'x86_64' && 'x86_64-pc-windows-msvc' || matrix.arch == 'x86' && 'i686-pc-windows-msvc' || matrix.arch == 'arm64' && 'aarch64-pc-windows-msvc' }}
+            cd target/${{ matrix.arch == 'amd64' && 'x86_64-unknown-linux-gnu' || matrix.arch == 'arm64' && 'aarch64-unknown-linux-gnu' || matrix.arch == 'x86_64' && 'x86_64-pc-windows-msvc' || matrix.arch == 'x86' && 'i686-pc-windows-msvc' || matrix.arch == 'arm64' && 'aarch64-pc-windows-msvc' }}/release
             mv kftray-tui kftray-tui-${{ matrix.os }}-${{ matrix.arch }}-${{ github.ref_name }}
             gh release upload ${{ github.event.release.tag_name }} kftray-tui-${{ matrix.os }}-${{ matrix.arch }}-${{ github.ref_name }} --clobber
           fi
