@@ -73,44 +73,44 @@ pub fn draw_ui(f: &mut Frame, app: &mut App, config_states: &[ConfigState]) {
 
     match app.state {
         AppState::ShowHelp => {
-            let help_area = centered_rect(20, 20, size);
+            let help_area = centered_rect(50, 50, size); // 50% width and height of the terminal
             render_background_overlay(f, size);
             render_help_popup(f, help_area);
         }
         AppState::ShowAbout => {
-            let about_area = centered_rect(20, 20, size);
+            let about_area = centered_rect(50, 50, size); // 50% width and height of the terminal
             render_background_overlay(f, size);
             render_about_popup(f, about_area);
         }
         AppState::ImportFileExplorerOpen => {
-            let popup_area = centered_rect(40, 80, size);
+            let popup_area = centered_rect(80, 60, size); // Adjusted size for better responsiveness
             render_background_overlay(f, size);
             draw_file_explorer_popup(f, app, popup_area, true);
         }
         AppState::ExportFileExplorerOpen => {
-            let popup_area = centered_rect(40, 80, size);
+            let popup_area = centered_rect(80, 60, size); // Adjusted size for better responsiveness
             render_background_overlay(f, size);
             draw_file_explorer_popup(f, app, popup_area, false);
         }
         AppState::ShowInputPrompt => {
-            let input_area = centered_rect(20, 20, size);
+            let input_area = centered_rect(40, 20, size); // Adjusted size for better responsiveness
             render_background_overlay(f, size);
             render_input_prompt(f, &app.input_buffer, input_area);
         }
         AppState::ShowConfirmationPopup => {
-            let confirmation_area = centered_rect(30, 20, size);
+            let confirmation_area = centered_rect(50, 30, size); // Adjusted size for better responsiveness
             render_background_overlay(f, size);
             render_confirmation_popup(f, &app.import_export_message, confirmation_area);
         }
         AppState::ShowErrorPopup => {
             if let Some(error_message) = &app.error_message {
-                let error_area = centered_rect(30, 60, size);
+                let error_area = centered_rect(60, 40, size); // Adjusted size for better responsiveness
                 render_background_overlay(f, size);
                 render_error_popup(f, error_message, error_area, 1);
             }
         }
         AppState::ShowDeleteConfirmation => {
-            let delete_area = centered_rect(30, 20, size);
+            let delete_area = centered_rect(50, 30, size); // Adjusted size for better responsiveness
             render_background_overlay(f, size);
             render_delete_confirmation_popup(
                 f,

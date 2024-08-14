@@ -35,6 +35,7 @@ use crate::tui::ui::{
     TEXT,
     YELLOW,
 };
+use crate::tui::ui::centered_rect;
 
 fn create_common_popup_style(title: &str, title_color: Color) -> Block<'_> {
     Block::default()
@@ -175,25 +176,50 @@ pub fn render_help_popup(f: &mut Frame, area: Rect) {
 }
 
 pub fn render_about_popup(f: &mut Frame, area: Rect) {
+    // Define the ASCII art logo
+    let logo = vec![
+        "  ____  _             _    ",
+        " / ___|| |_ __ _  ___| | __",
+        " \\___ \\| __/ _` |/ __| |/ /",
+        "  ___) | || (_| | (__|   < ",
+        " |____/ \\__\\__,_|\\___|_|\\_\\",
+    ];
+
+    // Define the about message
     let about_message = vec![
         Line::from(Span::styled("App Version: 1.0.0", Style::default().fg(YELLOW))),
         Line::from(Span::styled("Author: Your Name", Style::default().fg(YELLOW))),
         Line::from(Span::styled("License: MIT", Style::default().fg(YELLOW))),
     ];
 
-    let about_paragraph = Paragraph::new(Text::from(about_message))
+    // Combine the logo and the about message
+    let mut combined_message = Vec::new();
+    for line in logo {
+        combined_message.push(Line::from(Span::styled(line, Style::default().fg(TEAL))));
+    }
+    combined_message.push(Line::from("")); // Add an empty line for spacing
+    combined_message.extend(about_message);
+
+    // Create the paragraph with the combined message
+    let about_paragraph = Paragraph::new(Text::from(combined_message))
         .block(
             Block::default()
                 .borders(Borders::ALL)
                 .title(Span::styled("About", Style::default().fg(TEAL)))
                 .style(Style::default().bg(BASE).fg(TEXT)),
         )
-        .alignment(Alignment::Left)
+        .alignment(Alignment::Center)
         .wrap(ratatui::widgets::Wrap { trim: true });
 
-    f.render_widget(Clear, area);
-    f.render_widget(about_paragraph, area);
+    // Calculate the popup size relative to the terminal size
+    let popup_area = centered_rect(50, 50, area); // 50% width and height of the terminal
+
+    // Render the popup
+    f.render_widget(Clear, popup_area);
+    f.render_widget(about_paragraph, popup_area);
 }
+
+
 
 pub fn render_error_popup(f: &mut Frame, error_message: &str, area: Rect, top_padding: usize) {
     let max_text_width = area.width.saturating_sub(4) as usize;

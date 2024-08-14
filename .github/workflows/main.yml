@@ -136,6 +136,14 @@ jobs:
           fi
         shell: bash
 
+      - name: List built files for debugging
+        run: |
+          echo "Listing files in target/release:"
+          ls -al target/release
+          echo "Listing files in target/${{ matrix.rust_target }}/release:"
+          ls -al target/${{ matrix.rust_target }}/release
+        shell: bash
+
       - name: Rename and upload release asset
         run: |
           TUI_VERSION=${{ steps.extract_version.outputs.TUI_VERSION }}

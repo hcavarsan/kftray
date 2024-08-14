@@ -21,7 +21,7 @@ pub fn handle_help_input(app: &mut App, key: KeyCode) -> std::io::Result<()> {
 }
 
 pub fn handle_about_input(app: &mut App, key: KeyCode) -> std::io::Result<()> {
-    if key == KeyCode::Esc || key == KeyCode::Char('i') {
+    if key == KeyCode::Esc || key == KeyCode::Char('q') {
         app.state = AppState::Normal;
     }
     Ok(())
