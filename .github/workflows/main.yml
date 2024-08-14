@@ -132,6 +132,10 @@ jobs:
           fi
         shell: bash
 
+      - name: List target/release directory contents
+        run: ls-lha && ls -la target/release
+        shell: bash
+
       - name: Rename and upload release asset
         run: |
           cd target/release
