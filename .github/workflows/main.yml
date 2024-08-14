@@ -16,22 +16,22 @@ jobs:
       contents: write
     strategy:
       matrix:
-        os: [ubuntu-latest, windows-latest]
-        arch: [x86_64, arm64, x86]
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        arch: [arm64, universal, amd64, x86, x86_64]
         include:
+          - os: ubuntu-latest
+            arch: arm64
+            runner: ubicloud-standard-4-arm
           - os: macos-latest
             arch: universal
           - os: ubuntu-latest
             arch: amd64
-          - os: ubuntu-latest
-            arch: arm64
-            runner: ubicloud-standard-4-arm
           - os: windows-latest
-            arch: x86_64
+            arch: arm64
           - os: windows-latest
             arch: x86
           - os: windows-latest
-            arch: arm64
+            arch: x86_64
 
     runs-on: ${{ matrix.runner || matrix.os }}
 
@@ -48,7 +48,7 @@ jobs:
       - name: Install pnpm
         uses: pnpm/action-setup@v3
         with:
-          version: 9.1.2
+          version: 9.6.0
 
       - name: Sync node version and setup cache
         uses: actions/setup-node@v4
