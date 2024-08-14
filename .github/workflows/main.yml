@@ -92,8 +92,17 @@ jobs:
           arch: amd64_arm64
 
       - name: Reconfigure Rust targets
-        run: rustup target add ${{ matrix.rust_target }}
+        run: |
+          if [ "${{ matrix.os }}" == "macos-latest" ]; then
+            rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          else
+            rustup target add ${{ matrix.rust_target }}
+          fi
         shell: bash
+
+      - name: Extract TUI version
+        id: extract_version
+        run: echo "::set-output name=TUI_VERSION::$(cargo metadata --format-version=1 | jq -r '.packages[] | select(.name == "kftray-tui") | .version')"
 
       - name: Build the app
         uses: tauri-apps/tauri-action@v0
@@ -129,14 +138,15 @@ jobs:
 
       - name: Rename and upload release asset
         run: |
+          TUI_VERSION=${{ steps.extract_version.outputs.TUI_VERSION }}
           if [ "${{ matrix.os }}" == "macos-latest" ]; then
             cd target/release
-            mv kftray-tui kftray-tui_${{ github.ref_name }}_macos-universal
-            gh release upload ${{ github.ref_name }} kftray-tui_${{ github.ref_name }}_macos-universal --clobber
+            mv kftray-tui kftray-tui_${TUI_VERSION}_macos-universal
+            gh release upload ${{ github.ref_name }} kftray-tui_${TUI_VERSION}_macos-universal --clobber
           else
             cd target/${{ matrix.rust_target }}/release
-            mv kftray-tui kftray-tui_${{ github.ref_name }}_${{ matrix.os }}_${{ matrix.arch }}
-            gh release upload ${{ github.ref_name }} kftray-tui_${{ github.ref_name }}_${{ matrix.os }}_${{ matrix.arch }} --clobber
+            mv kftray-tui kftray-tui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }}
+            gh release upload ${{ github.ref_name }} kftray-tui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }} --clobber
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
