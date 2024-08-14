@@ -75,6 +75,20 @@ jobs:
           updaterJsonKeepUniversal: true
           args: --target universal-apple-darwin --bundles dmg,updater --verbose
 
+      - name: Build kftray-tui for x86_64
+        run: cargo build --release --bin kftray-tui --target x86_64-apple-darwin
+
+      - name: Build kftray-tui for aarch64
+        run: cargo build --release --bin kftray-tui --target aarch64-apple-darwin
+
+      - name: Create universal binary
+        run: lipo -create -output ./target/release/kftray-tui ./target/x86_64-apple-darwin/release/kftray-tui ./target/aarch64-apple-darwin/release/kftray-tui
+
+      - name: Upload kftray-tui artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: kftray-tui-macos-${{ github.ref_name }}
+          path: ./target/release/kftray-tui
 
   ubuntu-amd64:
     permissions:
@@ -133,6 +147,15 @@ jobs:
           prerelease: false
           updaterJsonKeepUniversal: true
           args: --target x86_64-unknown-linux-gnu --bundles appimage,updater --verbose
+
+      - name: Build kftray-tui
+        run: cargo build --release --bin kftray-tui
+
+      - name: Upload kftray-tui artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: kftray-tui-linux-amd64-${{ github.ref_name }}
+          path: ./target/release/kftray-tui
 
   ubuntu-arm64:
     permissions:
@@ -195,6 +218,15 @@ jobs:
           updaterJsonKeepUniversal: true
           args: --target aarch64-unknown-linux-gnu --bundles appimage,updater --verbose
 
+      - name: Build kftray-tui
+        run: cargo build --release --bin kftray-tui
+
+      - name: Upload kftray-tui artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: kftray-tui-linux-arm64-${{ github.ref_name }}
+          path: ./target/release/kftray-tui
+
   windows-x86_64:
     permissions:
       contents: write
@@ -251,6 +283,15 @@ jobs:
           updaterJsonKeepUniversal: true
           args: --target x86_64-pc-windows-msvc --bundles nsis,updater  --verbose
 
+      - name: Build kftray-tui
+        run: cargo build --release --bin kftray-tui
+
+      - name: Upload kftray-tui artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: kftray-tui-windows-x86_64-${{ github.ref_name }}
+          path: ./target/release/kftray-tui
+
   windows-x86:
     permissions:
       contents: write
@@ -265,7 +306,6 @@ jobs:
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
-
 
       - name: Install pnpm
         uses: pnpm/action-setup@v3
@@ -307,6 +347,15 @@ jobs:
           prerelease: false
           updaterJsonKeepUniversal: true
           args: --target i686-pc-windows-msvc --bundles nsis,updater --verbose
+
+      - name: Build kftray-tui
+        run: cargo build --release --bin kftray-tui
+
+      - name: Upload kftray-tui artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: kftray-tui-windows-x86-${{ github.ref_name }}
+          path: ./target/release/kftray-tui
 
   windows-arm64:
     permissions:
@@ -369,6 +418,15 @@ jobs:
           updaterJsonKeepUniversal: true
           args: --target aarch64-pc-windows-msvc --bundles nsis,updater --verbose
 
+      - name: Build kftray-tui
+        run: cargo build --release --bin kftray-tui
+
+      - name: Upload kftray-tui artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: kftray-tui-windows-arm64-${{ github.ref_name }}
+          path: ./target/release/kftray-tui
+
   build-and-push-docker:
     permissions:
       contents: write
@@ -394,3 +452,101 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/kftray-server:${{ github.sha }}
             ghcr.io/${{ github.repository_owner }}/kftray-server:${{ github.ref_name }}
             ghcr.io/${{ github.repository_owner }}/kftray-server:latest
+
+  upload-release-assets:
+    needs: [macos-universal, ubuntu-amd64, ubuntu-arm64, windows-x86_64, windows-x86, windows-arm64]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v3
+        with:
+          path: ./artifacts
+
+      - name: Check if release exists
+        id: check_release
+        uses: actions/github-script@v6
+        with:
+          script: |
+            const { data: releases } = await github.repos.listReleases({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            });
+            const release = releases.find(r => r.tag_name === process.env.GITHUB_REF_NAME);
+            if (release) {
+              core.setOutput('release_id', release.id);
+            } else {
+              core.setOutput('release_id', '');
+            }
+
+      - name: Create release if not exists
+        if: steps.check_release.outputs.release_id == ''
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref_name }}
+          release_name: "KFtray - ${{ github.ref_name }}"
+          body: "See the assets to download this version and install."
+          draft: true
+          prerelease: false
+
+      - name: Upload kftray-tui macOS artifact
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.check_release.outputs.release_id != '' && steps.check_release.outputs.release_id || steps.create_release.outputs.upload_url }}
+          asset_path: ./artifacts/kftray-tui-macos-${{ github.ref_name }}
+          asset_name: kftray-tui-macos-${{ github.ref_name }}
+          asset_content_type: application/octet-stream
+
+      - name: Upload kftray-tui Linux amd64 artifact
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.check_release.outputs.release_id != '' && steps.check_release.outputs.release_id || steps.create_release.outputs.upload_url }}
+          asset_path: ./artifacts/kftray-tui-linux-amd64-${{ github.ref_name }}
+          asset_name: kftray-tui-linux-amd64-${{ github.ref_name }}
+          asset_content_type: application/octet-stream
+
+      - name: Upload kftray-tui Linux arm64 artifact
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.check_release.outputs.release_id != '' && steps.check_release.outputs.release_id || steps.create_release.outputs.upload_url }}
+          asset_path: ./artifacts/kftray-tui-linux-arm64-${{ github.ref_name }}
+          asset_name: kftray-tui-linux-arm64-${{ github.ref_name }}
+          asset_content_type: application/octet-stream
+
+      - name: Upload kftray-tui Windows x86_64 artifact
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.check_release.outputs.release_id != '' && steps.check_release.outputs.release_id || steps.create_release.outputs.upload_url }}
+          asset_path: ./artifacts/kftray-tui-windows-x86_64-${{ github.ref_name }}
+          asset_name: kftray-tui-windows-x86_64-${{ github.ref_name }}
+          asset_content_type: application/octet-stream
+
+      - name: Upload kftray-tui Windows x86 artifact
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.check_release.outputs.release_id != '' && steps.check_release.outputs.release_id || steps.create_release.outputs.upload_url }}
+          asset_path: ./artifacts/kftray-tui-windows-x86-${{ github.ref_name }}
+          asset_name: kftray-tui-windows-x86-${{ github.ref_name }}
+          asset_content_type: application/octet-stream
+
+      - name: Upload kftray-tui Windows arm64 artifact
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.check_release.outputs.release_id != '' && steps.check_release.outputs.release_id || steps.create_release.outputs.upload_url }}
+          asset_path: ./artifacts/kftray-tui-windows-arm64-${{ github.ref_name }}
+          asset_name: kftray-tui-windows-arm64-${{ github.ref_name }}
+          asset_content_type: application/octet-stream

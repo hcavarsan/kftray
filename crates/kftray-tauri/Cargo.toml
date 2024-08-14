@@ -62,7 +62,6 @@ tempfile = "3.9"
 h2 = { optional = true, version = "0.4.5" }
 fix-path-env = { git = "https://github.com/tauri-apps/fix-path-env-rs" }
 open = "5.3.0"
-native-dialog = "0.7.0"
 
 kftray-portforward = { path = "../kftray-portforward" }
 kftray-commons = { path = "../kftray-commons" }
