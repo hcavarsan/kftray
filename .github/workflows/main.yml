@@ -138,11 +138,11 @@ jobs:
           if [ "${{ matrix.os }}" == "macos-latest" ]; then
             cd target/release
             mv kftray-tui kftray-tui-macos-universal-${{ github.ref_name }}
-            gh release upload ${{ github.event.release.tag_name }} kftray-tui-macos-universal-${{ github.ref_name }} --clobber
+            gh release upload ${{ github.ref_name }} kftray-tui-macos-universal-${{ github.ref_name }} --clobber
           else
             cd target/${{ matrix.arch == 'amd64' && 'x86_64-unknown-linux-gnu' || matrix.arch == 'arm64' && 'aarch64-unknown-linux-gnu' || matrix.arch == 'x86_64' && 'x86_64-pc-windows-msvc' || matrix.arch == 'x86' && 'i686-pc-windows-msvc' || matrix.arch == 'arm64' && 'aarch64-pc-windows-msvc' }}/release
             mv kftray-tui kftray-tui-${{ matrix.os }}-${{ matrix.arch }}-${{ github.ref_name }}
-            gh release upload ${{ github.event.release.tag_name }} kftray-tui-${{ matrix.os }}-${{ matrix.arch }}-${{ github.ref_name }} --clobber
+            gh release upload ${{ github.ref_name }} kftray-tui-${{ matrix.os }}-${{ matrix.arch }}-${{ github.ref_name }} --clobber
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
