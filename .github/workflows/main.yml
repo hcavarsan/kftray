@@ -59,7 +59,7 @@ jobs:
       - name: Install pnpm
         uses: pnpm/action-setup@v3
         with:
-          version: 9.6.0
+          version: 9.1.2
 
       - name: Sync node version and setup cache
         uses: actions/setup-node@v4
@@ -89,7 +89,7 @@ jobs:
       - name: Setup cmake
         uses: jwlawson/actions-setup-cmake@v1.14
         with:
-          cmake-version: "3.28.x"
+          cmake-version: '3.28.x'
 
       - name: Setup platform-specific dependencies
         if: matrix.os == 'ubuntu-latest'
@@ -172,12 +172,40 @@ jobs:
       - name: Cache Rust
         uses: swatinem/rust-cache@v2
 
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9.1.2
+
+      - name: Sync node version and setup cache
+        uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+          cache: "pnpm"
+
+      - name: Cache pnpm modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            $(pnpm store path --silent)
+            **/node_modules
+          key: ${{ runner.OS }}-pnpm-${{ runner.ARCH }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.OS }}-pnpm-${{ runner.ARCH }}-
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
 
       - name: Set up Visual Studio shell
         if: matrix.os == 'windows-latest' && matrix.arch == 'arm64'
         uses: TheMrMilchmann/setup-msvc-dev@v3
         with:
           arch: amd64_arm64
+
+      - name: Setup cmake
+        uses: jwlawson/actions-setup-cmake@v1.14
+        with:
+          cmake-version: '3.28.x'
 
       - name: Setup platform-specific dependencies
         if: matrix.os == 'ubuntu-latest'
@@ -210,9 +238,9 @@ jobs:
         shell: bash
 
       - name: Set up Visual Studio environment
-        if: matrix.os == 'windows-latest' && matrix.arch == 'arm64'
+        if: matrix.os == 'windows-latest'
         run: |
-          set VCVARSALL_PATH=$(vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath)\\VC\\Auxiliary\\Build\\vcvarsall.bat
+          for /f "tokens=*" %%i in ('vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath') do set VCVARSALL_PATH=%%i\VC\Auxiliary\Build\vcvarsall.bat
           call "%VCVARSALL_PATH%" amd64_arm64
         shell: cmd
 
