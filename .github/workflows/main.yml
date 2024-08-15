@@ -100,6 +100,14 @@ jobs:
           fi
         shell: bash
 
+      - name: Setup Visual Studio Environment
+        if: matrix.os == 'windows-latest'
+        run: |
+          echo "Setting up Visual Studio environment"
+          vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+          call "$(vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath)\\VC\\Auxiliary\\Build\\vcvarsall.bat" x64
+        shell: cmd
+
       - name: Extract TUI version
         id: extract_version
         run: echo "::set-output name=TUI_VERSION::$(cargo metadata --format-version=1 | jq -r '.packages[] | select(.name == "kftray-tui") | .version')"
@@ -176,7 +184,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
-
 
   build-and-push-docker:
     permissions:
