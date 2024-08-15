@@ -237,6 +237,13 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -s -k "" build.keychain
         shell: bash
 
+      - name: Set up Visual Studio environment
+        if: matrix.os == 'windows-latest'
+        run: |
+          call "C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\BuildTools\\VC\\Auxiliary\\Build\\vcvarsall.bat" amd64_arm64
+          set PATH=C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\BuildTools\\VC\\Tools\\MSVC\\14.29.30133\\bin\\Hostx64\\arm64;%PATH%
+        shell: cmd
+
       - name: Build kftray-tui
         run: |
           if [ "${{ matrix.os }}" == "macos-latest" ]; then
@@ -247,7 +254,6 @@ jobs:
             cargo build --release --bin kftray-tui --target ${{ matrix.rust_target }}
           fi
         shell: bash
-
 
       - name: Sign and notarize the release build
         if: matrix.os == 'macos-latest'
@@ -274,8 +280,6 @@ jobs:
         with:
           name: kftray-tui-${{ matrix.os }}-${{ matrix.arch }}
           path: target/release/kftray-tui.exe
-
-
 
   upload-artifacts:
     needs: [kftray-tauri, kftray-tui]
