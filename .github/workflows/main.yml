@@ -117,7 +117,7 @@ jobs:
         id: extract_version
         run: echo "::set-output name=TUI_VERSION::$(cargo metadata --format-version=1 | jq -r '.packages[] | select(.name == "kftray-tui") | .version')"
 
-      - name: Build the app
+      - name: Build kftray-tauri Desktop App
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -173,20 +173,24 @@ jobs:
           codesign --deep --force --verbose --sign "${{ secrets.APPLE_SIGNING_IDENTITY }}" ./target/release/kftray-tui
         shell: bash
 
-      - name: Verify kftray-tui binary after signing
+      - name: Create ZIP archive for notarization
         if: matrix.os == 'macos-latest'
         run: |
-          echo "Verifying kftray-tui binary after signing:"
-          codesign --verify --verbose ./target/release/kftray-tui
-          spctl --assess --type execute --verbose ./target/release/kftray-tui
+          cd target/release
+          zip kftray-tui.zip kftray-tui
         shell: bash
 
       - name: Notarize kftray-tui binary
         if: matrix.os == 'macos-latest'
         run: |
-          xcrun altool --notarize-app --primary-bundle-id "com.example.kftray-tui" --username "${{ secrets.APPLE_ID }}" --password "${{ secrets.APPLE_PASSWORD }}" --file ./target/release/kftray-tui
-          # Wait for notarization to complete
-          sleep 300
+          echo "Submitting kftray-tui.zip for notarization..."
+          xcrun notarytool submit kftray-tui.zip --wait --output-format json --apple-id "${{ secrets.APPLE_ID }}" --password "${{ secrets.APPLE_PASSWORD }}" --team-id "${{ secrets.APPLE_TEAM_ID }}"
+        shell: bash
+
+      - name: Staple the notarization ticket
+        if: matrix.os == 'macos-latest'
+        run: |
+          echo "Stapling the notarization ticket..."
           xcrun stapler staple ./target/release/kftray-tui
         shell: bash
 
@@ -195,14 +199,6 @@ jobs:
         run: |
           echo "Verifying kftray-tui binary after notarization:"
           spctl --assess --type execute --verbose ./target/release/kftray-tui
-        shell: bash
-
-      - name: List built files for debugging
-        run: |
-          echo "Listing files in target/release:"
-          ls -al target/release
-          echo "Listing files in target/${{ matrix.rust_target }}/release:"
-          ls -al target/${{ matrix.rust_target }}/release
         shell: bash
 
       - name: Rename and upload release asset
@@ -224,7 +220,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
-
 
   build-and-push-docker:
     permissions:
