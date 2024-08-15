@@ -219,52 +219,19 @@ jobs:
           fi
         shell: bash
 
-      - name: Verify kftray-tui binary before signing
-        if: matrix.os == 'macos-latest'
-        run: |
-          echo "Verifying kftray-tui binary before signing:"
-          file ./target/release/kftray-tui
-        shell: bash
 
-      - name: Create ZIP archive for notarization
+      - name: Sign and notarize the release build
         if: matrix.os == 'macos-latest'
-        run: |
-          cd target/release
-          echo "Contents of target/release before zipping:"
-          ls -la
-          zip kftray-tui.zip kftray-tui
-          echo "Contents of target/release after zipping:"
-          ls -la
-        shell: bash
-
-      - name: Sign binary
-        if: matrix.os == 'macos-latest'
-        uses: lando/code-sign-action@v2
+        uses: toitlang/action-macos-sign-notarize@v1.2.0
         with:
-          file: target/release/kftray-tui
-          certificate-data: ${{ secrets.APPLE_CERTIFICATE }}
+          certificate: ${{ secrets.APPLE_CERTIFICATE }}
           certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          apple-notary-user: ${{ secrets.APPLE_ID }}
-          apple-notary-password: ${{ secrets.APPLE_PASSWORD }}
-          apple-notary-tool: notarytool
-          apple-team-id: ${{ secrets.APPLE_TEAM_ID }}
-          apple-product-id: com.kftray.kftray-tui
-          options: --options runtime --deep --force --verbose
+          username: ${{ secrets.APPLE_ID }}
+          password: ${{ secrets.APPLE_PASSWORD }}
+          apple-team-id: 6M376JWU73
+          app-path: target/release/kftray-tui
+          entitlements-path: crates/kftray-tui/entitlements.plist
 
-      - name: Verify kftray-tui binary notarization
-        if: matrix.os == 'macos-latest'
-        run: |
-          echo "Verifying kftray-tui binary notarization:"
-          codesign --verify --deep --strict --verbose=2 ./target/release/kftray-tui
-        shell: bash
-
-      - name: Upload kftray-tui artifact
-        uses: actions/upload-artifact@v3
-        with:
-          name: kftray-tui-${{ matrix.os }}-${{ matrix.arch }}
-          path: |
-            target/release/kftray-tui*
-            target/${{ matrix.rust_target }}/release/kftray-tui*
 
   upload-artifacts:
     needs: [kftray-tauri, kftray-tui]
