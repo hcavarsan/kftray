@@ -125,6 +125,17 @@ jobs:
           updaterJsonKeepUniversal: true
           args: ${{ matrix.tauri_args }}
 
+      - name: Import Apple Certificate
+        if: matrix.os == 'macos-latest'
+        run: |
+          echo "${{ secrets.APPLE_CERTIFICATE }}" | base64 --decode > certificate.p12
+          security create-keychain -p "" build.keychain
+          security import certificate.p12 -k build.keychain -P "${{ secrets.APPLE_CERTIFICATE_PASSWORD }}" -T /usr/bin/codesign
+          security list-keychains -s build.keychain
+          security unlock-keychain -p "" build.keychain
+          security set-key-partition-list -S apple-tool:,apple: -s -k "" build.keychain
+        shell: bash
+
       - name: Build kftray-tui
         run: |
           if [ "${{ matrix.os }}" == "macos-latest" ]; then
@@ -134,6 +145,12 @@ jobs:
           else
             cargo build --release --bin kftray-tui --target ${{ matrix.rust_target }}
           fi
+        shell: bash
+
+      - name: Sign kftray-tui binary
+        if: matrix.os == 'macos-latest'
+        run: |
+          codesign --deep --force --verbose --sign "${{ secrets.APPLE_SIGNING_IDENTITY }}" ./target/release/kftray-tui
         shell: bash
 
       - name: List built files for debugging
@@ -159,6 +176,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
+
 
   build-and-push-docker:
     permissions:

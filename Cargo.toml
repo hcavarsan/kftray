@@ -4,7 +4,6 @@ members = [
     "crates/kftray-tauri",
 	"crates/kftray-tui",
 	"crates/kftray-portforward",
-    "hacks/kftray-utils",
 ]
 
 resolver = "2"
