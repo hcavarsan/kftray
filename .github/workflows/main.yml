@@ -100,7 +100,7 @@ jobs:
         shell: bash
 
       - name: Setup Visual Studio Environment
-        if: matrix.os == 'windows-latest' && (matrix.arch == 'x86' || matrix.arch == 'x86_64')
+        if: matrix.os == 'windows-latest' && (matrix.arch == 'x86' || matrix.arch == 'x86_64' || matrix.arch == 'arm64')
         run: |
           echo "Setting up Visual Studio environment"
           for /f "tokens=*" %%i in ('vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath') do set vs_install_path=%%i
@@ -113,6 +113,8 @@ jobs:
             call "%vs_install_path%\VC\Auxiliary\Build\vcvarsall.bat" x86
           ) else if "%{{ matrix.arch }}" == "x86_64" (
             call "%vs_install_path%\VC\Auxiliary\Build\vcvarsall.bat" x64
+          ) else if "%{{ matrix.arch }}" == "arm64" (
+            call "%vs_install_path%\VC\Auxiliary\Build\vcvarsall.bat" amd64_arm64
           )
         shell: cmd
 
@@ -226,7 +228,7 @@ jobs:
         shell: bash
 
       - name: Setup Visual Studio Environment
-        if: matrix.os == 'windows-latest' && (matrix.arch == 'x86' || matrix.arch == 'x86_64')
+        if: matrix.os == 'windows-latest' && (matrix.arch == 'x86' || matrix.arch == 'x86_64' || matrix.arch == 'arm64')
         run: |
           echo "Setting up Visual Studio environment"
           for /f "tokens=*" %%i in ('vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath') do set vs_install_path=%%i
@@ -239,6 +241,8 @@ jobs:
             call "%vs_install_path%\VC\Auxiliary\Build\vcvarsall.bat" x86
           ) else if "%{{ matrix.arch }}" == "x86_64" (
             call "%vs_install_path%\VC\Auxiliary\Build\vcvarsall.bat" x64
+          ) else if "%{{ matrix.arch }}" == "arm64" (
+            call "%vs_install_path%\VC\Auxiliary\Build\vcvarsall.bat" amd64_arm64
           )
         shell: cmd
 
