@@ -31,11 +31,6 @@ jobs:
             rust_target: universal-apple-darwin
             tauri_args: '--target universal-apple-darwin --bundles dmg,updater --verbose'
           - os: windows-latest
-            arch: arm64
-            rust_target: aarch64-pc-windows-msvc
-            tauri_args: '--target aarch64-pc-windows-msvc --bundles nsis,updater --verbose'
-            msvc_arch: amd64_arm64
-          - os: windows-latest
             arch: x86
             rust_target: i686-pc-windows-msvc
             tauri_args: '--target i686-pc-windows-msvc --bundles nsis,updater --verbose'
@@ -98,12 +93,6 @@ jobs:
           fi
         shell: bash
 
-      - name: Install dependencies for Windows on ARM64
-        if: matrix.os == 'windows-latest' && matrix.arch == 'arm64'
-        uses: TheMrMilchmann/setup-msvc-dev@v3
-        with:
-          arch: amd64_arm64
-
 
       - name: Extract TUI version
         id: extract_version
@@ -143,10 +132,6 @@ jobs:
           - os: macos-latest
             arch: universal
             rust_target: universal-apple-darwin
-          - os: windows-latest
-            arch: arm64
-            rust_target: aarch64-pc-windows-msvc
-            msvc_arch: amd64_arm64
           - os: windows-latest
             arch: x86
             rust_target: i686-pc-windows-msvc
@@ -210,12 +195,6 @@ jobs:
             rustup target add ${{ matrix.rust_target }}
           fi
         shell: bash
-
-      - name: Install dependencies for Windows on ARM64
-        if: matrix.os == 'windows-latest' && matrix.arch == 'arm64'
-        uses: TheMrMilchmann/setup-msvc-dev@v3
-        with:
-          arch: amd64_arm64
 
 
       - name: Extract TUI version
