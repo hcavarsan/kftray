@@ -177,6 +177,20 @@ jobs:
       - name: Cache Rust
         uses: swatinem/rust-cache@v2
 
+
+      - name: Setup platform-specific dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev
+
+      - name: Setup Windows ARM64 dependencies
+        if: matrix.os == 'windows-latest' && matrix.arch == 'arm64'
+        uses: TheMrMilchmann/setup-msvc-dev@v3
+        with:
+          arch: amd64_arm64
+
+
       - name: Reconfigure Rust targets
         run: |
           if [ "${{ matrix.os }}" == "macos-latest" ]; then
@@ -185,6 +199,24 @@ jobs:
             rustup target add ${{ matrix.rust_target }}
           fi
         shell: bash
+
+
+      - name: Setup Visual Studio Environment
+        if: matrix.os == 'windows-latest'
+        run: |
+          echo "Setting up Visual Studio environment"
+          for /f "tokens=*" %%i in ('vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath') do set vs_install_path=%%i
+          if "%vs_install_path%"=="" (
+            echo "Visual Studio installation not found"
+            exit /b 1
+          )
+          echo "Found Visual Studio at %vs_install_path%"
+          call "%vs_install_path%\VC\Auxiliary\Build\vcvarsall.bat" x64
+        shell: cmd
+
+      - name: Extract TUI version
+        id: extract_version
+        run: echo "::set-output name=TUI_VERSION::$(cargo metadata --format-version=1 | jq -r '.packages[] | select(.name == "kftray-tui") | .version')"
 
       - name: Import Apple Certificate
         if: matrix.os == 'macos-latest'
