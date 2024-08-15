@@ -263,8 +263,11 @@ jobs:
             cargo build --release --bin kftray-tui --target aarch64-apple-darwin
             cargo build --release --bin kftray-tui --target x86_64-apple-darwin
             lipo -create -output ./target/release/kftray-tui ./target/x86_64-apple-darwin/release/kftray-tui ./target/aarch64-apple-darwin/release/kftray-tui
+            chmod -R 755 ./target/release/kftray-tui
           else
             cargo build --release --bin kftray-tui --target ${{ matrix.rust_target }}
+            chmod -R 755 ./target/${{ matrix.rust_target }}/release/kftray-tui* || true
+            chmod -R 755 ./target/release/kftray-tui* || true
           fi
         shell: bash
 
@@ -310,18 +313,11 @@ jobs:
           fi
         shell: bash
 
-      - name: Staple the notarization ticket
+      - name: Verify kftray-tui binary notarization
         if: matrix.os == 'macos-latest'
         run: |
-          echo "Stapling the notarization ticket..."
-          xcrun stapler staple ./target/release/kftray-tui
-        shell: bash
-
-      - name: Verify kftray-tui binary after notarization
-        if: matrix.os == 'macos-latest'
-        run: |
-          echo "Verifying kftray-tui binary after notarization:"
-          spctl --assess --type execute --verbose ./target/release/kftray-tui
+          echo "Verifying kftray-tui binary notarization:"
+          codesign --verify --deep --strict --verbose=2 ./target/release/kftray-tui
         shell: bash
 
       - name: Upload kftray-tui artifact
