@@ -22,8 +22,13 @@ use ratatui::{
     Frame,
 };
 
+use crate::core::built_info;
 use crate::tui::input::DeleteButton;
 use crate::tui::ui::centered_rect;
+use crate::tui::ui::{
+    resize_ascii_art,
+    ASCII_LOGO,
+};
 use crate::tui::ui::{
     BASE,
     CRUST,
@@ -36,7 +41,6 @@ use crate::tui::ui::{
     TEXT,
     YELLOW,
 };
-
 fn create_common_popup_style(title: &str, title_color: Color) -> Block<'_> {
     Block::default()
         .borders(Borders::ALL)
@@ -176,37 +180,30 @@ pub fn render_help_popup(f: &mut Frame, area: Rect) {
 }
 
 pub fn render_about_popup(f: &mut Frame, area: Rect) {
-    // Define the ASCII art logo
-    let logo = vec![
-        "  ____  _             _    ",
-        " / ___|| |_ __ _  ___| | __",
-        " \\___ \\| __/ _` |/ __| |/ /",
-        "  ___) | || (_| | (__|   < ",
-        " |____/ \\__\\__,_|\\___|_|\\_\\",
-    ];
+    let resized_logo = resize_ascii_art(ASCII_LOGO, 1.0);
 
-    // Define the about message
     let about_message = vec![
         Line::from(Span::styled(
-            "App Version: 1.0.0",
+            format!("App Version: {}", built_info::PKG_VERSION),
             Style::default().fg(YELLOW),
         )),
         Line::from(Span::styled(
-            "Author: Your Name",
+            format!("Author: {}", built_info::PKG_AUTHORS),
             Style::default().fg(YELLOW),
         )),
-        Line::from(Span::styled("License: MIT", Style::default().fg(YELLOW))),
+        Line::from(Span::styled(
+            format!("License: {}", built_info::PKG_LICENSE),
+            Style::default().fg(YELLOW),
+        )),
     ];
 
-    // Combine the logo and the about message
     let mut combined_message = Vec::new();
-    for line in logo {
+    for line in resized_logo {
         combined_message.push(Line::from(Span::styled(line, Style::default().fg(TEAL))));
     }
-    combined_message.push(Line::from("")); // Add an empty line for spacing
+    combined_message.push(Line::from(""));
     combined_message.extend(about_message);
 
-    // Create the paragraph with the combined message
     let about_paragraph = Paragraph::new(Text::from(combined_message))
         .block(
             Block::default()
@@ -217,10 +214,7 @@ pub fn render_about_popup(f: &mut Frame, area: Rect) {
         .alignment(Alignment::Center)
         .wrap(ratatui::widgets::Wrap { trim: true });
 
-    // Calculate the popup size relative to the terminal size
-    let popup_area = centered_rect(50, 50, area); // 50% width and height of the terminal
-
-    // Render the popup
+    let popup_area = centered_rect(80, 80, area);
     f.render_widget(Clear, popup_area);
     f.render_widget(about_paragraph, popup_area);
 }
@@ -262,6 +256,7 @@ pub fn render_error_popup(f: &mut Frame, error_message: &str, area: Rect, top_pa
 
     f.render_widget(close_button, button_area);
 }
+
 fn wrap_text(text: &str, max_width: usize) -> Text {
     let mut wrapped_lines = Vec::new();
     for line in text.lines() {

@@ -9,6 +9,8 @@ license = "MIT"
 homepage = "https://kftray.app"
 repository = "https://github.com/hcavarsan/kftray"
 edition = "2021"
+build = "build.rs"
+
 
 [dependencies]
 
@@ -57,4 +59,11 @@ ratatui = { version = "0.26", features = ["unstable-widget-ref"] }
 crossterm = { version = "0.27", optional = false }
 ratatui-explorer = "0.1.1"
 once_cell = "1.10"
+ascii_converter = "0.3.0"
+image = "0.25.2"
+resvg = "0.43.0"
+built = "0.7.4"
 
+
+[build-dependencies]
+built = "0.7"

@@ -1,6 +1,11 @@
+use std::io::Write;
 use std::sync::Arc;
 
+use crossterm::execute;
+use crossterm::terminal::disable_raw_mode;
+use crossterm::terminal::LeaveAlternateScreen;
 use kftray_commons::models::config_model::Config;
+use kftray_portforward::core::stop_all_port_forward;
 use kftray_portforward::core::{
     deploy_and_forward_pod,
     start_port_forward,
@@ -76,4 +81,29 @@ pub async fn stop_port_forwarding(app: &mut App, config: Config) {
         }
         _ => {}
     }
+}
+
+pub async fn stop_all_port_forward_and_exit(app: &mut App) {
+    log::info!("Stopping all port forwards...");
+    match stop_all_port_forward().await {
+        Ok(responses) => {
+            for response in responses {
+                if response.status != 0 {
+                    error!("Error stopping port forward: {:?}", response.stderr);
+                }
+            }
+        }
+        Err(e) => {
+            error!("Failed to stop all port forwards: {:?}", e);
+            app.error_message = Some(format!("Failed to stop all port forwards: {:?}", e));
+            app.state = AppState::ShowErrorPopup;
+        }
+    }
+    log::info!("Exiting application...");
+
+    disable_raw_mode().expect("Failed to disable raw mode");
+    execute!(std::io::stdout(), LeaveAlternateScreen).expect("Failed to leave alternate screen");
+    std::io::stdout().flush().expect("Failed to flush stdout");
+
+    std::process::exit(0);
 }

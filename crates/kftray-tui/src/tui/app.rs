@@ -12,7 +12,10 @@ use crossterm::{
 use kftray_commons::config::read_configs;
 use kftray_commons::utils::config_state::read_config_states;
 use kftray_commons::utils::db::init;
-use log::error;
+use log::{
+    error,
+    info,
+};
 use ratatui::{
     backend::CrosstermBackend,
     Terminal,
@@ -23,6 +26,7 @@ use crate::tui::input::{
     App,
 };
 use crate::tui::ui::draw_ui;
+
 pub async fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
     init().await?;
 
@@ -44,6 +48,7 @@ pub async fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
         error!("{:?}", err);
     }
 
+    info!("run_tui completed.");
     Ok(())
 }
 

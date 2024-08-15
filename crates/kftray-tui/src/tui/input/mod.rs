@@ -28,6 +28,7 @@ use ratatui_explorer::{
 };
 
 use crate::core::logging::LOGGER;
+use crate::core::port_forward::stop_all_port_forward_and_exit;
 use crate::tui::input::navigation::handle_port_forward;
 
 #[derive(PartialEq, Clone, Copy)]
@@ -225,7 +226,7 @@ pub async fn handle_input(app: &mut App, _config_states: &mut [ConfigState]) -> 
     if event::poll(std::time::Duration::from_millis(100))? {
         if let Event::Key(key) = event::read()? {
             if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
-                return Ok(true);
+                stop_all_port_forward_and_exit(app).await;
             }
 
             match app.state {
@@ -283,7 +284,7 @@ async fn handle_normal_input(app: &mut App, key: KeyCode) -> io::Result<()> {
                 1 => open_import_file_explorer(app),
                 2 => open_export_file_explorer(app),
                 3 => app.state = AppState::ShowAbout,
-                4 => return Ok(()),
+                4 => stop_all_port_forward_and_exit(app).await,
                 _ => {}
             },
             _ => {}

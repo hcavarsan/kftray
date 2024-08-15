@@ -1,7 +1,4 @@
-use log::{
-    error,
-    info,
-};
+use log::error;
 use sqlx::Row;
 
 use crate::db::get_db_pool;
@@ -22,8 +19,6 @@ pub async fn update_config_state(config_state: &ConfigState) -> Result<(), Strin
 }
 
 pub async fn read_config_states() -> Result<Vec<ConfigState>, sqlx::Error> {
-    info!("Starting to read config states");
-
     let pool = get_db_pool().await.map_err(|e| {
         error!("Failed to get database pool: {}", e);
         sqlx::Error::Configuration(e.into())
@@ -62,7 +57,6 @@ pub async fn read_config_states() -> Result<Vec<ConfigState>, sqlx::Error> {
         })
         .collect::<Result<Vec<_>, sqlx::Error>>()?;
 
-    info!("Successfully read config states");
     Ok(config_states)
 }
 
