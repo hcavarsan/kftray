@@ -104,8 +104,13 @@ jobs:
         if: matrix.os == 'windows-latest'
         run: |
           echo "Setting up Visual Studio environment"
-          vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
-          call "$(vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath)\\VC\\Auxiliary\\Build\\vcvarsall.bat" x64
+          vs_install_path=$(vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath)
+          if [ -z "$vs_install_path" ]; then
+            echo "Visual Studio installation not found"
+            exit 0
+          fi
+          echo "Found Visual Studio at $vs_install_path"
+          call "$vs_install_path\\VC\\Auxiliary\\Build\\vcvarsall.bat" x64
         shell: cmd
 
       - name: Extract TUI version
