@@ -212,6 +212,7 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -s -k "" build.keychain
         shell: bash
 
+
       - name: Build kftray-tui
         run: |
           if [ "${{ matrix.os }}" == "macos-latest" ]; then
@@ -230,14 +231,6 @@ jobs:
           file ./target/release/kftray-tui
         shell: bash
 
-      - name: Sign kftray-tui binary
-        if: matrix.os == 'macos-latest'
-        run: |
-          echo "Signing kftray-tui binary..."
-          codesign --force --verbose --verbose=4  --options runtime --entitlements crates/kftray-tui/entitlements.plist --sign "${{ secrets.APPLE_SIGNING_IDENTITY }}" ./target/release/kftray-tui
-
-        shell: bash
-
       - name: Create ZIP archive for notarization
         if: matrix.os == 'macos-latest'
         run: |
@@ -249,21 +242,22 @@ jobs:
           ls -la
         shell: bash
 
-      - name: Notarize kftray-tui binary
+
+      - name: Sign binary
         if: matrix.os == 'macos-latest'
-        run: |
-          echo "Submitting kftray-tui.zip for notarization..."
-          xcrun notarytool submit target/release/kftray-tui.zip --wait --output-format json --apple-id "${{ secrets.APPLE_ID }}" --password "${{ secrets.APPLE_PASSWORD }}" --team-id "${{ secrets.APPLE_TEAM_ID }}" > notarization_result.json
-          cat notarization_result.json
-          NOTARIZATION_ID=$(jq -r '.id' notarization_result.json)
-          NOTARIZATION_STATUS=$(jq -r '.status' notarization_result.json)
-          if [ "$NOTARIZATION_STATUS" != "Accepted" ]; then
-            echo "Fetching notarization logs..."
-            xcrun notarytool log $NOTARIZATION_ID --apple-id "${{ secrets.APPLE_ID }}" --password "${{ secrets.APPLE_PASSWORD }}" --team-id "${{ secrets.APPLE_TEAM_ID }}" > notarization_log.json
-            cat notarization_log.json
-            exit 1
-          fi
-        shell: bash
+        uses: lando/code-sign-action@v2
+        with:
+          file: ./target/release/kftray-tui.zip
+          certificate-data: ${{ secrets.APPLE_CERTIFICATE }}
+          certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          apple-notary-user: ${{ secrets.APPLE_ID }}
+          apple-notary-password: ${{ secrets.APPLE_PASSWORD }}
+          apple-notary-tool: notarytool
+          apple-team-id: ${{ secrets.APPLE_TEAM_ID }}
+          apple-product-id: com.kftray.kftray-tui
+          options: --options runtime --entitlements crates/kftray-tui/entitlements.plist
+
+
 
       - name: Verify kftray-tui binary notarization
         if: matrix.os == 'macos-latest'
