@@ -177,14 +177,18 @@ jobs:
         if: matrix.os == 'macos-latest'
         run: |
           cd target/release
+          echo "Contents of target/release before zipping:"
+          ls -la
           zip kftray-tui.zip kftray-tui
+          echo "Contents of target/release after zipping:"
+          ls -la
         shell: bash
 
       - name: Notarize kftray-tui binary
         if: matrix.os == 'macos-latest'
         run: |
           echo "Submitting kftray-tui.zip for notarization..."
-          xcrun notarytool submit kftray-tui.zip --wait --output-format json --apple-id "${{ secrets.APPLE_ID }}" --password "${{ secrets.APPLE_PASSWORD }}" --team-id "${{ secrets.APPLE_TEAM_ID }}"
+          xcrun notarytool submit target/release/kftray-tui.zip --wait --output-format json --apple-id "${{ secrets.APPLE_ID }}" --password "${{ secrets.APPLE_PASSWORD }}" --team-id "${{ secrets.APPLE_TEAM_ID }}"
         shell: bash
 
       - name: Staple the notarization ticket
