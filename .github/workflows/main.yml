@@ -160,10 +160,41 @@ jobs:
           fi
         shell: bash
 
+      - name: Verify kftray-tui binary before signing
+        if: matrix.os == 'macos-latest'
+        run: |
+          echo "Verifying kftray-tui binary before signing:"
+          file ./target/release/kftray-tui
+        shell: bash
+
       - name: Sign kftray-tui binary
         if: matrix.os == 'macos-latest'
         run: |
           codesign --deep --force --verbose --sign "${{ secrets.APPLE_SIGNING_IDENTITY }}" ./target/release/kftray-tui
+        shell: bash
+
+      - name: Verify kftray-tui binary after signing
+        if: matrix.os == 'macos-latest'
+        run: |
+          echo "Verifying kftray-tui binary after signing:"
+          codesign --verify --verbose ./target/release/kftray-tui
+          spctl --assess --type execute --verbose ./target/release/kftray-tui
+        shell: bash
+
+      - name: Notarize kftray-tui binary
+        if: matrix.os == 'macos-latest'
+        run: |
+          xcrun altool --notarize-app --primary-bundle-id "com.example.kftray-tui" --username "${{ secrets.APPLE_ID }}" --password "${{ secrets.APPLE_PASSWORD }}" --file ./target/release/kftray-tui
+          # Wait for notarization to complete
+          sleep 300
+          xcrun stapler staple ./target/release/kftray-tui
+        shell: bash
+
+      - name: Verify kftray-tui binary after notarization
+        if: matrix.os == 'macos-latest'
+        run: |
+          echo "Verifying kftray-tui binary after notarization:"
+          spctl --assess --type execute --verbose ./target/release/kftray-tui
         shell: bash
 
       - name: List built files for debugging
@@ -181,6 +212,10 @@ jobs:
             cd target/release
             mv kftray-tui kftray-tui_${TUI_VERSION}_macos-universal
             gh release upload ${{ github.ref_name }} kftray-tui_${TUI_VERSION}_macos-universal --clobber
+          elif [ "${{ matrix.os }}" == "windows-latest" ]; then
+            cd target/${{ matrix.rust_target }}/release
+            mv kftray-tui.exe kftray-tui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }}.exe
+            gh release upload ${{ github.ref_name }} kftray-tui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }}.exe --clobber
           else
             cd target/${{ matrix.rust_target }}/release
             mv kftray-tui kftray-tui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }}
@@ -189,6 +224,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
+
 
   build-and-push-docker:
     permissions:
