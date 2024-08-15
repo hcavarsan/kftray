@@ -11,7 +11,7 @@ env:
   TAURI_DEBUG: 'false'
 
 jobs:
-  build:
+  kftray-tauri:
     permissions:
       contents: write
     strategy:
@@ -139,7 +139,6 @@ jobs:
           args: ${{ matrix.tauri_args }}
 
   kftray-tui:
-    needs: build
     strategy:
       matrix:
         include:
@@ -163,6 +162,10 @@ jobs:
             rust_target: x86_64-pc-windows-msvc
 
     runs-on: ${{ matrix.os }}
+
+    outputs:
+      os: ${{ matrix.os }}
+      arch: ${{ matrix.arch }}
 
     steps:
       - name: Checkout repository
@@ -268,8 +271,8 @@ jobs:
             target/release/kftray-tui*
             target/${{ matrix.rust_target }}/release/kftray-tui*
 
-  rename-and-upload:
-    needs: [build, kftray-tui]
+  upload-artifacts:
+    needs: [kftray-tauri, kftray-tui]
     runs-on: ubuntu-latest
 
     steps:
@@ -279,7 +282,7 @@ jobs:
       - name: Download kftray-tui artifacts
         uses: actions/download-artifact@v3
         with:
-          name: kftray-tui-${{ matrix.os }}-${{ matrix.arch }}
+          name: kftray-tui-${{ needs.kftray-tui.outputs.os }}-${{ needs.kftray-tui.outputs.arch }}
           path: ./artifacts
 
       - name: Extract TUI version
@@ -289,21 +292,21 @@ jobs:
       - name: Rename and upload release asset
         run: |
           TUI_VERSION=${{ steps.extract_version.outputs.TUI_VERSION }}
-          if [ "${{ matrix.os }}" == "macos-latest" ]; then
+          if [ "${{ needs.kftray-tui.outputs.os }}" == "macos-latest" ]; then
             mv ./artifacts/kftray-tui ./artifacts/kftray-tui_${TUI_VERSION}_macos-universal
             gh release upload ${{ github.ref_name }} ./artifacts/kftray-tui_${TUI_VERSION}_macos-universal --clobber
-          elif [ "${{ matrix.os }}" == "windows-latest" ]; then
-            mv ./artifacts/kftray-tui.exe ./artifacts/kftray-tui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }}.exe
-            gh release upload ${{ github.ref_name }} ./artifacts/kftray-tui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }}.exe --clobber
+          elif [ "${{ needs.kftray-tui.outputs.os }}" == "windows-latest" ]; then
+            mv ./artifacts/kftray-tui.exe ./artifacts/kftray-tui_${TUI_VERSION}_${{ needs.kftray-tui.outputs.os }}_${{ needs.kftray-tui.outputs.arch }}.exe
+            gh release upload ${{ github.ref_name }} ./artifacts/kftray-tui_${TUI_VERSION}_${{ needs.kftray-tui.outputs.os }}_${{ needs.kftray-tui.outputs.arch }}.exe --clobber
           else
-            mv ./artifacts/kftray-tui ./artifacts/kftray-tui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }}
-            gh release upload ${{ github.ref_name }} ./artifacts/kftray-tui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }} --clobber
+            mv ./artifacts/kftray-tui ./artifacts/kftray-tui_${TUI_VERSION}_${{ needs.kftray-tui.outputs.os }}_${{ needs.kftray-tui.outputs.arch }}
+            gh release upload ${{ github.ref_name }} ./artifacts/kftray-tui_${TUI_VERSION}_${{ needs.kftray-tui.outputs.os }}_${{ needs.kftray-tui.outputs.arch }} --clobber
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
 
-  build-and-push-docker:
+  kftray-server:
     permissions:
       contents: write
       packages: write
