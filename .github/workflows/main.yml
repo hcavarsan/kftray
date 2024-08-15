@@ -34,14 +34,17 @@ jobs:
             arch: arm64
             rust_target: aarch64-pc-windows-msvc
             tauri_args: '--target aarch64-pc-windows-msvc --bundles nsis,updater --verbose'
+            msvc_arch: amd64_arm64
           - os: windows-latest
             arch: x86
             rust_target: i686-pc-windows-msvc
             tauri_args: '--target i686-pc-windows-msvc --bundles nsis,updater --verbose'
+            msvc_arch: x86
           - os: windows-latest
             arch: x86_64
             rust_target: x86_64-pc-windows-msvc
             tauri_args: '--target x86_64-pc-windows-msvc --bundles nsis,updater --verbose'
+            msvc_arch: x64
 
     runs-on: ${{ matrix.runner || matrix.os }}
     steps:
@@ -84,11 +87,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev
 
-      - name: Setup Windows ARM64 dependencies
-        if: matrix.os == 'windows-latest' && matrix.arch == 'arm64'
+      - name: Setup Windows dependencies
+        if: matrix.os == 'windows-latest'
         uses: TheMrMilchmann/setup-msvc-dev@v3
         with:
-          arch: amd64_arm64
+          arch: ${{ matrix.msvc_arch }}
+          sdk: '10.0.10240.0'
+          toolset: '14.11'
+          export-path-to-vcvarsall: VC_VARS_PATH
+          export-path-to-vs: VS_PATH
 
       - name: Reconfigure Rust targets
         run: |
@@ -159,12 +166,15 @@ jobs:
           - os: windows-latest
             arch: arm64
             rust_target: aarch64-pc-windows-msvc
+            msvc_arch: amd64_arm64
           - os: windows-latest
             arch: x86
             rust_target: i686-pc-windows-msvc
+            msvc_arch: x86
           - os: windows-latest
             arch: x86_64
             rust_target: x86_64-pc-windows-msvc
+            msvc_arch: x64
 
     runs-on: ${{ matrix.runner || matrix.os }}
 
@@ -212,12 +222,15 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev
 
-      - name: Setup Windows ARM64 dependencies
-        if: matrix.os == 'windows-latest' && matrix.arch == 'arm64'
+      - name: Setup Windows dependencies
+        if: matrix.os == 'windows-latest'
         uses: TheMrMilchmann/setup-msvc-dev@v3
         with:
-          arch: amd64_arm64
-
+          arch: ${{ matrix.msvc_arch }}
+          sdk: '10.0.10240.0'
+          toolset: '14.11'
+          export-path-to-vcvarsall: VC_VARS_PATH
+          export-path-to-vs: VS_PATH
       - name: Reconfigure Rust targets
         run: |
           if [ "${{ matrix.os }}" == "macos-latest" ]; then
@@ -227,24 +240,7 @@ jobs:
           fi
         shell: bash
 
-      - name: Setup Visual Studio Environment
-        if: matrix.os == 'windows-latest' && (matrix.arch == 'x86' || matrix.arch == 'x86_64' || matrix.arch == 'arm64')
-        run: |
-          echo "Setting up Visual Studio environment"
-          for /f "tokens=*" %%i in ('vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath') do set vs_install_path=%%i
-          if "%vs_install_path%"=="" (
-            echo "Visual Studio installation not found"
-            exit /b 1
-          )
-          echo "Found Visual Studio at %vs_install_path%"
-          if "%{{ matrix.arch }}" == "x86" (
-            call "%vs_install_path%\VC\Auxiliary\Build\vcvarsall.bat" x86
-          ) else if "%{{ matrix.arch }}" == "x86_64" (
-            call "%vs_install_path%\VC\Auxiliary\Build\vcvarsall.bat" x64
-          ) else if "%{{ matrix.arch }}" == "arm64" (
-            call "%vs_install_path%\VC\Auxiliary\Build\vcvarsall.bat" amd64_arm64
-          )
-        shell: cmd
+
 
       - name: Extract TUI version
         id: extract_version
