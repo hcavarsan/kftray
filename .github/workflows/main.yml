@@ -138,6 +138,51 @@ jobs:
           updaterJsonKeepUniversal: true
           args: ${{ matrix.tauri_args }}
 
+  kftray-tui:
+    needs: build
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: arm64
+            rust_target: aarch64-unknown-linux-gnu
+          - os: ubuntu-latest
+            arch: amd64
+            rust_target: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            arch: universal
+            rust_target: universal-apple-darwin
+          - os: windows-latest
+            arch: arm64
+            rust_target: aarch64-pc-windows-msvc
+          - os: windows-latest
+            arch: x86
+            rust_target: i686-pc-windows-msvc
+          - os: windows-latest
+            arch: x86_64
+            rust_target: x86_64-pc-windows-msvc
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: swatinem/rust-cache@v2
+
+      - name: Reconfigure Rust targets
+        run: |
+          if [ "${{ matrix.os }}" == "macos-latest" ]; then
+            rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          else
+            rustup target add ${{ matrix.rust_target }}
+          fi
+        shell: bash
+
       - name: Import Apple Certificate
         if: matrix.os == 'macos-latest'
         run: |
@@ -170,7 +215,8 @@ jobs:
       - name: Sign kftray-tui binary
         if: matrix.os == 'macos-latest'
         run: |
-          codesign --deep --force --verbose --sign "${{ secrets.APPLE_SIGNING_IDENTITY }}" ./target/release/kftray-tui
+          echo "Signing kftray-tui binary..."
+          codesign --force --verbose --entitlements crates/kftray-tui/entitlements.plist --sign "${{ secrets.APPLE_SIGNING_IDENTITY }}" ./target/release/kftray-tui
         shell: bash
 
       - name: Create ZIP archive for notarization
@@ -188,7 +234,16 @@ jobs:
         if: matrix.os == 'macos-latest'
         run: |
           echo "Submitting kftray-tui.zip for notarization..."
-          xcrun notarytool submit target/release/kftray-tui.zip --wait --output-format json --apple-id "${{ secrets.APPLE_ID }}" --password "${{ secrets.APPLE_PASSWORD }}" --team-id "${{ secrets.APPLE_TEAM_ID }}"
+          xcrun notarytool submit target/release/kftray-tui.zip --wait --output-format json --apple-id "${{ secrets.APPLE_ID }}" --password "${{ secrets.APPLE_PASSWORD }}" --team-id "${{ secrets.APPLE_TEAM_ID }}" > notarization_result.json
+          cat notarization_result.json
+          NOTARIZATION_ID=$(jq -r '.id' notarization_result.json)
+          NOTARIZATION_STATUS=$(jq -r '.status' notarization_result.json)
+          if [ "$NOTARIZATION_STATUS" != "Accepted" ]; then
+            echo "Fetching notarization logs..."
+            xcrun notarytool log $NOTARIZATION_ID --apple-id "${{ secrets.APPLE_ID }}" --password "${{ secrets.APPLE_PASSWORD }}" --team-id "${{ secrets.APPLE_TEAM_ID }}" > notarization_log.json
+            cat notarization_log.json
+            exit 1
+          fi
         shell: bash
 
       - name: Staple the notarization ticket
@@ -205,21 +260,44 @@ jobs:
           spctl --assess --type execute --verbose ./target/release/kftray-tui
         shell: bash
 
+      - name: Upload kftray-tui artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: kftray-tui-${{ matrix.os }}-${{ matrix.arch }}
+          path: |
+            target/release/kftray-tui*
+            target/${{ matrix.rust_target }}/release/kftray-tui*
+
+  rename-and-upload:
+    needs: [build, kftray-tui]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download kftray-tui artifacts
+        uses: actions/download-artifact@v3
+        with:
+          name: kftray-tui-${{ matrix.os }}-${{ matrix.arch }}
+          path: ./artifacts
+
+      - name: Extract TUI version
+        id: extract_version
+        run: echo "::set-output name=TUI_VERSION::$(cargo metadata --format-version=1 | jq -r '.packages[] | select(.name == "kftray-tui") | .version')"
+
       - name: Rename and upload release asset
         run: |
           TUI_VERSION=${{ steps.extract_version.outputs.TUI_VERSION }}
           if [ "${{ matrix.os }}" == "macos-latest" ]; then
-            cd target/release
-            mv kftray-tui kftray-tui_${TUI_VERSION}_macos-universal
-            gh release upload ${{ github.ref_name }} kftray-tui_${TUI_VERSION}_macos-universal --clobber
+            mv ./artifacts/kftray-tui ./artifacts/kftray-tui_${TUI_VERSION}_macos-universal
+            gh release upload ${{ github.ref_name }} ./artifacts/kftray-tui_${TUI_VERSION}_macos-universal --clobber
           elif [ "${{ matrix.os }}" == "windows-latest" ]; then
-            cd target/${{ matrix.rust_target }}/release
-            mv kftray-tui.exe kftray-tui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }}.exe
-            gh release upload ${{ github.ref_name }} kftray-tui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }}.exe --clobber
+            mv ./artifacts/kftray-tui.exe ./artifacts/kftray-tui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }}.exe
+            gh release upload ${{ github.ref_name }} ./artifacts/kftray-tui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }}.exe --clobber
           else
-            cd target/${{ matrix.rust_target }}/release
-            mv kftray-tui kftray-tui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }}
-            gh release upload ${{ github.ref_name }} kftray-tui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }} --clobber
+            mv ./artifacts/kftray-tui ./artifacts/kftray-tui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }}
+            gh release upload ${{ github.ref_name }} ./artifacts/kftray-tui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }} --clobber
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
