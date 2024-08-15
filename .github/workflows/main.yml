@@ -241,7 +241,7 @@ jobs:
         if: matrix.os == 'macos-latest'
         uses: lando/code-sign-action@v2
         with:
-          file: ./target/release/kftray-tui.zip
+          file: target/release/kftray-tui
           certificate-data: ${{ secrets.APPLE_CERTIFICATE }}
           certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           apple-notary-user: ${{ secrets.APPLE_ID }}
