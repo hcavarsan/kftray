@@ -292,7 +292,7 @@ jobs:
 
       - name: Rename and upload release asset
         run: |
-          TUI_VERSION=${{ env.TUI_VERSION }}
+          TUI_VERSION=$TUI_VERSION
           if [ "${{ needs.kftray-tui.outputs.os }}" == "macos-latest" ]; then
             mv ./artifacts/kftray-tui ./artifacts/kftray-tui_${TUI_VERSION}_macos-universal
             chmod +x ./artifacts/kftray-tui_${TUI_VERSION}_macos-universal
