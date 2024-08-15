@@ -44,7 +44,6 @@ jobs:
             tauri_args: '--target x86_64-pc-windows-msvc --bundles nsis,updater --verbose'
 
     runs-on: ${{ matrix.runner || matrix.os }}
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -116,7 +115,6 @@ jobs:
       - name: Extract TUI version
         id: extract_version
         run: echo "::set-output name=TUI_VERSION::$(cargo metadata --format-version=1 | jq -r '.packages[] | select(.name == "kftray-tui") | .version')"
-
       - name: Build kftray-tauri Desktop App
         uses: tauri-apps/tauri-action@v0
         env:
@@ -177,6 +175,29 @@ jobs:
       - name: Cache Rust
         uses: swatinem/rust-cache@v2
 
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9.1.2
+
+      - name: Sync node version and setup cache
+        uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+          cache: "pnpm"
+
+      - name: Cache pnpm modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            $(pnpm store path --silent)
+            **/node_modules
+          key: ${{ runner.OS }}-pnpm-${{ runner.ARCH }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.OS }}-pnpm-${{ runner.ARCH }}-
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
 
       - name: Setup platform-specific dependencies
         if: matrix.os == 'ubuntu-latest'
@@ -190,7 +211,6 @@ jobs:
         with:
           arch: amd64_arm64
 
-
       - name: Reconfigure Rust targets
         run: |
           if [ "${{ matrix.os }}" == "macos-latest" ]; then
@@ -199,7 +219,6 @@ jobs:
             rustup target add ${{ matrix.rust_target }}
           fi
         shell: bash
-
 
       - name: Setup Visual Studio Environment
         if: matrix.os == 'windows-latest'
