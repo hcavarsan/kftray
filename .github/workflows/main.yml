@@ -14,6 +14,7 @@ jobs:
   build:
     permissions:
       contents: write
+      pull-requests: write
     strategy:
       matrix:
         include:
