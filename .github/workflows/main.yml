@@ -218,11 +218,8 @@ jobs:
             cargo build --release --bin kftray-tui --target aarch64-apple-darwin
             cargo build --release --bin kftray-tui --target x86_64-apple-darwin
             lipo -create -output ./target/release/kftray-tui ./target/x86_64-apple-darwin/release/kftray-tui ./target/aarch64-apple-darwin/release/kftray-tui
-            chmod -R 755 ./target/release/kftray-tui
           else
             cargo build --release --bin kftray-tui --target ${{ matrix.rust_target }}
-            chmod -R 755 ./target/${{ matrix.rust_target }}/release/kftray-tui* || true
-            chmod -R 755 ./target/release/kftray-tui* || true
           fi
         shell: bash
 
@@ -306,12 +303,15 @@ jobs:
           TUI_VERSION=${{ steps.extract_version.outputs.TUI_VERSION }}
           if [ "${{ needs.kftray-tui.outputs.os }}" == "macos-latest" ]; then
             mv ./artifacts/kftray-tui ./artifacts/kftray-tui_${TUI_VERSION}_macos-universal
+            chmod +x ./artifacts/kftray-tui_${TUI_VERSION}_macos-universal
             gh release upload ${{ github.ref_name }} ./artifacts/kftray-tui_${TUI_VERSION}_macos-universal --clobber
           elif [ "${{ needs.kftray-tui.outputs.os }}" == "windows-latest" ]; then
             mv ./artifacts/kftray-tui.exe ./artifacts/kftray-tui_${TUI_VERSION}_${{ needs.kftray-tui.outputs.os }}_${{ needs.kftray-tui.outputs.arch }}.exe
+            chmod +x ./artifacts/kftray-tui_${TUI_VERSION}_${{ needs.kftray-tui.outputs.os }}_${{ needs.kftray-tui.outputs.arch }}.exe
             gh release upload ${{ github.ref_name }} ./artifacts/kftray-tui_${TUI_VERSION}_${{ needs.kftray-tui.outputs.os }}_${{ needs.kftray-tui.outputs.arch }}.exe --clobber
           else
             mv ./artifacts/kftray-tui ./artifacts/kftray-tui_${TUI_VERSION}_${{ needs.kftray-tui.outputs.os }}_${{ needs.kftray-tui.outputs.arch }}
+            chmod +x ./artifacts/kftray-tui_${TUI_VERSION}_${{ needs.kftray-tui.outputs.os }}_${{ needs.kftray-tui.outputs.arch }}
             gh release upload ${{ github.ref_name }} ./artifacts/kftray-tui_${TUI_VERSION}_${{ needs.kftray-tui.outputs.os }}_${{ needs.kftray-tui.outputs.arch }} --clobber
           fi
         env:
