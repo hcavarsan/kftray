@@ -271,7 +271,7 @@ jobs:
         if: matrix.os == 'macos-latest'
         run: |
           echo "Signing kftray-tui binary..."
-          codesign -deep --force --verbose --options runtime --entitlements crates/kftray-tui/entitlements.plist --sign "${{ secrets.APPLE_SIGNING_IDENTITY }}" ./target/release/kftray-tui
+          codesign --deep --force --verbose --options runtime --entitlements crates/kftray-tui/entitlements.plist --sign "${{ secrets.APPLE_SIGNING_IDENTITY }}" ./target/release/kftray-tui
         shell: bash
 
       - name: Create ZIP archive for notarization
