@@ -86,22 +86,6 @@ jobs:
         with:
           arch: amd64_arm64
 
-      - name: Find Visual Studio installation path
-        if: matrix.os == 'windows-latest'
-        run: |
-          for /f "tokens=*" %%i in ('vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath') do set VSPATH=%%i
-          echo "VSPATH=$VSPATH" >> $GITHUB_ENV
-        shell: cmd
-
-      - name: Ensure correct link.exe is used
-        if: matrix.os == 'windows-latest'
-        run: echo "::add-path::$VSPATH\\VC\\Tools\\MSVC\\14.40.33807\\bin\\Hostx64\\ARM64"
-
-      - name: Setup cmake
-        uses: jwlawson/actions-setup-cmake@v1.14
-        with:
-          cmake-version: '3.28.x'
-
       - name: Setup platform-specific dependencies
         if: matrix.os == 'ubuntu-latest'
         run: |
@@ -119,7 +103,8 @@ jobs:
 
       - name: Extract TUI version
         id: extract_version
-        run: echo "::set-output name=TUI_VERSION::$(cargo metadata --format-version=1 | jq -r '.packages[] | select(.name == "kftray-tui") | .version')"
+        run: echo "TUI_VERSION=$(cargo metadata --format-version=1 | jq -r '.packages[] | select(.name == "kftray-tui") | .version')" >> $GITHUB_ENV
+
       - name: Build kftray-tauri Desktop App
         uses: tauri-apps/tauri-action@v0
         env:
@@ -214,15 +199,17 @@ jobs:
           arch: amd64_arm64
 
       - name: Find Visual Studio installation path
-        if: matrix.os == 'windows-latest'
+        if: matrix.os == 'windows-latest' && matrix.arch == 'arm64'
         run: |
           for /f "tokens=*" %%i in ('vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath') do set VSPATH=%%i
           echo "VSPATH=$VSPATH" >> $GITHUB_ENV
+          echo "MSVC_ARCH=${{ matrix.msvc_arch }}" >> $GITHUB_ENV
+          echo "PATH=$VSPATH\\VC\\Tools\\MSVC\\14.40.33807\\bin\\Hostx64\\${{ matrix.msvc_arch }};$PATH" >> $GITHUB_PATH
         shell: cmd
 
       - name: Ensure correct link.exe is used
-        if: matrix.os == 'windows-latest'
-        run: echo "::add-path::$VSPATH\\VC\\Tools\\MSVC\\14.40.33807\\bin\\Hostx64\\ARM64"
+        if: matrix.os == 'windows-latest' && matrix.arch == 'arm64'
+        run: echo "$VSPATH\\VC\\Tools\\MSVC\\14.40.33807\\bin\\Hostx64\\ARM64" >> $GITHUB_PATH
 
       - name: Setup cmake
         uses: jwlawson/actions-setup-cmake@v1.14
@@ -246,25 +233,7 @@ jobs:
 
       - name: Extract TUI version
         id: extract_version
-        run: echo "::set-output name=TUI_VERSION::$(cargo metadata --format-version=1 | jq -r '.packages[] | select(.name == "kftray-tui") | .version')"
-
-      - name: Import Apple Certificate
-        if: matrix.os == 'macos-latest'
-        run: |
-          echo "${{ secrets.APPLE_CERTIFICATE }}" | base64 --decode > certificate.p12
-          security create-keychain -p "" build.keychain
-          security import certificate.p12 -k build.keychain -P "${{ secrets.APPLE_CERTIFICATE_PASSWORD }}" -T /usr/bin/codesign
-          security list-keychains -s build.keychain
-          security unlock-keychain -p "" build.keychain
-          security set-key-partition-list -S apple-tool:,apple: -s -k "" build.keychain
-        shell: bash
-
-      - name: Set up Visual Studio environment
-        if: matrix.os == 'windows-latest'
-        run: |
-          for /f "tokens=*" %%i in ('vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath') do set VCVARSALL_PATH=%%i\VC\Auxiliary\Build\vcvarsall.bat
-          call "%VCVARSALL_PATH%" amd64_arm64
-        shell: cmd
+        run: echo "TUI_VERSION=$(cargo metadata --format-version=1 | jq -r '.packages[] | select(.name == "kftray-tui") | .version')" >> $GITHUB_ENV
 
       - name: Build kftray-tui
         run: |
@@ -319,11 +288,11 @@ jobs:
 
       - name: Extract TUI version
         id: extract_version
-        run: echo "::set-output name=TUI_VERSION::$(cargo metadata --format-version=1 | jq -r '.packages[] | select(.name == "kftray-tui") | .version')"
+        run: echo "TUI_VERSION=$(cargo metadata --format-version=1 | jq -r '.packages[] | select(.name == "kftray-tui") | .version')" >> $GITHUB_ENV
 
       - name: Rename and upload release asset
         run: |
-          TUI_VERSION=${{ steps.extract_version.outputs.TUI_VERSION }}
+          TUI_VERSION=${{ env.TUI_VERSION }}
           if [ "${{ needs.kftray-tui.outputs.os }}" == "macos-latest" ]; then
             mv ./artifacts/kftray-tui ./artifacts/kftray-tui_${TUI_VERSION}_macos-universal
             chmod +x ./artifacts/kftray-tui_${TUI_VERSION}_macos-universal
