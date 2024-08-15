@@ -86,6 +86,17 @@ jobs:
         with:
           arch: amd64_arm64
 
+      - name: Find Visual Studio installation path
+        if: matrix.os == 'windows-latest'
+        run: |
+          for /f "tokens=*" %%i in ('vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath') do set VSPATH=%%i
+          echo "VSPATH=$VSPATH" >> $GITHUB_ENV
+        shell: cmd
+
+      - name: Ensure correct link.exe is used
+        if: matrix.os == 'windows-latest'
+        run: echo "::add-path::$VSPATH\\VC\\Tools\\MSVC\\14.40.33807\\bin\\Hostx64\\ARM64"
+
       - name: Setup cmake
         uses: jwlawson/actions-setup-cmake@v1.14
         with:
@@ -201,6 +212,17 @@ jobs:
         uses: TheMrMilchmann/setup-msvc-dev@v3
         with:
           arch: amd64_arm64
+
+      - name: Find Visual Studio installation path
+        if: matrix.os == 'windows-latest'
+        run: |
+          for /f "tokens=*" %%i in ('vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath') do set VSPATH=%%i
+          echo "VSPATH=$VSPATH" >> $GITHUB_ENV
+        shell: cmd
+
+      - name: Ensure correct link.exe is used
+        if: matrix.os == 'windows-latest'
+        run: echo "::add-path::$VSPATH\\VC\\Tools\\MSVC\\14.40.33807\\bin\\Hostx64\\ARM64"
 
       - name: Setup cmake
         uses: jwlawson/actions-setup-cmake@v1.14
