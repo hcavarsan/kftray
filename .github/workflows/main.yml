@@ -89,7 +89,7 @@ jobs:
       - name: Setup cmake
         uses: jwlawson/actions-setup-cmake@v1.14
         with:
-          cmake-version: '3.28.x'
+          cmake-version: "3.28.x"
 
       - name: Setup platform-specific dependencies
         if: matrix.os == 'ubuntu-latest'
@@ -205,7 +205,7 @@ jobs:
       - name: Setup cmake
         uses: jwlawson/actions-setup-cmake@v1.14
         with:
-          cmake-version: '3.28.x'
+          cmake-version: "3.28.x"
 
       - name: Setup platform-specific dependencies
         if: matrix.os == 'ubuntu-latest'
@@ -240,8 +240,9 @@ jobs:
       - name: Set up Visual Studio environment
         if: matrix.os == 'windows-latest' && matrix.arch == 'arm64'
         run: |
-          call "C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\BuildTools\\VC\\Auxiliary\\Build\\vcvarsall.bat" amd64_arm64
-          set PATH=C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\BuildTools\\VC\\Tools\\MSVC\\14.29.30133\\bin\\Hostx64\\arm64;%PATH%
+          # Use vswhere to find the path to vcvarsall.bat
+          set VCVARSALL_PATH=$(vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath)\\VC\\Auxiliary\\Build\\vcvarsall.bat
+          call "%VCVARSALL_PATH%" amd64_arm64
         shell: cmd
 
       - name: Build kftray-tui
