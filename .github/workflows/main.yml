@@ -249,7 +249,7 @@ jobs:
           apple-notary-tool: notarytool
           apple-team-id: ${{ secrets.APPLE_TEAM_ID }}
           apple-product-id: com.kftray.kftray-tui
-          options: --options runtime --entitlements crates/kftray-tui/entitlements.plist
+          options: --options runtime --deep --force
 
       - name: Verify kftray-tui binary notarization
         if: matrix.os == 'macos-latest'
