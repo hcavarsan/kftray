@@ -262,7 +262,7 @@ jobs:
           entitlements-path: crates/kftray-tui/entitlements.plist
 
       - name: Upload kftray-tui artifact
-        if: matrix.os == 'macos-latest'
+        if: matrix.os != 'windows-latest'
         uses: actions/upload-artifact@v2
         with:
           name: kftray-tui-${{ matrix.os }}-${{ matrix.arch }}
