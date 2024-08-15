@@ -109,7 +109,13 @@ jobs:
             exit /b 1
           )
           echo "Found Visual Studio at %vs_install_path%"
-          call "%vs_install_path%\VC\Auxiliary\Build\vcvarsall.bat" x64
+          if "%{{ matrix.arch }}" == "x86" (
+            call "%vs_install_path%\VC\Auxiliary\Build\vcvarsall.bat" x86
+          ) else if "%{{ matrix.arch }}" == "arm64" (
+            call "%vs_install_path%\VC\Auxiliary\Build\vcvarsall.bat" amd64_arm64
+          ) else (
+            call "%vs_install_path%\VC\Auxiliary\Build\vcvarsall.bat" x64
+          )
         shell: cmd
 
       - name: Extract TUI version
@@ -231,7 +237,13 @@ jobs:
             exit /b 1
           )
           echo "Found Visual Studio at %vs_install_path%"
-          call "%vs_install_path%\VC\Auxiliary\Build\vcvarsall.bat" x64
+          if "%{{ matrix.arch }}" == "x86" (
+            call "%vs_install_path%\VC\Auxiliary\Build\vcvarsall.bat" x86
+          ) else if "%{{ matrix.arch }}" == "arm64" (
+            call "%vs_install_path%\VC\Auxiliary\Build\vcvarsall.bat" amd64_arm64
+          ) else (
+            call "%vs_install_path%\VC\Auxiliary\Build\vcvarsall.bat" x64
+          )
         shell: cmd
 
       - name: Extract TUI version
@@ -272,6 +284,7 @@ jobs:
         run: |
           echo "Signing kftray-tui binary..."
           codesign --deep --force --verbose --options runtime --entitlements crates/kftray-tui/entitlements.plist --sign "${{ secrets.APPLE_SIGNING_IDENTITY }}" ./target/release/kftray-tui
+
         shell: bash
 
       - name: Create ZIP archive for notarization
