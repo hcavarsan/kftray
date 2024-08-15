@@ -238,7 +238,7 @@ jobs:
         shell: bash
 
       - name: Set up Visual Studio environment
-        if: matrix.os == 'windows-latest'
+        if: matrix.os == 'windows-latest' && matrix.arch == 'arm64'
         run: |
           call "C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\BuildTools\\VC\\Auxiliary\\Build\\vcvarsall.bat" amd64_arm64
           set PATH=C:\\Program Files (x86)\\Microsoft Visual Studio\\2019\\BuildTools\\VC\\Tools\\MSVC\\14.29.30133\\bin\\Hostx64\\arm64;%PATH%
