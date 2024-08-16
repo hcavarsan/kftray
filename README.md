@@ -94,7 +94,7 @@ KFtray is available for macOS and Linux users via Homebrew, and directly from th
 
 ```bash
 brew tap hcavarsan/kftray
-brew install --HEAD kftray
+brew install --cask kftray
 ```
 
 **For Linux**
