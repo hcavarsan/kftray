@@ -20,6 +20,7 @@ jobs:
         uses: actions/checkout@v4
       - name: Create release draft
         run: |
+          echo "Creating release draft for tag: ${{ github.ref_name }}"
           gh release create ${{ github.ref_name }} --draft --title "KFtray - ${{ github.ref_name }}" --notes "See the assets to download this version and install."
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -241,11 +242,14 @@ jobs:
 
       - name: Extract TUI version
         id: extract_version
-        run: echo "TUI_VERSION=$(cargo metadata --format-version=1 | jq -r '.packages[] | select(.name == "kftui") | .version')" >> $GITHUB_ENV
+        run: |
+          TUI_VERSION=$(cargo metadata --format-version=1 | jq -r '.packages[] | select(.name == "kftui") | .version')
+          echo "TUI_VERSION=$TUI_VERSION" >> $GITHUB_ENV
+          echo "Extracted TUI_VERSION: $TUI_VERSION"
 
       - name: Rename and upload release asset
         run: |
-          TUI_VERSION=$TUI_VERSION
+          echo "Running TUI_VERSION=$TUI_VERSION"
           if [ "${{ matrix.os }}" == "macos-latest" ]; then
             mv ./target/release/kftui ./target/release/kftui_${TUI_VERSION}_macos-universal
             chmod +x ./target/release/kftui_${TUI_VERSION}_macos-universal
