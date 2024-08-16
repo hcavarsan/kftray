@@ -246,17 +246,17 @@ jobs:
         run: |
           TUI_VERSION=$TUI_VERSION
           if [ "${{ matrix.os }}" == "macos-latest" ]; then
-            mv ./artifacts/kftui ./artifacts/kftui_${TUI_VERSION}_macos-universal
-            chmod +x ./artifacts/kftui_${TUI_VERSION}_macos-universal
-            gh release upload ${{ github.ref_name }} ./artifacts/kftui_${TUI_VERSION}_macos-universal --clobber
+            mv ./target/release/kftui ./target/release/kftui_${TUI_VERSION}_macos-universal
+            chmod +x ./target/release/kftui_${TUI_VERSION}_macos-universal
+            gh release upload ${{ github.ref_name }} ./target/release/kftui_${TUI_VERSION}_macos-universal --clobber
           elif [ "${{ matrix.os }}" == "windows-latest" ]; then
-            mv ./artifacts/kftui.exe ./artifacts/kftui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }}.exe
-            chmod +x ./artifacts/kftui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }}.exe
-            gh release upload ${{ github.ref_name }} ./artifacts/kftui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }}.exe --clobber
+            mv ./target/release/kftui.exe ./target/release/kftui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }}.exe
+            chmod +x ./target/release/kftui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }}.exe
+            gh release upload ${{ github.ref_name }} ./target/release/kftui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }}.exe --clobber
           else
-            mv ./artifacts/kftui ./artifacts/kftui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }}
-            chmod +x ./artifacts/kftui__${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }}
-            gh release upload ${{ github.ref_name }} ./artifacts/kftui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }} --clobber
+            mv ./target/release/kftui ./target/release/kftui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }}
+            chmod +x ./target/release/kftui__${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }}
+            gh release upload ${{ github.ref_name }} ./target/release/kftui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }} --clobber
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
