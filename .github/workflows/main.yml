@@ -184,7 +184,6 @@ jobs:
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
 
-
       - name: Setup platform-specific dependencies
         if: matrix.os == 'ubuntu-latest'
         run: |
@@ -211,7 +210,6 @@ jobs:
           fi
         shell: bash
 
-
       - name: Sign and notarize the release build
         if: matrix.os == 'macos-latest'
         uses: toitlang/action-macos-sign-notarize@v1.2.0
@@ -224,24 +222,25 @@ jobs:
           app-path: target/release/kftui
           entitlements-path: crates/kftui/entitlements.plist
 
-      - name: Upload kftui artifact
-        if: matrix.os != 'windows-latest'
-        uses: actions/upload-artifact@v4
-        with:
-          name: kftui
-          path: target/release/
-
-      - name: Upload kftui artifact
-        if: matrix.os == 'windows-latest'
-        uses: actions/upload-artifact@v4
-        with:
-          name: kftui.exe
-          path: target/release/
-
-
       - name: Extract TUI version
         id: extract_version
         run: echo "TUI_VERSION=$(cargo metadata --format-version=1 | jq -r '.packages[] | select(.name == "kftui") | .version')" >> $GITHUB_ENV
+
+      - name: Wait for release creation
+        id: wait_for_release
+        run: |
+          for i in {1..20}; do
+            if gh release view ${{ github.ref_name }}; then
+              echo "Release found."
+              exit 0
+            fi
+            echo "Release not found. Waiting..."
+            sleep 30
+          done
+          echo "Release not created within 10 minutes."
+          exit 1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Rename and upload release asset
         run: |
