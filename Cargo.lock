@@ -2749,7 +2749,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "kftray-tui"
+name = "kftui"
 version = "0.12.2"
 dependencies = [
  "anyhow",

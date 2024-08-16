@@ -2,7 +2,7 @@
 members = [
     "crates/kftray-server",
     "crates/kftray-tauri",
-	"crates/kftray-tui",
+	"crates/kftui",
 	"crates/kftray-portforward",
 ]
 

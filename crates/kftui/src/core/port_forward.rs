@@ -1,11 +1,14 @@
-
-use std::sync::Arc;
-use crossterm::{
-    execute,
-    terminal::{disable_raw_mode, LeaveAlternateScreen},
-    cursor::Show,
-};
 use std::io::Write;
+use std::sync::Arc;
+
+use crossterm::{
+    cursor::Show,
+    execute,
+    terminal::{
+        disable_raw_mode,
+        LeaveAlternateScreen,
+    },
+};
 use kftray_commons::models::config_model::Config;
 use kftray_portforward::core::stop_all_port_forward;
 use kftray_portforward::core::{
@@ -16,7 +19,6 @@ use kftray_portforward::core::{
 };
 use kftray_portforward::models::kube::HttpLogState;
 use log::error;
-
 
 use crate::tui::input::{
     App,
@@ -106,7 +108,8 @@ pub async fn stop_all_port_forward_and_exit(app: &mut App) {
 
     // Cleanup terminal
     disable_raw_mode().expect("Failed to disable raw mode");
-    execute!(std::io::stdout(), LeaveAlternateScreen, Show).expect("Failed to leave alternate screen and show cursor");
+    execute!(std::io::stdout(), LeaveAlternateScreen, Show)
+        .expect("Failed to leave alternate screen and show cursor");
     std::io::stdout().flush().expect("Failed to flush stdout");
 
     std::process::exit(0);

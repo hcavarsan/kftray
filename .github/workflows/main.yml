@@ -121,7 +121,7 @@ jobs:
           updaterJsonKeepUniversal: true
           args: ${{ matrix.tauri_args }}
 
-  kftray-tui:
+  kftui:
     strategy:
       matrix:
         include:
@@ -200,14 +200,14 @@ jobs:
           fi
         shell: bash
 
-      - name: Build kftray-tui
+      - name: Build kftui
         run: |
           if [ "${{ matrix.os }}" == "macos-latest" ]; then
-            cargo build --release --bin kftray-tui --target aarch64-apple-darwin
-            cargo build --release --bin kftray-tui --target x86_64-apple-darwin
-            lipo -create -output ./target/release/kftray-tui ./target/x86_64-apple-darwin/release/kftray-tui ./target/aarch64-apple-darwin/release/kftray-tui
+            cargo build --release --bin kftui --target aarch64-apple-darwin
+            cargo build --release --bin kftui --target x86_64-apple-darwin
+            lipo -create -output ./target/release/kftui ./target/x86_64-apple-darwin/release/kftui ./target/aarch64-apple-darwin/release/kftui
           else
-            cargo build --release --bin kftray-tui --target ${{ matrix.rust_target }}
+            cargo build --release --bin kftui --target ${{ matrix.rust_target }}
           fi
         shell: bash
 
@@ -221,57 +221,43 @@ jobs:
           username: ${{ secrets.APPLE_ID }}
           password: ${{ secrets.APPLE_PASSWORD }}
           apple-team-id: 6M376JWU73
-          app-path: target/release/kftray-tui
-          entitlements-path: crates/kftray-tui/entitlements.plist
+          app-path: target/release/kftui
+          entitlements-path: crates/kftui/entitlements.plist
 
-      - name: Upload kftray-tui artifact
+      - name: Upload kftui artifact
         if: matrix.os != 'windows-latest'
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
-          name: kftray-tui
+          name: kftui
           path: target/release/
 
-      - name: Upload kftray-tui artifact
+      - name: Upload kftui artifact
         if: matrix.os == 'windows-latest'
-        uses: actions/upload-artifact@v2
+        uses: actions/upload-artifact@v4
         with:
-          name: kftray-tui.exe
+          name: kftui.exe
           path: target/release/
 
-
-  upload-artifacts:
-    needs: [kftray-tauri, kftray-tui]
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Download kftray-tui artifacts
-        uses: actions/download-artifact@v3
-        with:
-          name: kftray-tui-${{ needs.kftray-tui.outputs.os }}-${{ needs.kftray-tui.outputs.arch }}
-          path: ./artifacts
 
       - name: Extract TUI version
         id: extract_version
-        run: echo "TUI_VERSION=$(cargo metadata --format-version=1 | jq -r '.packages[] | select(.name == "kftray-tui") | .version')" >> $GITHUB_ENV
+        run: echo "TUI_VERSION=$(cargo metadata --format-version=1 | jq -r '.packages[] | select(.name == "kftui") | .version')" >> $GITHUB_ENV
 
       - name: Rename and upload release asset
         run: |
-          TUI_VERSION=${{ steps.extract_version.outputs.TUI_VERSION }} || true
-          if [ "${{ needs.kftray-tui.outputs.os }}" == "macos-latest" ]; then
-            mv ./artifacts/kftray-tui ./artifacts/kftray-tui_${TUI_VERSION}_macos-universal
-            chmod +x ./artifacts/kftray-tui_${TUI_VERSION}_macos-universal
-            gh release upload ${{ github.ref_name }} ./artifacts/kftray-tui_${TUI_VERSION}_macos-universal --clobber
-          elif [ "${{ needs.kftray-tui.outputs.os }}" == "windows-latest" ]; then
-            mv ./artifacts/kftray-tui.exe ./artifacts/kftray-tui_${TUI_VERSION}_${{ needs.kftray-tui.outputs.os }}_${{ needs.kftray-tui.outputs.arch }}.exe
-            chmod +x ./artifacts/kftray-tui_${TUI_VERSION}_${{ needs.kftray-tui.outputs.os }}_${{ needs.kftray-tui.outputs.arch }}.exe
-            gh release upload ${{ github.ref_name }} ./artifacts/kftray-tui_${TUI_VERSION}_${{ needs.kftray-tui.outputs.os }}_${{ needs.kftray-tui.outputs.arch }}.exe --clobber
+          TUI_VERSION=$TUI_VERSION
+          if [ "${{ matrix.os }}" == "macos-latest" ]; then
+            mv ./artifacts/kftui ./artifacts/kftui_${TUI_VERSION}_macos-universal
+            chmod +x ./artifacts/kftui_${TUI_VERSION}_macos-universal
+            gh release upload ${{ github.ref_name }} ./artifacts/kftui_${TUI_VERSION}_macos-universal --clobber
+          elif [ "${{ matrix.os }}" == "windows-latest" ]; then
+            mv ./artifacts/kftui.exe ./artifacts/kftui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }}.exe
+            chmod +x ./artifacts/kftui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }}.exe
+            gh release upload ${{ github.ref_name }} ./artifacts/kftui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }}.exe --clobber
           else
-            mv ./artifacts/kftray-tui ./artifacts/kftray-tui_${TUI_VERSION}_${{ needs.kftray-tui.outputs.os }}_${{ needs.kftray-tui.outputs.arch }}
-            chmod +x ./artifacts/kftray-tui_${TUI_VERSION}_${{ needs.kftray-tui.outputs.os }}_${{ needs.kftray-tui.outputs.arch }}
-            gh release upload ${{ github.ref_name }} ./artifacts/kftray-tui_${TUI_VERSION}_${{ needs.kftray-tui.outputs.os }}_${{ needs.kftray-tui.outputs.arch }} --clobber
+            mv ./artifacts/kftui ./artifacts/kftui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }}
+            chmod +x ./artifacts/kftui__${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }}
+            gh release upload ${{ github.ref_name }} ./artifacts/kftui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }} --clobber
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
