@@ -248,11 +248,11 @@ jobs:
             chmod +x ./target/release/kftui_${TUI_VERSION}_macos-universal
             gh release upload ${{ github.ref_name }} ./target/release/kftui_${TUI_VERSION}_macos-universal --clobber
           elif [ "${{ matrix.os }}" == "windows-latest" ]; then
-            mv ./target/release/kftui.exe ./target/release/kftui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }}.exe
+            mv ./target/${{ matrix.rust_target }}/release/kftui.exe ./target/release/kftui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }}.exe
             chmod +x ./target/release/kftui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }}.exe
             gh release upload ${{ github.ref_name }} ./target/release/kftui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }}.exe --clobber
           else
-            mv ./target/release/kftui ./target/release/kftui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }}
+            mv ./target/${{ matrix.rust_target }}/release/kftui ./target/release/kftui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }}
             chmod +x ./target/release/kftui__${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }}
             gh release upload ${{ github.ref_name }} ./target/release/kftui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }} --clobber
           fi
