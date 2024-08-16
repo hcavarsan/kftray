@@ -228,16 +228,15 @@ jobs:
         if: matrix.os != 'windows-latest'
         uses: actions/upload-artifact@v2
         with:
-          name: kftray-tui-${{ matrix.os }}-${{ matrix.arch }}
-          path: target/release/kftray-tui
+          name: kftray-tui
+          path: target/release/
 
       - name: Upload kftray-tui artifact
         if: matrix.os == 'windows-latest'
         uses: actions/upload-artifact@v2
         with:
-          name: kftray-tui-${{ matrix.os }}-${{ matrix.arch }}
-          path: target/release/kftray-tui.exe
-
+          name: kftray-tui.exe
+          path: target/release/
 
 
   upload-artifacts:
