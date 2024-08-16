@@ -224,8 +224,10 @@ jobs:
           app-path: target/release/kftui
           entitlements-path: crates/kftui/entitlements.plist
 
-      - name: Install GitHub CLI
-        uses: actions/setup-gh@v2
+      - name: Install the gh cli
+        uses: ksivamuthu/actions-setup-gh-cli@v3
+        with:
+          version: 2.54.0
 
       - name: Wait for draft release creation
         id: wait_for_draft_release
