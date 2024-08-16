@@ -38,7 +38,6 @@ import useCustomToast from '../CustomToast'
 const GitSyncModal: React.FC<GitSyncModalProps> = ({
   isGitSyncModalOpen,
   closeGitSyncModal,
-  onSettingsSaved,
   credentialsSaved,
   setCredentialsSaved,
   setPollingInterval,
@@ -120,7 +119,6 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
       setPollingInterval(0)
       setGitToken('')
 
-      onSettingsSaved?.()
       setCredentialsSaved(true)
       closeGitSyncModal()
       toast({
@@ -186,7 +184,6 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
         password: credentials,
       })
 
-      onSettingsSaved?.()
       setCredentialsSaved(true)
       toast({
         title: 'Settings saved successfully',
