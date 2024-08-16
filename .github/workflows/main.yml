@@ -229,10 +229,13 @@ jobs:
       - name: Wait for draft release creation
         id: wait_for_draft_release
         run: |
-          for i in {1..20}; do
-            response=$(curl -s -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+          for i in {1..40}; do
+            response=$(curl -s -w "%{http_code}" -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
               "https://api.github.com/repos/hcavarsan/kftray/releases")
-            if echo "$response" | jq -e --arg tag "${{ github.ref_name }}" '.[] | select(.tag_name == $tag and .draft == true)' > /dev/null; then
+            status_code="${response: -3}"
+            body="${response:0:${#response}-3}"
+            echo "Status code: $status_code"
+            if echo "$body" | jq -e --arg tag "${{ github.ref_name }}" '.[] | select(.tag_name == $tag and .draft == true)' > /dev/null; then
               echo "Draft release found."
               exit 0
             fi
