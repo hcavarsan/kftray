@@ -100,11 +100,6 @@ jobs:
             rustup target add ${{ matrix.rust_target }}
           fi
         shell: bash
-
-      - name: Extract TUI version
-        id: extract_version
-        run: echo "TUI_VERSION=$(cargo metadata --format-version=1 | jq -r '.packages[] | select(.name == "kftray-tui") | .version')" >> $GITHUB_ENV
-
       - name: Build kftray-tauri Desktop App
         uses: tauri-apps/tauri-action@v0
         env:
@@ -148,9 +143,6 @@ jobs:
             arch: x86_64
             rust_target: x86_64-pc-windows-msvc
             msvc_arch: x64
-          - os: windows-latest
-            arch: arm64
-            rust_target: aarch64-pc-windows-msvc
 
     runs-on: ${{ matrix.runner || matrix.os }}
 
@@ -192,29 +184,6 @@ jobs:
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
 
-      - name: Set up Visual Studio shell
-        if: matrix.os == 'windows-latest' && matrix.arch == 'arm64'
-        uses: TheMrMilchmann/setup-msvc-dev@v3
-        with:
-          arch: amd64_arm64
-
-      - name: Find Visual Studio installation path
-        if: matrix.os == 'windows-latest' && matrix.arch == 'arm64'
-        run: |
-          for /f "tokens=*" %%i in ('vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath') do set VSPATH=%%i
-          echo "VSPATH=$VSPATH" >> $GITHUB_ENV
-          echo "MSVC_ARCH=${{ matrix.msvc_arch }}" >> $GITHUB_ENV
-          echo "PATH=$VSPATH\\VC\\Tools\\MSVC\\14.40.33807\\bin\\Hostx64\\${{ matrix.msvc_arch }};$PATH" >> $GITHUB_PATH
-        shell: cmd
-
-      - name: Ensure correct link.exe is used
-        if: matrix.os == 'windows-latest' && matrix.arch == 'arm64'
-        run: echo "$VSPATH\\VC\\Tools\\MSVC\\14.40.33807\\bin\\Hostx64\\ARM64" >> $GITHUB_PATH
-
-      - name: Setup cmake
-        uses: jwlawson/actions-setup-cmake@v1.14
-        with:
-          cmake-version: '3.28.x'
 
       - name: Setup platform-specific dependencies
         if: matrix.os == 'ubuntu-latest'
@@ -231,10 +200,6 @@ jobs:
           fi
         shell: bash
 
-      - name: Extract TUI version
-        id: extract_version
-        run: echo "TUI_VERSION=$(cargo metadata --format-version=1 | jq -r '.packages[] | select(.name == "kftray-tui") | .version')" >> $GITHUB_ENV
-
       - name: Build kftray-tui
         run: |
           if [ "${{ matrix.os }}" == "macos-latest" ]; then
@@ -245,6 +210,7 @@ jobs:
             cargo build --release --bin kftray-tui --target ${{ matrix.rust_target }}
           fi
         shell: bash
+
 
       - name: Sign and notarize the release build
         if: matrix.os == 'macos-latest'
@@ -272,6 +238,8 @@ jobs:
           name: kftray-tui-${{ matrix.os }}-${{ matrix.arch }}
           path: target/release/kftray-tui.exe
 
+
+
   upload-artifacts:
     needs: [kftray-tauri, kftray-tui]
     runs-on: ubuntu-latest
@@ -292,7 +260,7 @@ jobs:
 
       - name: Rename and upload release asset
         run: |
-          TUI_VERSION=$TUI_VERSION
+          TUI_VERSION=${{ steps.extract_version.outputs.TUI_VERSION }} || true
           if [ "${{ needs.kftray-tui.outputs.os }}" == "macos-latest" ]; then
             mv ./artifacts/kftray-tui ./artifacts/kftray-tui_${TUI_VERSION}_macos-universal
             chmod +x ./artifacts/kftray-tui_${TUI_VERSION}_macos-universal
