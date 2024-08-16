@@ -240,6 +240,21 @@ jobs:
           app-path: target/release/kftui
           entitlements-path: crates/kftui/entitlements.plist
 
+      - name: Staple the notarization ticket
+        if: matrix.os == 'macos-latest'
+        run: |
+          xcrun stapler staple target/release/kftui
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: 6M376JWU73
+
+      - name: Verify the stapling
+        if: matrix.os == 'macos-latest'
+        run: |
+          spctl -a -v target/release/kftui
+
+
       - name: Extract TUI version
         if: matrix.os != 'windows-latest'
         id: extract_version
