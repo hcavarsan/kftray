@@ -257,76 +257,27 @@ jobs:
           echo "Extracted TUI_VERSION: $TUI_VERSION"
         shell: pwsh
 
-      - name: Create installer (macOS and Linux)
-        if: matrix.os != 'windows-latest'
+      - name: Rename and upload release asset
         run: |
           echo "Running TUI_VERSION=$TUI_VERSION"
           if [ "${{ matrix.os }}" == "macos-latest" ]; then
-            # Create DMG installer
-            hdiutil create -volname kftui -srcfolder ./target/release/kftui -ov -format UDZO ./target/release/kftui_${TUI_VERSION}_macos-universal.dmg
-          else
-            # Create AppImage installer
-            wget -qO- https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage > appimagetool
-            chmod +x appimagetool
-            ./appimagetool --no-appstream ./target/release/kftui ./target/release/kftui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }}.AppImage
-          fi
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        shell: bash
-
-      - name: Create installer (Windows)
-        if: matrix.os == 'windows-latest'
-        run: |
-          echo "Running TUI_VERSION=$TUI_VERSION"
-          # Create EXE installer using NSIS
-          curl -L -o nsis.zip https://sourceforge.net/projects/nsis/files/NSIS%203/3.08/nsis-3.08.zip/download
-          unzip nsis.zip -d nsis
-          $env:PATH += ";$(pwd)/nsis"
-          makensis -V4 -DVERSION=$TUI_VERSION -DOUTFILE=./target/release/kftui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }}.exe installer.nsi
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        shell: pwsh
-
-      - name: Upload release asset (macOS and Linux)
-        if: matrix.os != 'windows-latest'
-        run: |
-          echo "Running TUI_VERSION=$TUI_VERSION"
-          if [ "${{ matrix.os }}" == "macos-latest" ]; then
-            # Upload binary and DMG
             mv ./target/release/kftui ./target/release/kftui_${TUI_VERSION}_macos-universal
             chmod +x ./target/release/kftui_${TUI_VERSION}_macos-universal
             gh release upload ${{ github.ref_name }} ./target/release/kftui_${TUI_VERSION}_macos-universal --clobber
-            gh release upload ${{ github.ref_name }} ./target/release/kftui_${TUI_VERSION}_macos-universal.dmg --clobber
+          elif [ "${{ matrix.os }}" == "windows-latest" ]; then
+            mv ./target/${{ matrix.rust_target }}/release/kftui.exe ./target/release/kftui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }}.exe
+            chmod +x ./target/release/kftui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }}.exe
+            gh release upload ${{ github.ref_name }} ./target/release/kftui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }}.exe --clobber
           else
-            # Upload binary and AppImage
             mv ./target/${{ matrix.rust_target }}/release/kftui ./target/release/kftui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }}
             chmod +x ./target/release/kftui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }}
             gh release upload ${{ github.ref_name }} ./target/release/kftui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }} --clobber
-            gh release upload ${{ github.ref_name }} ./target/release/kftui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }}.AppImage --clobber
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         shell: bash
-
-      - name: Upload release asset (Windows)
-        if: matrix.os == 'windows-latest'
-        run: |
-          echo "Running TUI_VERSION=$TUI_VERSION"
-          # Upload binary and EXE
-          mv ./target/${{ matrix.rust_target }}/release/kftui.exe ./target/release/kftui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }}.exe
-          chmod +x ./target/release/kftui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }}.exe
-          gh release upload ${{ github.ref_name }} ./target/release/kftui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }}.exe --clobber
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-        shell: pwsh
 
   kftray-server:
     permissions:
