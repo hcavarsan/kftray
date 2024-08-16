@@ -11,7 +11,21 @@ env:
   TAURI_DEBUG: "false"
 
 jobs:
+  create-release-draft:
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Create release draft
+        run: |
+          gh release create ${{ github.ref_name }} --draft --title "KFtray - ${{ github.ref_name }}" --notes "See the assets to download this version and install."
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   kftray-tauri:
+    needs: create-release-draft
     permissions:
       contents: write
     strategy:
@@ -122,6 +136,7 @@ jobs:
           args: ${{ matrix.tauri_args }}
 
   kftui:
+    needs: create-release-draft
     permissions:
       contents: read
     strategy:
@@ -224,32 +239,6 @@ jobs:
           app-path: target/release/kftui
           entitlements-path: crates/kftui/entitlements.plist
 
-      - name: Wait for draft release creation
-        id: wait_for_draft_release
-        run: |
-          echo "Starting to wait for draft release creation..."
-          for i in {1..40}; do
-            echo "Attempt $i: Checking for draft release..."
-            response=$(gh release view "${{ github.ref_name }}" --json isDraft --jq '.isDraft' 2>&1)
-            status=$?
-            echo "Response: $response"
-            if [ $status -ne 0 ]; then
-              echo "Error fetching release information: $response"
-              echo "Retrying in 30 seconds..."
-            elif echo "$response" | grep -q true; then
-              echo "Draft release found."
-              exit 0
-            else
-              echo "Draft release not found. Waiting..."
-            fi
-            sleep 30
-          done
-          echo "Draft release not created within 10 minutes."
-          exit 1
-        shell: bash
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          DEBUG: true
 
       - name: Rename and upload release asset
         run: |
