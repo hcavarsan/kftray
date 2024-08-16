@@ -239,6 +239,9 @@ jobs:
           app-path: target/release/kftui
           entitlements-path: crates/kftui/entitlements.plist
 
+      - name: Extract TUI version
+        id: extract_version
+        run: echo "TUI_VERSION=$(cargo metadata --format-version=1 | jq -r '.packages[] | select(.name == "kftui") | .version')" >> $GITHUB_ENV
 
       - name: Rename and upload release asset
         run: |
