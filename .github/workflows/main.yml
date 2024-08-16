@@ -224,11 +224,6 @@ jobs:
           app-path: target/release/kftui
           entitlements-path: crates/kftui/entitlements.plist
 
-      - name: Install the gh cli
-        uses: ksivamuthu/actions-setup-gh-cli@v3
-        with:
-          version: 2.54.0
-
       - name: Wait for draft release creation
         id: wait_for_draft_release
         run: |
@@ -240,6 +235,7 @@ jobs:
             echo "Response: $response"
             if [ $status -ne 0 ]; then
               echo "Error fetching release information: $response"
+              echo "Retrying in 30 seconds..."
             elif echo "$response" | grep -q true; then
               echo "Draft release found."
               exit 0
@@ -253,6 +249,7 @@ jobs:
         shell: bash
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          DEBUG: true
 
       - name: Rename and upload release asset
         run: |
