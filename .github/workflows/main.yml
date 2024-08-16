@@ -224,24 +224,26 @@ jobs:
           app-path: target/release/kftui
           entitlements-path: crates/kftui/entitlements.plist
 
-      - name: Extract TUI version
-        id: extract_version
-        run: echo "TUI_VERSION=$(cargo metadata --format-version=1 | jq -r '.packages[] | select(.name == "kftui") | .version')" >> $GITHUB_ENV
+      - name: Install GitHub CLI
+        uses: actions/setup-gh@v2
 
       - name: Wait for draft release creation
         id: wait_for_draft_release
         run: |
+          echo "Starting to wait for draft release creation..."
           for i in {1..40}; do
-            response=$(curl -s -w "%{http_code}" -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-              "https://api.github.com/repos/hcavarsan/kftray/releases")
-            status_code="${response: -3}"
-            body="${response:0:${#response}-3}"
-            echo "Status code: $status_code"
-            if echo "$body" | jq -e --arg tag "${{ github.ref_name }}" '.[] | select(.tag_name == $tag and .draft == true)' > /dev/null; then
+            echo "Attempt $i: Checking for draft release..."
+            response=$(gh release view "${{ github.ref_name }}" --json isDraft --jq '.isDraft' 2>&1)
+            status=$?
+            echo "Response: $response"
+            if [ $status -ne 0 ]; then
+              echo "Error fetching release information: $response"
+            elif echo "$response" | grep -q true; then
               echo "Draft release found."
               exit 0
+            else
+              echo "Draft release not found. Waiting..."
             fi
-            echo "Draft release not found. Waiting..."
             sleep 30
           done
           echo "Draft release not created within 10 minutes."
