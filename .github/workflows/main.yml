@@ -268,7 +268,7 @@ jobs:
             # Create AppImage installer
             wget -qO- https://github.com/AppImage/AppImageKit/releases/download/continuous/appimagetool-x86_64.AppImage > appimagetool
             chmod +x appimagetool
-            ./appimagetool ./target/release/kftui ./target/release/kftui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }}.AppImage
+            ./appimagetool --no-appstream ./target/release/kftui ./target/release/kftui_${TUI_VERSION}_${{ matrix.os }}_${{ matrix.arch }}.AppImage
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
