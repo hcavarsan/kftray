@@ -31,9 +31,9 @@ use crate::tui::ui::draw_ui;
 pub async fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
     init().await?;
 
-	if let Err(e) = migrate_configs().await {
-		error!("Failed to migrate configs: {}", e);
-	}
+    if let Err(e) = migrate_configs().await {
+        error!("Failed to migrate configs: {}", e);
+    }
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
