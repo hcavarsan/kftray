@@ -139,7 +139,7 @@ jobs:
   kftui:
     needs: create-release-draft
     permissions:
-      contents: read
+      contents: write
     strategy:
       matrix:
         include:
