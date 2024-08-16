@@ -229,7 +229,7 @@ jobs:
       - name: Wait for release creation
         id: wait_for_release
         run: |
-          for i in {1..20}; do
+          for i in {1..100}; do
             if gh release view ${{ github.ref_name }}; then
               echo "Release found."
               exit 0
