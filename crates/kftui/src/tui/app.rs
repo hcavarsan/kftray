@@ -12,6 +12,7 @@ use crossterm::{
 use kftray_commons::config::read_configs;
 use kftray_commons::utils::config_state::read_config_states;
 use kftray_commons::utils::db::init;
+use kftray_commons::utils::migration::migrate_configs;
 use log::{
     error,
     info,
@@ -29,6 +30,10 @@ use crate::tui::ui::draw_ui;
 
 pub async fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
     init().await?;
+
+	if let Err(e) = migrate_configs().await {
+		error!("Failed to migrate configs: {}", e);
+	}
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
