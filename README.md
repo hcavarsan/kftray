@@ -11,7 +11,7 @@
 </p>
 
 <div align="center">
-  <img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/ss3.png" alt="KFtray Screenshot" width="400px" style="margin: 0 10px;" />
+  <img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/ss.png" alt="KFtray Screenshot" width="400px" style="margin: 0 10px;" />
   <img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/ss3.png" alt="KFtray Screenshot" width="400px" style="margin: 0 10px;" />
 </div>
 

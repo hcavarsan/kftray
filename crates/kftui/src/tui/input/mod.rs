@@ -314,12 +314,14 @@ fn switch_to_stopped_table(app: &mut App) {
     app.active_table = ActiveTable::Stopped;
     app.reset_scroll();
     app.selected_rows_running.clear();
+    app.table_state_running.select(None);
 }
 
 fn switch_to_running_table(app: &mut App) {
     app.active_table = ActiveTable::Running;
     app.reset_scroll();
     app.selected_rows_stopped.clear();
+    app.table_state_stopped.select(None);
 }
 
 fn toggle_row_selection(app: &mut App) {
