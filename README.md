@@ -15,7 +15,7 @@
 
 
 <div align="center"> <h2>KFtui</h2> <img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/sstui2.png" alt="KFtui Screenshot" width="600x" style="margin: 0 10px; border-radius: 15px;" /> </div>
----
+
 
 ## Features
 
