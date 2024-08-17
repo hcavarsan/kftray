@@ -10,14 +10,12 @@
   KFtray and KFtui are independent, cross-platform applications. They help you set up and manage multiple port-forwarding settings easily. Both apps are part of the same open-source project and aim to make working with Kubernetes easier. KFtray has a desktop interface, while KFtui has a terminal interface, so you can choose the one that suits you best.
 </p>
 
-
-<div align="center" style="display: flex; justify-content: center; gap: 20px;">
-  <img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/ss3.png" alt="KFtray Screenshot" width="400px" />
-  <img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/ss3.png" alt="KFtray Screenshot" width="400px" />
+<div align="center">
+  <img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/ss3.png" alt="KFtray Screenshot" width="400px" style="margin: 0 10px;" />
+  <img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/ss3.png" alt="KFtray Screenshot" width="400px" style="margin: 0 10px;" />
 </div>
 
-
-
+---
 
 ## Features
 
@@ -28,7 +26,11 @@
 - **HTTP Logs Tracing:** Enable or disable HTTP logs for specific configurations to save the requests and responses in a local log file. _(Currently available only in the kftray desktop app)_ - [Blog Post](https://kftray.app/blog/posts/6-debug-http-traffics-kftray)
 - **GitHub Sync:** Keep your configurations saved on GitHub and share or synchronize them in a GitOps style. _(Currently available only in the kftray desktop app)_
 
+---
+
 ## Features Matrix
+
+<div align="center">
 
 | Feature                                      | KFtray (Desktop App) | KFtui (Terminal UI) |
 |----------------------------------------------|----------------------|---------------------|
@@ -36,28 +38,33 @@
 | One-Click Multiple Port Forwards             | ✔️                   | ✔️                  |
 | Independent of Kubectl                       | ✔️                   | ✔️                  |
 | Multi-Protocol Support (TCP/UDP)             | ✔️                   | ✔️                  |
-| HTTP Logs Tracing                            | ✔️                   | ❌    (Coming Soon)              |
-| GitHub Sync                                  | ✔️                   | ❌  (Coming Soon)                  |
+| HTTP Logs Tracing                            | ✔️                   | ❌ (Coming Soon)    |
+| GitHub Sync                                  | ✔️                   | ❌ (Coming Soon)    |
 | Local JSON File Configuration                | ✔️                   | ✔️                  |
 
+</div>
 
+---
 
 ## Installation
 
 - **KFtray Desktop App:** Check [INSTALL.md](https://github.com/hcavarsan/kftray/tree/main/docs/kftray/INSTALL.md).
 - **KFtui:** Check [INSTALL.md](https://github.com/hcavarsan/kftray/tree/main/docs/kftui/INSTALL.md).
 
+---
+
 ## Building from Source
 
 - **KFtray Desktop App:** Check [BUILD.md](https://github.com/hcavarsan/kftray/tree/main/docs/kftray/BUILD.md).
 - **KFtui:** Check [BUILD.md](https://github.com/hcavarsan/kftray/tree/main/docs/kftui/BUILD.md).
 
+---
 
 ## 🏗 Architecture
 
 For an overall architectural review, check [ARCH.md](https://github.com/hcavarsan/kftray/tree/main/docs/ARCH.md).
 
-
+---
 
 ## 👥 Contributing
 
@@ -65,11 +72,15 @@ For an overall architectural review, check [ARCH.md](https://github.com/hcavarsa
 - **Issues:** Report bugs, suggest new features, or ask questions.
 - **Feedback:** Your feedback helps improve kftray.
 
-
+---
 
 ## 📄 License
 
 KFtray is available under the [MIT License](LICENSE.md). See the LICENSE file for full details.
+
+---
+
+This layout uses horizontal rules to separate sections, centers important elements, and maintains a clean, minimalist aesthetic.
 
 
 ## Star History
