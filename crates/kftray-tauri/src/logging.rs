@@ -4,7 +4,7 @@ use std::{
     io,
 };
 
-use crate::utils::config_dir::get_app_log_path;
+use kftray_commons::utils::config_dir::get_app_log_path;
 
 pub fn setup_logging() -> Result<(), Box<dyn std::error::Error>> {
     let log_filter = match env::var("RUST_LOG") {
@@ -12,7 +12,6 @@ pub fn setup_logging() -> Result<(), Box<dyn std::error::Error>> {
         Err(_) => log::LevelFilter::Off,
     };
 
-    // If the `KFTRAY_DEBUG` environment variable is set, set up file-based logging.
     if env::var("KFTRAY_DEBUG").is_ok() {
         let log_path = get_app_log_path().map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
 
@@ -23,7 +22,6 @@ pub fn setup_logging() -> Result<(), Box<dyn std::error::Error>> {
         std::fs::create_dir_all(log_dir)
             .map_err(|_| io::Error::new(io::ErrorKind::Other, "Could not create log directory"))?;
 
-        // Open the log file for appending, or return an error if it fails.
         let log_file = OpenOptions::new()
             .create(true)
             .append(true)
