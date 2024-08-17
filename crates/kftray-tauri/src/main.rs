@@ -8,30 +8,26 @@ use std::sync::{
     Mutex,
 };
 
-use crate::utils::validate_configs::alert_multiple_configs;
+use kftray_commons::utils::validate_configs::alert_multiple_configs;
+use log::error;
 mod commands;
-mod config;
-mod db;
-mod keychain;
-mod kubeforward;
 mod logging;
-mod models;
-mod remote_config;
 mod tray;
-mod utils;
 mod window;
 
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 
+use kftray_commons::models::window::AppState;
+use kftray_commons::models::window::SaveDialogState;
+use kftray_portforward::models::kube::HttpLogState;
 use tauri::{
     GlobalShortcutManager,
     Manager,
 };
 use tokio::runtime::Runtime;
 
-use crate::models::kube::HttpLogState;
-use crate::models::window::SaveDialogState;
+use crate::commands::portforward::check_and_emit_changes;
 use crate::tray::{
     create_tray_menu,
     handle_run_event,
@@ -40,19 +36,11 @@ use crate::tray::{
 };
 use crate::window::toggle_window_visibility;
 
-pub struct AppState {
-    pub is_moving: Arc<Mutex<bool>>,
-    pub is_plugin_moving: Arc<AtomicBool>,
-    pub is_pinned: Arc<AtomicBool>,
-    pub runtime: Arc<Runtime>,
-}
-
 fn main() {
     let _ = logging::setup_logging();
 
     let _ = fix_path_env::fix();
 
-    // configure tray menu
     let system_tray = create_tray_menu();
     let is_moving = Arc::new(Mutex::new(false));
     let is_plugin_moving = Arc::new(AtomicBool::new(false));
@@ -72,16 +60,31 @@ fn main() {
         .setup(move |app| {
             let app_handle = app.app_handle();
 
+            let app_handle_clone = app_handle.clone();
             tauri::async_runtime::spawn(async move {
-                alert_multiple_configs(app_handle).await;
+                alert_multiple_configs(app_handle_clone).await;
             });
 
-            let _ = config::clean_all_custom_hosts_entries();
-            let _ = db::init();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) =
+                    kftray_commons::utils::config::clean_all_custom_hosts_entries().await
+                {
+                    error!("Failed to clean custom hosts entries: {}", e);
+                }
 
-            if let Err(e) = config::migrate_configs() {
-                eprintln!("Failed to migrate configs: {}", e);
-            }
+                if let Err(e) = kftray_commons::utils::db::init().await {
+                    error!("Failed to initialize database: {}", e);
+                }
+
+                if let Err(e) = kftray_commons::utils::migration::migrate_configs().await {
+                    error!("Failed to migrate configs: {}", e);
+                }
+            });
+
+            let app_handle_clone = app_handle.clone();
+            tauri::async_runtime::spawn(async move {
+                check_and_emit_changes(app_handle_clone).await;
+            });
 
             #[cfg(target_os = "macos")]
             {
@@ -97,14 +100,13 @@ fn main() {
                 window.set_always_on_top(true).unwrap();
             }
 
-            // register global shortcut to open the app
             let mut shortcut = app.global_shortcut_manager();
 
             shortcut
                 .register("CmdOrCtrl+Shift+F1", move || {
                     toggle_window_visibility(&window);
                 })
-                .unwrap_or_else(|err| println!("{:?}", err));
+                .unwrap_or_else(|err| error!("{:?}", err));
 
             Ok(())
         })
@@ -113,37 +115,39 @@ fn main() {
         .on_system_tray_event(handle_system_tray_event)
         .on_window_event(handle_window_event)
         .invoke_handler(tauri::generate_handler![
-            kubeforward::commands::start_port_forward_tcp,
-            kubeforward::commands::stop_port_forward,
-            kubeforward::commands::stop_all_port_forward,
-            kubeforward::kubecontext::list_kube_contexts,
-            kubeforward::kubecontext::list_namespaces,
-            kubeforward::kubecontext::list_services,
-            kubeforward::kubecontext::list_pods,
-            kubeforward::kubecontext::list_ports,
-            kubeforward::commands::deploy_and_forward_pod,
-            kubeforward::commands::stop_proxy_forward,
-            kubeforward::commands::set_http_logs,
-            kubeforward::commands::get_http_logs,
-            config::get_configs,
-            config::insert_config,
-            config::delete_config,
-            config::get_config,
-            config::update_config,
-            config::export_configs,
-            config::import_configs,
-            config::delete_configs,
-            config::delete_all_configs,
-            commands::open_save_dialog,
-            commands::close_save_dialog,
-            commands::import_configs_from_github,
-            commands::open_log_file,
-            commands::clear_http_logs,
-            commands::get_http_log_size,
-            keychain::store_key,
-            keychain::get_key,
-            keychain::delete_key,
-            window::toggle_pin_state
+            commands::portforward::start_port_forward_tcp_cmd,
+            commands::portforward::start_port_forward_udp_cmd,
+            commands::portforward::stop_port_forward_cmd,
+            commands::portforward::stop_all_port_forward_cmd,
+            commands::kubecontext::list_kube_contexts,
+            commands::kubecontext::list_namespaces,
+            commands::kubecontext::list_services,
+            commands::kubecontext::list_pods,
+            commands::kubecontext::list_ports,
+            commands::portforward::deploy_and_forward_pod_cmd,
+            commands::portforward::stop_proxy_forward_cmd,
+            commands::httplogs::set_http_logs_cmd,
+            commands::httplogs::get_http_logs_cmd,
+            commands::config::get_configs_cmd,
+            commands::config::insert_config_cmd,
+            commands::config::delete_config_cmd,
+            commands::config::get_config_cmd,
+            commands::config::update_config_cmd,
+            commands::config::export_configs_cmd,
+            commands::config::import_configs_cmd,
+            commands::config::delete_configs_cmd,
+            commands::config::delete_all_configs_cmd,
+            commands::window_state::open_save_dialog,
+            commands::window_state::close_save_dialog,
+            commands::github::import_configs_from_github,
+            commands::httplogs::open_log_file,
+            commands::httplogs::clear_http_logs,
+            commands::httplogs::get_http_log_size,
+            commands::github::store_key,
+            commands::github::get_key,
+            commands::github::delete_key,
+            commands::window_state::toggle_pin_state,
+            commands::config_state::get_config_states,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");
