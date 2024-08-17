@@ -11,24 +11,24 @@
 </div>
 
 
-## Desktop App
+---
 
 KFtray is a system tray application built with Tauri (Rust and TypeScript), offering a user-friendly interface to manage configurations from local files or GitHub repositories.
 
 <br>
 
 <div align="center">
-   <img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/ss3.png" alt="kftray" width="500px" />
+   <img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/ss3.png" alt="kftray" width="400px" />
 </div>
 
-## TUI
+---
 
 KFtui is a terminal user interface (TUI) application made with Rust using the Ratatui framework, providing an intuitive terminal interface to manage configurations from local JSON files (GitHub repository support coming soon).
 
 <br>
 
 <div align="center">
-   <img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/ss3.png" alt="kftray" width="500px" />
+   <img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/ss3.png" alt="kftray" width="400px" />
 </div>
 
 <br>
