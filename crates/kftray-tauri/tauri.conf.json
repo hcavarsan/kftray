@@ -8,7 +8,7 @@
   },
   "package": {
     "productName": "kftray",
-    "version": "0.12.2"
+    "version": "0.13.0"
   },
   "tauri": {
     "allowlist": {
@@ -33,6 +33,13 @@
         "icons/icon.ico"
       ],
       "identifier": "com.hcavarsan.kftray",
+      "macOS": {
+        "entitlements": "./entitlements.plist",
+        "exceptionDomain": "",
+        "frameworks": [],
+        "providerShortName": null,
+        "signingIdentity": null
+      },
       "resources": [],
       "shortDescription": "",
       "targets": [
@@ -48,13 +55,6 @@
         "certificateThumbprint": null,
         "digestAlgorithm": "sha256",
         "timestampUrl": ""
-      },
-      "macOS": {
-        "entitlements": "./entitlements.plist",
-        "exceptionDomain": "",
-        "frameworks": [],
-        "providerShortName": null,
-        "signingIdentity": null
       }
     },
     "macOSPrivateApi": true,

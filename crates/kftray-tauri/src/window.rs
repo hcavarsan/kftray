@@ -3,6 +3,13 @@ use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
+use kftray_commons::models::window::AppState;
+use kftray_commons::models::window::WindowPosition;
+use kftray_commons::utils::config_dir::get_window_state_path;
+use log::{
+    info,
+    warn,
+};
 use tauri::{
     Manager,
     Window,
@@ -13,11 +20,6 @@ use tauri_plugin_positioner::{
 };
 use tokio::time::sleep;
 
-use crate::models::window::WindowPosition;
-use crate::utils::config_dir::get_window_state_path;
-use crate::AppState;
-
-/// Saves the current window position to the configuration file.
 pub fn save_window_position(window: &Window) {
     if let Ok(position) = window.outer_position() {
         let position_data = WindowPosition {
@@ -30,21 +32,21 @@ pub fn save_window_position(window: &Window) {
             Ok(path) => {
                 if let Some(parent_dir) = path.parent() {
                     if let Err(e) = fs::create_dir_all(parent_dir) {
-                        println!("Failed to create config directory: {}", e);
+                        info!("Failed to create config directory: {}", e);
                         return;
                     }
                 }
 
                 if fs::write(&path, position_json).is_ok() {
-                    println!("Window position saved: {:?}", position_data);
+                    info!("Window position saved: {:?}", position_data);
                 } else {
-                    println!("Failed to save window position.");
+                    info!("Failed to save window position.");
                 }
             }
-            Err(err) => println!("Failed to get window state path: {}", err),
+            Err(err) => info!("Failed to get window state path: {}", err),
         }
     } else {
-        println!("Failed to get window position.");
+        info!("Failed to get window position.");
     }
 }
 
@@ -54,7 +56,7 @@ pub fn load_window_position() -> Option<WindowPosition> {
             match fs::read_to_string(&home_path) {
                 Ok(position_json) => match serde_json::from_str(&position_json) {
                     Ok(position) => {
-                        println!(
+                        info!(
                             "Window position loaded from home directory: {:?}",
                             home_path
                         );
@@ -71,19 +73,19 @@ pub fn load_window_position() -> Option<WindowPosition> {
                 }
             }
         } else {
-            println!("No window position file found.");
+            info!("No window position file found.");
             None
         }
     } else {
-        println!("Could not determine window state path.");
+        info!("Could not determine window state path.");
         None
     }
 }
 
 fn handle_corrupted_file(path: &Path, error: impl std::fmt::Display) {
-    eprintln!("Failed to parse window position JSON: {}", error);
+    warn!("Failed to parse window position JSON: {}", error);
     if let Err(delete_err) = fs::remove_file(path) {
-        eprintln!(
+        warn!(
             "Failed to delete corrupted window position file: {}",
             delete_err
         );
@@ -151,13 +153,13 @@ pub fn reset_to_default_position(window: &Window) {
     #[cfg(target_os = "linux")]
     {
         if let Err(e) = window.move_window(Position::Center) {
-            eprintln!("Failed to move window to center: {}", e);
+            warn!("Failed to move window to center: {}", e);
         }
     }
     #[cfg(not(target_os = "linux"))]
     {
         if let Err(e) = window.move_window(Position::TrayCenter) {
-            eprintln!("Failed to move window to tray center: {}", e);
+            warn!("Failed to move window to tray center: {}", e);
         }
     }
 
@@ -177,21 +179,21 @@ fn remove_position_file() {
     if let Ok(path) = get_window_state_path() {
         if path.exists() {
             if let Err(e) = fs::remove_file(&path) {
-                eprintln!("Failed to delete window position file: {}", e);
+                warn!("Failed to delete window position file: {}", e);
             } else {
-                println!("Window position file deleted successfully.");
+                info!("Window position file deleted successfully.");
             }
         } else {
-            println!("No window position file found to delete.");
+            info!("No window position file found to delete.");
         }
     } else {
-        println!("Could not determine window state path.");
+        info!("Could not determine window state path.");
     }
 }
 
 pub fn set_window_position(window: &Window, position: Position) {
     if let Err(e) = window.move_window(position) {
-        eprintln!("Failed to move window: {}", e);
+        warn!("Failed to move window: {}", e);
     }
 }
 
@@ -219,11 +221,4 @@ pub fn adjust_window_size_and_position(
         .unwrap();
 
     reset_plugin_moving_state_after_delay(&app_state);
-}
-
-#[tauri::command]
-pub fn toggle_pin_state(app_state: tauri::State<AppState>, window: tauri::Window) {
-    let is_pinned = app_state.is_pinned.load(Ordering::SeqCst);
-    app_state.is_pinned.store(!is_pinned, Ordering::SeqCst);
-    window.set_always_on_top(!is_pinned).unwrap();
 }

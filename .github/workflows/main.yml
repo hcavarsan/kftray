@@ -7,26 +7,68 @@ on:
 env:
   TAURI_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
   TAURI_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
-  VITE_ENV: 'production'
-  TAURI_DEBUG: 'false'
+  VITE_ENV: "production"
+  TAURI_DEBUG: "false"
 
 jobs:
-  macos-universal:
+  create-release-draft:
     permissions:
       contents: write
-    runs-on: macos-latest
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Create release draft
+        run: |
+          echo "Creating release draft for tag: ${{ github.ref_name }}"
+          gh release create ${{ github.ref_name }} --draft --title "KFtray - ${{ github.ref_name }}" --notes "See the assets to download this version and install."
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+  kftray-tauri:
+    needs: create-release-draft
+    permissions:
+      contents: write
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: arm64
+            runner: ubicloud-standard-4-arm
+            rust_target: aarch64-unknown-linux-gnu
+            tauri_args: "--target aarch64-unknown-linux-gnu --bundles appimage,updater --verbose"
+          - os: ubuntu-latest
+            arch: amd64
+            rust_target: x86_64-unknown-linux-gnu
+            tauri_args: "--target x86_64-unknown-linux-gnu --bundles appimage,updater --verbose"
+          - os: macos-latest
+            arch: universal
+            rust_target: universal-apple-darwin
+            tauri_args: "--target universal-apple-darwin --bundles dmg,updater --verbose"
+          - os: windows-latest
+            arch: x86
+            rust_target: i686-pc-windows-msvc
+            tauri_args: "--target i686-pc-windows-msvc --bundles nsis,updater --verbose"
+            msvc_arch: x86
+          - os: windows-latest
+            arch: x86_64
+            rust_target: x86_64-pc-windows-msvc
+            tauri_args: "--target x86_64-pc-windows-msvc --bundles nsis,updater --verbose"
+            msvc_arch: x64
+          - os: windows-latest
+            arch: arm64
+            rust_target: aarch64-pc-windows-msvc
+            tauri_args: "--target aarch64-pc-windows-msvc --bundles nsis,updater --verbose"
+
+    runs-on: ${{ matrix.runner || matrix.os }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Reconfigure for MacOS Universal
-        run: rustup target add aarch64-apple-darwin && rustup target add x86_64-apple-darwin
-
-      - name: Rust setup
+      - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Rust cache
+      - name: Cache Rust
         uses: swatinem/rust-cache@v2
 
       - name: Install pnpm
@@ -53,12 +95,31 @@ jobs:
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
 
-      - name: Build the app for MacOS Universal
+      - name: Set up Visual Studio shell
+        if: matrix.os == 'windows-latest' && matrix.arch == 'arm64'
+        uses: TheMrMilchmann/setup-msvc-dev@v3
+        with:
+          arch: amd64_arm64
+
+      - name: Setup platform-specific dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev
+
+      - name: Reconfigure Rust targets
+        run: |
+          if [ "${{ matrix.os }}" == "macos-latest" ]; then
+            rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          else
+            rustup target add ${{ matrix.rust_target }}
+          fi
+        shell: bash
+      - name: Build kftray-tauri Desktop App
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NODE_OPTIONS: --max-old-space-size=6000
-          # MacOS Signing:
           ENABLE_CODE_SIGNING: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -73,303 +134,133 @@ jobs:
           releaseDraft: true
           prerelease: false
           updaterJsonKeepUniversal: true
-          args: --target universal-apple-darwin --bundles dmg,updater --verbose
+          args: ${{ matrix.tauri_args }}
 
-
-  ubuntu-amd64:
+  kftui:
+    needs: create-release-draft
     permissions:
       contents: write
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            arch: arm64
+            runner: ubicloud-standard-4-arm
+            rust_target: aarch64-unknown-linux-gnu
+          - os: ubuntu-latest
+            arch: amd64
+            rust_target: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            arch: universal
+            rust_target: universal-apple-darwin
+          - os: windows-latest
+            arch: x86
+            rust_target: i686-pc-windows-msvc
+            msvc_arch: x86
+          - os: windows-latest
+            arch: x86_64
+            rust_target: x86_64-pc-windows-msvc
+            msvc_arch: x64
+
+    runs-on: ${{ matrix.runner || matrix.os }}
+
+    outputs:
+      os: ${{ matrix.os }}
+      arch: ${{ matrix.arch }}
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install dependencies for Linux
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust
+        uses: swatinem/rust-cache@v2
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v3
+        with:
+          version: 9.1.2
+
+      - name: Sync node version and setup cache
+        uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+          cache: "pnpm"
+
+      - name: Cache pnpm modules
+        uses: actions/cache@v4
+        with:
+          path: |
+            $(pnpm store path --silent)
+            **/node_modules
+          key: ${{ runner.OS }}-pnpm-${{ runner.ARCH }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.OS }}-pnpm-${{ runner.ARCH }}-
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Setup platform-specific dependencies
+        if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev
 
-      - name: Rust setup
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@v3
-        with:
-          version: 9.1.2
-
-      - name: Sync node version and setup cache
-        uses: actions/setup-node@v4
-        with:
-          node-version: "lts/*"
-          cache: "pnpm"
-
-      - name: Cache pnpm modules
-        uses: actions/cache@v4
-        with:
-          path: |
-            $(pnpm store path --silent)
-            **/node_modules
-          key: ${{ runner.OS }}-pnpm-${{ runner.ARCH }}-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.OS }}-pnpm-${{ runner.ARCH }}-
-
-      - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile
-
-      - name: Build the app for Linux amd64
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NODE_OPTIONS: --max-old-space-size=6000
-        with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "KFtray - ${{ github.ref_name }}"
-          releaseBody: "See the assets to download this version and install."
-          releaseDraft: true
-          prerelease: false
-          updaterJsonKeepUniversal: true
-          args: --target x86_64-unknown-linux-gnu --bundles appimage,updater --verbose
-
-  ubuntu-arm64:
-    permissions:
-      contents: write
-    runs-on: ubicloud-standard-4-arm
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Install dependencies for Linux
+      - name: Reconfigure Rust targets
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev perl
+          if [ "${{ matrix.os }}" == "macos-latest" ]; then
+            rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          else
+            rustup target add ${{ matrix.rust_target }}
+          fi
+        shell: bash
 
-      - name: Rust setup
-        uses: dtolnay/rust-toolchain@stable
+      - name: Build kftui
+        run: |
+          if [ "${{ matrix.os }}" == "macos-latest" ]; then
+            cargo build --release --bin kftui --target aarch64-apple-darwin
+            cargo build --release --bin kftui --target x86_64-apple-darwin
+            lipo -create -output ./target/release/kftui ./target/x86_64-apple-darwin/release/kftui ./target/aarch64-apple-darwin/release/kftui
+          else
+            cargo build --release --bin kftui --target ${{ matrix.rust_target }}
+          fi
+        shell: bash
 
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
-
-      - name: Reconfigure for Linux ARM64
-        run: rustup target add aarch64-unknown-linux-gnu
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@v3
+      - name: Sign and notarize the release build
+        if: matrix.os == 'macos-latest'
+        uses: toitlang/action-macos-sign-notarize@v1.2.0
         with:
-          version: 9.1.2
+          certificate: ${{ secrets.APPLE_CERTIFICATE }}
+          certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          username: ${{ secrets.APPLE_ID }}
+          password: ${{ secrets.APPLE_PASSWORD }}
+          apple-team-id: 6M376JWU73
+          app-path: target/release/kftui
+          entitlements-path: crates/kftui/entitlements.plist
 
-      - name: Sync node version and setup cache
-        uses: actions/setup-node@v4
-        with:
-          node-version: "lts/*"
-          cache: "pnpm"
-
-      - name: Cache pnpm modules
-        uses: actions/cache@v4
-        with:
-          path: |
-            $(pnpm store path --silent)
-            **/node_modules
-          key: ${{ runner.OS }}-pnpm-${{ runner.ARCH }}-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.OS }}-pnpm-${{ runner.ARCH }}-
-
-      - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile
-
-      - name: Build the appimage for Linux ARM
-        uses: tauri-apps/tauri-action@v0
+      - name: Rename and upload release asset
+        run: |
+          if [ "${{ matrix.os }}" == "macos-latest" ]; then
+            mv ./target/release/kftui ./target/release/kftui_macos_universal
+            gh release upload ${{ github.ref_name }} ./target/release/kftui_macos_universal --clobber
+          elif [ "${{ matrix.os }}" == "windows-latest" ]; then
+            mv ./target/${{ matrix.rust_target }}/release/kftui.exe ./target/release/kftui_${{ matrix.arch }}.exe
+            chmod +x ./target/release/kftui_${{ matrix.arch }}.exe
+            gh release upload ${{ github.ref_name }} ./target/release/kftui_${{ matrix.arch }}.exe --clobber
+          else
+            mv ./target/${{ matrix.rust_target }}/release/kftui ./target/release/kftui_${{ matrix.arch }}
+            chmod +x ./target/release/kftui_${{ matrix.arch }}
+            gh release upload ${{ github.ref_name }} ./target/release/kftui_${{ matrix.arch }} --clobber
+          fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NODE_OPTIONS: --max-old-space-size=6000
-        with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "KFtray - ${{ github.ref_name }}"
-          releaseBody: "See the assets to download this version and install."
-          releaseDraft: true
-          prerelease: false
-          updaterJsonKeepUniversal: true
-          args: --target aarch64-unknown-linux-gnu --bundles appimage,updater --verbose
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
 
-  windows-x86_64:
-    permissions:
-      contents: write
-    runs-on: windows-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Rust setup
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@v3
-        with:
-          version: 9.1.2
-
-      - name: Sync node version and setup cache
-        uses: actions/setup-node@v4
-        with:
-          node-version: "lts/*"
-          cache: "pnpm"
-
-      - name: Cache pnpm modules
-        uses: actions/cache@v4
-        with:
-          path: |
-            $(pnpm store path --silent)
-            **/node_modules
-          key: ${{ runner.OS }}-pnpm-${{ runner.ARCH }}-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.OS }}-pnpm-${{ runner.ARCH }}-
-
-      - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile
-
-      - name: Reconfigure for Windows x86_64
-        run: rustup target add x86_64-pc-windows-msvc
-
-      - name: Build the app for Windows x86_64
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NODE_OPTIONS: --max-old-space-size=6000
-        with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "KFtray - ${{ github.ref_name }}"
-          releaseBody: "See the assets to download this version and install."
-          releaseDraft: true
-          prerelease: false
-          updaterJsonKeepUniversal: true
-          args: --target x86_64-pc-windows-msvc --bundles nsis,updater  --verbose
-
-  windows-x86:
-    permissions:
-      contents: write
-    runs-on: windows-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Rust setup
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
-
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@v3
-        with:
-          version: 9.1.2
-
-      - name: Sync node version and setup cache
-        uses: actions/setup-node@v4
-        with:
-          node-version: "lts/*"
-          cache: "pnpm"
-
-      - name: Cache pnpm modules
-        uses: actions/cache@v4
-        with:
-          path: |
-            $(pnpm store path --silent)
-            **/node_modules
-          key: ${{ runner.OS }}-pnpm-${{ runner.ARCH }}-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.OS }}-pnpm-${{ runner.ARCH }}-
-
-      - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile
-
-      - name: Reconfigure for Windows x86
-        run: rustup target add i686-pc-windows-msvc
-
-      - name: Build the app for Windows x86
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NODE_OPTIONS: --max-old-space-size=6000
-        with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "KFtray - ${{ github.ref_name }}"
-          releaseBody: "See the assets to download this version and install."
-          releaseDraft: true
-          prerelease: false
-          updaterJsonKeepUniversal: true
-          args: --target i686-pc-windows-msvc --bundles nsis,updater --verbose
-
-  windows-arm64:
-    permissions:
-      contents: write
-    runs-on: windows-latest
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Rust setup
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@v3
-        with:
-          version: 9.1.2
-
-      - name: Sync node version and setup cache
-        uses: actions/setup-node@v4
-        with:
-          node-version: "lts/*"
-          cache: "pnpm"
-
-      - name: Cache pnpm modules
-        uses: actions/cache@v4
-        with:
-          path: |
-            $(pnpm store path --silent)
-            **/node_modules
-          key: ${{ runner.OS }}-pnpm-${{ runner.ARCH }}-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.OS }}-pnpm-${{ runner.ARCH }}-
-
-      - name: Install dependencies
-        run: pnpm install --no-frozen-lockfile
-
-      - name: Install dependencies for Windows on ARM64
-        uses: TheMrMilchmann/setup-msvc-dev@v3
-        with:
-          arch: amd64_arm64
-
-      - name: Reconfigure for Windows on ARM64
-        run: rustup target add aarch64-pc-windows-msvc
-
-      - name: Build the app for Windows on ARM64
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NODE_OPTIONS: --max-old-space-size=6000
-        with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "KFtray - ${{ github.ref_name }}"
-          releaseBody: "See the assets to download this version and install."
-          releaseDraft: true
-          prerelease: false
-          updaterJsonKeepUniversal: true
-          args: --target aarch64-pc-windows-msvc --bundles nsis,updater --verbose
-
-  build-and-push-docker:
+  kftray-server:
     permissions:
       contents: write
       packages: write

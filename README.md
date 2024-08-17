@@ -1,276 +1,87 @@
 <div align="center">
-   <br />
-   <img align="center" width="128px" src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/logo.png" />
-   <h1 align="center"><b>kftray</b></h1>
-   <p align="center">
-      A cross-platform system tray application for managing multiple kubectl port-forward commands, with support for UDP and proxy connections through k8s clusters.
-
-   </p>
-   <p align="center">
-   <a href="https://kftray.app"><strong>kftray.app »</strong></a>
-   <p />
-   <img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/ss3.png" alt="kftray" width="800px" />
-
-   </div>
-
-   <h2> Download latest release </h2>
-<div align="left">
-         <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.12.2_universal.dmg">
-            <img src="https://img.shields.io/badge/-macOS (Universal)-grey.svg?style=for-the-badge&logo=apple" alt="Download for macOS" />
-         </a>
-         <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.12.2_arm64-setup.exe">
-            <img src="https://img.shields.io/badge/-Windows (ARM64)-grey.svg?style=for-the-badge&logo=windows" alt="Download for Windows ARM64" />
-         </a>
-         <br />
-         <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.12.2_x64-setup.exe">
-            <img src="https://img.shields.io/badge/-Windows (x64)-grey.svg?style=for-the-badge&logo=windows" alt="Download for Windows x64" />
-         </a>
-         <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.12.2_x86-setup.exe">
-            <img src="https://img.shields.io/badge/-Windows (x86)-grey.svg?style=for-the-badge&logo=windows" alt="Download for Windows x86" />
-         </a>
-         <br />
-         <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.12.2_amd64.AppImage">
-            <img src="https://img.shields.io/badge/-Linux (x64)-grey.svg?style=for-the-badge&logo=linux" alt="Download for Linux AMD64" />
-         </a>
-         <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.12.2_aarch64.AppImage">
-            <img src="https://img.shields.io/badge/-Linux (ARM64)-grey.svg?style=for-the-badge&logo=linux" alt="Download for Linux AARCH64" />
-         </a>
+  <br>
+  <img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/logo.png" width="128px" alt="KFtray Logo" />
+  <br><br>
+  <a href="https://kftray.app"><strong>Visit kftray.app »</strong></a>
+  <br><br>
 </div>
 
-<br/>
-  <h2>Overview</h1>
-  <p>kftray is a cross-platform system tray app made with Tauri (Rust and TypeScript) for Kubernetes users. It simplifies setting up multiple kubectl port forward configurations through a user-friendly interface. Easily store and manage all configurations from local files or GitHub repositories.</p>
-    <p><strong>Learn More:</strong> <a href="https://kftray.hashnode.dev/kubernetes-debugging-handling-multiple-kubectl-port-forward-from-tray">Blog Post - Kubernetes Debugging with KFtray</a></p>
+<p align="center">
+  KFtray and KFtui are independent, cross-platform applications. They help you set up and manage multiple port-forwarding settings easily. Both apps are part of the same open-source project and aim to make working with Kubernetes easier. KFtray has a desktop interface, while KFtui has a terminal interface, so you can choose the one that suits you best.
+</p>
 
-  <table>
-    <tr>
-      <td><strong>Kftray Overview</strong></td>
-      <td><strong>Demo: GitHub Sync</strong></td>
-      <td><strong>Demo: Adding a New Configuration</strong></td>
-    </tr>
-    <tr>
-      <td>
-        <a href="https://www.youtube.com/watch?v=9fQO7x4mqn8">
-          <img src="https://img.youtube.com/vi/9fQO7x4mqn8/0.jpg" alt="Kftray Overview" width="256"/>
-        </a>
-      </td>
-      <td>
-        <a href="https://www.youtube.com/watch?v=BAdL7IzaEh8">
-          <img src="https://img.youtube.com/vi/BAdL7IzaEh8/0.jpg" alt="Kftray Demo: Github Sync" width="256"/>
-        </a>
-      </td>
-      <td>
-        <a href="https://www.youtube.com/watch?v=nqEhmcKeCc4">
-          <img src="https://img.youtube.com/vi/nqEhmcKeCc4/0.jpg" alt="Kftray Demo: Adding a new configuration" width="256"/>
-        </a>
-      </td>
-    </tr>
-  </table>
-  <br>
-<br/>
 
-## Table of Contents
+<div align="center"> <h2>KFtray</h2> <img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/ss3.png" alt="KFtray Screenshot" width="600px" style="margin: 0 10px; border-radius: 15px;" /> </div>
 
-- [Features](#-features)
-- [Installation](#-installation)
-- [Usage](#-usage)
-- [Architecture](#-architecture)
-- [Contributing](#-contributing)
-- [License](#-license)
 
-## 🚀 Features
+<div align="center"> <h2>KFtui</h2> <img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/sstui2.png" alt="KFtui Screenshot" width="600x" style="margin: 0 10px; border-radius: 15px;" /> </div>
 
-- **Resilient Port Forwarding Connection:** Ensures continuous service even if a pod dies, by reconnecting to another running pod automatically.
-- **One-Click Multiple Port Forwards:** Allows for the setup of several port forwarding instances at the same time with a single click.
+
+## Features
+
+- **Resilient Port Forwarding Connection:** Ensures continuous service even if a pod dies by reconnecting to another running pod automatically.
+- **One-Click Multiple Port Forwards:** Allows for the setup of several port forwarding instances simultaneously with a single click.
 - **Independent of Kubectl:** Directly interfaces with the Kubernetes API, eliminating the need for `kubectl`.
 - **Multi-Protocol Support:** Enables access to internal or external servers through a Proxy Relay server deployed in a Kubernetes cluster, including TCP and UDP port forwarding.
-- **HTTP Logs Tracing**: Enable or disable HTTP logs for specific configurations to save the requests and responses in a local log file.
-
-## 📦 Installation
-
-KFtray is available for macOS and Linux users via Homebrew, and directly from the GitHub releases page for other systems. Here's how you can get started:
-
-**For macOS**
-
-```bash
-brew tap hcavarsan/kftray
-brew install --HEAD kftray
-```
-
-**For Linux**
-
-```bash
-brew tap hcavarsan/kftray
-brew install kftray-linux
-```
-
-_Please check the caveats section for global app creation instructions after installation._
-
-Linux Note: due to GTK limitations, it is necessary to install and enable the GNOME Shell extension for AppIndicator support to kftray works. See here: <https://extensions.gnome.org/extension/615/appindicator-support/>
-
-For other systems, visit the [GitHub releases page](https://github.com/hcavarsan/kftray/releases) for downloadable binaries.
-
-## 🧭 Usage
-
-## 🎛 Configuring Your First Port Forward
-
-In a few simple steps, you can configure your first port forward:
-
-1. **Launch the application**
-2. **Open the configuration panel from the tray icon**
-3. **Add a new configuration:**
-
-   - Give it a unique alias and set if you want to set the alias as domain to your forward \*1
-   - Indicate if the configuration is for a port forward for a service (common use) or a proxy (port forward to an endpoint via a Kubernetes cluster).
-   - Specify the Kubernetes context
-   - Define the namespace housing your service
-   - Enter the service name
-   - Choose TCP or UDP
-   - Set the local and remote port numbers
-   - Configure a custom local IP address (optional)
-
-4. **Activate Your Configuration**: With your configuration saved, simply click on the switch button in the main menu to start the port forward in a single por forward or in Start All to start all configurations at the same time
-
-> Note: To use the alias feature with a local domain name, you must enable write permissions in the hosts file. This method is not secure. We are addressing this in the following issue: [https://github.com/hcavarsan/kftray/issues/171](https://github.com/hcavarsan/kftray/issues/171).
-> Follow these steps to allow write access:
->
-> For Windows:
->
-> ```bash
-> icacls "C:\Windows\System32\drivers\etc\hosts" /grant Everyone:(R,W)
-> ```
->
-> For MacOS and Linux:
->
-> ```bash
-> sudo chmod ugo+rw /etc/hosts
-> ```
-
-## Export configurations to a JSON file
-
-1. Open the main menu in the footer
-2. Select the `Export Local File` option
-3. Choose a file name and location to save the JSON file
-4. The JSON file will contain all your current configurations
-
-You can then import this JSON file at any time to restore your configurations.
-
-Example Json configuration File:
-
-```json
-[
-  {
-    "service": "argocd-server",
-    "namespace": "argocd",
-    "local_port": 8888,
-    "remote_port": 8080,
-    "context": "test-cluster",
-    "workload_type": "service",
-    "protocol": "tcp",
-    "remote_address": "",
-    "local_address": "127.0.0.1",
-    "alias": "argocd",
-    "domain_enabled": true
-  }
-]
-```
-
-## Sharing the configurations through Git
-
-now, with the local json saved, you can share your configurations with your team members by committing the JSON file to a GitHub repository. This allows for easy collaboration and synchronization of KFtray configurations across your team.
-
-To import and sync your GitHub configs in kftray:
+- **HTTP Logs Tracing:** Enable or disable HTTP logs for specific configurations to save the requests and responses in a local log file. _(Currently available only in the KFtray desktop app)_ - [Blog Post](https://kftray.app/blog/posts/6-debug-http-traffics-kftray)
+- **GitHub Sync:** Keep your configurations saved on GitHub and share or synchronize them in a GitOps style. _(Currently available only in the KFtray desktop app)_
 
 
-1.  Open the application's main menu
-2.  Select the button with GitHub icon in the footer menu
-4.  Enter the URL of your Git repository and path containing the JSON file
-5.  If your GitHub repository is private, you will need to enter the private token. Credentials are securely saved in the SO keyring (Keychain on macOS). Kftray does not store or save credentials in any local file; they are only stored in the local keyring.
-6.  Select the polling time for when Kftray will synchronize configurations and retrieve them from GitHub.
+
+## Features Matrix
+
+<div align="center">
+
+| Feature                                      | KFtray (Desktop App) | KFtui (Terminal UI) |
+|----------------------------------------------|----------------------|---------------------|
+| Resilient Port Forwarding Connection         | ✔️                   | ✔️                  |
+| One-Click Multiple Port Forwards             | ✔️                   | ✔️                  |
+| Independent of Kubectl                       | ✔️                   | ✔️                  |
+| Multi-Protocol Support (TCP/UDP)             | ✔️                   | ✔️                  |
+| HTTP Logs Tracing                            | ✔️                   | ❌ (Coming Soon)    |
+| GitHub Sync                                  | ✔️                   | ❌ (Coming Soon)    |
+| Local JSON File Configuration                | ✔️                   | ✔️                  |
+
+</div>
 
 
-6. KFtray will now sync with the Git repository to automatically import any new configurations or changes committed to the JSON file.
 
-This allows you to quickly deploy any port forward changes to all team members. And if someone on your team adds a new configuration, it will be automatically synced to everyone else's KFtray.
+## Installation
+
+- **KFtray Desktop App:** Check [INSTALL.md](https://github.com/hcavarsan/kftray/tree/main/docs/kftray/INSTALL.md).
+- **KFtui:** Check [INSTALL.md](https://github.com/hcavarsan/kftray/tree/main/docs/kftui/INSTALL.md).
+
+---
 
 ## Building from Source
 
-### Requirements
+- **KFtray Desktop App:** Check [BUILD.md](https://github.com/hcavarsan/kftray/tree/main/docs/kftray/BUILD.md).
+- **KFtui:** Check [BUILD.md](https://github.com/hcavarsan/kftray/tree/main/docs/kftui/BUILD.md).
 
-- Node.js and pnpm or yarn for building the frontend.
-- Rust for building the backend.
 
-To compile `kftray`, these steps should be followed:
-
-1. Clone the repository:
-
-   ```bash
-   git clone https://github.com/hcavarsan/kftray.git
-   ```
-
-2. Navigate to the cloned directory:
-
-   ```bash
-   cd kftray
-   ```
-
-3. Install dependencies:
-
-   ```bash
-   pnpm install
-   ```
-
-4. Launch the application in development mode:
-
-   ```bash
-   pnpm run tauri dev
-   ```
 
 ## 🏗 Architecture
 
-### Server
+For an overall architectural review, check [ARCH.md](https://github.com/hcavarsan/kftray/tree/main/docs/ARCH.md).
 
-KFtray Server is a Rust application that relays UDP/TCP traffic to an upstream server. Check the source code [here](https://github.com/hcavarsan/kftray/tree/main/crates/kftray-server).
 
-### Forwarding Flows
-
-- **TCP Forwarding:** A local TCP socket, similar to kubectl, can be used to communicate with a Kubernetes pod. This approach offers parallel execution and improved resilience.
-
-```mermaid
-sequenceDiagram
-Application->>Kubernetes Pod: Opens TCP socket, starts port-forwarding
-Kubernetes Pod-->>Application: Responds with TCP Packet
-```
-
-- **Proxy TCP Forwarding:** The local TCP connects to the kftray-server pod, which then sends TCP packet to the upstream server.
-
-```mermaid
-sequenceDiagram
-Application->>Kubernetes Pod: Socket to kftray-server, facilitates TCP relay
-Kubernetes Pod->>Remote Service: Relays TCP Packet
-Remote Service-->>Kubernetes Pod: Responds
-Kubernetes Pod-->>Application: Returns TCP Packet
-```
-
-- **UDP Forwarding:** The KFtray client opens a local UDP socket and connects a local TCP socket to the kftray-server pod. The TCP socket sends UDP packets over TCP, which are then forwarded to the upstream server.
-
-```mermaid
-sequenceDiagram
-Application->>Kubernetes Pod: UDP socket, TCP port-forward to kftray-server
-Kubernetes Pod->>Service/Remote: Converts to UDP, sends packet
-Service/Remote-->>Kubernetes Pod: Responds with UDP Packet
-Kubernetes Pod-->>Application: Relays as TCP
-```
 
 ## 👥 Contributing
 
-- 🛠 **Pull Requests**: Feel free to create pull requests for bug fixes, new features, or improvements.
-- 📝 **Issues**: Report bugs, suggest new features, or ask questions.
-- 💡 **Feedback**: Your feedback helps improve kftray.
+- **Pull Requests:** Feel free to create pull requests for bug fixes, new features, or improvements.
+- **Issues:** Report bugs, suggest new features, or ask questions.
+- **Feedback:** Your feedback helps improve kftray.
+
+
 
 ## 📄 License
 
-KFtray is available under the [MIT License](LICENSE.md), which is included in the repository. See the LICENSE file for full details.
+KFtray is available under the [MIT License](LICENSE.md). See the LICENSE file for full details.
+
+
+
+This layout uses horizontal rules to separate sections, centers important elements, and maintains a clean, minimalist aesthetic.
+
 
 ## Star History
 

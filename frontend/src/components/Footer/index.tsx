@@ -28,7 +28,6 @@ const Footer: React.FC<FooterProps> = ({
   openGitSyncModal,
   handleExportConfigs,
   handleImportConfigs,
-  onConfigsSynced,
   credentialsSaved,
   setCredentialsSaved,
   isGitSyncModalOpen,
@@ -37,7 +36,6 @@ const Footer: React.FC<FooterProps> = ({
   selectedConfigs,
   setSelectedConfigs,
   configs,
-  setConfigs,
 }) => {
   const borderColor = useColorModeValue('gray.500', 'gray.700')
   const [logSize, setLogSize] = useState<number>(0)
@@ -132,7 +130,6 @@ const Footer: React.FC<FooterProps> = ({
           setSelectedConfigs={setSelectedConfigs}
           selectedConfigs={selectedConfigs}
           configs={configs}
-          setConfigs={setConfigs}
         />
       </Flex>
 
@@ -161,7 +158,6 @@ const Footer: React.FC<FooterProps> = ({
         <SyncConfigsButton
           serviceName='kftray'
           accountName='github_config'
-          onConfigsSynced={onConfigsSynced}
           onSyncFailure={error => console.error('Sync failed:', error)}
           credentialsSaved={credentialsSaved}
           setCredentialsSaved={setCredentialsSaved}
