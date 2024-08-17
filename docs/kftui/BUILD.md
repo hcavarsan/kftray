@@ -20,7 +20,7 @@
 2. **Navigate to the `kftui` Directory:**
 
    ```bash
-   cd kftray/kftui
+   cd kftray
    ```
 
 3. **Build the Application:**
