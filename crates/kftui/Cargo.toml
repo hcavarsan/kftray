@@ -1,6 +1,6 @@
 [package]
 name = "kftui"
-version = "0.12.2"
+version = "0.13.0"
 description = "KFtray TUI is a Rust application that manage multiple kubectl port forward configurations"
 authors = [
     "Henrique Cavarsan <hencavarsan@gmail.com>",
@@ -64,4 +64,3 @@ built = "0.7.4"
 
 [build-dependencies]
 built = "0.7"
-

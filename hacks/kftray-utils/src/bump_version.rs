@@ -124,7 +124,7 @@ fn bump_version(bump_type: &str) -> io::Result<()> {
 
     log::info!("kftui Cargo.toml updated");
 
-    update_file_content("../../README.md", new_version, update_markdown_version)?;
+    update_file_content("../../docs/kftray/INSTALL.md", new_version, update_markdown_version)?;
 
     log::info!("README.md updated");
 
