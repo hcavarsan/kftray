@@ -1,37 +1,23 @@
 <div align="center">
-   <br />
-   <img align="center" width="128px" src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/logo.png" />
-   <h1 align="center"><b>kftray</b></h1>
-   <p align="center">
-      KFtray and KFtui are independent, cross-platform applications. They help you set up and manage multiple port-forwarding settings easily. Both apps are part of the same open-source project and aim to make working with Kubernetes easier. KFtray has a desktop interface, while KFtui has a terminal interface, so you can choose the one that suits you best.
-   </p>
-   <p align="center">
-      <a href="https://kftray.app"><strong>Visit kftray.app »</strong></a>
-   </p>
+  <br>
+  <img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/logo.png" width="128px" alt="KFtray Logo" />
+  <br><br>
+  <a href="https://kftray.app"><strong>Visit kftray.app »</strong></a>
+  <br><br>
+</div>
+
+<p align="center">
+  KFtray and KFtui are independent, cross-platform applications. They help you set up and manage multiple port-forwarding settings easily. Both apps are part of the same open-source project and aim to make working with Kubernetes easier. KFtray has a desktop interface, while KFtui has a terminal interface, so you can choose the one that suits you best.
+</p>
+
+
+<div align="center" style="display: flex; justify-content: center; gap: 20px;">
+  <img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/ss3.png" alt="KFtray Screenshot" width="400px" />
+  <img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/ss3.png" alt="KFtray Screenshot" width="400px" />
 </div>
 
 
----
 
-KFtray is a system tray application built with Tauri (Rust and TypeScript), offering a user-friendly interface to manage configurations from local files or GitHub repositories.
-
-<br>
-
-<div align="center">
-   <img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/ss3.png" alt="kftray" width="400px" />
-</div>
-
----
-
-KFtui is a terminal user interface (TUI) application made with Rust using the Ratatui framework, providing an intuitive terminal interface to manage configurations from local JSON files (GitHub repository support coming soon).
-
-<br>
-
-<div align="center">
-   <img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/ss3.png" alt="kftray" width="400px" />
-</div>
-
-<br>
 
 ## Features
 
