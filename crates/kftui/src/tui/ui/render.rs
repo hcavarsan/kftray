@@ -150,8 +150,8 @@ pub fn draw_configs_tab(f: &mut Frame, app: &mut App, config_states: &[ConfigSta
 
     if !app.stopped_configs.is_empty() || !app.running_configs.is_empty() {
         let selected_row = match app.active_table {
-            ActiveTable::Stopped => app.selected_row_stopped,
-            ActiveTable::Running => app.selected_row_running,
+            ActiveTable::Stopped => app.table_state_stopped.selected().unwrap_or(0),
+            ActiveTable::Running => app.table_state_running.selected().unwrap_or(0),
         };
         let configs = match app.active_table {
             ActiveTable::Stopped => &app.stopped_configs,
