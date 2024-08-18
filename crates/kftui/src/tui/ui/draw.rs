@@ -1,4 +1,8 @@
 use kftray_commons::models::config_state_model::ConfigState;
+use ratatui::widgets::Paragraph;
+use ratatui::widgets::Scrollbar;
+use ratatui::widgets::ScrollbarOrientation;
+use ratatui::widgets::ScrollbarState;
 use ratatui::{
     layout::{
         Constraint,
@@ -23,12 +27,16 @@ use ratatui::{
     Frame,
 };
 
+use crate::tui::input::ActiveTable;
 use crate::tui::input::{
     ActiveComponent,
     App,
     AppState,
 };
 use crate::tui::ui::render_delete_confirmation_popup;
+use crate::tui::ui::render_details;
+use crate::tui::ui::MAUVE;
+use crate::tui::ui::SURFACE2;
 use crate::tui::ui::{
     centered_rect,
     draw_configs_tab,
@@ -68,8 +76,61 @@ pub fn draw_ui(f: &mut Frame, app: &mut App, config_states: &[ConfigState]) {
     }
 
     draw_header(f, app, chunks[0]);
-    draw_configs_tab(f, app, config_states, chunks[1]);
-    render_legend(f, chunks[2]);
+
+    let main_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Percentage(70), Constraint::Percentage(30)].as_ref())
+        .split(chunks[1]);
+
+    draw_configs_tab(
+        f,
+        app,
+        config_states,
+        main_chunks[0],
+        app.active_component == ActiveComponent::StoppedTable
+            || app.active_component == ActiveComponent::RunningTable,
+    );
+
+    let bottom_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
+        .split(main_chunks[1]);
+
+    let selected_config = match app.active_table {
+        ActiveTable::Stopped => app
+            .stopped_configs
+            .get(app.table_state_stopped.selected().unwrap_or(0))
+            .cloned(),
+        ActiveTable::Running => app
+            .running_configs
+            .get(app.table_state_running.selected().unwrap_or(0))
+            .cloned(),
+    };
+
+    if let Some(config) = selected_config {
+        render_details(
+            f,
+            app,
+            &config,
+            config_states,
+            bottom_chunks[0],
+            app.active_component == ActiveComponent::Details,
+        );
+    } else {
+        let empty_block = Block::default()
+            .borders(Borders::ALL)
+            .title(Span::styled("Detail", Style::default().fg(MAUVE)));
+        f.render_widget(empty_block, bottom_chunks[0]);
+    }
+
+    render_logs(
+        f,
+        app,
+        bottom_chunks[1],
+        app.active_component == ActiveComponent::Logs,
+    );
+
+    render_legend(f, chunks[2], app.active_component);
 
     match app.state {
         AppState::ShowHelp => {
@@ -123,6 +184,68 @@ pub fn draw_ui(f: &mut Frame, app: &mut App, config_states: &[ConfigState]) {
     }
 }
 
+pub fn render_logs(f: &mut Frame, app: &mut App, area: Rect, has_focus: bool) {
+    let logs = {
+        let log_content = app.log_content.lock().unwrap();
+        log_content.clone()
+    };
+
+    let log_lines: Vec<&str> = logs.lines().collect();
+    let log_height = area.height as usize;
+    app.log_scroll_max_offset = log_lines.len().saturating_sub(log_height);
+
+    if app.log_scroll_offset > app.log_scroll_max_offset {
+        app.log_scroll_offset = app.log_scroll_max_offset;
+    }
+
+    let visible_logs: String = log_lines
+        .iter()
+        .skip(app.log_scroll_offset)
+        .take(log_height)
+        .cloned()
+        .collect::<Vec<&str>>()
+        .join("\n");
+
+    let focus_color = if has_focus { YELLOW } else { TEXT };
+    let border_modifier = if has_focus {
+        Modifier::BOLD
+    } else {
+        Modifier::empty()
+    };
+
+    let logs_paragraph = Paragraph::new(visible_logs)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(Span::styled("Logs", Style::default().fg(MAUVE)))
+                .border_style(
+                    Style::default()
+                        .fg(focus_color)
+                        .add_modifier(border_modifier),
+                ),
+        )
+        .style(Style::default().fg(TEXT).bg(BASE))
+        .wrap(ratatui::widgets::Wrap { trim: true });
+
+    f.render_widget(logs_paragraph, area);
+
+    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .begin_symbol(None)
+        .track_symbol(None)
+        .end_symbol(None)
+        .style(Style::default().fg(SURFACE2).bg(BASE));
+    let mut scrollbar_state = ScrollbarState::new(app.log_scroll_max_offset)
+        .position(app.log_scroll_offset)
+        .viewport_content_length(log_height);
+    let scrollbar_area = Rect {
+        x: area.x + area.width - 1,
+        y: area.y.saturating_add(2),
+        height: area.height.saturating_sub(2),
+        width: 1,
+    };
+    f.render_stateful_widget(scrollbar, scrollbar_area, &mut scrollbar_state);
+}
+
 pub fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     let menu_titles = ["Help", "Import", "Export", "About", "Quit"];
     let menu: Vec<Line> = menu_titles
@@ -140,7 +263,7 @@ pub fn draw_header(f: &mut Frame, app: &App, area: Rect) {
         .collect();
 
     let border_style = if app.active_component == ActiveComponent::Menu {
-        Style::default().fg(YELLOW)
+        Style::default().fg(YELLOW).add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(TEXT)
     };

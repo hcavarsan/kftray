@@ -1,6 +1,7 @@
 mod file_explorer;
 mod navigation;
 mod popup;
+
 use std::collections::HashSet;
 use std::io;
 use std::sync::{
@@ -40,10 +41,13 @@ pub enum DeleteButton {
 #[derive(PartialEq, Clone, Copy)]
 pub enum ActiveComponent {
     Menu,
-    Table,
+    StoppedTable,
+    RunningTable,
+    Details,
+    Logs,
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Clone, Copy)]
 pub enum ActiveTable {
     Stopped,
     Running,
@@ -63,6 +67,8 @@ pub enum AppState {
 }
 
 pub struct App {
+    pub details_scroll_offset: usize,
+    pub details_scroll_max_offset: usize,
     pub selected_rows_stopped: HashSet<usize>,
     pub selected_rows_running: HashSet<usize>,
     pub import_file_explorer: FileExplorer,
@@ -79,6 +85,8 @@ pub struct App {
     pub running_configs: Vec<Config>,
     pub stdout_output: Arc<Mutex<String>>,
     pub error_message: Option<String>,
+    pub log_scroll_offset: usize,
+    pub log_scroll_max_offset: usize,
     pub active_component: ActiveComponent,
     pub selected_menu_item: usize,
     pub delete_confirmation_message: Option<String>,
@@ -86,6 +94,7 @@ pub struct App {
     pub visible_rows: usize,
     pub table_state_stopped: TableState,
     pub table_state_running: TableState,
+    pub log_content: Arc<Mutex<String>>,
 }
 
 impl App {
@@ -96,6 +105,8 @@ impl App {
         let stdout_output = LOGGER.buffer.clone();
 
         let mut app = Self {
+            details_scroll_offset: 0,
+            details_scroll_max_offset: 0,
             import_file_explorer,
             export_file_explorer,
             state: AppState::Normal,
@@ -112,13 +123,16 @@ impl App {
             running_configs: Vec::new(),
             stdout_output,
             error_message: None,
-            active_component: ActiveComponent::Table,
+            log_scroll_offset: 0,
+            log_scroll_max_offset: 0,
+            active_component: ActiveComponent::StoppedTable,
             selected_menu_item: 0,
             delete_confirmation_message: None,
             selected_delete_button: DeleteButton::Confirm,
             visible_rows: 0,
             table_state_stopped: TableState::default(),
             table_state_running: TableState::default(),
+            log_content: Arc::new(Mutex::new(String::new())),
         };
 
         if let Ok((_, height)) = size() {
@@ -161,16 +175,22 @@ impl App {
     pub fn scroll_up(&mut self) {
         match self.active_table {
             ActiveTable::Stopped => {
-                if let Some(selected) = self.table_state_stopped.selected() {
-                    if selected > 0 {
-                        self.table_state_stopped.select(Some(selected - 1));
+                if !self.stopped_configs.is_empty() {
+                    if let Some(selected) = self.table_state_stopped.selected() {
+                        if selected > 0 {
+                            self.table_state_stopped.select(Some(selected - 1));
+                            self.selected_row_stopped = selected - 1;
+                        }
                     }
                 }
             }
             ActiveTable::Running => {
-                if let Some(selected) = self.table_state_running.selected() {
-                    if selected > 0 {
-                        self.table_state_running.select(Some(selected - 1));
+                if !self.running_configs.is_empty() {
+                    if let Some(selected) = self.table_state_running.selected() {
+                        if selected > 0 {
+                            self.table_state_running.select(Some(selected - 1));
+                            self.selected_row_running = selected - 1;
+                        }
                     }
                 }
             }
@@ -180,29 +200,32 @@ impl App {
     pub fn scroll_down(&mut self) {
         match self.active_table {
             ActiveTable::Stopped => {
-                if let Some(selected) = self.table_state_stopped.selected() {
-                    if selected < self.stopped_configs.len() - 1 {
-                        self.table_state_stopped.select(Some(selected + 1));
+                if !self.stopped_configs.is_empty() {
+                    if let Some(selected) = self.table_state_stopped.selected() {
+                        if selected < self.stopped_configs.len() - 1 {
+                            self.table_state_stopped.select(Some(selected + 1));
+                            self.selected_row_stopped = selected + 1;
+                        }
+                    } else {
+                        self.table_state_stopped.select(Some(0));
+                        self.selected_row_stopped = 0;
                     }
-                } else {
-                    self.table_state_stopped.select(Some(0));
                 }
             }
             ActiveTable::Running => {
-                if let Some(selected) = self.table_state_running.selected() {
-                    if selected < self.running_configs.len() - 1 {
-                        self.table_state_running.select(Some(selected + 1));
+                if !self.running_configs.is_empty() {
+                    if let Some(selected) = self.table_state_running.selected() {
+                        if selected < self.running_configs.len() - 1 {
+                            self.table_state_running.select(Some(selected + 1));
+                            self.selected_row_running = selected + 1;
+                        }
+                    } else {
+                        self.table_state_running.select(Some(0));
+                        self.selected_row_running = 0;
                     }
-                } else {
-                    self.table_state_running.select(Some(0));
                 }
             }
         }
-    }
-
-    pub fn reset_scroll(&mut self) {
-        self.table_state_stopped.select(Some(0));
-        self.table_state_running.select(Some(0));
     }
 }
 
@@ -225,40 +248,52 @@ fn toggle_select_all(app: &mut App) {
 pub async fn handle_input(app: &mut App, _config_states: &mut [ConfigState]) -> io::Result<bool> {
     if event::poll(std::time::Duration::from_millis(100))? {
         if let Event::Key(key) = event::read()? {
+            log::debug!("Key pressed: {:?}", key);
+
             if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
                 stop_all_port_forward_and_exit(app).await;
             }
 
             match app.state {
                 AppState::ShowErrorPopup => {
+                    log::debug!("Handling ShowErrorPopup state");
                     handle_error_popup_input(app, key.code)?;
                 }
                 AppState::ShowConfirmationPopup => {
+                    log::debug!("Handling ShowConfirmationPopup state");
                     handle_confirmation_popup_input(app, key.code).await?;
                 }
                 AppState::ImportFileExplorerOpen => {
+                    log::debug!("Handling ImportFileExplorerOpen state");
                     handle_import_file_explorer_input(app, key.code).await?;
                 }
                 AppState::ExportFileExplorerOpen => {
+                    log::debug!("Handling ExportFileExplorerOpen state");
                     handle_export_file_explorer_input(app, key.code).await?;
                 }
                 AppState::ShowInputPrompt => {
+                    log::debug!("Handling ShowInputPrompt state");
                     handle_export_input_prompt(app, key.code).await?;
                 }
                 AppState::ShowHelp => {
+                    log::debug!("Handling ShowHelp state");
                     handle_help_input(app, key.code)?;
                 }
                 AppState::ShowAbout => {
+                    log::debug!("Handling ShowAbout state");
                     handle_about_input(app, key.code)?;
                 }
                 AppState::ShowDeleteConfirmation => {
+                    log::debug!("Handling ShowDeleteConfirmation state");
                     handle_delete_confirmation_input(app, key.code).await?;
                 }
                 AppState::Normal => {
+                    log::debug!("Handling Normal state");
                     handle_normal_input(app, key.code).await?;
                 }
             }
         } else if let Event::Resize(_, height) = event::read()? {
+            log::debug!("Handling Resize event");
             app.update_visible_rows(height);
         }
     }
@@ -266,73 +301,354 @@ pub async fn handle_input(app: &mut App, _config_states: &mut [ConfigState]) -> 
 }
 
 async fn handle_normal_input(app: &mut App, key: KeyCode) -> io::Result<()> {
-    match app.active_component {
-        ActiveComponent::Menu => match key {
-            KeyCode::Tab => app.active_component = ActiveComponent::Table,
-            KeyCode::Left => {
-                if app.selected_menu_item > 0 {
-                    app.selected_menu_item -= 1
-                }
-            }
-            KeyCode::Right => {
-                if app.selected_menu_item < 4 {
-                    app.selected_menu_item += 1
-                }
-            }
-            KeyCode::Enter => match app.selected_menu_item {
-                0 => app.state = AppState::ShowHelp,
-                1 => open_import_file_explorer(app),
-                2 => open_export_file_explorer(app),
-                3 => app.state = AppState::ShowAbout,
-                4 => stop_all_port_forward_and_exit(app).await,
-                _ => {}
-            },
-            _ => {}
-        },
-        ActiveComponent::Table => match key {
-            KeyCode::Tab => app.active_component = ActiveComponent::Menu,
-            KeyCode::Left => switch_to_stopped_table(app),
-            KeyCode::Right => switch_to_running_table(app),
-            KeyCode::Char(' ') => toggle_row_selection(app),
-            KeyCode::Char('c') => clear_stdout_output(app),
-            KeyCode::Char('f') => handle_port_forwarding(app).await?,
-            KeyCode::Char('q') => app.state = AppState::ShowAbout,
-            KeyCode::Char('i') => open_import_file_explorer(app),
-            KeyCode::Char('e') => open_export_file_explorer(app),
-            KeyCode::Char('h') => app.state = AppState::ShowHelp,
-            KeyCode::Char('d') => show_delete_confirmation(app),
-            KeyCode::Up => app.scroll_up(),
-            KeyCode::Down => app.scroll_down(),
-            KeyCode::Char('a') => toggle_select_all(app),
-            _ => {}
+    if handle_common_hotkeys(app, key).await? {
+        return Ok(());
+    }
+
+    match key {
+        KeyCode::Tab => {
+            app.active_component = match app.active_component {
+                ActiveComponent::Menu => ActiveComponent::StoppedTable,
+                ActiveComponent::StoppedTable => ActiveComponent::Details,
+                ActiveComponent::Details => ActiveComponent::Menu,
+                _ => ActiveComponent::Menu,
+            };
+
+            app.active_table = match app.active_component {
+                ActiveComponent::StoppedTable => ActiveTable::Stopped,
+                _ => app.active_table,
+            };
+        }
+        KeyCode::PageUp => {
+            scroll_page_up(app);
+        }
+        KeyCode::PageDown => {
+            scroll_page_down(app);
+        }
+        _ => match app.active_component {
+            ActiveComponent::Menu => handle_menu_input(app, key).await?,
+            ActiveComponent::StoppedTable => handle_stopped_table_input(app, key).await?,
+            ActiveComponent::RunningTable => handle_running_table_input(app, key).await?,
+            ActiveComponent::Details => handle_details_input(app, key).await?,
+            ActiveComponent::Logs => handle_logs_input(app, key).await?,
         },
     }
     Ok(())
 }
 
-fn switch_to_stopped_table(app: &mut App) {
-    app.active_table = ActiveTable::Stopped;
-    app.reset_scroll();
-    app.selected_rows_running.clear();
-    app.table_state_running.select(None);
+fn scroll_page_up(app: &mut App) {
+    match app.active_component {
+        ActiveComponent::StoppedTable => {
+            let rows_to_scroll = app.visible_rows;
+            if app.selected_row_stopped >= rows_to_scroll {
+                app.selected_row_stopped -= rows_to_scroll;
+            } else {
+                app.selected_row_stopped = 0;
+            }
+            app.table_state_stopped
+                .select(Some(app.selected_row_stopped));
+        }
+        ActiveComponent::RunningTable => {
+            let rows_to_scroll = app.visible_rows;
+            if app.selected_row_running >= rows_to_scroll {
+                app.selected_row_running -= rows_to_scroll;
+            } else {
+                app.selected_row_running = 0;
+            }
+            app.table_state_running
+                .select(Some(app.selected_row_running));
+        }
+        ActiveComponent::Logs => {
+            if app.log_scroll_offset >= app.visible_rows {
+                app.log_scroll_offset -= app.visible_rows;
+            } else {
+                app.log_scroll_offset = 0;
+            }
+        }
+        ActiveComponent::Details => {
+            if app.details_scroll_offset >= app.visible_rows {
+                app.details_scroll_offset -= app.visible_rows;
+            } else {
+                app.details_scroll_offset = 0;
+            }
+        }
+        _ => {}
+    }
 }
 
-fn switch_to_running_table(app: &mut App) {
-    app.active_table = ActiveTable::Running;
-    app.reset_scroll();
-    app.selected_rows_stopped.clear();
-    app.table_state_stopped.select(None);
+fn scroll_page_down(app: &mut App) {
+    match app.active_component {
+        ActiveComponent::StoppedTable => {
+            let rows_to_scroll = app.visible_rows;
+            if app.selected_row_stopped + rows_to_scroll < app.stopped_configs.len() {
+                app.selected_row_stopped += rows_to_scroll;
+            } else {
+                app.selected_row_stopped = app.stopped_configs.len() - 1;
+            }
+            app.table_state_stopped
+                .select(Some(app.selected_row_stopped));
+        }
+        ActiveComponent::RunningTable => {
+            let rows_to_scroll = app.visible_rows;
+            if app.selected_row_running + rows_to_scroll < app.running_configs.len() {
+                app.selected_row_running += rows_to_scroll;
+            } else {
+                app.selected_row_running = app.running_configs.len() - 1;
+            }
+            app.table_state_running
+                .select(Some(app.selected_row_running));
+        }
+        ActiveComponent::Logs => {
+            if app.log_scroll_offset + app.visible_rows < app.log_scroll_max_offset {
+                app.log_scroll_offset += app.visible_rows;
+            } else {
+                app.log_scroll_offset = app.log_scroll_max_offset;
+            }
+        }
+        ActiveComponent::Details => {
+            if app.details_scroll_offset + app.visible_rows < app.details_scroll_max_offset {
+                app.details_scroll_offset += app.visible_rows;
+            } else {
+                app.details_scroll_offset = app.details_scroll_max_offset;
+            }
+        }
+        _ => {}
+    }
+}
+
+fn select_first_row(app: &mut App) {
+    match app.active_table {
+        ActiveTable::Stopped => {
+            if !app.stopped_configs.is_empty() {
+                app.table_state_stopped.select(Some(0));
+            }
+        }
+        ActiveTable::Running => {
+            if !app.running_configs.is_empty() {
+                app.table_state_running.select(Some(0));
+            }
+        }
+    }
+}
+
+fn clear_selection(app: &mut App) {
+    match app.active_table {
+        ActiveTable::Stopped => {
+            app.selected_rows_running.clear();
+            app.table_state_running.select(None);
+        }
+        ActiveTable::Running => {
+            app.selected_rows_stopped.clear();
+            app.table_state_stopped.select(None);
+        }
+    }
+}
+
+async fn handle_menu_input(app: &mut App, key: KeyCode) -> io::Result<()> {
+    if handle_common_hotkeys(app, key).await? {
+        return Ok(());
+    }
+
+    match key {
+        KeyCode::Left => {
+            if app.selected_menu_item > 0 {
+                app.selected_menu_item -= 1
+            }
+        }
+        KeyCode::Right => {
+            if app.selected_menu_item < 4 {
+                app.selected_menu_item += 1
+            }
+        }
+        KeyCode::Down => {
+            app.active_component = ActiveComponent::StoppedTable;
+            app.active_table = ActiveTable::Stopped;
+            clear_selection(app);
+            select_first_row(app);
+        }
+        KeyCode::Enter => match app.selected_menu_item {
+            0 => app.state = AppState::ShowHelp,
+            1 => open_import_file_explorer(app),
+            2 => open_export_file_explorer(app),
+            3 => app.state = AppState::ShowAbout,
+            4 => stop_all_port_forward_and_exit(app).await,
+            _ => {}
+        },
+        _ => {}
+    }
+    Ok(())
+}
+
+async fn handle_stopped_table_input(app: &mut App, key: KeyCode) -> io::Result<()> {
+    if handle_common_hotkeys(app, key).await? {
+        return Ok(());
+    }
+
+    match key {
+        KeyCode::Right => {
+            app.active_component = ActiveComponent::RunningTable;
+            app.active_table = ActiveTable::Running;
+            clear_selection(app);
+            select_first_row(app);
+        }
+        KeyCode::Up => {
+            if app.table_state_stopped.selected() == Some(0) {
+                app.active_component = ActiveComponent::Menu;
+                app.table_state_running.select(None);
+                app.selected_rows_stopped.clear();
+                app.table_state_stopped.select(None);
+            } else {
+                app.scroll_up();
+            }
+        }
+        KeyCode::Down => {
+            if app.stopped_configs.is_empty()
+                || app.table_state_stopped.selected() == Some(app.stopped_configs.len() - 1)
+            {
+                app.active_component = ActiveComponent::Details;
+                app.table_state_running.select(None);
+                app.selected_rows_stopped.clear();
+                app.table_state_stopped.select(None);
+            } else {
+                app.scroll_down();
+            }
+        }
+        KeyCode::Char(' ') => toggle_row_selection(app),
+        KeyCode::Char('f') => handle_port_forwarding(app).await?,
+        KeyCode::Char('d') => show_delete_confirmation(app),
+        KeyCode::Char('a') => toggle_select_all(app),
+        _ => {}
+    }
+    Ok(())
+}
+
+async fn handle_running_table_input(app: &mut App, key: KeyCode) -> io::Result<()> {
+    if handle_common_hotkeys(app, key).await? {
+        return Ok(());
+    }
+
+    match key {
+        KeyCode::Left => {
+            app.active_component = ActiveComponent::StoppedTable;
+            app.active_table = ActiveTable::Stopped;
+            clear_selection(app);
+            select_first_row(app);
+        }
+        KeyCode::Up => {
+            if app.running_configs.is_empty() || app.table_state_running.selected() == Some(0) {
+                app.active_component = ActiveComponent::Menu;
+                app.table_state_running.select(None);
+                app.selected_rows_stopped.clear();
+                app.table_state_stopped.select(None);
+            } else {
+                app.scroll_up();
+            }
+        }
+        KeyCode::Down => {
+            if app.running_configs.is_empty()
+                || app.table_state_running.selected() == Some(app.running_configs.len() - 1)
+            {
+                app.active_component = ActiveComponent::Logs;
+                app.table_state_running.select(None);
+                app.selected_rows_stopped.clear();
+                app.table_state_stopped.select(None);
+            } else {
+                app.scroll_down();
+            }
+        }
+        KeyCode::Char(' ') => toggle_row_selection(app),
+        KeyCode::Char('f') => handle_port_forwarding(app).await?,
+        KeyCode::Char('d') => show_delete_confirmation(app),
+        KeyCode::Char('a') => toggle_select_all(app),
+        _ => {}
+    }
+    Ok(())
+}
+
+async fn handle_details_input(app: &mut App, key: KeyCode) -> io::Result<()> {
+    if handle_common_hotkeys(app, key).await? {
+        return Ok(());
+    }
+
+    match key {
+        KeyCode::Right => app.active_component = ActiveComponent::Logs,
+        KeyCode::Up => {
+            app.active_component = ActiveComponent::StoppedTable;
+            app.active_table = ActiveTable::Stopped;
+            clear_selection(app);
+            select_first_row(app);
+        }
+        KeyCode::PageUp => {
+            scroll_page_up(app);
+        }
+        KeyCode::PageDown => {
+            scroll_page_down(app);
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+async fn handle_logs_input(app: &mut App, key: KeyCode) -> io::Result<()> {
+    if handle_common_hotkeys(app, key).await? {
+        return Ok(());
+    }
+
+    match key {
+        KeyCode::Left => app.active_component = ActiveComponent::Details,
+        KeyCode::Up => {
+            app.active_component = ActiveComponent::RunningTable;
+            app.active_table = ActiveTable::Running;
+            clear_selection(app);
+            select_first_row(app);
+        }
+        KeyCode::PageUp => {
+            scroll_page_up(app);
+        }
+        KeyCode::PageDown => {
+            scroll_page_down(app);
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+async fn handle_common_hotkeys(app: &mut App, key: KeyCode) -> io::Result<bool> {
+    match key {
+        KeyCode::Char('c') => {
+            clear_stdout_output(app);
+            Ok(true)
+        }
+        KeyCode::Char('q') => {
+            app.state = AppState::ShowAbout;
+            Ok(true)
+        }
+        KeyCode::Char('i') => {
+            open_import_file_explorer(app);
+            Ok(true)
+        }
+        KeyCode::Char('e') => {
+            open_export_file_explorer(app);
+            Ok(true)
+        }
+        KeyCode::Char('h') => {
+            app.state = AppState::ShowHelp;
+            Ok(true)
+        }
+        _ => Ok(false),
+    }
 }
 
 fn toggle_row_selection(app: &mut App) {
-    let selected_row = match app.active_table {
-        ActiveTable::Stopped => app.table_state_stopped.selected().unwrap_or(0),
-        ActiveTable::Running => app.table_state_running.selected().unwrap_or(0),
-    };
-
-    let selected_rows = match app.active_table {
-        ActiveTable::Stopped => &mut app.selected_rows_stopped,
-        ActiveTable::Running => &mut app.selected_rows_running,
+    let (selected_row, selected_rows) = match app.active_table {
+        ActiveTable::Stopped => (
+            app.table_state_stopped.selected().unwrap_or(0),
+            &mut app.selected_rows_stopped,
+        ),
+        ActiveTable::Running => (
+            app.table_state_running.selected().unwrap_or(0),
+            &mut app.selected_rows_running,
+        ),
     };
 
     if selected_rows.contains(&selected_row) {
@@ -360,6 +676,10 @@ async fn handle_port_forwarding(app: &mut App) -> io::Result<()> {
             app.selected_row_running,
         ),
     };
+
+    if configs.is_empty() {
+        return Ok(());
+    }
 
     if selected_rows.is_empty() {
         selected_rows.insert(selected_row);

@@ -3,14 +3,11 @@ use std::collections::HashSet;
 use kftray_commons::models::config_model::Config;
 use kftray_commons::models::config_state_model::ConfigState;
 use ratatui::prelude::Alignment;
-use ratatui::prelude::Color;
 use ratatui::widgets::BorderType;
 use ratatui::widgets::TableState;
 use ratatui::{
     layout::{
         Constraint,
-        Direction,
-        Layout,
         Rect,
     },
     style::{
@@ -36,10 +33,7 @@ use ratatui::{
     Frame,
 };
 
-use crate::tui::input::{
-    ActiveTable,
-    App,
-};
+use crate::tui::input::App;
 use crate::tui::ui::{
     BASE,
     GREEN,
@@ -52,40 +46,6 @@ use crate::tui::ui::{
     TEXT,
     YELLOW,
 };
-
-pub fn draw_main_tab(f: &mut Frame, app: &mut App, config_states: &[ConfigState], area: Rect) {
-    let chunks = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage(100)].as_ref())
-        .split(area);
-
-    let tables_chunks = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
-        .split(chunks[0]);
-
-    draw_configs_table(
-        f,
-        tables_chunks[0],
-        &app.stopped_configs,
-        config_states,
-        &mut app.table_state_stopped,
-        "Stopped Configs",
-        app.active_table == ActiveTable::Stopped,
-        &app.selected_rows_stopped,
-    );
-
-    draw_configs_table(
-        f,
-        tables_chunks[1],
-        &app.running_configs,
-        config_states,
-        &mut app.table_state_running,
-        "Running Configs",
-        app.active_table == ActiveTable::Running,
-        &app.selected_rows_running,
-    );
-}
 
 #[allow(clippy::too_many_arguments)]
 pub fn draw_configs_table(
@@ -124,7 +84,12 @@ pub fn draw_configs_table(
         })
         .collect();
 
-    let focus_color = focus_color(has_focus);
+    let focus_color = if has_focus { YELLOW } else { TEXT };
+    let border_modifier = if has_focus {
+        Modifier::BOLD
+    } else {
+        Modifier::empty()
+    };
 
     let table = Table::new(
         rows,
@@ -149,8 +114,12 @@ pub fn draw_configs_table(
             .border_type(BorderType::Rounded)
             .borders(Borders::ALL)
             .title_alignment(Alignment::Left)
-            .border_style(Style::default().fg(focus_color))
-            .title(title),
+            .border_style(
+                Style::default()
+                    .fg(focus_color)
+                    .add_modifier(border_modifier),
+            )
+            .title(Span::styled(title, Style::default().fg(MAUVE))),
     )
     .highlight_style(Style::default().bg(SURFACE1).fg(TEXT));
 
@@ -183,7 +152,10 @@ pub fn draw_configs_table(
     frame.render_stateful_widget(scrollbar, scrollbar_area, &mut scrollbar_state);
 }
 
-pub fn render_details(f: &mut Frame, config: &Config, config_states: &[ConfigState], area: Rect) {
+pub fn render_details(
+    f: &mut Frame, app: &mut App, config: &Config, config_states: &[ConfigState], area: Rect,
+    has_focus: bool,
+) {
     let state = config_states
         .iter()
         .find(|s| s.config_id == config.id.unwrap_or_default())
@@ -274,21 +246,51 @@ pub fn render_details(f: &mut Frame, config: &Config, config_states: &[ConfigSta
         ]),
     ];
 
-    let paragraph = Paragraph::new(Text::from(details))
-        .block(Block::default().borders(Borders::ALL).title("Details"))
-        .style(Style::default().fg(TEXT).bg(BASE));
+    let details_clone = details.clone();
+
+    let height = area.height as usize;
+    app.details_scroll_max_offset = details_clone.len().saturating_sub(height);
+
+    let visible_details: Vec<Line> = details_clone
+        .iter()
+        .skip(app.details_scroll_offset)
+        .take(height)
+        .cloned()
+        .collect();
+
+    let paragraph = Paragraph::new(Text::from(visible_details))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(Span::styled("Details", Style::default().fg(MAUVE)))
+                .border_style(if has_focus {
+                    Style::default().fg(YELLOW).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(TEXT)
+                }),
+        )
+        .style(Style::default().fg(TEXT).bg(BASE))
+        .wrap(ratatui::widgets::Wrap { trim: true });
 
     f.render_widget(paragraph, area);
+
+    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .begin_symbol(None)
+        .track_symbol(None)
+        .end_symbol(None)
+        .style(Style::default().fg(SURFACE2).bg(BASE));
+    let mut scrollbar_state = ScrollbarState::new(app.details_scroll_max_offset)
+        .position(app.details_scroll_offset)
+        .viewport_content_length(height);
+    let scrollbar_area = Rect {
+        x: area.x + area.width - 1,
+        y: area.y.saturating_add(2),
+        height: area.height.saturating_sub(2),
+        width: 1,
+    };
+    f.render_stateful_widget(scrollbar, scrollbar_area, &mut scrollbar_state);
 }
 
 pub fn style_bold() -> Style {
     Style::default().add_modifier(Modifier::BOLD)
-}
-
-pub fn focus_color(has_focus: bool) -> Color {
-    if has_focus {
-        YELLOW
-    } else {
-        TEXT
-    }
 }

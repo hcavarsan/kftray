@@ -26,7 +26,7 @@ use kube::{
 };
 use kube_runtime::wait::conditions;
 use log::{
-    error,
+    debug,
     info,
 };
 use rand::{
@@ -64,17 +64,13 @@ pub async fn start_port_forward(
         let namespace = config.namespace.clone();
         let target = Target::new(selector, remote_port, namespace.clone());
 
-        log::info!("Remote Port: {}", config.remote_port);
-        log::info!("Local Port: {}", config.local_port);
-        log::debug!(
-            "Attempting to forward to {}: {:?}",
-            if config.workload_type.as_str() == "pod" {
-                "pod label"
-            } else {
-                "service"
-            },
-            &config.service
-        );
+        log::debug!("Remote Port: {}", config.remote_port);
+        log::debug!("Local Port: {}", config.local_port);
+        if config.workload_type.as_str() == "pod" {
+            log::info!("Attempting to forward to pod label: {:?}", &config.target);
+        } else {
+            log::info!("Attempting to forward to service: {:?}", &config.service);
+        }
 
         let local_address_clone = config.local_address.clone();
 
@@ -116,8 +112,8 @@ pub async fn start_port_forward(
                             &config.service
                         );
 
-                        error!("Port forwarding details: {:?}", port_forward);
-                        error!("Actual local port: {:?}", actual_local_port);
+                        debug!("Port forwarding details: {:?}", port_forward);
+                        debug!("Actual local port: {:?}", actual_local_port);
 
                         let handle_key = format!(
                             "{}_{}",
@@ -250,7 +246,7 @@ pub async fn start_port_forward(
     }
 
     if !responses.is_empty() {
-        log::info!(
+        log::debug!(
             "{} port forwarding responses generated successfully.",
             protocol.to_uppercase()
         );
@@ -443,12 +439,12 @@ pub async fn stop_port_forward(config_id: String) -> Result<CustomResponse, Stri
     if let Some(composite_key) = composite_key {
         let join_handle = {
             let mut child_processes = CHILD_PROCESSES.lock().unwrap();
-            info!("child_processes: {:?}", child_processes);
+            debug!("child_processes: {:?}", child_processes);
             child_processes.remove(&composite_key)
         };
 
         if let Some(join_handle) = join_handle {
-            info!("Join handle: {:?}", join_handle);
+            debug!("Join handle: {:?}", join_handle);
             join_handle.abort();
         }
 
@@ -713,7 +709,7 @@ pub async fn stop_proxy_forward(
 
     let pod_prefix = format!("kftray-forward-{}", username);
 
-    log::info!("Looking for pods with prefix: {}", pod_prefix);
+    log::debug!("Looking for pods with prefix: {}", pod_prefix);
 
     for pod in pod_list.items {
         if let Some(pod_name) = pod.metadata.name {
