@@ -17,8 +17,6 @@ use crate::utils::config::{
 use crate::utils::file::get_file_content;
 
 async fn handle_file_selection(app: &mut App, selected_path: &Path) -> Result<(), std::io::Error> {
-    log::info!("Selected path: {:?}", selected_path);
-
     if selected_path.is_file() {
         if selected_path.extension().and_then(|s| s.to_str()) == Some("json") {
             match get_file_content(selected_path) {
@@ -55,11 +53,11 @@ async fn handle_import(app: &mut App, selected_path: &Path) -> Result<(), std::i
 }
 
 async fn handle_export(app: &mut App, export_path: &Path) -> Result<(), std::io::Error> {
-    log::info!("Starting export of configs to file: {:?}", export_path);
+    log::debug!("Starting export of configs to file: {:?}", export_path);
 
     match export_configs_to_file(export_path.to_str().unwrap()).await {
         Ok(_) => {
-            log::info!("Export successful");
+            log::debug!("Export successful");
 
             show_confirmation_popup(app, format!("Export successful: {:?}", export_path));
         }
@@ -74,14 +72,14 @@ async fn handle_export(app: &mut App, export_path: &Path) -> Result<(), std::io:
 fn show_confirmation_popup(app: &mut App, message: String) {
     app.import_export_message = Some(message);
     app.state = AppState::ShowConfirmationPopup;
-    log::info!("State changed to ShowConfirmationPopup");
+    log::debug!("State changed to ShowConfirmationPopup");
 }
 
 fn show_error_popup(app: &mut App, message: String) {
     app.import_export_message = Some(message.clone());
     app.error_message = Some(message);
     app.state = AppState::ShowErrorPopup;
-    log::info!("State changed to ShowErrorPopup");
+    log::debug!("State changed to ShowErrorPopup");
 }
 
 pub async fn handle_import_file_explorer_input(
@@ -127,7 +125,6 @@ async fn handle_import_enter_key(app: &mut App) -> Result<(), std::io::Error> {
 
 fn navigate_to_parent_directory(app: &mut App) {
     if let Some(parent_path) = app.import_file_explorer.cwd().parent() {
-        log::info!("Navigating to parent directory: {:?}", parent_path);
         app.import_file_explorer
             .set_cwd(parent_path.to_path_buf())
             .unwrap();
@@ -164,7 +161,7 @@ pub async fn handle_export_file_explorer_input(
         _ => match key {
             KeyCode::Esc => close_export_file_explorer(app),
             KeyCode::Backspace => navigate_to_parent_directory(app),
-            _ => log::info!("Unhandled key: {:?}", key),
+            _ => log::debug!("Unhandled key: {:?}", key),
         },
     }
     Ok(())
@@ -177,10 +174,10 @@ async fn handle_export_enter_key(app: &mut App) -> Result<(), std::io::Error> {
         .get(app.export_file_explorer.selected_idx())
     {
         let selected_path = selected_file.path().clone();
-        log::info!("Selected path: {:?}", selected_path);
+        log::debug!("Selected path: {:?}", selected_path);
 
         if selected_file.is_dir() {
-            log::info!("Changed working directory to: {:?}", selected_path);
+            log::debug!("Changed working directory to: {:?}", selected_path);
             app.selected_file_path = Some(selected_path.clone());
             app.state = AppState::ShowInputPrompt;
         }
@@ -191,14 +188,14 @@ async fn handle_export_enter_key(app: &mut App) -> Result<(), std::io::Error> {
 }
 
 pub async fn handle_export_input_prompt(app: &mut App, key: KeyCode) -> Result<(), std::io::Error> {
-    log::info!("Handling input prompt key: {:?}", key);
+    log::debug!("Handling input prompt key: {:?}", key);
 
     match key {
         KeyCode::Enter => handle_export_enter_key_press(app).await?,
         KeyCode::Char(c) => update_input_buffer(app, c),
         KeyCode::Backspace => remove_last_char_from_input_buffer(app),
         KeyCode::Esc => cancel_input_prompt(app),
-        _ => log::info!("Unhandled key in input prompt: {:?}", key),
+        _ => log::debug!("Unhandled key in input prompt: {:?}", key),
     }
     Ok(())
 }
@@ -206,7 +203,7 @@ pub async fn handle_export_input_prompt(app: &mut App, key: KeyCode) -> Result<(
 async fn handle_export_enter_key_press(app: &mut App) -> Result<(), std::io::Error> {
     if let Some(selected_file_path) = &app.selected_file_path {
         let export_path = selected_file_path.join(&app.input_buffer);
-        log::info!("Export path: {:?}", export_path);
+        log::debug!("Export path: {:?}", export_path);
         handle_export(app, &export_path).await?;
         app.input_buffer.clear();
     } else {
@@ -218,29 +215,29 @@ async fn handle_export_enter_key_press(app: &mut App) -> Result<(), std::io::Err
 
 fn update_input_buffer(app: &mut App, c: char) {
     app.input_buffer.push(c);
-    log::info!("Input buffer updated: {}", app.input_buffer);
+    log::debug!("Input buffer updated: {}", app.input_buffer);
 }
 
 fn remove_last_char_from_input_buffer(app: &mut App) {
     app.input_buffer.pop();
-    log::info!("Input buffer updated: {}", app.input_buffer);
+    log::debug!("Input buffer updated: {}", app.input_buffer);
 }
 
 fn cancel_input_prompt(app: &mut App) {
     app.state = AppState::Normal;
     app.input_buffer.clear();
-    log::info!("Input prompt canceled");
+    log::debug!("Input prompt canceled");
 }
 
 fn close_import_file_explorer(app: &mut App) {
-    log::info!("File explorer closed");
+    log::debug!("File explorer closed");
     app.state = AppState::Normal;
     app.file_content = None;
     app.selected_file_path = std::env::current_dir().ok();
 }
 
 fn close_export_file_explorer(app: &mut App) {
-    log::info!("File explorer closed");
+    log::debug!("File explorer closed");
     app.state = AppState::Normal;
     app.file_content = None;
     app.selected_file_path = std::env::current_dir().ok();

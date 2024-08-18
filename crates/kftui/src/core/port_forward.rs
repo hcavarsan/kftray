@@ -89,7 +89,7 @@ pub async fn stop_port_forwarding(app: &mut App, config: Config) {
 }
 
 pub async fn stop_all_port_forward_and_exit(app: &mut App) {
-    log::info!("Stopping all port forwards...");
+    log::debug!("Stopping all port forwards...");
     match stop_all_port_forward().await {
         Ok(responses) => {
             for response in responses {
@@ -104,9 +104,8 @@ pub async fn stop_all_port_forward_and_exit(app: &mut App) {
             app.state = AppState::ShowErrorPopup;
         }
     }
-    log::info!("Exiting application...");
+    log::debug!("Exiting application...");
 
-    // Cleanup terminal
     disable_raw_mode().expect("Failed to disable raw mode");
     execute!(std::io::stdout(), LeaveAlternateScreen, Show)
         .expect("Failed to leave alternate screen and show cursor");
