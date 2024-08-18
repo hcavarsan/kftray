@@ -8,7 +8,6 @@ use ratatui::{
     },
     style::Style,
     text::{
-        Line,
         Span,
         Text,
     },
@@ -21,33 +20,43 @@ use ratatui::{
     Frame,
 };
 
-use crate::tui::input::{
-    ActiveTable,
-    App,
-};
-use crate::tui::ui::render_details;
+use crate::tui::input::ActiveComponent;
+use crate::tui::input::App;
+use crate::tui::ui::draw_configs_table;
 use crate::tui::ui::{
-    draw_main_tab,
     BASE,
     MAUVE,
     TEXT,
     YELLOW,
 };
 
-pub fn render_legend(f: &mut Frame, area: Rect) {
-    let legend_message = vec![Line::from(vec![
-        Span::styled("CtrlC: Quit", Style::default().fg(YELLOW)),
-        Span::raw(" | "),
-        Span::styled("Tab: Toggle Menu", Style::default().fg(YELLOW)),
-        Span::raw(" | "),
-        Span::styled("h: Toggle Help", Style::default().fg(YELLOW)),
-    ])];
+pub fn render_legend(f: &mut Frame, area: Rect, active_component: ActiveComponent) {
+    let common_legend = "Ctrl+C: Quit | h: Show Help";
 
-    let legend_paragraph = Paragraph::new(Text::from(legend_message))
+    let menu_legend = "←/→: Navigate Menu | Enter: Select Menu Item | Tab: Switch to Configs Tab";
+
+    let table_legend = "PageUp/PageDown: Scroll | ↑/↓: Navigate | ←/→: Switch Table | Space: Select  | f: Start/Stop Port Forward | d: Delete | Ctrl+A: Select All | Tab: Switch to Details";
+
+    let details_legend = "PageUp/PageDown: Scroll | ←/→: Switch Details/Logs | Tab: Switch to Menu";
+
+    let logs_legend = "PageUp/PageDown: Scroll | ←/→: Switch Focus | c: Clear Output";
+
+    let legend_message = match active_component {
+        ActiveComponent::Menu => format!("{} | {}", common_legend, menu_legend),
+        ActiveComponent::StoppedTable | ActiveComponent::RunningTable => {
+            format!("{} | {}", common_legend, table_legend)
+        }
+        ActiveComponent::Details => format!("{} | {}", common_legend, details_legend),
+        ActiveComponent::Logs => format!("{} | {}", common_legend, logs_legend),
+    };
+
+    let styled_legend_message = Span::styled(legend_message, Style::default().fg(YELLOW));
+
+    let legend_paragraph = Paragraph::new(Text::from(styled_legend_message))
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title("Help")
+                .title(Span::styled("Help", Style::default().fg(MAUVE)))
                 .style(Style::default().bg(BASE).fg(TEXT)),
         )
         .style(Style::default().fg(TEXT).bg(BASE));
@@ -138,28 +147,38 @@ pub fn draw_file_explorer_popup(f: &mut Frame, app: &mut App, area: Rect, is_imp
     f.render_widget(help_widget, chunks[1]);
 }
 
-pub fn draw_configs_tab(f: &mut Frame, app: &mut App, config_states: &[ConfigState], area: Rect) {
-    let table_height = app.visible_rows as u16;
-
+pub fn draw_configs_tab(
+    f: &mut Frame, app: &mut App, config_states: &[ConfigState], area: Rect, has_focus: bool,
+) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(table_height), Constraint::Min(table_height)].as_ref())
+        .constraints([Constraint::Percentage(100)].as_ref())
         .split(area);
 
-    draw_main_tab(f, app, config_states, chunks[0]);
+    let tables_chunks = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
+        .split(chunks[0]);
 
-    if !app.stopped_configs.is_empty() || !app.running_configs.is_empty() {
-        let selected_row = match app.active_table {
-            ActiveTable::Stopped => app.table_state_stopped.selected().unwrap_or(0),
-            ActiveTable::Running => app.table_state_running.selected().unwrap_or(0),
-        };
-        let configs = match app.active_table {
-            ActiveTable::Stopped => &app.stopped_configs,
-            ActiveTable::Running => &app.running_configs,
-        };
+    draw_configs_table(
+        f,
+        tables_chunks[0],
+        &app.stopped_configs,
+        config_states,
+        &mut app.table_state_stopped,
+        "Stopped Configs",
+        has_focus && app.active_component == ActiveComponent::StoppedTable,
+        &app.selected_rows_stopped,
+    );
 
-        if !configs.is_empty() && selected_row < configs.len() {
-            render_details(f, &configs[selected_row], config_states, chunks[1]);
-        }
-    }
+    draw_configs_table(
+        f,
+        tables_chunks[1],
+        &app.running_configs,
+        config_states,
+        &mut app.table_state_running,
+        "Running Configs",
+        has_focus && app.active_component == ActiveComponent::RunningTable,
+        &app.selected_rows_running,
+    );
 }

@@ -48,7 +48,7 @@ fn create_common_popup_style(title: &str, title_color: Color) -> Block<'_> {
             Cow::Borrowed(title),
             Style::default().fg(title_color),
         ))
-        .style(Style::default().bg(BASE).fg(TEXT))
+        .style(Style::default().bg(BASE).fg(MAUVE))
 }
 
 fn create_bottom_right_shadow_layers(
@@ -163,14 +163,19 @@ pub fn render_help_popup(f: &mut Frame, area: Rect) {
             Style::default().fg(YELLOW),
         )),
         Line::from(Span::styled("c: Clear Output", Style::default().fg(YELLOW))),
+        Line::from(Span::styled(
+            "PageUp/PageDown: Scroll Page Up/Down",
+            Style::default().fg(YELLOW),
+        )),
+        Line::from(Span::styled("q: Show About", Style::default().fg(YELLOW))),
     ];
 
     let help_paragraph = Paragraph::new(Text::from(help_message))
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(Span::styled("Help", Style::default().fg(TEAL)))
-                .style(Style::default().bg(BASE).fg(TEXT)),
+                .title(Span::styled("Help", Style::default().fg(MAUVE)))
+                .style(Style::default().bg(BASE).fg(MAUVE)),
         )
         .alignment(Alignment::Left)
         .wrap(ratatui::widgets::Wrap { trim: true });
@@ -208,7 +213,7 @@ pub fn render_about_popup(f: &mut Frame, area: Rect) {
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(Span::styled("About", Style::default().fg(TEAL)))
+                .title(Span::styled("About", Style::default().fg(MAUVE)))
                 .style(Style::default().bg(BASE).fg(TEXT)),
         )
         .alignment(Alignment::Center)
