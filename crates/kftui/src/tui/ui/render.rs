@@ -1,4 +1,5 @@
 use kftray_commons::models::config_state_model::ConfigState;
+use ratatui::prelude::Alignment;
 use ratatui::{
     layout::{
         Constraint,
@@ -31,15 +32,15 @@ use crate::tui::ui::{
 };
 
 pub fn render_legend(f: &mut Frame, area: Rect, active_component: ActiveComponent) {
-    let common_legend = "Ctrl+C: Quit | h: Show Help";
+    let common_legend = "ctrlc: quit | h: help";
 
-    let menu_legend = "←/→: Navigate Menu | Enter: Select Menu Item | Tab: Switch to Configs Tab";
+    let menu_legend = "←/→: navigate | enter: open | tab: switch to configs tab";
 
-    let table_legend = "PageUp/PageDown: Scroll | ↑/↓: Navigate | ←/→: Switch Table | Space: Select  | f: Start/Stop Port Forward | d: Delete | Ctrl+A: Select All | Tab: Switch to Details";
+    let table_legend = "pageup/down: scroll | ↑/↓: navigate | ←/→: switch table | space: select | f: start/stop | d: delete | ctrla: select all | tab: switch to details";
 
-    let details_legend = "PageUp/PageDown: Scroll | ←/→: Switch Details/Logs | Tab: Switch to Menu";
+    let details_legend = "pageup/pagedown: scroll | ←/→: switch tabs | tab: switch to menu";
 
-    let logs_legend = "PageUp/PageDown: Scroll | ←/→: Switch Focus | c: Clear Output";
+    let logs_legend = "pageup/pagedown: scroll | ←/→: switch focus | c: clear output";
 
     let legend_message = match active_component {
         ActiveComponent::Menu => format!("{} | {}", common_legend, menu_legend),
@@ -50,7 +51,15 @@ pub fn render_legend(f: &mut Frame, area: Rect, active_component: ActiveComponen
         ActiveComponent::Logs => format!("{} | {}", common_legend, logs_legend),
     };
 
-    let styled_legend_message = Span::styled(legend_message, Style::default().fg(YELLOW));
+    let available_width = area.width as usize - 2;
+
+    let truncated_legend_message = if legend_message.len() > available_width {
+        format!("{}...", &legend_message[..available_width - 3])
+    } else {
+        legend_message
+    };
+
+    let styled_legend_message = Span::styled(truncated_legend_message, Style::default().fg(YELLOW));
 
     let legend_paragraph = Paragraph::new(Text::from(styled_legend_message))
         .block(
@@ -59,7 +68,8 @@ pub fn render_legend(f: &mut Frame, area: Rect, active_component: ActiveComponen
                 .title(Span::styled("Help", Style::default().fg(MAUVE)))
                 .style(Style::default().bg(BASE).fg(TEXT)),
         )
-        .style(Style::default().fg(TEXT).bg(BASE));
+        .wrap(ratatui::widgets::Wrap { trim: true })
+        .alignment(Alignment::Left);
 
     f.render_widget(legend_paragraph, area);
 }
