@@ -1,9 +1,4 @@
-# Building `kftray` and `kftui` from Source
-
-
-<br>
-
-## `kftray` Desktop App
+# Building `kftray` from Source
 
 ### Overview
 
@@ -37,19 +32,14 @@ For detailed prerequisites, please refer to the [Tauri Getting Started Guide](ht
    pnpm install
    ```
 
-4. **Install Tauri CLI Globally (if not already installed):**
 
-   ```bash
-   pnpm add -g @tauri-apps/cli
-   ```
-
-5. **Launch the Application in Development Mode:**
+4. **Launch the Application in Development Mode:**
 
    ```bash
    pnpm tauri dev
    ```
 
-6. **Build the Application for Production:**
+5. **Build the Application for Production:**
 
    ```bash
    pnpm tauri build
