@@ -39,6 +39,7 @@ KFtray and KFtui solve these issues by being more reliable and easier to use. Th
 - [🗂 Features Matrix](#-features-matrix)
 - [🛠 Installation](#-installation)
 - [📚 Usage](#-usage)
+- [🛠️ Build from source](#️-build-from-source)
 - [🏗 Architecture](#-architecture)
 - [👥 Contributing](#-contributing)
 - [📄 License](#-license)
