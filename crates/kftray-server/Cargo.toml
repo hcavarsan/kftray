@@ -11,9 +11,9 @@ repository = "https://github.com/hcavarsan/kftray"
 edition = "2021"
 
 [dependencies]
-ctrlc = "3.4.4"
+ctrlc = "3.4.5"
 log = "0.4"
-env_logger = "0.11.4"
+env_logger = "0.11.5"
 byteorder = "1.4"
 tokio = { version = "1", features = ["full"] }
 
