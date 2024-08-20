@@ -4,6 +4,8 @@ set -e
 
 INSTALL_DIR="$HOME/.local/bin"
 PROFILE_FILES=("$HOME/.profile" "$HOME/.bashrc" "$HOME/.zshrc" "$HOME/.config/fish/config.fish")
+TMP_DIR="/tmp"
+TMP_FILE="$TMP_DIR/kftui"
 
 # Function to print messages in color with timestamp
 print_msg() {
@@ -139,4 +141,4 @@ install_kftui() {
 }
 
 # Install kftui
-install_kftui "$URL" "kftui"
+install_kftui "$URL" "$TMP_FILE"
