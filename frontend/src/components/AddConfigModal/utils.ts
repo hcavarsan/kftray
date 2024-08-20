@@ -45,7 +45,7 @@ export const customStyles: StylesConfig = {
     color: state.isSelected ? theme.colors.white : theme.colors.gray[300],
     background: state.isSelected ? theme.colors.gray[600] : 'none',
     cursor: 'pointer',
-    fontSize: '0.70rem', // Adjust font size to match xs size
+    fontSize: '0.70rem',
     ':active': {
       ...provided[':active'],
       background: theme.colors.gray[500],
@@ -59,7 +59,7 @@ export const customStyles: StylesConfig = {
   menu: provided => ({
     ...provided,
     background: theme.colors.gray[800],
-    fontSize: '0.70rem', // Adjust font size to match xs size
+    fontSize: '0.70rem',
   }),
   singleValue: provided => ({
     ...provided,
@@ -83,7 +83,6 @@ export function assertIsError(
   error: unknown,
 ): asserts error is { message: string } {
   if (typeof error === 'object' && error !== null && 'message' in error) {
-    // Nothing to do, the error is already in the correct format
   } else {
     throw new Error(`The provided value is not an Error object: ${error}`)
   }

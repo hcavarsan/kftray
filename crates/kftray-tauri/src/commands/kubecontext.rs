@@ -1,18 +1,12 @@
 use std::collections::HashSet;
 
-use anyhow::{
-    Context,
-    Result,
+use anyhow::Result;
+use k8s_openapi::api::core::v1::{
+    Namespace,
+    Pod,
+    Service,
 };
-use k8s_openapi::api::core::v1::Pod;
-use k8s_openapi::{
-    api::core::v1::{
-        Namespace,
-        Service,
-    },
-    apimachinery::pkg::util::intstr::IntOrString,
-};
-use kftray_commons::utils::config_dir::get_default_kubeconfig_path;
+use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
 use kftray_portforward::client::create_client_with_specific_context;
 use kftray_portforward::models::kube::{
     KubeContextInfo,
@@ -27,10 +21,39 @@ use kube::{
         Api,
         ListParams,
     },
-    config::Kubeconfig,
     ResourceExt,
 };
 use log::info;
+
+#[tauri::command]
+pub async fn list_kube_contexts(
+    kubeconfig: Option<String>,
+) -> Result<Vec<KubeContextInfo>, String> {
+    info!("list_kube_contexts {}", kubeconfig.as_deref().unwrap_or(""));
+
+    let (_, kubeconfig, contexts) = create_client_with_specific_context(kubeconfig, None)
+        .await
+        .map_err(|err| format!("Failed to create client: {}", err))?;
+
+    if let Some(kubeconfig) = kubeconfig {
+        let contexts: Vec<KubeContextInfo> = kubeconfig
+            .contexts
+            .into_iter()
+            .map(|c| KubeContextInfo { name: c.name })
+            .collect();
+
+        Ok(contexts)
+    } else if !contexts.is_empty() {
+        let context_infos: Vec<KubeContextInfo> = contexts
+            .into_iter()
+            .map(|name| KubeContextInfo { name })
+            .collect();
+
+        Ok(context_infos)
+    } else {
+        Err("Failed to retrieve kubeconfig".to_string())
+    }
+}
 
 #[tauri::command]
 pub async fn list_pods(
@@ -40,7 +63,7 @@ pub async fn list_pods(
         return Err("Namespace parameter cannot be empty".to_string());
     }
 
-    let client = create_client_with_specific_context(kubeconfig, context_name)
+    let (client, _, _) = create_client_with_specific_context(kubeconfig, Some(context_name))
         .await
         .map_err(|err| {
             format!(
@@ -49,6 +72,8 @@ pub async fn list_pods(
             )
         })?;
 
+    let client =
+        client.ok_or_else(|| format!("Client not created for context '{}'", context_name))?;
     let api: Api<Pod> = Api::namespaced(client, namespace);
 
     let pod_list = api
@@ -56,15 +81,15 @@ pub async fn list_pods(
         .await
         .map_err(|e| e.to_string())?;
 
-    let mut unique_labels = HashSet::new();
-
-    for pod in pod_list {
-        if let Some(labels) = &pod.meta().labels {
-            for (key, value) in labels {
-                unique_labels.insert(format!("{}={}", key, value));
-            }
-        }
-    }
+    let unique_labels: HashSet<String> = pod_list
+        .iter()
+        .filter_map(|pod| pod.meta().labels.as_ref())
+        .flat_map(|labels| {
+            labels
+                .iter()
+                .map(|(key, value)| format!("{}={}", key, value))
+        })
+        .collect();
 
     let label_infos = unique_labels
         .into_iter()
@@ -77,60 +102,10 @@ pub async fn list_pods(
 }
 
 #[tauri::command]
-pub async fn list_kube_contexts(
-    kubeconfig: Option<String>,
-) -> Result<Vec<KubeContextInfo>, String> {
-    info!("list_kube_contexts {}", kubeconfig.as_deref().unwrap_or(""));
-
-    let kubeconfig = if let Some(path) = &kubeconfig {
-        if path == "default" {
-            let default_path = get_default_kubeconfig_path()
-                .context("Couldn't get default kubeconfig path")
-                .map_err(|err| err.to_string())?;
-
-            info!(
-                "Reading kubeconfig from default location: {:?}",
-                default_path
-            );
-
-            Kubeconfig::read_from(default_path.to_str().unwrap())
-                .context("Failed to read kubeconfig from default path")
-                .map_err(|err| err.to_string())?
-        } else {
-            info!("Reading kubeconfig from specified path: {}", path);
-
-            Kubeconfig::read_from(path)
-                .context("Failed to read kubeconfig from specified path")
-                .map_err(|err| err.to_string())?
-        }
-    } else {
-        let default_path = get_default_kubeconfig_path()
-            .context("Couldn't get default kubeconfig path")
-            .map_err(|err| err.to_string())?;
-
-        info!(
-            "Reading kubeconfig from default location: {:?}",
-            default_path
-        );
-
-        Kubeconfig::read_from(default_path.to_str().unwrap())
-            .context("Failed to read kubeconfig from default path")
-            .map_err(|err| err.to_string())?
-    };
-
-    Ok(kubeconfig
-        .contexts
-        .into_iter()
-        .map(|c| KubeContextInfo { name: c.name })
-        .collect())
-}
-
-#[tauri::command]
-
 pub async fn list_namespaces(
     context_name: &str, kubeconfig: Option<String>,
 ) -> Result<Vec<KubeNamespaceInfo>, String> {
-    let client = create_client_with_specific_context(kubeconfig, context_name)
+    let (client, _, _) = create_client_with_specific_context(kubeconfig, Some(context_name))
         .await
         .map_err(|err| {
             format!(
@@ -139,6 +114,8 @@ pub async fn list_namespaces(
             )
         })?;
 
+    let client =
+        client.ok_or_else(|| format!("Client not created for context '{}'", context_name))?;
     let api: Api<Namespace> = Api::all(client);
 
     let ns_list = api
@@ -155,7 +132,6 @@ pub async fn list_namespaces(
 }
 
 #[tauri::command]
-
 pub async fn list_services(
     context_name: &str, namespace: &str, kubeconfig: Option<String>,
 ) -> Result<Vec<KubeServiceInfo>, String> {
@@ -163,7 +139,7 @@ pub async fn list_services(
         return Err("Namespace parameter cannot be empty".to_string());
     }
 
-    let client = create_client_with_specific_context(kubeconfig, context_name)
+    let (client, _, _) = create_client_with_specific_context(kubeconfig, Some(context_name))
         .await
         .map_err(|err| {
             format!(
@@ -172,6 +148,8 @@ pub async fn list_services(
             )
         })?;
 
+    let client =
+        client.ok_or_else(|| format!("Client not created for context '{}'", context_name))?;
     let api: Api<Service> = Api::namespaced(client, namespace);
 
     let svc_list = api
@@ -191,7 +169,7 @@ pub async fn list_services(
 pub async fn list_ports(
     context_name: &str, namespace: &str, service_name: &str, kubeconfig: Option<String>,
 ) -> Result<Vec<KubeServicePortInfo>, String> {
-    let client = create_client_with_specific_context(kubeconfig, context_name)
+    let (client, _, _) = create_client_with_specific_context(kubeconfig, Some(context_name))
         .await
         .map_err(|err| {
             format!(
@@ -200,8 +178,10 @@ pub async fn list_ports(
             )
         })?;
 
+    let client =
+        client.ok_or_else(|| format!("Client not created for context '{}'", context_name))?;
     let api_svc: Api<Service> = Api::namespaced(client.clone(), namespace);
-    let api_pod: Api<Pod> = Api::namespaced(client.clone(), namespace);
+    let api_pod: Api<Pod> = Api::namespaced(client, namespace);
 
     match api_svc.get(service_name).await {
         Ok(service) => {
@@ -220,7 +200,7 @@ pub async fn list_ports(
                                 });
 
                             let pods = api_pod
-                                .list(&ListParams::default().labels(selector_string.as_str()))
+                                .list(&ListParams::default().labels(&selector_string))
                                 .await
                                 .map_err(|e| format!("Failed to list pods: {}", e))?;
 
@@ -236,7 +216,6 @@ pub async fn list_ports(
                                                             cp.container_port,
                                                         )),
                                                     });
-
                                                     break 'port_search;
                                                 }
                                             }
@@ -269,22 +248,17 @@ pub async fn list_ports(
                 .await
                 .map_err(|e| format!("Failed to list pods: {}", e))?;
 
-            let mut pod_port_infos = Vec::new();
-
-            for pod in pods {
-                if let Some(spec) = pod.spec {
-                    for container in spec.containers {
-                        if let Some(ports) = container.ports {
-                            for cp in ports {
-                                pod_port_infos.push(KubeServicePortInfo {
-                                    name: cp.name.clone(),
-                                    port: Some(IntOrString::Int(cp.container_port)),
-                                });
-                            }
-                        }
-                    }
-                }
-            }
+            let pod_port_infos: Vec<KubeServicePortInfo> = pods
+                .iter()
+                .filter_map(|pod| pod.spec.as_ref())
+                .flat_map(|spec| spec.containers.iter())
+                .filter_map(|container| container.ports.as_ref())
+                .flat_map(|ports| ports.iter())
+                .map(|cp| KubeServicePortInfo {
+                    name: cp.name.clone(),
+                    port: Some(IntOrString::Int(cp.container_port)),
+                })
+                .collect();
 
             if pod_port_infos.is_empty() {
                 Err(format!(

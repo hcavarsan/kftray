@@ -104,7 +104,6 @@ fn handle_udp_to_tcp(
                 }
             }
             Err(e) => {
-                // Handling the would block error that is normal for non-blocking IO
                 if e.kind() != io::ErrorKind::WouldBlock {
                     error!("UDP to TCP: Error receiving from UDP socket: {}", e);
                 }

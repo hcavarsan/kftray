@@ -35,6 +35,7 @@ hostsfile = { git = "https://github.com/tonarino/innernet", branch = "main" }
 kftray-commons = { path = "../kftray-commons" }
 tower = "0.4.13"
 hyper-util = "0.1.7"
+dirs = "5.0.1"
 
 [lib]
 name = "kftray_portforward"

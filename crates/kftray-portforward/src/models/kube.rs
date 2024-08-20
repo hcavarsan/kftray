@@ -82,7 +82,6 @@ impl Target {
                 let spec = pod.spec.as_ref().context("Pod Spec is None")?;
                 let containers = &spec.containers;
 
-                // Find the port by name within the container ports
                 containers
                     .iter()
                     .flat_map(|c| c.ports.as_ref().map_or(Vec::new(), |v| v.clone()))
