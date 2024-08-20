@@ -555,15 +555,22 @@ pub async fn deploy_and_forward_pod(
     let mut responses: Vec<CustomResponse> = Vec::new();
 
     for mut config in configs.into_iter() {
-        let client = if !config.context.is_empty() {
+        let (client, _, _) = if !config.context.is_empty() {
             let kubeconfig = config.kubeconfig.clone();
 
-            create_client_with_specific_context(kubeconfig, &config.context)
+            create_client_with_specific_context(kubeconfig, Some(&config.context))
                 .await
                 .map_err(|e| e.to_string())?
         } else {
-            Client::try_default().await.map_err(|e| e.to_string())?
+            (
+                Some(Client::try_default().await.map_err(|e| e.to_string())?),
+                None,
+                Vec::new(),
+            )
         };
+
+        let client =
+            client.ok_or_else(|| format!("Client not created for context '{}'", config.context))?;
 
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)

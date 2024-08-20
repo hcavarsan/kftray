@@ -534,7 +534,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                       options={[
                         { label: 'service', value: 'service' },
                         { label: 'proxy', value: 'proxy' },
-                        { label: 'pod', value: 'pod' }, // Add pod option
+                        { label: 'pod', value: 'pod' },
                       ]}
                       value={selectedWorkloadType}
                       onChange={selectedOption =>

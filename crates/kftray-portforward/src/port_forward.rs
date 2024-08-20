@@ -57,12 +57,19 @@ impl PortForward {
         local_address: impl Into<Option<String>>, context_name: Option<String>,
         kubeconfig: Option<String>, config_id: i64, workload_type: String,
     ) -> anyhow::Result<Self> {
-        let client = if let Some(ref context_name) = context_name {
-            crate::client::create_client_with_specific_context(kubeconfig, context_name).await?
+        let (client, _, _) = if let Some(ref context_name) = context_name {
+            crate::client::create_client_with_specific_context(kubeconfig, Some(context_name))
+                .await?
         } else {
-            Client::try_default().await?
+            (Some(Client::try_default().await?), None, Vec::new())
         };
 
+        let client = client.ok_or_else(|| {
+            anyhow::anyhow!(
+                "Client not created for context '{}'",
+                context_name.clone().unwrap_or_default()
+            )
+        })?;
         let namespace = target.namespace.name_any();
 
         Ok(Self {
@@ -71,7 +78,7 @@ impl PortForward {
             local_address: local_address.into(),
             pod_api: Api::namespaced(client.clone(), &namespace),
             svc_api: Api::namespaced(client, &namespace),
-            context_name,
+            context_name: context_name.clone(),
             config_id,
             workload_type,
             connection: Arc::new(Mutex::new(None)),

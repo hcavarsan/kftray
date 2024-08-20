@@ -91,7 +91,6 @@ impl<'a> TargetPodFinder<'a> {
     async fn find_pod_by_label(
         &self, label: &str, ready_pod: &AnyReady, target: &Target,
     ) -> Result<TargetPod> {
-        // Directly use the label provided
         let label_selector_str = label.to_string();
         let pods = self
             .pod_api
