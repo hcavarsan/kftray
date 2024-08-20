@@ -96,10 +96,17 @@ download_file() {
 
   if command_exists curl; then
     print_msg blue "Downloading kftui using curl from $url"
-    curl -L -s "$url" -o "$output" || { print_msg red "Error: Failed to download file using curl."; exit 1; }
+    if ! curl -L -s "$url" -o "$output"; then
+      print_msg red "Error: Failed to download file using curl."
+      curl -L "$url" -o "$output"  # Run without -s to show error
+      exit 1
+    fi
   elif command_exists wget; then
     print_msg blue "Downloading kftui using wget from $url"
-    wget "$url" -O "$output" || { print_msg red "Error: Failed to download file using wget."; exit 1; }
+    if ! wget "$url" -O "$output"; then
+      print_msg red "Error: Failed to download file using wget."
+      exit 1
+    fi
   else
     print_msg red "Error: Neither curl nor wget is available for downloading."
     exit 1
@@ -112,6 +119,10 @@ install_kftui() {
   local filename=$2
 
   print_msg blue "Starting download and installation process for kftui"
+
+  # Change to /tmp directory
+  cd "$TMP_DIR"
+
   download_file "$url" "$filename"
   chmod +x "$filename"
   mkdir -p "$INSTALL_DIR"
@@ -133,11 +144,12 @@ install_kftui() {
     print_msg yellow "Added $INSTALL_DIR to PATH. Please restart your terminal or run 'source ~/.profile' to update your PATH."
   fi
 
-  if ! kftui --version; then
+  if [ -x "$INSTALL_DIR/kftui" ]; then
+    print_msg green "kftui installation completed successfully"
+  else
     print_msg red "Error: kftui installation verification failed."
     exit 1
   fi
-  print_msg green "kftui installation completed successfully"
 }
 
 # Install kftui
