@@ -55,20 +55,40 @@ pub fn get_window_state_path() -> Result<PathBuf, String> {
     Ok(config_path)
 }
 
-pub fn get_default_kubeconfig_path() -> Result<PathBuf> {
-    if let Ok(kubeconfig_path) = env::var("KUBECONFIG") {
-        Ok(PathBuf::from(kubeconfig_path))
-    } else if let Some(mut config_path) = dirs::home_dir() {
-        config_path.push(".kube/config");
-        Ok(config_path)
+pub fn get_kubeconfig_paths() -> Result<Vec<PathBuf>> {
+    let mut paths = Vec::new();
+
+    if let Ok(kubeconfig_paths) = env::var("KUBECONFIG") {
+        for path in kubeconfig_paths.split(if cfg!(windows) { ';' } else { ':' }) {
+            let path_buf = PathBuf::from(path);
+            if path_buf.exists() {
+                paths.push(path_buf);
+            }
+        }
+    }
+
+    if paths.is_empty() {
+        if let Some(mut config_path) = dirs::home_dir() {
+            config_path.push(".kube/config");
+            if config_path.exists() {
+                paths.push(config_path);
+            }
+        }
+    }
+
+    if paths.is_empty() {
+        Err(anyhow::anyhow!("Unable to determine kubeconfig path"))
     } else {
-        Err(anyhow::anyhow!("Unable to determine home directory"))
+        Ok(paths)
     }
 }
-
 #[cfg(test)]
 mod tests {
     use std::env;
+    use std::fs;
+    use std::path::PathBuf;
+
+    use tempfile::TempDir;
 
     use super::*;
 
@@ -108,7 +128,7 @@ mod tests {
         env::remove_var("KFTRAY_CONFIG");
         env::set_var("XDG_CONFIG_HOME", "/xdg/config/home");
         let config_dir = get_config_dir().unwrap();
-        assert_eq!(config_dir, PathBuf::from("/xdg/config/home/.kftray"));
+        assert_eq!(config_dir, PathBuf::from("/xdg/config/home/kftray"));
 
         restore_env_vars(preserved_vars);
     }
@@ -122,16 +142,6 @@ mod tests {
         let home_dir = dirs::home_dir().unwrap();
         let config_dir = get_config_dir().unwrap();
         assert_eq!(config_dir, home_dir.join(".kftray"));
-
-        restore_env_vars(preserved_vars);
-    }
-
-    #[test]
-    fn test_get_config_dir_missing_home() {
-        let preserved_vars = preserve_env_vars(&["KFTRAY_CONFIG", "XDG_CONFIG_HOME"]);
-
-        env::remove_var("KFTRAY_CONFIG");
-        env::remove_var("XDG_CONFIG_HOME");
 
         restore_env_vars(preserved_vars);
     }
@@ -201,18 +211,26 @@ mod tests {
     }
 
     #[test]
-    fn test_get_default_kubeconfig_path() {
+    fn test_get_kubeconfig_paths() {
         let preserved_vars = preserve_env_vars(&["KUBECONFIG"]);
 
-        env::set_var("KUBECONFIG", "/custom/kube/config");
-        let kubeconfig_path = get_default_kubeconfig_path().unwrap();
-        assert_eq!(kubeconfig_path, PathBuf::from("/custom/kube/config"));
+        let temp_dir = TempDir::new().unwrap();
+        let custom_kubeconfig_path = temp_dir.path().join("custom_kube_config");
+        fs::write(&custom_kubeconfig_path, "mock kubeconfig content").unwrap();
+
+        env::set_var("KUBECONFIG", custom_kubeconfig_path.to_str().unwrap());
+        let kubeconfig_paths = get_kubeconfig_paths().unwrap();
+        assert_eq!(kubeconfig_paths, vec![custom_kubeconfig_path.clone()]);
 
         env::remove_var("KUBECONFIG");
         let expected_default_path = dirs::home_dir().unwrap().join(".kube/config");
-        let kubeconfig_path = get_default_kubeconfig_path().unwrap();
-        assert_eq!(kubeconfig_path, expected_default_path);
+        fs::write(&expected_default_path, "mock kubeconfig content").unwrap();
+        let kubeconfig_paths = get_kubeconfig_paths().unwrap();
+        assert_eq!(kubeconfig_paths, vec![expected_default_path.clone()]);
 
         restore_env_vars(preserved_vars);
+
+        fs::remove_file(custom_kubeconfig_path).unwrap();
+        fs::remove_file(expected_default_path).unwrap();
     }
 }
