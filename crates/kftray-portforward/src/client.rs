@@ -1,14 +1,25 @@
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
+use anyhow::{
+    Context,
+    Result,
+};
 use hyper_util::rt::TokioExecutor;
 use kftray_commons::config_dir::get_kubeconfig_paths;
 use kube::{
     client::ConfigExt,
-    config::{Config, KubeConfigOptions, Kubeconfig},
+    config::{
+        Config,
+        KubeConfigOptions,
+        Kubeconfig,
+    },
     Client,
 };
-use log::{info, warn, error};
+use log::{
+    error,
+    info,
+    warn,
+};
 use tower::ServiceBuilder;
 
 pub async fn create_client_with_specific_context(
@@ -18,6 +29,7 @@ pub async fn create_client_with_specific_context(
 
     let mut errors = Vec::new();
     let mut all_contexts = Vec::new();
+    let mut merged_kubeconfig = Kubeconfig::default();
 
     for path in &kubeconfig_paths {
         info!("Attempting to read kubeconfig from path: {:?}", path);
@@ -31,32 +43,7 @@ pub async fn create_client_with_specific_context(
                 all_contexts.extend(contexts.clone());
                 info!("Available contexts in {:?}: {:?}", path, contexts);
 
-                if let Some(context_name) = context_name {
-                    match create_config_with_context(&kubeconfig, context_name).await {
-                        Ok(config) => {
-                            info!("Successfully created configuration for context: {}", context_name);
-                            if let Some(client) = create_client_with_config(&config).await {
-                                info!("Successfully created client for context: {}", context_name);
-                                return Ok((Some(client), Some(kubeconfig), all_contexts));
-                            } else {
-                                let error_msg = format!(
-                                    "Failed to create HTTPS connector for context: {} in path: {:?}",
-                                    context_name, path
-                                );
-                                warn!("{}", error_msg);
-                                errors.push(error_msg);
-                            }
-                        }
-                        Err(e) => {
-                            let error_msg = format!(
-                                "Failed to create configuration from kubeconfig for context: {} in path: {:?}: {}",
-                                context_name, path, e
-                            );
-                            error!("{}", error_msg);
-                            errors.push(error_msg);
-                        }
-                    }
-                }
+                merged_kubeconfig = merged_kubeconfig.merge(kubeconfig)?;
             }
             Err(e) => {
                 let error_msg = format!("Failed to read kubeconfig from {:?}: {}", path, e);
@@ -66,7 +53,35 @@ pub async fn create_client_with_specific_context(
         }
     }
 
-    if context_name.is_none() {
+    if let Some(context_name) = context_name {
+        match create_config_with_context(&merged_kubeconfig, context_name).await {
+            Ok(config) => {
+                info!(
+                    "Successfully created configuration for context: {}",
+                    context_name
+                );
+                if let Some(client) = create_client_with_config(&config).await {
+                    info!("Successfully created client for context: {}", context_name);
+                    return Ok((Some(client), Some(merged_kubeconfig), all_contexts));
+                } else {
+                    let error_msg = format!(
+                        "Failed to create HTTPS connector for context: {}",
+                        context_name
+                    );
+                    warn!("{}", error_msg);
+                    errors.push(error_msg);
+                }
+            }
+            Err(e) => {
+                let error_msg = format!(
+                    "Failed to create configuration for context: {}: {}",
+                    context_name, e
+                );
+                error!("{}", error_msg);
+                errors.push(error_msg);
+            }
+        }
+    } else {
         info!("No specific context provided, returning all available contexts.");
         return Ok((None, None, all_contexts));
     }
@@ -82,22 +97,19 @@ fn get_kubeconfig_paths_from_option(kubeconfig: Option<String>) -> Result<Vec<Pa
         Some(path) if path == "default" => {
             info!("Using default kubeconfig paths.");
             get_kubeconfig_paths()
-        },
+        }
         Some(path) => {
             info!("Using provided kubeconfig paths: {}", path);
             Ok(path.split(':').map(PathBuf::from).collect())
-        },
+        }
         None => {
             info!("No kubeconfig path provided, using default paths.");
             get_kubeconfig_paths()
-        },
+        }
     }
 }
 
-async fn create_config_with_context(
-    kubeconfig: &Kubeconfig,
-    context_name: &str,
-) -> Result<Config> {
+async fn create_config_with_context(kubeconfig: &Kubeconfig, context_name: &str) -> Result<Config> {
     info!("Creating configuration for context: {}", context_name);
     Config::from_custom_kubeconfig(
         kubeconfig.clone(),

@@ -16,13 +16,10 @@ use kftray_commons::models::{
 };
 use kftray_commons::utils::config_dir::get_pod_manifest_path;
 use kftray_commons::utils::config_state::update_config_state;
-use kube::{
-    api::{
-        Api,
-        DeleteParams,
-        ListParams,
-    },
-    Client,
+use kube::api::{
+    Api,
+    DeleteParams,
+    ListParams,
 };
 use kube_runtime::wait::conditions;
 use log::{
@@ -260,10 +257,14 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
 
     let mut responses = Vec::new();
 
-    let client = Client::try_default().await.map_err(|e| {
-        log::error!("Failed to create Kubernetes client: {}", e);
-        e.to_string()
-    })?;
+    let (client, _, _) = create_client_with_specific_context(None, None)
+        .await
+        .map_err(|e| {
+            log::error!("Failed to create Kubernetes client: {}", e);
+            e.to_string()
+        })?;
+
+    let client = client.ok_or_else(|| "Client not created".to_string())?;
 
     CANCEL_NOTIFIER.notify_waiters();
 
@@ -562,11 +563,9 @@ pub async fn deploy_and_forward_pod(
                 .await
                 .map_err(|e| e.to_string())?
         } else {
-            (
-                Some(Client::try_default().await.map_err(|e| e.to_string())?),
-                None,
-                Vec::new(),
-            )
+            create_client_with_specific_context(None, None)
+                .await
+                .map_err(|e| e.to_string())?
         };
 
         let client =
@@ -698,10 +697,14 @@ pub async fn stop_proxy_forward(
         service_name
     );
 
-    let client = Client::try_default().await.map_err(|e| {
-        log::error!("Failed to create Kubernetes client: {}", e);
-        e.to_string()
-    })?;
+    let (client, _, _) = create_client_with_specific_context(None, None)
+        .await
+        .map_err(|e| {
+            log::error!("Failed to create Kubernetes client: {}", e);
+            e.to_string()
+        })?;
+
+    let client = client.ok_or_else(|| "Client not created".to_string())?;
 
     let pods: Api<Pod> = Api::namespaced(client, namespace);
 
