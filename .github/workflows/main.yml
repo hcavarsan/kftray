@@ -217,13 +217,17 @@ jobs:
           fi
         shell: bash
         
-      - name: Set up Perl
-        if:  matrix.os == 'windows-latest'
-        run: |
-          choco install strawberryperl
-          echo "C:\strawberry\c\bin;C:\strawberry\perl\site\bin;C:\strawberry\perl\bin" >> $GITHUB_PATH
-          cpan Locale::Maketext::Simple
-          cpanm -n --installdeps .
+      - name: Set up Perl on Windows
+        if: matrix.os == 'windows-latest'
+        uses: shogo82148/actions-setup-perl@v1
+        with:
+          perl-version: "5.32"
+          distribution: strawberry
+
+      - name: Install Perl Dependencies on Windows
+        if: matrix.os == 'windows-latest'
+        run: cpanm --installdeps .
+        
       - name: Build kftui
         run: |
           if [ "${{ matrix.os }}" == "macos-latest" ]; then
