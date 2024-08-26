@@ -223,22 +223,6 @@ jobs:
         with:
           perl-version: 5.38
 
-      - name: Install Perl build tools
-        if: matrix.os == 'ubuntu-latest' || matrix.os == 'windows-latest'
-        run: |
-          if [ "${{ matrix.os }}" == "ubuntu-latest" ]; then
-            sudo apt-get install -y build-essential
-          elif [ "${{ matrix.os }}" == "windows-latest" ]; then
-            choco install strawberryperl
-          fi
-
-      - name: Configure Perl module
-        if: matrix.os == 'ubuntu-latest' || matrix.os == 'windows-latest'
-        run: perl Makefile.PL
-
-      - name: Install Perl dependencies
-        if: matrix.os == 'ubuntu-latest' || matrix.os == 'windows-latest'
-        run: cpanm --installdeps .
 
       - name: Build kftui
         run: |
