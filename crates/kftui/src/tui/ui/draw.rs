@@ -54,7 +54,7 @@ use crate::tui::ui::{
 };
 
 pub fn draw_ui(f: &mut Frame, app: &mut App, config_states: &[ConfigState]) {
-    let size = f.size();
+    let size = f.area();
 
     let background = Block::default().style(Style::default().bg(BASE));
     f.render_widget(background, size);

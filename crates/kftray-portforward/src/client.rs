@@ -1,3 +1,4 @@
+use std::error::Error;
 use std::path::PathBuf;
 
 use anyhow::{
@@ -129,6 +130,7 @@ async fn create_client_with_config(config: &Config) -> Option<Client> {
             let service = ServiceBuilder::new()
                 .layer(config.base_uri_layer())
                 .option_layer(config.auth_layer().ok()?)
+                .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)
                 .service(
                     hyper_util::client::legacy::Client::builder(TokioExecutor::new())
                         .build(https_connector),
@@ -146,6 +148,7 @@ async fn create_client_with_config(config: &Config) -> Option<Client> {
                     let service = ServiceBuilder::new()
                         .layer(config.base_uri_layer())
                         .option_layer(config.auth_layer().ok()?)
+                        .map_err(|e| Box::new(e) as Box<dyn Error + Send + Sync>)
                         .service(
                             hyper_util::client::legacy::Client::builder(TokioExecutor::new())
                                 .build(https_connector),

@@ -33,7 +33,7 @@ uuid = { version = "1.10.0", features = ["v4"] }
 whoami = "1.5.1"
 hostsfile = { git = "https://github.com/tonarino/innernet", branch = "main" }
 kftray-commons = { path = "../kftray-commons" }
-tower = "0.5.0"
+tower = { version = "0.5.0", features = ["util"] }
 hyper-util = "0.1.7"
 dirs = "5.0.1"
 openssl = { version = "0.10.66", features = ["vendored"] }
