@@ -218,10 +218,10 @@ jobs:
         shell: bash
 
       - name: Set up Perl
-        if: matrix.os == 'ubuntu-latest' || matrix.os == 'windows-latest'
+        if:  matrix.os == 'windows-latest'
         uses: shogo82148/actions-setup-perl@v1
         with:
-          perl-version: 5.38
+          perl-version: 5.40
 
 
       - name: Build kftui
