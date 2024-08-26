@@ -223,10 +223,6 @@ jobs:
         with:
           perl-version: "5.32"
           distribution: strawberry
-
-      - name: Install Perl Dependencies on Windows
-        if: matrix.os == 'windows-latest'
-        run: cpanm --installdeps .
         
       - name: Build kftui
         run: |
