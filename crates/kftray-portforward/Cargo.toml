@@ -25,15 +25,15 @@ lazy_static = "1.5.0"
 log = "0.4"
 rand = "0.8.5"
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0.120"
-tokio = { version = "1.39.1", features = ["rt-multi-thread", "macros", "full"] }
+serde_json = "1.0.125"
+tokio = { version = "1.39.3", features = ["rt-multi-thread", "macros", "full"] }
 tokio-stream = { version = "0.1.15", features = ["net"] }
 tracing = "0.1.40"
 uuid = { version = "1.10.0", features = ["v4"] }
 whoami = "1.5.1"
 hostsfile = { git = "https://github.com/tonarino/innernet", branch = "main" }
 kftray-commons = { path = "../kftray-commons" }
-tower = "0.4.13"
+tower = "0.5.0"
 hyper-util = "0.1.7"
 dirs = "5.0.1"
 openssl = { version = "0.10.66", features = ["vendored"] }
