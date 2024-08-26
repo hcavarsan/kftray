@@ -7,8 +7,10 @@ use std::time::{
     UNIX_EPOCH,
 };
 
+use futures::future::join_all;
 use hostsfile::HostsBuilder;
 use k8s_openapi::api::core::v1::Pod;
+use kftray_commons::config::get_config;
 use kftray_commons::models::{
     config_model::Config,
     config_state_model::ConfigState,
@@ -22,14 +24,17 @@ use kube::api::{
     ListParams,
 };
 use kube_runtime::wait::conditions;
+use log::warn;
 use log::{
     debug,
+    error,
     info,
 };
 use rand::{
     distributions::Alphanumeric,
     Rng,
 };
+use tokio::task::JoinHandle;
 
 use crate::client::create_client_with_specific_context;
 use crate::models::kube::{
@@ -71,7 +76,7 @@ pub async fn start_port_forward(
 
         let local_address_clone = config.local_address.clone();
 
-        let port_forward_result = PortForward::new(
+        let port_forward_result: Result<PortForward, anyhow::Error> = PortForward::new(
             target,
             config.local_port,
             local_address_clone,
@@ -253,38 +258,27 @@ pub async fn start_port_forward(
 }
 
 pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
-    log::info!("Attempting to stop all port forwards");
+    info!("Attempting to stop all port forwards");
 
     let mut responses = Vec::new();
 
-    let (client, _, _) = create_client_with_specific_context(None, None)
-        .await
-        .map_err(|e| {
-            log::error!("Failed to create Kubernetes client: {}", e);
-            e.to_string()
-        })?;
-
-    let client = client.ok_or_else(|| "Client not created".to_string())?;
-
     CANCEL_NOTIFIER.notify_waiters();
 
-    let handle_map: HashMap<String, tokio::task::JoinHandle<()>> =
+    let handle_map: HashMap<String, JoinHandle<()>> =
         CHILD_PROCESSES.lock().unwrap().drain().collect();
 
     let configs_result = kftray_commons::utils::config::get_configs().await;
     if let Err(e) = configs_result {
         let error_message = format!("Failed to retrieve configs: {}", e);
-        log::error!("{}", error_message);
+        error!("{}", error_message);
         return Err(error_message);
     }
     let configs = configs_result.unwrap();
 
-    let mut pod_deletion_tasks = Vec::new();
-
     for (composite_key, handle) in handle_map.iter() {
         let ids: Vec<&str> = composite_key.split('_').collect();
         if ids.len() != 2 {
-            log::error!(
+            error!(
                 "Invalid composite key format encountered: {}",
                 composite_key
             );
@@ -305,7 +299,7 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
                 let hosts_builder = HostsBuilder::new(&hostfile_comment);
 
                 if let Err(e) = hosts_builder.write() {
-                    log::error!("Failed to write to the hostfile for {}: {}", service_id, e);
+                    error!("Failed to write to the hostfile for {}: {}", service_id, e);
                     responses.push(CustomResponse {
                         id: Some(config_id_parsed),
                         service: service_id.to_string(),
@@ -318,88 +312,19 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
                         stderr: e.to_string(),
                         status: 1,
                     });
-                    let config_state = ConfigState {
-                        id: None,
-                        config_id: config_id_parsed,
-                        is_running: false,
-                    };
-                    if let Err(e) = update_config_state(&config_state).await {
-                        log::error!("Failed to update config state: {}", e);
-                    }
                     continue;
                 }
             }
         } else {
-            log::warn!("Config with id '{}' not found.", config_id_str);
+            warn!("Config with id '{}' not found.", config_id_str);
         }
 
-        log::info!(
+        info!(
             "Aborting port forwarding task for config_id: {}",
             config_id_str
         );
 
         handle.abort();
-
-        let client_clone = client.clone();
-        let pod_deletion_task = async move {
-            let pods: Api<Pod> = Api::all(client_clone.clone());
-            let lp = ListParams::default().labels(&format!("config_id={}", config_id_str));
-            log::info!(
-                "Listing pods with label selector: config_id={}",
-                config_id_str
-            );
-
-            let pod_list = pods.list(&lp).await.map_err(|e| {
-                log::error!("Error listing pods for config_id {}: {}", config_id_str, e);
-                e.to_string()
-            })?;
-
-            let username = whoami::username();
-            let pod_prefix = format!("kftray-forward-{}", username);
-
-            for pod in pod_list.items.into_iter() {
-                if let Some(pod_name) = pod.metadata.name {
-                    log::info!("Found pod: {}", pod_name);
-                    if pod_name.starts_with(&pod_prefix) {
-                        log::info!("Deleting pod: {}", pod_name);
-                        let namespace = pod
-                            .metadata
-                            .namespace
-                            .clone()
-                            .unwrap_or_else(|| "default".to_string());
-                        let pods_in_namespace: Api<Pod> =
-                            Api::namespaced(client_clone.clone(), &namespace);
-                        let dp = DeleteParams {
-                            grace_period_seconds: Some(0),
-                            ..DeleteParams::default()
-                        };
-                        if let Err(e) = pods_in_namespace.delete(&pod_name, &dp).await {
-                            log::error!(
-                                "Failed to delete pod {} in namespace {}: {}",
-                                pod_name,
-                                namespace,
-                                e
-                            );
-                        } else {
-                            log::info!("Successfully deleted pod: {}", pod_name);
-                        }
-                    }
-                }
-            }
-
-            Ok::<(), String>(())
-        };
-
-        pod_deletion_tasks.push(pod_deletion_task);
-
-        let config_state = ConfigState {
-            id: None,
-            config_id: config_id_parsed,
-            is_running: false,
-        };
-        if let Err(e) = update_config_state(&config_state).await {
-            log::error!("Failed to update config state: {}", e);
-        }
 
         responses.push(CustomResponse {
             id: Some(config_id_parsed),
@@ -415,9 +340,101 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
         });
     }
 
-    futures::future::join_all(pod_deletion_tasks).await;
+    let mut pod_deletion_tasks = Vec::new();
+    for config in configs.iter() {
+        if let Some(kubeconfig) = config.kubeconfig.clone() {
+            let config_id_str = config.id.unwrap_or_default();
+            let pod_deletion_task = async move {
+                match create_client_with_specific_context(
+                    Some(kubeconfig.clone()),
+                    Some(&config.context),
+                )
+                .await
+                {
+                    Ok((Some(client), _, _)) => {
+                        let pods: Api<Pod> = Api::all(client.clone());
+                        let lp =
+                            ListParams::default().labels(&format!("config_id={}", config_id_str));
+                        info!(
+                            "Listing pods with label selector: config_id={}",
+                            config_id_str
+                        );
 
-    log::info!(
+                        match pods.list(&lp).await {
+                            Ok(pod_list) => {
+                                let username = whoami::username();
+                                let pod_prefix = format!("kftray-forward-{}", username);
+
+                                for pod in pod_list.items.into_iter() {
+                                    if let Some(pod_name) = pod.metadata.name {
+                                        info!("Found pod: {}", pod_name);
+                                        if pod_name.starts_with(&pod_prefix) {
+                                            info!("Deleting pod: {}", pod_name);
+                                            let namespace = pod
+                                                .metadata
+                                                .namespace
+                                                .clone()
+                                                .unwrap_or_else(|| "default".to_string());
+                                            let pods_in_namespace: Api<Pod> =
+                                                Api::namespaced(client.clone(), &namespace);
+                                            let dp = DeleteParams {
+                                                grace_period_seconds: Some(0),
+                                                ..DeleteParams::default()
+                                            };
+                                            if let Err(e) =
+                                                pods_in_namespace.delete(&pod_name, &dp).await
+                                            {
+                                                error!(
+                                                    "Failed to delete pod {} in namespace {}: {}",
+                                                    pod_name, namespace, e
+                                                );
+                                            } else {
+                                                info!("Successfully deleted pod: {}", pod_name);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                error!("Error listing pods for config_id {}: {}", config_id_str, e);
+                            }
+                        }
+                    }
+                    Ok((None, _, _)) => {
+                        error!("Client not created for kubeconfig: {:?}", kubeconfig);
+                    }
+                    Err(e) => {
+                        error!("Failed to create Kubernetes client: {}", e);
+                    }
+                }
+
+                Ok::<(), String>(())
+            };
+
+            pod_deletion_tasks.push(pod_deletion_task);
+        }
+    }
+
+    join_all(pod_deletion_tasks).await;
+
+    for config in configs.iter() {
+        let config_id_parsed = config.id.unwrap_or_default();
+        let config_state = ConfigState {
+            id: None,
+            config_id: config_id_parsed,
+            is_running: false,
+        };
+        if let Err(e) = update_config_state(&config_state).await {
+            error!("Failed to update config state: {}", e);
+        } else {
+            info!(
+                "Successfully updated config state for config_id: {}",
+                config_id_parsed
+            );
+        }
+    }
+
+    info!(
         "Port forward stopping process completed with {} responses",
         responses.len()
     );
@@ -549,27 +566,22 @@ fn render_json_template(template: &str, values: &HashMap<&str, String>) -> Strin
 
     rendered_template
 }
-
 pub async fn deploy_and_forward_pod(
     configs: Vec<Config>, http_log_state: Arc<HttpLogState>,
 ) -> Result<Vec<CustomResponse>, String> {
     let mut responses: Vec<CustomResponse> = Vec::new();
 
     for mut config in configs.into_iter() {
-        let (client, _, _) = if !config.context.is_empty() {
-            let kubeconfig = config.kubeconfig.clone();
+        let context_name = Some(config.context.as_str());
+        let kubeconfig_clone = config.kubeconfig.clone();
+        let (client, _, _) = create_client_with_specific_context(kubeconfig_clone, context_name)
+            .await
+            .map_err(|e| {
+                log::error!("Failed to create Kubernetes client: {}", e);
+                e.to_string()
+            })?;
 
-            create_client_with_specific_context(kubeconfig, Some(&config.context))
-                .await
-                .map_err(|e| e.to_string())?
-        } else {
-            create_client_with_specific_context(None, None)
-                .await
-                .map_err(|e| e.to_string())?
-        };
-
-        let client =
-            client.ok_or_else(|| format!("Client not created for context '{}'", config.context))?;
+        let client = client.ok_or_else(|| "Client not created".to_string())?;
 
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -690,17 +702,27 @@ pub async fn deploy_and_forward_pod(
 }
 
 pub async fn stop_proxy_forward(
-    config_id: String, namespace: &str, service_name: String,
+    config_id: i64, namespace: &str, service_name: String,
 ) -> Result<CustomResponse, String> {
-    log::info!(
+    info!(
         "Attempting to stop proxy forward for service: {}",
         service_name
     );
 
-    let (client, _, _) = create_client_with_specific_context(None, None)
+    let config = get_config(config_id).await.map_err(|e| {
+        error!("Failed to get config: {}", e);
+        e.to_string()
+    })?;
+
+    let kubeconfig = config
+        .kubeconfig
+        .ok_or_else(|| "Kubeconfig not found".to_string())?;
+    let context_name = &config.context;
+
+    let (client, _, _) = create_client_with_specific_context(Some(kubeconfig), Some(context_name))
         .await
         .map_err(|e| {
-            log::error!("Failed to create Kubernetes client: {}", e);
+            error!("Failed to create Kubernetes client: {}", e);
             e.to_string()
         })?;
 
@@ -711,7 +733,7 @@ pub async fn stop_proxy_forward(
     let lp = ListParams::default().labels(&format!("config_id={}", config_id));
 
     let pod_list = pods.list(&lp).await.map_err(|e| {
-        log::error!("Error listing pods: {}", e);
+        error!("Error listing pods: {}", e);
         e.to_string()
     })?;
 
@@ -719,12 +741,12 @@ pub async fn stop_proxy_forward(
 
     let pod_prefix = format!("kftray-forward-{}", username);
 
-    log::debug!("Looking for pods with prefix: {}", pod_prefix);
+    debug!("Looking for pods with prefix: {}", pod_prefix);
 
     for pod in pod_list.items {
         if let Some(pod_name) = pod.metadata.name {
             if pod_name.starts_with(&pod_prefix) {
-                log::info!("Found pod to stop: {}", pod_name);
+                info!("Found pod to stop: {}", pod_name);
 
                 let delete_options = DeleteParams {
                     grace_period_seconds: Some(0),
@@ -733,32 +755,33 @@ pub async fn stop_proxy_forward(
                 };
 
                 match pods.delete(&pod_name, &delete_options).await {
-                    Ok(_) => log::info!("Successfully deleted pod: {}", pod_name),
+                    Ok(_) => info!("Successfully deleted pod: {}", pod_name),
                     Err(e) => {
-                        log::error!("Failed to delete pod: {} with error: {}", pod_name, e);
+                        error!("Failed to delete pod: {} with error: {}", pod_name, e);
                         return Err(e.to_string());
                     }
                 }
 
                 break;
             } else {
-                log::info!("Pod {} does not match prefix, skipping", pod_name);
+                info!("Pod {} does not match prefix, skipping", pod_name);
             }
         }
     }
 
-    log::info!("Stopping port forward for service: {}", service_name);
+    info!("Stopping port forward for service: {}", service_name);
 
-    let stop_result = stop_port_forward(config_id.clone()).await.map_err(|e| {
-        log::error!(
-            "Failed to stop port forwarding for service '{}': {}",
-            service_name,
+    let stop_result = stop_port_forward(config_id.to_string())
+        .await
+        .map_err(|e| {
+            error!(
+                "Failed to stop port forwarding for service '{}': {}",
+                service_name, e
+            );
             e
-        );
-        e
-    })?;
+        })?;
 
-    log::info!("Proxy forward stopped for service: {}", service_name);
+    info!("Proxy forward stopped for service: {}", service_name);
 
     Ok(stop_result)
 }
