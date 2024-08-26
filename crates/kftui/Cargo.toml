@@ -14,7 +14,7 @@ build = "build.rs"
 
 [dependencies]
 
-serde_json = "1.0.120"
+serde_json = "1.0.125"
 tauri = { version = "1.6", default-features = false, features = [
 	"updater",
 	"api-all",
@@ -23,8 +23,8 @@ tauri = { version = "1.6", default-features = false, features = [
 	"icon-png",
 	"devtools",
 ] }
-tokio = { version = "1.39.1", features = ["rt-multi-thread", "macros", "full"] }
-sqlx = { version = "0.8.0", features = ["sqlite", "runtime-tokio-native-tls"] }
+tokio = { version = "1.39.3", features = ["rt-multi-thread", "macros", "full"] }
+sqlx = { version = "0.8.1", features = ["sqlite", "runtime-tokio-native-tls"] }
 dirs = "5.0.1"
 base64 = "0.22.1"
 hostsfile = { git = "https://github.com/tonarino/innernet", branch = "main" }
@@ -43,21 +43,23 @@ futures = "0.3.30"
 anyhow = "1.0.86"
 tracing = "0.1.40"
 hyper = { version = "1.3.1", features = ["client", "http1", "http2"] }
-hyper-util = { version = "0.1.6", features = ["client-legacy", "http1", "tokio"] }
+hyper-util = { version = "0.1.7", features = ["client-legacy", "http1", "tokio"] }
 lazy_static = "1.5.0"
 serde = { version = "1.0", features = ["derive"] }
 rand = "0.8.5"
 kube-runtime = "0.93.1"
-tower = "0.4.13"
+tower = "0.5.0"
 whoami = "1.5.1"
 tempfile = "3.9"
 h2 = { optional = true, version = "0.4.5" }
 libc = "0.2"
 kftray-commons = { path = "../kftray-commons" }
 kftray-portforward = { path = "../kftray-portforward" }
-ratatui = { version = "0.26", features = ["unstable-widget-ref"] }
-crossterm = { version = "0.27", optional = false }
-ratatui-explorer = "0.1.1"
+ratatui = { version = "0.28.1", features = ["unstable-widget-ref"] }
+crossterm = { version = "0.28.1", optional = false }
+
+# https://github.com/tatounee/ratatui-explorer/pull/2/files
+ratatui-explorer = { git = "https://github.com/hcavarsan/ratatui-explorer", branch = "master" }
 once_cell = "1.10"
 built = "0.7.4"
 
