@@ -222,7 +222,8 @@ jobs:
         run: |
           choco install strawberryperl
           echo "C:\strawberry\c\bin;C:\strawberry\perl\site\bin;C:\strawberry\perl\bin" >> $GITHUB_PATH
-
+          cpan Locale::Maketext::Simple
+          cpanm -n --installdeps .
       - name: Build kftui
         run: |
           if [ "${{ matrix.os }}" == "macos-latest" ]; then
