@@ -216,6 +216,10 @@ jobs:
             rustup target add ${{ matrix.rust_target }}
           fi
         shell: bash
+
+      - name: Install OpenSSL on Windows
+        if: matrix.os == 'windows-latest'
+        run: choco install openssl
         
       - name: Set up Perl on Windows
         if: matrix.os == 'windows-latest'
