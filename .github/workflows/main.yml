@@ -226,8 +226,14 @@ jobs:
         uses: shogo82148/actions-setup-perl@v1
         with:
           perl-version: "5.32"
-          distribution: strawberry
-        
+          distribution: "strawberry"
+          
+      - name: Set Perl environment variables
+        if: matrix.os == 'windows-latest'
+        run: |
+          echo "PERL=$((where.exe perl)[0])" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          echo "OPENSSL_SRC_PERL=$((where.exe perl)[0])" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8 
+          
       - name: Build kftui
         run: |
           if [ "${{ matrix.os }}" == "macos-latest" ]; then
