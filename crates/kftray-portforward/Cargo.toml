@@ -39,7 +39,6 @@ dirs = "5.0.1"
 openssl = { version = "0.10.66", features = ["vendored"] }
 openssl-sys = { version = "0.9.103", features = ["vendored"] }
 hyper = "1.4.1"
-hyper-openssl = "0.10.2"
 
 [lib]
 name = "kftray_portforward"
