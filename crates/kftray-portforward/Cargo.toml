@@ -36,7 +36,8 @@ kftray-commons = { path = "../kftray-commons" }
 tower = "0.4.13"
 hyper-util = "0.1.7"
 dirs = "5.0.1"
-openssl = "0.10.66"
+openssl = { version = "0.10.66", features = ["vendored"] }
+openssl-sys = { version = "0.9.103", features = ["vendored"] }
 hyper = "1.4.1"
 hyper-openssl = "0.10.2"
 
