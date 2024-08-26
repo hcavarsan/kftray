@@ -131,5 +131,9 @@ pub async fn deploy_and_forward_pod_cmd(
 pub async fn stop_proxy_forward_cmd(
     config_id: String, namespace: &str, service_name: String, _app_handle: tauri::AppHandle,
 ) -> Result<CustomResponse, String> {
-    stop_proxy_forward(config_id.clone(), namespace, service_name).await
+    let config_id = config_id
+        .parse::<i64>()
+        .map_err(|e| format!("Failed to parse config_id: {}", e))?;
+
+    stop_proxy_forward(config_id, namespace, service_name).await
 }

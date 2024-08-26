@@ -11,7 +11,9 @@ use tauri::api::dialog::{
 use tauri::{
     async_runtime::spawn_blocking,
     AppHandle,
+    Runtime,
 };
+
 #[derive(Clone)]
 struct ConfigLocation {
     path: PathBuf,
@@ -64,8 +66,8 @@ fn detect_multiple_configs() -> (Vec<ConfigLocation>, Option<ConfigLocation>) {
     (config_locations, active_config)
 }
 
-async fn show_alert_dialog(
-    app_handle: AppHandle, configs: Vec<ConfigLocation>, active_config: Option<ConfigLocation>,
+async fn show_alert_dialog<R: Runtime>(
+    app_handle: AppHandle<R>, configs: Vec<ConfigLocation>, active_config: Option<ConfigLocation>,
 ) {
     let msg = configs
         .into_iter()
@@ -113,7 +115,7 @@ async fn show_alert_dialog(
     .unwrap();
 }
 
-pub async fn alert_multiple_configs(app_handle: AppHandle) {
+pub async fn alert_multiple_configs<R: Runtime>(app_handle: AppHandle<R>) {
     let (configs, active_config) = detect_multiple_configs();
     if configs.len() > 1 {
         show_alert_dialog(app_handle, configs, active_config).await;

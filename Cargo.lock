@@ -2228,6 +2228,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "hyper-openssl"
+version = "0.10.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "527d4d619ca2c2aafa31ec139a3d1d60bf557bf7578a1f20f743637eccd9ca19"
+dependencies = [
+ "http 1.1.0",
+ "hyper 1.4.1",
+ "hyper-util",
+ "linked_hash_set",
+ "once_cell",
+ "openssl",
+ "openssl-sys",
+ "parking_lot",
+ "pin-project",
+ "tower-layer",
+ "tower-service",
+]
+
+[[package]]
 name = "hyper-rustls"
 version = "0.27.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2678,6 +2697,8 @@ dependencies = [
  "futures",
  "hostsfile",
  "httparse",
+ "hyper 1.4.1",
+ "hyper-openssl",
  "hyper-util",
  "k8s-openapi",
  "kftray-commons",
@@ -2685,6 +2706,7 @@ dependencies = [
  "kube-runtime",
  "lazy_static",
  "log",
+ "openssl",
  "rand 0.8.5",
  "serde",
  "serde_json",
@@ -2698,7 +2720,7 @@ dependencies = [
 
 [[package]]
 name = "kftray-server"
-version = "0.13.2"
+version = "0.13.3"
 dependencies = [
  "byteorder",
  "ctrlc",
@@ -2710,7 +2732,7 @@ dependencies = [
 
 [[package]]
 name = "kftray-tauri"
-version = "0.13.2"
+version = "0.13.3"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2752,7 +2774,7 @@ dependencies = [
 
 [[package]]
 name = "kftui"
-version = "0.13.2"
+version = "0.13.3"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2816,12 +2838,14 @@ dependencies = [
  "http-body-util",
  "hyper 1.4.1",
  "hyper-http-proxy",
+ "hyper-openssl",
  "hyper-rustls",
  "hyper-timeout",
  "hyper-util",
  "jsonpath-rust",
  "k8s-openapi",
  "kube-core",
+ "openssl",
  "pem",
  "rand 0.8.5",
  "rustls",
@@ -2981,6 +3005,21 @@ dependencies = [
  "cc",
  "pkg-config",
  "vcpkg",
+]
+
+[[package]]
+name = "linked-hash-map"
+version = "0.5.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0717cef1bc8b636c6e1c1bbdefc09e6322da8a9321966e8928ef80d20f7f770f"
+
+[[package]]
+name = "linked_hash_set"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "47186c6da4d81ca383c7c47c1bfc80f4b95f4720514d860a5407aaf4233f9588"
+dependencies = [
+ "linked-hash-map",
 ]
 
 [[package]]

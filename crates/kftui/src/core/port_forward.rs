@@ -66,7 +66,7 @@ pub async fn stop_port_forwarding(app: &mut App, config: Config) {
     match config.workload_type.as_str() {
         "proxy" => {
             if let Err(e) = stop_proxy_forward(
-                config.id.unwrap_or_default().to_string(),
+                config.id.unwrap_or_default(),
                 &config.namespace,
                 config.service.clone().unwrap_or_default(),
             )
