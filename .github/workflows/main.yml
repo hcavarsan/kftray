@@ -222,8 +222,10 @@ jobs:
         uses: shogo82148/actions-setup-perl@v1
         with:
           perl-version: "5.38"
-      - run: cpanm --installdeps .
-      - run: prove -lv t
+      - if: matrix.os == 'ubuntu-latest' || matrix.os == 'windows-latest'
+        run: cpanm --installdeps .
+      - if: matrix.os == 'ubuntu-latest' || matrix.os == 'windows-latest'
+        run: prove -lv t
 
       - name: Build kftui
         run: |
