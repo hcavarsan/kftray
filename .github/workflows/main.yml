@@ -217,13 +217,13 @@ jobs:
           fi
         shell: bash
 
-      - name: Set up Perl
+      - name: Install Perl
+        if: matrix.os == 'ubuntu-latest' || matrix.os == 'windows-latest'
         uses: shogo82148/actions-setup-perl@v1
         with:
-          perl-version: 5.38
-
-      - name: Install Perl dependencies
-        run: cpanm --installdeps .
+          perl-version: "5.38"
+      - run: cpanm --installdeps .
+      - run: prove -lv t
 
       - name: Build kftui
         run: |
