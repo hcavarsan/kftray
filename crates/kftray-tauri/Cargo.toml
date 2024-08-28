@@ -16,7 +16,7 @@ path = "src/lib.rs"
 tauri-build = { version = "1.5", features = [] }
 
 [dependencies]
-serde_json = "1.0.125"
+serde_json = "1.0.127"
 tauri = { version = "1.6", default-features = false, features = [
 	"updater",
 	"api-all",
@@ -29,7 +29,7 @@ tauri-plugin-positioner = { version = "1.0.5", features = ["system-tray"] }
 tokio = { version = "1.39.3", features = ["rt-multi-thread", "macros", "full"] }
 sqlx = { version = "0.8.1", features = ["sqlite", "runtime-tokio-native-tls"] }
 dirs = "5.0.1"
-reqwest = "0.12.5"
+reqwest = "0.12.7"
 base64 = "0.22.1"
 keyring = { version = "3.2.0", features = ["apple-native", "windows-native", "linux-native"] }
 hostsfile = { git = "https://github.com/tonarino/innernet", branch = "main" }
@@ -59,7 +59,7 @@ kube-runtime = "0.93.1"
 tower = "0.5.0"
 whoami = "1.5.1"
 tempfile = "3.9"
-h2 = { optional = true, version = "0.4.5" }
+h2 = { optional = true, version = "0.4.6" }
 fix-path-env = { git = "https://github.com/tauri-apps/fix-path-env-rs" }
 open = "5.3.0"
 
