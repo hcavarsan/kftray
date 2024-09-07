@@ -22,6 +22,7 @@ use kftray_commons::models::{
     config_state_model::ConfigState,
 };
 pub use popup::*;
+use ratatui::widgets::ListState;
 use ratatui::widgets::TableState;
 use ratatui_explorer::{
     FileExplorer,
@@ -30,8 +31,9 @@ use ratatui_explorer::{
 
 use crate::core::logging::LOGGER;
 use crate::core::port_forward::stop_all_port_forward_and_exit;
+use crate::tui::input::navigation::handle_auto_add_configs;
+use crate::tui::input::navigation::handle_context_selection;
 use crate::tui::input::navigation::handle_port_forward;
-
 #[derive(PartialEq, Clone, Copy)]
 pub enum DeleteButton {
     Confirm,
@@ -64,6 +66,7 @@ pub enum AppState {
     ShowHelp,
     ShowAbout,
     ShowDeleteConfirmation,
+    ShowContextSelection,
 }
 
 pub struct App {
@@ -95,6 +98,9 @@ pub struct App {
     pub table_state_stopped: TableState,
     pub table_state_running: TableState,
     pub log_content: Arc<Mutex<String>>,
+    pub contexts: Vec<String>,
+    pub selected_context_index: usize,
+    pub context_list_state: ListState,
 }
 
 impl App {
@@ -133,6 +139,9 @@ impl App {
             table_state_stopped: TableState::default(),
             table_state_running: TableState::default(),
             log_content: Arc::new(Mutex::new(String::new())),
+            contexts: Vec::new(),
+            selected_context_index: 0,
+            context_list_state: ListState::default(),
         };
 
         if let Ok((_, height)) = size() {
@@ -286,6 +295,10 @@ pub async fn handle_input(app: &mut App, _config_states: &mut [ConfigState]) -> 
                 AppState::ShowDeleteConfirmation => {
                     log::debug!("Handling ShowDeleteConfirmation state");
                     handle_delete_confirmation_input(app, key.code).await?;
+                }
+                AppState::ShowContextSelection => {
+                    log::debug!("Handling ShowContextSelection state");
+                    handle_context_selection_input(app, key.code).await?;
                 }
                 AppState::Normal => {
                     log::debug!("Handling Normal state");
@@ -456,7 +469,7 @@ async fn handle_menu_input(app: &mut App, key: KeyCode) -> io::Result<()> {
             }
         }
         KeyCode::Right => {
-            if app.selected_menu_item < 4 {
+            if app.selected_menu_item < 5 {
                 app.selected_menu_item += 1
             }
         }
@@ -468,10 +481,11 @@ async fn handle_menu_input(app: &mut App, key: KeyCode) -> io::Result<()> {
         }
         KeyCode::Enter => match app.selected_menu_item {
             0 => app.state = AppState::ShowHelp,
-            1 => open_import_file_explorer(app),
-            2 => open_export_file_explorer(app),
-            3 => app.state = AppState::ShowAbout,
-            4 => stop_all_port_forward_and_exit(app).await,
+            1 => handle_auto_add_configs(app).await,
+            2 => open_import_file_explorer(app),
+            3 => open_export_file_explorer(app),
+            4 => app.state = AppState::ShowAbout,
+            5 => stop_all_port_forward_and_exit(app).await,
             _ => {}
         },
         _ => {}
@@ -767,4 +781,25 @@ fn open_import_file_explorer(app: &mut App) {
 fn open_export_file_explorer(app: &mut App) {
     app.state = AppState::ExportFileExplorerOpen;
     app.selected_file_path = std::env::current_dir().ok();
+}
+
+pub async fn handle_context_selection_input(app: &mut App, key: KeyCode) -> io::Result<()> {
+    if let KeyCode::Enter = key {
+        if let Some(selected_context) = app.contexts.get(app.selected_context_index).cloned() {
+            handle_context_selection(app, &selected_context).await;
+        }
+    } else if let KeyCode::Up = key {
+        if app.selected_context_index > 0 {
+            app.selected_context_index -= 1;
+            app.context_list_state
+                .select(Some(app.selected_context_index));
+        }
+    } else if let KeyCode::Down = key {
+        if app.selected_context_index < app.contexts.len() - 1 {
+            app.selected_context_index += 1;
+            app.context_list_state
+                .select(Some(app.selected_context_index));
+        }
+    }
+    Ok(())
 }
