@@ -234,3 +234,8 @@ export interface ContextsAccordionProps {
   setIsInitiating: React.Dispatch<React.SetStateAction<boolean>>
   isStopping: boolean
 }
+
+export interface AutoImportModalProps {
+  isOpen: boolean
+  onClose: () => void
+}

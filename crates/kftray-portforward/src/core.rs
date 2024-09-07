@@ -37,6 +37,10 @@ use rand::{
 use tokio::task::JoinHandle;
 
 use crate::client::create_client_with_specific_context;
+use crate::client::{
+    get_services_with_annotation,
+    list_all_namespaces,
+};
 use crate::models::kube::{
     HttpLogState,
     Port,
@@ -784,4 +788,101 @@ pub async fn stop_proxy_forward(
     info!("Proxy forward stopped for service: {}", service_name);
 
     Ok(stop_result)
+}
+
+pub async fn retrieve_service_configs(context: &str) -> Result<Vec<Config>, String> {
+    let (client, _, _) = create_client_with_specific_context(None, Some(context))
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let client = client.ok_or_else(|| "Client not created".to_string())?;
+    let annotation = "kftray.app/configs";
+
+    let namespaces = list_all_namespaces(client.clone())
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut configs = Vec::new();
+
+    for namespace in namespaces {
+        let services = get_services_with_annotation(client.clone(), &namespace, annotation)
+            .await
+            .map_err(|e| e.to_string())?;
+        for (service_name, annotations, ports) in services {
+            if let Some(configs_str) = annotations.get(annotation) {
+                configs.extend(parse_configs(
+                    configs_str,
+                    context,
+                    &namespace,
+                    &service_name,
+                    &ports,
+                ));
+            } else {
+                configs.extend(create_default_configs(
+                    context,
+                    &namespace,
+                    &service_name,
+                    &ports,
+                ));
+            }
+        }
+    }
+
+    Ok(configs)
+}
+
+fn parse_configs(
+    configs_str: &str, context: &str, namespace: &str, service_name: &str,
+    ports: &HashMap<String, i32>,
+) -> Vec<Config> {
+    configs_str
+        .split(',')
+        .filter_map(|config_str| {
+            let parts: Vec<&str> = config_str.trim().split('-').collect();
+            if parts.len() != 3 {
+                return None;
+            }
+
+            let alias = parts[0].to_string();
+            let local_port: u16 = parts[1].parse().ok()?;
+            let target_port = parts[2]
+                .parse()
+                .ok()
+                .or_else(|| ports.get(parts[2]).cloned())?;
+
+            Some(Config {
+                id: None,
+                context: context.to_string(),
+                kubeconfig: None,
+                namespace: namespace.to_string(),
+                service: Some(service_name.to_string()),
+                alias: Some(alias),
+                local_port,
+                remote_port: target_port as u16,
+                protocol: "tcp".to_string(),
+                workload_type: "service".to_string(),
+                ..Default::default()
+            })
+        })
+        .collect()
+}
+
+fn create_default_configs(
+    context: &str, namespace: &str, service_name: &str, ports: &HashMap<String, i32>,
+) -> Vec<Config> {
+    ports
+        .iter()
+        .map(|(_port_name, &port)| Config {
+            id: None,
+            context: context.to_string(),
+            kubeconfig: None,
+            namespace: namespace.to_string(),
+            service: Some(service_name.to_string()),
+            alias: Some(service_name.to_string()),
+            local_port: port as u16,
+            remote_port: port as u16,
+            protocol: "tcp".to_string(),
+            workload_type: "service".to_string(),
+            ..Default::default()
+        })
+        .collect()
 }

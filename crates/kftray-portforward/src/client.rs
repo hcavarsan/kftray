@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::error::Error;
 use std::path::PathBuf;
 
@@ -6,7 +7,13 @@ use anyhow::{
     Result,
 };
 use hyper_util::rt::TokioExecutor;
+use k8s_openapi::api::core::v1::Namespace;
+use k8s_openapi::api::core::v1::Service;
+use k8s_openapi::api::core::v1::ServiceSpec;
+use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
 use kftray_commons::config_dir::get_kubeconfig_paths;
+use kube::api::ListParams;
+use kube::Api;
 use kube::{
     client::ConfigExt,
     config::{
@@ -22,6 +29,8 @@ use log::{
     warn,
 };
 use tower::ServiceBuilder;
+
+use crate::models::kube::KubeContextInfo;
 
 pub async fn create_client_with_specific_context(
     kubeconfig: Option<String>, context_name: Option<&str>,
@@ -173,4 +182,106 @@ fn list_contexts(kubeconfig: &Kubeconfig) -> Vec<String> {
         .iter()
         .map(|context| context.name.clone())
         .collect()
+}
+
+pub async fn list_kube_contexts(
+    kubeconfig: Option<String>,
+) -> Result<Vec<KubeContextInfo>, String> {
+    info!("list_kube_contexts {}", kubeconfig.as_deref().unwrap_or(""));
+
+    let (_, kubeconfig, contexts) = create_client_with_specific_context(kubeconfig, None)
+        .await
+        .map_err(|err| format!("Failed to create client: {}", err))?;
+
+    if let Some(kubeconfig) = kubeconfig {
+        let contexts: Vec<KubeContextInfo> = kubeconfig
+            .contexts
+            .into_iter()
+            .map(|c| KubeContextInfo { name: c.name })
+            .collect();
+
+        Ok(contexts)
+    } else if !contexts.is_empty() {
+        let context_infos: Vec<KubeContextInfo> = contexts
+            .into_iter()
+            .map(|name| KubeContextInfo { name })
+            .collect();
+
+        Ok(context_infos)
+    } else {
+        Err("Failed to retrieve kubeconfig".to_string())
+    }
+}
+
+pub async fn list_all_namespaces(client: Client) -> Result<Vec<String>, anyhow::Error> {
+    let namespaces: Api<Namespace> = Api::all(client);
+    let namespace_list = namespaces.list(&ListParams::default()).await?;
+
+    let mut namespace_names = Vec::new();
+    for namespace in namespace_list {
+        if let Some(name) = namespace.metadata.name {
+            namespace_names.push(name);
+        }
+    }
+
+    Ok(namespace_names)
+}
+pub async fn get_services_with_annotation(
+    client: Client, namespace: &str, _: &str,
+) -> Result<Vec<(String, HashMap<String, String>, HashMap<String, i32>)>, Box<dyn std::error::Error>>
+{
+    let services: Api<Service> = Api::namespaced(client, namespace);
+    let lp = ListParams::default();
+
+    let service_list = services.list(&lp).await?;
+
+    let mut results = Vec::new();
+
+    for service in service_list {
+        if let Some(service_name) = service.metadata.name.clone() {
+            if let Some(annotations) = &service.metadata.annotations {
+                if annotations
+                    .get("kftray.app/enabled")
+                    .map_or(false, |v| v == "true")
+                {
+                    let ports = extract_ports_from_service(&service);
+                    let annotations_hashmap: HashMap<String, String> =
+                        annotations.clone().into_iter().collect();
+                    results.push((service_name, annotations_hashmap, ports));
+                }
+            }
+        }
+    }
+
+    Ok(results)
+}
+
+fn extract_ports_from_service(service: &Service) -> HashMap<String, i32> {
+    let mut ports = HashMap::new();
+    if let Some(spec) = &service.spec {
+        for port in spec.ports.as_ref().unwrap_or(&vec![]) {
+            let port_number = match port.target_port {
+                Some(IntOrString::Int(port)) => port,
+                Some(IntOrString::String(ref name)) => {
+                    resolve_named_port(spec, name).unwrap_or_default()
+                }
+                None => continue,
+            };
+            ports.insert(
+                port.name.clone().unwrap_or_else(|| port_number.to_string()),
+                port_number,
+            );
+        }
+    }
+    ports
+}
+
+fn resolve_named_port(spec: &ServiceSpec, name: &str) -> Option<i32> {
+    spec.ports.as_ref()?.iter().find_map(|port| {
+        if port.name.as_deref() == Some(name) {
+            Some(port.port)
+        } else {
+            None
+        }
+    })
 }
