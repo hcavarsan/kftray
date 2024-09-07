@@ -10,6 +10,8 @@ use ratatui::text::{
     Span,
     Text,
 };
+use ratatui::widgets::List;
+use ratatui::widgets::ListItem;
 use ratatui::{
     layout::Rect,
     style::Style,
@@ -23,6 +25,7 @@ use ratatui::{
 };
 
 use crate::core::built_info;
+use crate::tui::input::App;
 use crate::tui::input::DeleteButton;
 use crate::tui::ui::centered_rect;
 use crate::tui::ui::{
@@ -341,4 +344,58 @@ fn create_button(label: &str, is_selected: bool) -> Paragraph<'_> {
                 .style(Style::default().bg(BASE).fg(TEXT)),
         )
         .alignment(Alignment::Center)
+}
+
+pub fn render_context_selection_popup(f: &mut Frame, app: &mut App, area: Rect) {
+    let contexts: Vec<ListItem> = app
+        .contexts
+        .iter()
+        .map(|context| ListItem::new(context.clone()))
+        .collect();
+
+    let context_list = List::new(contexts)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(Span::styled("Select Context", Style::default().fg(MAUVE)))
+                .style(Style::default().bg(BASE).fg(TEXT)),
+        )
+        .highlight_style(Style::default().fg(YELLOW).add_modifier(Modifier::BOLD))
+        .highlight_symbol(">> ");
+
+    f.render_widget(Clear, area);
+    f.render_stateful_widget(context_list, area, &mut app.context_list_state);
+
+    let explanation_text = vec![
+        Line::from(""),
+        Line::from(vec![
+            Span::raw("- Select a context to automatically import services with the annotation "),
+            Span::styled("kftray.app/enabled: true", Style::default().fg(YELLOW)),
+            Span::raw("."),
+        ]),
+        Line::from(""),
+        Line::from(vec![
+            Span::raw("- If a service has "),
+            Span::styled(
+                "kftray.app/configs: \"test-9999-http\"",
+                Style::default().fg(YELLOW),
+            ),
+            Span::raw(
+                ", it will use 'test' as alias, '9999' as local port, and 'http' as target port.",
+            ),
+        ]),
+    ];
+
+    let explanation_paragraph = Paragraph::new(Text::from(explanation_text))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .style(Style::default().bg(BASE).fg(TEXT)),
+        )
+        .alignment(Alignment::Left)
+        .wrap(ratatui::widgets::Wrap { trim: true });
+
+    let explanation_area = Rect::new(area.x, area.y + area.height - 9, area.width, 9);
+
+    f.render_widget(explanation_paragraph, explanation_area);
 }
