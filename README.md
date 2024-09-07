@@ -5,10 +5,19 @@
   <a href="https://kftray.app"><strong>Visit kftray.app »</strong></a>
   <br><br>
   <a href="https://join.slack.com/t/kftray/shared_invite/zt-2q6lwn15f-Y8Mi_4NlenH9TuEDMjxPUA">
-    <img src="https://img.shields.io/badge/Slack-Join%20our%20Slack-blue" alt="Join Slack">
+    <img src="https://img.shields.io/badge/Slack-Join%20our%20Slack-blue?style=for-the-badge&logo=slack" alt="Join Slack">
+  </a>
+  <a href="https://github.com/sponsors/hcavarsan">
+    <img src="https://img.shields.io/github/sponsors/hcavarsan?style=for-the-badge" alt="Sponsor">
   </a>
   <a href="https://github.com/hcavarsan/kftray/graphs/contributors">
-    <img src="https://img.shields.io/github/contributors/hcavarsan/kftray" alt="Contributors">
+    <img src="https://img.shields.io/github/contributors/hcavarsan/kftray?style=for-the-badge" alt="Contributors">
+  </a>
+  <a href="https://github.com/hcavarsan/kftray/releases">
+    <img src="https://img.shields.io/github/v/release/hcavarsan/kftray?style=for-the-badge" alt="Latest Release">
+  </a>
+  <a href="https://github.com/hcavarsan/kftray">
+    <img src="https://img.shields.io/github/downloads/hcavarsan/kftray/total?style=for-the-badge" alt="Total Downloads">
   </a>
   <br><br>
 </div>
@@ -16,6 +25,14 @@
 <p align="center">
   KFtray and KFtui are independent, cross-platform applications. They help you set up and manage multiple port-forwarding settings easily. Both apps are part of the same open-source project and aim to make working with Kubernetes easier. KFtray has a desktop interface, while KFtui has a terminal interface, so you can choose the one that suits you best.
 </p>
+
+## ❓ Why
+
+KFtray and KFtui were made to fix common problems with Kubernetes port forwarding. The usual kubectl port-forward command can be unreliable. For example, if a pod dies, it needs manual reconnection. It also has trouble setting up many port forwards at once and doesn't support UDP services.
+
+KFtray and KFtui solve these issues by being more reliable and easier to use. They automatically reconnect to running pods if one fails, allow setting up multiple port forwards with one click, and support both TCP and UDP protocols. KFtray also has extra features like HTTP logs tracing and GitHub sync to make workflows smoother.
+
+<br>
 
 <div align="center"> <h2>KFtray</h2>
 
@@ -29,11 +46,6 @@
 
 </div>
 
-## ❓ Why
-
-KFtray and KFtui were made to fix common problems with Kubernetes port forwarding. The usual kubectl port-forward command can be unreliable. For example, if a pod dies, it needs manual reconnection. It also has trouble setting up many port forwards at once and doesn't support UDP services.
-
-KFtray and KFtui solve these issues by being more reliable and easier to use. They automatically reconnect to running pods if one fails, allow setting up multiple port forwards with one click, and support both TCP and UDP protocols. KFtray also has extra features like HTTP logs tracing and GitHub sync to make workflows smoother.
 
 
 ## 📑 Table of Contents
