@@ -19,6 +19,7 @@ import {
 import { invoke } from '@tauri-apps/api/tauri'
 
 import { FooterProps } from '../../types'
+import AutoImportModal from '../AutoImportModal'
 
 import BulkDeleteButton from './BulkDeleteButton'
 import SyncConfigsButton from './SyncConfigsButton'
@@ -40,6 +41,7 @@ const Footer: React.FC<FooterProps> = ({
   const borderColor = useColorModeValue('gray.500', 'gray.700')
   const [logSize, setLogSize] = useState<number>(0)
   const [fetchError, setFetchError] = useState<boolean>(false)
+  const [isAutoImportModalOpen, setIsAutoImportModalOpen] = useState(false)
 
   const fetchLogSize = async () => {
     try {
@@ -60,6 +62,14 @@ const Footer: React.FC<FooterProps> = ({
     } catch (error) {
       console.error('Failed to clear logs:', error)
     }
+  }
+
+  const openAutoImportModal = () => {
+    setIsAutoImportModalOpen(true)
+  }
+
+  const closeAutoImportModal = () => {
+    setIsAutoImportModalOpen(false)
   }
 
   return (
@@ -105,6 +115,9 @@ const Footer: React.FC<FooterProps> = ({
               isDisabled={logSize === 0 || fetchError}
             >
               Prune Logs ({(logSize / (1024 * 1024)).toFixed(2)} MB)
+            </MenuItem>
+            <MenuItem icon={<MdSettings />} onClick={openAutoImportModal}>
+              Auto Import
             </MenuItem>
           </MenuList>
         </Menu>
@@ -166,6 +179,10 @@ const Footer: React.FC<FooterProps> = ({
           pollingInterval={pollingInterval}
         />
       </Flex>
+      <AutoImportModal
+        isOpen={isAutoImportModalOpen}
+        onClose={closeAutoImportModal}
+      />
     </Flex>
   )
 }

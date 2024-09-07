@@ -7,7 +7,9 @@ use k8s_openapi::api::core::v1::{
     Service,
 };
 use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
+use kftray_commons::config_model::Config;
 use kftray_portforward::client::create_client_with_specific_context;
+use kftray_portforward::core::retrieve_service_configs;
 use kftray_portforward::models::kube::{
     KubeContextInfo,
     KubeNamespaceInfo,
@@ -270,4 +272,11 @@ pub async fn list_ports(
             }
         }
     }
+}
+
+#[tauri::command]
+pub async fn get_services_with_annotations(context_name: &str) -> Result<Vec<Config>, String> {
+    info!("get_services_with_annotations for context {}", context_name);
+
+    retrieve_service_configs(context_name).await
 }
