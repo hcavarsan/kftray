@@ -8,6 +8,7 @@ import { invoke } from '@tauri-apps/api/tauri'
 
 import { Config, Response, Status } from '../../types'
 import AddConfigModal from '../AddConfigModal'
+import AutoImportModal from '../AutoImportModal'
 import useCustomToast from '../CustomToast'
 import Footer from '../Footer'
 import GitSyncModal from '../GitSyncModal'
@@ -48,6 +49,7 @@ const KFTray = () => {
   const [isStopping, setIsStopping] = useState(false)
   const [isAlertOpen, setIsAlertOpen] = useState(false)
   const [configToDelete, setConfigToDelete] = useState<number | undefined>()
+  const [isAutoImportModalOpen, setIsAutoImportModalOpen] = useState(false)
 
   const fetchConfigsWithState = useCallback(async () => {
     try {
@@ -302,6 +304,7 @@ const KFTray = () => {
     }
   }
 
+
   const stopPortForwardingForConfig = async (config: Config) => {
     if (
       (config.workload_type === 'service' || config.workload_type === 'pod') &&
@@ -482,12 +485,12 @@ const KFTray = () => {
       borderRadius='20px'
       bg={cardBg}
       boxShadow={`
-        /* Inset shadow for top & bottom inner border effect using dark gray */
-        inset 0 2px 4px rgba(0, 0, 0, 0.3),
-        inset 0 -2px 4px rgba(0, 0, 0, 0.3),
-        /* Inset shadow for an inner border all around using dark gray */
-        inset 0 0 0 4px rgba(45, 57, 81, 0.9)
-      `}
+		/* Inset shadow for top & bottom inner border effect using dark gray */
+		inset 0 2px 4px rgba(0, 0, 0, 0.3),
+		inset 0 -2px 4px rgba(0, 0, 0, 0.3),
+		/* Inset shadow for an inner border all around using dark gray */
+		inset 0 0 0 4px rgba(45, 57, 81, 0.9)
+	  `}
     >
       <VStack
         css={{
@@ -558,6 +561,10 @@ const KFTray = () => {
           pollingInterval={pollingInterval}
           setSelectedConfigs={setSelectedConfigs}
           configs={configs}
+        />
+        <AutoImportModal
+          isOpen={isAutoImportModalOpen}
+          onClose={() => setIsAutoImportModalOpen(false)}
         />
       </VStack>
     </Box>

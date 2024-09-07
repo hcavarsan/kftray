@@ -33,6 +33,7 @@ use crate::tui::input::{
     App,
     AppState,
 };
+use crate::tui::ui::render_context_selection_popup;
 use crate::tui::ui::render_delete_confirmation_popup;
 use crate::tui::ui::render_details;
 use crate::tui::ui::MAUVE;
@@ -180,6 +181,11 @@ pub fn draw_ui(f: &mut Frame, app: &mut App, config_states: &[ConfigState]) {
                 app.selected_delete_button,
             );
         }
+        AppState::ShowContextSelection => {
+            let context_selection_area = centered_rect(50, 50, size);
+            render_background_overlay(f, size);
+            render_context_selection_popup(f, app, context_selection_area);
+        }
         _ => {}
     }
 }
@@ -247,7 +253,7 @@ pub fn render_logs(f: &mut Frame, app: &mut App, area: Rect, has_focus: bool) {
 }
 
 pub fn draw_header(f: &mut Frame, app: &App, area: Rect) {
-    let menu_titles = ["Help", "Import", "Export", "About", "Quit"];
+    let menu_titles = ["Help", "Auto Import", "Import", "Export", "About", "Quit"];
     let menu: Vec<Line> = menu_titles
         .iter()
         .enumerate()
