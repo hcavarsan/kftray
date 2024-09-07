@@ -7,12 +7,6 @@
   <a href="https://join.slack.com/t/kftray/shared_invite/zt-2q6lwn15f-Y8Mi_4NlenH9TuEDMjxPUA">
     <img src="https://img.shields.io/badge/Slack-Join%20our%20Slack-blue?style=for-the-badge&logo=slack" alt="Join Slack">
   </a>
-  <a href="https://github.com/sponsors/hcavarsan">
-    <img src="https://img.shields.io/github/sponsors/hcavarsan?style=for-the-badge" alt="Sponsor">
-  </a>
-  <a href="https://github.com/hcavarsan/kftray/graphs/contributors">
-    <img src="https://img.shields.io/github/contributors/hcavarsan/kftray?style=for-the-badge" alt="Contributors">
-  </a>
   <a href="https://github.com/hcavarsan/kftray/releases">
     <img src="https://img.shields.io/github/v/release/hcavarsan/kftray?style=for-the-badge" alt="Latest Release">
   </a>
@@ -23,7 +17,9 @@
 </div>
 
 <p align="center">
+
   KFtray and KFtui are independent, cross-platform applications. They help you set up and manage multiple port-forwarding settings easily. Both apps are part of the same open-source project and aim to make working with Kubernetes easier. KFtray has a desktop interface, while KFtui has a terminal interface, so you can choose the one that suits you best.
+
 </p>
 
 ## ❓ Why
