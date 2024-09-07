@@ -34,18 +34,22 @@ KFtray and KFtui solve these issues by being more reliable and easier to use. Th
 
 <br>
 
-<div align="center"> <h2>KFtray</h2>
-
-[![Watch the video](https://img.youtube.com/vi/H6UJCfUr8yE/maxresdefault.jpg)](https://youtu.be/H6UJCfUr8yE)
-
+<div align="center">
+  <table>
+    <tr>
+      <td>
+        <a href="https://youtu.be/H6UJCfUr8yE">
+          <img src="https://img.youtube.com/vi/H6UJCfUr8yE/maxresdefault.jpg" alt="Watch the video" width="800px">
+        </a>
+      </td>
+      <td>
+        <a href="https://youtu.be/d-Je34Hy5Lo">
+          <img src="https://img.youtube.com/vi/d-Je34Hy5Lo/maxresdefault.jpg" alt="Watch the video" width="800px">
+        </a>
+      </td>
+    </tr>
+  </table>
 </div>
-
-<div align="center"> <h2>KFtui</h2>
-
-[![Watch the video](https://img.youtube.com/vi/d-Je34Hy5Lo/maxresdefault.jpg)](https://youtu.be/d-Je34Hy5Lo)
-
-</div>
-
 
 
 ## 📑 Table of Contents
