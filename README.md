@@ -81,6 +81,7 @@ KFtray and KFtui solve these issues by being more reliable and easier to use. Th
 | HTTP Logs Tracing                            | ✔️                   | ❌ (Coming Soon)    |
 | GitHub Sync                                  | ✔️                   | ❌ (Coming Soon)    |
 | Local JSON File Configuration                | ✔️                   | ✔️                  |
+| Auto Import with k8s Annotations             | ✔️                   | ✔️                  |
 
 </div>
 
