@@ -176,7 +176,7 @@ pub async fn export_configs() -> Result<String, String> {
     let default_config = serde_json::to_value(Config::default()).map_err(|e| e.to_string())?;
     remove_blank_or_default_fields(&mut json_config, &default_config);
 
-    let json = serde_json::to_string(&json_config).map_err(|e| e.to_string())?;
+    let json = serde_json::to_string_pretty(&json_config).map_err(|e| e.to_string())?;
 
     Ok(json)
 }

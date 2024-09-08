@@ -67,6 +67,7 @@ KFtray and KFtui solve these issues by being more reliable and easier to use. Th
 - **Multi-Protocol Support:** Enables access to internal or external servers through a Proxy Relay server deployed in a Kubernetes cluster, including TCP and UDP port forwarding.
 - **HTTP Logs Tracing:** Enable or disable HTTP logs for specific configurations to save the requests and responses in a local log file. _(Currently available only in the KFtray desktop app)_ - [Blog Post](https://kftray.app/blog/posts/6-debug-http-traffics-kftray)
 - **GitHub Sync:** Keep your configurations saved on GitHub and share or synchronize them in a GitOps style. _(Currently available only in the KFtray desktop app)_
+- **Auto Import:** Automatically import Kubernetes service configurations based on specific annotations.
 
 ## 🗂 Features Matrix
 
@@ -81,6 +82,7 @@ KFtray and KFtui solve these issues by being more reliable and easier to use. Th
 | HTTP Logs Tracing                            | ✔️                   | ❌ (Coming Soon)    |
 | GitHub Sync                                  | ✔️                   | ❌ (Coming Soon)    |
 | Local JSON File Configuration                | ✔️                   | ✔️                  |
+| Auto Import with k8s Annotations             | ✔️                   | ✔️                  |
 
 </div>
 
