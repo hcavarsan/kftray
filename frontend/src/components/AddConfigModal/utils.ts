@@ -6,13 +6,17 @@ import theme from '../../assets/theme'
 import { KubeContext } from '../../types'
 
 export const customStyles: StylesConfig = {
-  control: provided => ({
+  control: (provided, state) => ({
     ...provided,
     minHeight: '26px',
     height: '26px',
     fontSize: '0.75rem',
-    background: theme.colors.gray[800],
-    borderColor: theme.colors.gray[600],
+    background: state.isDisabled
+      ? theme.colors.gray[900]
+      : theme.colors.gray[800],
+    borderColor: state.isDisabled
+      ? theme.colors.gray[900]
+      : theme.colors.gray[700],
     boxShadow: 'none',
     '&:hover': {
       borderColor: theme.colors.gray[600],
@@ -70,20 +74,11 @@ export const customStyles: StylesConfig = {
     color: theme.colors.gray[500],
   }),
 }
-// utils.ts
+
 export const fetchKubeContexts = (
   kubeConfig?: string,
 ): Promise<KubeContext[]> => {
   console.log('fetchKubeContexts', kubeConfig)
 
   return invoke('list_kube_contexts', { kubeconfig: kubeConfig })
-}
-
-export function assertIsError(
-  error: unknown,
-): asserts error is { message: string } {
-  if (typeof error === 'object' && error !== null && 'message' in error) {
-  } else {
-    throw new Error(`The provided value is not an Error object: ${error}`)
-  }
 }
