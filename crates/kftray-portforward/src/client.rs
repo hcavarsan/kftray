@@ -188,14 +188,13 @@ async fn create_client_with_config(config: &Config) -> Option<Client> {
         config_with_invalid_certs_false,
     );
 
-    let futures: Vec<_> = strategies
-        .into_iter()
-        .map(|(description, strategy)| try_create_client(description, strategy))
-        .collect();
+    for (description, strategy) in strategies {
+        if let Some(client) = try_create_client(description, strategy).await {
+            return Some(client);
+        }
+    }
 
-    let results = join_all(futures).await;
-
-    results.into_iter().flatten().next()
+    None
 }
 
 fn create_strategies<'a>(
