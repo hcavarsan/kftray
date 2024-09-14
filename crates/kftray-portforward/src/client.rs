@@ -7,7 +7,7 @@ use anyhow::{
     Context,
     Result,
 };
-use futures::future::join_all;
+use futures::future::select_ok;
 use hyper_openssl::client::legacy::HttpsConnector;
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::TokioExecutor;
@@ -188,13 +188,15 @@ async fn create_client_with_config(config: &Config) -> Option<Client> {
         config_with_invalid_certs_false,
     );
 
-    for (description, strategy) in strategies {
-        if let Some(client) = try_create_client(description, strategy).await {
-            return Some(client);
-        }
-    }
+    let futures: Vec<_> = strategies
+        .into_iter()
+        .map(|(description, strategy)| Box::pin(try_create_client(description, strategy)))
+        .collect();
 
-    None
+    match select_ok(futures).await {
+        Ok((client, _)) => Some(client),
+        Err(_) => None,
+    }
 }
 
 fn create_strategies<'a>(
@@ -260,21 +262,21 @@ fn create_strategies<'a>(
     ]
 }
 
-async fn try_create_client(description: &str, strategy: StrategyFuture<'_>) -> Option<Client> {
+async fn try_create_client(description: &str, strategy: StrategyFuture<'_>) -> Result<Client, ()> {
     info!("Attempting to create client with {}", description);
     match strategy.await {
         Ok(client) => {
             if test_client(&client).await.is_ok() {
                 info!("Successfully created client with {}", description);
-                Some(client)
+                Ok(client)
             } else {
                 warn!("{} failed to connect.", description);
-                None
+                Err(())
             }
         }
         Err(e) => {
             warn!("Failed to create {}: {}", description, e);
-            None
+            Err(())
         }
     }
 }
