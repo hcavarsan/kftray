@@ -19,8 +19,8 @@ flate2 = "1.0"
 futures = "0.3.30"
 httparse = "1.9.4"
 k8s-openapi = { version = "0.22.0", default-features = false, features = ["latest"] }
-kube = { version = "0.93.1", features = ["client", "config", "rustls-tls", "ws", "openssl-tls"] }
-kube-runtime = "0.93.1"
+kube = { version = "0.94.2", features = ["client", "config", "rustls-tls", "ws", "openssl-tls"] }
+kube-runtime = "0.94.2"
 lazy_static = "1.5.0"
 log = "0.4"
 rand = "0.8.5"
@@ -39,6 +39,9 @@ dirs = "5.0.1"
 openssl = { version = "0.10.66", features = ["vendored"] }
 openssl-sys = { version = "0.9.103", features = ["vendored"] }
 hyper = "1.4.1"
+base64 = "0.22.1"
+secrecy = "0.8.0"
+hyper-openssl = "0.10.2"
 
 [lib]
 name = "kftray_portforward"
