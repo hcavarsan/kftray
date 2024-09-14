@@ -1,6 +1,6 @@
 [package]
 name = "kftui"
-version = "0.14.0"
+version = "0.14.1"
 description = "KFtray TUI is a Rust application that manage multiple kubectl port forward configurations"
 authors = [
     "Henrique Cavarsan <hencavarsan@gmail.com>",
@@ -29,7 +29,7 @@ dirs = "5.0.1"
 base64 = "0.22.1"
 hostsfile = { git = "https://github.com/tonarino/innernet", branch = "main" }
 log = "0.4"
-kube = { version = "0.93.1", features = [
+kube = { version = "0.94.2", features = [
 	"client",
 	"config",
 	"rustls-tls",
@@ -47,7 +47,7 @@ hyper-util = { version = "0.1.7", features = ["client-legacy", "http1", "tokio"]
 lazy_static = "1.5.0"
 serde = { version = "1.0", features = ["derive"] }
 rand = "0.8.5"
-kube-runtime = "0.93.1"
+kube-runtime = "0.94.2"
 tower = "0.5.0"
 whoami = "1.5.1"
 tempfile = "3.9"
