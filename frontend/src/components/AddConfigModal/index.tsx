@@ -1,5 +1,6 @@
+/* eslint-disable react/jsx-no-duplicate-props */
 /* eslint-disable complexity */
-
+/* eslint-disable max-len */
 import React, { useEffect, useState } from 'react'
 import { useQuery } from 'react-query'
 import ReactSelect, { ActionMeta } from 'react-select'
@@ -27,8 +28,9 @@ import { open } from '@tauri-apps/api/dialog'
 import { invoke } from '@tauri-apps/api/tauri'
 
 import { Config, CustomConfigProps, KubeContext, Option } from '../../types'
+import useCustomToast from '../CustomToast'
 
-import { assertIsError, customStyles, fetchKubeContexts } from './utils'
+import { customStyles, fetchKubeContexts } from './utils'
 
 const AddConfigModal: React.FC<CustomConfigProps> = ({
   isModalOpen,
@@ -72,6 +74,8 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
   } | null>(null)
 
   const [isChecked, setIsChecked] = useState(false)
+  const toast = useCustomToast()
+
   const handleCheckboxChange = () => {
     setIsChecked(!isChecked)
   }
@@ -112,6 +116,22 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     () => fetchKubeContexts(kubeConfig),
     {
       enabled: isModalOpen,
+      onError: error => {
+        console.error('Error fetching contexts:', error)
+        if (error instanceof Error) {
+          toast({
+            title: 'Error fetching contexts',
+            description: error.message,
+            status: 'error',
+          })
+        } else {
+          toast({
+            title: 'Error fetching contexts',
+            description: 'An unknown error occurred',
+            status: 'error',
+          })
+        }
+      },
     },
   )
 
@@ -150,6 +170,22 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     {
       initialData: configData?.namespace,
       enabled: !!newConfig.context,
+      onError: error => {
+        console.error('Error fetching namespaces:', error)
+        if (error instanceof Error) {
+          toast({
+            title: 'Error fetching namespaces',
+            description: error.message,
+            status: 'error',
+          })
+        } else {
+          toast({
+            title: 'Error fetching namespaces',
+            description: 'An unknown error occurred',
+            status: 'error',
+          })
+        }
+      },
     },
   )
   const podsQuery = useQuery(
@@ -166,6 +202,22 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
         !!newConfig.context &&
         !!newConfig.namespace &&
         newConfig.workload_type === 'pod',
+      onError: error => {
+        console.error('Error fetching pods:', error)
+        if (error instanceof Error) {
+          toast({
+            title: 'Error fetching pods',
+            description: error.message,
+            status: 'error',
+          })
+        } else {
+          toast({
+            title: 'Error fetching pods',
+            description: 'An unknown error occurred',
+            status: 'error',
+          })
+        }
+      },
     },
   )
 
@@ -184,6 +236,22 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
         !!newConfig.context &&
         !!newConfig.namespace &&
         newConfig.workload_type !== 'proxy',
+      onError: error => {
+        console.error('Error fetching services or targets:', error)
+        if (error instanceof Error) {
+          toast({
+            title: 'Error fetching services or targets',
+            description: error.message,
+            status: 'error',
+          })
+        } else {
+          toast({
+            title: 'Error fetching services or targets',
+            description: 'An unknown error occurred',
+            status: 'error',
+          })
+        }
+      },
     },
   )
 
@@ -226,11 +294,20 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
         console.log('Ports fetched successfully:', ports)
       },
       onError: error => {
-        assertIsError(error)
-        console.error(
-          'Error fetching service ports:',
-          error instanceof Error ? error.message : error,
-        )
+        console.error('Error fetching service ports:', error)
+        if (error instanceof Error) {
+          toast({
+            title: 'Error fetching service ports',
+            description: error.message,
+            status: 'error',
+          })
+        } else {
+          toast({
+            title: 'Error fetching service ports',
+            description: 'An unknown error occurred',
+            status: 'error',
+          })
+        }
       },
     },
   )
@@ -422,12 +499,12 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                 borderRadius='20px'
                 bg='gray.800'
                 boxShadow={`
-                /* Inset shadow for top & bottom inner border effect using dark gray */
-                inset 0 2px 6px rgba(0, 0, 0, 0.6),
-                inset 0 -2px 6px rgba(0, 0, 0, 0.6),
-                /* Inset shadow for an inner border all around using dark gray */
-                inset 0 0 0 4px rgba(45, 60, 81, 0.9)
-              `}
+				  /* Inset shadow for top & bottom inner border effect using dark gray */
+				  inset 0 2px 6px rgba(0, 0, 0, 0.6),
+				  inset 0 -2px 6px rgba(0, 0, 0, 0.6),
+				  /* Inset shadow for an inner border all around using dark gray */
+				  inset 0 0 0 4px rgba(45, 60, 81, 0.9)
+				`}
               >
                 <Flex justifyContent='space-between' alignItems='center'>
                   <Text fontSize='sm' fontWeight='bold'>
@@ -519,7 +596,15 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                           primary: 'grey',
                         },
                       })}
+                      isDisabled={
+                        contextQuery.isLoading || contextQuery.isError
+                      }
                     />
+                    {contextQuery.isError && (
+                      <Text color='red.500' fontSize='xs'>
+                        Error fetching contexts
+                      </Text>
+                    )}
                   </FormControl>
                 </SimpleGrid>
 
@@ -585,7 +670,15 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                           primary: 'grey',
                         },
                       })}
+                      isDisabled={
+                        namespaceQuery.isLoading || namespaceQuery.isError
+                      }
                     />
+                    {namespaceQuery.isError && (
+                      <Text color='red.500' fontSize='xs'>
+                        Error fetching namespaces
+                      </Text>
+                    )}
                   </FormControl>
                 </SimpleGrid>
 
@@ -627,6 +720,9 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                               selectedOption as Option,
                               { name: 'protocol' } as ActionMeta<Option>,
                             )
+                          }
+                          isDisabled={
+                            contextQuery.isLoading || contextQuery.isError
                           }
                         />
                       </FormControl>
@@ -719,7 +815,25 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                               primary: 'grey',
                             },
                           })}
+                          isDisabled={
+                            podsQuery.isLoading ||
+                            podsQuery.isError ||
+                            serviceOrTargetQuery.isLoading ||
+                            serviceOrTargetQuery.isError
+                          }
                         />
+                        {newConfig.workload_type === 'pod' &&
+                          podsQuery.isError && (
+                          <Text color='red.500' fontSize='xs'>
+                              Error fetching pods
+                          </Text>
+                        )}
+                        {newConfig.workload_type !== 'pod' &&
+                          serviceOrTargetQuery.isError && (
+                          <Text color='red.500' fontSize='xs'>
+                              Error fetching services or targets
+                          </Text>
+                        )}
                       </FormControl>
 
                       <FormControl isRequired>
@@ -739,6 +853,9 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                               selectedOption as Option,
                               { name: 'protocol' } as ActionMeta<Option>,
                             )
+                          }
+                          isDisabled={
+                            contextQuery.isLoading || contextQuery.isError
                           }
                         />
                       </FormControl>
@@ -782,7 +899,13 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                               primary: 'grey',
                             },
                           })}
+                          isDisabled={portQuery.isLoading || portQuery.isError}
                         />
+                        {portQuery.isError && (
+                          <Text color='red.500' fontSize='xs'>
+                            Error fetching ports
+                          </Text>
+                        )}
                       </FormControl>
 
                       <FormControl isRequired>

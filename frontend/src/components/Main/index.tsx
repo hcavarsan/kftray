@@ -304,7 +304,6 @@ const KFTray = () => {
     }
   }
 
-
   const stopPortForwardingForConfig = async (config: Config) => {
     if (
       (config.workload_type === 'service' || config.workload_type === 'pod') &&
