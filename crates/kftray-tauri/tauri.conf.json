@@ -8,14 +8,22 @@
   },
   "package": {
     "productName": "kftray",
-    "version": "0.14.1"
+    "version": "0.14.2"
   },
   "tauri": {
     "allowlist": {
       "all": true,
       "shell": {
-        "all": false,
-        "open": true
+        "all": true,
+        "execute": true,
+        "open": true,
+        "scope": [
+          {
+            "args": true,
+            "cmd": "aws",
+            "name": "aws-cli"
+          }
+        ]
       }
     },
     "bundle": {
