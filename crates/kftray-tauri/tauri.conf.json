@@ -14,8 +14,16 @@
     "allowlist": {
       "all": true,
       "shell": {
-        "all": false,
-        "open": true
+        "all": true,
+        "open": true,
+        "execute": true,
+        "scope": [
+          {
+            "name": "aws-cli",
+            "cmd": "aws",
+            "args": true
+          }
+        ]
       }
     },
     "bundle": {
@@ -42,15 +50,7 @@
       },
       "resources": [],
       "shortDescription": "",
-      "targets": [
-        "app",
-        "dmg",
-        "appimage",
-        "deb",
-        "updater",
-        "msi",
-        "nsis"
-      ],
+      "targets": ["app", "dmg", "appimage", "deb", "updater", "msi", "nsis"],
       "windows": {
         "certificateThumbprint": null,
         "digestAlgorithm": "sha256",
