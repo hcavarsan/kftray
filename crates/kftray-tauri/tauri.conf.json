@@ -8,20 +8,20 @@
   },
   "package": {
     "productName": "kftray",
-    "version": "0.14.1"
+    "version": "0.14.2"
   },
   "tauri": {
     "allowlist": {
       "all": true,
       "shell": {
         "all": true,
-        "open": true,
         "execute": true,
+        "open": true,
         "scope": [
           {
-            "name": "aws-cli",
+            "args": true,
             "cmd": "aws",
-            "args": true
+            "name": "aws-cli"
           }
         ]
       }
@@ -50,7 +50,15 @@
       },
       "resources": [],
       "shortDescription": "",
-      "targets": ["app", "dmg", "appimage", "deb", "updater", "msi", "nsis"],
+      "targets": [
+        "app",
+        "dmg",
+        "appimage",
+        "deb",
+        "updater",
+        "msi",
+        "nsis"
+      ],
       "windows": {
         "certificateThumbprint": null,
         "digestAlgorithm": "sha256",
