@@ -2711,7 +2711,7 @@ dependencies = [
 
 [[package]]
 name = "kftray-server"
-version = "0.14.2"
+version = "0.14.3"
 dependencies = [
  "byteorder",
  "ctrlc",
@@ -2723,7 +2723,7 @@ dependencies = [
 
 [[package]]
 name = "kftray-tauri"
-version = "0.14.2"
+version = "0.14.3"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2765,7 +2765,7 @@ dependencies = [
 
 [[package]]
 name = "kftui"
-version = "0.14.2"
+version = "0.14.3"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
