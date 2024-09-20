@@ -268,6 +268,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
           contextName: newConfig.context,
           namespace: newConfig.namespace,
           serviceName: newConfig.target,
+          kubeconfig: kubeConfig,
         })
       }
 
@@ -275,6 +276,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
         contextName: newConfig.context,
         namespace: newConfig.namespace,
         serviceName: newConfig.service ?? newConfig.target,
+        kubeconfig: kubeConfig,
       })
     },
     {
