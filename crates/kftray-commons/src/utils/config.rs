@@ -1,4 +1,11 @@
+use std::collections::BTreeMap;
+
 use hostsfile::HostsBuilder;
+use log::error;
+use serde_json::{
+    self,
+    Value,
+};
 use serde_json::{
     json,
     Value as JsonValue,
@@ -52,6 +59,8 @@ pub async fn delete_all_configs() -> Result<(), String> {
 }
 
 pub async fn insert_config(config: Config) -> Result<(), String> {
+    let config = prepare_config(config);
+
     let pool = get_db_pool().await.map_err(|e| e.to_string())?;
     let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
 
@@ -150,6 +159,8 @@ pub async fn get_config(id: i64) -> Result<Config, String> {
 }
 
 pub async fn update_config(config: Config) -> Result<(), String> {
+    let config = prepare_config(config);
+
     let pool = get_db_pool().await.map_err(|e| e.to_string())?;
     let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
 
@@ -157,7 +168,7 @@ pub async fn update_config(config: Config) -> Result<(), String> {
 
     sqlx::query("UPDATE configs SET data = ?1 WHERE id = ?2")
         .bind(data)
-        .bind(config.id.unwrap())
+        .bind(config.unwrap().id.unwrap())
         .execute(&mut *conn)
         .await
         .map_err(|e| e.to_string())?;
@@ -176,27 +187,29 @@ pub async fn export_configs() -> Result<String, String> {
     let default_config = serde_json::to_value(Config::default()).map_err(|e| e.to_string())?;
     remove_blank_or_default_fields(&mut json_config, &default_config);
 
-    let json = serde_json::to_string_pretty(&json_config).map_err(|e| e.to_string())?;
+    let sorted_configs: Vec<BTreeMap<String, Value>> =
+        serde_json::from_value(json_config).map_err(|e| e.to_string())?;
+
+    let json = serde_json::to_string_pretty(&sorted_configs).map_err(|e| e.to_string())?;
 
     Ok(json)
 }
 
 pub async fn import_configs(json: String) -> Result<(), String> {
-    match serde_json::from_str::<Vec<Config>>(&json) {
-        Ok(configs) => {
-            for config in configs {
-                insert_config(config)
-                    .await
-                    .map_err(|e| format!("Failed to insert config: {}", e))?;
-            }
-        }
-        Err(_) => {
+    let configs: Vec<Config> = match serde_json::from_str(&json) {
+        Ok(configs) => configs,
+        Err(e) => {
+            error!("Failed to parse JSON as Vec<Config>: {}", e);
             let config = serde_json::from_str::<Config>(&json)
                 .map_err(|e| format!("Failed to parse config: {}", e))?;
-            insert_config(config)
-                .await
-                .map_err(|e| format!("Failed to insert config: {}", e))?;
+            vec![config]
         }
+    };
+
+    for config in configs {
+        insert_config(config)
+            .await
+            .map_err(|e| format!("Failed to insert config: {}", e))?;
     }
 
     if let Err(e) = migrate_configs().await {
@@ -246,4 +259,34 @@ fn remove_blank_or_default_fields(value: &mut JsonValue, default_config: &JsonVa
         }
         _ => (),
     }
+}
+
+fn prepare_config(mut config: Config) -> Result<Config, String> {
+    if let Some(ref mut alias) = config.alias {
+        *alias = alias.trim().to_string();
+    }
+    if let Some(ref mut kubeconfig) = config.kubeconfig {
+        *kubeconfig = kubeconfig.trim().to_string();
+    }
+
+    if config.local_port == 0 {
+        if config.remote_port == 0 {
+            return Err("Both local_port and remote_port cannot be zero".to_string());
+        }
+        config.local_port = config.remote_port;
+    }
+
+    if config.alias.as_deref() == Some("") || config.alias.is_none() {
+        let alias = format!(
+            "{}-{}-{}",
+            config.workload_type, config.protocol, config.local_port
+        );
+        config.alias = Some(alias);
+    }
+
+    if config.kubeconfig.as_deref() == Some("") || config.kubeconfig.is_none() {
+        config.kubeconfig = Some("default".to_string());
+    }
+
+    Ok(config)
 }
