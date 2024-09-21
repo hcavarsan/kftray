@@ -303,6 +303,7 @@ jobs:
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
+          platforms: linux/amd64,linux/arm64
           context: ./crates/kftray-server
           file: ./crates/kftray-server/Dockerfile
           push: true
