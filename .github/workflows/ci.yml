@@ -32,8 +32,8 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '21.7.1'
-          cache: 'pnpm'
+          node-version: "21.7.1"
+          cache: "pnpm"
 
       - name: Install pnpm dependencies
         run: pnpm install --no-frozen-lockfile
@@ -79,7 +79,7 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '21.7.1'
+          node-version: "21.7.1"
 
       - name: Install pnpm
         uses: pnpm/action-setup@v3
@@ -99,12 +99,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
       - name: Build Docker image
         uses: docker/build-push-action@v6
         with:
+          platforms: linux/amd64,linux/arm64
           context: ./crates/kftray-server
           file: ./crates/kftray-server/Dockerfile
           push: false
           tags: |
             ghcr.io/${{ github.repository_owner }}/kftray-server:${{ github.sha }}
-
