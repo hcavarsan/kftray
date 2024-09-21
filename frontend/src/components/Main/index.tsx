@@ -6,7 +6,7 @@ import { listen } from '@tauri-apps/api/event'
 import { readTextFile, writeTextFile } from '@tauri-apps/api/fs'
 import { invoke } from '@tauri-apps/api/tauri'
 
-import { Config, Response, Status } from '../../types'
+import { Config, Response } from '../../types'
 import AddConfigModal from '../AddConfigModal'
 import AutoImportModal from '../AutoImportModal'
 import useCustomToast from '../CustomToast'
@@ -22,10 +22,10 @@ const initialStatus = 0
 const KFTray = () => {
   const toast = useCustomToast()
   const [pollingInterval, setPollingInterval] = useState(0)
-  const [configs, setConfigs] = useState<Status[]>([])
+  const [configs, setConfigs] = useState<Config[]>([])
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [isGitSyncModalOpen, setIsGitSyncModalOpen] = useState(false)
-  const [selectedConfigs, setSelectedConfigs] = useState<Status[]>([])
+  const [selectedConfigs, setSelectedConfigs] = useState<Config[]>([])
   const [credentialsSaved, setCredentialsSaved] = useState(false)
   const [isEdit, setIsEdit] = useState(false)
   const [newConfig, setNewConfig] = useState<Config>({
@@ -43,6 +43,7 @@ const KFTray = () => {
     remote_address: '',
     alias: '',
     kubeconfig: 'default',
+    is_running: false,
   })
   const cancelRef = React.useRef<HTMLElement>(null)
   const [isInitiating, setIsInitiating] = useState(false)
@@ -50,17 +51,16 @@ const KFTray = () => {
   const [isAlertOpen, setIsAlertOpen] = useState(false)
   const [configToDelete, setConfigToDelete] = useState<number | undefined>()
   const [isAutoImportModalOpen, setIsAutoImportModalOpen] = useState(false)
-
   const fetchConfigsWithState = useCallback(async () => {
     try {
-      const configsResponse = await invoke<Status[]>('get_configs_cmd')
-      const configStates = await invoke<Status[]>('get_config_states')
+      const configsResponse = await invoke<Config[]>('get_configs_cmd')
+      const configStates = await invoke<Config[]>('get_config_states')
 
       return configsResponse.map(config => ({
         ...config,
-        isRunning:
-          configStates.find(state => state.config_id === config.id)
-          ?.is_running || false,
+        is_running:
+          configStates.find(state => state.id === config.id)?.is_running ||
+          false,
       }))
     } catch (error) {
       console.error('Failed to fetch configs:', error)
@@ -123,6 +123,7 @@ const KFTray = () => {
       remote_address: '',
       alias: '',
       kubeconfig: 'default',
+      is_running: false,
     })
     setIsEdit(false)
     setIsModalOpen(true)
@@ -145,8 +146,8 @@ const KFTray = () => {
     const { name, value } = e.target
     const updatedValue =
       name === 'local_port' || name === 'remote_port'
-        ? value === ''
-          ? ''
+        ? value === Number(0).toString()
+          ? Number(0).toString()
           : Number(value)
         : value
 
@@ -268,7 +269,7 @@ const KFTray = () => {
       }
       let wasRunning = false
       const originalConfigsRunningState = new Map(
-        configs.map(conf => [conf.id, conf.isRunning]),
+        configs.map(conf => [conf.id, conf.is_running]),
       )
 
       if (isEdit && originalConfigsRunningState.get(newConfig.id)) {
@@ -348,9 +349,10 @@ const KFTray = () => {
     }
   }
 
-  const initiatePortForwarding = async (configsToStart: Status[]) => {
+  const initiatePortForwarding = async (configsToStart: Config[]) => {
     setIsInitiating(true)
-    const errors = []
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const errors: { id: number; error: any }[] = []
 
     for (const config of configsToStart) {
       try {
@@ -375,7 +377,7 @@ const KFTray = () => {
     setIsInitiating(false)
   }
 
-  const handlePortForwarding = async (config: Status) => {
+  const handlePortForwarding = async (config: Config) => {
     switch (config.workload_type) {
     case 'service':
     case 'pod':

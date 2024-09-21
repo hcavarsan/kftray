@@ -64,6 +64,13 @@ export const customStyles: StylesConfig = {
     ...provided,
     background: theme.colors.gray[800],
     fontSize: '0.70rem',
+    maxHeight: '200px',
+    overflowY: 'auto',
+  }),
+  menuList: provided => ({
+    ...provided,
+    maxHeight: '200px',
+    overflowY: 'auto',
   }),
   singleValue: provided => ({
     ...provided,

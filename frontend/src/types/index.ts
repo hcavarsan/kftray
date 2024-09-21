@@ -1,10 +1,5 @@
 import { RefObject } from 'react'
 
-export interface Status {
-  id: number
-  isRunning: boolean
-}
-
 export interface Config {
   id: number
   service: string
@@ -20,6 +15,7 @@ export interface Config {
   target: string
   protocol: string
   kubeconfig: string
+  is_running: boolean
 }
 
 export interface Response {
@@ -69,23 +65,23 @@ export interface GitSyncModalProps {
 }
 
 export interface TableProps {
-  configs: Status[]
+  configs: Config[]
   isInitiating: boolean
   isStopping: boolean
-  initiatePortForwarding: (configs: Status[]) => Promise<void>
-  stopAllPortForwarding: (configs: Status[]) => Promise<void>
+  initiatePortForwarding: (configs: Config[]) => Promise<void>
+  stopAllPortForwarding: () => Promise<void>
   confirmDeleteConfig: () => void
   handleDeleteConfig: (id: number) => void
   handleEditConfig: (id: number) => void
   isAlertOpen: boolean
   setIsAlertOpen: (isOpen: boolean) => void
-  selectedConfigs: Status[]
-  setSelectedConfigs: React.Dispatch<React.SetStateAction<Status[]>>
+  selectedConfigs: Config[]
+  setSelectedConfigs: React.Dispatch<React.SetStateAction<Config[]>>
   setIsInitiating: React.Dispatch<React.SetStateAction<boolean>>
 }
 
 export interface PortForwardRowProps {
-  config: Status
+  config: Config
   confirmDeleteConfig: () => void
   handleDeleteConfig: (id: number) => void
   handleEditConfig: (id: number) => void
@@ -107,11 +103,11 @@ export interface FooterProps {
   credentialsSaved: boolean
   setCredentialsSaved: React.Dispatch<React.SetStateAction<boolean>>
   isGitSyncModalOpen: boolean
-  selectedConfigs: Status[]
+  selectedConfigs: Config[]
   setPollingInterval: React.Dispatch<React.SetStateAction<number>>
   pollingInterval: number
-  setSelectedConfigs: React.Dispatch<React.SetStateAction<Status[]>>
-  configs: Status[]
+  setSelectedConfigs: React.Dispatch<React.SetStateAction<Config[]>>
+  configs: Config[]
 }
 
 export interface SyncConfigsButtonProps {
@@ -188,7 +184,7 @@ export interface ShowToastParams {
 }
 
 export interface ConfigsByContext {
-  [key: string]: Status[]
+  [key: string]: Config[]
 }
 
 export interface HeaderProps {
@@ -199,9 +195,9 @@ export interface HeaderProps {
 export interface HeaderMenuProps {
   isSelectAllChecked: boolean
   setIsSelectAllChecked: React.Dispatch<React.SetStateAction<boolean>>
-  configs: Status[]
-  selectedConfigs: Status[]
-  initiatePortForwarding: (configs: Status[]) => void
+  configs: Config[]
+  selectedConfigs: Config[]
+  initiatePortForwarding: (configs: Config[]) => void
   startSelectedPortForwarding: () => void
   stopAllPortForwarding: () => void
   isInitiating: boolean
@@ -209,25 +205,25 @@ export interface HeaderMenuProps {
   toggleExpandAll: () => void
   expandedIndices: number[]
   configsByContext: ConfigsByContext
-  setSelectedConfigs: React.Dispatch<React.SetStateAction<Status[]>>
+  setSelectedConfigs: React.Dispatch<React.SetStateAction<Config[]>>
 }
 
 export interface BulkDeleteButtonProps {
-  selectedConfigs: Status[]
-  setSelectedConfigs: React.Dispatch<React.SetStateAction<Status[]>>
-  configs: Status[]
+  selectedConfigs: Config[]
+  setSelectedConfigs: React.Dispatch<React.SetStateAction<Config[]>>
+  configs: Config[]
 }
 
 export interface ContextsAccordionProps {
   context: string
-  contextConfigs: Status[]
-  selectedConfigs: Status[]
+  contextConfigs: Config[]
+  selectedConfigs: Config[]
   handleDeleteConfig: (id: number) => void
   confirmDeleteConfig: () => void
   handleEditConfig: (id: number) => void
   isAlertOpen: boolean
   setIsAlertOpen: (isOpen: boolean) => void
-  handleSelectionChange: (config: Status, isSelected: boolean) => void
+  handleSelectionChange: (config: Config, isSelected: boolean) => void
   selectedConfigsByContext: Record<string, boolean>
   handleCheckboxChange: (context: string, isChecked: boolean) => void
   isInitiating: boolean

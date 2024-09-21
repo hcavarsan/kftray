@@ -2,7 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 
 import { Accordion, Flex, useColorModeValue } from '@chakra-ui/react'
 
-import { Status, TableProps } from '../../types'
+import { Config, TableProps } from '../../types'
 import Header from '../Header'
 import HeaderMenu from '../HeaderMenu'
 
@@ -24,20 +24,19 @@ const PortForwardTable: React.FC<TableProps> = ({
   selectedConfigs,
   setSelectedConfigs,
 }) => {
-  const [search, setSearch] = useState('')
+  const [search, setSearch] = useState<string>('')
   const [expandedIndices, setExpandedIndices] = useState<number[]>([])
-  const prevSelectedConfigsRef = useRef(selectedConfigs)
-  const [isSelectAllChecked, setIsSelectAllChecked] = useState(false)
-
+  const prevSelectedConfigsRef = useRef<Config[]>(selectedConfigs)
+  const [isSelectAllChecked, setIsSelectAllChecked] = useState<boolean>(false)
   const [selectedConfigsByContext, setSelectedConfigsByContext] = useState<
     Record<string, boolean>
   >({})
-  const [isCheckboxAction, setIsCheckboxAction] = useState(false)
+  const [isCheckboxAction, setIsCheckboxAction] = useState<boolean>(false)
 
   useEffect(() => {
-    const isConfigRunning = (selectedConfig: Status) =>
+    const isConfigRunning = (selectedConfig: Config) =>
       configs.some(
-        config => config.id === selectedConfig.id && config.isRunning,
+        config => config.id === selectedConfig.id && config.is_running,
       )
 
     setSelectedConfigs(prevSelectedConfigs =>
@@ -48,7 +47,7 @@ const PortForwardTable: React.FC<TableProps> = ({
   }, [configs, setSelectedConfigs])
 
   const filteredConfigs = useMemo(() => {
-    const filterConfigsBySearch = (config: Status) =>
+    const filterConfigsBySearch = (config: Config) =>
       config.alias.toLowerCase().includes(search.toLowerCase()) ||
       config.context.toLowerCase().includes(search.toLowerCase()) ||
       config.remote_address?.toLowerCase().includes(search.toLowerCase()) ||
@@ -58,12 +57,10 @@ const PortForwardTable: React.FC<TableProps> = ({
       ? configs.filter(filterConfigsBySearch)
       : configs
 
-    const compareConfigs = (a: Status, b: Status) =>
+    const compareConfigs = (a: Config, b: Config) =>
       a.alias.localeCompare(b.alias) || a.context.localeCompare(b.context)
 
-    const sortedByAliasAsc = [...searchFiltered].sort(compareConfigs)
-
-    return sortedByAliasAsc
+    return [...searchFiltered].sort(compareConfigs)
   }, [configs, search])
 
   const toggleExpandAll = () => {
@@ -77,7 +74,9 @@ const PortForwardTable: React.FC<TableProps> = ({
   }
 
   const startSelectedPortForwarding = async () => {
-    const configsToStart = selectedConfigs.filter(config => !config.isRunning)
+    const configsToStart = selectedConfigs.filter(
+      (config: Config) => !config.is_running,
+    )
 
     if (configsToStart.length > 0) {
       await initiatePortForwarding(configsToStart)
@@ -94,7 +93,6 @@ const PortForwardTable: React.FC<TableProps> = ({
     }
   }
 
-  // eslint-disable-next-line max-params
   const handleCheckboxChange = (context: string, isChecked: boolean) => {
     setIsCheckboxAction(true)
     handleContextSelectionChange(context, isChecked)
@@ -115,14 +113,12 @@ const PortForwardTable: React.FC<TableProps> = ({
       }
 
       setSelectedConfigsByContext(newSelectedConfigsByContext)
-
       setIsSelectAllChecked(selectedConfigs.length === configs.length)
-
       prevSelectedConfigsRef.current = selectedConfigs
     }
   }, [selectedConfigs, configs, configsByContext])
 
-  const handleSelectionChange = (config: Status, isSelected: boolean) => {
+  const handleSelectionChange = (config: Config, isSelected: boolean) => {
     setSelectedConfigs(prevSelectedConfigs => {
       const isSelectedCurrently = prevSelectedConfigs.some(
         c => c.id === config.id,
@@ -155,8 +151,8 @@ const PortForwardTable: React.FC<TableProps> = ({
   }
 
   function addContextConfigs(
-    currentSelectedConfigs: Status[],
-    contextConfigs: Status[],
+    currentSelectedConfigs: Config[],
+    contextConfigs: Config[],
   ) {
     const newConfigsToAdd = contextConfigs.filter(
       config =>
@@ -169,7 +165,7 @@ const PortForwardTable: React.FC<TableProps> = ({
   }
 
   function removeContextConfigs(
-    currentSelectedConfigs: Status[],
+    currentSelectedConfigs: Config[],
     context: string,
   ) {
     return currentSelectedConfigs.filter(config => config.context !== context)
