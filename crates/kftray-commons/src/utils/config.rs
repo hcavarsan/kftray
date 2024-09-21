@@ -168,7 +168,7 @@ pub async fn update_config(config: Config) -> Result<(), String> {
 
     sqlx::query("UPDATE configs SET data = ?1 WHERE id = ?2")
         .bind(data)
-        .bind(config.id.unwrap())
+        .bind(config.unwrap().id.unwrap())
         .execute(&mut *conn)
         .await
         .map_err(|e| e.to_string())?;
@@ -261,7 +261,7 @@ fn remove_blank_or_default_fields(value: &mut JsonValue, default_config: &JsonVa
     }
 }
 
-fn prepare_config(mut config: Config) -> Config {
+fn prepare_config(mut config: Config) -> Result<Config, String> {
     if let Some(ref mut alias) = config.alias {
         *alias = alias.trim().to_string();
     }
@@ -270,6 +270,9 @@ fn prepare_config(mut config: Config) -> Config {
     }
 
     if config.local_port == 0 {
+        if config.remote_port == 0 {
+            return Err("Both local_port and remote_port cannot be zero".to_string());
+        }
         config.local_port = config.remote_port;
     }
 
@@ -285,5 +288,5 @@ fn prepare_config(mut config: Config) -> Config {
         config.kubeconfig = Some("default".to_string());
     }
 
-    config
+    Ok(config)
 }
