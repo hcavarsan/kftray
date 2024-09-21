@@ -88,8 +88,6 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
       selectedPort ?? newConfig.remote_port,
       selectedWorkloadType,
       selectedProtocol,
-      newConfig.alias,
-      newConfig.local_port,
     ].every(field => field !== null && field !== '')
 
     setIsFormValid(isValid)
@@ -100,10 +98,8 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     selectedPort,
     selectedWorkloadType,
     selectedProtocol,
-    newConfig.alias,
     newConfig.remote_address,
     newConfig.remote_port,
-    newConfig.local_port,
     newConfig.workload_type,
     newConfig.target,
   ])
@@ -464,15 +460,29 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     }
   }, [kubeConfig, setNewConfig])
 
+  const trimConfigValues = (config: Config): Config => {
+    const trimmedConfig: Config = { ...config }
+
+    for (const key in config) {
+      if (typeof config[key] === 'string') {
+        trimmedConfig[key] = config[key].trim()
+      }
+    }
+
+    return trimmedConfig
+  }
+
   const handleSave = async (event: React.FormEvent) => {
     event.preventDefault()
 
-    const configToSave = {
+    const configToSave: Config = {
       ...newConfig,
       kubeconfig: kubeConfig ?? '',
     }
 
-    await handleSaveConfig(configToSave)
+    const trimmedConfig = trimConfigValues(configToSave)
+
+    await handleSaveConfig(trimmedConfig)
 
     if (!isEdit) {
       resetState()
@@ -745,7 +755,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                         />
                       </FormControl>
 
-                      <FormControl isRequired>
+                      <FormControl>
                         <FormLabel htmlFor='local_port' fontSize='12px' mb='0'>
                           Local Port
                         </FormLabel>
@@ -910,7 +920,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                         )}
                       </FormControl>
 
-                      <FormControl isRequired>
+                      <FormControl>
                         <FormLabel
                           htmlFor='local_port'
                           fontSize='12px'
