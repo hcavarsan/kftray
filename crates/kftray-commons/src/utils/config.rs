@@ -203,8 +203,8 @@ pub async fn import_configs(json: String) -> Result<(), String> {
 
     let configs: Vec<Config> = match serde_json::from_str(&json) {
         Ok(configs) => configs,
-        Err(_e) => {
-            error!("Failed to parse JSON as Vec<Config>");
+        Err(e) => {
+            error!("Failed to parse JSON as Vec<Config>: {}", e);
             let config = serde_json::from_str::<Config>(&json)
                 .map_err(|e| format!("Failed to parse config: {}", e))?;
             info!("Parsed JSON as single Config");
