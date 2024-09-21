@@ -47,20 +47,52 @@ Example Json configuration File:
 
 ```json
 [
-  {
-    "service": "argocd-server",
-    "namespace": "argocd",
-    "local_port": 8888,
-    "remote_port": 8080,
-    "context": "test-cluster",
-    "workload_type": "service",
-    "protocol": "tcp",
-    "remote_address": "",
-    "local_address": "127.0.0.1",
-    "alias": "argocd",
-    "domain_enabled": true
-  }
-]
+ {
+   "alias": "service-tcp-8080",
+   "context": "kind",
+   "kubeconfig": "/Users/henrique/.kube/config.bkp",
+   "local_port": 8080,
+   "namespace": "argocd",
+   "protocol": "tcp",
+   "remote_port": 8080,
+   "service": "argocd-server",
+   "workload_type": "service"
+ },
+ {
+   "alias": "pod-tcp-8083",
+   "context": "kind",
+   "kubeconfig": "/Users/henrique/.kube/config.bkp",
+   "local_port": 8083,
+   "namespace": "argocd",
+   "protocol": "tcp",
+   "remote_port": 8083,
+   "target": "app.kubernetes.io/component=server",
+   "workload_type": "pod"
+ },
+ {
+   "alias": "proxy-udp-5353",
+   "context": "kind",
+   "kubeconfig": "/Users/henrique/.kube/config.bkp",
+   "local_port": 5353,
+   "namespace": "argocd",
+   "protocol": "udp",
+   "remote_address": "coredns.cluster.local.internal",
+   "remote_port": 5353,
+   "workload_type": "proxy"
+ },
+ {
+   "alias": "proxy-tcp-6443",
+   "context": "kind",
+   "kubeconfig": "/Users/henrique/.kube/config.bkp",
+   "local_port": 8777,
+   "namespace": "argocd",
+   "protocol": "tcp",
+   "remote_address": "test.homelab.cluster.internal",
+   "remote_port": 80,
+   "workload_type": "proxy"
+ }
+  ]
+
 ```
 
 ## Sharing the configurations through Git
@@ -69,17 +101,12 @@ now, with the local json saved, you can share your configurations with your team
 
 To import and sync your GitHub configs in kftray:
 
-
-1.  Open the application's main menu
-2.  Select the button with GitHub icon in the footer menu
-4.  Enter the URL of your Git repository and path containing the JSON file
-5.  If your GitHub repository is private, you will need to enter the private token. Credentials are securely saved in the SO keyring (Keychain on macOS). Kftray does not store or save credentials in any local file; they are only stored in the local keyring.
-6.  Select the polling time for when Kftray will synchronize configurations and retrieve them from GitHub.
-
+1. Open the application's main menu
+2. Select the button with GitHub icon in the footer menu
+3. Enter the URL of your Git repository and path containing the JSON file
+4. If your GitHub repository is private, you will need to enter the private token. Credentials are securely saved in the SO keyring (Keychain on macOS). Kftray does not store or save credentials in any local file; they are only stored in the local keyring.
+5. Select the polling time for when Kftray will synchronize configurations and retrieve them from GitHub.
 
 6. KFtray will now sync with the Git repository to automatically import any new configurations or changes committed to the JSON file.
 
 This allows you to quickly deploy any port forward changes to all team members. And if someone on your team adds a new configuration, it will be automatically synced to everyone else's KFtray.
-
-
-

@@ -48,13 +48,13 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
               ? startSelectedPortForwarding
               : () =>
                 initiatePortForwarding(
-                  configs.filter(config => !config.isRunning),
+                  configs.filter(config => !config.is_running),
                 )
           }
           isDisabled={
             isInitiating ||
             (!selectedConfigs.length &&
-              !configs.some(config => !config.isRunning))
+              !configs.some(config => !config.is_running))
           }
           size='xs'
         >
@@ -66,7 +66,7 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
           isLoading={isStopping}
           loadingText='Stopping...'
           onClick={stopAllPortForwarding}
-          isDisabled={isStopping || !configs.some(config => config.isRunning)}
+          isDisabled={isStopping || !configs.some(config => config.is_running)}
           size='xs'
         >
           Stop All

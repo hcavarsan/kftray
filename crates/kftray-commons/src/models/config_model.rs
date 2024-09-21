@@ -13,9 +13,11 @@ pub struct Config {
     #[serde(default)]
     pub namespace: String,
     #[serde(default)]
-    pub local_port: u16,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_port: Option<u16>,
     #[serde(default)]
-    pub remote_port: u16,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remote_port: Option<u16>,
     #[serde(default)]
     pub context: String,
     #[serde(default)]
@@ -42,8 +44,8 @@ impl Default for Config {
             id: None,
             service: Some("default-service".to_string()),
             namespace: "default-namespace".to_string(),
-            local_port: 0,
-            remote_port: 0,
+            local_port: Some(0),
+            remote_port: Some(0),
             context: "default-context".to_string(),
             workload_type: "default-workload".to_string(),
             protocol: "protocol".to_string(),

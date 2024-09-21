@@ -75,6 +75,8 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
 
   const [isChecked, setIsChecked] = useState(false)
   const toast = useCustomToast()
+  const [isContextDropdownFocused, setIsContextDropdownFocused] =
+    useState(false)
 
   const handleCheckboxChange = () => {
     setIsChecked(!isChecked)
@@ -111,7 +113,8 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     ['kube-contexts', kubeConfig],
     () => fetchKubeContexts(kubeConfig),
     {
-      enabled: isModalOpen,
+      enabled:
+        isModalOpen && (isContextDropdownFocused || kubeConfig !== 'default'),
       onError: error => {
         console.error('Error fetching contexts:', error)
         if (error instanceof Error) {
@@ -165,7 +168,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     },
     {
       initialData: configData?.namespace,
-      enabled: !!newConfig.context,
+      enabled: isModalOpen && !!newConfig.context,
       onError: error => {
         console.error('Error fetching namespaces:', error)
         if (error instanceof Error) {
@@ -195,6 +198,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     },
     {
       enabled:
+        isModalOpen &&
         !!newConfig.context &&
         !!newConfig.namespace &&
         newConfig.workload_type === 'pod',
@@ -229,6 +233,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     {
       initialData: configData?.service,
       enabled:
+        isModalOpen &&
         !!newConfig.context &&
         !!newConfig.namespace &&
         newConfig.workload_type !== 'proxy',
@@ -282,6 +287,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
           port: port.port,
         })) ?? [],
       enabled:
+        isModalOpen &&
         !!newConfig.context &&
         !!newConfig.namespace &&
         !!(newConfig.workload_type === 'pod'
@@ -376,6 +382,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     setSelectedWorkloadType(null)
     setSelectedProtocol(null)
     setKubeConfig('default')
+    setIsContextDropdownFocused(false)
   }
 
   const handleSelectChange = (
@@ -459,7 +466,6 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
       }))
     }
   }, [kubeConfig, setNewConfig])
-
   const trimConfigValues = (config: Config): Config => {
     const trimmedConfig: Config = { ...config }
 
@@ -499,12 +505,12 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     <Center>
       <Modal isOpen={isModalOpen} onClose={handleCancel} size='sm'>
         <ModalOverlay bg='transparent' />
-        <ModalContent bg='transparent' borderRadius='20px' marginTop='4'>
+        <ModalContent bg='transparent' borderRadius='20px' marginTop='15'>
           <ModalBody p={0}>
             <form onSubmit={handleSave}>
               <VStack
                 spacing={3}
-                align='stretch'
+                align='inherit'
                 p={4}
                 border='1px'
                 borderColor='gray.700'
@@ -598,6 +604,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                           { name: 'context' } as ActionMeta<Option>,
                         )
                       }
+                      onFocus={() => setIsContextDropdownFocused(true)}
                       menuPlacement='auto'
                       theme={theme => ({
                         ...theme,
@@ -614,7 +621,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                     />
                     {contextQuery.isError && (
                       <Text color='red.500' fontSize='xs'>
-                        Error fetching contexts
+                        Error: select a valid kubeconfig
                       </Text>
                     )}
                   </FormControl>

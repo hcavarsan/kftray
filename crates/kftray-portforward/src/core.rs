@@ -64,14 +64,14 @@ pub async fn start_port_forward(
             _ => TargetSelector::ServiceName(config.service.clone().unwrap_or_default()),
         };
 
-        let remote_port = Port::from(config.remote_port as i32);
+        let remote_port = Port::from(config.remote_port.unwrap_or_default() as i32);
         let context_name = Some(config.context.clone());
         let kubeconfig = Some(config.kubeconfig.clone());
         let namespace = config.namespace.clone();
         let target = Target::new(selector, remote_port, namespace.clone());
 
-        log::debug!("Remote Port: {}", config.remote_port);
-        log::debug!("Local Port: {}", config.local_port);
+        log::debug!("Remote Port: {:?}", config.remote_port);
+        log::debug!("Local Port: {:?}", config.local_port);
         if config.workload_type.as_str() == "pod" {
             log::info!("Attempting to forward to pod label: {:?}", &config.target);
         } else {
@@ -194,14 +194,14 @@ pub async fn start_port_forward(
                             service: config.service.clone().unwrap(),
                             namespace: namespace.clone(),
                             local_port: actual_local_port,
-                            remote_port: config.remote_port,
+                            remote_port: config.remote_port.unwrap_or_default(),
                             context: config.context.clone(),
                             protocol: config.protocol.clone(),
                             stdout: format!(
-                                "{} forwarding from 127.0.0.1:{} -> {}:{}",
+                                "{} forwarding from 127.0.0.1:{} -> {:?}:{}",
                                 protocol.to_uppercase(),
                                 actual_local_port,
-                                config.remote_port,
+                                config.remote_port.unwrap_or_default(),
                                 config.service.clone().unwrap()
                             ),
                             stderr: String::new(),
@@ -632,8 +632,8 @@ pub async fn deploy_and_forward_pod(
             "remote_address",
             config.remote_address.as_ref().unwrap().clone(),
         );
-        values.insert("remote_port", config.remote_port.to_string());
-        values.insert("local_port", config.remote_port.to_string());
+        values.insert("remote_port", config.remote_port.expect("None").to_string());
+        values.insert("local_port", config.remote_port.expect("None").to_string());
         values.insert("protocol", protocol.clone());
 
         let manifest_path = get_pod_manifest_path().map_err(|e| e.to_string())?;
@@ -856,8 +856,8 @@ fn parse_configs(
                 namespace: namespace.to_string(),
                 service: Some(service_name.to_string()),
                 alias: Some(alias),
-                local_port,
-                remote_port: target_port as u16,
+                local_port: Some(local_port),
+                remote_port: Some(target_port as u16),
                 protocol: "tcp".to_string(),
                 workload_type: "service".to_string(),
                 ..Default::default()
@@ -878,8 +878,8 @@ fn create_default_configs(
             namespace: namespace.to_string(),
             service: Some(service_name.to_string()),
             alias: Some(service_name.to_string()),
-            local_port: port as u16,
-            remote_port: port as u16,
+            local_port: Some(port as u16),
+            remote_port: Some(port as u16),
             protocol: "tcp".to_string(),
             workload_type: "service".to_string(),
             ..Default::default()

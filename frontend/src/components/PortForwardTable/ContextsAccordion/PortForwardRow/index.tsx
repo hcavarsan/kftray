@@ -322,12 +322,12 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
         >
           <Checkbox
             size='sm'
-            isChecked={selected || config.isRunning}
+            isChecked={selected || config.is_running}
             onChange={event => {
               event.stopPropagation()
               onSelectionChange(!selected)
             }}
-            disabled={config.isRunning}
+            disabled={config.is_running}
             ml={-4}
             mr={2}
             mt={1}
@@ -366,12 +366,12 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
             <Switch
               ml={2}
               colorScheme='facebook'
-              isChecked={config.isRunning && !isInitiating}
+              isChecked={config.is_running && !isInitiating}
               size='sm'
               onChange={e => togglePortForwarding(e.target.checked)}
               isDisabled={isInitiating}
             />
-            {config.isRunning && (
+            {config.is_running && (
               <Tooltip
                 hasArrow
                 label='Open URL'
@@ -394,7 +394,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
                 />
               </Tooltip>
             )}
-            {config.isRunning &&
+            {config.is_running &&
               (config.workload_type === 'service' ||
                 config.workload_type === 'pod') &&
               config.protocol === 'tcp' &&
