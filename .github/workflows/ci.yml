@@ -32,8 +32,8 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '21.7.1'
-          cache: 'pnpm'
+          node-version: "21.7.1"
+          cache: "pnpm"
 
       - name: Install pnpm dependencies
         run: pnpm install --no-frozen-lockfile
@@ -79,7 +79,7 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '21.7.1'
+          node-version: "21.7.1"
 
       - name: Install pnpm
         uses: pnpm/action-setup@v3
@@ -113,4 +113,3 @@ jobs:
           push: false
           tags: |
             ghcr.io/${{ github.repository_owner }}/kftray-server:${{ github.sha }}
-
