@@ -77,7 +77,11 @@ pub fn draw_configs_table(
             Row::new(vec![
                 Cell::from(config.alias.clone().unwrap_or_default()),
                 Cell::from(config.workload_type.clone()),
-                Cell::from(config.local_port.to_string()),
+                Cell::from(
+                    config
+                        .local_port
+                        .map_or_else(|| "".to_string(), |port| port.to_string()),
+                ),
                 Cell::from(config.context.clone()),
             ])
             .style(row_style)
@@ -191,7 +195,11 @@ pub fn render_details(
                 "Local Port: ",
                 Style::default().add_modifier(Modifier::BOLD),
             ),
-            Span::raw(config.local_port.to_string()),
+            Span::raw(
+                config
+                    .local_port
+                    .map_or_else(|| "".to_string(), |port| port.to_string()),
+            ),
         ]),
         Line::from(vec![
             Span::styled(
@@ -205,7 +213,11 @@ pub fn render_details(
                 "Remote Port: ",
                 Style::default().add_modifier(Modifier::BOLD),
             ),
-            Span::raw(config.remote_port.to_string()),
+            Span::raw(
+                config
+                    .remote_port
+                    .map_or_else(|| "".to_string(), |port| port.to_string()),
+            ),
         ]),
         Line::from(vec![
             Span::styled("Context: ", Style::default().add_modifier(Modifier::BOLD)),

@@ -1,42 +1,46 @@
 [
-  {
-    "target": "app.kubernetes.io/component=server",
-    "namespace": "default",
-    "local_port": 8181,
-    "remote_port": 8080,
-    "context": "kind1",
-    "workload_type": "pod",
-    "protocol": "tcp",
-    "alias": "argocd"
-  },
-  {
-    "service": "httpbin",
-    "namespace": "default",
-    "local_port": 8081,
-    "remote_port": 8080,
-    "context": "kind1",
-    "workload_type": "service",
-    "protocol": "tcp",
-    "alias": "httpbin"
-  },
-  {
-    "target": "app.kubernetes.io/instance=echoserver",
-    "namespace": "echoserver",
-    "local_port": 8989,
-    "remote_port": 80,
-    "context": "kind-kind2",
-    "workload_type": "pod",
-    "protocol": "tcp",
-    "alias": "echoserver"
-  },
-  {
-    "alias": "ifconfig",
-    "namespace": "default",
-    "local_port": 8443,
-    "remote_port": 443,
-    "context": "kind-kind2",
-    "workload_type": "proxy",
-    "protocol": "tcp",
-    "remote_address": "ifconfig.me"
-  }
-]
+	{
+	  "alias": "service-tcp-8080",
+	  "context": "kind",
+	  "kubeconfig": "/Users/henrique/.kube/config.bkp",
+	  "local_port": 8080,
+	  "namespace": "argocd",
+	  "protocol": "tcp",
+	  "remote_port": 8080,
+	  "service": "argocd-server",
+	  "workload_type": "service"
+	},
+	{
+	  "alias": "pod-tcp-8083",
+	  "context": "kind",
+	  "kubeconfig": "/Users/henrique/.kube/config.bkp",
+	  "local_port": 8083,
+	  "namespace": "argocd",
+	  "protocol": "tcp",
+	  "remote_port": 8083,
+	  "target": "app.kubernetes.io/component=server",
+	  "workload_type": "pod"
+	},
+	{
+	  "alias": "proxy-udp-5353",
+	  "context": "kind",
+	  "kubeconfig": "/Users/henrique/.kube/config.bkp",
+	  "local_port": 5353,
+	  "namespace": "argocd",
+	  "protocol": "udp",
+	  "remote_address": "coredns.cluster.local.internal",
+	  "remote_port": 5353,
+	  "workload_type": "proxy"
+	},
+	{
+	  "alias": "proxy-tcp-6443",
+	  "context": "kind",
+	  "kubeconfig": "/Users/henrique/.kube/config.bkp",
+	  "local_port": 8777,
+	  "namespace": "argocd",
+	  "protocol": "tcp",
+	  "remote_address": "test.homelab.cluster.internal",
+	  "remote_port": 80,
+	  "workload_type": "proxy"
+	}
+  ]

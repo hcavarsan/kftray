@@ -50,7 +50,7 @@ const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
   const fontFamily = '\'Inter\', sans-serif'
 
   const contextRunningCount = contextConfigs.filter(
-    config => config.isRunning,
+    config => config.is_running,
   ).length
   const contextTotalCount = contextConfigs.length
   const contextTagColorScheme = contextRunningCount > 0 ? 'facebook' : 'gray'
@@ -76,7 +76,7 @@ const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
               size='sm'
               isChecked={
                 selectedConfigsByContext[context] ||
-                contextConfigs.every(config => config.isRunning)
+                contextConfigs.every(config => config.is_running)
               }
               onChange={event => {
                 event.stopPropagation()
@@ -86,7 +86,7 @@ const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
                 )
               }}
               onClick={event => event.stopPropagation()}
-              isDisabled={contextConfigs.every(config => config.isRunning)}
+              isDisabled={contextConfigs.every(config => config.is_running)}
             >
               <Tag
                 size='sm'

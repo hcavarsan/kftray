@@ -1,13 +1,13 @@
 import { useMemo } from 'react'
 
-import { ConfigsByContext, Status } from '../../types'
+import { Config, ConfigsByContext } from '../../types'
 
 export const useConfigsByContext = (
-  filteredConfigs: Status[],
+  filteredConfigs: Config[],
 ): ConfigsByContext => {
   return useMemo(() => {
-    const groupByContext = (configs: Status[]): ConfigsByContext => {
-      return configs.reduce((group: ConfigsByContext, config: Status) => {
+    const groupByContext = (configs: Config[]): ConfigsByContext => {
+      return configs.reduce((group: ConfigsByContext, config: Config) => {
         const { context } = config
 
         if (!group[context]) {

@@ -168,7 +168,7 @@ pub async fn update_config(config: Config) -> Result<(), String> {
 
     sqlx::query("UPDATE configs SET data = ?1 WHERE id = ?2")
         .bind(data)
-        .bind(config.unwrap().id.unwrap())
+        .bind(config.id.unwrap())
         .execute(&mut *conn)
         .await
         .map_err(|e| e.to_string())?;
@@ -261,7 +261,7 @@ fn remove_blank_or_default_fields(value: &mut JsonValue, default_config: &JsonVa
     }
 }
 
-fn prepare_config(mut config: Config) -> Result<Config, String> {
+fn prepare_config(mut config: Config) -> Config {
     if let Some(ref mut alias) = config.alias {
         *alias = alias.trim().to_string();
     }
@@ -269,17 +269,16 @@ fn prepare_config(mut config: Config) -> Result<Config, String> {
         *kubeconfig = kubeconfig.trim().to_string();
     }
 
-    if config.local_port == 0 {
-        if config.remote_port == 0 {
-            return Err("Both local_port and remote_port cannot be zero".to_string());
-        }
+    if config.local_port == Some(0) || config.local_port.is_none() {
         config.local_port = config.remote_port;
     }
 
     if config.alias.as_deref() == Some("") || config.alias.is_none() {
         let alias = format!(
             "{}-{}-{}",
-            config.workload_type, config.protocol, config.local_port
+            config.workload_type,
+            config.protocol,
+            config.local_port.unwrap_or_default()
         );
         config.alias = Some(alias);
     }
@@ -288,5 +287,5 @@ fn prepare_config(mut config: Config) -> Result<Config, String> {
         config.kubeconfig = Some("default".to_string());
     }
 
-    Ok(config)
+    config
 }
