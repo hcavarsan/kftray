@@ -1,10 +1,7 @@
 use std::collections::BTreeMap;
 
 use hostsfile::HostsBuilder;
-use log::{
-    error,
-    info,
-};
+use log::error;
 use serde_json::{
     self,
     Value,
@@ -199,15 +196,12 @@ pub async fn export_configs() -> Result<String, String> {
 }
 
 pub async fn import_configs(json: String) -> Result<(), String> {
-    info!("Received JSON: {}", json);
-
     let configs: Vec<Config> = match serde_json::from_str(&json) {
         Ok(configs) => configs,
         Err(e) => {
             error!("Failed to parse JSON as Vec<Config>: {}", e);
             let config = serde_json::from_str::<Config>(&json)
                 .map_err(|e| format!("Failed to parse config: {}", e))?;
-            info!("Parsed JSON as single Config");
             vec![config]
         }
     };
