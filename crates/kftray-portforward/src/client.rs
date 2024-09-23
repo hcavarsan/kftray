@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::env;
+use std::error::Error;
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
@@ -369,18 +370,21 @@ async fn create_insecure_http_client<'a>(
     Ok(client)
 }
 
-async fn test_client(client: &Client) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let api: Api<Namespace> = Api::all(client.clone());
-    api.list(&ListParams::default())
-        .await
-        .map(|_| ())
-        .map_err(|e| {
-            let err_msg = format!("Failed to list namespaces: {}", e);
-            Box::new(std::io::Error::new(std::io::ErrorKind::Other, err_msg))
-                as Box<dyn std::error::Error + Send + Sync>
-        })
+async fn test_client(client: &Client) -> Result<(), Box<dyn Error + Send + Sync>> {
+    match client.apiserver_version().await {
+        Ok(version) => {
+            info!("Kubernetes API server version: {:?}", version);
+            Ok(())
+        }
+        Err(e) => {
+            let err_msg = format!("Failed to get API server version: {}", e);
+            Err(
+                Box::new(std::io::Error::new(std::io::ErrorKind::Other, err_msg))
+                    as Box<dyn Error + Send + Sync>,
+            )
+        }
+    }
 }
-
 fn is_pkcs8_key(key_data: &[u8]) -> bool {
     key_data.starts_with(b"-----BEGIN PRIVATE KEY-----")
 }
