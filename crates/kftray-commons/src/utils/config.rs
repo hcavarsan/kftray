@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 
 use hostsfile::HostsBuilder;
 use log::error;
+use portpicker::pick_unused_port;
 use serde_json::{
     self,
     Value,
@@ -270,7 +271,13 @@ fn prepare_config(mut config: Config) -> Config {
     }
 
     if config.local_port == Some(0) || config.local_port.is_none() {
-        config.local_port = config.remote_port;
+        match pick_unused_port() {
+            Some(port) => config.local_port = Some(port),
+            None => {
+                config.local_port = config.remote_port;
+                error!("Failed to find an unused port, using remote_port as local_port");
+            }
+        }
     }
 
     if config.alias.as_deref() == Some("") || config.alias.is_none() {
