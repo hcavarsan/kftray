@@ -37,8 +37,8 @@ log = "0.4"
 env_logger = "0.11.5"
 openssl = { version = "0.10.66", features = ["vendored"] }
 openssl-sys = { version = "0.9.103", features = ["vendored"] }
-kube = { version = "0.94.2", features = ["client", "config", "rustls-tls", "ws", "openssl-tls"] }
-k8s-openapi = { version = "0.22.0", default-features = false, features = [
+kube = { version = "0.95.0", features = ["client", "config", "rustls-tls", "ws", "openssl-tls"] }
+k8s-openapi = { version = "0.23", default-features = false, features = [
 	"latest",
 ] }
 tokio-stream = { version = "0.1.15", features = ["net"] }
@@ -50,7 +50,7 @@ hyper-util = { version = "0.1.7", features = ["client-legacy", "http1", "tokio"]
 lazy_static = "1.5.0"
 serde = { version = "1.0", features = ["derive"] }
 rand = "0.8.5"
-kube-runtime = "0.94.2"
+kube-runtime = "0.95"
 tower = "0.5.0"
 whoami = "1.5.1"
 tempfile = "3.9"
