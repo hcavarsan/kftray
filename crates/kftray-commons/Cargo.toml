@@ -37,6 +37,7 @@ tauri = { version = "1.6", default-features = false, features = [
 sqlx = { version = "0.8.1", default-features = false, features = ["sqlite", "runtime-tokio-native-tls"] }
 hostsfile = { git = "https://github.com/tonarino/innernet", branch = "main" }
 tempfile = "3.12.0"
+portpicker = "0.1.1"
 
 [lib]
 name = "kftray_commons"
