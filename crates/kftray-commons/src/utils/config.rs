@@ -271,10 +271,12 @@ fn prepare_config(mut config: Config) -> Config {
     }
 
     if config.local_port == Some(0) || config.local_port.is_none() {
-        if let Some(port) = pick_unused_port() {
-            config.local_port = Some(port);
-        } else {
-            panic!("Failed to find an unused port");
+        match pick_unused_port() {
+            Some(port) => config.local_port = Some(port),
+            None => {
+                config.local_port = config.remote_port;
+                error!("Failed to find an unused port, using remote_port as local_port");
+            }
         }
     }
 
