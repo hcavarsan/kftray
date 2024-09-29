@@ -1,6 +1,5 @@
-/* eslint-disable react/jsx-no-duplicate-props */
 /* eslint-disable complexity */
-/* eslint-disable max-len */
+
 import React, { useEffect, useState } from 'react'
 import { useQuery } from 'react-query'
 import ReactSelect, { ActionMeta } from 'react-select'
