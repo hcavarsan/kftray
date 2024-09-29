@@ -38,7 +38,7 @@ pub async fn handle_auto_add_configs(app: &mut App) {
 }
 
 pub async fn handle_context_selection(app: &mut App, context: &str) {
-    let configs = match retrieve_service_configs(context).await {
+    let configs = match retrieve_service_configs(context, None).await {
         Ok(configs) => configs,
         Err(e) => {
             app.error_message = Some(format!("Failed to retrieve service configs: {}", e));

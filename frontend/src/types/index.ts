@@ -160,7 +160,11 @@ export interface CustomConfigProps extends ConfigProps {
   setNewConfig: React.Dispatch<React.SetStateAction<Config>>
 }
 
-export type Option = { name: string; value: string | number; label: string }
+export interface Option {
+  name?: string | string
+  value: string | number
+  label: string
+}
 
 export interface CustomToastProps {
   title: string
