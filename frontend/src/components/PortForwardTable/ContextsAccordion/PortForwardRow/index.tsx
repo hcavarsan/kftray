@@ -1,3 +1,4 @@
+/* eslint-disable complexity */
 import React, { useEffect, useRef, useState } from 'react'
 
 import { ExternalLinkIcon } from '@chakra-ui/icons'
@@ -17,6 +18,7 @@ import {
   MenuButton,
   MenuItem,
   MenuList,
+  Portal,
   Switch,
   Td,
   Text,
@@ -440,51 +442,51 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
               size='xs'
               ml={2}
             />
-            <MenuList
-              zIndex='popover'
-              fontSize='xs'
-              minW='150px'
-              position='relative'
-            >
-              <MenuItem
-                icon={
-                  <FontAwesomeIcon icon={faPen} style={{ fontSize: '10px' }} />
-                }
-                onClick={() => handleEditConfig(config.id)}
-              >
-                Edit
-              </MenuItem>
-              <MenuItem
-                icon={
-                  <FontAwesomeIcon
-                    icon={faTrash}
-                    style={{ fontSize: '10px' }}
-                  />
-                }
-                onClick={() => {
-                  setIsAlertOpen(true)
-                  handleDeleteClick()
-                  handleDeleteConfig(config.id)
-                }}
-              >
-                Delete
-              </MenuItem>
-              {config.protocol === 'tcp' && (
+            <Portal>
+              <MenuList zIndex='popover' fontSize='xs' minW='150px'>
                 <MenuItem
                   icon={
                     <FontAwesomeIcon
-                      icon={faFileAlt}
+                      icon={faPen}
                       style={{ fontSize: '10px' }}
                     />
                   }
-                  onClick={handleToggleHttpLogs}
+                  onClick={() => handleEditConfig(config.id)}
                 >
-                  {httpLogsEnabled[config.id]
-                    ? 'Disable HTTP Logs'
-                    : 'Enable HTTP Logs'}
+                  Edit
                 </MenuItem>
-              )}
-            </MenuList>
+                <MenuItem
+                  icon={
+                    <FontAwesomeIcon
+                      icon={faTrash}
+                      style={{ fontSize: '10px' }}
+                    />
+                  }
+                  onClick={() => {
+                    setIsAlertOpen(true)
+                    handleDeleteClick()
+                    handleDeleteConfig(config.id)
+                  }}
+                >
+                  Delete
+                </MenuItem>
+                {config.protocol === 'tcp' && (
+                  <MenuItem
+                    icon={
+                      <FontAwesomeIcon
+                        icon={faFileAlt}
+                        style={{ fontSize: '10px' }}
+                      />
+                    }
+                    onClick={handleToggleHttpLogs}
+                  >
+                    {httpLogsEnabled[config.id]
+                      ? 'Disable HTTP Logs'
+                      : 'Enable HTTP Logs'}
+                  </MenuItem>
+                )}
+              </MenuList>
+            </Portal>
           </Menu>
         </Td>
       </Tr>
