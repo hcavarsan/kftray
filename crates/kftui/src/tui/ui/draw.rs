@@ -1,8 +1,4 @@
 use kftray_commons::models::config_state_model::ConfigState;
-use ratatui::widgets::Paragraph;
-use ratatui::widgets::Scrollbar;
-use ratatui::widgets::ScrollbarOrientation;
-use ratatui::widgets::ScrollbarState;
 use ratatui::{
     layout::{
         Constraint,
@@ -11,6 +7,7 @@ use ratatui::{
         Rect,
     },
     style::{
+        Color,
         Modifier,
         Style,
     },
@@ -26,6 +23,8 @@ use ratatui::{
     },
     Frame,
 };
+use tui_logger::TuiLoggerLevelOutput;
+use tui_logger::TuiLoggerWidget;
 
 use crate::tui::input::ActiveTable;
 use crate::tui::input::{
@@ -37,7 +36,6 @@ use crate::tui::ui::render_context_selection_popup;
 use crate::tui::ui::render_delete_confirmation_popup;
 use crate::tui::ui::render_details;
 use crate::tui::ui::MAUVE;
-use crate::tui::ui::SURFACE2;
 use crate::tui::ui::{
     centered_rect,
     draw_configs_tab,
@@ -190,28 +188,17 @@ pub fn draw_ui(f: &mut Frame, app: &mut App, config_states: &[ConfigState]) {
     }
 }
 
-pub fn render_logs(f: &mut Frame, app: &mut App, area: Rect, has_focus: bool) {
-    let logs = {
-        let log_content = app.log_content.lock().unwrap();
-        log_content.clone()
-    };
-
-    let log_lines: Vec<&str> = logs.lines().collect();
-    let log_height = area.height as usize;
-    app.log_scroll_max_offset = log_lines.len().saturating_sub(log_height);
-
-    if app.log_scroll_offset > app.log_scroll_max_offset {
-        app.log_scroll_offset = app.log_scroll_max_offset;
+fn log_level_to_color(level: log::Level) -> Style {
+    match level {
+        log::Level::Error => Style::default().fg(Color::Red),
+        log::Level::Warn => Style::default().fg(Color::Yellow),
+        log::Level::Info => Style::default().fg(Color::Green),
+        log::Level::Debug => Style::default().fg(Color::Cyan),
+        log::Level::Trace => Style::default().fg(Color::Blue),
     }
+}
 
-    let visible_logs: String = log_lines
-        .iter()
-        .skip(app.log_scroll_offset)
-        .take(log_height)
-        .cloned()
-        .collect::<Vec<&str>>()
-        .join("\n");
-
+pub fn render_logs(f: &mut Frame, app: &mut App, area: Rect, has_focus: bool) {
     let focus_color = if has_focus { YELLOW } else { TEXT };
     let border_modifier = if has_focus {
         Modifier::BOLD
@@ -219,7 +206,7 @@ pub fn render_logs(f: &mut Frame, app: &mut App, area: Rect, has_focus: bool) {
         Modifier::empty()
     };
 
-    let logs_paragraph = Paragraph::new(visible_logs)
+    let logs_widget = TuiLoggerWidget::default()
         .block(
             Block::default()
                 .borders(Borders::ALL)
@@ -231,27 +218,16 @@ pub fn render_logs(f: &mut Frame, app: &mut App, area: Rect, has_focus: bool) {
                 ),
         )
         .style(Style::default().fg(TEXT).bg(BASE))
-        .wrap(ratatui::widgets::Wrap { trim: true });
+        .state(&app.logger_state)
+        .output_separator('|')
+        .output_timestamp(Some(" %H:%M ".to_string()))
+        .output_level(Some(TuiLoggerLevelOutput::Long))
+        .style(Style::default().fg(Color::White))
+        .style_error(log_level_to_color(log::Level::Error))
+        .style_warn(log_level_to_color(log::Level::Warn));
 
-    f.render_widget(logs_paragraph, area);
-
-    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
-        .begin_symbol(None)
-        .track_symbol(None)
-        .end_symbol(None)
-        .style(Style::default().fg(SURFACE2).bg(BASE));
-    let mut scrollbar_state = ScrollbarState::new(app.log_scroll_max_offset)
-        .position(app.log_scroll_offset)
-        .viewport_content_length(log_height);
-    let scrollbar_area = Rect {
-        x: area.x + area.width - 1,
-        y: area.y.saturating_add(2),
-        height: area.height.saturating_sub(2),
-        width: 1,
-    };
-    f.render_stateful_widget(scrollbar, scrollbar_area, &mut scrollbar_state);
+    f.render_widget(logs_widget, area);
 }
-
 pub fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     let menu_titles = ["Help", "Auto Import", "Import", "Export", "About", "Quit"];
     let menu: Vec<Line> = menu_titles
