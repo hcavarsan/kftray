@@ -4,10 +4,6 @@ mod popup;
 
 use std::collections::HashSet;
 use std::io;
-use std::sync::{
-    Arc,
-    Mutex,
-};
 
 use crossterm::event::{
     self,
@@ -21,6 +17,7 @@ use kftray_commons::models::{
     config_model::Config,
     config_state_model::ConfigState,
 };
+use log::LevelFilter;
 pub use popup::*;
 use ratatui::widgets::ListState;
 use ratatui::widgets::TableState;
@@ -28,8 +25,9 @@ use ratatui_explorer::{
     FileExplorer,
     Theme,
 };
+use tui_logger::TuiWidgetEvent;
+use tui_logger::TuiWidgetState;
 
-use crate::core::logging::LOGGER;
 use crate::core::port_forward::stop_all_port_forward_and_exit;
 use crate::tui::input::navigation::handle_auto_add_configs;
 use crate::tui::input::navigation::handle_context_selection;
@@ -86,10 +84,7 @@ pub struct App {
     pub file_content: Option<String>,
     pub stopped_configs: Vec<Config>,
     pub running_configs: Vec<Config>,
-    pub stdout_output: Arc<Mutex<String>>,
     pub error_message: Option<String>,
-    pub log_scroll_offset: usize,
-    pub log_scroll_max_offset: usize,
     pub active_component: ActiveComponent,
     pub selected_menu_item: usize,
     pub delete_confirmation_message: Option<String>,
@@ -97,10 +92,10 @@ pub struct App {
     pub visible_rows: usize,
     pub table_state_stopped: TableState,
     pub table_state_running: TableState,
-    pub log_content: Arc<Mutex<String>>,
     pub contexts: Vec<String>,
     pub selected_context_index: usize,
     pub context_list_state: ListState,
+    pub logger_state: TuiWidgetState,
 }
 
 impl App {
@@ -108,7 +103,7 @@ impl App {
         let theme = Theme::default().add_default_title();
         let import_file_explorer = FileExplorer::with_theme(theme.clone()).unwrap();
         let export_file_explorer = FileExplorer::with_theme(theme).unwrap();
-        let stdout_output = LOGGER.buffer.clone();
+        let logger_state = TuiWidgetState::new().set_default_display_level(LevelFilter::Warn);
 
         let mut app = Self {
             details_scroll_offset: 0,
@@ -127,10 +122,7 @@ impl App {
             file_content: None,
             stopped_configs: Vec::new(),
             running_configs: Vec::new(),
-            stdout_output,
             error_message: None,
-            log_scroll_offset: 0,
-            log_scroll_max_offset: 0,
             active_component: ActiveComponent::StoppedTable,
             selected_menu_item: 0,
             delete_confirmation_message: None,
@@ -138,10 +130,10 @@ impl App {
             visible_rows: 0,
             table_state_stopped: TableState::default(),
             table_state_running: TableState::default(),
-            log_content: Arc::new(Mutex::new(String::new())),
             contexts: Vec::new(),
             selected_context_index: 0,
             context_list_state: ListState::default(),
+            logger_state,
         };
 
         if let Ok((_, height)) = size() {
@@ -371,13 +363,6 @@ fn scroll_page_up(app: &mut App) {
             app.table_state_running
                 .select(Some(app.selected_row_running));
         }
-        ActiveComponent::Logs => {
-            if app.log_scroll_offset >= app.visible_rows {
-                app.log_scroll_offset -= app.visible_rows;
-            } else {
-                app.log_scroll_offset = 0;
-            }
-        }
         ActiveComponent::Details => {
             if app.details_scroll_offset >= app.visible_rows {
                 app.details_scroll_offset -= app.visible_rows;
@@ -410,13 +395,6 @@ fn scroll_page_down(app: &mut App) {
             }
             app.table_state_running
                 .select(Some(app.selected_row_running));
-        }
-        ActiveComponent::Logs => {
-            if app.log_scroll_offset + app.visible_rows < app.log_scroll_max_offset {
-                app.log_scroll_offset += app.visible_rows;
-            } else {
-                app.log_scroll_offset = app.log_scroll_max_offset;
-            }
         }
         ActiveComponent::Details => {
             if app.details_scroll_offset + app.visible_rows < app.details_scroll_max_offset {
@@ -604,10 +582,6 @@ async fn handle_details_input(app: &mut App, key: KeyCode) -> io::Result<()> {
 }
 
 async fn handle_logs_input(app: &mut App, key: KeyCode) -> io::Result<()> {
-    if handle_common_hotkeys(app, key).await? {
-        return Ok(());
-    }
-
     match key {
         KeyCode::Left => app.active_component = ActiveComponent::Details,
         KeyCode::Up => {
@@ -616,12 +590,16 @@ async fn handle_logs_input(app: &mut App, key: KeyCode) -> io::Result<()> {
             clear_selection(app);
             select_first_row(app);
         }
-        KeyCode::PageUp => {
-            scroll_page_up(app);
-        }
-        KeyCode::PageDown => {
-            scroll_page_down(app);
-        }
+        // Pass key events to the logger state
+        KeyCode::PageUp => app.logger_state.transition(TuiWidgetEvent::PrevPageKey),
+        KeyCode::PageDown => app.logger_state.transition(TuiWidgetEvent::NextPageKey),
+        KeyCode::Down => app.logger_state.transition(TuiWidgetEvent::DownKey),
+        KeyCode::Char('+') => app.logger_state.transition(TuiWidgetEvent::PlusKey),
+        KeyCode::Char('-') => app.logger_state.transition(TuiWidgetEvent::MinusKey),
+        KeyCode::Char(' ') => app.logger_state.transition(TuiWidgetEvent::SpaceKey),
+        KeyCode::Esc => app.logger_state.transition(TuiWidgetEvent::EscapeKey),
+        KeyCode::Char('h') => app.logger_state.transition(TuiWidgetEvent::HideKey),
+        KeyCode::Char('f') => app.logger_state.transition(TuiWidgetEvent::FocusKey),
         _ => {}
     }
     Ok(())
@@ -629,10 +607,6 @@ async fn handle_logs_input(app: &mut App, key: KeyCode) -> io::Result<()> {
 
 async fn handle_common_hotkeys(app: &mut App, key: KeyCode) -> io::Result<bool> {
     match key {
-        KeyCode::Char('c') => {
-            clear_stdout_output(app);
-            Ok(true)
-        }
         KeyCode::Char('q') => {
             app.state = AppState::ShowAbout;
             Ok(true)
@@ -670,11 +644,6 @@ fn toggle_row_selection(app: &mut App) {
     } else {
         selected_rows.insert(selected_row);
     }
-}
-
-fn clear_stdout_output(app: &mut App) {
-    let mut stdout_output = app.stdout_output.lock().unwrap();
-    stdout_output.clear();
 }
 
 async fn handle_port_forwarding(app: &mut App) -> io::Result<()> {

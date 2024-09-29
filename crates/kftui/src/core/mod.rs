@@ -1,4 +1,3 @@
-pub mod logging;
 pub mod port_forward;
 
 pub mod built_info {

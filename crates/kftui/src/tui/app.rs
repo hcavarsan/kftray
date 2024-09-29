@@ -67,7 +67,6 @@ async fn run_app<B: ratatui::backend::Backend>(
         let mut config_states = read_config_states().await.unwrap_or_default();
 
         app.update_configs(&configs, &config_states);
-        fetch_new_logs(app).await;
 
         terminal.draw(|f| {
             draw_ui(f, app, &config_states);
@@ -80,26 +79,4 @@ async fn run_app<B: ratatui::backend::Backend>(
         interval.tick().await;
     }
     Ok(())
-}
-
-async fn fetch_new_logs(app: &mut App) {
-    let new_logs = {
-        let mut buffer = app.stdout_output.lock().unwrap();
-        let new_logs = buffer.clone();
-        buffer.clear();
-        new_logs
-    };
-
-    let mut log_content = app.log_content.lock().unwrap();
-    let was_at_bottom = app.log_scroll_offset == app.log_scroll_max_offset;
-
-    log_content.push_str(&new_logs);
-
-    let log_lines: Vec<&str> = log_content.lines().collect();
-    let log_height = app.visible_rows;
-    app.log_scroll_max_offset = log_lines.len().saturating_sub(log_height);
-
-    if was_at_bottom {
-        app.log_scroll_offset = app.log_scroll_max_offset;
-    }
 }
