@@ -149,20 +149,25 @@ jobs:
             arch: arm64
             runner: ubicloud-standard-4-arm
             rust_target: aarch64-unknown-linux-gnu
+            os_name: linux
           - os: ubuntu-latest
             arch: amd64
             rust_target: x86_64-unknown-linux-gnu
+            os_name: linux
           - os: macos-latest
             arch: universal
             rust_target: universal-apple-darwin
+            os_name: macos
           - os: windows-latest
             arch: x86
             rust_target: i686-pc-windows-msvc
             msvc_arch: x86
+            os_name: windows
           - os: windows-latest
             arch: x86_64
             rust_target: x86_64-pc-windows-msvc
             msvc_arch: x64
+            os_name: windows
 
     runs-on: ${{ matrix.runner || matrix.os }}
 
@@ -266,13 +271,13 @@ jobs:
             mv ./target/release/kftui ./target/release/kftui_macos_universal
             gh release upload ${{ github.ref_name }} ./target/release/kftui_macos_universal --clobber
           elif [ "${{ matrix.os }}" == "windows-latest" ]; then
-            mv ./target/${{ matrix.rust_target }}/release/kftui.exe ./target/release/kftui_${{ matrix.arch }}.exe
-            chmod +x ./target/release/kftui_${{ matrix.arch }}.exe
-            gh release upload ${{ github.ref_name }} ./target/release/kftui_${{ matrix.arch }}.exe --clobber
+            mv ./target/${{ matrix.rust_target }}/release/kftui.exe ./target/release/kftui_${{ matrix.os_name }}_${{ matrix.arch }}.exe
+            chmod +x ./target/release/kftui_${{ matrix.os_name }}_${{ matrix.arch }}.exe
+            gh release upload ${{ github.ref_name }} ./target/release/kftui_${{ matrix.os_name }}_${{ matrix.arch }}.exe
           else
-            mv ./target/${{ matrix.rust_target }}/release/kftui ./target/release/kftui_${{ matrix.arch }}
-            chmod +x ./target/release/kftui_${{ matrix.arch }}
-            gh release upload ${{ github.ref_name }} ./target/release/kftui_${{ matrix.arch }} --clobber
+            mv ./target/${{ matrix.rust_target }}/release/kftui ./target/release/kftui_${{ matrix.os_name }}_${{ matrix.arch }}
+            chmod +x ./target/release/kftui_${{ matrix.os_name }}_${{ matrix.arch }}
+            gh release upload ${{ github.ref_name }} ./target/release/kftui_${{ matrix.os_name }}_${{ matrix.arch }}
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
