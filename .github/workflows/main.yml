@@ -71,12 +71,6 @@ jobs:
       - name: Cache Rust
         uses: swatinem/rust-cache@v2
 
-      - name: Install Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "lts/*"
-          cache: "pnpm"
-
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -84,6 +78,14 @@ jobs:
           run_install: |
            - recursive: true
              args: [--frozen-lockfile]
+
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+
 
       - name: Cache pnpm modules
         uses: actions/cache@v4
@@ -178,11 +180,6 @@ jobs:
       - name: Cache Rust
         uses: swatinem/rust-cache@v2
 
-      - name: Install Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "lts/*"
-          cache: "pnpm"
 
       - name: Install pnpm
         uses: pnpm/action-setup@v4
@@ -191,6 +188,12 @@ jobs:
           run_install: |
            - recursive: true
              args: [--frozen-lockfile]
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
 
       - name: Cache pnpm modules
         uses: actions/cache@v4
