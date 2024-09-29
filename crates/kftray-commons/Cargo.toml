@@ -16,7 +16,7 @@ bytes = "1.6.0"
 dashmap = "6.0.0"
 flate2 = "1.0"
 httparse = "1.9.4"
-k8s-openapi = { version = "0.22.0", default-features = false, features = ["latest"] }
+k8s-openapi = { version = "0.23.0", default-features = false, features = ["latest"] }
 lazy_static = "1.5.0"
 log = "0.4"
 rand = "0.8.5"
@@ -26,7 +26,7 @@ tokio = { version = "1.40.0", features = ["rt-multi-thread", "macros", "full"] }
 tracing = "0.1.40"
 uuid = { version = "1.10.0", features = ["v4"] }
 dirs = "5.0.1"
-tauri = { version = "1.6", default-features = false, features = [
+tauri = { version = "1.8", default-features = false, features = [
 	"updater",
 	"api-all",
 	"macos-private-api",

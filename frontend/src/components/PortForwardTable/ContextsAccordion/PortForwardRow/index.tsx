@@ -1,3 +1,4 @@
+/* eslint-disable complexity */
 import React, { useEffect, useRef, useState } from 'react'
 
 import { ExternalLinkIcon } from '@chakra-ui/icons'

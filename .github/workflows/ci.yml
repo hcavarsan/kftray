@@ -24,19 +24,20 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install pnpm
-        uses: pnpm/action-setup@v3
-        with:
-          version: 8.15.6
 
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "21.7.1"
+          node-version: "lts/*"
           cache: "pnpm"
 
-      - name: Install pnpm dependencies
-        run: pnpm install --no-frozen-lockfile
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+          run_install: |
+           - recursive: true
+             args: [--frozen-lockfile]
 
       - name: Perform linting
         run: pnpm lint:front

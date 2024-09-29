@@ -4,7 +4,7 @@
 	"private": true,
 	"scripts": {
 		"build": "pnpm --filter @kftray/ui run build",
-		"check": "pnpm --filter @kftray/uirun check",
+		"check": "pnpm --filter @kftray/ui run check",
 		"dev": "pnpm --filter @kftray/ui run dev",
 		"format": "pnpm run format:front && pnpm run format:back",
 		"format:back": "cargo fmt",
@@ -19,6 +19,6 @@
 		"tauri": "tauri"
 	},
 	"devDependencies": {
-		"@tauri-apps/cli": "^1.6.0"
+		"@tauri-apps/cli": "^1.6.2"
 	}
 }
