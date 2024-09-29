@@ -24,13 +24,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-
-      - name: Install Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: "lts/*"
-          cache: "pnpm"
-
       - name: Install pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -38,6 +31,12 @@ jobs:
           run_install: |
            - recursive: true
              args: [--frozen-lockfile]
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "lts/*"
+          cache: "pnpm"
 
       - name: Perform linting
         run: pnpm lint:front
