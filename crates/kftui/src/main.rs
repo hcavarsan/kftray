@@ -1,3 +1,4 @@
+#![allow(clippy::needless_return)]
 mod core;
 mod tui;
 mod utils;
