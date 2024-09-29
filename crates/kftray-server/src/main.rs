@@ -137,5 +137,5 @@ async fn main() {
     }
 
     warn!("Shutdown initiated...");
-    info!("Exiting...");
+    info!("Exiting...")
 }
