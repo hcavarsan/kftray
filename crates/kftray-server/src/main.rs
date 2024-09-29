@@ -1,3 +1,4 @@
+#![allow(clippy::needless_return)]
 mod http_proxy;
 mod udp_over_tcp_proxy;
 
