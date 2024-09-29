@@ -2,13 +2,12 @@
 mod core;
 mod tui;
 mod utils;
-
-use core::logging::init_logger;
-
 use tui::run_tui;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    init_logger()?;
+    tui_logger::init_logger(log::LevelFilter::Debug).unwrap();
+    tui_logger::set_default_level(log::LevelFilter::Debug);
+
     run_tui().await
 }

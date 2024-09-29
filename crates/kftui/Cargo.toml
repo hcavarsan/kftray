@@ -58,6 +58,7 @@ kftray-commons = { path = "../kftray-commons" }
 kftray-portforward = { path = "../kftray-portforward" }
 ratatui = { version = "0.28.1", features = ["unstable-widget-ref"] }
 crossterm = { version = "0.28.1", optional = false }
+tui-logger = "0.13.1"
 
 # https://github.com/tatounee/ratatui-explorer/pull/2/files
 ratatui-explorer = { git = "https://github.com/hcavarsan/ratatui-explorer", branch = "master" }
