@@ -75,9 +75,9 @@ case "$OS" in
   macos) URL="${BASE_URL}/kftui_macos_universal" ;;
   linux|wsl)
     if [ "$ARCH" = "amd64" ]; then
-      URL="${BASE_URL}/kftui_amd64"
+      URL="${BASE_URL}/kftui_linux_amd64"
     elif [ "$ARCH" = "arm64" ]; then
-      URL="${BASE_URL}/kftui_arm64"
+      URL="${BASE_URL}/kftui_linux_arm64"
     else
       print_msg red "Error: Unsupported architecture for Linux/WSL."
       exit 1
