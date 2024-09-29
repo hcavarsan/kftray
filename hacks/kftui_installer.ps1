@@ -60,7 +60,7 @@ $BASE_URL = "https://github.com/hcavarsan/kftray/releases/download/$LATEST_RELEA
 $ARCH = if ([System.Environment]::Is64BitOperatingSystem) { "x86_64" } else { "x86" }
 
 # Set the download URL based on architecture
-$URL = "$BASE_URL/kftui_$ARCH.exe"
+$URL = "$BASE_URL/kftui_windows_$ARCH.exe"
 
 # Install kftui
 Install-Kftui -Url $URL -Filename "kftui.exe"
