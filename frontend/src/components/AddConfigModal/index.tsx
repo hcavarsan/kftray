@@ -892,7 +892,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                             label: `${port.port ? port.port + ' - ' : ''}${
                               port.name
                             }`,
-                            value: port.port,
+                            value: port.port!,
                           }))}
                           value={
                             selectedPort

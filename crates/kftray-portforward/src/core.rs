@@ -8,6 +8,10 @@ use std::time::{
 };
 
 use futures::future::join_all;
+use futures::stream::{
+    self,
+    StreamExt,
+};
 use hostsfile::HostsBuilder;
 use k8s_openapi::api::core::v1::Pod;
 use kftray_commons::config::get_config;
@@ -790,49 +794,81 @@ pub async fn stop_proxy_forward(
     Ok(stop_result)
 }
 
-pub async fn retrieve_service_configs(context: &str) -> Result<Vec<Config>, String> {
-    let (client, _, _) = create_client_with_specific_context(None, Some(context))
+pub async fn retrieve_service_configs(
+    context: &str, kubeconfig: Option<String>,
+) -> Result<Vec<Config>, String> {
+    let (client_opt, _, _) = create_client_with_specific_context(kubeconfig.clone(), Some(context))
         .await
         .map_err(|e| e.to_string())?;
 
-    let client = client.ok_or_else(|| "Client not created".to_string())?;
+    let client = client_opt.ok_or_else(|| "Client not created".to_string())?;
     let annotation = "kftray.app/configs";
 
     let namespaces = list_all_namespaces(client.clone())
         .await
         .map_err(|e| e.to_string())?;
-    let mut configs = Vec::new();
 
-    for namespace in namespaces {
-        let services = get_services_with_annotation(client.clone(), &namespace, annotation)
-            .await
-            .map_err(|e| e.to_string())?;
-        for (service_name, annotations, ports) in services {
-            if let Some(configs_str) = annotations.get(annotation) {
-                configs.extend(parse_configs(
-                    configs_str,
-                    context,
-                    &namespace,
-                    &service_name,
-                    &ports,
-                ));
-            } else {
-                configs.extend(create_default_configs(
-                    context,
-                    &namespace,
-                    &service_name,
-                    &ports,
-                ));
+    let concurrency_limit = 10;
+
+    stream::iter(namespaces)
+        .map(|namespace| {
+            let client = client.clone();
+            let context = context.to_string();
+            let kubeconfig = kubeconfig.clone();
+            let annotation = annotation.to_string();
+            async move {
+                let services =
+                    get_services_with_annotation(client.clone(), &namespace, &annotation)
+                        .await
+                        .map_err(|e| e.to_string())?;
+
+                let mut namespace_configs = Vec::new();
+
+                for (service_name, annotations, ports) in services {
+                    if let Some(configs_str) = annotations.get(&annotation) {
+                        namespace_configs.extend(parse_configs(
+                            configs_str,
+                            &context,
+                            &namespace,
+                            &service_name,
+                            &ports,
+                            kubeconfig.clone(),
+                        ));
+                    } else {
+                        namespace_configs.extend(create_default_configs(
+                            &context,
+                            &namespace,
+                            &service_name,
+                            &ports,
+                            kubeconfig.clone(),
+                        ));
+                    }
+                }
+
+                Ok(namespace_configs)
             }
-        }
-    }
-
-    Ok(configs)
+        })
+        .buffer_unordered(concurrency_limit)
+        .fold(
+            Ok(Vec::new()),
+            |mut acc: Result<Vec<Config>, String>, result: Result<Vec<Config>, String>| async {
+                match result {
+                    Ok(mut namespace_configs) => {
+                        acc.as_mut().unwrap().append(&mut namespace_configs)
+                    }
+                    Err(e) => {
+                        eprintln!("Error processing namespace: {}", e);
+                    }
+                }
+                acc
+            },
+        )
+        .await
 }
 
 fn parse_configs(
     configs_str: &str, context: &str, namespace: &str, service_name: &str,
-    ports: &HashMap<String, i32>,
+    ports: &HashMap<String, i32>, kubeconfig: Option<String>,
 ) -> Vec<Config> {
     configs_str
         .split(',')
@@ -852,7 +888,7 @@ fn parse_configs(
             Some(Config {
                 id: None,
                 context: context.to_string(),
-                kubeconfig: None,
+                kubeconfig: kubeconfig.clone(),
                 namespace: namespace.to_string(),
                 service: Some(service_name.to_string()),
                 alias: Some(alias),
@@ -868,13 +904,14 @@ fn parse_configs(
 
 fn create_default_configs(
     context: &str, namespace: &str, service_name: &str, ports: &HashMap<String, i32>,
+    kubeconfig: Option<String>,
 ) -> Vec<Config> {
     ports
         .iter()
         .map(|(_port_name, &port)| Config {
             id: None,
             context: context.to_string(),
-            kubeconfig: None,
+            kubeconfig: kubeconfig.clone(),
             namespace: namespace.to_string(),
             service: Some(service_name.to_string()),
             alias: Some(service_name.to_string()),
