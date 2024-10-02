@@ -16,17 +16,20 @@
   <br><br>
 </div>
 
+
 <p align="center">
 
   kftray and kftui are independent, cross-platform applications. They help you set up and manage multiple port-forwarding settings easily. Both apps are part of the same open-source project and aim to make working with Kubernetes easier. kftray has a desktop interface, while kftui has a terminal interface, so you can choose the one that suits you best.
 
 </p>
 
-## ❓ Why
+## Why
 
 `kftray` and `kftui` were made to fix common problems with Kubernetes port forwarding. The usual kubectl port-forward command can be unreliable. For example, if a pod dies, it needs manual reconnection. It also has trouble setting up many port forwards at once and doesn't support UDP services.
 
 `kftray` and `kftui` solve these issues by being more reliable and easier to use. They automatically reconnect to running pods if one fails, allow setting up multiple port forwards with one click, and support both TCP and UDP protocols. kftray also has extra features like HTTP logs tracing and GitHub sync to make workflows smoother.
+
+<br>
 
 <br>
 
@@ -47,8 +50,11 @@
   </table>
 </div>
 
+<br>
+<br>
 
-## ✨ Features
+
+## Features
 
 - **Resilient Port Forwarding Connection:** Ensures continuous service even if a pod dies by reconnecting to another running pod automatically.
 - **One-Click Multiple Port Forwards:** Allows for the setup of several port forwarding instances simultaneously with a single click.
@@ -57,6 +63,8 @@
 - **HTTP Logs Tracing:** Enable or disable HTTP logs for specific configurations to save the requests and responses in a local log file. _(Currently available only in the kftray desktop app)_ - [Blog Post](https://kftray.app/blog/posts/6-debug-http-traffics-kftray)
 - **GitHub Sync:** Keep your configurations saved on GitHub and share or synchronize them in a GitOps style. _(Currently available only in the kftray desktop app)_
 - **Auto Import:** Automatically import Kubernetes service configurations based on specific annotations. An example with an explanation can be found in this repo: https://github.com/hcavarsan/kftray-k8s-tf-example
+
+<br>
 
 <div align="center">
 
@@ -72,6 +80,8 @@
 | Auto Import with k8s Annotations             | ✔️                   | ✔️                  |
 
 </div>
+
+<br>
 
 ## kftray - Desktop App
 
