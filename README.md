@@ -1,6 +1,6 @@
 <div align="center">
   <br>
-  <img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/logo.png" width="128px" alt="KFtray Logo" />
+  <img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/logo.png" width="128px" alt="kftray Logo" />
   <br><br>
   <a href="https://kftray.app"><strong>Visit kftray.app »</strong></a>
   <br><br>
@@ -18,15 +18,15 @@
 
 <p align="center">
 
-  KFtray and KFtui are independent, cross-platform applications. They help you set up and manage multiple port-forwarding settings easily. Both apps are part of the same open-source project and aim to make working with Kubernetes easier. KFtray has a desktop interface, while KFtui has a terminal interface, so you can choose the one that suits you best.
+  kftray and kftui are independent, cross-platform applications. They help you set up and manage multiple port-forwarding settings easily. Both apps are part of the same open-source project and aim to make working with Kubernetes easier. kftray has a desktop interface, while kftui has a terminal interface, so you can choose the one that suits you best.
 
 </p>
 
 ## ❓ Why
 
-KFtray and KFtui were made to fix common problems with Kubernetes port forwarding. The usual kubectl port-forward command can be unreliable. For example, if a pod dies, it needs manual reconnection. It also has trouble setting up many port forwards at once and doesn't support UDP services.
+`kftray` and `kftui` were made to fix common problems with Kubernetes port forwarding. The usual kubectl port-forward command can be unreliable. For example, if a pod dies, it needs manual reconnection. It also has trouble setting up many port forwards at once and doesn't support UDP services.
 
-KFtray and KFtui solve these issues by being more reliable and easier to use. They automatically reconnect to running pods if one fails, allow setting up multiple port forwards with one click, and support both TCP and UDP protocols. KFtray also has extra features like HTTP logs tracing and GitHub sync to make workflows smoother.
+`kftray` and `kftui` solve these issues by being more reliable and easier to use. They automatically reconnect to running pods if one fails, allow setting up multiple port forwards with one click, and support both TCP and UDP protocols. kftray also has extra features like HTTP logs tracing and GitHub sync to make workflows smoother.
 
 <br>
 
@@ -48,32 +48,19 @@ KFtray and KFtui solve these issues by being more reliable and easier to use. Th
 </div>
 
 
-## 📑 Table of Contents
-
-- [✨ Features](#-features)
-- [🗂 Features Matrix](#-features-matrix)
-- [🛠 Installation](#-installation)
-- [📚 Usage](#-usage)
-- [🛠️ Build from source](#️-build-from-source)
-- [🏗 Architecture](#-architecture)
-- [👥 Contributing](#-contributing)
-- [📄 License](#-license)
-
 ## ✨ Features
 
 - **Resilient Port Forwarding Connection:** Ensures continuous service even if a pod dies by reconnecting to another running pod automatically.
 - **One-Click Multiple Port Forwards:** Allows for the setup of several port forwarding instances simultaneously with a single click.
 - **Independent of Kubectl:** Directly interfaces with the Kubernetes API, eliminating the need for `kubectl`.
 - **Multi-Protocol Support:** Enables access to internal or external servers through a Proxy Relay server deployed in a Kubernetes cluster, including TCP and UDP port forwarding.
-- **HTTP Logs Tracing:** Enable or disable HTTP logs for specific configurations to save the requests and responses in a local log file. _(Currently available only in the KFtray desktop app)_ - [Blog Post](https://kftray.app/blog/posts/6-debug-http-traffics-kftray)
-- **GitHub Sync:** Keep your configurations saved on GitHub and share or synchronize them in a GitOps style. _(Currently available only in the KFtray desktop app)_
+- **HTTP Logs Tracing:** Enable or disable HTTP logs for specific configurations to save the requests and responses in a local log file. _(Currently available only in the kftray desktop app)_ - [Blog Post](https://kftray.app/blog/posts/6-debug-http-traffics-kftray)
+- **GitHub Sync:** Keep your configurations saved on GitHub and share or synchronize them in a GitOps style. _(Currently available only in the kftray desktop app)_
 - **Auto Import:** Automatically import Kubernetes service configurations based on specific annotations. An example with an explanation can be found in this repo: https://github.com/hcavarsan/kftray-k8s-tf-example
-
-## 🗂 Features Matrix
 
 <div align="center">
 
-| Feature                                      | KFtray (Desktop App) | KFtui (Terminal UI) |
+| Feature                                      | kftray (Desktop App) | kftui (Terminal UI) |
 |----------------------------------------------|----------------------|---------------------|
 | Resilient Port Forwarding Connection         | ✔️                   | ✔️                  |
 | One-Click Multiple Port Forwards             | ✔️                   | ✔️                  |
@@ -86,35 +73,31 @@ KFtray and KFtui solve these issues by being more reliable and easier to use. Th
 
 </div>
 
-## 🛠 Installation
+## kftray - Desktop App
 
-- **KFtray Desktop App:** Check [INSTALL.md](https://github.com/hcavarsan/kftray/tree/main/docs/kftray/INSTALL.md).
-- **KFtui:** Check [INSTALL.md](https://github.com/hcavarsan/kftray/tree/main/docs/kftui/INSTALL.md).
+- [INSTALL.md](https://github.com/hcavarsan/kftray/tree/main/docs/kftui/INSTALL.md)
+- [USAGE.md](https://github.com/hcavarsan/kftray/tree/main/docs/kftray/USAGE.md)
+- [BUILD.md](https://github.com/hcavarsan/kftray/tree/main/docs/kftray/BUILD.md)
 
-## 📚 Usage
+## kftui - Terminal User Interface
 
-- **KFtray Desktop App:** Check [USAGE.md](https://github.com/hcavarsan/kftray/tree/main/docs/kftray/USAGE.md).
-- **KFtui:** Check [USAGE.md](https://github.com/hcavarsan/kftray/tree/main/docs/kftui/USAGE.md).
+- [INSTALL.md](https://github.com/hcavarsan/kftray/tree/main/docs/kftui/INSTALL.md)
+- [USAGE.md](https://github.com/hcavarsan/kftray/tree/main/docs/kftui/USAGE.md)
+- [BUILD.md](https://github.com/hcavarsan/kftray/tree/main/docs/kftui/BUILD.md)
 
-##  🛠️ Build from source
+## kftray server - Proxy Relay Server
 
-- **KFtray Desktop App:** Check [BUILD.md](https://github.com/hcavarsan/kftray/tree/main/docs/kftray/BUILD.md).
-- **KFtui:** Check [BUILD.md](https://github.com/hcavarsan/kftray/tree/main/docs/kftui/BUILD.md).
+- [ARCH.md](https://github.com/hcavarsan/kftray/tree/main/docs/ARCH.md).
 
-## 🏗 Architecture
-
-For an overall architectural review, check [ARCH.md](https://github.com/hcavarsan/kftray/tree/main/docs/ARCH.md).
-
-## 👥 Contributing
+## Contributing
 
 - **Pull Requests:** Feel free to create pull requests for bug fixes, new features, or improvements.
 - **Issues:** Report bugs, suggest new features, or ask questions.
 - **Feedback:** Your feedback helps improve kftray.
 
-## 📄 License
+##  License
 
-KFtray is available under the [MIT License](LICENSE.md). See the LICENSE file for full details.
-
+kftray is available under the [MIT License](LICENSE.md). See the LICENSE file for full details.
 
 ## Star History
 
