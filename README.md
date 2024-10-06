@@ -27,7 +27,7 @@
 
 `kftray` and `kftui` were made to fix common problems with Kubernetes port forwarding. The usual kubectl port-forward command can be unreliable. For example, if a pod dies, it needs manual reconnection. It also has trouble setting up many port forwards at once and doesn't support UDP services.
 
-`kftray` and `kftui` solve these issues by being more reliable and easier to use. They automatically reconnect to running pods if one fails, allow setting up multiple port forwards with one click, and support both TCP and UDP protocols. kftray also has extra features like HTTP logs tracing and GitHub sync to make workflows smoother.
+They automatically reconnect to running pods if one fails, also it allow setting up multiple port forwards with one click, and support both TCP and UDP protocols. kftray also has extra features like HTTP logs tracing and GitHub sync to make workflows smoother.
 
 <br>
 
