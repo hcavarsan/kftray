@@ -2691,7 +2691,7 @@ dependencies = [
  "openssl",
  "openssl-sys",
  "rand 0.8.5",
- "secrecy",
+ "secrecy 0.10.3",
  "serde",
  "serde_json",
  "tokio",
@@ -2835,7 +2835,7 @@ dependencies = [
  "rand 0.8.5",
  "rustls",
  "rustls-pemfile 2.1.3",
- "secrecy",
+ "secrecy 0.8.0",
  "serde",
  "serde_json",
  "serde_yaml",
@@ -4738,6 +4738,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "secrecy"
+version = "0.10.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e891af845473308773346dc847b2c23ee78fe442e0472ac50e22a18a93d3ae5a"
+dependencies = [
+ "zeroize",
+]
+
+[[package]]
 name = "security-framework"
 version = "2.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4821,9 +4830,9 @@ dependencies = [
 
 [[package]]
 name = "serde_json"
-version = "1.0.128"
+version = "1.0.129"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6ff5456707a1de34e7e37f2a6fd3d3f808c318259cbd01ab6377795054b483d8"
+checksum = "6dbcf9b78a125ee667ae19388837dd12294b858d101fdd393cb9d5501ef09eb2"
 dependencies = [
  "indexmap 2.5.0",
  "itoa 1.0.11",
