@@ -103,13 +103,13 @@ async fn start_port_forwarding(config: Config) -> Result<(), String> {
     let http_log_state = Arc::new(HttpLogState::new());
 
     info!(
-        "Starting workload type '{}' for config: {:?}",
+        "Starting workload type '{:?}' for config: {:?}",
         config.workload_type, config.alias
     );
 
     let configs = vec![config.clone()];
-    let forward_result = match config.workload_type.as_str() {
-        "proxy" => deploy_and_forward_pod(configs, http_log_state).await,
+    let forward_result = match config.workload_type.as_deref() {
+        Some("proxy") => deploy_and_forward_pod(configs, http_log_state).await,
         _ => start_port_forward(configs, protocol, http_log_state).await,
     };
 

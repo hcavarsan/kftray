@@ -63,8 +63,8 @@ pub async fn start_port_forward(
     let mut child_handles = Vec::new();
 
     for config in configs.iter() {
-        let selector = match config.workload_type.as_str() {
-            "pod" => TargetSelector::PodLabel(config.target.clone().unwrap_or_default()),
+        let selector = match config.workload_type.as_deref() {
+            Some("pod") => TargetSelector::PodLabel(config.target.clone().unwrap_or_default()),
             _ => TargetSelector::ServiceName(config.service.clone().unwrap_or_default()),
         };
 
@@ -76,7 +76,7 @@ pub async fn start_port_forward(
 
         log::debug!("Remote Port: {:?}", config.remote_port);
         log::debug!("Local Port: {:?}", config.local_port);
-        if config.workload_type.as_str() == "pod" {
+        if config.workload_type.as_deref() == Some("pod") {
             log::info!("Attempting to forward to pod label: {:?}", &config.target);
         } else {
             log::info!("Attempting to forward to service: {:?}", &config.service);
@@ -91,7 +91,7 @@ pub async fn start_port_forward(
             context_name,
             kubeconfig.flatten(),
             config.id.unwrap_or_default(),
-            config.workload_type.clone(),
+            config.workload_type.clone().unwrap_or_default(),
         )
         .await;
 
@@ -114,7 +114,7 @@ pub async fn start_port_forward(
                             "{} port forwarding is set up on local port: {:?} for {}: {:?}",
                             protocol.to_uppercase(),
                             actual_local_port,
-                            if config.workload_type.as_str() == "pod" {
+                            if config.workload_type.as_deref() == Some("pod") {
                                 "pod label"
                             } else {
                                 "service"
@@ -216,7 +216,7 @@ pub async fn start_port_forward(
                         let error_message = format!(
                             "Failed to start {} port forwarding for {} {}: {}",
                             protocol.to_uppercase(),
-                            if config.workload_type.as_str() == "pod" {
+                            if config.workload_type.as_deref() == Some("pod") {
                                 "pod label"
                             } else {
                                 "service"
@@ -232,7 +232,7 @@ pub async fn start_port_forward(
             Err(e) => {
                 let error_message = format!(
                     "Failed to create PortForward for {} {}: {}",
-                    if config.workload_type.as_str() == "pod" {
+                    if config.workload_type.as_deref() == Some("pod") {
                         "pod label"
                     } else {
                         "service"
@@ -268,20 +268,29 @@ pub async fn start_port_forward(
 pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
     info!("Attempting to stop all port forwards");
 
-    let mut responses = Vec::new();
-
+    let mut responses = Vec::with_capacity(1024); // Preallocate a reasonably large vector to avoid frequent reallocations
     CANCEL_NOTIFIER.notify_waiters();
 
-    let handle_map: HashMap<String, JoinHandle<()>> =
-        CHILD_PROCESSES.lock().unwrap().drain().collect();
+    let handle_map: HashMap<String, JoinHandle<()>> = {
+        let mut processes = CHILD_PROCESSES.lock().unwrap();
+        processes.drain().collect()
+    };
 
-    let configs_result = kftray_commons::utils::config::get_configs().await;
-    if let Err(e) = configs_result {
-        let error_message = format!("Failed to retrieve configs: {}", e);
-        error!("{}", error_message);
-        return Err(error_message);
-    }
-    let configs = configs_result.unwrap();
+    let configs = match kftray_commons::utils::config::get_configs().await {
+        Ok(configs) => configs,
+        Err(e) => {
+            let error_message = format!("Failed to retrieve configs: {}", e);
+            error!("{}", error_message);
+            return Err(error_message);
+        }
+    };
+
+    let config_map: HashMap<i64, &Config> = configs
+        .iter()
+        .filter_map(|c| c.id.map(|id| (id, c)))
+        .collect();
+
+    let empty_str = String::new();
 
     for (composite_key, handle) in handle_map.iter() {
         let ids: Vec<&str> = composite_key.split('_').collect();
@@ -297,10 +306,7 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
         let service_id = ids[1];
         let config_id_parsed = config_id_str.parse::<i64>().unwrap_or_default();
 
-        let config = configs
-            .iter()
-            .find(|c| c.id.map_or(false, |id| id == config_id_parsed));
-        if let Some(config) = config {
+        if let Some(config) = config_map.get(&config_id_parsed) {
             if config.domain_enabled.unwrap_or_default() {
                 let hostfile_comment =
                     format!("kftray custom host for {} - {}", service_id, config_id_str);
@@ -311,12 +317,12 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
                     responses.push(CustomResponse {
                         id: Some(config_id_parsed),
                         service: service_id.to_string(),
-                        namespace: String::new(),
+                        namespace: empty_str.clone(),
                         local_port: 0,
                         remote_port: 0,
-                        context: String::new(),
-                        protocol: String::new(),
-                        stdout: String::new(),
+                        context: empty_str.clone(),
+                        protocol: empty_str.clone(),
+                        stdout: empty_str.clone(),
                         stderr: e.to_string(),
                         status: 1,
                     });
@@ -331,28 +337,36 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
             "Aborting port forwarding task for config_id: {}",
             config_id_str
         );
-
         handle.abort();
 
         responses.push(CustomResponse {
             id: Some(config_id_parsed),
             service: service_id.to_string(),
-            namespace: String::new(),
+            namespace: empty_str.clone(),
             local_port: 0,
             remote_port: 0,
-            context: String::new(),
-            protocol: String::new(),
+            context: empty_str.clone(),
+            protocol: empty_str.clone(),
             stdout: String::from("Service port forwarding has been stopped"),
-            stderr: String::new(),
+            stderr: empty_str.clone(),
             status: 0,
         });
     }
 
-    let mut pod_deletion_tasks = Vec::new();
-    for config in configs.iter() {
-        if let Some(kubeconfig) = config.kubeconfig.clone() {
+    let pod_deletion_tasks: Vec<_> = configs
+        .iter()
+        .filter(|config| {
+            config.protocol == "udp" || matches!(config.workload_type.as_deref(), Some("proxy"))
+        })
+        .filter_map(|config| {
+            config
+                .kubeconfig
+                .clone()
+                .map(|kubeconfig| (config, kubeconfig))
+        })
+        .map(|(config, kubeconfig)| {
             let config_id_str = config.id.unwrap_or_default();
-            let pod_deletion_task = async move {
+            async move {
                 match create_client_with_specific_context(
                     Some(kubeconfig.clone()),
                     Some(&config.context),
@@ -363,6 +377,7 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
                         let pods: Api<Pod> = Api::all(client.clone());
                         let lp =
                             ListParams::default().labels(&format!("config_id={}", config_id_str));
+
                         info!(
                             "Listing pods with label selector: config_id={}",
                             config_id_str
@@ -373,15 +388,13 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
                                 let username = whoami::username();
                                 let pod_prefix = format!("kftray-forward-{}", username);
 
-                                for pod in pod_list.items.into_iter() {
+                                for pod in pod_list.items {
                                     if let Some(pod_name) = pod.metadata.name {
-                                        info!("Found pod: {}", pod_name);
                                         if pod_name.starts_with(&pod_prefix) {
                                             info!("Deleting pod: {}", pod_name);
                                             let namespace = pod
                                                 .metadata
                                                 .namespace
-                                                .clone()
                                                 .unwrap_or_else(|| "default".to_string());
                                             let pods_in_namespace: Api<Pod> =
                                                 Api::namespaced(client.clone(), &namespace);
@@ -389,6 +402,7 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
                                                 grace_period_seconds: Some(0),
                                                 ..DeleteParams::default()
                                             };
+
                                             if let Err(e) =
                                                 pods_in_namespace.delete(&pod_name, &dp).await
                                             {
@@ -404,43 +418,46 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
                                 }
                             }
                             Err(e) => {
-                                error!("Error listing pods for config_id {}: {}", config_id_str, e);
+                                error!("Error listing pods for config_id {}: {}", config_id_str, e)
                             }
                         }
                     }
                     Ok((None, _, _)) => {
-                        error!("Client not created for kubeconfig: {:?}", kubeconfig);
+                        error!("Client not created for kubeconfig: {:?}", kubeconfig)
                     }
-                    Err(e) => {
-                        error!("Failed to create Kubernetes client: {}", e);
-                    }
+                    Err(e) => error!("Failed to create Kubernetes client: {}", e),
                 }
 
                 Ok::<(), String>(())
-            };
-
-            pod_deletion_tasks.push(pod_deletion_task);
-        }
-    }
+            }
+        })
+        .collect();
 
     join_all(pod_deletion_tasks).await;
 
-    for config in configs.iter() {
-        let config_id_parsed = config.id.unwrap_or_default();
-        let config_state = ConfigState {
-            id: None,
-            config_id: config_id_parsed,
-            is_running: false,
-        };
-        if let Err(e) = update_config_state(&config_state).await {
-            error!("Failed to update config state: {}", e);
-        } else {
-            info!(
-                "Successfully updated config state for config_id: {}",
-                config_id_parsed
-            );
-        }
-    }
+    let update_config_tasks: Vec<_> = configs
+        .iter()
+        .map(|config| {
+            let config_id_parsed = config.id.unwrap_or_default();
+            async move {
+                let config_state = ConfigState {
+                    id: None,
+                    config_id: config_id_parsed,
+                    is_running: false,
+                };
+                if let Err(e) = update_config_state(&config_state).await {
+                    error!("Failed to update config state: {}", e);
+                } else {
+                    info!(
+                        "Successfully updated config state for config_id: {}",
+                        config_id_parsed
+                    );
+                }
+            }
+        })
+        .collect();
+
+    join_all(update_config_tasks).await;
 
     info!(
         "Port forward stopping process completed with {} responses",
@@ -895,7 +912,7 @@ fn parse_configs(
                 local_port: Some(local_port),
                 remote_port: Some(target_port as u16),
                 protocol: "tcp".to_string(),
-                workload_type: "service".to_string(),
+                workload_type: Some("service".to_string()),
                 ..Default::default()
             })
         })
@@ -918,7 +935,7 @@ fn create_default_configs(
             local_port: Some(port as u16),
             remote_port: Some(port as u16),
             protocol: "tcp".to_string(),
-            workload_type: "service".to_string(),
+            workload_type: Some("service".to_string()),
             ..Default::default()
         })
         .collect()
