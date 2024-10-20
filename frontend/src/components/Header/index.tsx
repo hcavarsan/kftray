@@ -132,28 +132,39 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
         </Tooltip>
       </Flex>
 
-      <Flex alignItems='center'>
-        <InputGroup size='xs' width='200px' mt='1'>
-          <InputLeftElement pointerEvents='none'>
-            <SearchIcon color='gray.300' />
-          </InputLeftElement>
-          <Input
-            height='25px'
-            type='text'
-            placeholder='Search'
-            value={search}
-            onChange={handleSearchChange}
-            borderRadius='md'
-          />
-        </InputGroup>
-
-        <Box mt={-5} mr={-4} position='relative'>
-          <Tooltip label='Close Window'>
+      <Flex alignItems='center' direction={'row'} mt='0'>
+        <Flex
+          alignItems='center'
+          justifyContent='flex-end'
+          direction={'row'}
+          mt={-1}
+          mr={1}
+        >
+          <InputGroup size='xs' width='200px' mt='1'>
+            <InputLeftElement pointerEvents='none'>
+              <SearchIcon color='gray.300' />
+            </InputLeftElement>
+            <Input
+              height='25px'
+              type='text'
+              placeholder='Search'
+              value={search}
+              onChange={handleSearchChange}
+              borderRadius='md'
+            />
+          </InputGroup>
+        </Flex>
+        <Flex alignItems='center' justifyContent='flex-end' direction={'row'}>
+          <Tooltip
+            label={isPinned ? 'Unpin Window' : 'Pin Window'}
+            bg='gray.300'
+            fontSize='xs'
+            lineHeight='tight'
+          >
             <IconButton
-              mt={-1}
-              aria-label='Close Window'
-              icon={<MdClose />}
-              onClick={handleStopPortForwardsAndExit}
+              icon={isPinned ? <TiPin /> : <TiPinOutline />}
+              aria-label='Pin Window'
+              onClick={togglePinWindow}
               size='sm'
               variant='ghost'
               color='gray.500'
@@ -162,21 +173,24 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
             />
           </Tooltip>
 
-          <Box position='absolute' top='15px' left='0'>
-            <Tooltip label={isPinned ? 'Unpin Window' : 'Pin Window'}>
-              <IconButton
-                aria-label='Pin Window'
-                icon={isPinned ? <TiPin /> : <TiPinOutline />}
-                onClick={togglePinWindow}
-                size='sm'
-                variant='ghost'
-                color='gray.500'
-                _hover={{ backgroundColor: 'transparent' }}
-                _active={{ backgroundColor: 'transparent' }}
-              />
-            </Tooltip>
-          </Box>
-        </Box>
+          <Tooltip
+            label='Close Window'
+            bg='gray.300'
+            fontSize='xs'
+            lineHeight='tight'
+          >
+            <IconButton
+              icon={<MdClose />}
+              aria-label='Close Window'
+              onClick={handleStopPortForwardsAndExit}
+              size='sm'
+              variant='ghost'
+              color='gray.500'
+              _hover={{ backgroundColor: 'transparent' }}
+              _active={{ backgroundColor: 'transparent' }}
+            />
+          </Tooltip>
+        </Flex>
       </Flex>
     </Flex>
   )
