@@ -25,7 +25,7 @@ tauri = { version = "1.8", default-features = false, features = [
 	"icon-png",
 	"devtools",
 ] }
-tauri-plugin-positioner = { version = "1.0.5", features = ["system-tray"] }
+tauri-plugin-positioner = { version = "2.0.0", features = ["system-tray"] }
 tokio = { version = "1.40.0", features = ["rt-multi-thread", "macros", "full"] }
 sqlx = { version = "0.8.1", features = ["sqlite", "runtime-tokio-native-tls"] }
 dirs = "5.0.1"
