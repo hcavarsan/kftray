@@ -63,12 +63,7 @@ fn main() {
         .manage(http_log_state.clone())
         .setup(move |app| {
             let app_handle = app.app_handle();
-
             let app_handle_clone = app_handle.clone();
-            tauri::async_runtime::spawn(async move {
-                alert_multiple_configs(app_handle_clone).await;
-            });
-
             tauri::async_runtime::spawn(async move {
                 if let Err(e) =
                     kftray_commons::utils::config::clean_all_custom_hosts_entries().await
@@ -83,6 +78,10 @@ fn main() {
                 if let Err(e) = kftray_commons::utils::migration::migrate_configs().await {
                     error!("Failed to migrate configs: {}", e);
                 }
+            });
+
+            tauri::async_runtime::spawn(async move {
+                alert_multiple_configs(app_handle_clone).await;
             });
 
             tauri::async_runtime::spawn(async move {
@@ -130,6 +129,7 @@ fn main() {
             commands::portforward::start_port_forward_udp_cmd,
             commands::portforward::stop_port_forward_cmd,
             commands::portforward::stop_all_port_forward_cmd,
+            commands::portforward::handle_exit_app,
             commands::kubecontext::list_kube_contexts,
             commands::kubecontext::list_namespaces,
             commands::kubecontext::list_services,
