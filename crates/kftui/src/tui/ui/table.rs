@@ -76,7 +76,7 @@ pub fn draw_configs_table(
 
             Row::new(vec![
                 Cell::from(config.alias.clone().unwrap_or_default()),
-                Cell::from(config.workload_type.clone()),
+                Cell::from(config.workload_type.clone().unwrap_or_default()),
                 Cell::from(
                     config
                         .local_port
@@ -228,7 +228,7 @@ pub fn render_details(
                 "Workload Type: ",
                 Style::default().add_modifier(Modifier::BOLD),
             ),
-            Span::raw(&config.workload_type),
+            Span::raw(config.workload_type.clone().unwrap_or_default()),
         ]),
         Line::from(vec![
             Span::styled("Protocol: ", Style::default().add_modifier(Modifier::BOLD)),

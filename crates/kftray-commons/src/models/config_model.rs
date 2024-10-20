@@ -21,7 +21,7 @@ pub struct Config {
     #[serde(default)]
     pub context: String,
     #[serde(default)]
-    pub workload_type: String,
+    pub workload_type: Option<String>,
     #[serde(default)]
     pub protocol: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -47,7 +47,7 @@ impl Default for Config {
             local_port: Some(0),
             remote_port: Some(0),
             context: "default-context".to_string(),
-            workload_type: "default-workload".to_string(),
+            workload_type: Some("default-workload".to_string()),
             protocol: "protocol".to_string(),
             remote_address: Some("default-remote-address".to_string()),
             local_address: Some("127.0.0.1".to_string()),

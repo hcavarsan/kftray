@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { useCallback, useEffect, useState } from 'react'
 
 import { Box, useColorModeValue, VStack } from '@chakra-ui/react'
@@ -351,16 +352,22 @@ const KFTray = () => {
 
   const initiatePortForwarding = async (configsToStart: Config[]) => {
     setIsInitiating(true)
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const errors: { id: number; error: any }[] = []
 
-    for (const config of configsToStart) {
+    const portForwardingPromises = configsToStart.map(async config => {
       try {
         await handlePortForwarding(config)
+
+        return { id: config.id, error: null }
       } catch (error) {
-        errors.push({ id: config.id, error })
+        return { id: config.id, error }
       }
-    }
+    })
+
+    const results = await Promise.allSettled(portForwardingPromises)
+
+    const errors = results
+    .map(result => (result.status === 'fulfilled' ? result.value : null))
+    .filter(result => result && result.error) as { id: number; error: any }[]
 
     if (errors.length > 0) {
       const errorMessage = errors
@@ -376,7 +383,6 @@ const KFTray = () => {
 
     setIsInitiating(false)
   }
-
   const handlePortForwarding = async (config: Config) => {
     switch (config.workload_type) {
     case 'service':

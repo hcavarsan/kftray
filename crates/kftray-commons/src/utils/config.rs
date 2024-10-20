@@ -281,9 +281,10 @@ fn prepare_config(mut config: Config) -> Config {
     }
 
     if config.alias.as_deref() == Some("") || config.alias.is_none() {
+        let workload_type = config.workload_type.clone().unwrap_or_default();
         let alias = format!(
             "{}-{}-{}",
-            config.workload_type,
+            workload_type,
             config.protocol,
             config.local_port.unwrap_or_default()
         );
