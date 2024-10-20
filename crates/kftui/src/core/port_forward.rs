@@ -26,8 +26,8 @@ use crate::tui::input::{
 };
 
 pub async fn start_port_forwarding(app: &mut App, config: Config) {
-    match config.workload_type.as_str() {
-        "proxy" => {
+    match config.workload_type.as_deref() {
+        Some("proxy") => {
             if let Err(e) =
                 deploy_and_forward_pod(vec![config.clone()], Arc::new(HttpLogState::new())).await
             {
@@ -36,7 +36,7 @@ pub async fn start_port_forwarding(app: &mut App, config: Config) {
                 app.state = AppState::ShowErrorPopup;
             }
         }
-        "service" | "pod" => match config.protocol.as_str() {
+        Some("service") | Some("pod") => match config.protocol.as_str() {
             "tcp" => {
                 let log_state = Arc::new(HttpLogState::new());
                 let result = start_port_forward(vec![config.clone()], "tcp", log_state).await;
@@ -63,8 +63,8 @@ pub async fn start_port_forwarding(app: &mut App, config: Config) {
 }
 
 pub async fn stop_port_forwarding(app: &mut App, config: Config) {
-    match config.workload_type.as_str() {
-        "proxy" => {
+    match config.workload_type.as_deref() {
+        Some("proxy") => {
             if let Err(e) = stop_proxy_forward(
                 config.id.unwrap_or_default(),
                 &config.namespace,
@@ -77,7 +77,7 @@ pub async fn stop_port_forwarding(app: &mut App, config: Config) {
                 app.state = AppState::ShowErrorPopup;
             }
         }
-        "service" | "pod" => {
+        Some("service") | Some("pod") => {
             if let Err(e) = stop_port_forward(config.id.unwrap_or_default().to_string()).await {
                 error!("Failed to stop port forward: {:?}", e);
                 app.error_message = Some(format!("Failed to stop port forward: {:?}", e));
