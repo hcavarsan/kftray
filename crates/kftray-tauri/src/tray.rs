@@ -3,7 +3,6 @@ use std::time::Duration;
 
 use kftray_commons::models::window::AppState;
 use kftray_commons::models::window::SaveDialogState;
-use kftray_portforward::core;
 use log::{
     error,
     info,
@@ -19,9 +18,9 @@ use tauri::{
     SystemTraySubmenu,
 };
 use tauri_plugin_positioner::Position;
-use tokio::runtime::Runtime;
 use tokio::time::sleep;
 
+use crate::commands::portforward::handle_exit_app;
 use crate::window::{
     adjust_window_size_and_position,
     reset_window_position,
@@ -170,29 +169,13 @@ pub fn handle_run_event(app_handle: &tauri::AppHandle, event: RunEvent) {
     match event {
         RunEvent::ExitRequested { ref api, .. } => {
             api.prevent_exit();
-            stop_all_port_forwards_and_exit(app_handle);
+            tauri::async_runtime::block_on(handle_exit_app(app_handle.clone()));
         }
         RunEvent::Exit => {
-            stop_all_port_forwards_and_exit(app_handle);
+            tauri::async_runtime::block_on(handle_exit_app(app_handle.clone()));
         }
         _ => {}
     }
-}
-
-pub fn stop_all_port_forwards_and_exit(app_handle: &tauri::AppHandle) {
-    let runtime = Runtime::new().expect("Failed to create a Tokio runtime");
-
-    runtime.block_on(async {
-        match core::stop_all_port_forward().await {
-            Ok(_) => {
-                info!("Successfully stopped all port forwards.");
-            }
-            Err(err) => {
-                error!("Failed to stop port forwards: {}", err);
-            }
-        }
-    });
-    app_handle.exit(0);
 }
 
 pub fn handle_system_tray_event(app: &tauri::AppHandle, event: SystemTrayEvent) {
@@ -200,18 +183,24 @@ pub fn handle_system_tray_event(app: &tauri::AppHandle, event: SystemTrayEvent) 
 
     match event {
         SystemTrayEvent::LeftClick { .. } => {
-            let window = app.get_window("main").unwrap();
-            toggle_window_visibility(&window);
+            if let Some(window) = app.get_window("main") {
+                toggle_window_visibility(&window);
+            } else {
+                error!("Main window not found on SystemTrayEvent");
+            }
         }
         SystemTrayEvent::RightClick { .. } => {}
         SystemTrayEvent::DoubleClick { .. } => {}
         SystemTrayEvent::MenuItemClick { id, .. } => match id.as_str() {
             "quit" => {
-                stop_all_port_forwards_and_exit(app);
+                tauri::async_runtime::block_on(handle_exit_app(app.clone()));
             }
             "toggle" => {
-                let window = app.get_window("main").unwrap();
-                toggle_window_visibility(&window);
+                if let Some(window) = app.get_window("main") {
+                    toggle_window_visibility(&window);
+                } else {
+                    error!("Main window not found on SystemTrayEvent");
+                }
             }
             "reset_position" => {
                 let window = app.get_window("main").unwrap();

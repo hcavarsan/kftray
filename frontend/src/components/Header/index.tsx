@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
+import { MdClose } from 'react-icons/md'
 import { TiPin, TiPinOutline } from 'react-icons/ti'
 
 import { DragHandleIcon, SearchIcon } from '@chakra-ui/icons'
@@ -66,6 +67,14 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
     }
   }, [])
 
+  async function handleStopPortForwardsAndExit() {
+    try {
+      await invoke('handle_exit_app')
+    } catch (error) {
+      console.error('Error invoking handle_exit_app:', error)
+    }
+  }
+
   const handleMouseEnter = () => setTooltipOpen(true)
   const handleMouseLeave = () => setTooltipOpen(false)
 
@@ -122,7 +131,8 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
           <Image src={logo} alt='Kftray Logo' boxSize='32px' ml={3} mt={0.5} />
         </Tooltip>
       </Flex>
-      <Flex alignItems='center' justifyContent='flex-end'>
+
+      <Flex alignItems='center'>
         <InputGroup size='xs' width='200px' mt='1'>
           <InputLeftElement pointerEvents='none'>
             <SearchIcon color='gray.300' />
@@ -136,18 +146,14 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
             borderRadius='md'
           />
         </InputGroup>
-        <Box mt={-7} mr={-4}>
-          <Tooltip
-            label={isPinned ? 'Unpin Window' : 'Pin Window'}
-            aria-label='Pin Window'
-            fontSize='xs'
-            lineHeight='tight'
-            placement='top'
-          >
+
+        <Box mt={-5} mr={-4} position='relative'>
+          <Tooltip label='Close Window'>
             <IconButton
-              aria-label='Pin Window'
-              icon={isPinned ? <TiPin /> : <TiPinOutline />}
-              onClick={togglePinWindow}
+              mt={-1}
+              aria-label='Close Window'
+              icon={<MdClose />}
+              onClick={handleStopPortForwardsAndExit}
               size='sm'
               variant='ghost'
               color='gray.500'
@@ -155,6 +161,21 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
               _active={{ backgroundColor: 'transparent' }}
             />
           </Tooltip>
+
+          <Box position='absolute' top='15px' left='0'>
+            <Tooltip label={isPinned ? 'Unpin Window' : 'Pin Window'}>
+              <IconButton
+                aria-label='Pin Window'
+                icon={isPinned ? <TiPin /> : <TiPinOutline />}
+                onClick={togglePinWindow}
+                size='sm'
+                variant='ghost'
+                color='gray.500'
+                _hover={{ backgroundColor: 'transparent' }}
+                _active={{ backgroundColor: 'transparent' }}
+              />
+            </Tooltip>
+          </Box>
         </Box>
       </Flex>
     </Flex>
