@@ -1,6 +1,6 @@
 [package]
 name = "kftray-tauri"
-version = "0.14.8"
+version = "0.14.9"
 description = "A cross-platform system tray app for Kubernetes port-forward management"
 authors = ["Henrique Cavarsan <hencavarsan@gmail.com>"]
 license = "MIT"
