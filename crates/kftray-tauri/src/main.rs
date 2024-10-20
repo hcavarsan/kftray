@@ -9,7 +9,11 @@ use std::sync::{
 };
 
 use kftray_commons::utils::validate_configs::alert_multiple_configs;
-use log::error;
+use log::{
+    error,
+    info,
+};
+mod check;
 mod commands;
 mod logging;
 mod tray;
@@ -78,6 +82,13 @@ fn main() {
 
                 if let Err(e) = kftray_commons::utils::migration::migrate_configs().await {
                     error!("Failed to migrate configs: {}", e);
+                }
+            });
+
+            tauri::async_runtime::spawn(async move {
+                info!("Starting port management checks");
+                if let Err(e) = check::check_and_manage_ports().await {
+                    error!("Error in port management: {}", e);
                 }
             });
 
