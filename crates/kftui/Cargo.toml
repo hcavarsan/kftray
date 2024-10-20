@@ -15,7 +15,7 @@ build = "build.rs"
 [dependencies]
 
 serde_json = "1.0.128"
-tauri = { version = "1.8", default-features = false, features = [
+tauri = { version = "2.0", default-features = false, features = [
 	"updater",
 	"api-all",
 	"macos-private-api",
