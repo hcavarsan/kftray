@@ -13,8 +13,8 @@ use log::{
     error,
     info,
 };
-mod check;
 mod commands;
+mod init_check;
 mod logging;
 mod tray;
 mod window;
@@ -87,7 +87,7 @@ fn main() {
 
             tauri::async_runtime::spawn(async move {
                 info!("Starting port management checks");
-                if let Err(e) = check::check_and_manage_ports().await {
+                if let Err(e) = init_check::check_and_manage_ports().await {
                     error!("Error in port management: {}", e);
                 }
             });
