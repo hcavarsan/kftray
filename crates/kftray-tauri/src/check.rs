@@ -22,7 +22,6 @@ use netstat2::{
 };
 use sysinfo::{
     Pid,
-    ProcessesToUpdate,
     System,
 };
 
@@ -79,7 +78,7 @@ async fn handle_existing_process(
         process_name, pid, port
     );
 
-    if process_name == "kftray" || process_name == "kftui" {
+    if process_name.eq_ignore_ascii_case("kftray") || process_name.eq_ignore_ascii_case("kftui") {
         info!("Process '{}' is internal, skipping...", process_name);
     } else {
         info!(
@@ -103,21 +102,15 @@ async fn start_port_forwarding(config: Config) -> Result<(), String> {
     let protocol = config.protocol.as_str();
     let http_log_state = Arc::new(HttpLogState::new());
 
+    info!(
+        "Starting workload type '{}' for config: {:?}",
+        config.workload_type, config.alias
+    );
+
+    let configs = vec![config.clone()];
     let forward_result = match config.workload_type.as_str() {
-        "proxy" => {
-            info!(
-                "Starting workload type '{}' for config : {:?}",
-                config.workload_type, config.alias
-            );
-            deploy_and_forward_pod(vec![config.clone()], http_log_state).await
-        }
-        _ => {
-            info!(
-                "Starting workload type '{}' for config : {:?}",
-                config.workload_type, config.alias
-            );
-            start_port_forward(vec![config.clone()], protocol, http_log_state).await
-        }
+        "proxy" => deploy_and_forward_pod(configs, http_log_state).await,
+        _ => start_port_forward(configs, protocol, http_log_state).await,
     };
 
     match forward_result {
@@ -181,7 +174,7 @@ async fn find_process_by_port(port: u16) -> Option<(i32, String)> {
 
 fn get_process_name_by_pid(pid: i32) -> String {
     let mut system = System::new_all();
-    system.refresh_processes(ProcessesToUpdate::All, false);
+    system.refresh_all();
 
     if let Some(process) = system.process(Pid::from(pid as usize)) {
         process.name().to_string_lossy().into_owned()
