@@ -13,6 +13,7 @@ use kftray_portforward::core::{
 };
 use kftray_portforward::models::kube::HttpLogState;
 use log::error;
+use log::info;
 use tauri::AppHandle;
 use tauri::Manager;
 use tokio::sync::Mutex;
@@ -136,4 +137,56 @@ pub async fn stop_proxy_forward_cmd(
         .map_err(|e| format!("Failed to parse config_id: {}", e))?;
 
     stop_proxy_forward(config_id, namespace, service_name).await
+}
+
+#[tauri::command]
+pub async fn handle_exit_app(app_handle: tauri::AppHandle) {
+    let windows_map = app_handle.windows();
+
+    if let Some((_, window)) = windows_map.iter().next() {
+        let config_states = match get_configs_state().await {
+            Ok(config_states) => config_states,
+            Err(err) => {
+                error!("Failed to get config states: {:?}", err);
+                app_handle.exit(0);
+                return;
+            }
+        };
+
+        let any_running = config_states.iter().any(|config| config.is_running);
+
+        if !any_running {
+            app_handle.exit(0);
+            return;
+        }
+
+        tauri::api::dialog::ask(
+            Some(window),
+            "Exit Kftray",
+            "There are active port forwards. Do you want to stop all port forwards before closing?\n\nIf you choose 'No', the active port forwards will resume the next time you open the app.\n\nIf you choose 'Yes', the active port forwards will be stopped and the app will close.",
+            move |ask_result| {
+                tauri::async_runtime::spawn(async move {
+                    if ask_result {
+                        info!("Attempting to stop all port forwards...");
+                        match stop_all_port_forward().await {
+                            Ok(responses) => {
+                                info!("Successfully stopped all port forwards: {:?}", responses);
+                                app_handle.exit(0);
+                            }
+                            Err(err) => {
+                                error!("Failed to stop port forwards: {:?}", err);
+                                app_handle.exit(0);
+                            }
+                        };
+                    } else {
+                        info!("User chose to leave all port-forwards running.");
+                        app_handle.exit(0);
+                    }
+                });
+            },
+        );
+    } else {
+        error!("No windows found, exiting application.");
+        app_handle.exit(0);
+    }
 }
