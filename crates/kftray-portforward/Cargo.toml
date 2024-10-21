@@ -13,7 +13,7 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0.89"
 async-trait = "0.1"
-bytes = "1.7.2"
+bytes = "1.8.0"
 dashmap = "6.1.0"
 flate2 = "1.0"
 futures = "0.3.30"
@@ -40,7 +40,7 @@ openssl = { version = "0.10.66", features = ["vendored"] }
 openssl-sys = { version = "0.9.103", features = ["vendored"] }
 hyper = "1.4.1"
 base64 = "0.22.1"
-secrecy = "0.8.0"
+secrecy = "0.10.0"
 hyper-openssl = "0.10.2"
 
 [lib]

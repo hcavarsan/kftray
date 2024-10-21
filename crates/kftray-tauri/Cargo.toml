@@ -16,7 +16,7 @@ path = "src/lib.rs"
 tauri-build = { version = "1.5", features = [] }
 
 [dependencies]
-serde_json = "1.0.127"
+serde_json = "1.0.128"
 tauri = { version = "1.8", default-features = false, features = [
 	"updater",
 	"api-all",
@@ -27,7 +27,7 @@ tauri = { version = "1.8", default-features = false, features = [
 ] }
 tauri-plugin-positioner = { version = "1.0.5", features = ["system-tray"] }
 tokio = { version = "1.40.0", features = ["rt-multi-thread", "macros", "full"] }
-sqlx = { version = "0.8.1", features = ["sqlite", "runtime-tokio-native-tls"] }
+sqlx = { version = "0.8.2", features = ["sqlite", "runtime-tokio-native-tls"] }
 dirs = "5.0.1"
 reqwest = "0.12.7"
 base64 = "0.22.1"
