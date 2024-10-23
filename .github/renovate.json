@@ -33,7 +33,7 @@
 		"groupSlug": "all-minor-patch"
 	},
 	{
-		"matchPackageNames": ["kube", "k8s-openapi", "kube-runtime", "eslint", "hyper", "tauri", "tauri-plugin-positioner", "tauri-build", "@tauri-apps/cli", "@tauri-apps/api"],
+		"matchPackageNames": ["kube", "k8s-openapi", "kube-runtime", "eslint", "hyper", "tauri", "tauri-plugin-positioner", "tauri-build", "@tauri-apps/cli", "@tauri-apps/api", "ratatui"],
 		"enabled": false
 	}]
 }
