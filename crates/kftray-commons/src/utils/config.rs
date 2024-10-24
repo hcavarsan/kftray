@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use futures::stream::StreamExt;
 use hostsfile::HostsBuilder;
 use log::error;
 use portpicker::pick_unused_port;
@@ -95,15 +96,32 @@ pub async fn read_configs() -> Result<Vec<Config>, String> {
         .await
         .map_err(|e| e.to_string())?;
 
-    let mut configs = Vec::new();
+    let config_results: Vec<Result<Config, String>> = futures::stream::iter(rows.into_iter())
+        .map(|row| {
+            let id: Result<i64, String> = row.try_get("id").map_err(|e| e.to_string());
+            let data: Result<String, String> = row.try_get("data").map_err(|e| e.to_string());
 
-    for row in rows {
-        let id: i64 = row.try_get("id").map_err(|e| e.to_string())?;
-        let data: String = row.try_get("data").map_err(|e| e.to_string())?;
-        let mut config: Config =
-            serde_json::from_str(&data).map_err(|_| "Failed to decode config".to_string())?;
-        config.id = Some(id);
-        configs.push(config);
+            async move {
+                let id = id?;
+                let data = data?;
+                let mut config = serde_json::from_str::<Config>(&data)
+                    .map_err(|_| "Failed to decode config".to_string())?;
+                config.id = Some(id);
+                Ok(config)
+            }
+        })
+        .buffer_unordered(8)
+        .collect::<Vec<Result<Config, String>>>()
+        .await;
+
+    let mut configs = Vec::new();
+    for result in config_results {
+        match result {
+            Ok(config) => configs.push(config),
+            Err(e) => {
+                return Err(e);
+            }
+        }
     }
 
     Ok(configs)
