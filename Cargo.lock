@@ -3336,8 +3336,7 @@ dependencies = [
 [[package]]
 name = "netstat2"
 version = "0.9.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0faa3f4ad230fd2bf2a5dad71476ecbaeaed904b3c7e7e5b1f266c415c03761f"
+source = "git+https://github.com/hcavarsan/netstat2-rs#2192edb42c47dc0d8dc07987b2117ac51f6acec2"
 dependencies = [
  "bitflags 1.3.2",
  "byteorder",
