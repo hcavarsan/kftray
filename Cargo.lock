@@ -2710,6 +2710,7 @@ dependencies = [
  "dashmap",
  "dirs",
  "flate2",
+ "futures",
  "hostsfile",
  "httparse",
  "k8s-openapi",

@@ -37,7 +37,7 @@
     "@types/react-dom": "^18.3.0",
     "@typescript-eslint/eslint-plugin": "^8.7.0",
     "@typescript-eslint/parser": "^8.7.0",
-    "@typescript-eslint/typescript-estree": "^8.7.0",
+    "@typescript-eslint/typescript-estree": "^8.11.0",
     "core-js": "^3.38.1",
     "eslint": "^9.11.1",
     "eslint-config-prettier": "^9.1.0",
