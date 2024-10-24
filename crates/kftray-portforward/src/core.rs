@@ -7,14 +7,15 @@ use std::time::{
     UNIX_EPOCH,
 };
 
-use futures::future::join_all;
 use futures::stream::{
     self,
+    FuturesUnordered,
     StreamExt,
 };
 use hostsfile::HostsBuilder;
 use k8s_openapi::api::core::v1::Pod;
 use kftray_commons::config::get_config;
+use kftray_commons::config_state::get_configs_state;
 use kftray_commons::models::{
     config_model::Config,
     config_state_model::ConfigState,
@@ -268,12 +269,25 @@ pub async fn start_port_forward(
 pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
     info!("Attempting to stop all port forwards");
 
-    let mut responses = Vec::with_capacity(1024); // Preallocate a reasonably large vector to avoid frequent reallocations
+    let mut responses = Vec::with_capacity(1024);
     CANCEL_NOTIFIER.notify_waiters();
 
     let handle_map: HashMap<String, JoinHandle<()>> = {
         let mut processes = CHILD_PROCESSES.lock().unwrap();
         processes.drain().collect()
+    };
+
+    let running_configs_state = match get_configs_state().await {
+        Ok(states) => states
+            .into_iter()
+            .filter(|s| s.is_running)
+            .map(|s| s.config_id)
+            .collect::<Vec<i64>>(),
+        Err(e) => {
+            let error_message = format!("Failed to retrieve config states: {}", e);
+            error!("{}", error_message);
+            return Err(error_message);
+        }
     };
 
     let configs = match kftray_commons::utils::config::get_configs().await {
@@ -292,76 +306,101 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
 
     let empty_str = String::new();
 
-    for (composite_key, handle) in handle_map.iter() {
-        let ids: Vec<&str> = composite_key.split('_').collect();
-        if ids.len() != 2 {
-            error!(
-                "Invalid composite key format encountered: {}",
-                composite_key
-            );
-            continue;
-        }
+    let mut abort_handles: FuturesUnordered<_> = handle_map
+        .iter()
+        .map(|(composite_key, handle)| {
+            let ids: Vec<&str> = composite_key.split('_').collect();
 
-        let config_id_str = ids[0];
-        let service_id = ids[1];
-        let config_id_parsed = config_id_str.parse::<i64>().unwrap_or_default();
+            let empty_str_clone = empty_str.clone();
+            let config_map_cloned = config_map.clone();
 
-        if let Some(config) = config_map.get(&config_id_parsed) {
-            if config.domain_enabled.unwrap_or_default() {
-                let hostfile_comment =
-                    format!("kftray custom host for {} - {}", service_id, config_id_str);
-                let hosts_builder = HostsBuilder::new(&hostfile_comment);
-
-                if let Err(e) = hosts_builder.write() {
-                    error!("Failed to write to the hostfile for {}: {}", service_id, e);
-                    responses.push(CustomResponse {
-                        id: Some(config_id_parsed),
-                        service: service_id.to_string(),
-                        namespace: empty_str.clone(),
+            async move {
+                if ids.len() != 2 {
+                    error!(
+                        "Invalid composite key format encountered: {}",
+                        composite_key
+                    );
+                    return CustomResponse {
+                        id: None,
+                        service: empty_str_clone.clone(),
+                        namespace: empty_str_clone.clone(),
                         local_port: 0,
                         remote_port: 0,
-                        context: empty_str.clone(),
-                        protocol: empty_str.clone(),
-                        stdout: empty_str.clone(),
-                        stderr: e.to_string(),
+                        context: empty_str_clone.clone(),
+                        protocol: empty_str_clone.clone(),
+                        stdout: empty_str_clone.clone(),
+                        stderr: String::from("Invalid composite key format"),
                         status: 1,
-                    });
-                    continue;
+                    };
+                }
+
+                let config_id_str = ids[0];
+                let service_id = ids[1].to_string();
+                let config_id_parsed = config_id_str.parse::<i64>().unwrap_or_default();
+                let config_option = config_map_cloned.get(&config_id_parsed).cloned();
+
+                if let Some(config) = config_option {
+                    if config.domain_enabled.unwrap_or_default() {
+                        let hostfile_comment =
+                            format!("kftray custom host for {} - {}", service_id, config_id_str);
+                        let hosts_builder = HostsBuilder::new(&hostfile_comment);
+
+                        if let Err(e) = hosts_builder.write() {
+                            error!("Failed to write to the hostfile for {}: {}", service_id, e);
+                            return CustomResponse {
+                                id: Some(config_id_parsed),
+                                service: service_id.clone(),
+                                namespace: empty_str_clone.clone(),
+                                local_port: 0,
+                                remote_port: 0,
+                                context: empty_str_clone.clone(),
+                                protocol: empty_str_clone.clone(),
+                                stdout: empty_str_clone.clone(),
+                                stderr: e.to_string(),
+                                status: 1,
+                            };
+                        }
+                    }
+                } else {
+                    warn!("Config with id '{}' not found.", config_id_str);
+                }
+
+                info!(
+                    "Aborting port forwarding task for config_id: {}",
+                    config_id_str
+                );
+                handle.abort();
+
+                CustomResponse {
+                    id: Some(config_id_parsed),
+                    service: service_id,
+                    namespace: empty_str_clone.clone(),
+                    local_port: 0,
+                    remote_port: 0,
+                    context: empty_str_clone.clone(),
+                    protocol: empty_str_clone.clone(),
+                    stdout: String::from("Service port forwarding has been stopped"),
+                    stderr: empty_str_clone,
+                    status: 0,
                 }
             }
-        } else {
-            warn!("Config with id '{}' not found.", config_id_str);
-        }
+        })
+        .collect();
 
-        info!(
-            "Aborting port forwarding task for config_id: {}",
-            config_id_str
-        );
-        handle.abort();
-
-        responses.push(CustomResponse {
-            id: Some(config_id_parsed),
-            service: service_id.to_string(),
-            namespace: empty_str.clone(),
-            local_port: 0,
-            remote_port: 0,
-            context: empty_str.clone(),
-            protocol: empty_str.clone(),
-            stdout: String::from("Service port forwarding has been stopped"),
-            stderr: empty_str.clone(),
-            status: 0,
-        });
+    while let Some(response) = abort_handles.next().await {
+        responses.push(response);
     }
 
-    let pod_deletion_tasks: Vec<_> = configs
+    let pod_deletion_tasks: FuturesUnordered<_> = configs
         .iter()
+        .filter(|config| running_configs_state.contains(&config.id.unwrap_or_default()))
         .filter(|config| {
             config.protocol == "udp" || matches!(config.workload_type.as_deref(), Some("proxy"))
         })
         .filter_map(|config| {
             config
                 .kubeconfig
-                .clone()
+                .as_ref()
                 .map(|kubeconfig| (config, kubeconfig))
         })
         .map(|(config, kubeconfig)| {
@@ -378,20 +417,15 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
                         let lp =
                             ListParams::default().labels(&format!("config_id={}", config_id_str));
 
-                        info!(
-                            "Listing pods with label selector: config_id={}",
-                            config_id_str
-                        );
-
-                        match pods.list(&lp).await {
-                            Ok(pod_list) => {
-                                let username = whoami::username();
-                                let pod_prefix = format!("kftray-forward-{}", username);
-
-                                for pod in pod_list.items {
+                        if let Ok(pod_list) = pods.list(&lp).await {
+                            let username = whoami::username();
+                            let pod_prefix = format!("kftray-forward-{}", username);
+                            let delete_tasks: FuturesUnordered<_> = pod_list
+                                .items
+                                .into_iter()
+                                .filter_map(|pod| {
                                     if let Some(pod_name) = pod.metadata.name {
                                         if pod_name.starts_with(&pod_prefix) {
-                                            info!("Deleting pod: {}", pod_name);
                                             let namespace = pod
                                                 .metadata
                                                 .namespace
@@ -403,23 +437,28 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
                                                 ..DeleteParams::default()
                                             };
 
-                                            if let Err(e) =
-                                                pods_in_namespace.delete(&pod_name, &dp).await
-                                            {
-                                                error!(
-                                                    "Failed to delete pod {} in namespace {}: {}",
-                                                    pod_name, namespace, e
-                                                );
-                                            } else {
-                                                info!("Successfully deleted pod: {}", pod_name);
-                                            }
+                                            return Some(async move {
+                                                match pods_in_namespace.delete(&pod_name, &dp).await
+                                                {
+                                                    Ok(_) => info!(
+                                                        "Successfully deleted pod: {}",
+                                                        pod_name
+                                                    ),
+                                                    Err(e) => error!(
+                                                        "Failed to delete pod {}: {}",
+                                                        pod_name, e
+                                                    ),
+                                                }
+                                            });
                                         }
                                     }
-                                }
-                            }
-                            Err(e) => {
-                                error!("Error listing pods for config_id {}: {}", config_id_str, e)
-                            }
+                                    None
+                                })
+                                .collect();
+
+                            delete_tasks.collect::<Vec<_>>().await;
+                        } else {
+                            error!("Error listing pods for config_id {}", config_id_str);
                         }
                     }
                     Ok((None, _, _)) => {
@@ -427,15 +466,13 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
                     }
                     Err(e) => error!("Failed to create Kubernetes client: {}", e),
                 }
-
-                Ok::<(), String>(())
             }
         })
         .collect();
 
-    join_all(pod_deletion_tasks).await;
+    pod_deletion_tasks.collect::<Vec<_>>().await;
 
-    let update_config_tasks: Vec<_> = configs
+    let update_config_tasks: FuturesUnordered<_> = configs
         .iter()
         .map(|config| {
             let config_id_parsed = config.id.unwrap_or_default();
@@ -457,7 +494,7 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
         })
         .collect();
 
-    join_all(update_config_tasks).await;
+    update_config_tasks.collect::<Vec<_>>().await;
 
     info!(
         "Port forward stopping process completed with {} responses",

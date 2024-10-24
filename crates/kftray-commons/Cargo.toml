@@ -12,7 +12,7 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0.89"
-bytes = "1.7.2"
+bytes = "1.8.0"
 dashmap = "6.1.0"
 flate2 = "1.0"
 httparse = "1.9.4"
@@ -38,6 +38,7 @@ sqlx = { version = "0.8.2", default-features = false, features = ["sqlite", "run
 hostsfile = { git = "https://github.com/tonarino/innernet", branch = "main" }
 tempfile = "3.13.0"
 portpicker = "0.1.1"
+futures = "0.3.31"
 
 [lib]
 name = "kftray_commons"

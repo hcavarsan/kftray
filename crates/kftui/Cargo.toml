@@ -29,7 +29,7 @@ dirs = "5.0.1"
 base64 = "0.22.1"
 hostsfile = { git = "https://github.com/tonarino/innernet", branch = "main" }
 log = "0.4"
-kube = { version = "0.95.0", features = [
+kube = { version = "0.96.0", features = [
 	"client",
 	"config",
 	"rustls-tls",
@@ -48,7 +48,7 @@ hyper-util = { version = "0.1.9", features = ["client-legacy", "http1", "tokio"]
 lazy_static = "1.5.0"
 serde = { version = "1.0", features = ["derive"] }
 rand = "0.8.5"
-kube-runtime = "0.95"
+kube-runtime = "0.96"
 tower = "0.5.1"
 whoami = "1.5.2"
 tempfile = "3.13"
@@ -56,7 +56,7 @@ h2 = { optional = true, version = "0.4.6" }
 libc = "0.2"
 kftray-commons = { path = "../kftray-commons" }
 kftray-portforward = { path = "../kftray-portforward" }
-ratatui = { version = "0.28.1", features = ["unstable-widget-ref"] }
+ratatui = { version = "0.28", features = ["unstable-widget-ref"] }
 crossterm = { version = "0.28.1", optional = false }
 tui-logger = "0.13.1"
 
