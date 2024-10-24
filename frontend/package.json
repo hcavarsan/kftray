@@ -41,7 +41,7 @@
     "core-js": "^3.38.1",
     "eslint": "^9.11.1",
     "eslint-config-prettier": "^9.1.0",
-    "eslint-plugin-import": "^2.30",
+    "eslint-plugin-import": "^2.31",
     "eslint-plugin-react": "^7.37.0",
     "eslint-plugin-react-hooks": "^5.0.0",
     "eslint-plugin-simple-import-sort": "^12.1.1",
