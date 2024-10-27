@@ -16,7 +16,7 @@ path = "src/lib.rs"
 tauri-build = { version = "1.5", features = [] }
 
 [dependencies]
-serde_json = "1.0.128"
+serde_json = "1.0.132"
 tauri = { version = "1.8", default-features = false, features = [
 	"updater",
 	"api-all",
@@ -26,24 +26,24 @@ tauri = { version = "1.8", default-features = false, features = [
 	"devtools",
 ] }
 tauri-plugin-positioner = { version = "1.0.5", features = ["system-tray"] }
-tokio = { version = "1.40.0", features = ["rt-multi-thread", "macros", "full"] }
+tokio = { version = "1.41.0", features = ["rt-multi-thread", "macros", "full"] }
 sqlx = { version = "0.8.2", features = ["sqlite", "runtime-tokio-native-tls"] }
 dirs = "5.0.1"
-reqwest = "0.12.7"
+reqwest = "0.12.8"
 base64 = "0.22.1"
-keyring = { version = "3.3.0", features = ["apple-native", "windows-native", "linux-native"] }
+keyring = { version = "3.5.0", features = ["apple-native", "windows-native", "linux-native"] }
 hostsfile = { git = "https://github.com/tonarino/innernet", branch = "main" }
 log = "0.4"
 env_logger = "0.11.5"
-openssl = { version = "0.10.66", features = ["vendored"] }
-openssl-sys = { version = "0.9.103", features = ["vendored"] }
+openssl = { version = "0.10.68", features = ["vendored"] }
+openssl-sys = { version = "0.9.104", features = ["vendored"] }
 kube = { version = "0.96.0", features = ["client", "config", "rustls-tls", "ws", "openssl-tls"] }
 k8s-openapi = { version = "0.23", default-features = false, features = [
 	"latest",
 ] }
 tokio-stream = { version = "0.1.16", features = ["net"] }
-futures = "0.3.30"
-anyhow = "1.0.89"
+futures = "0.3.31"
+anyhow = "1.0.91"
 tracing = "0.1.40"
 hyper = { version = "1.4.1", features = ["client", "http1", "http2"] }
 hyper-util = { version = "0.1.9", features = ["client-legacy", "http1", "tokio"] }
