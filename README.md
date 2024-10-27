@@ -85,7 +85,7 @@ They automatically reconnect to running pods if one fails, also it allow setting
 
 ## kftray - Desktop App
 
-- [INSTALL.md](https://github.com/hcavarsan/kftray/tree/main/docs/kftui/INSTALL.md)
+- [INSTALL.md](https://github.com/hcavarsan/kftray/tree/main/docs/kftray/INSTALL.md)
 - [USAGE.md](https://github.com/hcavarsan/kftray/tree/main/docs/kftray/USAGE.md)
 - [BUILD.md](https://github.com/hcavarsan/kftray/tree/main/docs/kftray/BUILD.md)
 
