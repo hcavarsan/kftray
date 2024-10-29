@@ -11,20 +11,20 @@ repository = "https://github.com/hcavarsan/kftray"
 edition = "2021"
 
 [dependencies]
-anyhow = "1.0.89"
+anyhow = "1.0.91"
 bytes = "1.8.0"
 dashmap = "6.1.0"
 flate2 = "1.0"
-httparse = "1.9.4"
+httparse = "1.9.5"
 k8s-openapi = { version = "0.23.0", default-features = false, features = ["latest"] }
 lazy_static = "1.5.0"
 log = "0.4"
 rand = "0.8.5"
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0.128"
-tokio = { version = "1.40.0", features = ["rt-multi-thread", "macros", "full"] }
+serde_json = "1.0.132"
+tokio = { version = "1.41.0", features = ["rt-multi-thread", "macros", "full"] }
 tracing = "0.1.40"
-uuid = { version = "1.10.0", features = ["v4"] }
+uuid = { version = "1.11.0", features = ["v4"] }
 dirs = "5.0.1"
 tauri = { version = "1.8", default-features = false, features = [
 	"updater",
