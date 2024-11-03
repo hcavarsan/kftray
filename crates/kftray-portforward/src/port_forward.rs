@@ -6,10 +6,7 @@ use std::time::Duration;
 
 use anyhow::Context;
 use futures::TryStreamExt;
-use kftray_commons::logging::{
-    create_log_file_path,
-    Logger,
-};
+use kftray_commons::utils::http::HttpLogger;
 use kube::{
     api::Api,
     Client,
@@ -35,6 +32,7 @@ use tracing::{
     info,
     trace,
 };
+use uuid::Uuid;
 
 use crate::models::kube::HttpLogState;
 use crate::models::kube::{
@@ -195,9 +193,8 @@ impl PortForward {
 
         trace!(local_port, pod_port, pod_name = %pod_name, "forwarding connections");
 
-        let logger = if workload_type == "service" || workload_type == "pod" {
-            let log_file_path = create_log_file_path(config_id, local_port).await?;
-            let logger = Logger::new(log_file_path).await?;
+        let logger = if http_log_state.get_http_logs(self.config_id).await {
+            let logger = HttpLogger::new(self.config_id, local_port).await?;
             Some(logger)
         } else {
             None
@@ -268,7 +265,7 @@ impl PortForward {
         upstream_writer: &'a mut tokio::io::WriteHalf<
             impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
         >,
-        logger: Option<Logger>, http_log_state: &HttpLogState,
+        logger: Option<HttpLogger>, http_log_state: &HttpLogState,
         request_id: Arc<Mutex<Option<String>>>, cancel_notifier: Arc<Notify>,
     ) -> anyhow::Result<()> {
         let mut buffer = [0; BUFFER_SIZE];
@@ -297,21 +294,23 @@ impl PortForward {
                     trace!("Read {} bytes from client", n);
                     request_buffer.extend_from_slice(&buffer[..n]);
 
-                        if http_log_state.get_http_logs(self.config_id).await {
-                            if let Some(logger) = &logger {
-                                let mut req_id_guard = request_id.lock().await;
-                                let new_request_id =
-                                    logger.log_request(request_buffer.clone().into()).await;
-                                trace!("Generated new request ID: {}", new_request_id);
-                                *req_id_guard = Some(new_request_id);
+                    if http_log_state.get_http_logs(self.config_id).await {
+                        if let Some(logger) = &logger {
+                            let request_id_str = Uuid::new_v4().to_string();
+                            if let Err(e) = logger.log_request(&request_id_str, request_buffer.clone()).await {
+                                error!("Failed to log request: {:?}", e);
                             }
-                        }
 
-                        if let Err(e) = upstream_writer.write_all(&request_buffer).await {
-                            error!("Error writing to upstream: {:?}", e);
-                            return Err(e.into());
+                            let mut req_id_guard = request_id.lock().await;
+                            *req_id_guard = Some(request_id_str);
                         }
-                        request_buffer.clear();
+                    }
+
+                    if let Err(e) = upstream_writer.write_all(&request_buffer).await {
+                        error!("Error writing to upstream: {:?}", e);
+                        return Err(e.into());
+                    }
+                    request_buffer.clear();
                 },
 
                 _ = cancel_notifier.notified() => {
@@ -335,7 +334,7 @@ impl PortForward {
         upstream_reader: &'a mut tokio::io::ReadHalf<
             impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
         >,
-        client_writer: &'a mut tokio::io::WriteHalf<&mut TcpStream>, logger: Option<Logger>,
+        client_writer: &'a mut tokio::io::WriteHalf<&mut TcpStream>, logger: Option<HttpLogger>,
         http_log_state: &HttpLogState, request_id: Arc<Mutex<Option<String>>>,
         cancel_notifier: Arc<Notify>,
     ) -> anyhow::Result<()> {
@@ -365,25 +364,23 @@ impl PortForward {
                     trace!("Read {} bytes from upstream", n);
                     response_buffer.extend_from_slice(&buffer[..n]);
 
-                        if http_log_state.get_http_logs(self.config_id).await {
-                            if let Some(logger) = &logger {
-                                let req_id_guard = request_id.lock().await;
-                                if let Some(req_id) = &*req_id_guard {
-                                    trace!("Logging response for request ID: {}", req_id);
-                                    logger
-                                        .log_response(response_buffer.clone().into(), req_id.clone())
-                                        .await;
+                    if http_log_state.get_http_logs(self.config_id).await {
+                        if let Some(logger) = &logger {
+                            let req_id_guard = request_id.lock().await;
+                            if let Some(req_id) = &*req_id_guard {
+                                if let Err(e) = logger.log_response(req_id, response_buffer.clone()).await {
+                                    error!("Failed to log response: {:?}", e);
                                 }
                             }
                         }
+                    }
 
-                        if let Err(e) = client_writer.write_all(&response_buffer).await {
-                            error!("Error writing to client: {:?}", e);
-                            return Err(e.into());
-                        }
+                    if let Err(e) = client_writer.write_all(&response_buffer).await {
+                        error!("Error writing to client: {:?}", e);
+                        return Err(e.into());
+                    }
 
-                        response_buffer.clear();
-
+                    response_buffer.clear();
 
                     timeout_duration = Duration::from_secs(600);
                 },

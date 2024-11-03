@@ -19,7 +19,7 @@ use k8s_openapi::api::core::v1::{
     ServiceSpec,
 };
 use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
-use kftray_commons::config_dir::get_kubeconfig_paths;
+use kftray_commons::utils::paths::get_kubeconfig_paths;
 use kube::api::ListParams;
 use kube::client::ConfigExt;
 use kube::{
@@ -115,7 +115,7 @@ fn get_kubeconfig_paths_from_option(kubeconfig: Option<String>) -> Result<Vec<Pa
     match kubeconfig {
         Some(path) if path == "default" => {
             info!("Using default kubeconfig paths.");
-            get_kubeconfig_paths()
+            get_kubeconfig_paths().map_err(anyhow::Error::from)
         }
         Some(path) => {
             info!("Using provided kubeconfig paths: {}", path);
@@ -123,7 +123,7 @@ fn get_kubeconfig_paths_from_option(kubeconfig: Option<String>) -> Result<Vec<Pa
         }
         None => {
             info!("No kubeconfig path provided, using default paths.");
-            get_kubeconfig_paths()
+            get_kubeconfig_paths().map_err(anyhow::Error::from)
         }
     }
 }

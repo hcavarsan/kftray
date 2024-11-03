@@ -14,15 +14,25 @@ use futures::stream::{
 };
 use hostsfile::HostsBuilder;
 use k8s_openapi::api::core::v1::Pod;
-use kftray_commons::config::get_config;
-use kftray_commons::config_state::get_configs_state;
-use kftray_commons::models::{
-    config_model::Config,
-    config_state_model::ConfigState,
-    response::CustomResponse,
+use kftray_commons::{
+    config::Config,
+    db::{
+        get_db_path,
+        Database,
+    },
+    error::{
+        Error,
+        Result,
+    },
+    models::{
+        response::{
+            CustomResponse,
+            ResponseStatus,
+        },
+        state::ConfigState,
+    },
+    utils::paths::get_pod_manifest_path,
 };
-use kftray_commons::utils::config_dir::get_pod_manifest_path;
-use kftray_commons::utils::config_state::update_config_state;
 use kube::api::{
     Api,
     DeleteParams,
@@ -58,7 +68,9 @@ use crate::port_forward::CHILD_PROCESSES;
 
 pub async fn start_port_forward(
     configs: Vec<Config>, protocol: &str, http_log_state: Arc<HttpLogState>,
-) -> Result<Vec<CustomResponse>, String> {
+) -> Result<Vec<CustomResponse>> {
+    let (db, state_manager) = kftray_commons::init().await?;
+
     let mut responses = Vec::new();
     let mut errors = Vec::new();
     let mut child_handles = Vec::new();
@@ -85,7 +97,7 @@ pub async fn start_port_forward(
 
         let local_address_clone = config.local_address.clone();
 
-        let port_forward_result: Result<PortForward, anyhow::Error> = PortForward::new(
+        let port_forward_result: Result<PortForward> = PortForward::new(
             target,
             config.local_port,
             local_address_clone,
@@ -94,7 +106,8 @@ pub async fn start_port_forward(
             config.id.unwrap_or_default(),
             config.workload_type.clone().unwrap_or_default(),
         )
-        .await;
+        .await
+        .map_err(|e| Error::kubernetes(e.to_string()));
 
         match port_forward_result {
             Ok(port_forward) => {
@@ -185,14 +198,7 @@ pub async fn start_port_forward(
                             }
                         }
 
-                        let config_state = ConfigState {
-                            id: None,
-                            config_id: config.id.unwrap(),
-                            is_running: true,
-                        };
-                        if let Err(e) = update_config_state(&config_state).await {
-                            log::error!("Failed to update config state: {}", e);
-                        }
+                        state_manager.update_state(config.id.unwrap(), true).await?;
 
                         responses.push(CustomResponse {
                             id: config.id,
@@ -210,39 +216,23 @@ pub async fn start_port_forward(
                                 config.service.clone().unwrap()
                             ),
                             stderr: String::new(),
-                            status: 0,
+                            status: ResponseStatus::Success,
+                            error: None,
                         });
                     }
                     Err(e) => {
-                        let error_message = format!(
-                            "Failed to start {} port forwarding for {} {}: {}",
-                            protocol.to_uppercase(),
-                            if config.workload_type.as_deref() == Some("pod") {
-                                "pod label"
-                            } else {
-                                "service"
-                            },
-                            config.service.clone().unwrap_or_default(),
-                            e
-                        );
-                        log::error!("{}", &error_message);
-                        errors.push(error_message);
+                        if let Some(config_id) = config.id {
+                            state_manager.update_state(config_id, false).await?;
+                        }
+                        errors.push(format!("Forward error: {}", e));
                     }
                 }
             }
             Err(e) => {
-                let error_message = format!(
-                    "Failed to create PortForward for {} {}: {}",
-                    if config.workload_type.as_deref() == Some("pod") {
-                        "pod label"
-                    } else {
-                        "service"
-                    },
-                    config.service.clone().unwrap_or_default(),
-                    e
-                );
-                log::error!("{}", &error_message);
-                errors.push(error_message);
+                if let Some(config_id) = config.id {
+                    state_manager.update_state(config_id, false).await?;
+                }
+                errors.push(format!("Port forward creation error: {}", e));
             }
         }
     }
@@ -253,7 +243,7 @@ pub async fn start_port_forward(
                 handle.abort();
             }
         }
-        return Err(errors.join("\n"));
+        return Err(Error::kubernetes(errors.join("\n")));
     }
 
     if !responses.is_empty() {
@@ -266,7 +256,7 @@ pub async fn start_port_forward(
     Ok(responses)
 }
 
-pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
+pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>> {
     info!("Attempting to stop all port forwards");
 
     let mut responses = Vec::with_capacity(1024);
@@ -277,25 +267,15 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
         processes.drain().collect()
     };
 
-    let running_configs_state = match get_configs_state().await {
-        Ok(states) => states
-            .into_iter()
-            .filter(|s| s.is_running)
-            .map(|s| s.config_id)
-            .collect::<Vec<i64>>(),
-        Err(e) => {
-            let error_message = format!("Failed to retrieve config states: {}", e);
-            error!("{}", error_message);
-            return Err(error_message);
-        }
-    };
+    let db = Database::new(get_db_path().await?).await?;
+    let running_configs_state = db.get_all_config_states().await?;
 
-    let configs = match kftray_commons::utils::config::get_configs().await {
+    let configs = match db.get_all_configs().await {
         Ok(configs) => configs,
         Err(e) => {
             let error_message = format!("Failed to retrieve configs: {}", e);
             error!("{}", error_message);
-            return Err(error_message);
+            return Err(Error::kubernetes(error_message));
         }
     };
 
@@ -330,7 +310,8 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
                         protocol: empty_str_clone.clone(),
                         stdout: empty_str_clone.clone(),
                         stderr: String::from("Invalid composite key format"),
-                        status: 1,
+                        status: ResponseStatus::Error,
+                        error: None,
                     };
                 }
 
@@ -357,7 +338,8 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
                                 protocol: empty_str_clone.clone(),
                                 stdout: empty_str_clone.clone(),
                                 stderr: e.to_string(),
-                                status: 1,
+                                status: ResponseStatus::Error,
+                                error: None,
                             };
                         }
                     }
@@ -381,7 +363,8 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
                     protocol: empty_str_clone.clone(),
                     stdout: String::from("Service port forwarding has been stopped"),
                     stderr: empty_str_clone,
-                    status: 0,
+                    status: ResponseStatus::Success,
+                    error: None,
                 }
             }
         })
@@ -393,7 +376,11 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
 
     let pod_deletion_tasks: FuturesUnordered<_> = configs
         .iter()
-        .filter(|config| running_configs_state.contains(&config.id.unwrap_or_default()))
+        .filter(|config| {
+            running_configs_state
+                .iter()
+                .any(|state| state.config_id == config.id.unwrap_or_default())
+        })
         .filter(|config| {
             config.protocol == "udp" || matches!(config.workload_type.as_deref(), Some("proxy"))
         })
@@ -482,13 +469,10 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
                     config_id: config_id_parsed,
                     is_running: false,
                 };
-                if let Err(e) = update_config_state(&config_state).await {
-                    error!("Failed to update config state: {}", e);
-                } else {
-                    info!(
-                        "Successfully updated config state for config_id: {}",
-                        config_id_parsed
-                    );
+                if let Ok(db_path) = get_db_path().await {
+                    if let Ok(db) = Database::new(db_path).await {
+                        let _ = db.update_config_state(&config_state).await;
+                    }
                 }
             }
         })
@@ -504,7 +488,17 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
     Ok(responses)
 }
 
-pub async fn stop_port_forward(config_id: String) -> Result<CustomResponse, String> {
+pub async fn stop_port_forward(config_id: String) -> Result<CustomResponse> {
+    let (db, state_manager) = kftray_commons::init().await?;
+
+    let config_id_parsed = config_id.parse::<i64>().unwrap_or_default();
+
+    // Get config using Database
+    let config = db.get_config(config_id_parsed).await?;
+
+    // Update state using StateManager
+    state_manager.update_state(config_id_parsed, false).await?;
+
     let cancellation_notifier = CANCEL_NOTIFIER.clone();
     cancellation_notifier.notify_waiters();
 
@@ -530,8 +524,8 @@ pub async fn stop_port_forward(config_id: String) -> Result<CustomResponse, Stri
 
         let (config_id_str, service_name) = composite_key.split_once('_').unwrap_or(("", ""));
         let config_id_parsed = config_id_str.parse::<i64>().unwrap_or_default();
-
-        match kftray_commons::config::get_configs().await {
+        let db = Database::new(get_db_path().await?).await?;
+        match db.get_all_configs().await {
             Ok(configs) => {
                 if let Some(config) = configs
                     .iter()
@@ -557,10 +551,9 @@ pub async fn stop_port_forward(config_id: String) -> Result<CustomResponse, Stri
                                 config_id: config_id_parsed,
                                 is_running: false,
                             };
-                            if let Err(e) = update_config_state(&config_state).await {
-                                log::error!("Failed to update config state: {}", e);
-                            }
-                            return Err(e.to_string());
+                            let db = Database::new(get_db_path().await?).await?;
+                            db.update_config_state(&config_state).await?;
+                            return Err(Error::kubernetes(e.to_string()));
                         }
                     }
                 } else {
@@ -572,12 +565,11 @@ pub async fn stop_port_forward(config_id: String) -> Result<CustomResponse, Stri
                     config_id: config_id_parsed,
                     is_running: false,
                 };
-                if let Err(e) = update_config_state(&config_state).await {
-                    log::error!("Failed to update config state: {}", e);
-                }
+                let db = Database::new(get_db_path().await?).await?;
+                db.update_config_state(&config_state).await?;
 
                 Ok(CustomResponse {
-                    id: None,
+                    id: Some(config_id_parsed),
                     service: service_name.to_string(),
                     namespace: String::new(),
                     local_port: 0,
@@ -586,7 +578,8 @@ pub async fn stop_port_forward(config_id: String) -> Result<CustomResponse, Stri
                     protocol: String::new(),
                     stdout: String::from("Service port forwarding has been stopped"),
                     stderr: String::new(),
-                    status: 0,
+                    status: ResponseStatus::Success,
+                    error: None,
                 })
             }
             Err(e) => {
@@ -596,10 +589,12 @@ pub async fn stop_port_forward(config_id: String) -> Result<CustomResponse, Stri
                     config_id: config_id_parsed,
                     is_running: false,
                 };
-                if let Err(e) = update_config_state(&config_state).await {
-                    log::error!("Failed to update config state: {}", e);
-                }
-                Err(format!("Failed to retrieve configs: {}", e))
+                let db = Database::new(get_db_path().await?).await?;
+                db.update_config_state(&config_state).await?;
+                Err(Error::kubernetes(format!(
+                    "Failed to retrieve configs: {}",
+                    e
+                )))
             }
         }
     } else {
@@ -609,13 +604,12 @@ pub async fn stop_port_forward(config_id: String) -> Result<CustomResponse, Stri
             config_id: config_id_parsed,
             is_running: false,
         };
-        if let Err(e) = update_config_state(&config_state).await {
-            log::error!("Failed to update config state: {}", e);
-        }
-        Err(format!(
+        let db = Database::new(get_db_path().await?).await?;
+        db.update_config_state(&config_state).await?;
+        Err(Error::kubernetes(format!(
             "No port forwarding process found for config_id '{}'",
             config_id
-        ))
+        )))
     }
 }
 
@@ -628,9 +622,10 @@ fn render_json_template(template: &str, values: &HashMap<&str, String>) -> Strin
 
     rendered_template
 }
+
 pub async fn deploy_and_forward_pod(
     configs: Vec<Config>, http_log_state: Arc<HttpLogState>,
-) -> Result<Vec<CustomResponse>, String> {
+) -> Result<Vec<CustomResponse>> {
     let mut responses: Vec<CustomResponse> = Vec::new();
 
     for mut config in configs.into_iter() {
@@ -640,14 +635,14 @@ pub async fn deploy_and_forward_pod(
             .await
             .map_err(|e| {
                 log::error!("Failed to create Kubernetes client: {}", e);
-                e.to_string()
+                Error::kubernetes(e.to_string())
             })?;
 
-        let client = client.ok_or_else(|| "Client not created".to_string())?;
+        let client = client.ok_or_else(|| Error::kubernetes("Client not created".to_string()))?;
 
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map_err(|e| e.to_string())?
+            .map_err(|e| Error::kubernetes(e.to_string()))?
             .as_secs();
 
         let random_string: String = rand::thread_rng()
@@ -694,14 +689,15 @@ pub async fn deploy_and_forward_pod(
         values.insert("local_port", config.remote_port.expect("None").to_string());
         values.insert("protocol", protocol.clone());
 
-        let manifest_path = get_pod_manifest_path().map_err(|e| e.to_string())?;
-        let mut file = File::open(manifest_path).map_err(|e| e.to_string())?;
+        let manifest_path = get_pod_manifest_path().await?;
+        let mut file = File::open(manifest_path).map_err(|e| Error::kubernetes(e.to_string()))?;
         let mut contents = String::new();
         file.read_to_string(&mut contents)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| Error::kubernetes(e.to_string()))?;
 
         let rendered_json = render_json_template(&contents, &values);
-        let pod: Pod = serde_json::from_str(&rendered_json).map_err(|e| e.to_string())?;
+        let pod: Pod =
+            serde_json::from_str(&rendered_json).map_err(|e| Error::kubernetes(e.to_string()))?;
 
         let pods: Api<Pod> = Api::namespaced(client.clone(), &config.namespace);
 
@@ -719,7 +715,7 @@ pub async fn deploy_and_forward_pod(
                         ..DeleteParams::default()
                     };
                     let _ = pods.delete(&hashed_name, &dp).await;
-                    return Err(e.to_string());
+                    return Err(Error::kubernetes(e.to_string()));
                 }
 
                 config.service = Some(hashed_name.clone());
@@ -737,26 +733,28 @@ pub async fn deploy_and_forward_pod(
                         let _ = pods
                             .delete(&hashed_name, &kube::api::DeleteParams::default())
                             .await;
-                        return Err("Unsupported proxy type".to_string());
+                        return Err(Error::config("Unsupported proxy type"));
                     }
                 };
 
                 match start_response {
                     Ok(mut port_forward_responses) => {
-                        let response = port_forward_responses
-                            .pop()
-                            .ok_or("No response received from port forwarding")?;
+                        let response = port_forward_responses.pop().ok_or_else(|| {
+                            Error::kubernetes(
+                                "No response received from port forwarding".to_string(),
+                            )
+                        })?;
                         responses.push(response);
                     }
                     Err(e) => {
                         let _ = pods
                             .delete(&hashed_name, &kube::api::DeleteParams::default())
                             .await;
-                        return Err(format!("Failed to start port forwarding {}", e));
+                        return Err(Error::kubernetes(e.to_string()));
                     }
                 }
             }
-            Err(e) => return Err(e.to_string()),
+            Err(e) => return Err(Error::kubernetes(e.to_string())),
         }
     }
 
@@ -765,30 +763,31 @@ pub async fn deploy_and_forward_pod(
 
 pub async fn stop_proxy_forward(
     config_id: i64, namespace: &str, service_name: String,
-) -> Result<CustomResponse, String> {
+) -> Result<CustomResponse> {
     info!(
         "Attempting to stop proxy forward for service: {}",
         service_name
     );
+    let db = Database::new(get_db_path().await?).await?;
 
-    let config = get_config(config_id).await.map_err(|e| {
+    let config = db.get_config(config_id).await.map_err(|e| {
         error!("Failed to get config: {}", e);
-        e.to_string()
+        Error::kubernetes(e.to_string())
     })?;
 
     let kubeconfig = config
         .kubeconfig
-        .ok_or_else(|| "Kubeconfig not found".to_string())?;
+        .ok_or_else(|| Error::kubernetes("Kubeconfig not found".to_string()))?;
     let context_name = &config.context;
 
     let (client, _, _) = create_client_with_specific_context(Some(kubeconfig), Some(context_name))
         .await
         .map_err(|e| {
             error!("Failed to create Kubernetes client: {}", e);
-            e.to_string()
+            Error::kubernetes(e.to_string())
         })?;
 
-    let client = client.ok_or_else(|| "Client not created".to_string())?;
+    let client = client.ok_or_else(|| Error::kubernetes("Client not created".to_string()))?;
 
     let pods: Api<Pod> = Api::namespaced(client, namespace);
 
@@ -796,7 +795,7 @@ pub async fn stop_proxy_forward(
 
     let pod_list = pods.list(&lp).await.map_err(|e| {
         error!("Error listing pods: {}", e);
-        e.to_string()
+        Error::kubernetes(e.to_string())
     })?;
 
     let username = whoami::username();
@@ -820,7 +819,7 @@ pub async fn stop_proxy_forward(
                     Ok(_) => info!("Successfully deleted pod: {}", pod_name),
                     Err(e) => {
                         error!("Failed to delete pod: {} with error: {}", pod_name, e);
-                        return Err(e.to_string());
+                        return Err(Error::kubernetes(e.to_string()));
                     }
                 }
 
@@ -840,7 +839,7 @@ pub async fn stop_proxy_forward(
                 "Failed to stop port forwarding for service '{}': {}",
                 service_name, e
             );
-            e
+            Error::kubernetes(e.to_string())
         })?;
 
     info!("Proxy forward stopped for service: {}", service_name);
@@ -850,17 +849,17 @@ pub async fn stop_proxy_forward(
 
 pub async fn retrieve_service_configs(
     context: &str, kubeconfig: Option<String>,
-) -> Result<Vec<Config>, String> {
+) -> Result<Vec<Config>> {
     let (client_opt, _, _) = create_client_with_specific_context(kubeconfig.clone(), Some(context))
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| Error::kubernetes(e.to_string()))?;
 
-    let client = client_opt.ok_or_else(|| "Client not created".to_string())?;
+    let client = client_opt.ok_or_else(|| Error::kubernetes("Client not created".to_string()))?;
     let annotation = "kftray.app/configs";
 
     let namespaces = list_all_namespaces(client.clone())
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| Error::kubernetes(e.to_string()))?;
 
     let concurrency_limit = 10;
 
@@ -874,7 +873,7 @@ pub async fn retrieve_service_configs(
                 let services =
                     get_services_with_annotation(client.clone(), &namespace, &annotation)
                         .await
-                        .map_err(|e| e.to_string())?;
+                        .map_err(|e| Error::kubernetes(e.to_string()))?;
 
                 let mut namespace_configs = Vec::new();
 
@@ -905,7 +904,7 @@ pub async fn retrieve_service_configs(
         .buffer_unordered(concurrency_limit)
         .fold(
             Ok(Vec::new()),
-            |mut acc: Result<Vec<Config>, String>, result: Result<Vec<Config>, String>| async {
+            |mut acc: Result<Vec<Config>>, result: Result<Vec<Config>>| async {
                 match result {
                     Ok(mut namespace_configs) => {
                         acc.as_mut().unwrap().append(&mut namespace_configs)

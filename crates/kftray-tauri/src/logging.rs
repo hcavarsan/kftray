@@ -4,16 +4,18 @@ use std::{
     io,
 };
 
-use kftray_commons::utils::config_dir::get_app_log_path;
+use kftray_commons::utils::paths::get_app_log_path;
 
-pub fn setup_logging() -> Result<(), Box<dyn std::error::Error>> {
+pub async fn setup_logging() -> Result<(), Box<dyn std::error::Error>> {
     let log_filter = match env::var("RUST_LOG") {
-        Ok(filter) => filter.parse().unwrap_or(log::LevelFilter::Info),
+        Ok(filter) => filter.parse().unwrap_or(log::LevelFilter::Trace),
         Err(_) => log::LevelFilter::Off,
     };
 
     if env::var("KFTRAY_DEBUG").is_ok() {
-        let log_path = get_app_log_path().map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        let log_path = get_app_log_path()
+            .await
+            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
 
         let log_dir = log_path.parent().ok_or_else(|| {
             io::Error::new(io::ErrorKind::Other, "Could not find the log directory")

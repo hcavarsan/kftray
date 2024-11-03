@@ -73,6 +73,7 @@ pub fn create_tray_menu() -> SystemTray {
 
     SystemTray::new().with_menu(system_tray_menu)
 }
+
 pub fn handle_window_event(event: GlobalWindowEvent) {
     if let tauri::WindowEvent::ScaleFactorChanged {
         scale_factor,
@@ -83,9 +84,12 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
         let window = event.window();
         adjust_window_size_and_position(window, *scale_factor, *new_inner_size);
         if !window.is_visible().unwrap() || !window.is_focused().unwrap() {
-            set_default_position(window);
-            window.show().unwrap();
-            window.set_focus().unwrap();
+            let window = event.window().clone();
+            tauri::async_runtime::spawn(async move {
+                set_default_position(&window).await;
+                window.show().unwrap();
+                let _ = window.set_focus();
+            });
         }
 
         return;
@@ -93,7 +97,7 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
 
     info!("event: {:?}", event.event());
     let app_state = event.window().state::<AppState>();
-    let mut is_moving = app_state.is_moving.lock().unwrap();
+    let is_moving = app_state.is_moving.lock().unwrap();
 
     if let tauri::WindowEvent::Focused(is_focused) = event.event() {
         if !is_focused && !*is_moving && !app_state.is_pinned.load(Ordering::SeqCst) {
@@ -121,40 +125,41 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
     }
 
     if let tauri::WindowEvent::Moved(_) = event.event() {
-        let win = event.window();
-        #[warn(unused_must_use)]
-        let _ = win.with_webview(|_webview| {
-            #[cfg(target_os = "linux")]
-            {}
+        let should_save = !*is_moving && !app_state.is_plugin_moving.load(Ordering::SeqCst);
+        drop(is_moving);
 
-            #[cfg(windows)]
-            unsafe {
-                // https://github.com/MicrosoftEdge/WebView2Feedback/issues/780#issuecomment-808306938
-                // https://docs.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/icorewebview2controller?view=webview2-1.0.774.44#notifyparentwindowpositionchanged
-                _webview
-                    .controller()
-                    .NotifyParentWindowPositionChanged()
-                    .unwrap();
+        let window = event.window().clone();
+        let app_handle = window.app_handle();
+        let is_plugin_moving = app_state.is_plugin_moving.load(Ordering::SeqCst);
+
+        tauri::async_runtime::spawn(async move {
+            #[warn(unused_must_use)]
+            let _ = window.with_webview(|_webview| {
+                #[cfg(target_os = "linux")]
+                {}
+
+                #[cfg(windows)]
+                unsafe {
+                    // https://github.com/MicrosoftEdge/WebView2Feedback/issues/780#issuecomment-808306938
+                    // https://docs.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/icorewebview2controller?view=webview2-1.0.774.44#notifyparentwindowpositionchanged
+                    _webview
+                        .controller()
+                        .NotifyParentWindowPositionChanged()
+                        .unwrap();
+                }
+
+                #[cfg(target_os = "macos")]
+                {}
+            });
+
+            if should_save {
+                info!("is_plugin_moving: {}", is_plugin_moving);
+
+                if let Some(window) = app_handle.get_window("main") {
+                    save_window_position(&window).await;
+                }
             }
-
-            #[cfg(target_os = "macos")]
-            {}
         });
-
-        if !*is_moving && !app_state.is_plugin_moving.load(Ordering::SeqCst) {
-            info!(
-                "is_plugin_moving: {}",
-                app_state.is_plugin_moving.load(Ordering::SeqCst)
-            );
-            *is_moving = true;
-            let app_handle = event.window().app_handle();
-
-            if let Some(window) = app_handle.get_window("main") {
-                save_window_position(&window);
-            }
-
-            *is_moving = false;
-        }
     }
 
     if let tauri::WindowEvent::CloseRequested { api, .. } = event.event() {
@@ -204,7 +209,9 @@ pub fn handle_system_tray_event(app: &tauri::AppHandle, event: SystemTrayEvent) 
             }
             "reset_position" => {
                 let window = app.get_window("main").unwrap();
-                reset_window_position(&window);
+                tauri::async_runtime::spawn(async move {
+                    reset_window_position(&window).await;
+                });
             }
             "set_center_position" => {
                 let window = app.get_window("main").unwrap();

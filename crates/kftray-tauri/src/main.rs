@@ -7,23 +7,24 @@ use std::sync::{
     Arc,
     Mutex,
 };
+use std::error::Error;
+use kftray_commons::utils::path_validation::alert_multiple_configs;
+use log::error;
 
-use kftray_commons::utils::validate_configs::alert_multiple_configs;
-use log::{
-    error,
-    info,
-};
 mod commands;
-mod init_check;
 mod logging;
 mod tray;
 mod window;
 
-use std::sync::atomic::AtomicBool;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{
+    AtomicBool,
+    Ordering,
+};
 
-use kftray_commons::models::window::AppState;
-use kftray_commons::models::window::SaveDialogState;
+use kftray_commons::models::window::{
+    AppState,
+    SaveDialogState,
+};
 use kftray_portforward::models::kube::HttpLogState;
 use tauri::{
     GlobalShortcutManager,
@@ -42,7 +43,6 @@ use crate::window::toggle_window_visibility;
 
 fn main() {
     let _ = logging::setup_logging();
-
     let _ = fix_path_env::fix();
 
     let system_tray = create_tray_menu();
@@ -51,6 +51,48 @@ fn main() {
     let is_pinned = Arc::new(AtomicBool::new(false));
     let runtime = Arc::new(Runtime::new().expect("Failed to create a Tokio runtime"));
     let http_log_state = HttpLogState::new();
+
+    // Initialize database and state manager synchronously before app setup
+    let init_result = runtime.block_on(async {
+        // First ensure the config directory exists
+        let config_dir = kftray_commons::utils::paths::ensure_config_dir().await?;
+
+        // Also ensure the parent directory of the database file exists
+        let db_path = kftray_commons::utils::paths::get_db_path().await?;
+        if let Some(parent) = db_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        match kftray_commons::init().await {
+            Ok((database, state_manager)) => {
+                // Verify database connection
+                if !database.is_connected().await.map_err(|e| kftray_commons::error::Error::db_connection(e.to_string()))? {
+                    error!("Database connection test failed");
+                    return Err(kftray_commons::error::Error::db_connection(
+                        "Database connection test failed".to_string()
+                    ));
+                }
+
+                // Clean up and initialize states
+                if let Err(e) = kftray_commons::utils::hosts::clean_all_custom_hosts_entries(&database).await {
+                    error!("Failed to clean custom hosts entries: {}", e);
+                }
+
+                if let Err(e) = kftray_commons::check_and_manage_ports(&database, &state_manager).await {
+                    error!("Error in port management: {}", e);
+                }
+
+                Ok((database, state_manager))
+            }
+            Err(e) => {
+                error!("Failed to initialize database and state manager: {}", e);
+                Err(e)
+            }
+        }
+    });
+
+    // Ensure initialization succeeded before continuing
+    let (database, state_manager) = init_result.expect("Failed to initialize application state");
 
     let app = tauri::Builder::default()
         .manage(SaveDialogState::default())
@@ -61,34 +103,14 @@ fn main() {
             runtime: runtime.clone(),
         })
         .manage(http_log_state.clone())
+        .manage(database)
+        .manage(state_manager)
         .setup(move |app| {
             let app_handle = app.app_handle();
             let app_handle_clone = app_handle.clone();
-            tauri::async_runtime::spawn(async move {
-                if let Err(e) =
-                    kftray_commons::utils::config::clean_all_custom_hosts_entries().await
-                {
-                    error!("Failed to clean custom hosts entries: {}", e);
-                }
-
-                if let Err(e) = kftray_commons::utils::db::init().await {
-                    error!("Failed to initialize database: {}", e);
-                }
-
-                if let Err(e) = kftray_commons::utils::migration::migrate_configs().await {
-                    error!("Failed to migrate configs: {}", e);
-                }
-            });
 
             tauri::async_runtime::spawn(async move {
                 alert_multiple_configs(app_handle_clone).await;
-            });
-
-            tauri::async_runtime::spawn(async move {
-                info!("Starting port management checks");
-                if let Err(e) = init_check::check_and_manage_ports().await {
-                    error!("Error in port management: {}", e);
-                }
             });
 
             let app_handle_clone = app_handle.clone();
@@ -111,7 +133,6 @@ fn main() {
             }
 
             let mut shortcut = app.global_shortcut_manager();
-
             shortcut
                 .register("CmdOrCtrl+Shift+F1", move || {
                     toggle_window_visibility(&window);

@@ -1,9 +1,9 @@
 use std::sync::Arc;
 
-use kftray_commons::config::get_configs;
-use kftray_commons::models::config_model::Config;
+use kftray_commons::config::Config;
+use kftray_commons::db::operations::Database;
 use kftray_commons::models::response::CustomResponse;
-use kftray_commons::utils::config_state::get_configs_state;
+use kftray_commons::utils::get_db_path;
 use kftray_portforward::core::{
     deploy_and_forward_pod,
     start_port_forward,
@@ -30,7 +30,9 @@ pub async fn check_and_emit_changes(app_handle: AppHandle) {
     loop {
         interval.tick().await;
 
-        let current_config_states = match get_configs_state().await {
+        let db = Database::new(get_db_path().await.unwrap()).await.unwrap();
+
+        let current_config_states = match db.get_all_config_states().await {
             Ok(states) => states,
             Err(e) => {
                 error!("Failed to get config states: {}", e);
@@ -38,7 +40,7 @@ pub async fn check_and_emit_changes(app_handle: AppHandle) {
             }
         };
 
-        let current_configs = match get_configs().await {
+        let current_configs = match db.get_all_configs().await {
             Ok(configs) => configs,
             Err(e) => {
                 error!("Failed to get configs: {}", e);
@@ -91,6 +93,7 @@ pub async fn start_port_forward_udp_cmd(
         Arc::new(http_log_state.inner().clone()),
     )
     .await
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -104,20 +107,23 @@ pub async fn start_port_forward_tcp_cmd(
         Arc::new(http_log_state.inner().clone()),
     )
     .await
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn stop_all_port_forward_cmd(
     _app_handle: tauri::AppHandle,
 ) -> Result<Vec<CustomResponse>, String> {
-    stop_all_port_forward().await
+    stop_all_port_forward().await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn stop_port_forward_cmd(
     config_id: String, _app_handle: tauri::AppHandle,
 ) -> Result<CustomResponse, String> {
-    stop_port_forward(config_id.clone()).await
+    stop_port_forward(config_id.clone())
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -125,7 +131,9 @@ pub async fn deploy_and_forward_pod_cmd(
     configs: Vec<Config>, http_log_state: tauri::State<'_, HttpLogState>,
     _app_handle: tauri::AppHandle,
 ) -> Result<Vec<CustomResponse>, String> {
-    deploy_and_forward_pod(configs.clone(), Arc::new(http_log_state.inner().clone())).await
+    deploy_and_forward_pod(configs.clone(), Arc::new(http_log_state.inner().clone()))
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -136,15 +144,17 @@ pub async fn stop_proxy_forward_cmd(
         .parse::<i64>()
         .map_err(|e| format!("Failed to parse config_id: {}", e))?;
 
-    stop_proxy_forward(config_id, namespace, service_name).await
+    stop_proxy_forward(config_id, namespace, service_name)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn handle_exit_app(app_handle: tauri::AppHandle) {
     let windows_map = app_handle.windows();
-
+    let db = Database::new(get_db_path().await.unwrap()).await.unwrap();
     if let Some((_, window)) = windows_map.iter().next() {
-        let config_states = match get_configs_state().await {
+        let config_states = match db.get_all_config_states().await {
             Ok(config_states) => config_states,
             Err(err) => {
                 error!("Failed to get config states: {:?}", err);

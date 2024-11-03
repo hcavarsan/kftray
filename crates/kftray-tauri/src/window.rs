@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use kftray_commons::models::window::AppState;
 use kftray_commons::models::window::WindowPosition;
-use kftray_commons::utils::config_dir::get_window_state_path;
+use kftray_commons::utils::paths::get_window_state_path;
 use log::{
     info,
     warn,
@@ -20,7 +20,7 @@ use tauri_plugin_positioner::{
 };
 use tokio::time::sleep;
 
-pub fn save_window_position(window: &Window) {
+pub async fn save_window_position(window: &Window) {
     if let Ok(position) = window.outer_position() {
         let position_data = WindowPosition {
             x: position.x,
@@ -28,7 +28,7 @@ pub fn save_window_position(window: &Window) {
         };
         let position_json = serde_json::to_string(&position_data).unwrap();
 
-        match get_window_state_path() {
+        match get_window_state_path().await {
             Ok(path) => {
                 if let Some(parent_dir) = path.parent() {
                     if let Err(e) = fs::create_dir_all(parent_dir) {
@@ -50,8 +50,8 @@ pub fn save_window_position(window: &Window) {
     }
 }
 
-pub fn load_window_position() -> Option<WindowPosition> {
-    if let Ok(home_path) = get_window_state_path() {
+pub async fn load_window_position() -> Option<WindowPosition> {
+    if let Ok(home_path) = get_window_state_path().await {
         if home_path.exists() {
             match fs::read_to_string(&home_path) {
                 Ok(position_json) => match serde_json::from_str(&position_json) {
@@ -100,16 +100,19 @@ pub fn toggle_window_visibility(window: &Window) {
         }
     } else {
         window.show().unwrap();
-        set_default_position(window);
+        let window_clone = window.clone();
+        app_state.runtime.spawn(async move {
+            set_default_position(&window_clone).await;
+        });
         window.set_focus().unwrap();
     }
 }
 
-pub fn set_default_position(window: &Window) {
+pub async fn set_default_position(window: &Window) {
     let app_state = window.state::<AppState>();
     app_state.is_plugin_moving.store(true, Ordering::SeqCst);
 
-    if let Some(position) = load_window_position() {
+    if let Some(position) = load_window_position().await {
         if is_valid_position(window, position.x, position.y) {
             window
                 .set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(
@@ -166,17 +169,17 @@ pub fn reset_to_default_position(window: &Window) {
     reset_plugin_moving_state_after_delay(&app_state);
 }
 
-pub fn reset_window_position(window: &Window) {
+pub async fn reset_window_position(window: &Window) {
     let app_state = window.state::<AppState>();
     app_state.is_plugin_moving.store(true, Ordering::SeqCst);
 
-    remove_position_file();
+    remove_position_file().await;
     reset_to_default_position(window);
     reset_plugin_moving_state_after_delay(&app_state);
 }
 
-fn remove_position_file() {
-    if let Ok(path) = get_window_state_path() {
+async fn remove_position_file() {
+    if let Ok(path) = get_window_state_path().await {
         if path.exists() {
             if let Err(e) = fs::remove_file(&path) {
                 warn!("Failed to delete window position file: {}", e);

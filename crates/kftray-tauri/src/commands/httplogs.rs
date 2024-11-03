@@ -1,8 +1,7 @@
-use kftray_commons::utils::config_dir::get_log_folder_path;
+use kftray_commons::utils::paths::get_log_dir;
 use kftray_portforward::models::kube::HttpLogState;
 use log::error;
 use log::info;
-
 #[tauri::command]
 pub async fn set_http_logs_cmd(
     state: tauri::State<'_, HttpLogState>, config_id: i64, enable: bool,
@@ -23,7 +22,7 @@ pub async fn clear_http_logs() -> Result<(), String> {
     use std::fs;
     use std::path::PathBuf;
 
-    fn delete_files_in_folder(path: &PathBuf) -> Result<(), String> {
+    async fn delete_files_in_folder(path: &PathBuf) -> Result<(), String> {
         if path.is_dir() {
             for entry in
                 fs::read_dir(path).map_err(|e| format!("Failed to read directory: {}", e))?
@@ -41,7 +40,7 @@ pub async fn clear_http_logs() -> Result<(), String> {
         Ok(())
     }
 
-    let log_folder_path = get_log_folder_path()?;
+    let log_folder_path = get_log_dir().await.unwrap();
 
     if !log_folder_path.exists() {
         return Err(format!(
@@ -50,7 +49,7 @@ pub async fn clear_http_logs() -> Result<(), String> {
         ));
     }
 
-    delete_files_in_folder(&log_folder_path)
+    delete_files_in_folder(&log_folder_path).await
 }
 
 #[tauri::command]
@@ -82,7 +81,7 @@ pub async fn get_http_log_size() -> Result<u64, String> {
         Ok(size)
     }
 
-    let log_folder_path = get_log_folder_path()?;
+    let log_folder_path = get_log_dir().await.unwrap();
 
     if !log_folder_path.exists() {
         return Err(format!(
@@ -101,7 +100,8 @@ pub async fn open_log_file(log_file_name: String) -> Result<(), String> {
 
     use open::that_in_background;
 
-    let log_folder_path = get_log_folder_path()?;
+    let log_folder_path = get_log_dir().await.unwrap();
+
     let log_file_path = log_folder_path.join(log_file_name);
 
     if !log_file_path.exists() {
