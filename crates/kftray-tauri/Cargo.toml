@@ -31,7 +31,7 @@ sqlx = { version = "0.8.2", features = ["sqlite", "runtime-tokio-native-tls"] }
 dirs = "5.0.1"
 reqwest = "0.12.8"
 base64 = "0.22.1"
-keyring = { version = "3.5.0", features = ["apple-native", "windows-native", "linux-native"] }
+keyring = { version = "3.6.0", features = ["apple-native", "windows-native", "linux-native"] }
 hostsfile = { git = "https://github.com/tonarino/innernet", branch = "main" }
 log = "0.4"
 env_logger = "0.11.5"
