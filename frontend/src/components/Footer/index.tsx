@@ -1,28 +1,23 @@
 import React, { useState } from 'react'
+import { Menu as MenuIcon } from 'lucide-react'
 import { FaGithub } from 'react-icons/fa'
 import { MdAdd, MdFileDownload, MdFileUpload, MdSettings } from 'react-icons/md'
 
-import { HamburgerIcon } from '@chakra-ui/icons'
-import {
-  Box,
-  Button,
-  Flex,
-  HStack,
-  IconButton,
-  Menu,
-  MenuButton,
-  MenuItem,
-  MenuList,
-  Tooltip,
-  useColorModeValue,
-} from '@chakra-ui/react'
+import { Box } from '@chakra-ui/react'
 import { invoke } from '@tauri-apps/api/tauri'
 
-import { FooterProps } from '../../types'
-import AutoImportModal from '../AutoImportModal'
-
-import BulkDeleteButton from './BulkDeleteButton'
-import SyncConfigsButton from './SyncConfigsButton'
+import AutoImportModal from '@/components/AutoImportModal'
+import BulkDeleteButton from '@/components/Footer/BulkDeleteButton'
+import SyncConfigsButton from '@/components/Footer/SyncConfigsButton'
+import { Button } from '@/components/ui/button'
+import {
+  MenuContent,
+  MenuItem,
+  MenuRoot,
+  MenuTrigger,
+} from '@/components/ui/menu'
+import { Tooltip } from '@/components/ui/tooltip'
+import { FooterProps } from '@/types'
 
 const Footer: React.FC<FooterProps> = ({
   openModal,
@@ -38,7 +33,6 @@ const Footer: React.FC<FooterProps> = ({
   setSelectedConfigs,
   configs,
 }) => {
-  const borderColor = useColorModeValue('gray.500', 'gray.700')
   const [logSize, setLogSize] = useState<number>(0)
   const [fetchError, setFetchError] = useState<boolean>(false)
   const [isAutoImportModalOpen, setIsAutoImportModalOpen] = useState(false)
@@ -64,113 +58,173 @@ const Footer: React.FC<FooterProps> = ({
     }
   }
 
-  const openAutoImportModal = () => {
-    setIsAutoImportModalOpen(true)
-  }
-
-  const closeAutoImportModal = () => {
-    setIsAutoImportModalOpen(false)
-  }
-
   return (
-    <Flex
-      as='footer'
-      direction='row'
-      justifyContent='space-between'
-      wrap='wrap'
-      bg='gray.800'
-      boxShadow='0px 0px 8px 3px rgba(0, 0, 0, 0.2)'
-      borderRadius='lg'
-      border='1px'
-      borderColor={borderColor}
-      width='100%'
-      padding='0.3rem'
+    <Box
+      display="flex"
+      alignItems="center"
+      justifyContent="space-between"
+      width="100%"
+      bg="#161616"
+      px={3}
+      py={2}
+      borderRadius="md"
+      border="1px solid rgba(255, 255, 255, 0.08)"
     >
-      <Flex justifyContent='flex-start'>
-        <Menu placement='top-end'>
-          <MenuButton
-            as={IconButton}
-            aria-label='Options'
-            icon={<HamburgerIcon />}
-            size='sm'
-            colorScheme='facebook'
-            variant='outline'
-            borderColor={borderColor}
-            onClick={fetchLogSize}
-          />
-          <MenuList zIndex='popover' fontSize='sm' minW='150px'>
-            <MenuItem icon={<MdFileUpload />} onClick={handleExportConfigs}>
-              Export Local File
-            </MenuItem>
+      {/* Left Section */}
+      <Box display="flex" alignItems="center" gap={2}>
+        {/* Menu Button */}
+        <MenuRoot>
+          <MenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="xs"
+              onClick={fetchLogSize}
+              height="24px"
+              width="24px"
+              minWidth="24px"
+              p={0}
+              bg="whiteAlpha.50"
+              _hover={{ bg: 'whiteAlpha.100' }}
+            >
+              <Box as={MenuIcon} width={4} height={4} />
+            </Button>
+          </MenuTrigger>
+          <MenuContent
+            css={{
+              backgroundColor: '#1A1A1A',
+              border: '1px solid rgba(255, 255, 255, 0.08)',
+              padding: '4px',
+              gap: '2px',
+            }}
+          >
             <MenuItem
-              icon={<MdFileDownload />}
-              isDisabled={credentialsSaved}
+              value="export"
+              onClick={handleExportConfigs}
+              css={{
+                fontSize: '11px',
+                padding: '6px 8px',
+                borderRadius: '4px',
+                gap: '8px',
+                '&:hover': {
+                  backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                },
+              }}
+            >
+              <Box as={MdFileUpload} width={5} height={5} />
+              <Box>Export Local File</Box>
+            </MenuItem>
+
+            <MenuItem
+              value="import"
               onClick={handleImportConfigs}
+              disabled={credentialsSaved}
+              css={{
+                fontSize: '11px',
+                padding: '6px 8px',
+                borderRadius: '4px',
+                gap: '8px',
+                '&:hover': {
+                  backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                },
+                '&[disabled]': {
+                  opacity: 0.5,
+                  pointerEvents: 'none',
+                },
+              }}
             >
-              Import Local File
+              <Box as={MdFileDownload} width={5} height={5} />
+              <Box>Import Local File</Box>
             </MenuItem>
+
             <MenuItem
-              icon={<MdSettings />}
+              value="clear-logs"
               onClick={handleClearLogs}
-              isDisabled={logSize === 0 || fetchError}
+              disabled={logSize === 0 || fetchError}
+              css={{
+                fontSize: '11px',
+                padding: '6px 8px',
+                borderRadius: '4px',
+                gap: '8px',
+                '&:hover': {
+                  backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                },
+                '&[disabled]': {
+                  opacity: 0.5,
+                  pointerEvents: 'none',
+                },
+              }}
             >
-              Prune Logs ({(logSize / (1024 * 1024)).toFixed(2)} MB)
+              <Box as={MdSettings} width={5} height={5} />
+              <Box>Prune Logs ({(logSize / (1024 * 1024)).toFixed(2)} MB)</Box>
             </MenuItem>
-            <MenuItem icon={<MdSettings />} onClick={openAutoImportModal}>
-              Auto Import
+
+            <MenuItem
+              value="auto-import"
+              onClick={() => setIsAutoImportModalOpen(true)}
+              css={{
+                fontSize: '11px',
+                padding: '6px 8px',
+                borderRadius: '4px',
+                gap: '8px',
+                '&:hover': {
+                  backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                },
+              }}
+            >
+              <Box as={MdSettings} width={6} height={6} />
+              <Box>Auto Import</Box>
             </MenuItem>
-          </MenuList>
-        </Menu>
-        <Tooltip
-          label='Add New Config'
-          placement='top'
-          fontSize='sm'
-          lineHeight='tight'
-        >
-          <IconButton
-            variant='outline'
-            icon={<MdAdd />}
-            colorScheme='facebook'
+          </MenuContent>
+        </MenuRoot>
+
+        {/* Add Button */}
+        <Tooltip content="Add New Config">
+          <Button
+            variant="ghost"
+            size="sm"
             onClick={openModal}
-            isDisabled={credentialsSaved}
-            size='sm'
-            ml={2}
-            aria-label='Add New Config'
-            borderColor={borderColor}
-          />
+            disabled={credentialsSaved}
+            height="25px"
+            width="25px"
+            minWidth="25px"
+            p={0}
+            bg="whiteAlpha.50"
+            _hover={{ bg: 'whiteAlpha.100' }}
+          >
+            <Box as={MdAdd} width={4} height={4} />
+          </Button>
         </Tooltip>
+
         <BulkDeleteButton
           setSelectedConfigs={setSelectedConfigs}
           selectedConfigs={selectedConfigs}
           configs={configs}
         />
-      </Flex>
+      </Box>
 
-      <Flex flexGrow={1} justifyContent='flex-end' alignItems='center'>
-        <Tooltip
-          label='Configure Git Sync'
-          placement='top'
-          fontSize='sm'
-          lineHeight='tight'
-        >
+      {/* Right Section */}
+      <Box display="flex" alignItems="center" gap={2}>
+        <Tooltip content="Configure Git Sync">
           <Button
-            variant='outline'
-            colorScheme='facebook'
+            variant="ghost"
+            size="2xs"
             onClick={openGitSyncModal}
-            size='sm'
-            aria-label='Sync Configs'
-            borderColor='gray.700'
-            mr={2}
+            height="24px"
+            minWidth="40px"
+            px={2}
+            bg="whiteAlpha.50"
+            _hover={{ bg: 'whiteAlpha.100' }}
           >
-            <HStack spacing={1}>
-              <Box as={FaGithub} />
-              <MdSettings />
-            </HStack>
+            <Box display="flex" alignItems="center" gap={1}>
+              <Box as={FaGithub} width={4} height={4} />
+              <Box as={MdSettings} width={4} height={4} />
+            </Box>
           </Button>
         </Tooltip>
+
         <SyncConfigsButton
-          serviceName='kftray'
-          accountName='github_config'
+          serviceName="kftray"
+          accountName="github_config"
           onSyncFailure={error => console.error('Sync failed:', error)}
           credentialsSaved={credentialsSaved}
           setCredentialsSaved={setCredentialsSaved}
@@ -178,12 +232,14 @@ const Footer: React.FC<FooterProps> = ({
           setPollingInterval={setPollingInterval}
           pollingInterval={pollingInterval}
         />
-      </Flex>
+      </Box>
+
       <AutoImportModal
         isOpen={isAutoImportModalOpen}
-        onClose={closeAutoImportModal}
+        onClose={() => setIsAutoImportModalOpen(false)}
       />
-    </Flex>
+
+    </Box>
   )
 }
 

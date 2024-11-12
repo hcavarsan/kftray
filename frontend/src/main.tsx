@@ -1,13 +1,10 @@
+// src/main.tsx
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from 'react-query'
 
-import { ChakraProvider } from '@chakra-ui/react'
-
-import theme from './assets/theme'
+import { Provider } from './components/ui/provider'
 import App from './App'
-
-import './assets/style.css'
 
 const queryClient = new QueryClient()
 
@@ -20,10 +17,9 @@ if (!rootElement) {
 ReactDOM.createRoot(rootElement).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
-      {' '}
-      <ChakraProvider theme={theme}>
+      <Provider>
         <App />
-      </ChakraProvider>
+      </Provider>
     </QueryClientProvider>
   </React.StrictMode>,
 )

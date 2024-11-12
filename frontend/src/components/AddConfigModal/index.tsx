@@ -1,35 +1,49 @@
+/* eslint-disable max-lines-per-function */
+
 /* eslint-disable complexity */
 
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
+import { InfoIcon } from 'lucide-react'
 import { useQuery } from 'react-query'
-import ReactSelect, { ActionMeta } from 'react-select'
+import Select, { ActionMeta } from 'react-select'
 
-import { InfoIcon } from '@chakra-ui/icons'
 import {
   Button,
-  Center,
-  Checkbox,
-  Divider,
+  Checkbox as C,
+  Dialog,
+  Field as F,
   Flex,
-  FormControl,
-  FormLabel,
+  Grid,
+  HStack,
   Input,
-  Modal,
-  ModalBody,
-  ModalContent,
-  ModalOverlay,
-  SimpleGrid,
+  Separator,
+  Stack,
   Text,
   Tooltip,
-  VStack,
 } from '@chakra-ui/react'
 import { open } from '@tauri-apps/api/dialog'
 import { invoke } from '@tauri-apps/api/tauri'
 
-import { Config, CustomConfigProps, KubeContext, Option } from '../../types'
-import useCustomToast from '../CustomToast'
+import { fetchKubeContexts } from '@/components/PortForwardTable/ContextsAccordion/utils'
+import { useCustomToast } from '@/components/ui/toaster'
+import { Config, CustomConfigProps, KubeContext } from '@/types'
 
-import { customStyles, fetchKubeContexts } from './utils'
+// Define our option types
+interface StringOption {
+  value: string
+  label: string
+}
+
+interface PortOption {
+  value: number
+  label: string
+}
+
+// Define the service interface
+interface ServiceData {
+  name: string
+  port?: number
+}
 
 const AddConfigModal: React.FC<CustomConfigProps> = ({
   isModalOpen,
@@ -41,44 +55,31 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
   configData,
   setNewConfig,
 }) => {
-  const [selectedContext, setSelectedContext] = useState<{
-    name?: string
-    value: string | number
-    label: string
-  } | null>(null)
-  const [selectedNamespace, setSelectedNamespace] = useState<{
-    name?: string
-    value: string | number
-    label: string
-  } | null>(null)
-  const [selectedServiceOrTarget, setSelectedServiceOrTarget] = useState<{
-    name?: string
-    value: string | number
-    label: string
-  } | null>(null)
-  const [selectedPort, setSelectedPort] = useState<{
-    name?: string
-    value: string | number
-    label: string
-  } | null>(null)
-  const [selectedWorkloadType, setSelectedWorkloadType] = useState<{
-    name?: string
-    value: string | number
-    label: string
-  } | null>(null)
-  const [selectedProtocol, setSelectedProtocol] = useState<{
-    name?: string
-    value: string | number
-    label: string
-  } | null>(null)
-
+  const [selectedContext, setSelectedContext] = useState<StringOption | null>(
+    null,
+  )
+  const [selectedNamespace, setSelectedNamespace] =
+    useState<StringOption | null>(null)
+  const [selectedServiceOrTarget, setSelectedServiceOrTarget] =
+    useState<StringOption | null>(null)
+  const [selectedPort, setSelectedPort] = useState<PortOption | null>(null)
+  const [selectedWorkloadType, setSelectedWorkloadType] =
+    useState<StringOption | null>(null)
+  const [selectedProtocol, setSelectedProtocol] = useState<StringOption | null>(
+    null,
+  )
+  const showToast = useCustomToast()
   const [isChecked, setIsChecked] = useState(false)
-  const toast = useCustomToast()
   const [isContextDropdownFocused, setIsContextDropdownFocused] =
     useState(false)
 
-  const handleCheckboxChange = () => {
-    setIsChecked(!isChecked)
+  const handleCheckboxChange = (e: React.FormEvent<HTMLLabelElement>) => {
+    const target = e.target as HTMLInputElement
+
+    setNewConfig(prev => ({
+      ...prev,
+      [target.name]: target.checked,
+    }))
   }
 
   useEffect(() => {
@@ -117,13 +118,13 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
       onError: error => {
         console.error('Error fetching contexts:', error)
         if (error instanceof Error) {
-          toast({
+          showToast({
             title: 'Error fetching contexts',
             description: error.message,
             status: 'error',
           })
         } else {
-          toast({
+          showToast({
             title: 'Error fetching contexts',
             description: 'An unknown error occurred',
             status: 'error',
@@ -171,13 +172,13 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
       onError: error => {
         console.error('Error fetching namespaces:', error)
         if (error instanceof Error) {
-          toast({
+          showToast({
             title: 'Error fetching namespaces',
             description: error.message,
             status: 'error',
           })
         } else {
-          toast({
+          showToast({
             title: 'Error fetching namespaces',
             description: 'An unknown error occurred',
             status: 'error',
@@ -204,13 +205,13 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
       onError: error => {
         console.error('Error fetching pods:', error)
         if (error instanceof Error) {
-          toast({
+          showToast({
             title: 'Error fetching pods',
             description: error.message,
             status: 'error',
           })
         } else {
-          toast({
+          showToast({
             title: 'Error fetching pods',
             description: 'An unknown error occurred',
             status: 'error',
@@ -220,38 +221,21 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     },
   )
 
-  const serviceOrTargetQuery = useQuery(
-    ['kube-services-or-targets', newConfig.context, newConfig.namespace],
+  const serviceOrTargetQuery = useQuery<ServiceData[]>(
+    ['services', newConfig.context, newConfig.namespace],
     () => {
-      return invoke<{ name: string }[]>('list_services', {
+      return invoke<ServiceData[]>('list_services', {
         contextName: newConfig.context,
         namespace: newConfig.namespace,
         kubeconfig: kubeConfig,
       })
     },
     {
-      initialData: configData?.service,
       enabled:
         isModalOpen &&
         !!newConfig.context &&
         !!newConfig.namespace &&
-        newConfig.workload_type !== 'proxy',
-      onError: error => {
-        console.error('Error fetching services or targets:', error)
-        if (error instanceof Error) {
-          toast({
-            title: 'Error fetching services or targets',
-            description: error.message,
-            status: 'error',
-          })
-        } else {
-          toast({
-            title: 'Error fetching services or targets',
-            description: 'An unknown error occurred',
-            status: 'error',
-          })
-        }
-      },
+        newConfig.workload_type === 'service',
     },
   )
 
@@ -299,13 +283,13 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
       onError: error => {
         console.error('Error fetching service ports:', error)
         if (error instanceof Error) {
-          toast({
+          showToast({
             title: 'Error fetching service ports',
             description: error.message,
             status: 'error',
           })
         } else {
-          toast({
+          showToast({
             title: 'Error fetching service ports',
             description: 'An unknown error occurred',
             status: 'error',
@@ -314,6 +298,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
       },
     },
   )
+
 
   useEffect(() => {
     if (isEdit && isModalOpen) {
@@ -385,76 +370,49 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
   }
 
   const handleSelectChange = (
-    selectedOption: Option | null,
-    { name }: ActionMeta<Option>,
+    selectedOption: StringOption | PortOption | null,
+    { name }: ActionMeta<StringOption | PortOption>,
   ) => {
+    // Handle port separately first
+    if (name === 'remote_port') {
+      const portOption = selectedOption as PortOption | null
+
+      setSelectedPort(portOption)
+      setNewConfig(prev => ({
+        ...prev,
+        remote_port: portOption?.value,
+      }))
+
+      return
+    }
+
+    // Handle string-based options
     switch (name) {
     case 'context':
-      setSelectedContext(selectedOption)
-      if (
-        !selectedOption ||
-          selectedContext?.value !== selectedOption?.value
-      ) {
-        setSelectedNamespace(null)
-        setSelectedServiceOrTarget(null)
-        setSelectedPort(null)
-        handleInputChange({
-          target: { name: 'namespace', value: '' },
-        } as unknown as React.ChangeEvent<HTMLInputElement>)
-        handleInputChange({
-          target: { name: 'service', value: '' },
-        } as unknown as React.ChangeEvent<HTMLInputElement>)
-        handleInputChange({
-          target: { name: 'remote_port', value: '' },
-        } as unknown as React.ChangeEvent<HTMLInputElement>)
-      }
+      setSelectedContext(selectedOption as StringOption | null)
       break
     case 'namespace':
-      setSelectedNamespace(selectedOption)
-      if (
-        !selectedOption ||
-          selectedNamespace?.value !== selectedOption?.value
-      ) {
-        setSelectedServiceOrTarget(null)
-        setSelectedPort(null)
-        handleInputChange({
-          target: { name: 'service', value: '' },
-        } as unknown as React.ChangeEvent<HTMLInputElement>)
-        handleInputChange({
-          target: { name: 'remote_port', value: '' },
-        } as unknown as React.ChangeEvent<HTMLInputElement>)
-      }
+      setSelectedNamespace(selectedOption as StringOption | null)
       break
     case 'service':
     case 'target':
-      setSelectedServiceOrTarget(selectedOption)
-      if (
-        !selectedOption ||
-          selectedServiceOrTarget?.value !== selectedOption?.value
-      ) {
-        setSelectedPort(null)
-        handleInputChange({
-          target: { name: 'remote_port', value: '' },
-        } as unknown as React.ChangeEvent<HTMLInputElement>)
-      }
-      break
-    case 'remote_port':
-      setSelectedPort(selectedOption)
+      setSelectedServiceOrTarget(selectedOption as StringOption | null)
       break
     case 'workload_type':
-      setSelectedWorkloadType(selectedOption)
+      setSelectedWorkloadType(selectedOption as StringOption | null)
       break
     case 'protocol':
-      setSelectedProtocol(selectedOption)
+      setSelectedProtocol(selectedOption as StringOption | null)
       break
     }
 
+    // Update the config
     handleInputChange({
       target: {
-        name: name as string,
+        name: name,
         value: selectedOption ? selectedOption.value : '',
-      },
-    } as unknown as React.ChangeEvent<HTMLInputElement>)
+      } as HTMLInputElement,
+    } as React.ChangeEvent<HTMLInputElement>)
   }
 
   useEffect(() => {
@@ -468,11 +426,12 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
   const trimConfigValues = (config: Config): Config => {
     const trimmedConfig: Config = { ...config }
 
-    for (const key in config) {
-      if (typeof config[key] === 'string') {
-        trimmedConfig[key] = config[key].trim()
+    // Type assertion to allow string indexing
+    Object.keys(config).forEach(key => {
+      if (typeof (config as any)[key] === 'string') {
+        ;(trimmedConfig as any)[key] = (config as any)[key].trim()
       }
-    }
+    })
 
     return trimmedConfig
   }
@@ -500,507 +459,730 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     resetState()
   }
 
+  const portOptions: PortOption[] = useMemo(
+    () =>
+      serviceOrTargetQuery.data
+      ?.filter(
+        (service: ServiceData): service is ServiceData & { port: number } =>
+          service.port !== undefined && typeof service.port === 'number',
+      )
+      .map(service => ({
+        value: service.port,
+        label: service.port.toString(),
+      })) || [],
+    [serviceOrTargetQuery.data],
+  )
+
+
+
   return (
-    <Center>
-      <Modal isOpen={isModalOpen} onClose={handleCancel} size='sm'>
-        <ModalOverlay bg='transparent' />
-        <ModalContent bg='transparent' borderRadius='20px' marginTop='15'>
-          <ModalBody p={0}>
+    <Dialog.Root open={isModalOpen} onOpenChange={handleCancel}>
+	  <Dialog.Backdrop bg="blackAlpha.500" backdropFilter="blur(8px)" borderRadius="lg" />
+	  <Dialog.Positioner>
+        <Dialog.Content
+		  onClick={(e) => e.stopPropagation()}
+		  maxWidth="400px"
+		  width="200vw"
+		  maxHeight="200vh"
+		  bg="#111111"
+		  borderRadius="lg"
+		  border="1px solid rgba(255, 255, 255, 0.08)"
+		  overflow="hidden"
+		  mt={5}
+        >
+		  <Dialog.Header
+            p={4}
+            bg="#161616"
+            borderBottom="1px solid rgba(255, 255, 255, 0.05)"
+		  >
+            <Text fontSize="sm" fontWeight="medium" color="gray.100">
+			  {isEdit ? 'Edit Configuration' : 'Add Configuration'}
+            </Text>
+		  </Dialog.Header>
+
+		  <Dialog.Body p={4}>
             <form onSubmit={handleSave}>
-              <VStack
-                spacing={3}
-                align='inherit'
-                p={4}
-                border='1px'
-                borderColor='gray.700'
-                borderRadius='20px'
-                bg='gray.800'
-                boxShadow={`
-				  /* Inset shadow for top & bottom inner border effect using dark gray */
-				  inset 0 2px 6px rgba(0, 0, 0, 0.6),
-				  inset 0 -2px 6px rgba(0, 0, 0, 0.6),
-				  /* Inset shadow for an inner border all around using dark gray */
-				  inset 0 0 0 4px rgba(45, 60, 81, 0.9)
-				`}
-              >
-                <Flex justifyContent='space-between' alignItems='center'>
-                  <Text fontSize='sm' fontWeight='bold'>
-                    {isEdit ? 'Edit Configuration' : 'Add Configuration'}
-                  </Text>
-                  <Button
-                    size='xs'
-                    height='26px'
-                    width='35%'
-                    variant='outline'
-                    onClick={handleSetKubeConfig}
-                    px={4}
-                    borderColor='gray.600'
-                  >
-                    <Tooltip
-                      label={`Current kubeconfig: ${kubeConfig}`}
-                      aria-label='Kubeconfig Details'
-                      placement='top'
-                      hasArrow
-                    >
-                      <Flex align='center'>
-                        <Text fontSize='10px' mr={2}>
-                          Set Kubeconfig
-                        </Text>
-                        <InfoIcon color='gray.500' w={2} h={2} />
-                      </Flex>
-                    </Tooltip>
-                  </Button>
+			  <Stack gap={5}>
+                {/* Kubeconfig Section */}
+                <Flex justify="space-between" align="center">
+				  <Text fontSize="xs" color="gray.400">
+					Kubeconfig
+				  </Text>
+				  <Tooltip.Root>
+                    <Tooltip.Trigger>
+					  <Button
+                        size="xs"
+                        variant="ghost"
+                        onClick={handleSetKubeConfig}
+                        bg="whiteAlpha.50"
+                        _hover={{ bg: 'whiteAlpha.100' }}
+                        height="24px"
+					  >
+                        <Text fontSize="xs">Set Path</Text>
+					  </Button>
+                    </Tooltip.Trigger>
+                    <Tooltip.Positioner>
+					  <Tooltip.Content bg="#161616" border="1px solid rgba(255, 255, 255, 0.05)">
+                        <Text fontSize="xs" color="gray.300">{kubeConfig}</Text>
+					  </Tooltip.Content>
+                    </Tooltip.Positioner>
+				  </Tooltip.Root>
                 </Flex>
-                <Divider />
-                <SimpleGrid columns={2} spacing={3}>
-                  <FormControl>
-                    <FormLabel htmlFor='alias' fontSize='12px' mb='-0.4'>
-                      Alias
-                    </FormLabel>
+
+                {/* Alias and Domain Section */}
+                <Grid templateColumns="repeat(2, 1fr)" gap={4}>
+				  <Stack gap={2}>
+                    <Text fontSize="xs" color="gray.400">Alias</Text>
                     <Input
-                      id='alias'
-                      type='text'
-                      value={newConfig.alias || ''}
-                      name='alias'
-                      onChange={handleInputChange}
-                      size='xs'
-                      borderRadius='4px'
-                      height='25px'
+					  value={newConfig.alias || ''}
+					  name="alias"
+					  onChange={handleInputChange}
+					  bg="#161616"
+					  border="1px solid rgba(255, 255, 255, 0.08)"
+					  _hover={{ borderColor: 'rgba(255, 255, 255, 0.15)' }}
+					  _focus={{ borderColor: 'blue.400', boxShadow: 'none' }}
+					  height="32px"
+					  fontSize="13px"
                     />
-                    <Checkbox
-                      size='sm'
-                      isChecked={newConfig.domain_enabled || false}
-                      onChange={e =>
-                        handleInputChange({
-                          target: {
-                            name: e.target.name,
-                            value: e.target.checked,
-                          },
-                        } as unknown as React.ChangeEvent<HTMLInputElement>)
-                      }
-                      mt={1}
-                      ml={0.5}
-                      name='domain_enabled'
+                    <C.Root
+					  checked={newConfig.domain_enabled || false}
+					  onChange={handleCheckboxChange}
+					  name="domain_enabled"
                     >
-                      <Text fontSize='10px'>Enable alias as domain</Text>
-                    </Checkbox>
-                  </FormControl>
-                  <FormControl isRequired mt='0.4'>
-                    <FormLabel htmlFor='context' fontSize='12px' mb='0'>
-                      Context
-                    </FormLabel>
-                    <ReactSelect
-                      styles={customStyles}
-                      name='context'
-                      options={contextQuery.data?.map(context => ({
-                        label: context.name,
+					  <C.Control bg="#161616" borderColor="whiteAlpha.200" />
+					  <C.Label>
+                        <Text fontSize="xs" color="gray.400">Enable alias as domain</Text>
+					  </C.Label>
+                    </C.Root>
+				  </Stack>
+
+				  <Stack gap={2}>
+                    <Text fontSize="xs" color="gray.400">Context *</Text>
+                    <Select
+					  name="context"
+					  value={selectedContext}
+					  onChange={(option, action) => handleSelectChange(option, action)}
+					  options={contextQuery.data?.map(context => ({
                         value: context.name,
-                      }))}
-                      value={selectedContext}
-                      onChange={selectedOption =>
-                        handleSelectChange(
-                          selectedOption as Option,
-                          { name: 'context' } as ActionMeta<Option>,
-                        )
-                      }
-                      onFocus={() => setIsContextDropdownFocused(true)}
-                      menuPlacement='auto'
-                      theme={theme => ({
-                        ...theme,
-                        borderRadius: 4,
-                        colors: {
-                          ...theme.colors,
-                          primary25: 'lightgrey',
-                          primary: 'grey',
-                        },
-                      })}
-                      isDisabled={
-                        contextQuery.isLoading || contextQuery.isError
-                      }
+                        label: context.name,
+					  }))}
+					  isLoading={contextQuery.isLoading}
+					  styles={{
+                        control: (base) => ({
+						  ...base,
+						  background: '#161616',
+						  borderColor: 'rgba(255, 255, 255, 0.08)',
+						  borderRadius: '6px',
+						  minHeight: '32px',
+						  fontSize: '13px',
+						  '&:hover': {
+                            borderColor: 'rgba(255, 255, 255, 0.15)'
+						  }
+                        }),
+                        menu: (base) => ({
+						  ...base,
+						  background: '#161616',
+						  border: '1px solid rgba(255, 255, 255, 0.08)',
+						  borderRadius: '6px',
+						  overflow: 'hidden'
+                        }),
+                        menuList: (base) => ({
+						  ...base,
+						  padding: '4px'
+                        }),
+                        option: (base, state) => ({
+						  ...base,
+						  fontSize: '13px',
+						  background: state.isFocused ? 'rgba(255, 255, 255, 0.05)' : 'transparent',
+						  borderRadius: '4px',
+						  color: 'rgba(255, 255, 255, 0.9)',
+						  padding: '6px 8px',
+						  '&:hover': {
+                            background: 'rgba(255, 255, 255, 0.05)'
+						  }
+                        }),
+                        singleValue: (base) => ({
+						  ...base,
+						  color: 'rgba(255, 255, 255, 0.9)',
+						  fontSize: '13px'
+                        }),
+                        input: (base) => ({
+						  ...base,
+						  color: 'rgba(255, 255, 255, 0.9)',
+						  fontSize: '13px'
+                        }),
+                        placeholder: (base) => ({
+						  ...base,
+						  color: 'rgba(255, 255, 255, 0.4)',
+						  fontSize: '13px'
+                        })
+					  }}
                     />
                     {contextQuery.isError && (
-                      <Text color='red.500' fontSize='xs'>
-                        Error: select a valid kubeconfig
-                      </Text>
+					  <Text color="red.300" fontSize="xs">
+						Error: select a valid kubeconfig
+					  </Text>
                     )}
-                  </FormControl>
-                </SimpleGrid>
+				  </Stack>
+                </Grid>
 
-                <SimpleGrid columns={2} spacing={3}>
-                  <FormControl isRequired>
-                    <FormLabel htmlFor='workload_type' fontSize='12px' mb='0'>
-                      Workload Type
-                    </FormLabel>
-                    <ReactSelect
-                      styles={customStyles}
-                      name='workload_type'
-                      options={[
-                        { label: 'service', value: 'service' },
-                        { label: 'proxy', value: 'proxy' },
-                        { label: 'pod', value: 'pod' },
-                      ]}
-                      value={selectedWorkloadType}
-                      onChange={selectedOption =>
-                        handleSelectChange(
-                          selectedOption as Option,
-                          { name: 'workload_type' } as ActionMeta<Option>,
-                        )
-                      }
-                      isSearchable={false}
-                      menuPlacement='auto'
-                      theme={theme => ({
-                        ...theme,
-                        borderRadius: 4,
-                        colors: {
-                          ...theme.colors,
-                          primary25: 'lightgrey',
-                          primary: 'grey',
-                        },
-                      })}
+                {/* Workload Type and Namespace Section */}
+                <Grid templateColumns="repeat(2, 1fr)" gap={4}>
+				  <Stack gap={2}>
+                    <Text fontSize="xs" color="gray.400">Workload Type</Text>
+                    <Select
+					  name="workload_type"
+					  value={selectedWorkloadType}
+					  onChange={(option, action) => handleSelectChange(option, action)}
+					  options={[
+                        { value: 'service', label: 'service' },
+                        { value: 'proxy', label: 'proxy' },
+                        { value: 'pod', label: 'pod' },
+					  ]}
+					  styles={{
+                        control: (base) => ({
+						  ...base,
+						  background: '#161616',
+						  borderColor: 'rgba(255, 255, 255, 0.08)',
+						  borderRadius: '6px',
+						  minHeight: '32px',
+						  fontSize: '13px',
+						  '&:hover': {
+                            borderColor: 'rgba(255, 255, 255, 0.15)'
+						  }
+                        }),
+                        menu: (base) => ({
+						  ...base,
+						  background: '#161616',
+						  border: '1px solid rgba(255, 255, 255, 0.08)',
+						  borderRadius: '6px',
+						  overflow: 'hidden'
+                        }),
+                        menuList: (base) => ({
+						  ...base,
+						  padding: '4px'
+                        }),
+                        option: (base, state) => ({
+						  ...base,
+						  fontSize: '13px',
+						  background: state.isFocused ? 'rgba(255, 255, 255, 0.05)' : 'transparent',
+						  borderRadius: '4px',
+						  color: 'rgba(255, 255, 255, 0.9)',
+						  padding: '6px 8px',
+						  '&:hover': {
+                            background: 'rgba(255, 255, 255, 0.05)'
+						  }
+                        }),
+                        singleValue: (base) => ({
+						  ...base,
+						  color: 'rgba(255, 255, 255, 0.9)',
+						  fontSize: '13px'
+                        }),
+                        input: (base) => ({
+						  ...base,
+						  color: 'rgba(255, 255, 255, 0.9)',
+						  fontSize: '13px'
+                        }),
+                        placeholder: (base) => ({
+						  ...base,
+						  color: 'rgba(255, 255, 255, 0.4)',
+						  fontSize: '13px'
+                        })
+					  }}
                     />
-                  </FormControl>
+				  </Stack>
 
-                  <FormControl isRequired>
-                    <FormLabel htmlFor='namespace' fontSize='12px' mb='0'>
-                      Namespace
-                    </FormLabel>
-                    <ReactSelect
-                      styles={customStyles}
-                      name='namespace'
-                      options={namespaceQuery.data?.map(namespace => ({
-                        label: namespace.name,
+				  <Stack gap={2}>
+                    <Text fontSize="xs" color="gray.400">Namespace *</Text>
+                    <Select
+					  name="namespace"
+					  value={selectedNamespace}
+					  onChange={(option, action) => handleSelectChange(option, action)}
+					  options={namespaceQuery.data?.map(namespace => ({
                         value: namespace.name,
-                      }))}
-                      value={selectedNamespace}
-                      onChange={selectedOption =>
-                        handleSelectChange(
-                          selectedOption as Option,
-                          { name: 'namespace' } as ActionMeta<Option>,
-                        )
-                      }
-                      menuPlacement='auto'
-                      theme={theme => ({
-                        ...theme,
-                        borderRadius: 4,
-                        colors: {
-                          ...theme.colors,
-                          primary25: 'lightgrey',
-                          primary: 'grey',
-                        },
-                      })}
-                      isDisabled={
-                        namespaceQuery.isLoading || namespaceQuery.isError
-                      }
+                        label: namespace.name,
+					  }))}
+					  isLoading={namespaceQuery.isLoading}
+					  styles={{
+                        control: (base) => ({
+						  ...base,
+						  background: '#161616',
+						  borderColor: 'rgba(255, 255, 255, 0.08)',
+						  borderRadius: '6px',
+						  minHeight: '32px',
+						  fontSize: '13px',
+						  '&:hover': {
+                            borderColor: 'rgba(255, 255, 255, 0.15)'
+						  }
+                        }),
+                        menu: (base) => ({
+						  ...base,
+						  background: '#161616',
+						  border: '1px solid rgba(255, 255, 255, 0.08)',
+						  borderRadius: '6px',
+						  overflow: 'hidden'
+                        }),
+                        menuList: (base) => ({
+						  ...base,
+						  padding: '4px'
+                        }),
+                        option: (base, state) => ({
+						  ...base,
+						  fontSize: '13px',
+						  background: state.isFocused ? 'rgba(255, 255, 255, 0.05)' : 'transparent',
+						  borderRadius: '4px',
+						  color: 'rgba(255, 255, 255, 0.9)',
+						  padding: '6px 8px',
+						  '&:hover': {
+                            background: 'rgba(255, 255, 255, 0.05)'
+						  }
+                        }),
+                        singleValue: (base) => ({
+						  ...base,
+						  color: 'rgba(255, 255, 255, 0.9)',
+						  fontSize: '13px'
+                        }),
+                        input: (base) => ({
+						  ...base,
+						  color: 'rgba(255, 255, 255, 0.9)',
+						  fontSize: '13px'
+                        }),
+                        placeholder: (base) => ({
+						  ...base,
+						  color: 'rgba(255, 255, 255, 0.4)',
+						  fontSize: '13px'
+                        })
+					  }}
                     />
                     {namespaceQuery.isError && (
-                      <Text color='red.500' fontSize='xs'>
-                        Error fetching namespaces
-                      </Text>
+					  <Text color="red.300" fontSize="xs">
+						Error fetching namespaces
+					  </Text>
                     )}
-                  </FormControl>
-                </SimpleGrid>
+				  </Stack>
+                </Grid>
 
+                {/* Conditional Rendering based on workload_type */}
                 {newConfig.workload_type?.startsWith('proxy') ? (
-                  <>
-                    <SimpleGrid columns={2} spacing={3} mt='2'>
-                      <FormControl>
-                        <FormLabel
-                          htmlFor='remote_address'
-                          fontSize='12px'
-                          mb='0'
-                        >
-                          Remote Address
-                        </FormLabel>
+				  <>
+                    <Grid templateColumns="repeat(2, 1fr)" gap={4}>
+					  <Stack gap={2}>
+                        <Text fontSize="xs" color="gray.400">Remote Address</Text>
                         <Input
-                          id='remote_address'
-                          type='text'
-                          value={newConfig.remote_address || ''}
-                          name='remote_address'
-                          onChange={handleInputChange}
-                          size='xs'
+						  value={newConfig.remote_address || ''}
+						  name="remote_address"
+						  onChange={handleInputChange}
+						  bg="#161616"
+						  border="1px solid rgba(255, 255, 255, 0.08)"
+						  _hover={{ borderColor: 'rgba(255, 255, 255, 0.15)' }}
+						  _focus={{ borderColor: 'blue.400', boxShadow: 'none' }}
+						  height="32px"
+						  fontSize="13px"
                         />
-                      </FormControl>
+					  </Stack>
 
-                      <FormControl isRequired>
-                        <FormLabel htmlFor='protocol' fontSize='12px' mb='0'>
-                          Protocol
-                        </FormLabel>
-                        <ReactSelect
-                          styles={customStyles}
-                          name='protocol'
-                          options={[
-                            { label: 'udp', value: 'udp' },
-                            { label: 'tcp', value: 'tcp' },
-                          ]}
-                          value={selectedProtocol}
-                          onChange={selectedOption =>
-                            handleSelectChange(
-                              selectedOption as Option,
-                              { name: 'protocol' } as ActionMeta<Option>,
-                            )
-                          }
-                          isDisabled={
-                            contextQuery.isLoading || contextQuery.isError
-                          }
+					  <Stack gap={2}>
+                        <Text fontSize="xs" color="gray.400">Protocol *</Text>
+                        <Select
+						  name="protocol"
+						  value={selectedProtocol}
+						  onChange={(option, action) => handleSelectChange(option, action)}
+						  options={[
+                            { value: 'udp', label: 'udp' },
+                            { value: 'tcp', label: 'tcp' },
+						  ]}
+						  styles={{
+                            control: (base) => ({
+							  ...base,
+							  background: '#161616',
+							  borderColor: 'rgba(255, 255, 255, 0.08)',
+							  borderRadius: '6px',
+							  minHeight: '32px',
+							  fontSize: '13px',
+							  '&:hover': {
+                                borderColor: 'rgba(255, 255, 255, 0.15)'
+							  }
+                            }),
+                            menu: (base) => ({
+							  ...base,
+							  background: '#161616',
+							  border: '1px solid rgba(255, 255, 255, 0.08)',
+							  borderRadius: '6px',
+							  overflow: 'hidden'
+                            }),
+                            menuList: (base) => ({
+							  ...base,
+							  padding: '4px'
+                            }),
+                            option: (base, state) => ({
+							  ...base,
+							  fontSize: '13px',
+							  background: state.isFocused ? 'rgba(255, 255, 255, 0.05)' : 'transparent',
+							  borderRadius: '4px',
+							  color: 'rgba(255, 255, 255, 0.9)',
+							  padding: '6px 8px',
+							  '&:hover': {
+                                background: 'rgba(255, 255, 255, 0.05)'
+							  }
+                            }),
+                            singleValue: (base) => ({
+							  ...base,
+							  color: 'rgba(255, 255, 255, 0.9)',
+							  fontSize: '13px'
+                            }),
+                            input: (base) => ({
+							  ...base,
+							  color: 'rgba(255, 255, 255, 0.9)',
+							  fontSize: '13px'
+                            }),
+                            placeholder: (base) => ({
+							  ...base,
+							  color: 'rgba(255, 255, 255, 0.4)',
+							  fontSize: '13px'
+                            })
+						  }}
                         />
-                      </FormControl>
-                    </SimpleGrid>
+					  </Stack>
+                    </Grid>
 
-                    <SimpleGrid columns={2} spacing={3} mt='2'>
-                      <FormControl isRequired>
-                        <FormLabel htmlFor='remote_port' fontSize='12px' mb='0'>
-                          Target Port
-                        </FormLabel>
+                    <Grid templateColumns="repeat(2, 1fr)" gap={4}>
+					  <Stack gap={2}>
+                        <Text fontSize="xs" color="gray.400">Target Port *</Text>
                         <Input
-                          id='remote_port'
-                          type='number'
-                          value={newConfig.remote_port || ''}
-                          name='remote_port'
-                          onChange={handleInputChange}
-                          size='xs'
+						  type="number"
+						  value={newConfig.remote_port || ''}
+						  name="remote_port"
+						  onChange={handleInputChange}
+						  bg="#161616"
+						  border="1px solid rgba(255, 255, 255, 0.08)"
+						  _hover={{ borderColor: 'rgba(255, 255, 255, 0.15)' }}
+						  _focus={{ borderColor: 'blue.400', boxShadow: 'none' }}
+						  height="32px"
+						  fontSize="13px"
                         />
-                      </FormControl>
+					  </Stack>
 
-                      <FormControl>
-                        <FormLabel htmlFor='local_port' fontSize='12px' mb='0'>
-                          Local Port
-                        </FormLabel>
+					  <Stack gap={2}>
+                        <Text fontSize="xs" color="gray.400">Local Port</Text>
                         <Input
-                          id='local_port'
-                          type='number'
-                          value={newConfig.local_port || ''}
-                          name='local_port'
-                          onChange={handleInputChange}
-                          size='xs'
+						  type="number"
+						  value={newConfig.local_port || ''}
+						  name="local_port"
+						  onChange={handleInputChange}
+						  bg="#161616"
+						  border="1px solid rgba(255, 255, 255, 0.08)"
+						  _hover={{ borderColor: 'rgba(255, 255, 255, 0.15)' }}
+						  _focus={{ borderColor: 'blue.400', boxShadow: 'none' }}
+						  height="32px"
+						  fontSize="13px"
                         />
-                      </FormControl>
-                    </SimpleGrid>
-                  </>
+					  </Stack>
+                    </Grid>
+				  </>
                 ) : (
-                  <>
-                    <SimpleGrid columns={2} spacing={3} mt='2'>
-                      <FormControl>
-                        <FormLabel
-                          htmlFor={
+				  <>
+                    <Grid templateColumns="repeat(2, 1fr)" gap={4}>
+					  <Stack gap={2}>
+                        <Text fontSize="xs" color="gray.400">
+						  {newConfig.workload_type === 'pod' ? 'Pod Label' : 'Service'}
+                        </Text>
+                        <Select
+						  name={newConfig.workload_type === 'pod' ? 'target' : 'service'}
+						  value={selectedServiceOrTarget}
+						  onChange={(option, action) => handleSelectChange(option, action)}
+						  options={
                             newConfig.workload_type === 'pod'
-                              ? 'target'
-                              : 'service'
-                          }
-                          fontSize='12px'
-                          mb='0'
-                        >
-                          {newConfig.workload_type === 'pod'
-                            ? 'Pod Label'
-                            : 'Service'}
-                        </FormLabel>
-                        <ReactSelect
-                          styles={customStyles}
-                          name={
-                            newConfig.workload_type === 'pod'
-                              ? 'target'
-                              : 'service'
-                          }
-                          options={
-                            newConfig.workload_type === 'pod'
-                              ? podsQuery.data?.map(pod => ({
-                                label: pod.labels_str,
+							  ? podsQuery.data?.map(pod => ({
                                 value: pod.labels_str,
-                              }))
-                              : serviceOrTargetQuery.data?.map(service => ({
-                                label: service.name,
+                                label: pod.labels_str,
+							  }))
+							  : serviceOrTargetQuery.data?.map(service => ({
                                 value: service.name,
-                              }))
-                          }
-                          value={selectedServiceOrTarget}
-                          onChange={selectedOption =>
-                            handleSelectChange(
-                              selectedOption as Option,
-                              {
-                                name:
-                                  newConfig.workload_type === 'pod'
-                                    ? 'target'
-                                    : 'service',
-                              } as ActionMeta<Option>,
-                            )
-                          }
-                          menuPlacement='auto'
-                          theme={theme => ({
-                            ...theme,
-                            borderRadius: 4,
-                            colors: {
-                              ...theme.colors,
-                              primary25: 'lightgrey',
-                              primary: 'grey',
-                            },
-                          })}
-                          isDisabled={
-                            podsQuery.isLoading ||
-                            podsQuery.isError ||
-                            serviceOrTargetQuery.isLoading ||
-                            serviceOrTargetQuery.isError
-                          }
+                                label: service.name,
+							  }))
+						  }
+						  isLoading={
+                            newConfig.workload_type === 'pod'
+							  ? podsQuery.isLoading
+							  : serviceOrTargetQuery.isLoading
+						  }
+						  styles={{
+                            control: (base) => ({
+							  ...base,
+							  background: '#161616',
+							  borderColor: 'rgba(255, 255, 255, 0.08)',
+							  borderRadius: '6px',
+							  minHeight: '32px',
+							  fontSize: '13px',
+							  '&:hover': {
+                                borderColor: 'rgba(255, 255, 255, 0.15)'
+							  }
+                            }),
+                            menu: (base) => ({
+							  ...base,
+							  background: '#161616',
+							  border: '1px solid rgba(255, 255, 255, 0.08)',
+							  borderRadius: '6px',
+							  overflow: 'hidden'
+                            }),
+                            menuList: (base) => ({
+							  ...base,
+							  padding: '4px'
+                            }),
+                            option: (base, state) => ({
+							  ...base,
+							  fontSize: '13px',
+							  background: state.isFocused ? 'rgba(255, 255, 255, 0.05)' : 'transparent',
+							  borderRadius: '4px',
+							  color: 'rgba(255, 255, 255, 0.9)',
+							  padding: '6px 8px',
+							  '&:hover': {
+                                background: 'rgba(255, 255, 255, 0.05)'
+							  }
+                            }),
+                            singleValue: (base) => ({
+							  ...base,
+							  color: 'rgba(255, 255, 255, 0.9)',
+							  fontSize: '13px'
+                            }),
+                            input: (base) => ({
+							  ...base,
+							  color: 'rgba(255, 255, 255, 0.9)',
+							  fontSize: '13px'
+                            }),
+                            placeholder: (base) => ({
+							  ...base,
+							  color: 'rgba(255, 255, 255, 0.4)',
+							  fontSize: '13px'
+                            })
+						  }}
                         />
-                        {newConfig.workload_type === 'pod' &&
-                          podsQuery.isError && (
-                          <Text color='red.500' fontSize='xs'>
-                              Error fetching pods
-                          </Text>
+                        {newConfig.workload_type === 'pod' && podsQuery.isError && (
+						  <Text color="red.300" fontSize="xs">
+							Error fetching pods
+						  </Text>
                         )}
-                        {newConfig.workload_type !== 'pod' &&
-                          serviceOrTargetQuery.isError && (
-                          <Text color='red.500' fontSize='xs'>
-                              Error fetching services or targets
-                          </Text>
+                        {newConfig.workload_type !== 'pod' && serviceOrTargetQuery.isError && (
+						  <Text color="red.300" fontSize="xs">
+							Error fetching services or targets
+						  </Text>
                         )}
-                      </FormControl>
+					  </Stack>
 
-                      <FormControl isRequired>
-                        <FormLabel htmlFor='protocol' fontSize='12px' mb='0'>
-                          Protocol
-                        </FormLabel>
-                        <ReactSelect
-                          styles={customStyles}
-                          name='protocol'
-                          options={[
-                            { label: 'udp', value: 'udp' },
-                            { label: 'tcp', value: 'tcp' },
-                          ]}
-                          value={selectedProtocol}
-                          onChange={selectedOption =>
-                            handleSelectChange(
-                              selectedOption as Option,
-                              { name: 'protocol' } as ActionMeta<Option>,
-                            )
-                          }
-                          isDisabled={
-                            contextQuery.isLoading || contextQuery.isError
-                          }
+					  <Stack gap={2}>
+                        <Text fontSize="xs" color="gray.400">Protocol *</Text>
+                        <Select
+						  name="protocol"
+						  value={selectedProtocol}
+						  onChange={(option, action) => handleSelectChange(option, action)}
+						  options={[
+                            { value: 'udp', label: 'udp' },
+                            { value: 'tcp', label: 'tcp' },
+						  ]}
+						  styles={{
+                            control: (base) => ({
+							  ...base,
+							  background: '#161616',
+							  borderColor: 'rgba(255, 255, 255, 0.08)',
+							  borderRadius: '6px',
+							  minHeight: '32px',
+							  fontSize: '13px',
+							  '&:hover': {
+                                borderColor: 'rgba(255, 255, 255, 0.15)'
+							  }
+                            }),
+                            menu: (base) => ({
+							  ...base,
+							  background: '#161616',
+							  border: '1px solid rgba(255, 255, 255, 0.08)',
+							  borderRadius: '6px',
+							  overflow: 'hidden'
+                            }),
+                            menuList: (base) => ({
+							  ...base,
+							  padding: '4px'
+                            }),
+                            option: (base, state) => ({
+							  ...base,
+							  fontSize: '13px',
+							  background: state.isFocused ? 'rgba(255, 255, 255, 0.05)' : 'transparent',
+							  borderRadius: '4px',
+							  color: 'rgba(255, 255, 255, 0.9)',
+							  padding: '6px 8px',
+							  '&:hover': {
+                                background: 'rgba(255, 255, 255, 0.05)'
+							  }
+                            }),
+                            singleValue: (base) => ({
+							  ...base,
+							  color: 'rgba(255, 255, 255, 0.9)',
+							  fontSize: '13px'
+                            }),
+                            input: (base) => ({
+							  ...base,
+							  color: 'rgba(255, 255, 255, 0.9)',
+							  fontSize: '13px'
+                            }),
+                            placeholder: (base) => ({
+							  ...base,
+							  color: 'rgba(255, 255, 255, 0.4)',
+							  fontSize: '13px'
+                            })
+						  }}
                         />
-                      </FormControl>
-                    </SimpleGrid>
+					  </Stack>
+                    </Grid>
 
-                    <SimpleGrid columns={2} spacing={3} mt='2'>
-                      <FormControl isRequired>
-                        <FormLabel htmlFor='remote_port' fontSize='12px' mb='0'>
-                          Target Port
-                        </FormLabel>
-                        <ReactSelect
-                          styles={customStyles}
-                          name='remote_port'
-                          options={portQuery.data?.map(port => ({
-                            label: `${port.port ? port.port + ' - ' : ''}${
-                              port.name
-                            }`,
-                            value: port.port!,
-                          }))}
-                          value={
-                            selectedPort
-                              ? {
-                                label: selectedPort.label,
-                                value: selectedPort.value,
-                              }
-                              : null
-                          }
-                          onChange={selectedOption =>
-                            handleSelectChange(
-                              selectedOption as Option,
-                              { name: 'remote_port' } as ActionMeta<Option>,
-                            )
-                          }
-                          menuPlacement='auto'
-                          theme={theme => ({
-                            ...theme,
-                            borderRadius: 4,
-                            colors: {
-                              ...theme.colors,
-                              primary25: 'lightgrey',
-                              primary: 'grey',
-                            },
-                          })}
-                          isDisabled={portQuery.isLoading || portQuery.isError}
+                    <Grid templateColumns="repeat(2, 1fr)" gap={4}>
+					  <Stack gap={2}>
+                        <Text fontSize="xs" color="gray.400">Target Port *</Text>
+                        <Select
+						  name="remote_port"
+						  value={selectedPort}
+						  onChange={(option, action) => handleSelectChange(option, action)}
+						  options={portOptions}
+						  placeholder="Select port"
+						  isDisabled={!newConfig.context || !newConfig.namespace}
+						  styles={{
+                            control: (base) => ({
+							  ...base,
+							  background: '#161616',
+							  borderColor: 'rgba(255, 255, 255, 0.08)',
+							  borderRadius: '6px',
+							  minHeight: '32px',
+							  fontSize: '13px',
+							  '&:hover': {
+                                borderColor: 'rgba(255, 255, 255, 0.15)'
+							  }
+                            }),
+                            menu: (base) => ({
+							  ...base,
+							  background: '#161616',
+							  border: '1px solid rgba(255, 255, 255, 0.08)',
+							  borderRadius: '6px',
+							  overflow: 'hidden'
+                            }),
+                            menuList: (base) => ({
+							  ...base,
+							  padding: '4px'
+                            }),
+                            option: (base, state) => ({
+							  ...base,
+							  fontSize: '13px',
+							  background: state.isFocused ? 'rgba(255, 255, 255, 0.05)' : 'transparent',
+							  borderRadius: '4px',
+							  color: 'rgba(255, 255, 255, 0.9)',
+							  padding: '6px 8px',
+							  '&:hover': {
+                                background: 'rgba(255, 255, 255, 0.05)'
+							  }
+                            }),
+                            singleValue: (base) => ({
+							  ...base,
+							  color: 'rgba(255, 255, 255, 0.9)',
+							  fontSize: '13px'
+                            }),
+                            input: (base) => ({
+							  ...base,
+							  color: 'rgba(255, 255, 255, 0.9)',
+							  fontSize: '13px'
+                            }),
+                            placeholder: (base) => ({
+							  ...base,
+							  color: 'rgba(255, 255, 255, 0.4)',
+							  fontSize: '13px'
+                            })
+						  }}
                         />
                         {portQuery.isError && (
-                          <Text color='red.500' fontSize='xs'>
-                            Error fetching ports
-                          </Text>
+						  <Text color="red.300" fontSize="xs">
+							Error fetching ports
+						  </Text>
                         )}
-                      </FormControl>
+					  </Stack>
 
-                      <FormControl>
-                        <FormLabel
-                          htmlFor='local_port'
-                          fontSize='12px'
-                          mb='-0.6'
-                        >
-                          Local Port
-                        </FormLabel>
+					  <Stack gap={2}>
+                        <Text fontSize="xs" color="gray.400">Local Port</Text>
                         <Input
-                          id='local_port'
-                          type='number'
-                          value={newConfig.local_port || ''}
-                          name='local_port'
-                          onChange={handleInputChange}
-                          size='xs'
-                          borderRadius='4px'
-                          height='26px'
-                          borderColor='gray.600'
+						  type="number"
+						  value={newConfig.local_port || ''}
+						  name="local_port"
+						  onChange={handleInputChange}
+						  bg="#161616"
+						  border="1px solid rgba(255, 255, 255, 0.08)"
+						  _hover={{ borderColor: 'rgba(255, 255, 255, 0.15)' }}
+						  _focus={{ borderColor: 'blue.400', boxShadow: 'none' }}
+						  height="32px"
+						  fontSize="13px"
                         />
-                      </FormControl>
-                    </SimpleGrid>
-                  </>
+					  </Stack>
+                    </Grid>
+				  </>
                 )}
-                <SimpleGrid columns={2} spacing={3} mt='1'>
-                  <FormControl mt='0'>
-                    <Checkbox
-                      size='sm'
-                      isChecked={isChecked}
-                      onChange={handleCheckboxChange}
-                      mt={1.5}
-                    >
-                      <Text fontSize='12px'>Local Address</Text>
-                    </Checkbox>
-                    <Input
-                      id='local_address'
-                      isDisabled={!isChecked}
-                      value={newConfig.local_address || '127.0.0.1'}
-                      type='text'
-                      name='local_address'
-                      onChange={handleInputChange}
-                      size='xs'
-                      borderRadius='4px'
-                      height='26px'
-                      borderColor='gray.600'
-                    />
-                  </FormControl>
-                </SimpleGrid>
 
-                <Flex justifyContent='flex-end' pt={4} width='100%'>
-                  <Button
+                {/* Local Address Section */}
+                <Grid templateColumns="repeat(2, 1fr)" gap={4}>
+				  <Stack gap={2}>
+                    <C.Root
+					  checked={isChecked}
+					  onChange={(e) => {
+                        const target = e.target as HTMLInputElement
+
+
+                        setIsChecked(target.checked)
+					  }}
+                    >
+					  <C.Control bg="#161616" borderColor="whiteAlpha.200" />
+					  <C.Label>
+                        <Text fontSize="xs" color="gray.400">Local Address</Text>
+					  </C.Label>
+                    </C.Root>
+                    <Input
+					  value={newConfig.local_address || '127.0.0.1'}
+					  name="local_address"
+					  onChange={handleInputChange}
+					  disabled={!isChecked}
+					  bg="#161616"
+					  border="1px solid rgba(255, 255, 255, 0.08)"
+					  _hover={{ borderColor: 'rgba(255, 255, 255, 0.15)' }}
+					  _focus={{ borderColor: 'blue.400', boxShadow: 'none' }}
+					  height="32px"
+					  fontSize="13px"
+					  opacity={isChecked ? 1 : 0.5}
+                    />
+				  </Stack>
+                </Grid>
+
+                {/* Footer Actions */}
+                <HStack justify="flex-end" pt={4} gap={3}>
+				  <Button
+                    size="sm"
+                    variant="ghost"
                     onClick={handleCancel}
-                    size='xs'
-                    height='20px'
-                    variant='outline'
-                    mr={2}
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    height='20px'
-                    type='submit'
-                    colorScheme='blue'
-                    size='xs'
-                    isDisabled={!isFormValid}
-                  >
+                    _hover={{ bg: 'whiteAlpha.50' }}
+                    height="32px"
+				  >
+					Cancel
+				  </Button>
+				  <Button
+                    size="sm"
+                    bg="blue.500"
+                    _hover={{ bg: 'blue.600' }}
+                    type="submit"
+                    disabled={!isFormValid}
+                    height="32px"
+				  >
                     {isEdit ? 'Save Changes' : 'Add Config'}
-                  </Button>
-                </Flex>
-              </VStack>
+				  </Button>
+                </HStack>
+			  </Stack>
             </form>
-          </ModalBody>
-        </ModalContent>
-      </Modal>
-    </Center>
+		  </Dialog.Body>
+        </Dialog.Content>
+	  </Dialog.Positioner>
+    </Dialog.Root>
   )
 }
+
 
 export default AddConfigModal

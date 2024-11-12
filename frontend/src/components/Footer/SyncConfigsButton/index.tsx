@@ -1,11 +1,12 @@
 import React, { useEffect, useState } from 'react'
+import { RepeatIcon } from 'lucide-react'
 
-import { RepeatIcon } from '@chakra-ui/icons'
-import { Box, Button, HStack, Spinner, Text, Tooltip } from '@chakra-ui/react'
+import { Box, Button, HStack, Spinner, Text } from '@chakra-ui/react'
 import { invoke } from '@tauri-apps/api/tauri'
 
-import { GitConfig, SyncConfigsButtonProps } from '../../../types'
-import useCustomToast from '../../CustomToast'
+import { useCustomToast } from '@/components/ui/toaster'
+import { Tooltip } from '@/components/ui/tooltip'
+import { GitConfig, SyncConfigsButtonProps } from '@/types'
 
 const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
   serviceName,
@@ -170,23 +171,23 @@ const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
   )
 
   return (
-    <Tooltip hasArrow label={tooltipContent} placement='top'>
+    <Tooltip content={tooltipContent}>
       <Button
         variant='outline'
-        colorScheme='facebook'
+        colorPalette='facebook'
         onClick={handleSyncConfigs}
-        isDisabled={!credentialsSaved || isLoading}
+        disabled={!credentialsSaved || isLoading}
         size='sm'
         aria-label='Sync Configs'
         justifyContent='center'
         borderColor='gray.700'
       >
         {isLoading ? (
-          <HStack spacing={1}>
+          <HStack gap={1}>
             <Spinner size='sm' />
           </HStack>
         ) : (
-          <HStack spacing={1}>
+          <HStack gap={1}>
             <RepeatIcon />
           </HStack>
         )}

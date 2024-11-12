@@ -2,34 +2,34 @@ import React, { useState } from 'react'
 import { MdDelete } from 'react-icons/md'
 
 import {
-  AlertDialog,
-  AlertDialogBody,
-  AlertDialogContent,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogOverlay,
   Box,
   Button,
+  DialogActionTrigger,
+  DialogBody,
+  DialogCloseTrigger,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogRoot,
+  DialogTitle,
+  DialogTrigger,
   IconButton,
-  Tooltip,
 } from '@chakra-ui/react'
 import { invoke } from '@tauri-apps/api/tauri'
 
-import { BulkDeleteButtonProps } from '../../../types'
-import useCustomToast from '../../CustomToast'
+import { useCustomToast } from '@/components/ui/toaster'
+import { Tooltip } from '@/components/ui/tooltip'
+import { BulkDeleteButtonProps } from '@/types'
 
 const BulkDeleteButton: React.FC<BulkDeleteButtonProps> = ({
   selectedConfigs,
   setSelectedConfigs,
 }) => {
-  const cancelRef = React.useRef<HTMLButtonElement>(null)
-  const [isBulkAlertOpen, setIsBulkAlertOpen] = useState(false)
   const [configsToDelete, setConfigsToDelete] = useState<number[]>([])
   const toast = useCustomToast()
 
   const handleDeleteConfigs = (selectedIds: number[]) => {
     setConfigsToDelete(selectedIds)
-    setIsBulkAlertOpen(true)
   }
 
   const confirmDeleteConfigs = async () => {
@@ -45,9 +45,7 @@ const BulkDeleteButton: React.FC<BulkDeleteButtonProps> = ({
 
     try {
       await invoke('delete_configs_cmd', { ids: configsToDelete })
-
       setSelectedConfigs([])
-
       toast({
         title: 'Success',
         description: 'Configurations deleted successfully.',
@@ -61,61 +59,44 @@ const BulkDeleteButton: React.FC<BulkDeleteButtonProps> = ({
         status: 'error',
       })
     }
-
-    setIsBulkAlertOpen(false)
   }
 
   return (
     <Box>
       {selectedConfigs.length > 0 && (
-        <Tooltip
-          label='Delete Configs'
-          placement='top'
-          fontSize='xs'
-          lineHeight='tight'
-        >
-          <IconButton
-            colorScheme='red'
-            variant='outline'
-            onClick={() =>
-              handleDeleteConfigs(selectedConfigs.map(config => config.id))
-            }
-            size='sm'
-            aria-label='Delete selected configs'
-            borderColor='gray.700'
-            icon={<MdDelete />}
-            ml={2}
-          />
-        </Tooltip>
-      )}
+        <DialogRoot role='alertdialog'>
+          <DialogTrigger asChild>
+            <Tooltip content='Delete Configs'>
+              <IconButton
+                aria-label='Delete selected configs'
+                colorPalette='red'
+                variant='outline'
+                onClick={() =>
+                  handleDeleteConfigs(selectedConfigs.map(config => config.id))
+                }
+                size='sm'
+              >
+                <MdDelete />
+              </IconButton>
+            </Tooltip>
+          </DialogTrigger>
 
-      <AlertDialog
-        isOpen={isBulkAlertOpen}
-        leastDestructiveRef={cancelRef}
-        onClose={() => setIsBulkAlertOpen(false)}
-      >
-        <AlertDialogOverlay
-          style={{ alignItems: 'flex-start', justifyContent: 'flex-start' }}
-          bg='transparent'
-        >
-          <AlertDialogContent>
-            <AlertDialogHeader fontSize='xs' fontWeight='bold'>
-              Delete Config(s)
-            </AlertDialogHeader>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle fontSize='xs' fontWeight='bold'>
+                Delete Config(s)
+              </DialogTitle>
+            </DialogHeader>
 
-            <AlertDialogBody fontSize='xs'>
+            <DialogBody fontSize='xs'>
               Are you sure you want to delete the selected config(s)? This
               action cannot be undone.
-            </AlertDialogBody>
+            </DialogBody>
 
-            <AlertDialogFooter>
-              <Button
-                ref={cancelRef}
-                onClick={() => setIsBulkAlertOpen(false)}
-                size='xs'
-              >
-                Cancel
-              </Button>
+            <DialogFooter>
+              <DialogActionTrigger asChild>
+                <Button size='xs'>Cancel</Button>
+              </DialogActionTrigger>
               <Button
                 colorScheme='red'
                 onClick={confirmDeleteConfigs}
@@ -124,10 +105,11 @@ const BulkDeleteButton: React.FC<BulkDeleteButtonProps> = ({
               >
                 Delete
               </Button>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialogOverlay>
-      </AlertDialog>
+            </DialogFooter>
+            <DialogCloseTrigger />
+          </DialogContent>
+        </DialogRoot>
+      )}
     </Box>
   )
 }

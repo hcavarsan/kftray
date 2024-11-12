@@ -1,49 +1,55 @@
 body {
-  margin: 0;
-}
+	margin: 0;
+	background: transparent;
+  }
 
-.accordion-shadow {
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
-  border: 1px solid #e2e8f0;
-}
+  .root {
+	background: transparent;
+  }
 
-::-webkit-scrollbar {
-  width: 8px;
-}
+  .accordion-shadow {
+	box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+	border: 1px solid #e2e8f0;
+  }
 
-::-webkit-scrollbar-thumb:hover {
-  background: #555;
-}
+  ::-webkit-scrollbar {
+	width: 8px;
+  }
 
-::-webkit-scrollbar-thumb {
-  background: #888;
-  border-radius: 6px;
-  border: 2px solid transparent;
-  background-clip: content-box;
-}
+  ::-webkit-scrollbar-thumb:hover {
+	background: #555;
+  }
 
-::-webkit-scrollbar-button {
-  display: none;
-}
+  ::-webkit-scrollbar-thumb {
+	background: #888;
+	border-radius: 6px;
+	border: 2px solid transparent;
+	background-clip: content-box;
+  }
 
-::-webkit-scrollbar-corner {
-  background: transparent;
-}
-.VStackClass {
-  background: transparent;
-}
+  ::-webkit-scrollbar-button {
+	display: none;
+  }
 
-.iconButton {
-  font-size: 18px;
-  height: 24px;
-  width: 24px;
-}
+  ::-webkit-scrollbar-corner {
+	background: transparent;
+  }
 
-.iconButton svg {
-  width: 1rem;
-  height: 1rem;
-}
+  .VStackClass {
+	background: transparent;
+  }
 
-.no-scroll {
-  overflow: hidden;
-}
+  .iconButton {
+	font-size: 18px;
+	height: 24px;
+	width: 24px;
+  }
+
+  .iconButton svg {
+	width: 1rem;
+	height: 1rem;
+  }
+
+  .no-scroll {
+	overflow: hidden;
+  }

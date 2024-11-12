@@ -1,17 +1,15 @@
 import React from 'react'
 
-import { ChakraProvider } from '@chakra-ui/react'
-
-import theme from './assets/theme'
 import Main from './components/Main'
+import { Provider } from './components/ui/provider'
 
 import './assets/style.css'
 
 const App: React.FC = () => {
   return (
-    <ChakraProvider theme={theme}>
+    <Provider>
       <Main />
-    </ChakraProvider>
+    </Provider>
   )
 }
 

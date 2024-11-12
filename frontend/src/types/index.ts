@@ -7,7 +7,7 @@ export interface Config {
   local_port: number
   local_address: string
   domain_enabled: boolean
-  remote_port: number
+  remote_port?: number
   context: string
   alias: string
   remote_address: string
@@ -74,7 +74,7 @@ export interface TableProps {
   handleDeleteConfig: (id: number) => void
   handleEditConfig: (id: number) => void
   isAlertOpen: boolean
-  setIsAlertOpen: (isOpen: boolean) => void
+  setIsAlertOpen: (open: boolean) => void
   selectedConfigs: Config[]
   setSelectedConfigs: React.Dispatch<React.SetStateAction<Config[]>>
   setIsInitiating: React.Dispatch<React.SetStateAction<boolean>>
@@ -86,7 +86,7 @@ export interface PortForwardRowProps {
   handleDeleteConfig: (id: number) => void
   handleEditConfig: (id: number) => void
   isAlertOpen: boolean
-  setIsAlertOpen: (isOpen: boolean) => void
+  setIsAlertOpen: (open: boolean) => void
   showContext?: boolean
   onSelectionChange: (isSelected: boolean) => void
   selected: boolean
@@ -207,7 +207,7 @@ export interface HeaderMenuProps {
   isInitiating: boolean
   isStopping: boolean
   toggleExpandAll: () => void
-  expandedIndices: number[]
+  expandedIndices: string[]
   configsByContext: ConfigsByContext
   setSelectedConfigs: React.Dispatch<React.SetStateAction<Config[]>>
 }
@@ -226,7 +226,7 @@ export interface ContextsAccordionProps {
   confirmDeleteConfig: () => void
   handleEditConfig: (id: number) => void
   isAlertOpen: boolean
-  setIsAlertOpen: (isOpen: boolean) => void
+  setIsAlertOpen: (open: boolean) => void
   handleSelectionChange: (config: Config, isSelected: boolean) => void
   selectedConfigsByContext: Record<string, boolean>
   handleCheckboxChange: (context: string, isChecked: boolean) => void

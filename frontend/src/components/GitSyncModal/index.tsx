@@ -2,38 +2,29 @@ import React, { useEffect, useState } from 'react'
 import { MdGraphicEq } from 'react-icons/md'
 
 import {
-  AlertDialog,
-  AlertDialogBody,
-  AlertDialogContent,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogOverlay,
   Box,
   Button,
-  Center,
   Checkbox,
-  Divider,
+  Dialog,
+  Field,
+  Fieldset,
   Flex,
-  FormControl,
-  FormLabel,
+  HStack,
   Input,
-  Modal,
-  ModalBody,
-  ModalContent,
-  ModalOverlay,
+  Separator,
   Slider,
-  SliderFilledTrack,
-  SliderThumb,
-  SliderTrack,
+  Stack,
   Text,
   Tooltip,
-  VStack,
 } from '@chakra-ui/react'
 import { invoke } from '@tauri-apps/api/tauri'
 
-import { GitSyncModalProps } from '../../types'
-import useCustomToast from '../CustomToast'
+import { useCustomToast } from '@/components/ui/toaster'
+import { GitSyncModalProps } from '@/types'
 
+type ValueChangeDetails = {
+  value: number[]
+}
 const GitSyncModal: React.FC<GitSyncModalProps> = ({
   isGitSyncModalOpen,
   closeGitSyncModal,
@@ -48,9 +39,6 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
   const [gitToken, setGitToken] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [isImportAlertOpen, setIsImportAlertOpen] = useState(false)
-
-  const cancelRef = React.useRef<HTMLButtonElement>(null)
-  const [showTooltip, setShowTooltip] = React.useState(false)
   const toast = useCustomToast()
 
   const serviceName = 'kftray'
@@ -98,8 +86,6 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
   }, [
     isGitSyncModalOpen,
     credentialsSaved,
-    serviceName,
-    accountName,
     setCredentialsSaved,
     setPollingInterval,
   ])
@@ -137,26 +123,13 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
     }
   }
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) =>
-    setSettingInputValue(e.target.value)
-  const handleConfigPathChange = (e: React.ChangeEvent<HTMLInputElement>) =>
-    setConfigPath(e.target.value)
-  const handleCheckboxChange = (e: React.ChangeEvent<HTMLInputElement>) =>
-    setIsPrivateRepo(e.target.checked)
-  const handleGitTokenChange = (e: React.ChangeEvent<HTMLInputElement>) =>
-    setGitToken(e.target.value)
-
-  const handleSliderChange = (value: number) => {
-    setPollingInterval(value)
-  }
-
   const handleSaveSettings = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     setIsImportAlertOpen(true)
   }
+
   const onConfirmImport = async () => {
     setIsImportAlertOpen(false)
-
     setIsLoading(true)
 
     const credentials = JSON.stringify({
@@ -202,198 +175,198 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
     }
   }
 
+  const handleSliderChange = (value: ValueChangeDetails) => {
+    const numericValue = value.value[0]
+
+    setPollingInterval(numericValue)
+  }
+
   return (
-    <Center>
-      <Modal isOpen={isGitSyncModalOpen} onClose={closeGitSyncModal} size='sm'>
-        <ModalOverlay bg='transparent' />
-        <ModalContent bg='transparent' borderRadius='20px' marginTop='10'>
-          <ModalBody p={0}>
+    <>
+      <Dialog.Root open={isGitSyncModalOpen} onOpenChange={closeGitSyncModal}>
+        <Dialog.Backdrop />
+        <Dialog.Content
+          maxWidth='sm'
+          position='relative'
+          bg='gray.800'
+          borderRadius='xl'
+          boxShadow='xl'
+        >
+          <Dialog.Body p='0'>
             <form onSubmit={handleSaveSettings}>
-              <VStack
-                spacing={2}
-                align='stretch'
-                p={5}
-                border='1px'
-                borderColor='gray.700'
-                borderRadius='20px'
-                bg='gray.800'
-                boxShadow={`
-              /* Inset shadow for top & bottom inner border effect using dark gray */
-              inset 0 2px 4px rgba(0, 0, 0, 0.3),
-              inset 0 -2px 4px rgba(0, 0, 0, 0.3),
-              /* Inset shadow for an inner border all around using dark gray */
-              inset 0 0 0 4px rgba(45, 57, 81, 0.9)
-            `}
-              >
-                <Text fontSize='sm' fontWeight='bold'>
-                  Configure Github Sync
-                </Text>
-                <Divider />
-                <FormControl mt='4'>
-                  <FormLabel htmlFor='settingInput' fontSize='xs'>
-                    GitHub Repository URL
-                  </FormLabel>
-                  <Input
-                    id='settingInput'
-                    type='text'
-                    value={settingInputValue}
-                    onChange={handleInputChange}
-                    size='xs'
-                  />
-                </FormControl>
-                {/* Continue with other form controls following the same pattern */}
-                <FormControl mt='2'>
-                  <FormLabel htmlFor='configPath' fontSize='xs'>
-                    Config Path
-                  </FormLabel>
-                  <Input
-                    id='configPath'
-                    type='text'
-                    value={configPath}
-                    onChange={handleConfigPathChange}
-                    size='xs'
-                  />
-                </FormControl>
-                <FormControl mt='2'>
-                  <Checkbox
-                    size='sm'
-                    isChecked={isPrivateRepo}
-                    onChange={handleCheckboxChange}
-                  >
-                    <Text fontSize='xs'>Private repository</Text>
-                  </Checkbox>
-                  {isPrivateRepo && (
-                    <Input
-                      id='gitToken'
-                      type='password'
-                      value={gitToken}
-                      onChange={handleGitTokenChange}
-                      placeholder='Git Token'
-                      size='xs'
-                      mt='2'
-                    />
-                  )}
-                </FormControl>
-                {/* Slider for polling interval */}
-                <FormControl p={2}>
-                  <FormLabel
-                    htmlFor='pollingInterval'
-                    fontSize='xs'
-                    mb='4'
-                    mt='8s'
-                    ml='-3'
-                    color='gray.300'
-                    width='100%'
-                  >
-                    Polling Interval in minutes (set 0 to disable)
-                  </FormLabel>
-                  <Box position='relative' width='70%'>
-                    <Slider
-                      id='pollingInterval'
-                      defaultValue={pollingInterval}
-                      min={0}
-                      max={120}
-                      step={5}
-                      onChange={value => handleSliderChange(value)}
-                      onMouseEnter={() => setShowTooltip(true)}
-                      onMouseLeave={() => setShowTooltip(false)}
-                      colorScheme='facebook'
-                    >
-                      <SliderTrack bg='gray.700'>
-                        <Box position='relative' right={10} />
-                        <SliderFilledTrack bg='gray.600' />
-                      </SliderTrack>
-                      <Tooltip
-                        hasArrow
-                        bg='gray.600'
-                        color='white'
-                        placement='top'
-                        isOpen={showTooltip}
-                        label={`${pollingInterval} min`}
-                      >
-                        <SliderThumb boxSize={4}>
-                          <Box color='gray.600' as={MdGraphicEq} />
-                        </SliderThumb>
-                      </Tooltip>
-                    </Slider>
-                    <Flex justifyContent='space-between' mt='2'>
-                      <Text fontSize='xs' color='gray.400'>
-                        0 min
-                      </Text>
-                      <Text fontSize='xs' color='gray.400'>
-                        120 min
-                      </Text>
-                    </Flex>
-                  </Box>
-                </FormControl>
-                {/* Buttons */}
-                <Flex justifyContent='flex-end' pt={7} width='100%'>
-                  {credentialsSaved && (
-                    <Button
-                      onClick={handleDeleteGitConfig}
-                      variant='outline'
-                      colorScheme='red'
-                      size='xs'
-                      isLoading={isLoading}
-                      mr={3}
-                    >
-                      Disable Git Sync
-                    </Button>
-                  )}
-                  <Button
-                    variant='outline'
-                    onClick={closeGitSyncModal}
-                    size='xs'
-                    mr={2}
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    type='submit'
-                    colorScheme='blue'
-                    size='xs'
-                    isLoading={isLoading}
-                    isDisabled={isLoading || !settingInputValue || !configPath}
-                  >
-                    Save Settings
-                  </Button>
-                </Flex>
-              </VStack>
+              <Fieldset.Root>
+                <Stack
+                  gap='4'
+                  p='4'
+                  border='1px'
+                  borderColor='gray.700'
+                  borderRadius='xl'
+                  bg='gray.800'
+                  css={{
+                    boxShadow: `
+                      inset 0 2px 4px rgba(0, 0, 0, 0.3),
+                      inset 0 -2px 4px rgba(0, 0, 0, 0.3),
+                      inset 0 0 0 4px rgba(45, 57, 81, 0.9)
+                    `,
+                  }}
+                >
+                  <Fieldset.Legend>
+                    <Text fontSize='sm' fontWeight='semibold'>
+                      Configure Github Sync
+                    </Text>
+                  </Fieldset.Legend>
+
+                  <Separator />
+
+                  <Fieldset.Content>
+                    <Stack gap='4'>
+                      <Field.Root>
+                        <Field.Label>GitHub Repository URL</Field.Label>
+                        <Input
+                          value={settingInputValue}
+                          onChange={e => setSettingInputValue(e.target.value)}
+                          size='sm'
+                        />
+                      </Field.Root>
+                      <Field.Root>
+                        <Field.Label>Config Path</Field.Label>
+                        <Input
+                          value={configPath}
+                          onChange={e => setConfigPath(e.target.value)}
+                          size='sm'
+                        />
+                      </Field.Root>
+                      <Field.Root>
+                        <Checkbox.Root
+                          checked={isPrivateRepo}
+                          onCheckedChange={checked =>
+                            setIsPrivateRepo(!!checked)
+                          }
+                        >
+                          <Checkbox.Control>
+                            <Checkbox.Indicator />
+                          </Checkbox.Control>
+                          <Checkbox.Label>
+                            <Text fontSize='sm'>Private repository</Text>
+                          </Checkbox.Label>
+                        </Checkbox.Root>
+                        {isPrivateRepo && (
+                          <Input
+                            type='password'
+                            value={gitToken}
+                            onChange={e => setGitToken(e.target.value)}
+                            placeholder='Git Token'
+                            size='sm'
+                            mt='2'
+                          />
+                        )}
+                      </Field.Root>
+                      <Field.Root>
+                        <Field.Label>
+                          Polling Interval in minutes (set 0 to disable)
+                        </Field.Label>
+                        <Box position='relative' width='70%'>
+                          <Slider.Root
+                            value={[pollingInterval]}
+                            min={0}
+                            max={120}
+                            step={5}
+                            onValueChange={value => handleSliderChange(value)}
+                          >
+                            <Slider.Control>
+                              <Slider.Track>
+                                <Slider.Range />
+                              </Slider.Track>
+                              <Tooltip.Root>
+                                <Tooltip.Trigger asChild>
+                                  <Slider.Thumb index={0}>
+                                    <Box as={MdGraphicEq} />
+                                  </Slider.Thumb>
+                                </Tooltip.Trigger>
+                                <Tooltip.Positioner>
+                                  <Tooltip.Content>
+                                    <Text>{pollingInterval} min</Text>
+                                  </Tooltip.Content>
+                                </Tooltip.Positioner>
+                              </Tooltip.Root>
+                            </Slider.Control>
+                          </Slider.Root>
+                          <Flex justify='space-between' mt='2'>
+                            <Text fontSize='xs' color='gray.400'>
+                              0 min
+                            </Text>
+                            <Text fontSize='xs' color='gray.400'>
+                              120 min
+                            </Text>
+                          </Flex>
+                        </Box>
+                      </Field.Root>
+                      s
+                      <HStack justify='flex-end' pt='4'>
+                        {credentialsSaved && (
+                          <Button
+                            onClick={handleDeleteGitConfig}
+                            variant='outline'
+                            colorPalette='red'
+                            size='sm'
+                            disabled={isLoading}
+                          >
+                            Disable Git Sync
+                          </Button>
+                        )}
+                        <Button
+                          variant='outline'
+                          onClick={closeGitSyncModal}
+                          size='sm'
+                        >
+                          Cancel
+                        </Button>
+                        <Button
+                          type='submit'
+                          size='sm'
+                          disabled={
+                            isLoading || !settingInputValue || !configPath
+                          }
+                        >
+                          Save Settings
+                        </Button>
+                      </HStack>
+                    </Stack>
+                  </Fieldset.Content>
+                </Stack>
+              </Fieldset.Root>
             </form>
-          </ModalBody>
-        </ModalContent>
-      </Modal>
-      <AlertDialog
-        isOpen={isImportAlertOpen}
-        leastDestructiveRef={cancelRef}
-        onClose={() => setIsImportAlertOpen(false)}
+          </Dialog.Body>
+        </Dialog.Content>
+      </Dialog.Root>
+
+      <Dialog.Root
+        open={isImportAlertOpen}
+        onOpenChange={() => setIsImportAlertOpen(false)}
       >
-        <AlertDialogOverlay bg='transparent'>
-          <AlertDialogContent>
-            <AlertDialogHeader fontSize='xs' fontWeight='bold'>
-              Enable Git Sync
-            </AlertDialogHeader>
-
-            <AlertDialogBody>
-              Enabling Git Sync will replace all current configurations with
-              those from the git repository. Do you want to continue?
-            </AlertDialogBody>
-
-            <AlertDialogFooter>
-              <Button
-                ref={cancelRef}
-                onClick={() => setIsImportAlertOpen(false)}
-              >
-                Cancel
-              </Button>
-              <Button colorScheme='blue' onClick={onConfirmImport} ml={3}>
-                Import
-              </Button>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialogOverlay>
-      </AlertDialog>
-    </Center>
+        <Dialog.Backdrop />
+        <Dialog.Content>
+          <Dialog.Header>
+            <Dialog.Title>Enable Git Sync</Dialog.Title>
+          </Dialog.Header>
+          <Dialog.Body>
+            Enabling Git Sync will replace all current configurations with those
+            from the git repository. Do you want to continue?
+          </Dialog.Body>
+          <Dialog.Footer>
+            <Button
+              variant='outline'
+              onClick={() => setIsImportAlertOpen(false)}
+            >
+              Cancel
+            </Button>
+            <Button colorPalette='whiteAlpha' onClick={onConfirmImport} ml='3'>
+              Import
+            </Button>
+          </Dialog.Footer>
+        </Dialog.Content>
+      </Dialog.Root>
+    </>
   )
 }
 

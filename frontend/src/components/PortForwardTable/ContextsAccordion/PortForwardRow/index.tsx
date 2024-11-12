@@ -1,30 +1,22 @@
 /* eslint-disable complexity */
 import React, { useEffect, useRef, useState } from 'react'
+import { ExternalLinkIcon } from 'lucide-react'
 
-import { ExternalLinkIcon } from '@chakra-ui/icons'
 import {
-  AlertDialog,
-  AlertDialogBody,
-  AlertDialogContent,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogOverlay,
   Box,
   Button,
-  Checkbox,
+  DialogActionTrigger,
+  DialogBody,
+  DialogCloseTrigger,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogRoot,
+  DialogTitle,
   Flex,
   IconButton,
-  Menu,
-  MenuButton,
-  MenuItem,
-  MenuList,
-  Portal,
-  Switch,
-  Td,
+  Table,
   Text,
-  Tooltip,
-  Tr,
-  useColorModeValue,
   useDisclosure,
 } from '@chakra-ui/react'
 import {
@@ -35,11 +27,21 @@ import {
   faTrash,
 } from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { open } from '@tauri-apps/api/shell'
+import { open as openShell } from '@tauri-apps/api/shell'
 import { invoke } from '@tauri-apps/api/tauri'
 
-import { PortForwardRowProps } from '../../../../types'
-import useCustomToast from '../../../CustomToast'
+import { Checkbox } from '@/components/ui/checkbox'
+import { useColorModeValue } from '@/components/ui/color-mode'
+import {
+  MenuContent,
+  MenuItem,
+  MenuRoot,
+  MenuTrigger,
+} from '@/components/ui/menu'
+import { Switch } from '@/components/ui/switch'
+import { useCustomToast } from '@/components/ui/toaster'
+import { Tooltip } from '@/components/ui/tooltip'
+import { PortForwardRowProps } from '@/types'
 
 const PortForwardRow: React.FC<PortForwardRowProps> = ({
   config,
@@ -54,9 +56,8 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   isInitiating,
   setIsInitiating,
 }) => {
-  const { isOpen, onOpen } = useDisclosure()
+  const { open, onOpen } = useDisclosure()
   const textColor = useColorModeValue('gray.300', 'gray.300')
-  const cancelRef = React.useRef<HTMLButtonElement>(null)
   const toast = useCustomToast()
   const [httpLogsEnabled, setHttpLogsEnabled] = useState<{
     [key: string]: boolean
@@ -95,7 +96,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   const handleOpenLocalURL = () => {
     const baseUrl = config.domain_enabled ? config.alias : config.local_address
 
-    open(`http://${baseUrl}:${config.local_port}`).catch(error => {
+    openShell(`http://${baseUrl}:${config.local_port}`).catch(error => {
       console.error('Error opening the URL:', error)
     })
   }
@@ -193,7 +194,8 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   }
 
   const handleDeleteClick = () => {
-    onOpen()
+    handleDeleteConfig(config.id)
+    setIsAlertOpen(true)
   }
 
   const handleInspectLogs = async () => {
@@ -211,7 +213,6 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
         description: errorMessage,
         status: 'error',
         duration: 3000,
-        isClosable: true,
       })
     }
   }
@@ -314,86 +315,74 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
 
   return (
     <>
-      <Tr key={config.id}>
-        {showContext && <Td>{config.context}</Td>}
-        <Td
+      <Table.Row key={config.id}>
+        {showContext && <Table.Cell>{config.context}</Table.Cell>}
+        <Table.Cell
           color={textColor}
           fontFamily={fontFamily}
           fontSize={fontSize}
           width='39%'
         >
           <Checkbox
-            size='sm'
-            isChecked={selected || config.is_running}
+            size='xs'
+            checked={selected || config.is_running}
             onChange={event => {
               event.stopPropagation()
               onSelectionChange(!selected)
             }}
             disabled={config.is_running}
-            ml={-4}
+            ml={1}
             mr={2}
-            mt={1}
-            variant='ghost'
+            mt={2}
+            variant='outline'
           />
           {config.alias}
-          <Tooltip
-            hasArrow
-            label={tooltipLabel}
-            placement='right'
-            bg={useColorModeValue('white', 'gray.300')}
-            p={2}
-          >
-            <span>
-              <IconButton
-                size='xs'
-                aria-label='Info configuration'
-                icon={infoIcon}
-                variant='ghost'
-              />
-            </span>
+          <Tooltip content={tooltipLabel}>
+            <IconButton
+              size='xs'
+              aria-label='Info configuration'
+              variant='ghost'
+            >
+              {infoIcon}
+            </IconButton>
           </Tooltip>
-        </Td>
+        </Table.Cell>
 
-        <Td
+        <Table.Cell
           color={textColor}
           fontFamily={fontFamily}
           fontSize={fontSize}
           textAlign='center'
         >
           <Text ml={-3}>{config.local_port}</Text>
-        </Td>
+        </Table.Cell>
 
-        <Td>
+        <Table.Cell>
           <Flex alignItems='center'>
             <Switch
               ml={2}
-              colorScheme='facebook'
-              isChecked={config.is_running && !isInitiating}
+              colorPalette='facebook'
+              checked={config.is_running && !isInitiating}
               size='sm'
-              onChange={e => togglePortForwarding(e.target.checked)}
-              isDisabled={isInitiating}
+              onCheckedChange={e => togglePortForwarding(e.checked)}
+              disabled={isInitiating}
             />
             {config.is_running && (
-              <Tooltip
-                hasArrow
-                label='Open URL'
-                placement='top-start'
-                bg='gray.300'
-                p={1}
-                size='xs'
-                fontSize='xs'
-              >
+              <Tooltip content='Open URL'>
                 <IconButton
                   aria-label='Open local URL'
-                  icon={openLocalURLIcon}
-                  onClick={handleOpenLocalURL}
-                  size='xs'
                   variant='ghost'
-                  _hover={{
-                    background: 'none',
-                    transform: 'none',
+                  size='xs'
+                  onClick={handleOpenLocalURL}
+                  css={{
+                    _hover: {
+                      background: 'none',
+                      transform: 'none',
+                    },
                   }}
-                />
+                >
+                  {openLocalURLIcon}
+                </IconButton>
               </Tooltip>
             )}
             {config.is_running &&
@@ -401,118 +390,97 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
                 config.workload_type === 'pod') &&
               config.protocol === 'tcp' &&
               httpLogsEnabled[config.id] && (
-              <Tooltip
-                hasArrow
-                label='HTTP trace logs'
-                placement='top-start'
-                bg='gray.300'
-                p={1}
-                size='xs'
-                fontSize='xs'
-              >
+              <Tooltip content='HTTP trace logs'>
                 <IconButton
                   aria-label='HTTP trace logs'
-                  icon={
-                    <FontAwesomeIcon
-                      icon={faFileAlt}
-                      style={{ fontSize: '10px' }}
-                    />
-                  }
-                  onClick={handleInspectLogs}
-                  size='xs'
                   variant='ghost'
-                  _hover={{
-                    background: 'none',
-                    transform: 'none',
+                  size='xs'
+                  onClick={handleInspectLogs}
+                  css={{
+                    _hover: {
+                      background: 'none',
+                      transform: 'none',
+                    },
                   }}
-                />
+                >
+                  <FontAwesomeIcon
+                    icon={faFileAlt}
+                    style={{ fontSize: '10px' }}
+                  />
+                </IconButton>
               </Tooltip>
             )}
           </Flex>
-        </Td>
-        <Td fontSize={fontSize} align='center'>
-          <Menu>
-            <MenuButton
-              as={IconButton}
-              aria-label='Options'
-              icon={
+        </Table.Cell>
+
+        <Table.Cell fontSize={fontSize} textAlign='center'>
+          <MenuRoot>
+            <MenuTrigger asChild>
+              <IconButton aria-label='Options' variant='ghost' size='xs' ml={2}>
                 <FontAwesomeIcon icon={faBars} style={{ fontSize: '10px' }} />
-              }
-              variant='ghost'
-              size='xs'
-              ml={2}
-            />
-            <Portal>
-              <MenuList zIndex='popover' fontSize='xs' minW='150px'>
-                <MenuItem
-                  icon={
-                    <FontAwesomeIcon
-                      icon={faPen}
-                      style={{ fontSize: '10px' }}
-                    />
-                  }
-                  onClick={() => handleEditConfig(config.id)}
-                >
-                  Edit
-                </MenuItem>
-                <MenuItem
-                  icon={
-                    <FontAwesomeIcon
-                      icon={faTrash}
-                      style={{ fontSize: '10px' }}
-                    />
-                  }
-                  onClick={() => {
-                    setIsAlertOpen(true)
-                    handleDeleteClick()
-                    handleDeleteConfig(config.id)
-                  }}
-                >
-                  Delete
-                </MenuItem>
-                {config.protocol === 'tcp' && (
-                  <MenuItem
-                    icon={
-                      <FontAwesomeIcon
-                        icon={faFileAlt}
-                        style={{ fontSize: '10px' }}
-                      />
-                    }
-                    onClick={handleToggleHttpLogs}
-                  >
+              </IconButton>
+            </MenuTrigger>
+            <MenuContent>
+              <MenuItem
+                value='edit'
+                onClick={() => handleEditConfig(config.id)}
+              >
+                <FontAwesomeIcon
+                  icon={faPen}
+                  style={{ fontSize: '10px', marginRight: '8px' }}
+                />
+                <Box flex='1'>Edit</Box>
+              </MenuItem>
+
+              <MenuItem
+                value='delete'
+                onClick={handleDeleteClick}
+              >
+                <FontAwesomeIcon
+                  icon={faTrash}
+                  style={{ fontSize: '10px', marginRight: '8px' }}
+                />
+                <Box flex='1'>Delete</Box>
+              </MenuItem>
+
+              {config.protocol === 'tcp' && (
+                <MenuItem value='http-logs' onClick={handleToggleHttpLogs}>
+                  <FontAwesomeIcon
+                    icon={faFileAlt}
+                    style={{ fontSize: '10px', marginRight: '8px' }}
+                  />
+                  <Box flex='1'>
                     {httpLogsEnabled[config.id]
                       ? 'Disable HTTP Logs'
                       : 'Enable HTTP Logs'}
-                  </MenuItem>
-                )}
-              </MenuList>
-            </Portal>
-          </Menu>
-        </Td>
-      </Tr>
+                  </Box>
+                </MenuItem>
+              )}
+            </MenuContent>
+          </MenuRoot>
+        </Table.Cell>
+      </Table.Row>
+
       {isAlertOpen && (
-        <AlertDialog
-          isOpen={isOpen}
-          leastDestructiveRef={cancelRef}
-          onClose={() => setIsAlertOpen(false)}
-        >
-          <AlertDialogOverlay bg='transparent'>
-            <AlertDialogContent>
-              <AlertDialogHeader fontSize='lg' fontWeight='bold'>
-                Delete Configuration
-              </AlertDialogHeader>
-              <AlertDialogBody>
-                {'Are you sure? You can\'t undo this action afterwards.'}
-              </AlertDialogBody>
-              <AlertDialogFooter>
-                <Button onClick={() => setIsAlertOpen(false)}>Cancel</Button>
-                <Button colorScheme='red' onClick={confirmDeleteConfig} ml={3}>
-                  Delete
-                </Button>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialogOverlay>
-        </AlertDialog>
+        <DialogRoot role='alertdialog'>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Delete Configuration</DialogTitle>
+            </DialogHeader>
+            <DialogBody>
+              Are you sure? You can&apos;t undo this action afterwards.
+            </DialogBody>
+            <DialogFooter>
+              <DialogActionTrigger asChild>
+                <Button>Cancel</Button>
+              </DialogActionTrigger>
+              <Button colorPalette='red' onClick={confirmDeleteConfig} ml={3}>
+                Delete
+              </Button>
+            </DialogFooter>
+            <DialogCloseTrigger />
+          </DialogContent>
+        </DialogRoot>
       )}
     </>
   )

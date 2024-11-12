@@ -1,19 +1,18 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { useCallback, useEffect, useState } from 'react'
 
-import { Box, useColorModeValue, VStack } from '@chakra-ui/react'
+import { Box, VStack } from '@chakra-ui/react'
 import { open, save } from '@tauri-apps/api/dialog'
 import { listen } from '@tauri-apps/api/event'
 import { readTextFile, writeTextFile } from '@tauri-apps/api/fs'
 import { invoke } from '@tauri-apps/api/tauri'
 
-import { Config, Response } from '../../types'
-import AddConfigModal from '../AddConfigModal'
-import AutoImportModal from '../AutoImportModal'
-import useCustomToast from '../CustomToast'
-import Footer from '../Footer'
-import GitSyncModal from '../GitSyncModal'
-import PortForwardTable from '../PortForwardTable'
+import AddConfigModal from '@/components/AddConfigModal'
+import AutoImportModal from '@/components/AutoImportModal'
+import Footer from '@/components/Footer'
+import GitSyncModal from '@/components/GitSyncModal'
+import PortForwardTable from '@/components/PortForwardTable'
+import { useCustomToast } from '@/components/ui/toaster'
+import { Config, Response } from '@/types'
 
 const initialRemotePort = 0
 const initialLocalPort = 0
@@ -256,7 +255,7 @@ const KFTray = () => {
     } catch (error) {
       toast({
         title: 'Error',
-        description: `Failed to update configuration. ${error.message}`,
+        description: `Failed to update configuration. ${error instanceof Error ? error.message : 'Unknown error'}`,
         status: 'error',
       })
     }
@@ -479,63 +478,92 @@ const KFTray = () => {
     setIsStopping(false)
   }
 
-  const cardBg = useColorModeValue('gray.800', 'gray.800')
-
   return (
     <Box
-      position='fixed'
-      width='100%'
-      height='100%'
-      maxHeight='100%'
-      maxW='100%'
-      overflow='hidden'
-      borderRadius='20px'
-      bg={cardBg}
-      boxShadow={`
-		/* Inset shadow for top & bottom inner border effect using dark gray */
-		inset 0 2px 4px rgba(0, 0, 0, 0.3),
-		inset 0 -2px 4px rgba(0, 0, 0, 0.3),
-		/* Inset shadow for an inner border all around using dark gray */
-		inset 0 0 0 4px rgba(45, 57, 81, 0.9)
-	  `}
+      position="fixed"
+      width="100%"
+      height="100%"
+      maxHeight="100%"
+      maxW="100%"
+      overflow="hidden"
+      bg="#111111"
+      borderRadius="lg"
     >
       <VStack
-        css={{
-          '&::-webkit-scrollbar': {
-            width: '5px',
-            background: 'transparent',
-          },
-          '&::-webkit-scrollbar-thumb': {
-            background: '#555',
-          },
-          '&::-webkit-scrollbar-thumb:hover': {
-            background: '#666',
-          },
-        }}
-        height='100%'
-        maxH='100%'
-        w='100%'
-        maxW='100%'
-        overflow='hidden'
-        padding='15px'
-        position='fixed'
-        mt='2px'
+        height="100%"
+        width="100%"
+        gap={0}
+        position="relative"
+        overflow="hidden"
       >
-        <PortForwardTable
-          configs={configs}
-          initiatePortForwarding={initiatePortForwarding}
-          isInitiating={isInitiating}
-          setIsInitiating={setIsInitiating}
-          isStopping={isStopping}
-          handleEditConfig={handleEditConfig}
-          stopAllPortForwarding={stopAllPortForwarding}
-          handleDeleteConfig={handleDeleteConfig}
-          confirmDeleteConfig={confirmDeleteConfig}
-          isAlertOpen={isAlertOpen}
-          setIsAlertOpen={setIsAlertOpen}
-          selectedConfigs={selectedConfigs}
-          setSelectedConfigs={setSelectedConfigs}
-        />
+        {/* Main Content Area */}
+        <Box
+          flex={1}
+          width="100%"
+          height="100%"
+          position="relative"
+          overflow="hidden"
+          bg="#111111"
+
+        >
+          {/* Port Forward Table */}
+          <Box
+            position="absolute"
+            top={0}
+            left={0}
+            right={0}
+            bottom={0}
+            overflow="hidden"
+            padding="5px"
+          >
+            <PortForwardTable
+              configs={configs}
+              initiatePortForwarding={initiatePortForwarding}
+              isInitiating={isInitiating}
+              setIsInitiating={setIsInitiating}
+              isStopping={isStopping}
+              handleEditConfig={handleEditConfig}
+              stopAllPortForwarding={stopAllPortForwarding}
+              handleDeleteConfig={handleDeleteConfig}
+              confirmDeleteConfig={confirmDeleteConfig}
+              isAlertOpen={isAlertOpen}
+              setIsAlertOpen={setIsAlertOpen}
+              selectedConfigs={selectedConfigs}
+              setSelectedConfigs={setSelectedConfigs}
+            />
+          </Box>
+
+          {/* Footer Area */}
+          <Box
+            position="absolute"
+
+            left={0}
+            right={0}
+            bottom={0}
+            overflow="hidden"
+            padding="5px"
+
+            zIndex={10}
+
+          >
+            <Footer
+              openModal={openModal}
+              openGitSyncModal={openGitSyncModal}
+              handleExportConfigs={handleExportConfigs}
+              handleImportConfigs={handleImportConfigs}
+              setCredentialsSaved={setCredentialsSaved}
+              credentialsSaved={credentialsSaved}
+              isGitSyncModalOpen={isGitSyncModalOpen}
+              selectedConfigs={selectedConfigs}
+              setPollingInterval={setPollingInterval}
+              pollingInterval={pollingInterval}
+              setSelectedConfigs={setSelectedConfigs}
+              configs={configs}
+            />
+          </Box>
+        </Box>
+
+        {/* Modals */}
         <GitSyncModal
           isGitSyncModalOpen={isGitSyncModalOpen}
           closeGitSyncModal={closeGitSyncModal}
@@ -544,6 +572,7 @@ const KFTray = () => {
           setPollingInterval={setPollingInterval}
           pollingInterval={pollingInterval}
         />
+
         <AddConfigModal
           isModalOpen={isModalOpen}
           closeModal={closeModal}
@@ -555,20 +584,7 @@ const KFTray = () => {
           cancelRef={cancelRef}
           setNewConfig={setNewConfig}
         />
-        <Footer
-          openModal={openModal}
-          openGitSyncModal={openGitSyncModal}
-          handleExportConfigs={handleExportConfigs}
-          handleImportConfigs={handleImportConfigs}
-          setCredentialsSaved={setCredentialsSaved}
-          credentialsSaved={credentialsSaved}
-          isGitSyncModalOpen={isGitSyncModalOpen}
-          selectedConfigs={selectedConfigs}
-          setPollingInterval={setPollingInterval}
-          pollingInterval={pollingInterval}
-          setSelectedConfigs={setSelectedConfigs}
-          configs={configs}
-        />
+
         <AutoImportModal
           isOpen={isAutoImportModalOpen}
           onClose={() => setIsAutoImportModalOpen(false)}
