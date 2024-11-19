@@ -4,7 +4,6 @@ import { MdDelete } from 'react-icons/md'
 import {
   Box,
   Button,
-  DialogActionTrigger,
   DialogBody,
   DialogCloseTrigger,
   DialogContent,
@@ -12,8 +11,7 @@ import {
   DialogHeader,
   DialogRoot,
   DialogTitle,
-  DialogTrigger,
-  IconButton,
+  Text,
 } from '@chakra-ui/react'
 import { invoke } from '@tauri-apps/api/tauri'
 
@@ -25,15 +23,26 @@ const BulkDeleteButton: React.FC<BulkDeleteButtonProps> = ({
   selectedConfigs,
   setSelectedConfigs,
 }) => {
-  const [configsToDelete, setConfigsToDelete] = useState<number[]>([])
+  const [state, setState] = useState({
+    configsToDelete: [] as number[],
+    isDialogOpen: false,
+  })
   const toast = useCustomToast()
 
-  const handleDeleteConfigs = (selectedIds: number[]) => {
-    setConfigsToDelete(selectedIds)
+  const handleOpenChange = (details: { open: boolean }) => {
+    setState(prev => ({ ...prev, isDialogOpen: details.open }))
   }
 
-  const confirmDeleteConfigs = async () => {
-    if (!Array.isArray(configsToDelete) || !configsToDelete.length) {
+  const handleDeleteClick = (selectedIds: number[]) => {
+    setState(prev => ({
+      ...prev,
+      configsToDelete: selectedIds,
+      isDialogOpen: true,
+    }))
+  }
+
+  const handleConfirmDelete = async () => {
+    if (!state.configsToDelete.length) {
       toast({
         title: 'Error',
         description: 'No configurations selected for deletion.',
@@ -44,8 +53,9 @@ const BulkDeleteButton: React.FC<BulkDeleteButtonProps> = ({
     }
 
     try {
-      await invoke('delete_configs_cmd', { ids: configsToDelete })
+      await invoke('delete_configs_cmd', { ids: state.configsToDelete })
       setSelectedConfigs([])
+      setState(prev => ({ ...prev, isDialogOpen: false }))
       toast({
         title: 'Success',
         description: 'Configurations deleted successfully.',
@@ -55,61 +65,66 @@ const BulkDeleteButton: React.FC<BulkDeleteButtonProps> = ({
       console.error('Failed to delete configurations:', error)
       toast({
         title: 'Error',
-        description: 'Failed to delete configurations: "unknown error"',
+        description: 'Failed to delete configurations.',
         status: 'error',
       })
     }
   }
 
+  if (!selectedConfigs.length) {
+    return null
+  }
+
   return (
     <Box>
-      {selectedConfigs.length > 0 && (
-        <DialogRoot role='alertdialog'>
-          <DialogTrigger asChild>
-            <Tooltip content='Delete Configs'>
-              <IconButton
-                aria-label='Delete selected configs'
-                colorPalette='red'
-                variant='outline'
-                onClick={() =>
-                  handleDeleteConfigs(selectedConfigs.map(config => config.id))
-                }
-                size='sm'
-              >
-                <MdDelete />
-              </IconButton>
-            </Tooltip>
-          </DialogTrigger>
+      <DialogRoot
+        role='alertdialog'
+        open={state.isDialogOpen}
+        onOpenChange={handleOpenChange}
+      >
+        <Tooltip content='Delete Selected Configs'>
+          <Button
+            size='2xs'
+            variant='ghost'
+            onClick={() => handleDeleteClick(selectedConfigs.map(config => config.id))}
+            className="delete-button"
+          >
+            <Box as={MdDelete} width='12px' height='12px' />
+          </Button>
+        </Tooltip>
 
-          <DialogContent>
-            <DialogHeader>
-              <DialogTitle fontSize='xs' fontWeight='bold'>
-                Delete Config(s)
-              </DialogTitle>
-            </DialogHeader>
+        <DialogContent className="delete-dialog">
+          <DialogHeader>
+            <DialogTitle fontSize='11px' fontWeight='bold'>
+              Delete Config(s)
+            </DialogTitle>
+          </DialogHeader>
 
-            <DialogBody fontSize='xs'>
-              Are you sure you want to delete the selected config(s)? This
-              action cannot be undone.
-            </DialogBody>
+          <DialogBody fontSize='11px' py={4}>
+            Are you sure you want to delete the selected config(s)? This action cannot be undone.
+          </DialogBody>
 
-            <DialogFooter>
-              <DialogActionTrigger asChild>
-                <Button size='xs'>Cancel</Button>
-              </DialogActionTrigger>
+          <DialogFooter>
+            <DialogCloseTrigger asChild>
               <Button
-                colorScheme='red'
-                onClick={confirmDeleteConfigs}
-                ml={3}
-                size='xs'
+                size='2xs'
+                variant='ghost'
+                className="cancel-button"
               >
-                Delete
+                <Text fontSize='11px'>Cancel</Text>
               </Button>
-            </DialogFooter>
-            <DialogCloseTrigger />
-          </DialogContent>
-        </DialogRoot>
-      )}
+            </DialogCloseTrigger>
+            <Button
+              size='2xs'
+              variant='ghost'
+              onClick={handleConfirmDelete}
+              className="confirm-delete-button"
+            >
+              <Text fontSize='11px'>Delete</Text>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </DialogRoot>
     </Box>
   )
 }

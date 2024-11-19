@@ -7,7 +7,6 @@ import HeaderMenu from '@/components/HeaderMenu'
 import ContextsAccordion from '@/components/PortForwardTable/ContextsAccordion'
 import { useConfigsByContext } from '@/components/PortForwardTable/useConfigsByContext'
 import { AccordionRoot } from '@/components/ui/accordion'
-import { useColorModeValue } from '@/components/ui/color-mode'
 import { Config, TableProps } from '@/types'
 
 type ValueChangeDetails = {
@@ -38,59 +37,68 @@ const PortForwardTable: React.FC<TableProps> = ({
   >({})
   const [isCheckboxAction, setIsCheckboxAction] = useState<boolean>(false)
 
-  useEffect(() => {
-    const isConfigRunning = (selectedConfig: Config) =>
-      configs.some(
-        config => config.id === selectedConfig.id && config.is_running,
-      )
+  const filteredConfigs = useMemo(() => {
+    const searchLower = search.toLowerCase()
 
-    setSelectedConfigs(prevSelectedConfigs =>
-      prevSelectedConfigs.filter(
-        selectedConfig => !isConfigRunning(selectedConfig),
+    return configs
+    .filter(
+      config =>
+        config.alias.toLowerCase().includes(searchLower) ||
+          config.context.toLowerCase().includes(searchLower) ||
+          config.remote_address?.toLowerCase().includes(searchLower) ||
+          config.local_port.toString().includes(searchLower),
+    )
+    .sort(
+      (a, b) =>
+        a.alias.localeCompare(b.alias) || a.context.localeCompare(b.context),
+    )
+  }, [configs, search])
+
+  const configsByContext = useConfigsByContext(filteredConfigs)
+
+  useEffect(() => {
+    setSelectedConfigs(prev =>
+      prev.filter(
+        selected =>
+          !configs.some(
+            config => config.id === selected.id && config.is_running,
+          ),
       ),
     )
   }, [configs, setSelectedConfigs])
 
-  const filteredConfigs = useMemo(() => {
-    const filterConfigsBySearch = (config: Config) =>
-      config.alias.toLowerCase().includes(search.toLowerCase()) ||
-      config.context.toLowerCase().includes(search.toLowerCase()) ||
-      config.remote_address?.toLowerCase().includes(search.toLowerCase()) ||
-      config.local_port.toString().includes(search.toLowerCase())
+  useEffect(() => {
+    if (prevSelectedConfigsRef.current !== selectedConfigs) {
+      const newSelectedConfigsByContext = Object.fromEntries(
+        Object.entries(configsByContext).map(([context, contextConfigs]) => [
+          context,
+          contextConfigs.every(config =>
+            selectedConfigs.some(selected => selected.id === config.id),
+          ),
+        ]),
+      )
 
-    const searchFiltered = search
-      ? configs.filter(filterConfigsBySearch)
-      : configs
-
-    const compareConfigs = (a: Config, b: Config) =>
-      a.alias.localeCompare(b.alias) || a.context.localeCompare(b.context)
-
-    return [...searchFiltered].sort(compareConfigs)
-  }, [configs, search])
+      setSelectedConfigsByContext(newSelectedConfigsByContext)
+      setIsSelectAllChecked(selectedConfigs.length === configs.length)
+      prevSelectedConfigsRef.current = selectedConfigs
+    }
+  }, [selectedConfigs, configs, configsByContext])
 
   const toggleExpandAll = () => {
     const allContexts = Object.keys(configsByContext)
 
-    if (expandedIndices.length === allContexts.length) {
-      setExpandedIndices([])
-    } else {
-      setExpandedIndices(allContexts)
-    }
+    setExpandedIndices(current =>
+      current.length === allContexts.length ? [] : allContexts,
+    )
   }
 
   const startSelectedPortForwarding = async () => {
-    const configsToStart = selectedConfigs.filter(
-      (config: Config) => !config.is_running,
-    )
+    const configsToStart = selectedConfigs.filter(config => !config.is_running)
 
     if (configsToStart.length > 0) {
       await initiatePortForwarding(configsToStart)
     }
   }
-
-  const configsByContext = useConfigsByContext(filteredConfigs)
-  const borderColor = useColorModeValue('gray.200', 'gray.700')
-  const boxShadow = useColorModeValue('base', 'sm')
 
   const handleAccordionChange = (details: ValueChangeDetails) => {
     if (!isCheckboxAction) {
@@ -104,38 +112,17 @@ const PortForwardTable: React.FC<TableProps> = ({
     setIsCheckboxAction(false)
   }
 
-  useEffect(() => {
-    if (prevSelectedConfigsRef.current !== selectedConfigs) {
-      const newSelectedConfigsByContext: Record<string, boolean> = {}
-
-      for (const context of Object.keys(configsByContext)) {
-        newSelectedConfigsByContext[context] = configsByContext[context].every(
-          config =>
-            selectedConfigs.some(
-              selectedConfig => selectedConfig.id === config.id,
-            ),
-        )
-      }
-
-      setSelectedConfigsByContext(newSelectedConfigsByContext)
-      setIsSelectAllChecked(selectedConfigs.length === configs.length)
-      prevSelectedConfigsRef.current = selectedConfigs
-    }
-  }, [selectedConfigs, configs, configsByContext])
-
   const handleSelectionChange = (config: Config, isSelected: boolean) => {
-    setSelectedConfigs(prevSelectedConfigs => {
-      const isSelectedCurrently = prevSelectedConfigs.some(
-        c => c.id === config.id,
-      )
+    setSelectedConfigs(prev => {
+      const isCurrentlySelected = prev.some(c => c.id === config.id)
 
-      if (isSelected && !isSelectedCurrently) {
-        return [...prevSelectedConfigs, config]
-      } else if (!isSelected && isSelectedCurrently) {
-        return prevSelectedConfigs.filter(c => c.id !== config.id)
-      } else {
-        return prevSelectedConfigs
+      if (isSelected === isCurrentlySelected) {
+        return prev
       }
+
+      return isSelected
+        ? [...prev, config]
+        : prev.filter(c => c.id !== config.id)
     })
   }
 
@@ -144,80 +131,36 @@ const PortForwardTable: React.FC<TableProps> = ({
     isContextSelected: boolean,
   ) => {
     setIsCheckboxAction(true)
-    setSelectedConfigs(currentSelectedConfigs => {
+    setSelectedConfigs(current => {
       const contextConfigs = configs.filter(
         config => config.context === context,
       )
 
       return isContextSelected
-        ? addContextConfigs(currentSelectedConfigs, contextConfigs)
-        : removeContextConfigs(currentSelectedConfigs, context)
+        ? [
+          ...current,
+          ...contextConfigs.filter(
+            config => !current.some(selected => selected.id === config.id),
+          ),
+        ]
+        : current.filter(config => config.context !== context)
     })
-  }
-
-  function addContextConfigs(
-    currentSelectedConfigs: Config[],
-    contextConfigs: Config[],
-  ) {
-    const newConfigsToAdd = contextConfigs.filter(
-      config =>
-        !currentSelectedConfigs.some(
-          selectedConfig => selectedConfig.id === config.id,
-        ),
-    )
-
-    return [...currentSelectedConfigs, ...newConfigsToAdd]
-  }
-
-  function removeContextConfigs(
-    currentSelectedConfigs: Config[],
-    context: string,
-  ) {
-    return currentSelectedConfigs.filter(config => config.context !== context)
   }
 
   return (
     <Box
-      display="flex"
-      flexDirection="column"
-      height="90%"
-      width="100%"
-      overflow="hidden"
-      bg="#111111"
-      position="relative"
+      display='flex'
+      flexDirection='column'
+      height='87%'
+      width='100%'
+      overflow='hidden'
+      bg='transparent'
+      position='relative'
     >
       {/* Header Section */}
-      <Box
-        position="sticky"
-        top={0}
-        zIndex={10}
-        bg="#111111"
-
-        mb={2}
-      >
-        <Box
-          display="flex"
-          flexDirection="row"
-          alignItems="center"
-          justifyContent="space-between"
-          width="100%"
-        >
+      <Box position='sticky' top={0} zIndex={10} bg='transparent' mb={2}>
+        <Box display='flex' flexDirection='column' width='100%' gap={0}>
           <Header search={search} setSearch={setSearch} />
-        </Box>
-      </Box>
-
-      {/* Menu Section */}
-      <Box
-
-
-        bg="#161616"
-        borderRadius="lg"
-        border="1px solid rgba(255, 255, 255, 0.08)"
-        overflow="hidden"
-      >
-        <Box
-          p={1}
-        >
           <HeaderMenu
             isSelectAllChecked={isSelectAllChecked}
             setIsSelectAllChecked={setIsSelectAllChecked}
@@ -236,34 +179,31 @@ const PortForwardTable: React.FC<TableProps> = ({
         </Box>
       </Box>
 
-      {/* Main Content Section */}
+      {/* Content Section */}
       <Box
         flex={1}
-        mt={2}
-
-        overflowY="auto"
-        bg="#161616"
-        borderRadius="lg"
-        border="1px solid rgba(255, 255, 255, 0.08)"
+        overflowY='auto'
+        bg='#161616'
+        borderRadius='lg'
+        position='relative'
+        px={2}
+        py={1}
+        border='1px solid rgba(255, 255, 255, 0.08)'
         css={{
-          '&::-webkit-scrollbar': {
-            width: '4px',
-          },
-          '&::-webkit-scrollbar-track': {
-            background: 'transparent',
-          },
+          '&::-webkit-scrollbar': { width: '4px' },
+          '&::-webkit-scrollbar-track': { background: 'transparent' },
           '&::-webkit-scrollbar-thumb': {
             background: 'rgba(255, 255, 255, 0.1)',
-            borderRadius: '2px',
-          },
-          '&::-webkit-scrollbar-thumb:hover': {
-            background: 'rgba(255, 255, 255, 0.2)',
+            borderRadius: '4px',
+            '&:hover': { background: 'rgba(255, 255, 255, 0.2)' },
           },
         }}
       >
         <AccordionRoot
+          multiple
           value={expandedIndices}
           onValueChange={handleAccordionChange}
+          variant='subtle'
         >
           {Object.entries(configsByContext).map(([context, contextConfigs]) => (
             <ContextsAccordion
@@ -286,9 +226,6 @@ const PortForwardTable: React.FC<TableProps> = ({
           ))}
         </AccordionRoot>
       </Box>
-
-      {/* Bottom Spacing */}
-      <Box h={4} />
     </Box>
   )
 }

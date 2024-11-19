@@ -480,41 +480,40 @@ const KFTray = () => {
 
   return (
     <Box
-      position="fixed"
-      width="100%"
-      height="100%"
-      maxHeight="100%"
-      maxW="100%"
-      overflow="hidden"
-      bg="#111111"
-      borderRadius="lg"
+      position='fixed'
+      width='100%'
+      height='100%'
+      maxHeight='100%'
+      maxW='100%'
+      overflow='hidden'
+      bg='#111111'
+      borderRadius='lg'
     >
       <VStack
-        height="100%"
-        width="100%"
+        height='100%'
+        width='100%'
         gap={0}
-        position="relative"
-        overflow="hidden"
+        position='relative'
+        overflow='hidden'
       >
         {/* Main Content Area */}
         <Box
           flex={1}
-          width="100%"
-          height="100%"
-          position="relative"
-          overflow="hidden"
-          bg="#111111"
-
+          width='100%'
+          height='100%'
+          position='relative'
+          overflow='hidden'
+          bg='#111111'
         >
           {/* Port Forward Table */}
           <Box
-            position="absolute"
+            position='absolute'
             top={0}
             left={0}
             right={0}
             bottom={0}
-            overflow="hidden"
-            padding="5px"
+            overflow='hidden'
+            padding='5px'
           >
             <PortForwardTable
               configs={configs}
@@ -535,16 +534,13 @@ const KFTray = () => {
 
           {/* Footer Area */}
           <Box
-            position="absolute"
-
+            position='absolute'
             left={0}
             right={0}
             bottom={0}
-            overflow="hidden"
-            padding="5px"
-
+            overflow='hidden'
+            padding='5px'
             zIndex={10}
-
           >
             <Footer
               openModal={openModal}

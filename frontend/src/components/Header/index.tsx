@@ -23,10 +23,6 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
     app.getVersion().then(setVersion).catch(console.error)
   }, [])
 
-  const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    setSearch(event.target.value)
-  }
-
   useEffect(() => {
     if (!dragHandleRef.current) {
       return
@@ -78,158 +74,138 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
 
   return (
     <Box
-      display="flex"
-      alignItems="center"
-      justifyContent="space-between"
-      bg="#161616"
-      borderRadius="lg"
-      width="100%"
-
-      px={2}
-      py={2}
-      border="1px solid rgba(255, 255, 255, 0.08)"
+      display='flex'
+      alignItems='center'
+      justifyContent='space-between'
+      bg='#161616'
+      borderRadius='lg'
+      borderBottomRadius='none'
+      width='100%'
+      px={3}
+      py={3}
+      borderBottom='none'
+      border='1px solid rgba(255, 255, 255, 0.08)'
     >
-      {/* Left Section - Logo and Drag Handle */}
-      <Box
-        display="flex"
-        alignItems="center"
-        gap={2}
-      >
-        <Box
-          ref={dragHandleRef}
-          className="drag-handle"
-          onMouseEnter={() => setTooltipOpen(true)}
-          onMouseLeave={() => setTooltipOpen(false)}
-          cursor="move"
-          p={1}
-          _hover={{ color: 'whiteAlpha.700' }}
-        >
-          <Tooltip content="Move Window Position" open={tooltipOpen}>
-            <Box
-              as={GripVertical}
-              width="16px"
-              height="16px"
-              color="whiteAlpha.500"
-              data-drag
+      {/* Left Section */}
+      <Box display='flex' alignItems='center' gap={3}>
+        <Box display='flex' alignItems='center' gap={2}>
+          <Box
+            ref={dragHandleRef}
+            className='drag-handle'
+            onMouseEnter={() => setTooltipOpen(true)}
+            onMouseLeave={() => setTooltipOpen(false)}
+            cursor='move'
+            _hover={{ color: 'whiteAlpha.700' }}
+            mb={0.5}
+          >
+            <Tooltip content='Move Window Position' open={tooltipOpen}>
+              <Box
+                as={GripVertical}
+                width='22px'
+                height='22px'
+                color='whiteAlpha.500'
+                data-drag
+              />
+            </Tooltip>
+          </Box>
+
+          <Tooltip content={`Kftray v${version}`}>
+            <Image
+              src={logo}
+              alt='Kftray Logo'
+              width='33px'
+              height='33px'
+              objectFit='contain'
+              filter='brightness(0.9)'
+              _hover={{ filter: 'brightness(1)' }}
+              transition='filter 0.2s'
             />
           </Tooltip>
         </Box>
 
-        <Tooltip content={`Kftray v${version}`}>
-          <Image
-            src={logo}
-            alt="Kftray Logo"
-            width="24px"
-            height="24px"
-            objectFit="contain"
-            filter="brightness(0.9)"
-            _hover={{ filter: 'brightness(1)' }}
-            transition="filter 0.2s"
-          />
-        </Tooltip>
-      </Box>
-
-      {/* Right Section - Search and Controls */}
-      <Box
-        display="flex"
-        alignItems="center"
-        justifyContent="flex-end"
-
-        gap={4}
-      >
         {/* Search Input */}
-        <Box
-          position="relative"
-
-          maxWidth="200px"
-        >
+        <Box position='relative' width='200px' ml={12}>
           <Box
             as={Search}
-            position="absolute"
-            left={20}
-            top="50%"
-            transform="translateY(-50%)"
-            width="14px"
-            height="14px"
-            color="whiteAlpha.500"
+            position='absolute'
+            zIndex={100}
+            left={2}
+            top='50%'
+            transform='translateY(-50%)'
+            width='14px'
+            height='14px'
+            color='whiteAlpha.500'
           />
           <Input
             value={search}
-            onChange={handleSearchChange}
-            placeholder="Search..."
-            size="sm"
-            pl={1}
-            bg="#1A1A1A"
-            border="1px solid rgba(255, 255, 255, 0.08)"
+            onChange={e => setSearch(e.target.value)}
+            placeholder='Search...'
+            size='sm'
+            pl={8}
+            bg='#1A1A1A'
+            border='1px solid rgba(255, 255, 255, 0.08)'
             _hover={{
-              borderColor: 'rgba(255, 255, 255, 0.15)'
+              borderColor: 'rgba(255, 255, 255, 0.15)',
             }}
             _focus={{
               borderColor: 'blue.400',
-              boxShadow: 'none'
+              boxShadow: 'none',
             }}
-            height="26px"
-            fontSize="13px"
-            width="80%"
-
-            maxWidth="80%"
-            color="whiteAlpha.900"
+            height='28px'
+            fontSize='13px'
+            width='100%'
+            color='whiteAlpha.900'
             _placeholder={{
-              color: 'whiteAlpha.400'
+              color: 'whiteAlpha.400',
             }}
           />
         </Box>
-
-        {/* Window Controls */}
-        <Box
-          display="flex"
-          alignItems="center"
-          gap={1}
-        >
-          <Tooltip content={isPinned ? 'Unpin Window' : 'Pin Window'}>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={togglePinWindow}
-              height="32px"
-              width="32px"
-              minWidth="32px"
-              p={0}
-              _hover={{ bg: 'whiteAlpha.100' }}
-              _active={{ bg: 'whiteAlpha.200' }}
-            >
-              <Box
-                as={isPinned ? TiPin : TiPinOutline}
-                width="16px"
-                height="16px"
-                color="whiteAlpha.700"
-              />
-            </Button>
-          </Tooltip>
-
-          <Tooltip content="Close Window">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleStopPortForwardsAndExit}
-              height="32px"
-              width="32px"
-              minWidth="32px"
-              p={0}
-              _hover={{ bg: 'whiteAlpha.100' }}
-              _active={{ bg: 'whiteAlpha.200' }}
-            >
-              <Box
-                as={MdClose}
-                width="16px"
-                height="16px"
-                color="whiteAlpha.700"
-              />
-            </Button>
-          </Tooltip>
-        </Box>
       </Box>
 
+      {/* Right Section - Window Controls */}
+      <Box display='flex' alignItems='center' gap={1}>
+        <Tooltip content={isPinned ? 'Unpin Window' : 'Pin Window'}>
+          <Button
+            variant='ghost'
+            size='sm'
+            onClick={togglePinWindow}
+            height='28px'
+            width='28px'
+            minWidth='28px'
+            p={0}
+            _hover={{ bg: 'whiteAlpha.100' }}
+            _active={{ bg: 'whiteAlpha.200' }}
+          >
+            <Box
+              as={isPinned ? TiPin : TiPinOutline}
+              width='16px'
+              height='16px'
+              color='whiteAlpha.700'
+            />
+          </Button>
+        </Tooltip>
+
+        <Tooltip content='Close Window'>
+          <Button
+            variant='ghost'
+            size='sm'
+            onClick={handleStopPortForwardsAndExit}
+            height='28px'
+            width='28px'
+            minWidth='28px'
+            p={0}
+            _hover={{ bg: 'whiteAlpha.100' }}
+            _active={{ bg: 'whiteAlpha.200' }}
+          >
+            <Box
+              as={MdClose}
+              width='16px'
+              height='16px'
+              color='whiteAlpha.700'
+            />
+          </Button>
+        </Tooltip>
+      </Box>
     </Box>
   )
 }

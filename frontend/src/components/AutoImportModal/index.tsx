@@ -24,24 +24,23 @@ const AutoImportModal: React.FC<AutoImportModalProps> = ({
   isOpen,
   onClose,
 }) => {
-  const [selectedContext, setSelectedContext] = useState<Option | null>(null)
-  const [kubeConfig, setKubeConfig] = useState<string>('default')
-  const [isImporting, setIsImporting] = useState(false)
+  const [state, setState] = useState({
+    selectedContext: null as Option | null,
+    kubeConfig: 'default',
+    isImporting: false,
+  })
   const toast = useCustomToast()
 
   const contextQuery = useQuery<KubeContext[]>(
-    ['kube-contexts', kubeConfig],
-    () => fetchKubeContexts(kubeConfig),
+    ['kube-contexts', state.kubeConfig],
+    () => fetchKubeContexts(state.kubeConfig),
     {
       enabled: isOpen,
       onError: error => {
         console.error('Error fetching contexts:', error)
         toast({
           title: 'Error fetching contexts',
-          description:
-            error instanceof Error
-              ? error.message
-              : 'An unknown error occurred',
+          description: error instanceof Error ? error.message : 'An unknown error occurred',
           status: 'error',
         })
       },
@@ -59,15 +58,14 @@ const AutoImportModal: React.FC<AutoImportModalProps> = ({
       await invoke('close_save_dialog')
 
       if (selectedPath) {
-        const filePath = Array.isArray(selectedPath)
-          ? selectedPath[0]
-          : selectedPath
+        const filePath = Array.isArray(selectedPath) ? selectedPath[0] : selectedPath
 
-        setKubeConfig(filePath ?? 'default')
+
+        setState(prev => ({ ...prev, kubeConfig: filePath ?? 'default' }))
       }
     } catch (error) {
       console.error('Error selecting a file: ', error)
-      setKubeConfig('default')
+      setState(prev => ({ ...prev, kubeConfig: 'default' }))
       toast({
         title: 'Error',
         description: 'Failed to select kubeconfig file.',
@@ -77,7 +75,7 @@ const AutoImportModal: React.FC<AutoImportModalProps> = ({
   }
 
   const handleImport = async () => {
-    if (!selectedContext) {
+    if (!state.selectedContext) {
       toast({
         title: 'Error',
         description: 'Please select a context.',
@@ -87,11 +85,11 @@ const AutoImportModal: React.FC<AutoImportModalProps> = ({
       return
     }
 
-    setIsImporting(true)
+    setState(prev => ({ ...prev, isImporting: true }))
     try {
       const configs = await invoke<Config[]>('get_services_with_annotations', {
-        contextName: selectedContext.value,
-        kubeconfigPath: kubeConfig,
+        contextName: state.selectedContext.value,
+        kubeconfigPath: state.kubeConfig,
       })
 
       for (const config of configs) {
@@ -112,76 +110,59 @@ const AutoImportModal: React.FC<AutoImportModalProps> = ({
         status: 'error',
       })
     } finally {
-      setIsImporting(false)
+      setState(prev => ({ ...prev, isImporting: false }))
     }
   }
 
   useEffect(() => {
     if (!isOpen) {
-      setSelectedContext(null)
-      setKubeConfig('default')
+      setState(prev => ({ ...prev, selectedContext: null, kubeConfig: 'default' }))
     }
   }, [isOpen])
 
   return (
     <Dialog.Root open={isOpen} onOpenChange={onClose}>
-      <Dialog.Backdrop bg="transparent" />
+      <Dialog.Backdrop bg='transparent' />
       <Dialog.Positioner>
-        <Dialog.Content
-          onClick={(e) => e.stopPropagation()}
-          maxWidth="440px"
-          width="90vw"
-          bg="#161616"
-          borderRadius="lg"
-          border="1px solid rgba(255, 255, 255, 0.08)"
-          overflow="hidden"
-        >
-          <Dialog.Header
-            p={5}
-            bg="#161616"
-            borderBottom="1px solid rgba(255, 255, 255, 0.05)"
-          >
-            <Text fontSize="sm" fontWeight="medium" color="gray.100">
+        <Dialog.Content className="auto-import-dialog">
+          <Dialog.Header>
+            <Text fontSize='sm' fontWeight='medium' color='gray.100'>
               Auto Import
             </Text>
           </Dialog.Header>
 
           <Dialog.Body p={4}>
             <Stack gap={5}>
-              {/* Kubeconfig Selection */}
-              <Flex justify="space-between" align="center">
-                <Text fontSize="xs" color="gray.400">
+              <Flex justify='space-between' align='center'>
+                <Text fontSize='xs' color='gray.400'>
                   Kubeconfig
                 </Text>
                 <Tooltip.Root>
                   <Tooltip.Trigger>
                     <Button
-                      size="xs"
-                      variant="ghost"
+                      size='xs'
+                      variant='ghost'
                       onClick={handleSetKubeConfig}
-                      bg="whiteAlpha.50"
-                      _hover={{ bg: 'whiteAlpha.100' }}
-                      height="24px"
+                      className="kubeconfig-button"
                     >
-                      <Text fontSize="xs">Set Path</Text>
+                      <Text fontSize='xs'>Set Path</Text>
                     </Button>
                   </Tooltip.Trigger>
-                  <Tooltip.Positioner>
-                    <Tooltip.Content bg="#161616" border="1px solid rgba(255, 255, 255, 0.05)">
-                      <Text fontSize="xs" color="gray.300">{kubeConfig}</Text>
-                    </Tooltip.Content>
-                  </Tooltip.Positioner>
+                  <Tooltip.Content>
+                    <Text fontSize='xs' color='gray.300'>
+                      {state.kubeConfig}
+                    </Text>
+                  </Tooltip.Content>
                 </Tooltip.Root>
               </Flex>
 
-              {/* Context Selection */}
               <Stack gap={2}>
-                <Text fontSize="xs" color="gray.400">
+                <Text fontSize='xs' color='gray.400'>
                   Context
                 </Text>
                 {contextQuery.isLoading ? (
-                  <Flex justify="center" py={2}>
-                    <Spinner size="sm" color="blue.400" />
+                  <Flex justify='center' py={2}>
+                    <Spinner size='sm' color='blue.400' />
                   </Flex>
                 ) : (
                   <ReactSelect
@@ -189,91 +170,34 @@ const AutoImportModal: React.FC<AutoImportModalProps> = ({
                       label: context.name,
                       value: context.name,
                     }))}
-                    value={selectedContext}
-                    onChange={newValue => setSelectedContext(newValue as Option)}
+                    value={state.selectedContext}
+                    onChange={newValue => setState(prev => ({ ...prev, selectedContext: newValue as Option }))}
                     isDisabled={contextQuery.isLoading || contextQuery.isError}
-                    placeholder="Select context..."
-                    styles={{
-                      control: (base) => ({
-                        ...base,
-                        background: '#161616',
-                        borderColor: 'rgba(255, 255, 255, 0.08)',
-                        borderRadius: '6px',
-                        minHeight: '32px',
-                        fontSize: '13px',
-                        '&:hover': {
-                          borderColor: 'rgba(255, 255, 255, 0.15)'
-                        }
-                      }),
-                      menu: (base) => ({
-                        ...base,
-                        background: '#161616',
-                        border: '1px solid rgba(255, 255, 255, 0.08)',
-                        borderRadius: '6px',
-                        overflow: 'hidden'
-                      }),
-                      menuList: (base) => ({
-                        ...base,
-                        padding: '4px'
-                      }),
-                      option: (base, state) => ({
-                        ...base,
-                        fontSize: '13px',
-                        background: state.isFocused ? 'rgba(255, 255, 255, 0.05)' : 'transparent',
-                        borderRadius: '4px',
-                        color: 'rgba(255, 255, 255, 0.9)',
-                        padding: '6px 8px',
-                        '&:hover': {
-                          background: 'rgba(255, 255, 255, 0.05)'
-                        }
-                      }),
-                      singleValue: (base) => ({
-                        ...base,
-                        color: 'rgba(255, 255, 255, 0.9)',
-                        fontSize: '13px'
-                      }),
-                      input: (base) => ({
-                        ...base,
-                        color: 'rgba(255, 255, 255, 0.9)',
-                        fontSize: '13px'
-                      }),
-                      placeholder: (base) => ({
-                        ...base,
-                        color: 'rgba(255, 255, 255, 0.4)',
-                        fontSize: '13px'
-                      })
-                    }}
+                    placeholder='Select context...'
+                    className="context-select"
                   />
                 )}
                 {contextQuery.isError && (
-                  <Text fontSize="xs" color="red.300">
+                  <Text fontSize='xs' color='red.300'>
                     Please select a valid kubeconfig file
                   </Text>
                 )}
               </Stack>
 
-              {/* Instructions */}
-              <VStack
-                align="start"
-                gap={2.5}
-                bg="#161616"
-                p={3}
-                borderRadius="md"
-                border="1px solid rgba(255, 255, 255, 0.05)"
-              >
-                <Text fontSize="xs" color="gray.300">
+              <VStack align='start' gap={2.5} className="instructions">
+                <Text fontSize='xs' color='gray.300'>
                   Services must have:
                 </Text>
                 <Stack gap={1.5}>
-                  <Text fontSize="xs" color="gray.400">
+                  <Text fontSize='xs' color='gray.400'>
                     • Annotation{' '}
-                    <Text as="span" color="blue.300" fontFamily="mono">
+                    <Text as='span' color='blue.300' fontFamily='mono'>
                       kftray.app/enabled: true
                     </Text>
                   </Text>
-                  <Text fontSize="xs" color="gray.400">
+                  <Text fontSize='xs' color='gray.400'>
                     • Config format:{' '}
-                    <Text as="span" color="blue.300" fontFamily="mono">
+                    <Text as='span' color='blue.300' fontFamily='mono'>
                       alias-localPort-targetPort
                     </Text>
                   </Text>
@@ -282,28 +206,22 @@ const AutoImportModal: React.FC<AutoImportModalProps> = ({
             </Stack>
           </Dialog.Body>
 
-          <Dialog.Footer
-            p={4}
-            borderTop="1px solid rgba(255, 255, 255, 0.05)"
-            bg="#161616"
-          >
-            <HStack gap={3} justify="flex-end">
+          <Dialog.Footer>
+            <HStack gap={3} justify='flex-end'>
               <Button
-                size="sm"
-                variant="ghost"
+                size='sm'
+                variant='ghost'
                 onClick={onClose}
-                _hover={{ bg: 'whiteAlpha.50' }}
-                height="32px"
+                className="cancel-button"
               >
                 Cancel
               </Button>
               <Button
-                size="sm"
-                bg="blue.500"
-                _hover={{ bg: 'blue.600' }}
+                size='sm'
+                bg='blue.500'
                 onClick={handleImport}
-                disabled={isImporting || !selectedContext}
-                height="32px"
+                disabled={state.isImporting || !state.selectedContext}
+                className="import-button"
               >
                 Import
               </Button>
