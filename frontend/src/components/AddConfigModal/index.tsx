@@ -74,7 +74,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
       title,
       description:
         error instanceof Error ? error.message : 'An unknown error occurred',
-      duration: 500,
+      duration: 1000,
     })
   }
 

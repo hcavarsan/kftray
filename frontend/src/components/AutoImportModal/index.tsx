@@ -49,7 +49,7 @@ const AutoImportModal: React.FC<AutoImportModalProps> = ({
             error instanceof Error
               ? error.message
               : 'An unknown error occurred',
-          duration: 500,
+          duration: 1000,
         })
       },
     },
@@ -78,7 +78,7 @@ const AutoImportModal: React.FC<AutoImportModalProps> = ({
       toaster.error({
         title: 'Error',
         description: 'Failed to select kubeconfig file.',
-        duration: 500,
+        duration: 1000,
       })
     }
   }
@@ -88,7 +88,7 @@ const AutoImportModal: React.FC<AutoImportModalProps> = ({
       toaster.error({
         title: 'Error',
         description: 'Please select a context.',
-        duration: 500,
+        duration: 1000,
       })
 
       return
@@ -108,7 +108,7 @@ const AutoImportModal: React.FC<AutoImportModalProps> = ({
       toaster.success({
         title: 'Success',
         description: 'Configs imported successfully.',
-        duration: 500,
+        duration: 1000,
       })
       onClose()
     } catch (error) {
@@ -116,7 +116,7 @@ const AutoImportModal: React.FC<AutoImportModalProps> = ({
       toaster.error({
         title: 'Error',
         description: 'Failed to import configs.',
-        duration: 500,
+        duration: 1000,
       })
     } finally {
       setState(prev => ({ ...prev, isImporting: false }))

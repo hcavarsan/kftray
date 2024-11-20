@@ -84,7 +84,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
       toaster.error({
         title: 'Error toggling HTTP logs',
         description: error instanceof Error ? error.message : String(error),
-        duration: 500,
+        duration: 1000,
       })
     }
   }
@@ -99,7 +99,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
       toaster.error({
         title: 'Error opening log file',
         description: error instanceof Error ? error.message : String(error),
-        duration: 500,
+        duration: 1000,
       })
     }
   }
@@ -147,7 +147,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
       toaster.error({
         title: 'Error starting port forwarding',
         description: error instanceof Error ? error.message : String(error),
-        duration: 500,
+        duration: 1000,
       })
     }
   }
@@ -184,7 +184,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
       toaster.error({
         title: 'Error stopping port forwarding',
         description: error instanceof Error ? error.message : String(error),
-        duration: 500,
+        duration: 1000,
       })
     }
   }
@@ -251,25 +251,29 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
             />
             {config.is_running && (
               <Flex gap={1.5}>
-                <IconButton
-                  size='2xs'
-                  variant='ghost'
-                  aria-label='Open URL'
-                  onClick={handleOpenLocalURL}
-                  className='icon-button'
-                >
-                  <ExternalLinkIcon size={12} />
-                </IconButton>
-                {httpLogsEnabled[config.id] && (
+                <Tooltip content='Open in browser' portalled>
                   <IconButton
                     size='2xs'
                     variant='ghost'
-                    onClick={handleInspectLogs}
-                    aria-label='HTTP Logs'
+                    aria-label='Open URL'
+                    onClick={handleOpenLocalURL}
                     className='icon-button'
                   >
-                    <FileIcon size={10} />
+                    <ExternalLinkIcon size={12} />
                   </IconButton>
+                </Tooltip>
+                {httpLogsEnabled[config.id] && (
+                  <Tooltip content='View HTTP logs' portalled>
+                    <IconButton
+                      size='2xs'
+                      variant='ghost'
+                      onClick={handleInspectLogs}
+                      aria-label='HTTP Logs'
+                      className='icon-button'
+                    >
+                      <FileIcon size={10} />
+                    </IconButton>
+                  </Tooltip>
                 )}
               </Flex>
             )}

@@ -11,7 +11,7 @@ import { Provider } from './components/ui/provider'
 const App: React.FC = () => {
   return (
     <ChakraProvider value={system}>
-      <ColorModeProvider forcedTheme="dark">
+      <ColorModeProvider forcedTheme='dark'>
         <Provider>
           <Main />
         </Provider>

@@ -124,7 +124,7 @@ const BulkDeleteButton: React.FC<BulkDeleteButtonProps> = ({
       toaster.error({
         title: 'Error',
         description: 'No configurations selected for deletion.',
-        duration: 500,
+        duration: 1000,
       })
 
       return
@@ -137,14 +137,14 @@ const BulkDeleteButton: React.FC<BulkDeleteButtonProps> = ({
       toaster.success({
         title: 'Success',
         description: 'Configurations deleted successfully.',
-        duration: 500,
+        duration: 1000,
       })
     } catch (error) {
       console.error('Failed to delete configurations:', error)
       toaster.error({
         title: 'Error',
         description: 'Failed to delete configurations.',
-        duration: 500,
+        duration: 1000,
       })
     }
   }

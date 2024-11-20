@@ -31,7 +31,7 @@ const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
         toaster.error({
           title: 'Error syncing configs',
           description: error instanceof Error ? error.message : String(error),
-          duration: 500,
+          duration: 1000,
         })
       }
     },
@@ -68,7 +68,7 @@ const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
         toaster.success({
           title: 'Success',
           description: 'Configs synced successfully',
-          duration: 500,
+          duration: 1000,
         })
       } catch (error) {
         handleSyncError(error)

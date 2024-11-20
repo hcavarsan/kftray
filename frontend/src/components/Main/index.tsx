@@ -174,7 +174,7 @@ const KFTray = () => {
         toaster.success({
           title: 'Success',
           description: 'Configuration exported successfully.',
-          duration: 500,
+          duration: 1000,
         })
       }
     } catch (error) {
@@ -185,7 +185,7 @@ const KFTray = () => {
       toaster.error({
         title: 'Failed to export configs',
         description: errorMessage,
-        duration: 500,
+        duration: 1000,
       })
     }
   }
@@ -207,13 +207,13 @@ const KFTray = () => {
         toaster.success({
           title: 'Success',
           description: 'Configuration imported successfully.',
-          duration: 500,
+          duration: 1000,
         })
       } else {
         toaster.error({
           title: 'Error',
           description: 'Failed to import configurations.',
-          duration: 500,
+          duration: 1000,
         })
       }
     } catch (error) {
@@ -221,7 +221,7 @@ const KFTray = () => {
       toaster.error({
         title: 'Error',
         description: 'Failed to import configurations.',
-        duration: 500,
+        duration: 1000,
       })
     }
   }
@@ -248,14 +248,14 @@ const KFTray = () => {
       toaster.success({
         title: 'Success',
         description: 'Configuration updated successfully.',
-        duration: 500,
+        duration: 1000,
       })
       closeModal()
     } catch (error) {
       toaster.error({
         title: 'Error',
         description: `Failed to update configuration. ${error instanceof Error ? error.message : 'Unknown error'}`,
-        duration: 500,
+        duration: 1000,
       })
     }
   }
@@ -289,7 +289,7 @@ const KFTray = () => {
       toaster.success({
         title: 'Success',
         description: `Configuration ${isEdit ? 'updated' : 'added'} successfully.`,
-        duration: 500,
+        duration: 1000,
       })
       closeModal()
     } catch (error) {
@@ -297,7 +297,7 @@ const KFTray = () => {
       toaster.error({
         title: 'Error',
         description: `Failed to ${isEdit ? 'update' : 'add'} configuration.`,
-        duration: 500,
+        duration: 1000,
       })
     }
   }
@@ -375,7 +375,7 @@ const KFTray = () => {
       toaster.error({
         title: 'Error Starting Port Forwarding',
         description: `Some configs failed: ${errorMessage}`,
-        duration: 500,
+        duration: 1000,
       })
     }
 
@@ -416,7 +416,7 @@ const KFTray = () => {
       toaster.error({
         title: 'Error',
         description: 'Configuration id is undefined.',
-        duration: 500,
+        duration: 1000,
       })
 
       return
@@ -427,14 +427,14 @@ const KFTray = () => {
       toaster.success({
         title: 'Success',
         description: 'Configuration deleted successfully.',
-        duration: 500,
+        duration: 1000,
       })
     } catch (error) {
       console.error('Failed to delete configuration:', error)
       toaster.error({
         title: 'Error',
         description: 'Failed to delete configuration: "unknown error"',
-        duration: 500,
+        duration: 1000,
       })
     }
     setIsAlertOpen(false)
@@ -451,7 +451,7 @@ const KFTray = () => {
           title: 'Success',
           description:
             'Port forwarding stopped successfully for all configurations.',
-          duration: 500,
+          duration: 1000,
         })
       } else {
         const errorMessages = responses
@@ -462,7 +462,7 @@ const KFTray = () => {
         toaster.error({
           title: 'Error',
           description: `Port forwarding failed for some configurations: ${errorMessages}`,
-          duration: 500,
+          duration: 1000,
         })
       }
     } catch (error) {
@@ -470,7 +470,7 @@ const KFTray = () => {
       toaster.error({
         title: 'Error',
         description: `An error occurred while stopping port forwarding: ${error}`,
-        duration: 500,
+        duration: 1000,
       })
     }
     setIsStopping(false)
