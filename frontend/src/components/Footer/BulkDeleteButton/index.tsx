@@ -155,21 +155,28 @@ const BulkDeleteButton: React.FC<BulkDeleteButtonProps> = ({
 
   return (
     <Box>
-      <Tooltip content='Delete Selected Configs'>
+      <Tooltip
+        content='Delete Selected Configs'
+        portalled
+        positioning={{
+          strategy: 'absolute',
+          placement: 'top-end',
+          offset: { mainAxis: 8, crossAxis: 0 },
+        }}
+      >
         <Button
-          size='xs'
+          size='sm'
           variant='ghost'
           onClick={() =>
             handleDeleteClick(selectedConfigs.map(config => config.id))
           }
-          className='delete-button'
-          height='24px'
-          minWidth='24px'
-          bg='whiteAlpha.50'
+          height='32px'
+          minWidth='32px'
+          bg='red.500'
           px={1.5}
           borderRadius='md'
           border='1px solid rgba(255, 255, 255, 0.08)'
-          _hover={{ bg: 'whiteAlpha.100' }}
+          _hover={{ bg: 'red.600' }}
         >
           <Box as={MdDelete} width='12px' height='12px' />
         </Button>

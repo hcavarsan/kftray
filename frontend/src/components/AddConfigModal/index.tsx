@@ -427,6 +427,8 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
         bg='transparent'
         backdropFilter='blur(4px)'
         borderRadius='lg'
+        maxHeight='100vh'
+        overflow='hidden'
       />
       <Dialog.Positioner>
         <Dialog.Content
@@ -438,7 +440,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
           borderRadius='lg'
           border='1px solid rgba(255, 255, 255, 0.08)'
           overflow='hidden'
-          position='relative'
+          position='absolute'
           mt={4}
         >
           {/* Compact Header */}
