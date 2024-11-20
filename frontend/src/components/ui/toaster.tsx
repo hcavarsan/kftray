@@ -52,7 +52,9 @@ const createToastWrapper = (
   }
 }
 
-export const toaster = createToastWrapper(
+type ToasterType = ReturnType<typeof createToaster>
+
+export const toaster: ToasterType = createToastWrapper(
   createToaster({
     placement: 'top-end',
     duration: 1000,
