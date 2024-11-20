@@ -95,14 +95,28 @@ const KFTray = () => {
 
     fetchConfigs()
 
-    const unlisten = listen('config_state_changed', async () => {
-      await updateConfigsWithState()
-      console.log('config_state_changed')
-    })
+    let unsubscribe: (() => void) | undefined
+
+    const setupListener = async () => {
+      try {
+        unsubscribe = await listen('config_state_changed', async () => {
+          if (isMounted) {
+            await updateConfigsWithState()
+            console.log('config_state_changed')
+          }
+        })
+      } catch (error) {
+        console.error('Failed to setup event listener:', error)
+      }
+    }
+
+    setupListener()
 
     return () => {
       isMounted = false
-      unlisten.then(unsub => unsub())
+      if (unsubscribe) {
+        unsubscribe()
+      }
     }
   }, [fetchConfigsWithState, updateConfigsWithState])
 
