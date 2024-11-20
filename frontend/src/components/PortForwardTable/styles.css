@@ -24,17 +24,17 @@
 }
 
 .table-container::-webkit-scrollbar {
-  width: 8px;
+  width: 2px;
 }
 
 .table-container::-webkit-scrollbar-track {
   background: transparent;
-  border-radius: 4px;
+  border-radius: 2px;
 }
 
 .table-container::-webkit-scrollbar-thumb {
   background-color: rgba(255, 255, 255, 0.1);
-  border-radius: 4px;
+  border-radius: 2px;
 }
 
 .table-container::-webkit-scrollbar-thumb:hover {
