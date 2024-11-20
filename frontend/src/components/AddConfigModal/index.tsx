@@ -1,6 +1,5 @@
 /* eslint-disable complexity */
 
-
 import React, { useEffect, useMemo, useState } from 'react'
 import { useQuery } from 'react-query'
 import Select, { ActionMeta, MultiValue, SingleValue } from 'react-select'
@@ -12,6 +11,7 @@ import {
   Grid,
   HStack,
   Input,
+  Separator,
   Stack,
   Text,
   Tooltip,
@@ -20,8 +20,9 @@ import { open } from '@tauri-apps/api/dialog'
 import { invoke } from '@tauri-apps/api/tauri'
 
 import { Checkbox } from '@/components/ui/checkbox'
-import { useCustomToast } from '@/components/ui/toaster'
-import { Config,
+import { toaster } from '@/components/ui/toaster'
+import {
+  Config,
   CustomConfigProps,
   PortOption,
   ServiceData,
@@ -40,19 +41,16 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
   isEdit,
   setNewConfig,
 }) => {
-
-
   const workloadTypeOptions: StringOption[] = [
-	  { value: 'service', label: 'Service' },
-	  { value: 'pod', label: 'Pod' },
-	  { value: 'proxy', label: 'Proxy' },
+    { value: 'service', label: 'Service' },
+    { value: 'pod', label: 'Pod' },
+    { value: 'proxy', label: 'Proxy' },
   ]
 
   const protocolOptions: StringOption[] = [
-	  { value: 'tcp', label: 'TCP' },
-	  { value: 'udp', label: 'UDP' },
+    { value: 'tcp', label: 'TCP' },
+    { value: 'udp', label: 'UDP' },
   ]
-
 
   const [formState, setFormState] = useState({
     selectedContext: null as StringOption | null,
@@ -70,20 +68,16 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     kubeConfig: 'default',
   })
 
-  const showToast = useCustomToast()
-
-  // Error handling
   const handleError = (error: unknown, title: string) => {
     console.error(`Error: ${title}`, error)
-    showToast({
+    toaster.error({
       title,
       description:
         error instanceof Error ? error.message : 'An unknown error occurred',
-      status: 'error',
+      duration: 200,
     })
   }
 
-  // Form validation
   useEffect(() => {
     const requiredFields = [
       formState.selectedContext?.value ?? null,
@@ -102,7 +96,6 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     }))
   }, [formState, newConfig])
 
-  // Update the checkbox handling function
   const handleCheckboxChange = (
     name: string,
     e: { checked: boolean | 'indeterminate' },
@@ -126,7 +119,6 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     }
   }
 
-  // KubeConfig handling
   const handleSetKubeConfig = async () => {
     try {
       await invoke('open_save_dialog')
@@ -156,7 +148,6 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     }
   }
 
-  // Queries
   const contextQuery = useQuery(
     ['kube-contexts', uiState.kubeConfig],
     () =>
@@ -244,7 +235,6 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
 
       console.log(ports)
 
-      // Filter out null ports and convert string ports to numbers
       return ports
       .filter(p => p.port != null)
       .map(p => ({
@@ -268,7 +258,6 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     },
   )
 
-  // Helper function to determine service or target value
   const getServiceOrTargetValue = (config: Config) => {
     if (config.service) {
       return { label: config.service, value: config.service }
@@ -280,7 +269,6 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     return null
   }
 
-  // Edit mode handling
   useEffect(() => {
     if (isEdit && isModalOpen) {
       setFormState(prev => ({
@@ -312,7 +300,6 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     }
   }, [isEdit, isModalOpen, newConfig])
 
-  // Modal state reset
   useEffect(() => {
     if (!isModalOpen) {
       resetState()
@@ -338,7 +325,6 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     }))
   }
 
-  // Select change handling
   const handleSelectChange = (
     newValue:
       | SingleValue<StringOption | PortOption>
@@ -401,7 +387,6 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     } as React.ChangeEvent<HTMLInputElement>)
   }
 
-  // KubeConfig effect
   useEffect(() => {
     if (setNewConfig) {
       setNewConfig(prev => ({
@@ -411,7 +396,6 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     }
   }, [uiState.kubeConfig, setNewConfig])
 
-  // Form submission
   const handleSave = async (event: React.FormEvent) => {
     event.preventDefault()
     const configToSave = trimConfigValues(newConfig)
@@ -428,7 +412,6 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     resetState()
   }
 
-  // Port options memo
   const portOptions: PortOption[] = useMemo(
     () =>
       portQuery.data?.map(port => ({
@@ -444,64 +427,65 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
         bg='transparent'
         backdropFilter='blur(4px)'
         borderRadius='lg'
-        height='100vh'
       />
-      <Dialog.Positioner overflow='hidden'>
+      <Dialog.Positioner>
         <Dialog.Content
           onClick={e => e.stopPropagation()}
-          maxWidth='400px'
+          maxWidth='600px'
           width='90vw'
-          maxHeight='95vh'
-          height='95vh'
+          maxHeight='100vh'
           bg='#111111'
           borderRadius='lg'
           border='1px solid rgba(255, 255, 255, 0.08)'
           overflow='hidden'
-          mt={3}
+          position='relative'
+          mt={4}
         >
+          {/* Compact Header */}
           <Dialog.Header
-            p={1.5}
+            p={3}
             bg='#161616'
             borderBottom='1px solid rgba(255, 255, 255, 0.05)'
           >
-            <Text fontSize='sm' fontWeight='medium' color='gray.100'>
-              {isEdit ? 'Edit Configuration' : 'Add Configuration'}
-            </Text>
+            <Flex justify='space-between' align='center'>
+              <Text fontSize='sm' fontWeight='medium' color='gray.100'>
+                {isEdit ? 'Edit Configuration' : 'Add Configuration'}
+              </Text>
+
+              {/* Kubeconfig Section */}
+              <HStack gap={2}>
+                <Text fontSize='2xs' color='gray.400'>
+                  Kubeconfig:
+                </Text>
+                <Tooltip.Root>
+                  <Tooltip.Trigger asChild>
+                    <Button
+                      size='xs'
+                      variant='ghost'
+                      onClick={handleSetKubeConfig}
+                      bg='whiteAlpha.50'
+                      _hover={{ bg: 'whiteAlpha.200' }}
+                      height='20px'
+                      px={2}
+                    >
+                      <Text fontSize='2xs' maxW='120px' truncate>
+                        {uiState.kubeConfig}
+                      </Text>
+                    </Button>
+                  </Tooltip.Trigger>
+                  <Tooltip.Positioner>
+                    <Tooltip.Content bg='#ffffff'>
+                      <Text fontSize='2xs'>{uiState.kubeConfig}</Text>
+                    </Tooltip.Content>
+                  </Tooltip.Positioner>
+                </Tooltip.Root>
+              </HStack>
+            </Flex>
           </Dialog.Header>
 
           <Dialog.Body p={3}>
             <form onSubmit={handleSave}>
               <Stack gap={2}>
-                <Flex justify='space-between' align='center' mb={1}>
-                  <Text fontSize='12px' color='gray.400'>
-                    Kubeconfig
-                  </Text>
-                  <Tooltip.Root>
-                    <Tooltip.Trigger asChild>
-                      <Button
-                        size='xs'
-                        variant='ghost'
-                        onClick={handleSetKubeConfig}
-                        bg='whiteAlpha.50'
-                        _hover={{ bg: 'whiteAlpha.100' }}
-                        height='22px'
-                      >
-                        <Text fontSize='xs'>Set Path</Text>
-                      </Button>
-                    </Tooltip.Trigger>
-                    <Tooltip.Positioner>
-                      <Tooltip.Content
-                        bg='#161616'
-                        border='1px solid rgba(255, 255, 255, 0.05)'
-                      >
-                        <Text fontSize='xs' color='gray.300'>
-                          {uiState.kubeConfig}
-                        </Text>
-                      </Tooltip.Content>
-                    </Tooltip.Positioner>
-                  </Tooltip.Root>
-                </Flex>
-
                 <Grid templateColumns='repeat(2, 1fr)' gap={3}>
                   <Stack gap={1.5}>
                     <Text fontSize='xs' color='gray.400'>
@@ -519,6 +503,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                       fontSize='13px'
                     />
                     <Checkbox
+                      size='xs'
                       checked={newConfig.domain_enabled}
                       onCheckedChange={e =>
                         handleCheckboxChange('domain_enabled', e)
@@ -796,6 +781,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                 <Grid templateColumns='repeat(2, 1fr)' gap={3}>
                   <Stack gap={1.5}>
                     <Checkbox
+                      size='xs'
                       checked={uiState.isChecked}
                       onCheckedChange={e =>
                         handleCheckboxChange('local_address_enabled', e)
@@ -820,6 +806,8 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                     />
                   </Stack>
                 </Grid>
+
+                <Separator mt={5} />
 
                 <HStack justify='flex-end' gap={2}>
                   <Button

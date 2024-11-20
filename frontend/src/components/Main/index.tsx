@@ -11,7 +11,7 @@ import AutoImportModal from '@/components/AutoImportModal'
 import Footer from '@/components/Footer'
 import GitSyncModal from '@/components/GitSyncModal'
 import PortForwardTable from '@/components/PortForwardTable'
-import { useCustomToast } from '@/components/ui/toaster'
+import { toaster } from '@/components/ui/toaster'
 import { Config, Response } from '@/types'
 
 const initialRemotePort = 0
@@ -20,7 +20,6 @@ const initialId = 0
 const initialStatus = 0
 
 const KFTray = () => {
-  const toast = useCustomToast()
   const [pollingInterval, setPollingInterval] = useState(0)
   const [configs, setConfigs] = useState<Config[]>([])
   const [isModalOpen, setIsModalOpen] = useState(false)
@@ -144,12 +143,11 @@ const KFTray = () => {
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target
-    const updatedValue =
-      name === 'local_port' || name === 'remote_port'
-        ? value === Number(0).toString()
-          ? Number(0).toString()
-          : Number(value)
-        : value
+    let updatedValue = value
+
+    if (name === 'local_port' || name === 'remote_port') {
+      updatedValue = Number(value || 0).toString()
+    }
 
     setNewConfig(prev => ({ ...prev, [name]: updatedValue }))
   }
@@ -172,10 +170,10 @@ const KFTray = () => {
 
       if (filePath) {
         await writeTextFile(filePath, json)
-        toast({
+        toaster.success({
           title: 'Success',
           description: 'Configuration exported successfully.',
-          status: 'success',
+          duration: 200,
         })
       }
     } catch (error) {
@@ -183,10 +181,10 @@ const KFTray = () => {
         error instanceof Error ? error.message : String(error)
 
       console.error('Failed to export configs:', errorMessage)
-      toast({
+      toaster.error({
         title: 'Failed to export configs',
         description: errorMessage,
-        status: 'error',
+        duration: 200,
       })
     }
   }
@@ -205,24 +203,24 @@ const KFTray = () => {
         const jsonContent = await readTextFile(selected)
 
         await invoke('import_configs_cmd', { json: jsonContent })
-        toast({
+        toaster.success({
           title: 'Success',
           description: 'Configuration imported successfully.',
-          status: 'success',
+          duration: 200,
         })
       } else {
-        toast({
+        toaster.error({
           title: 'Error',
           description: 'Failed to import configurations.',
-          status: 'error',
+          duration: 200,
         })
       }
     } catch (error) {
       console.error('Error during import:', error)
-      toast({
+      toaster.error({
         title: 'Error',
         description: 'Failed to import configurations.',
-        status: 'error',
+        duration: 200,
       })
     }
   }
@@ -246,17 +244,17 @@ const KFTray = () => {
     e.preventDefault()
     try {
       await invoke('update_config_cmd', { config: newConfig })
-      toast({
+      toaster.success({
         title: 'Success',
         description: 'Configuration updated successfully.',
-        status: 'success',
+        duration: 200,
       })
       closeModal()
     } catch (error) {
-      toast({
+      toaster.error({
         title: 'Error',
         description: `Failed to update configuration. ${error instanceof Error ? error.message : 'Unknown error'}`,
-        status: 'error',
+        duration: 200,
       })
     }
   }
@@ -287,20 +285,18 @@ const KFTray = () => {
         await startPortForwardingForConfig(newConfig)
       }
 
-      toast({
+      toaster.success({
         title: 'Success',
-        description: `Configuration ${
-          isEdit ? 'updated' : 'added'
-        } successfully.`,
-        status: 'success',
+        description: `Configuration ${isEdit ? 'updated' : 'added'} successfully.`,
+        duration: 200,
       })
       closeModal()
     } catch (error) {
       console.error(`Failed to ${isEdit ? 'update' : 'add'} config:`, error)
-      toast({
+      toaster.error({
         title: 'Error',
         description: `Failed to ${isEdit ? 'update' : 'add'} configuration.`,
-        status: 'error',
+        duration: 200,
       })
     }
   }
@@ -366,17 +362,19 @@ const KFTray = () => {
 
     const errors = results
     .map(result => (result.status === 'fulfilled' ? result.value : null))
-    .filter(result => result && result.error) as { id: number; error: any }[]
+    .filter(
+      (result): result is { id: number; error: any } => result?.error != null,
+    )
 
     if (errors.length > 0) {
       const errorMessage = errors
       .map(e => `Config ID: ${e.id}, Error: ${e.error}`)
       .join(', ')
 
-      toast({
+      toaster.error({
         title: 'Error Starting Port Forwarding',
         description: `Some configs failed: ${errorMessage}`,
-        status: 'error',
+        duration: 200,
       })
     }
 
@@ -414,10 +412,10 @@ const KFTray = () => {
 
   const confirmDeleteConfig = async () => {
     if (typeof configToDelete !== 'number') {
-      toast({
+      toaster.error({
         title: 'Error',
         description: 'Configuration id is undefined.',
-        status: 'error',
+        duration: 200,
       })
 
       return
@@ -425,18 +423,17 @@ const KFTray = () => {
 
     try {
       await invoke('delete_config_cmd', { id: configToDelete })
-
-      toast({
+      toaster.success({
         title: 'Success',
         description: 'Configuration deleted successfully.',
-        status: 'success',
+        duration: 200,
       })
     } catch (error) {
       console.error('Failed to delete configuration:', error)
-      toast({
+      toaster.error({
         title: 'Error',
         description: 'Failed to delete configuration: "unknown error"',
-        status: 'error',
+        duration: 200,
       })
     }
     setIsAlertOpen(false)
@@ -449,11 +446,11 @@ const KFTray = () => {
       const allStopped = responses.every(res => res.status === initialStatus)
 
       if (allStopped) {
-        toast({
+        toaster.success({
           title: 'Success',
           description:
             'Port forwarding stopped successfully for all configurations.',
-          status: 'success',
+          duration: 200,
         })
       } else {
         const errorMessages = responses
@@ -461,22 +458,30 @@ const KFTray = () => {
         .map(res => `${res.service}: ${res.stderr}`)
         .join(', ')
 
-        toast({
+        toaster.error({
           title: 'Error',
           description: `Port forwarding failed for some configurations: ${errorMessages}`,
-          status: 'error',
+          duration: 200,
         })
       }
     } catch (error) {
       console.error('An error occurred while stopping port forwarding:', error)
-      toast({
+      toaster.error({
         title: 'Error',
         description: `An error occurred while stopping port forwarding: ${error}`,
-        status: 'error',
+        duration: 200,
       })
     }
     setIsStopping(false)
   }
+
+  const handleSetCredentialsSaved = useCallback((value: boolean) => {
+    setCredentialsSaved(value)
+  }, [])
+
+  const handleSetPollingInterval = useCallback((value: number) => {
+    setPollingInterval(value)
+  }, [])
 
   return (
     <Box
@@ -547,11 +552,11 @@ const KFTray = () => {
               openGitSyncModal={openGitSyncModal}
               handleExportConfigs={handleExportConfigs}
               handleImportConfigs={handleImportConfigs}
-              setCredentialsSaved={setCredentialsSaved}
+              setCredentialsSaved={handleSetCredentialsSaved}
               credentialsSaved={credentialsSaved}
               isGitSyncModalOpen={isGitSyncModalOpen}
               selectedConfigs={selectedConfigs}
-              setPollingInterval={setPollingInterval}
+              setPollingInterval={handleSetPollingInterval}
               pollingInterval={pollingInterval}
               setSelectedConfigs={setSelectedConfigs}
               configs={configs}
@@ -563,9 +568,9 @@ const KFTray = () => {
         <GitSyncModal
           isGitSyncModalOpen={isGitSyncModalOpen}
           closeGitSyncModal={closeGitSyncModal}
-          setCredentialsSaved={setCredentialsSaved}
+          setCredentialsSaved={handleSetCredentialsSaved}
           credentialsSaved={credentialsSaved}
-          setPollingInterval={setPollingInterval}
+          setPollingInterval={handleSetPollingInterval}
           pollingInterval={pollingInterval}
         />
 

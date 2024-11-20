@@ -12,12 +12,10 @@ export const fetchKubeContexts = (
 
 export const trimConfigValues = (config: Config): Config => {
   const trimmedConfig = { ...config }
-  // Define string keys of Config type
   const stringKeys = Object.keys(config).filter(
     key => typeof config[key as keyof Config] === 'string',
   ) as (keyof Config)[]
 
-  // Trim string values
   stringKeys.forEach(key => {
     const value = trimmedConfig[key]
 

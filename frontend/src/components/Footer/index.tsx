@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useCallback, useState } from 'react'
 import { Menu as MenuIcon } from 'lucide-react'
 import { FaGithub } from 'react-icons/fa'
 import { MdAdd, MdFileDownload, MdFileUpload, MdSettings } from 'react-icons/md'
@@ -10,7 +10,12 @@ import AutoImportModal from '@/components/AutoImportModal'
 import BulkDeleteButton from '@/components/Footer/BulkDeleteButton'
 import SyncConfigsButton from '@/components/Footer/SyncConfigsButton'
 import { Button } from '@/components/ui/button'
-import { MenuContent, MenuItem, MenuRoot, MenuTrigger } from '@/components/ui/menu'
+import {
+  MenuContent,
+  MenuItem,
+  MenuRoot,
+  MenuTrigger,
+} from '@/components/ui/menu'
 import { Tooltip } from '@/components/ui/tooltip'
 import { FooterProps } from '@/types'
 
@@ -34,10 +39,13 @@ const Footer: React.FC<FooterProps> = ({
   })
   const [isAutoImportModalOpen, setIsAutoImportModalOpen] = useState(false)
 
+  const handleSyncFailure = useCallback((error: Error) => {
+    console.error('Sync failed:', error)
+  }, [])
+
   const fetchLogSize = async () => {
     try {
       const size = await invoke<number>('get_http_log_size')
-
 
       setLogState({ size, fetchError: false })
     } catch (error) {
@@ -57,75 +65,101 @@ const Footer: React.FC<FooterProps> = ({
 
   const renderMenuItems = () => (
     <>
-      <MenuItem
-        value='export'
-        onClick={handleExportConfigs}
-        className="footer-menu-item"
-      >
+      <MenuItem value='export' onClick={handleExportConfigs}>
         <Box as={MdFileUpload} width='12px' height='12px' />
-        <Box>Export Local File</Box>
+        <Box fontSize='11px'>Export Local File</Box>
       </MenuItem>
 
       <MenuItem
         value='import'
         onClick={handleImportConfigs}
         disabled={credentialsSaved}
-        className="footer-menu-item"
       >
         <Box as={MdFileDownload} width='12px' height='12px' />
-        <Box>Import Local File</Box>
+        <Box fontSize='11px'>Import Local File</Box>
       </MenuItem>
 
       <MenuItem
         value='clear-logs'
         onClick={handleClearLogs}
         disabled={logState.size === 0 || logState.fetchError}
-        className="footer-menu-item"
       >
         <Box as={MdSettings} width='12px' height='12px' />
-        <Box>Prune Logs ({(logState.size / (1024 * 1024)).toFixed(2)} MB)</Box>
+        <Box fontSize='11px'>
+          Prune Logs ({(logState.size / (1024 * 1024)).toFixed(2)} MB)
+        </Box>
       </MenuItem>
 
       <MenuItem
         value='auto-import'
         onClick={() => setIsAutoImportModalOpen(true)}
-        className="footer-menu-item"
       >
         <Box as={MdSettings} width='12px' height='12px' />
-        <Box>Auto Import</Box>
+        <Box fontSize='11px'>Auto Import</Box>
       </MenuItem>
     </>
   )
 
   return (
-    <Box className="footer-container">
+    <Box
+      display='flex'
+      alignItems='center'
+      justifyContent='space-between'
+      width='100%'
+      bg='#161616'
+      px={3}
+      py={2}
+      borderRadius='lg'
+      border='1px solid rgba(255, 255, 255, 0.08)'
+      position='relative'
+      mt='-1px'
+      height='50px'
+    >
       {/* Left Section */}
       <Group display='flex' alignItems='center' gap={2}>
         <MenuRoot>
           <MenuTrigger asChild>
             <Button
-              size='sm'
+              size='xs'
               variant='ghost'
               onClick={fetchLogSize}
-              className="menu-trigger-button"
+              height='24px'
+              minWidth='24px'
+              bg='whiteAlpha.50'
+              px={1.5}
+              borderRadius='md'
+              border='1px solid rgba(255, 255, 255, 0.08)'
+              _hover={{ bg: 'whiteAlpha.100' }}
             >
-              <Box as={MenuIcon} width='16px' height='16px' />
+              <Box as={MenuIcon} width='12px' height='12px' />
             </Button>
           </MenuTrigger>
-          <MenuContent className="menu-content">
-            {renderMenuItems()}
-          </MenuContent>
+          <MenuContent>{renderMenuItems()}</MenuContent>
         </MenuRoot>
 
-        <Tooltip content='Add New Config'>
+        <Tooltip
+          content='Add New Config'
+          portalled
+          positioning={{
+            strategy: 'absolute',
+            placement: 'top-end',
+            offset: { mainAxis: 8, crossAxis: 0 },
+          }}
+        >
           <Button
-            size='sm'
+            size='xs'
             variant='ghost'
             onClick={openModal}
             disabled={credentialsSaved}
-            className="add-config-button"
+            height='24px'
+            minWidth='24px'
+            bg='whiteAlpha.50'
+            px={1.5}
+            borderRadius='md'
+            border='1px solid rgba(255, 255, 255, 0.08)'
+            _hover={{ bg: 'whiteAlpha.100' }}
           >
-            <Box as={MdAdd} width='16px' height='16px' />
+            <Box as={MdAdd} width='12px' height='12px' />
           </Button>
         </Tooltip>
 
@@ -138,16 +172,30 @@ const Footer: React.FC<FooterProps> = ({
 
       {/* Right Section */}
       <Group display='flex' alignItems='center' gap={2}>
-        <Tooltip content='Configure Git Sync'>
+        <Tooltip
+          content='Configure Git Sync'
+          portalled
+          positioning={{
+            strategy: 'absolute',
+            placement: 'top-end',
+            offset: { mainAxis: 8, crossAxis: 0 },
+          }}
+        >
           <Button
-            size='sm'
+            size='xs'
             variant='ghost'
             onClick={openGitSyncModal}
-            className="git-sync-button"
+            height='24px'
+            minWidth='48px'
+            bg='whiteAlpha.50'
+            px={1.5}
+            borderRadius='md'
+            border='1px solid rgba(255, 255, 255, 0.08)'
+            _hover={{ bg: 'whiteAlpha.100' }}
           >
             <Box display='flex' alignItems='center' gap={1}>
-              <Box as={FaGithub} width='16px' height='16px' />
-              <Box as={MdSettings} width='16px' height='16px' />
+              <Box as={FaGithub} width='12px' height='12px' />
+              <Box as={MdSettings} width='12px' height='12px' />
             </Box>
           </Button>
         </Tooltip>
@@ -155,7 +203,7 @@ const Footer: React.FC<FooterProps> = ({
         <SyncConfigsButton
           serviceName='kftray'
           accountName='github_config'
-          onSyncFailure={error => console.error('Sync failed:', error)}
+          onSyncFailure={handleSyncFailure}
           credentialsSaved={credentialsSaved}
           setCredentialsSaved={setCredentialsSaved}
           isGitSyncModalOpen={isGitSyncModalOpen}

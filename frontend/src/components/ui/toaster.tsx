@@ -1,101 +1,82 @@
 'use client'
 
-import React from 'react'
-
 import {
   createToaster,
   Portal,
+  Spinner,
   Stack,
   Toast,
   Toaster as ChakraToaster,
 } from '@chakra-ui/react'
 
-// Create the toaster instance with default configuration
 export const toaster = createToaster({
-  placement: 'top-end', // Changed from 'top-right' to 'top-end'
-  pauseOnPageIdle: true,
+  placement: 'top-end',
+  duration: 200,
+  overlap: false,
+  offsets: {
+    top: '5px',
+    right: '5px',
+    bottom: '5px',
+    left: '5px',
+  },
 })
 
-// Custom Toast Component
-const CustomToast = ({
-  title,
-  description,
-  type,
-}: {
-  title?: string
-  description?: string
-  type?: 'info' | 'warning' | 'success' | 'error'
-}) => {
-  const statusColorMap: Record<string, string> = {
-    info: 'blue.700',
-    warning: 'orange.700',
-    success: 'green.700',
-    error: 'red.700',
-  }
-
-  const backgroundColor = type ? statusColorMap[type] : 'gray.500'
-
-  return (
-    <Toast.Root
-      width={{ md: 'sm' }}
-      bg={backgroundColor}
-      color='white'
-      borderRadius='lg'
-      boxShadow='md'
-    >
-      <Stack gap='1' flex='1' maxWidth='100%' p='3'>
-        {title && (
-          <Toast.Title fontSize='12px' fontWeight='bold'>
-            {title}
-          </Toast.Title>
-        )}
-        {description && (
-          <Toast.Description fontSize='10px'>{description}</Toast.Description>
-        )}
-      </Stack>
-      <Toast.CloseTrigger color='white' />
-    </Toast.Root>
-  )
-}
-
-// Toaster Component
 export const Toaster = () => {
   return (
     <Portal>
-      <ChakraToaster toaster={toaster} insetInline={{ mdDown: '4' }}>
+      <ChakraToaster
+        toaster={toaster}
+        insetInline={{ mdDown: '2' }}
+        insetBlock={{ mdDown: '2' }}
+      >
         {toast => (
-          <CustomToast
-            title={String(toast.title || '')}
-            description={String(toast.description || '')}
-            type={toast.type as 'info' | 'warning' | 'success' | 'error'}
-          />
+          <Toast.Root
+            width={{ base: '240px', md: '260px' }}
+            maxWidth='90%'
+            py='2'
+            px='3'
+            bg='gray.900'
+            borderRadius='lg'
+            boxShadow='dark-lg'
+            border='1px solid'
+            borderColor='gray.800'
+          >
+            {toast.type === 'loading' ? (
+              <Spinner size='xs' color='gray.500' />
+            ) : (
+              <Toast.Indicator />
+            )}
+            <Stack gap='0' flex='1' maxWidth='100%'>
+              {toast.title && (
+                <Toast.Title fontSize='xs' fontWeight='normal' color='gray.200'>
+                  {toast.title}
+                </Toast.Title>
+              )}
+              {toast.description && (
+                <Toast.Description fontSize='xs' color='gray.300'>
+                  {toast.description}
+                </Toast.Description>
+              )}
+            </Stack>
+            {toast.action && (
+              <Toast.ActionTrigger
+                fontSize='xs'
+                color='gray.300'
+                _hover={{ color: 'gray.300' }}
+                ml='2'
+              >
+                {toast.action.label}
+              </Toast.ActionTrigger>
+            )}
+            <Toast.CloseTrigger
+              color='gray.600'
+              _hover={{ color: 'gray.400' }}
+              ml='1.5'
+              fontSize='xs'
+            />
+          </Toast.Root>
         )}
       </ChakraToaster>
     </Portal>
   )
-}
-
-// Custom hook for using the toaster
-export const useCustomToast = () => {
-  const showToast = ({
-    title,
-    description = '',
-    status = 'error',
-    duration = 3000,
-  }: {
-    title: string
-    description?: string
-    status?: 'info' | 'warning' | 'success' | 'error'
-    duration?: number
-  }) => {
-    toaster.create({
-      title,
-      description,
-      type: status,
-      duration,
-      meta: { closable: true },
-    })
-  }
-
-  return showToast
 }

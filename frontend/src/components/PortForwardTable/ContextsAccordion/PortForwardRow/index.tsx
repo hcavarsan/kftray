@@ -1,16 +1,13 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { ExternalLinkIcon } from 'lucide-react'
+import { ExternalLinkIcon, FileIcon } from 'lucide-react'
 
 import {
   Box,
   Button,
-  DialogBody,
+  DialogBackdrop,
   DialogCloseTrigger,
   DialogContent,
-  DialogFooter,
-  DialogHeader,
   DialogRoot,
-  DialogTitle,
   Flex,
   IconButton,
   Table,
@@ -18,7 +15,6 @@ import {
 } from '@chakra-ui/react'
 import {
   faBars,
-  faFileAlt,
   faInfoCircle,
   faPen,
   faTrash,
@@ -35,9 +31,11 @@ import {
   MenuTrigger,
 } from '@/components/ui/menu'
 import { Switch } from '@/components/ui/switch'
-import { useCustomToast } from '@/components/ui/toaster'
+import { toaster } from '@/components/ui/toaster'
 import { Tooltip } from '@/components/ui/tooltip'
 import { PortForwardRowProps } from '@/types'
+
+import '../../styles.css'
 
 const PortForwardRow: React.FC<PortForwardRowProps> = ({
   config,
@@ -49,7 +47,6 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   isInitiating,
   setIsInitiating,
 }) => {
-  const toast = useCustomToast()
   const [httpLogsEnabled, setHttpLogsEnabled] = useState<{
     [key: string]: boolean
   }>({})
@@ -84,13 +81,25 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
       setHttpLogsEnabled(prevState => ({ ...prevState, [config.id]: newState }))
     } catch (error) {
       console.error('Error toggling HTTP logs:', error)
-      const errorMessage =
-        error instanceof Error ? error.message : String(error)
-
-      toast({
+      toaster.error({
         title: 'Error toggling HTTP logs',
-        description: errorMessage,
-        status: 'error',
+        description: error instanceof Error ? error.message : String(error),
+        duration: 200,
+      })
+    }
+  }
+
+  const handleInspectLogs = async () => {
+    try {
+      const logFileName = `${config.id}_${config.local_port}.log`
+
+      await invoke('open_log_file', { logFileName: logFileName })
+    } catch (error) {
+      console.error('Error opening log file:', error)
+      toaster.error({
+        title: 'Error opening log file',
+        description: error instanceof Error ? error.message : String(error),
+        duration: 200,
       })
     }
   }
@@ -135,13 +144,10 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
         throw new Error(`Unsupported workload type: ${config.workload_type}`)
       }
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error)
-
-      toast({
+      toaster.error({
         title: 'Error starting port forwarding',
-        description: errorMessage,
-        status: 'error',
+        description: error instanceof Error ? error.message : String(error),
+        duration: 200,
       })
     }
   }
@@ -175,13 +181,10 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
         throw new Error(`Unsupported workload type: ${config.workload_type}`)
       }
     } catch (error) {
-      const errorMessage =
-        error instanceof Error ? error.message : String(error)
-
-      toast({
+      toaster.error({
         title: 'Error stopping port forwarding',
-        description: errorMessage,
-        status: 'error',
+        description: error instanceof Error ? error.message : String(error),
+        duration: 200,
       })
     }
   }
@@ -196,191 +199,176 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   }
 
   return (
-    <Table.Row
-      key={config.id}
-      css={{
-        height: '40px',
-        width: '100%',
-        borderBottom: '1px solid rgba(255, 255, 255, 0.06)',
-        transition: 'background-color 0.2s',
-        '&:hover': {
-          bg: 'rgba(255, 255, 255, 0.02)',
-        },
-      }}
-    >
-      <Table.Cell py={1}>
-        <Flex align='center' gap={2}>
-          <Checkbox
-            size='xs'
-            checked={selected || config.is_running}
-            onChange={() => onSelectionChange(!selected)}
-            disabled={config.is_running}
-          />
-          <Text color='gray.300' fontSize='xs'>
-            {config.alias}
-          </Text>
-          <Tooltip content={getTooltipContent(config)}>
-            <IconButton
-              size='xs'
-              variant='ghost'
-              aria-label='Info'
-              css={{
-                minWidth: '20px',
-                height: '20px',
-                color: 'gray.400',
-                _hover: { color: 'gray.200' },
-              }}
-            >
-              <FontAwesomeIcon icon={faInfoCircle} size='xs' />
-            </IconButton>
-          </Tooltip>
-        </Flex>
-      </Table.Cell>
+    <>
+      <Table.Row className='table-row'>
+        <Table.Cell className='table-cell'>
+          <Flex align='center' gap={1.5}>
+            <Tooltip content={getTooltipContent(config)} portalled>
+              <Flex align='center' gap={1.5}>
+                <Checkbox
+                  size='xs'
+                  checked={selected || config.is_running}
+                  onChange={() => onSelectionChange(!selected)}
+                  disabled={config.is_running}
+                  className='checkbox'
+                />
 
-      <Table.Cell py={1}>
-        <Text color='gray.300' fontSize='xs'>
-          {config.local_port}
-        </Text>
-      </Table.Cell>
+                <IconButton
+                  size='xs'
+                  variant='ghost'
+                  aria-label='Info'
+                  className='icon-button'
+                >
+                  <FontAwesomeIcon icon={faInfoCircle} size='xs' />
+                </IconButton>
 
-      <Table.Cell py={1}>
-        <Flex align='center' gap={2}>
-          <Switch
-            size='sm'
-            checked={config.is_running && !isInitiating}
-            onCheckedChange={details => togglePortForwarding(details.checked)}
-            disabled={isInitiating}
-            css={{
-              '& span': {
-                bg: config.is_running ? 'green.500' : 'gray.600',
-              },
-            }}
-          />
-          {config.is_running && (
-            <IconButton
-              size='xs'
-              variant='ghost'
-              aria-label='Open URL'
-              onClick={handleOpenLocalURL}
-              css={{
-                minWidth: '20px',
-                height: '20px',
-                color: 'blue.400',
-                _hover: { color: 'blue.300' },
-              }}
-            >
-              <ExternalLinkIcon size={12} />
-            </IconButton>
-          )}
-        </Flex>
-      </Table.Cell>
-
-      <Table.Cell py={1}>
-        <MenuRoot>
-          <MenuTrigger asChild>
-            <IconButton
-              size='xs'
-              variant='ghost'
-              aria-label='Actions'
-              css={{
-                minWidth: '20px',
-                height: '20px',
-                color: 'gray.400',
-                _hover: { color: 'gray.200' },
-              }}
-            >
-              <FontAwesomeIcon icon={faBars} size='xs' />
-            </IconButton>
-          </MenuTrigger>
-          <MenuContent>
-            <MenuItem value='edit' onClick={() => handleEditConfig(config.id)}>
-              <FontAwesomeIcon icon={faPen} size='xs' />
-              <Text ml={2} fontSize='xs'>
-                Edit
-              </Text>
-            </MenuItem>
-            <MenuItem value='delete' onClick={handleOpenDeleteDialog}>
-              <FontAwesomeIcon icon={faTrash} size='xs' />
-              <Text ml={2} fontSize='xs'>
-                Delete
-              </Text>
-            </MenuItem>
-            {config.protocol === 'tcp' && (
-              <MenuItem value='http-logs' onClick={handleToggleHttpLogs}>
-                <FontAwesomeIcon icon={faFileAlt} size='xs' />
-                <Text ml={2} fontSize='xs'>
-                  {httpLogsEnabled[config.id] ? 'Disable' : 'Enable'} HTTP Logs
+                <Text className='text-normal' truncate maxWidth='100px'>
+                  {config.alias}
                 </Text>
-              </MenuItem>
-            )}
-          </MenuContent>
-        </MenuRoot>
+              </Flex>
+            </Tooltip>
+          </Flex>
+        </Table.Cell>
 
-        {isDeleteDialogOpen && (
-          <DialogRoot
-            role='alertdialog'
-            open={isDeleteDialogOpen}
-            onOpenChange={handleOpenChange}
-          >
-            <DialogContent
-              css={{
-                backgroundColor: '#1A1A1A',
-                border: '1px solid rgba(255, 255, 255, 0.08)',
-                padding: '16px',
-                zIndex: 1000,
-                position: 'fixed',
-                top: '50%',
-                left: '50%',
-                transform: 'translate(-50%, -50%)',
-              }}
-            >
-              <DialogHeader>
-                <DialogTitle fontSize='11px' fontWeight='bold'>
-                  Delete Configuration
-                </DialogTitle>
-              </DialogHeader>
-              <DialogBody fontSize='11px' py={4}>
-                Are you sure? You can&lsquo;t undo this action afterwards.
-              </DialogBody>
-              <DialogFooter>
-                <DialogCloseTrigger asChild>
-                  <Button
-                    size='2xs'
-                    variant='ghost'
-                    height='24px'
-                    minWidth='60px'
-                    bg='whiteAlpha.50'
-                    _hover={{ bg: 'whiteAlpha.100' }}
-                  >
-                    <span style={{ fontSize: '11px' }}>Cancel</span>
-                  </Button>
-                </DialogCloseTrigger>
-                <Button
+        <Table.Cell className='table-cell'>
+          <Text>{config.local_port}</Text>
+        </Table.Cell>
+
+        <Table.Cell className='table-cell'>
+          <Flex align='center' gap={1.5}>
+            <Switch
+              size='sm'
+              checked={config.is_running && !isInitiating}
+              onCheckedChange={details => togglePortForwarding(details.checked)}
+              disabled={isInitiating}
+              data-loading={isInitiating ? '' : undefined}
+              unstyled={true}
+              className='switch'
+            />
+            {config.is_running && (
+              <Flex gap={1.5}>
+                <IconButton
                   size='2xs'
                   variant='ghost'
-                  onClick={() => {
-                    confirmDeleteConfig()
-                    setIsDeleteDialogOpen(false)
-                  }}
-                  height='24px'
-                  minWidth='60px'
-                  bg='red.500'
-                  _hover={{ bg: 'red.600' }}
-                  ml={2}
+                  aria-label='Open URL'
+                  onClick={handleOpenLocalURL}
+                  className='icon-button'
                 >
-                  <span style={{ fontSize: '11px' }}>Delete</span>
+                  <ExternalLinkIcon size={12} />
+                </IconButton>
+                {httpLogsEnabled[config.id] && (
+                  <IconButton
+                    size='2xs'
+                    variant='ghost'
+                    onClick={handleInspectLogs}
+                    aria-label='HTTP Logs'
+                    className='icon-button'
+                  >
+                    <FileIcon size={10} />
+                  </IconButton>
+                )}
+              </Flex>
+            )}
+          </Flex>
+        </Table.Cell>
+
+        <Table.Cell className='table-cell'>
+          <MenuRoot>
+            <MenuTrigger asChild>
+              <IconButton
+                size='xs'
+                ml={5}
+                variant='ghost'
+                aria-label='Actions'
+                className='icon-button'
+              >
+                <FontAwesomeIcon icon={faBars} size='xs' />
+              </IconButton>
+            </MenuTrigger>
+            <MenuContent className='menu-content'>
+              <MenuItem
+                className='menu-item'
+                value='edit'
+                onClick={() => handleEditConfig(config.id)}
+              >
+                <FontAwesomeIcon icon={faPen} size='xs' />
+                <Text ml={2} fontSize='xs'>
+                  Edit
+                </Text>
+              </MenuItem>
+              <MenuItem
+                className='menu-item'
+                value='delete'
+                onClick={handleOpenDeleteDialog}
+              >
+                <FontAwesomeIcon icon={faTrash} size='xs' />
+                <Text ml={2} fontSize='xs'>
+                  Delete
+                </Text>
+              </MenuItem>
+              {config.protocol === 'tcp' && (
+                <MenuItem
+                  className='menu-item'
+                  value='http-logs'
+                  onClick={handleToggleHttpLogs}
+                >
+                  <FileIcon size={12} />
+                  <Text ml={2} fontSize='xs'>
+                    {httpLogsEnabled[config.id] ? 'Disable' : 'Enable'} HTTP
+                    Logs
+                  </Text>
+                </MenuItem>
+              )}
+            </MenuContent>
+          </MenuRoot>
+        </Table.Cell>
+      </Table.Row>
+
+      {isDeleteDialogOpen && (
+        <DialogRoot open={isDeleteDialogOpen} onOpenChange={handleOpenChange}>
+          <DialogBackdrop className='dialog-backdrop' />
+          <DialogContent className='dialog-content'>
+            <Box className='dialog-header'>
+              <Text fontSize='sm' fontWeight='medium' color='gray.100'>
+                Delete Configuration
+              </Text>
+            </Box>
+
+            <Box className='dialog-body'>
+              <Text fontSize='xs' color='gray.400'>
+                Are you sure? You can&lsquo;t undo this action afterwards.
+              </Text>
+            </Box>
+
+            <Box className='dialog-footer'>
+              <DialogCloseTrigger asChild>
+                <Button size='xs' variant='ghost' className='dialog-button'>
+                  Cancel
                 </Button>
-              </DialogFooter>
-            </DialogContent>
-          </DialogRoot>
-        )}
-      </Table.Cell>
-    </Table.Row>
+              </DialogCloseTrigger>
+              <Button
+                size='xs'
+                className='dialog-button dialog-button-primary'
+                onClick={() => {
+                  confirmDeleteConfig()
+                  setIsDeleteDialogOpen(false)
+                }}
+              >
+                Delete
+              </Button>
+            </Box>
+          </DialogContent>
+        </DialogRoot>
+      )}
+    </>
   )
 }
 
 const getTooltipContent = (config: any) => (
   <Box p={1.5}>
+    <Text fontSize='xs'>
+      <strong>Alias:</strong> {config.alias}
+    </Text>
     <Text fontSize='xs'>
       <strong>Workload Type:</strong> {config.workload_type}
     </Text>

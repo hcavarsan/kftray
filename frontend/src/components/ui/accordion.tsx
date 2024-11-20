@@ -45,5 +45,9 @@ export const AccordionItemContent = forwardRef<
   )
 })
 
+export interface ValueChangeDetails {
+  value: string[]
+}
+
 export const AccordionRoot = Accordion.Root
 export const AccordionItem = Accordion.Item

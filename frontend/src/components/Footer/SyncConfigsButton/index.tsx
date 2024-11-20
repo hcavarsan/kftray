@@ -1,11 +1,12 @@
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useState } from 'react'
 import { RepeatIcon } from 'lucide-react'
 
 import { Box, Button, Spinner, Text } from '@chakra-ui/react'
 import { invoke } from '@tauri-apps/api/tauri'
 
-import { useCustomToast } from '@/components/ui/toaster'
+import { toaster } from '@/components/ui/toaster'
 import { Tooltip } from '@/components/ui/tooltip'
+import { useGitCredentials } from '@/hooks/useGitCredentials'
 import { GitConfig, SyncConfigsButtonProps } from '@/types'
 
 const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
@@ -16,101 +17,86 @@ const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
   setCredentialsSaved,
   isGitSyncModalOpen,
 }) => {
-  const [state, setState] = useState({
-    isLoading: false,
-    credentials: null as GitConfig | null,
+  const [syncState, setSyncState] = useState({
     lastSync: null as string | null,
     nextSync: null as string | null,
   })
-  const toast = useCustomToast()
 
-  const handleSyncError = useCallback((error: unknown) => {
-    onSyncFailure?.(error instanceof Error ? error : new Error(String(error)))
-    toast({
-      title: 'Error syncing configs',
-      description: error instanceof Error ? error.message : String(error),
-      status: 'error',
-    })
-  }, [onSyncFailure, toast])
-
-  const syncConfigs = useCallback(async (credentials: GitConfig) => {
-    try {
-      await invoke('import_configs_from_github', credentials)
-      const now = new Date()
-      const lastSyncDate = now.toLocaleTimeString()
-      const nextSyncDate = new Date(
-        now.getTime() + credentials.pollingInterval * 60000,
-      ).toLocaleTimeString()
-
-      setState(prev => ({
-        ...prev,
-        lastSync: lastSyncDate,
-        nextSync: nextSyncDate
-      }))
-
-      toast({
-        title: 'Configs synced successfully',
-        status: 'success',
-      })
-    } catch (error) {
-      handleSyncError(error)
-    }
-  }, [handleSyncError, toast])
-
-  useEffect(() => {
-    if (isGitSyncModalOpen) {
-      return
-    }
-
-    const fetchCredentials = async () => {
-      setState(prev => ({ ...prev, isLoading: true }))
-      try {
-        const credentialsString = await invoke<string>('get_key', {
-          service: serviceName,
-          name: accountName,
+  const handleSyncError = useCallback(
+    (error: unknown) => {
+      if (!String(error).includes('No matching entry')) {
+        onSyncFailure?.(
+          error instanceof Error ? error : new Error(String(error)),
+        )
+        toaster.error({
+          title: 'Error syncing configs',
+          description: error instanceof Error ? error.message : String(error),
+          duration: 200,
         })
-        const credentials = JSON.parse(credentialsString) as GitConfig
-
-        setState(prev => ({ ...prev, credentials }))
-        setCredentialsSaved(true)
-      } catch (error) {
-        setCredentialsSaved(false)
-        handleSyncError(error)
-      } finally {
-        setState(prev => ({ ...prev, isLoading: false }))
       }
-    }
+    },
+    [onSyncFailure],
+  )
 
-    fetchCredentials()
-  }, [serviceName, accountName, setCredentialsSaved, isGitSyncModalOpen, handleSyncError])
+  const { credentials, isLoading, setIsLoading } = useGitCredentials(
+    serviceName,
+    accountName,
+    isGitSyncModalOpen,
+    handleSyncError,
+    setCredentialsSaved,
+  )
 
-  const handleSyncConfigs = async () => {
-    if (!state.credentials) {
-      toast({
-        title: 'Error',
-        description: 'No credentials available',
-        status: 'error',
-      })
+  const syncConfigs = useCallback(
+    async (credentials: GitConfig) => {
+      if (!credentials) {
+        return
+      }
 
+      try {
+        await invoke('import_configs_from_github', credentials)
+        const now = new Date()
+        const lastSyncDate = now.toLocaleTimeString()
+        const nextSyncDate = new Date(
+          now.getTime() + credentials.pollingInterval * 60000,
+        ).toLocaleTimeString()
+
+        setSyncState({
+          lastSync: lastSyncDate,
+          nextSync: nextSyncDate,
+        })
+
+        toaster.success({
+          title: 'Success',
+          description: 'Configs synced successfully',
+          duration: 200,
+        })
+      } catch (error) {
+        handleSyncError(error)
+      }
+    },
+    [handleSyncError],
+  )
+
+  const handleSyncConfigs = useCallback(async () => {
+    if (!credentials) {
       return
     }
 
-    setState(prev => ({ ...prev, isLoading: true }))
-    await syncConfigs(state.credentials)
-    setState(prev => ({ ...prev, isLoading: false }))
-  }
-
+    setIsLoading(true)
+    await syncConfigs(credentials)
+    setIsLoading(false)
+  }, [credentials, setIsLoading, syncConfigs])
   const tooltipContent = (
     <Box fontSize='xs' lineHeight='tight'>
       {credentialsSaved ? (
         <>
           <Text>Github Sync Enabled</Text>
-          <Text>Repo URL: {state.credentials?.repoUrl}</Text>
-          <Text>Config Path: {state.credentials?.configPath}</Text>
-          <Text>Private Repo: {state.credentials?.isPrivate ? 'Yes' : 'No'}</Text>
-          <Text>Polling Interval: {state.credentials?.pollingInterval} minutes</Text>
-          <Text>Last Sync: {state.lastSync ?? ''}</Text>
-          <Text>Next Sync: {state.nextSync ?? ''}</Text>
+          <Text>Repo URL: {credentials?.repoUrl}</Text>
+          <Text>Config Path: {credentials?.configPath}</Text>
+          <Text>Private Repo: {credentials?.isPrivate ? 'Yes' : 'No'}</Text>
+          <Text>Polling Interval: {credentials?.pollingInterval} minutes</Text>
+          <Text>Last Sync: {syncState.lastSync ?? ''}</Text>
+          <Text>Next Sync: {syncState.nextSync ?? ''}</Text>
         </>
       ) : (
         <Text>Github Sync Disabled</Text>
@@ -119,21 +105,36 @@ const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
   )
 
   return (
-    <Tooltip content={tooltipContent}>
+    <Tooltip
+      content={tooltipContent}
+      portalled
+      positioning={{
+        strategy: 'absolute',
+        placement: 'top-end',
+        offset: { mainAxis: 8, crossAxis: 0 },
+      }}
+    >
       <Button
         size='sm'
         variant='ghost'
         onClick={handleSyncConfigs}
-        disabled={!credentialsSaved || state.isLoading}
-        className="sync-button"
+        disabled={!credentialsSaved || isLoading}
+        height='26px'
+        minWidth='70px'
+        bg='whiteAlpha.50'
+        px={2}
+        borderRadius='md'
+        border='1px solid rgba(255, 255, 255, 0.08)'
+        _hover={{ bg: 'whiteAlpha.100' }}
+        _active={{ bg: 'whiteAlpha.200' }}
       >
         <Box display='flex' alignItems='center' gap={1}>
-          {state.isLoading ? (
-            <Spinner size='xs' />
+          {isLoading ? (
+            <Spinner size='sm' />
           ) : (
-            <Box as={RepeatIcon} width='13px' height='13px' />
+            <Box as={RepeatIcon} width='12px' height='12px' />
           )}
-          <Box fontSize='12px'>Sync</Box>
+          <Box fontSize='11px'>Sync</Box>
         </Box>
       </Button>
     </Tooltip>

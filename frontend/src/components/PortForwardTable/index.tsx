@@ -6,12 +6,8 @@ import Header from '@/components/Header'
 import HeaderMenu from '@/components/HeaderMenu'
 import ContextsAccordion from '@/components/PortForwardTable/ContextsAccordion'
 import { useConfigsByContext } from '@/components/PortForwardTable/useConfigsByContext'
-import { AccordionRoot } from '@/components/ui/accordion'
+import { AccordionRoot, ValueChangeDetails } from '@/components/ui/accordion'
 import { Config, TableProps } from '@/types'
-
-type ValueChangeDetails = {
-  value: string[]
-}
 
 const PortForwardTable: React.FC<TableProps> = ({
   configs,
@@ -151,7 +147,7 @@ const PortForwardTable: React.FC<TableProps> = ({
     <Box
       display='flex'
       flexDirection='column'
-      height='87%'
+      height='88%'
       width='100%'
       overflow='hidden'
       bg='transparent'
@@ -181,29 +177,21 @@ const PortForwardTable: React.FC<TableProps> = ({
 
       {/* Content Section */}
       <Box
-        flex={1}
-        overflowY='auto'
-        bg='#161616'
-        borderRadius='lg'
-        position='relative'
-        px={2}
-        py={1}
-        border='1px solid rgba(255, 255, 255, 0.08)'
+        className='table-container'
         css={{
-          '&::-webkit-scrollbar': { width: '4px' },
-          '&::-webkit-scrollbar-track': { background: 'transparent' },
-          '&::-webkit-scrollbar-thumb': {
-            background: 'rgba(255, 255, 255, 0.1)',
-            borderRadius: '4px',
-            '&:hover': { background: 'rgba(255, 255, 255, 0.2)' },
-          },
+          flex: 1,
+          overflowY: 'auto',
+          backgroundColor: '#161616',
+          borderRadius: 'var(--border-radius)',
+          padding: '4px',
+          border: '1px solid rgba(255, 255, 255, 0.08)',
         }}
       >
         <AccordionRoot
+          className='accordion-root'
           multiple
           value={expandedIndices}
           onValueChange={handleAccordionChange}
-          variant='subtle'
         >
           {Object.entries(configsByContext).map(([context, contextConfigs]) => (
             <ContextsAccordion

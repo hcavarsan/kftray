@@ -1,10 +1,8 @@
 import React, { useEffect, useState } from 'react'
-import { MdGraphicEq } from 'react-icons/md'
 
 import {
   Box,
   Button,
-  Checkbox,
   Dialog,
   Flex,
   HStack,
@@ -12,16 +10,14 @@ import {
   Slider,
   Stack,
   Text,
-  Tooltip,
 } from '@chakra-ui/react'
 import { invoke } from '@tauri-apps/api/tauri'
 
-import { useCustomToast } from '@/components/ui/toaster'
+import { Checkbox } from '@/components/ui/checkbox'
+import { toaster } from '@/components/ui/toaster'
+import { Tooltip } from '@/components/ui/tooltip'
 import { GitSyncModalProps } from '@/types'
 
-type ValueChangeDetails = {
-  value: number[]
-}
 const GitSyncModal: React.FC<GitSyncModalProps> = ({
   isGitSyncModalOpen,
   closeGitSyncModal,
@@ -36,7 +32,6 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
   const [gitToken, setGitToken] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [isImportAlertOpen, setIsImportAlertOpen] = useState(false)
-  const toast = useCustomToast()
 
   const serviceName = 'kftray'
   const accountName = 'github_config'
@@ -51,7 +46,7 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
 
       setIsLoading(true)
       try {
-        const credentialsString = await invoke('get_key', {
+        const credentialsString = await invoke<string>('get_key', {
           service: serviceName,
           name: accountName,
         })
@@ -80,12 +75,7 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
     return () => {
       isComponentMounted = false
     }
-  }, [
-    isGitSyncModalOpen,
-    credentialsSaved,
-    setCredentialsSaved,
-    setPollingInterval,
-  ])
+  }, [isGitSyncModalOpen, setCredentialsSaved, setPollingInterval])
 
   const handleDeleteGitConfig = async () => {
     setIsLoading(true)
@@ -101,22 +91,23 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
       setPollingInterval(0)
       setGitToken('')
 
-      setCredentialsSaved(true)
+      setCredentialsSaved(false)
       closeGitSyncModal()
-      toast({
-        title: 'Git configuration deleted successfully',
-        status: 'success',
+      toaster.success({
+        title: 'Success',
+        description: 'Git configuration deleted successfully',
+        duration: 200,
       })
     } catch (error) {
       console.error('Failed to delete git config:', error)
-      toast({
+      toaster.error({
         title: 'Error deleting git configuration',
         description:
           error instanceof Error ? error.message : 'An unknown error occurred',
-        status: 'error',
+        duration: 200,
       })
     } finally {
-      closeGitSyncModal()
+      setIsLoading(false)
     }
   }
 
@@ -129,71 +120,67 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
     setIsImportAlertOpen(false)
     setIsLoading(true)
 
-    const credentials = JSON.stringify({
+    const credentials = {
       repoUrl: settingInputValue,
       configPath: configPath,
       isPrivate: isPrivateRepo,
       token: gitToken,
       pollingInterval: pollingInterval,
       flush: true,
-    })
+    }
 
     try {
-      await invoke('import_configs_from_github', {
-        repoUrl: settingInputValue,
-        configPath: configPath,
-        isPrivate: isPrivateRepo,
-        token: gitToken,
-        pollingInterval: pollingInterval,
-        flush: true,
-      })
+      await invoke('import_configs_from_github', credentials)
       await invoke('store_key', {
         service: serviceName,
         name: accountName,
-        password: credentials,
+        password: JSON.stringify(credentials),
       })
 
       setCredentialsSaved(true)
-      toast({
-        title: 'Settings saved successfully',
-        status: 'success',
+      toaster.success({
+        title: 'Success',
+        description: 'Settings saved successfully',
+        duration: 200,
       })
+      closeGitSyncModal()
     } catch (error) {
       console.error('Failed to save settings:', error)
-      toast({
+      toaster.error({
         title: 'Error saving settings',
         description:
           error instanceof Error ? error.message : 'An unknown error occurred',
-        status: 'error',
+        duration: 200,
       })
     } finally {
       setIsLoading(false)
-      closeGitSyncModal()
     }
-  }
-
-  const handleSliderChange = (value: ValueChangeDetails) => {
-    const numericValue = value.value[0]
-
-    setPollingInterval(numericValue)
   }
 
   return (
     <>
       <Dialog.Root open={isGitSyncModalOpen} onOpenChange={closeGitSyncModal}>
-        <Dialog.Backdrop bg='transparent' />
-        <Dialog.Positioner>
+        <Dialog.Backdrop
+          bg='transparent'
+          backdropFilter='blur(4px)'
+          borderRadius='lg'
+          height='100vh'
+        />
+        <Dialog.Positioner overflow='hidden'>
           <Dialog.Content
             onClick={e => e.stopPropagation()}
-            maxWidth='440px'
+            maxWidth='400px'
             width='90vw'
-            bg='#161616'
+            maxHeight='95vh'
+            height='90vh'
+            bg='#111111'
             borderRadius='lg'
             border='1px solid rgba(255, 255, 255, 0.08)'
             overflow='hidden'
+            mt={3}
           >
             <Dialog.Header
-              p={5}
+              p={1.5}
               bg='#161616'
               borderBottom='1px solid rgba(255, 255, 255, 0.05)'
             >
@@ -202,9 +189,9 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
               </Text>
             </Dialog.Header>
 
-            <Dialog.Body p={4}>
+            <Dialog.Body p={3} position='relative' height='calc(100% - 45px)'>
               <form onSubmit={handleSaveSettings}>
-                <Stack gap={5}>
+                <Stack gap={5} height='100%'>
                   <Stack gap={2}>
                     <Text fontSize='xs' color='gray.400'>
                       GitHub Repository URL
@@ -236,67 +223,66 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
                   </Stack>
 
                   <Stack gap={2}>
-                    <Checkbox.Root
+                    <Checkbox
                       checked={isPrivateRepo}
-                      onCheckedChange={checked => setIsPrivateRepo(!!checked)}
+                      onCheckedChange={(e: {
+                        checked: boolean | 'indeterminate'
+                      }) => {
+                        const isCheckedBoolean =
+                          e.checked === 'indeterminate' ? false : e.checked
+
+                        setIsPrivateRepo(isCheckedBoolean)
+                      }}
                     >
-                      <Checkbox.Control>
-                        <Checkbox.Indicator />
-                      </Checkbox.Control>
-                      <Checkbox.Label>
-                        <Text fontSize='xs' color='gray.400'>
-                          Private repository
-                        </Text>
-                      </Checkbox.Label>
-                    </Checkbox.Root>
-                    {isPrivateRepo && (
-                      <Input
-                        type='password'
-                        value={gitToken}
-                        onChange={e => setGitToken(e.target.value)}
-                        placeholder='Git Token'
-                        bg='#161616'
-                        borderColor='rgba(255, 255, 255, 0.08)'
-                        _hover={{ borderColor: 'rgba(255, 255, 255, 0.15)' }}
-                        height='32px'
-                        fontSize='13px'
-                      />
-                    )}
+                      <Text fontSize='xs' color='gray.400'>
+                        Private repository
+                      </Text>
+                    </Checkbox>
+
+                    <Input
+                      type='password'
+                      value={gitToken}
+                      onChange={e => setGitToken(e.target.value)}
+                      placeholder='Git Token'
+                      bg='#161616'
+                      borderColor='rgba(255, 255, 255, 0.08)'
+                      _hover={{ borderColor: 'rgba(255, 255, 255, 0.15)' }}
+                      height='32px'
+                      fontSize='13px'
+                      disabled={!isPrivateRepo}
+                      opacity={isPrivateRepo ? 1 : 0.5}
+                    />
                   </Stack>
 
                   <Stack gap={2}>
                     <Text fontSize='xs' color='gray.400'>
                       Polling Interval (minutes)
                     </Text>
-                    <Box width='100%'>
-                      <Slider.Root
-                        value={[pollingInterval]}
-                        min={0}
-                        max={120}
-                        step={5}
-                        onValueChange={value => handleSliderChange(value)}
+                    <Box width='100%' position='relative'>
+                      <Tooltip
+                        content={`${pollingInterval} minutes`}
+                        open={true}
+                        showArrow
                       >
-                        <Slider.Control>
-                          <Slider.Track>
-                            <Slider.Range />
-                          </Slider.Track>
-                          <Tooltip.Root>
-                            <Tooltip.Trigger asChild>
-                              <Slider.Thumb index={0}>
-                                <Box as={MdGraphicEq} />
-                              </Slider.Thumb>
-                            </Tooltip.Trigger>
-                            <Tooltip.Positioner>
-                              <Tooltip.Content
-                                bg='#161616'
-                                border='1px solid rgba(255, 255, 255, 0.05)'
-                              >
-                                <Text fontSize='xs'>{pollingInterval} min</Text>
-                              </Tooltip.Content>
-                            </Tooltip.Positioner>
-                          </Tooltip.Root>
-                        </Slider.Control>
-                      </Slider.Root>
+                        <Box>
+                          <Slider.Root
+                            value={[pollingInterval]}
+                            min={0}
+                            max={120}
+                            step={5}
+                            onValueChange={(details: { value: number[] }) =>
+                              setPollingInterval(details.value[0])
+                            }
+                          >
+                            <Slider.Control>
+                              <Slider.Track>
+                                <Slider.Range />
+                              </Slider.Track>
+                              <Slider.Thumb index={0} />
+                            </Slider.Control>
+                          </Slider.Root>
+                        </Box>
+                      </Tooltip>
                       <Flex justify='space-between' mt={2}>
                         <Text fontSize='xs' color='gray.400'>
                           0 min
@@ -307,50 +293,60 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
                       </Flex>
                     </Box>
                   </Stack>
+
+                  <Dialog.Footer
+                    position='absolute'
+                    bottom={0}
+                    right={0}
+                    left={0}
+                    p={3}
+                    borderTop='1px solid rgba(255, 255, 255, 0.05)'
+                    bg='#111111'
+                  >
+                    <Flex justify='space-between' width='100%'>
+                      <Box>
+                        {credentialsSaved && (
+                          <Button
+                            size='xs'
+                            variant='ghost'
+                            onClick={handleDeleteGitConfig}
+                            color='red.300'
+                            _hover={{ bg: 'whiteAlpha.50' }}
+                            height='28px'
+                            disabled={isLoading}
+                          >
+                            Disable Git Sync
+                          </Button>
+                        )}
+                      </Box>
+                      <HStack justify='flex-end' gap={2}>
+                        <Button
+                          size='xs'
+                          variant='ghost'
+                          onClick={closeGitSyncModal}
+                          _hover={{ bg: 'whiteAlpha.50' }}
+                          height='28px'
+                        >
+                          Cancel
+                        </Button>
+                        <Button
+                          type='submit'
+                          size='xs'
+                          bg='blue.500'
+                          _hover={{ bg: 'blue.600' }}
+                          disabled={
+                            isLoading || !settingInputValue || !configPath
+                          }
+                          height='28px'
+                        >
+                          Save Settings
+                        </Button>
+                      </HStack>
+                    </Flex>
+                  </Dialog.Footer>
                 </Stack>
               </form>
             </Dialog.Body>
-
-            <Dialog.Footer
-              p={4}
-              borderTop='1px solid rgba(255, 255, 255, 0.05)'
-              bg='#161616'
-            >
-              <HStack gap={3} justify='flex-end'>
-                {credentialsSaved && (
-                  <Button
-                    size='sm'
-                    variant='ghost'
-                    onClick={handleDeleteGitConfig}
-                    color='red.300'
-                    _hover={{ bg: 'whiteAlpha.50' }}
-                    height='32px'
-                    disabled={isLoading}
-                  >
-                    Disable Git Sync
-                  </Button>
-                )}
-                <Button
-                  size='sm'
-                  variant='ghost'
-                  onClick={closeGitSyncModal}
-                  _hover={{ bg: 'whiteAlpha.50' }}
-                  height='32px'
-                >
-                  Cancel
-                </Button>
-                <Button
-                  type='submit'
-                  size='sm'
-                  bg='blue.500'
-                  _hover={{ bg: 'blue.600' }}
-                  disabled={isLoading || !settingInputValue || !configPath}
-                  height='32px'
-                >
-                  Save Settings
-                </Button>
-              </HStack>
-            </Dialog.Footer>
           </Dialog.Content>
         </Dialog.Positioner>
       </Dialog.Root>
@@ -358,28 +354,70 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
       <Dialog.Root
         open={isImportAlertOpen}
         onOpenChange={() => setIsImportAlertOpen(false)}
+        role='alertdialog'
       >
-        <Dialog.Backdrop />
-        <Dialog.Content>
-          <Dialog.Header>
-            <Dialog.Title>Enable Git Sync</Dialog.Title>
-          </Dialog.Header>
-          <Dialog.Body>
-            Enabling Git Sync will replace all current configurations with those
-            from the git repository. Do you want to continue?
-          </Dialog.Body>
-          <Dialog.Footer>
-            <Button
-              variant='outline'
-              onClick={() => setIsImportAlertOpen(false)}
+        <Dialog.Backdrop
+          bg='transparent'
+          backdropFilter='blur(4px)'
+          borderRadius='lg'
+          height='100vh'
+        />
+        <Dialog.Positioner overflow='hidden'>
+          <Dialog.Content
+            onClick={e => e.stopPropagation()}
+            maxWidth='400px'
+            width='90vw'
+            bg='#111111'
+            borderRadius='lg'
+            border='1px solid rgba(255, 255, 255, 0.08)'
+            overflow='hidden'
+            mt={150}
+          >
+            <Dialog.Header
+              p={1.5}
+              bg='#161616'
+              borderBottom='1px solid rgba(255, 255, 255, 0.05)'
             >
-              Cancel
-            </Button>
-            <Button colorPalette='whiteAlpha' onClick={onConfirmImport} ml='3'>
-              Import
-            </Button>
-          </Dialog.Footer>
-        </Dialog.Content>
+              <Text fontSize='sm' fontWeight='medium' color='gray.100'>
+                Enable Git Sync
+              </Text>
+            </Dialog.Header>
+
+            <Dialog.Body p={3}>
+              <Text fontSize='xs' color='gray.400'>
+                Enabling Git Sync will replace all current configurations with
+                those from the git repository. Do you want to continue?
+              </Text>
+            </Dialog.Body>
+
+            <Dialog.Footer
+              p={3}
+              borderTop='1px solid rgba(255, 255, 255, 0.05)'
+              bg='#111111'
+            >
+              <HStack justify='flex-end' gap={2}>
+                <Button
+                  size='xs'
+                  variant='ghost'
+                  onClick={() => setIsImportAlertOpen(false)}
+                  _hover={{ bg: 'whiteAlpha.50' }}
+                  height='28px'
+                >
+                  Cancel
+                </Button>
+                <Button
+                  size='xs'
+                  bg='blue.500'
+                  _hover={{ bg: 'blue.600' }}
+                  onClick={onConfirmImport}
+                  height='28px'
+                >
+                  Import
+                </Button>
+              </HStack>
+            </Dialog.Footer>
+          </Dialog.Content>
+        </Dialog.Positioner>
       </Dialog.Root>
     </>
   )
