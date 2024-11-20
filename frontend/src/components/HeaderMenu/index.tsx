@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useMemo } from 'react'
 import { ChevronDown, ChevronUp, RefreshCw, X } from 'lucide-react'
 
 import { Box, Group } from '@chakra-ui/react'
@@ -8,8 +8,6 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { HeaderMenuProps } from '@/types'
 
 const HeaderMenu: React.FC<HeaderMenuProps> = ({
-  isSelectAllChecked,
-  setIsSelectAllChecked,
   configs,
   selectedConfigs,
   initiatePortForwarding,
@@ -22,15 +20,25 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
   configsByContext,
   setSelectedConfigs,
 }) => {
+  const isSelectAllChecked = useMemo(() => {
+    const selectableConfigs = configs.filter(config => !config.is_running)
+
+    return (
+      selectableConfigs.length > 0 &&
+      selectableConfigs.every(config =>
+        selectedConfigs.some(selected => selected.id === config.id),
+      )
+    )
+  }, [configs, selectedConfigs])
+
   const handleCheckboxChange = ({
     checked,
   }: {
     checked: boolean | 'indeterminate'
   }) => {
-    const isChecked = checked === true
+    const selectableConfigs = configs.filter(config => !config.is_running)
 
-    setIsSelectAllChecked(isChecked)
-    setSelectedConfigs(isChecked ? configs : [])
+    setSelectedConfigs(checked === true ? selectableConfigs : [])
   }
 
   return (
@@ -52,6 +60,8 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
       <Group display='flex' alignItems='center' gap={3}>
         {/* Checkbox */}
         <Checkbox
+          ml={2}
+          size='sm'
           checked={isSelectAllChecked}
           onCheckedChange={handleCheckboxChange}
           css={{

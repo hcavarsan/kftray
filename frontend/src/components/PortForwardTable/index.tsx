@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { Box } from '@chakra-ui/react'
 
@@ -54,12 +54,11 @@ const PortForwardTable: React.FC<TableProps> = ({
 
   useEffect(() => {
     setSelectedConfigs(prev =>
-      prev.filter(
-        selected =>
-          !configs.some(
-            config => config.id === selected.id && config.is_running,
-          ),
-      ),
+      prev.filter(selected => {
+        const config = configs.find(c => c.id === selected.id)
+
+        return config && !config.is_running
+      }),
     )
   }, [configs, setSelectedConfigs])
 
@@ -102,46 +101,61 @@ const PortForwardTable: React.FC<TableProps> = ({
     }
   }
 
-  const handleCheckboxChange = (context: string, isChecked: boolean) => {
-    setIsCheckboxAction(true)
-    handleContextSelectionChange(context, isChecked)
-    setIsCheckboxAction(false)
-  }
-
-  const handleSelectionChange = (config: Config, isSelected: boolean) => {
-    setSelectedConfigs(prev => {
-      const isCurrentlySelected = prev.some(c => c.id === config.id)
-
-      if (isSelected === isCurrentlySelected) {
-        return prev
-      }
-
-      return isSelected
-        ? [...prev, config]
-        : prev.filter(c => c.id !== config.id)
-    })
-  }
-
-  const handleContextSelectionChange = (
-    context: string,
-    isContextSelected: boolean,
-  ) => {
-    setIsCheckboxAction(true)
-    setSelectedConfigs(current => {
-      const contextConfigs = configs.filter(
-        config => config.context === context,
+  const handleCheckboxChange = useCallback(
+    (context: string, isChecked: boolean) => {
+      setIsCheckboxAction(true)
+      const selectableConfigs = configs.filter(
+        config => config.context === context && !config.is_running,
       )
 
-      return isContextSelected
-        ? [
-          ...current,
-          ...contextConfigs.filter(
-            config => !current.some(selected => selected.id === config.id),
-          ),
-        ]
-        : current.filter(config => config.context !== context)
-    })
-  }
+      setSelectedConfigs(prev => {
+        if (isChecked) {
+          const newSelections = [...prev]
+
+          selectableConfigs.forEach(config => {
+            if (!prev.some(p => p.id === config.id)) {
+              newSelections.push(config)
+            }
+          })
+
+          return newSelections
+        }
+
+        return prev.filter(config => config.context !== context)
+      })
+      setIsCheckboxAction(false)
+    },
+    [configs, setSelectedConfigs],
+  )
+
+  const handleSelectionChange = useCallback(
+    (config: Config, isSelected: boolean) => {
+      if (config.is_running) {
+        return
+      }
+
+      setSelectedConfigs(prev => {
+        const newSelection = isSelected
+          ? [...prev, config]
+          : prev.filter(c => c.id !== config.id)
+
+        const contextConfigs = configs.filter(
+          c => c.context === config.context && !c.is_running,
+        )
+        const allContextSelected = contextConfigs.every(contextConfig =>
+          newSelection.some(selected => selected.id === contextConfig.id),
+        )
+
+        setSelectedConfigsByContext(prev => ({
+          ...prev,
+          [config.context]: allContextSelected,
+        }))
+
+        return newSelection
+      })
+    },
+    [configs, setSelectedConfigs],
+  )
 
   return (
     <Box

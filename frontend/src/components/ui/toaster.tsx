@@ -1,5 +1,7 @@
 'use client'
 
+import { MdClose } from 'react-icons/md'
+
 import {
   createToaster,
   Portal,
@@ -11,7 +13,7 @@ import {
 
 export const toaster = createToaster({
   placement: 'top-end',
-  duration: 200,
+  duration: 600,
   overlap: false,
   offsets: {
     top: '5px',
@@ -72,8 +74,10 @@ export const Toaster = () => {
               color='gray.600'
               _hover={{ color: 'gray.400' }}
               ml='1.5'
-              fontSize='xs'
-            />
+              fontSize='sm'
+            >
+              <MdClose size={14} />
+            </Toast.CloseTrigger>
           </Toast.Root>
         )}
       </ChakraToaster>

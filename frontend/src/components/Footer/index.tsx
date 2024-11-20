@@ -120,11 +120,11 @@ const Footer: React.FC<FooterProps> = ({
         <MenuRoot>
           <MenuTrigger asChild>
             <Button
-              size='xs'
+              size='sm'
               variant='ghost'
               onClick={fetchLogSize}
-              height='24px'
-              minWidth='24px'
+              height='32px'
+              minWidth='32px'
               bg='whiteAlpha.50'
               px={1.5}
               borderRadius='md'
@@ -147,12 +147,12 @@ const Footer: React.FC<FooterProps> = ({
           }}
         >
           <Button
-            size='xs'
+            size='sm'
             variant='ghost'
             onClick={openModal}
             disabled={credentialsSaved}
-            height='24px'
-            minWidth='24px'
+            height='32px'
+            minWidth='32px'
             bg='whiteAlpha.50'
             px={1.5}
             borderRadius='md'
@@ -182,11 +182,11 @@ const Footer: React.FC<FooterProps> = ({
           }}
         >
           <Button
-            size='xs'
+            size='sm'
             variant='ghost'
             onClick={openGitSyncModal}
-            height='24px'
-            minWidth='48px'
+            height='32px'
+            minWidth='32px'
             bg='whiteAlpha.50'
             px={1.5}
             borderRadius='md'
@@ -194,8 +194,8 @@ const Footer: React.FC<FooterProps> = ({
             _hover={{ bg: 'whiteAlpha.100' }}
           >
             <Box display='flex' alignItems='center' gap={1}>
-              <Box as={FaGithub} width='12px' height='12px' />
-              <Box as={MdSettings} width='12px' height='12px' />
+              <Box as={FaGithub} width='14px' height='14px' />
+              <Box as={MdSettings} width='14px' height='14px' />
             </Box>
           </Button>
         </Tooltip>

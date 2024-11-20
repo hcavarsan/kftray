@@ -84,7 +84,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
       toaster.error({
         title: 'Error toggling HTTP logs',
         description: error instanceof Error ? error.message : String(error),
-        duration: 200,
+        duration: 500,
       })
     }
   }
@@ -99,7 +99,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
       toaster.error({
         title: 'Error opening log file',
         description: error instanceof Error ? error.message : String(error),
-        duration: 200,
+        duration: 500,
       })
     }
   }
@@ -147,7 +147,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
       toaster.error({
         title: 'Error starting port forwarding',
         description: error instanceof Error ? error.message : String(error),
-        duration: 200,
+        duration: 500,
       })
     }
   }
@@ -184,7 +184,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
       toaster.error({
         title: 'Error stopping port forwarding',
         description: error instanceof Error ? error.message : String(error),
-        duration: 200,
+        duration: 500,
       })
     }
   }
@@ -208,7 +208,11 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
                 <Checkbox
                   size='xs'
                   checked={selected || config.is_running}
-                  onChange={() => onSelectionChange(!selected)}
+                  onCheckedChange={e => {
+                    if (!config.is_running) {
+                      onSelectionChange(e.checked === true)
+                    }
+                  }}
                   disabled={config.is_running}
                   className='checkbox'
                 />

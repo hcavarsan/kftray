@@ -96,7 +96,7 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
       toaster.success({
         title: 'Success',
         description: 'Git configuration deleted successfully',
-        duration: 200,
+        duration: 500,
       })
     } catch (error) {
       console.error('Failed to delete git config:', error)
@@ -104,7 +104,7 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
         title: 'Error deleting git configuration',
         description:
           error instanceof Error ? error.message : 'An unknown error occurred',
-        duration: 200,
+        duration: 500,
       })
     } finally {
       setIsLoading(false)
@@ -141,7 +141,7 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
       toaster.success({
         title: 'Success',
         description: 'Settings saved successfully',
-        duration: 200,
+        duration: 500,
       })
       closeGitSyncModal()
     } catch (error) {
@@ -150,7 +150,7 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
         title: 'Error saving settings',
         description:
           error instanceof Error ? error.message : 'An unknown error occurred',
-        duration: 200,
+        duration: 500,
       })
     } finally {
       setIsLoading(false)

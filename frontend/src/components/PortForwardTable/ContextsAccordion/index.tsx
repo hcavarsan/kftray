@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useMemo } from 'react'
 import { InfoIcon, RepeatIcon } from 'lucide-react'
 
 import {
@@ -25,18 +25,31 @@ const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
   context,
   contextConfigs,
   selectedConfigs,
+  handleSelectionChange,
+  handleCheckboxChange,
+  isInitiating,
+  setIsInitiating,
+  isStopping,
   handleDeleteConfig,
   confirmDeleteConfig,
   handleEditConfig,
   isAlertOpen,
   setIsAlertOpen,
-  handleSelectionChange,
-  selectedConfigsByContext,
-  handleCheckboxChange,
-  isInitiating,
-  setIsInitiating,
-  isStopping,
 }) => {
+  const isContextSelected = useMemo(() => {
+    const selectableConfigs = contextConfigs.filter(
+      config => !config.is_running,
+    )
+
+    if (selectableConfigs.length === 0) {
+      return false
+    }
+
+    return selectableConfigs.every(config =>
+      selectedConfigs.some(selected => selected.id === config.id),
+    )
+  }, [contextConfigs, selectedConfigs])
+
   const contextRunningCount = contextConfigs.filter(
     config => config.is_running,
   ).length
@@ -56,15 +69,13 @@ const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
           <div className='checkbox-wrapper'>
             <Box onClick={e => e.stopPropagation()}>
               <Checkbox
-                size='xs'
-                checked={selectedConfigsByContext[context]}
-                onCheckedChange={() =>
-                  handleCheckboxChange(
-                    context,
-                    !selectedConfigsByContext[context],
-                  )
-                }
                 className='checkbox'
+                size='xs'
+                checked={isContextSelected}
+                onCheckedChange={e =>
+                  handleCheckboxChange(context, e.checked === true)
+                }
+                disabled={contextConfigs.every(config => config.is_running)}
               />
             </Box>
             <span className='context-tag'>{context}</span>

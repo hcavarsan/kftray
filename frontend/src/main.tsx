@@ -3,6 +3,7 @@ import ReactDOM from 'react-dom/client'
 import { QueryClient, QueryClientProvider } from 'react-query'
 
 import { Provider } from './components/ui/provider'
+import { Toaster } from './components/ui/toaster'
 import App from './App'
 
 const queryClient = new QueryClient()
@@ -18,6 +19,7 @@ ReactDOM.createRoot(rootElement).render(
     <QueryClientProvider client={queryClient}>
       <Provider>
         <App />
+        <Toaster />
       </Provider>
     </QueryClientProvider>
   </React.StrictMode>,
