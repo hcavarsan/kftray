@@ -144,7 +144,7 @@ const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
                 {columns.map(column => (
                   <TableColumnHeader
                     key={column.label}
-                    className='table-header-cell'
+                    className={`table-header-cell ${column.label === 'Alias' ? 'table-header-cell-alias' : ''}`}
                     style={{ width: column.width }}
                   >
                     {column.label}

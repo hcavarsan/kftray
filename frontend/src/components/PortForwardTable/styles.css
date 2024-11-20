@@ -16,6 +16,7 @@
   scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
   scrollbar-gutter: stable;
   border: none;
+  overflow-y: auto;
 }
 
 .table-root {
@@ -23,15 +24,17 @@
 }
 
 .table-container::-webkit-scrollbar {
-  width: 1px;
+  width: 8px;
 }
 
 .table-container::-webkit-scrollbar-track {
   background: transparent;
+  border-radius: 4px;
 }
 
 .table-container::-webkit-scrollbar-thumb {
-  background-color: rgba(255, 255, 255, 0.03);
+  background-color: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
 }
 
 .table-container::-webkit-scrollbar-thumb:hover {
@@ -178,6 +181,10 @@
   font-weight: 500;
   text-align: left;
   border: none;
+}
+
+.table-header-cell-alias {
+  padding-left: 40px;
 }
 
 .table-row {
