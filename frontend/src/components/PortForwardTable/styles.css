@@ -44,6 +44,7 @@
 .accordion-trigger {
   padding: 8px var(--padding-x);
   min-height: var(--row-height);
+  background: transparent;
 }
 
 .accordion-content {
