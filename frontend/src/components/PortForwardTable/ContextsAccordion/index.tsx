@@ -103,7 +103,6 @@ const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
                 height: '3px',
                 backgroundColor: 'rgba(255, 255, 255, 0.1)',
                 borderRadius: '2px',
-                overflow: 'hidden',
               }}
             >
               <ProgressBar
