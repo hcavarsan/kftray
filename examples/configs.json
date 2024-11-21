@@ -53,5 +53,5 @@
     "remote_port": 16686,
     "service": "jaeger-query",
     "workload_type": "service"
-  },
+  }
 ]
