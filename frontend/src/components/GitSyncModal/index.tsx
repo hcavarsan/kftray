@@ -13,10 +13,12 @@ import {
 } from '@chakra-ui/react'
 import { invoke } from '@tauri-apps/api/tauri'
 
-import { Checkbox } from '@/components/ui/checkbox'
+import { Radio, RadioGroup } from '@/components/ui/radio'
 import { toaster } from '@/components/ui/toaster'
 import { Tooltip } from '@/components/ui/tooltip'
 import { GitSyncModalProps } from '@/types'
+
+type AuthMethod = 'none' | 'system' | 'token'
 
 const GitSyncModal: React.FC<GitSyncModalProps> = ({
   isGitSyncModalOpen,
@@ -26,9 +28,9 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
   setPollingInterval,
   pollingInterval,
 }) => {
-  const [settingInputValue, setSettingInputValue] = useState('')
+  const [repoUrl, setRepoUrl] = useState('')
   const [configPath, setConfigPath] = useState('')
-  const [isPrivateRepo, setIsPrivateRepo] = useState(false)
+  const [authMethod, setAuthMethod] = useState<AuthMethod>('none')
   const [gitToken, setGitToken] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [isImportAlertOpen, setIsImportAlertOpen] = useState(false)
@@ -54,9 +56,9 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
         if (typeof credentialsString === 'string' && isComponentMounted) {
           const credentials = JSON.parse(credentialsString)
 
-          setSettingInputValue(credentials.repoUrl || '')
+          setRepoUrl(credentials.repoUrl || '')
           setConfigPath(credentials.configPath || '')
-          setIsPrivateRepo(credentials.isPrivate || false)
+          setAuthMethod(credentials.authMethod || 'none')
           setGitToken(credentials.token || '')
           setPollingInterval(credentials.pollingInterval || 60)
           setCredentialsSaved(true)
@@ -85,9 +87,9 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
         name: accountName,
       })
 
-      setSettingInputValue('')
+      setRepoUrl('')
       setConfigPath('')
-      setIsPrivateRepo(false)
+      setAuthMethod('none')
       setPollingInterval(0)
       setGitToken('')
 
@@ -121,16 +123,23 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
     setIsLoading(true)
 
     const credentials = {
-      repoUrl: settingInputValue,
-      configPath: configPath,
-      isPrivate: isPrivateRepo,
-      token: gitToken,
-      pollingInterval: pollingInterval,
+      repoUrl,
+      configPath,
+      authMethod,
+      token: authMethod === 'token' ? gitToken : '',
+      pollingInterval,
       flush: true,
     }
 
     try {
-      await invoke('import_configs_from_github', credentials)
+      await invoke('import_configs_from_github', {
+        repoUrl,
+        configPath,
+        useSystemCredentials: authMethod === 'system',
+        flush: true,
+        githubToken: authMethod === 'token' ? gitToken : null,
+      })
+
       await invoke('store_key', {
         service: serviceName,
         name: accountName,
@@ -154,6 +163,15 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
       })
     } finally {
       setIsLoading(false)
+    }
+  }
+
+  const handleAuthMethodChange = (event: React.FormEvent<HTMLDivElement>) => {
+    const value = (event.target as HTMLInputElement).value as AuthMethod
+
+    setAuthMethod(value)
+    if (value !== 'token') {
+      setGitToken('')
     }
   }
 
@@ -191,14 +209,16 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
 
             <Dialog.Body p={3} position='relative' height='calc(100% - 45px)'>
               <form onSubmit={handleSaveSettings}>
-                <Stack gap={5} height='100%'>
+                <Stack gap={5}>
+                  {/* Repository URL */}
                   <Stack gap={2}>
                     <Text fontSize='xs' color='gray.400'>
                       GitHub Repository URL
                     </Text>
                     <Input
-                      value={settingInputValue}
-                      onChange={e => setSettingInputValue(e.target.value)}
+                      value={repoUrl}
+                      onChange={e => setRepoUrl(e.target.value)}
+                      placeholder='https://github.com/username/repo'
                       bg='#161616'
                       borderColor='rgba(255, 255, 255, 0.08)'
                       _hover={{ borderColor: 'rgba(255, 255, 255, 0.15)' }}
@@ -207,6 +227,7 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
                     />
                   </Stack>
 
+                  {/* Config Path */}
                   <Stack gap={2}>
                     <Text fontSize='xs' color='gray.400'>
                       Config Path
@@ -214,6 +235,7 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
                     <Input
                       value={configPath}
                       onChange={e => setConfigPath(e.target.value)}
+                      placeholder='path/to/config.json'
                       bg='#161616'
                       borderColor='rgba(255, 255, 255, 0.08)'
                       _hover={{ borderColor: 'rgba(255, 255, 255, 0.15)' }}
@@ -222,36 +244,58 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
                     />
                   </Stack>
 
+                  {/* Authentication Method */}
                   <Stack gap={2}>
-                    <Checkbox
-                      checked={isPrivateRepo}
-                      onCheckedChange={(e: {
-                        checked: boolean | 'indeterminate'
-                      }) => {
-                        const isCheckedBoolean =
-                          e.checked === 'indeterminate' ? false : e.checked
-
-                        setIsPrivateRepo(isCheckedBoolean)
-                      }}
-                    >
-                      <Text fontSize='xs' color='gray.400'>
-                        Private repository
-                      </Text>
-                    </Checkbox>
-
-                    <Input
-                      type='password'
-                      value={gitToken}
-                      onChange={e => setGitToken(e.target.value)}
-                      placeholder='Git Token'
+                    <Text fontSize='xs' color='gray.400'>
+                      Authentication Method
+                    </Text>
+                    <Stack
+                      direction='row'
+                      gap={4}
                       bg='#161616'
-                      borderColor='rgba(255, 255, 255, 0.08)'
-                      _hover={{ borderColor: 'rgba(255, 255, 255, 0.15)' }}
-                      height='32px'
-                      fontSize='13px'
-                      disabled={!isPrivateRepo}
-                      opacity={isPrivateRepo ? 1 : 0.5}
-                    />
+                      p={2}
+                      borderRadius='md'
+                      border='1px solid rgba(255, 255, 255, 0.08)'
+                    >
+                      <RadioGroup
+                        value={authMethod}
+                        onChange={handleAuthMethodChange}
+                        size='sm'
+                      >
+                        <Stack direction='row' gap={3}>
+                          <Radio value='none'>
+                            <Text fontSize='xs' color='gray.400'>
+                              Public Repository
+                            </Text>
+                          </Radio>
+                          <Radio value='system'>
+                            <Text fontSize='xs' color='gray.400'>
+                              Use System Git Credentials
+                            </Text>
+                          </Radio>
+                          <Radio value='token'>
+                            <Text fontSize='xs' color='gray.400'>
+                              GitHub Token
+                            </Text>
+                          </Radio>
+                        </Stack>
+                      </RadioGroup>
+                    </Stack>
+
+                    {/* Token Input (only shown when token auth is selected) */}
+                    {authMethod === 'token' && (
+                      <Input
+                        type='password'
+                        value={gitToken}
+                        onChange={e => setGitToken(e.target.value)}
+                        placeholder='Enter your GitHub token'
+                        bg='#161616'
+                        borderColor='rgba(255, 255, 255, 0.08)'
+                        _hover={{ borderColor: 'rgba(255, 255, 255, 0.15)' }}
+                        height='32px'
+                        fontSize='13px'
+                      />
+                    )}
                   </Stack>
 
                   <Stack gap={2}>
@@ -294,6 +338,8 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
                     </Box>
                   </Stack>
 
+                  {/* Footer */}
+
                   <Dialog.Footer
                     position='absolute'
                     bottom={0}
@@ -335,7 +381,10 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
                           bg='blue.500'
                           _hover={{ bg: 'blue.600' }}
                           disabled={
-                            isLoading || !settingInputValue || !configPath
+                            isLoading ||
+                            !repoUrl ||
+                            !configPath ||
+                            (authMethod === 'token' && !gitToken)
                           }
                           height='28px'
                         >
@@ -351,6 +400,7 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
         </Dialog.Positioner>
       </Dialog.Root>
 
+      {/* Import Alert Dialog */}
       <Dialog.Root
         open={isImportAlertOpen}
         onOpenChange={() => setIsImportAlertOpen(false)}
