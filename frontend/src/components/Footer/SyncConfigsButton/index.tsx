@@ -57,7 +57,7 @@ const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
           repoUrl: credentials.repoUrl,
           configPath: credentials.configPath,
           useSystemCredentials: credentials.authMethod === 'system',
-          flush: false,
+          flush: true,
           githubToken:
             credentials.authMethod === 'token' ? credentials.token : null,
         })

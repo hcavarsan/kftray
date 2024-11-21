@@ -190,11 +190,11 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
             maxWidth='400px'
             width='90vw'
             maxHeight='95vh'
-            height='90vh'
+            height='100vh'
             bg='#111111'
             borderRadius='lg'
             border='1px solid rgba(255, 255, 255, 0.08)'
-            overflow='hidden'
+            overflow='auto'
             mt={3}
           >
             <Dialog.Header
@@ -207,9 +207,14 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
               </Text>
             </Dialog.Header>
 
-            <Dialog.Body p={3} position='relative' height='calc(100% - 45px)'>
+            <Dialog.Body
+              p={3}
+              position='relative'
+              height='calc(100% - 45px)'
+              overflow='auto'
+            >
               <form onSubmit={handleSaveSettings}>
-                <Stack gap={5}>
+                <Stack gap={4} overflow='auto'>
                   {/* Repository URL */}
                   <Stack gap={2}>
                     <Text fontSize='xs' color='gray.400'>
@@ -222,8 +227,8 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
                       bg='#161616'
                       borderColor='rgba(255, 255, 255, 0.08)'
                       _hover={{ borderColor: 'rgba(255, 255, 255, 0.15)' }}
-                      height='32px'
-                      fontSize='13px'
+                      height='30px'
+                      fontSize='12px'
                     />
                   </Stack>
 
@@ -239,8 +244,8 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
                       bg='#161616'
                       borderColor='rgba(255, 255, 255, 0.08)'
                       _hover={{ borderColor: 'rgba(255, 255, 255, 0.15)' }}
-                      height='32px'
-                      fontSize='13px'
+                      height='30px'
+                      fontSize='12px'
                     />
                   </Stack>
 
@@ -251,7 +256,7 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
                     </Text>
                     <Stack
                       direction='row'
-                      gap={4}
+                      gap={2}
                       bg='#161616'
                       p={2}
                       borderRadius='md'
@@ -260,9 +265,9 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
                       <RadioGroup
                         value={authMethod}
                         onChange={handleAuthMethodChange}
-                        size='sm'
+                        size='xs'
                       >
-                        <Stack direction='row' gap={3}>
+                        <Stack direction='row' gap={2}>
                           <Radio value='none'>
                             <Text fontSize='xs' color='gray.400'>
                               Public Repository
@@ -292,8 +297,8 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
                         bg='#161616'
                         borderColor='rgba(255, 255, 255, 0.08)'
                         _hover={{ borderColor: 'rgba(255, 255, 255, 0.15)' }}
-                        height='32px'
-                        fontSize='13px'
+                        height='30px'
+                        fontSize='12px'
                       />
                     )}
                   </Stack>
@@ -302,40 +307,39 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
                     <Text fontSize='xs' color='gray.400'>
                       Polling Interval (minutes)
                     </Text>
-                    <Box width='100%' position='relative'>
-                      <Tooltip
-                        content={`${pollingInterval} minutes`}
-                        open={true}
-                        showArrow
-                      >
-                        <Box>
-                          <Slider.Root
-                            value={[pollingInterval]}
-                            min={0}
-                            max={120}
-                            step={5}
-                            onValueChange={(details: { value: number[] }) =>
-                              setPollingInterval(details.value[0])
-                            }
-                          >
-                            <Slider.Control>
-                              <Slider.Track>
-                                <Slider.Range />
-                              </Slider.Track>
-                              <Slider.Thumb index={0} />
-                            </Slider.Control>
-                          </Slider.Root>
-                        </Box>
-                      </Tooltip>
-                      <Flex justify='space-between' mt={2}>
-                        <Text fontSize='xs' color='gray.400'>
-                          0 min
-                        </Text>
-                        <Text fontSize='xs' color='gray.400'>
-                          120 min
-                        </Text>
-                      </Flex>
-                    </Box>
+                    <Tooltip
+                      content={`${pollingInterval} minutes`}
+                      positioning={{
+                        placement: 'bottom-start',
+                      }}
+                    >
+                      <Box>
+                        <Slider.Root
+                          value={[pollingInterval]}
+                          min={0}
+                          max={120}
+                          step={5}
+                          onValueChange={(details: { value: number[] }) =>
+                            setPollingInterval(details.value[0])
+                          }
+                        >
+                          <Slider.Control>
+                            <Slider.Track>
+                              <Slider.Range />
+                            </Slider.Track>
+                            <Slider.Thumb index={0} />
+                          </Slider.Control>
+                        </Slider.Root>
+                      </Box>
+                    </Tooltip>
+                    <Flex justify='space-between' mt={2}>
+                      <Text fontSize='xs' color='gray.400'>
+                        0 min
+                      </Text>
+                      <Text fontSize='xs' color='gray.400'>
+                        120 min
+                      </Text>
+                    </Flex>
                   </Stack>
 
                   {/* Footer */}
