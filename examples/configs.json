@@ -1,46 +1,57 @@
 [
-	{
-	  "alias": "service-tcp-8080",
-	  "context": "kind",
-	  "kubeconfig": "/Users/henrique/.kube/config.bkp",
-	  "local_port": 8080,
-	  "namespace": "argocd",
-	  "protocol": "tcp",
-	  "remote_port": 8080,
-	  "service": "argocd-server",
-	  "workload_type": "service"
-	},
-	{
-	  "alias": "pod-tcp-8083",
-	  "context": "kind",
-	  "kubeconfig": "/Users/henrique/.kube/config.bkp",
-	  "local_port": 8083,
-	  "namespace": "argocd",
-	  "protocol": "tcp",
-	  "remote_port": 8083,
-	  "target": "app.kubernetes.io/component=server",
-	  "workload_type": "pod"
-	},
-	{
-	  "alias": "proxy-udp-5353",
-	  "context": "kind",
-	  "kubeconfig": "/Users/henrique/.kube/config.bkp",
-	  "local_port": 5353,
-	  "namespace": "argocd",
-	  "protocol": "udp",
-	  "remote_address": "coredns.cluster.local.internal",
-	  "remote_port": 5353,
-	  "workload_type": "proxy"
-	},
-	{
-	  "alias": "proxy-tcp-6443",
-	  "context": "kind",
-	  "kubeconfig": "/Users/henrique/.kube/config.bkp",
-	  "local_port": 8777,
-	  "namespace": "argocd",
-	  "protocol": "tcp",
-	  "remote_address": "test.homelab.cluster.internal",
-	  "remote_port": 80,
-	  "workload_type": "proxy"
-	}
-  ]
+  {
+    "alias": "argocd",
+    "context": "kind-kftray-cluster",
+    "kubeconfig": "/Users/henrique/.kube/kind-config-kftray-cluster",
+    "local_port": 16080,
+    "namespace": "argocd",
+    "protocol": "tcp",
+    "remote_port": 8080,
+    "service": "argocd-server",
+    "workload_type": "service"
+  },
+  {
+    "alias": "grafana",
+    "context": "kind-kftray-cluster",
+    "kubeconfig": "/Users/henrique/.kube/kind-config-kftray-cluster",
+    "local_port": 13080,
+    "namespace": "monitoring",
+    "protocol": "tcp",
+    "remote_port": 3000,
+    "service": "grafana",
+    "workload_type": "service"
+  },
+  {
+    "alias": "alertmanager",
+    "context": "kind-kftray-cluster",
+    "kubeconfig": "/Users/henrique/.kube/kind-config-kftray-cluster",
+    "local_port": 19093,
+    "namespace": "monitoring",
+    "protocol": "tcp",
+    "remote_port": 9093,
+    "service": "prometheus-alertmanager",
+    "workload_type": "service"
+  },
+  {
+    "alias": "prometheus",
+    "context": "kind-kftray-cluster",
+    "kubeconfig": "/Users/henrique/.kube/kind-config-kftray-cluster",
+    "local_port": 19090,
+    "namespace": "monitoring",
+    "protocol": "tcp",
+    "remote_port": 9090,
+    "service": "prometheus-server",
+    "workload_type": "service"
+  },
+  {
+    "alias": "jaeger",
+    "context": "kind-kftray-cluster",
+    "kubeconfig": "/Users/henrique/.kube/kind-config-kftray-cluster",
+    "local_port": 15090,
+    "namespace": "observability",
+    "protocol": "tcp",
+    "remote_port": 16686,
+    "service": "jaeger-query",
+    "workload_type": "service"
+  },
+]
