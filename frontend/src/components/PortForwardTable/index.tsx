@@ -1,13 +1,13 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
-import { Accordion, Flex, useColorModeValue } from '@chakra-ui/react'
+import { Box } from '@chakra-ui/react'
 
-import { Config, TableProps } from '../../types'
-import Header from '../Header'
-import HeaderMenu from '../HeaderMenu'
-
-import ContextsAccordion from './ContextsAccordion'
-import { useConfigsByContext } from './useConfigsByContext'
+import Header from '@/components/Header'
+import HeaderMenu from '@/components/HeaderMenu'
+import ContextsAccordion from '@/components/PortForwardTable/ContextsAccordion'
+import { useConfigsByContext } from '@/components/PortForwardTable/useConfigsByContext'
+import { AccordionRoot, ValueChangeDetails } from '@/components/ui/accordion'
+import { Config, TableProps } from '@/types'
 
 const PortForwardTable: React.FC<TableProps> = ({
   configs,
@@ -25,7 +25,7 @@ const PortForwardTable: React.FC<TableProps> = ({
   setSelectedConfigs,
 }) => {
   const [search, setSearch] = useState<string>('')
-  const [expandedIndices, setExpandedIndices] = useState<number[]>([])
+  const [expandedIndices, setExpandedIndices] = useState<string[]>([])
   const prevSelectedConfigsRef = useRef<Config[]>(selectedConfigs)
   const [isSelectAllChecked, setIsSelectAllChecked] = useState<boolean>(false)
   const [selectedConfigsByContext, setSelectedConfigsByContext] = useState<
@@ -33,84 +33,45 @@ const PortForwardTable: React.FC<TableProps> = ({
   >({})
   const [isCheckboxAction, setIsCheckboxAction] = useState<boolean>(false)
 
-  useEffect(() => {
-    const isConfigRunning = (selectedConfig: Config) =>
-      configs.some(
-        config => config.id === selectedConfig.id && config.is_running,
-      )
+  const filteredConfigs = useMemo(() => {
+    const searchLower = search.toLowerCase()
 
-    setSelectedConfigs(prevSelectedConfigs =>
-      prevSelectedConfigs.filter(
-        selectedConfig => !isConfigRunning(selectedConfig),
-      ),
+    return configs
+    .filter(
+      config =>
+        config.alias.toLowerCase().includes(searchLower) ||
+          config.context.toLowerCase().includes(searchLower) ||
+          config.remote_address?.toLowerCase().includes(searchLower) ||
+          config.local_port.toString().includes(searchLower),
+    )
+    .sort(
+      (a, b) =>
+        a.alias.localeCompare(b.alias) || a.context.localeCompare(b.context),
+    )
+  }, [configs, search])
+
+  const configsByContext = useConfigsByContext(filteredConfigs)
+
+  useEffect(() => {
+    setSelectedConfigs(prev =>
+      prev.filter(selected => {
+        const config = configs.find(c => c.id === selected.id)
+
+        return config && !config.is_running
+      }),
     )
   }, [configs, setSelectedConfigs])
 
-  const filteredConfigs = useMemo(() => {
-    const filterConfigsBySearch = (config: Config) =>
-      config.alias.toLowerCase().includes(search.toLowerCase()) ||
-      config.context.toLowerCase().includes(search.toLowerCase()) ||
-      config.remote_address?.toLowerCase().includes(search.toLowerCase()) ||
-      config.local_port.toString().includes(search.toLowerCase())
-
-    const searchFiltered = search
-      ? configs.filter(filterConfigsBySearch)
-      : configs
-
-    const compareConfigs = (a: Config, b: Config) =>
-      a.alias.localeCompare(b.alias) || a.context.localeCompare(b.context)
-
-    return [...searchFiltered].sort(compareConfigs)
-  }, [configs, search])
-
-  const toggleExpandAll = () => {
-    const allIndices = Object.keys(configsByContext).map((_, index) => index)
-
-    if (expandedIndices.length === allIndices.length) {
-      setExpandedIndices([])
-    } else {
-      setExpandedIndices(allIndices)
-    }
-  }
-
-  const startSelectedPortForwarding = async () => {
-    const configsToStart = selectedConfigs.filter(
-      (config: Config) => !config.is_running,
-    )
-
-    if (configsToStart.length > 0) {
-      await initiatePortForwarding(configsToStart)
-    }
-  }
-
-  const configsByContext = useConfigsByContext(filteredConfigs)
-  const borderColor = useColorModeValue('gray.200', 'gray.700')
-  const boxShadow = useColorModeValue('base', 'lg')
-
-  const handleAccordionChange = (expandedIndex: number | number[]) => {
-    if (!isCheckboxAction) {
-      setExpandedIndices(expandedIndex as number[])
-    }
-  }
-
-  const handleCheckboxChange = (context: string, isChecked: boolean) => {
-    setIsCheckboxAction(true)
-    handleContextSelectionChange(context, isChecked)
-    setIsCheckboxAction(false)
-  }
-
   useEffect(() => {
     if (prevSelectedConfigsRef.current !== selectedConfigs) {
-      const newSelectedConfigsByContext: Record<string, boolean> = {}
-
-      for (const context of Object.keys(configsByContext)) {
-        newSelectedConfigsByContext[context] = configsByContext[context].every(
-          config =>
-            selectedConfigs.some(
-              selectedConfig => selectedConfig.id === config.id,
-            ),
-        )
-      }
+      const newSelectedConfigsByContext = Object.fromEntries(
+        Object.entries(configsByContext).map(([context, contextConfigs]) => [
+          context,
+          contextConfigs.every(config =>
+            selectedConfigs.some(selected => selected.id === config.id),
+          ),
+        ]),
+      )
 
       setSelectedConfigsByContext(newSelectedConfigsByContext)
       setIsSelectAllChecked(selectedConfigs.length === configs.length)
@@ -118,154 +79,156 @@ const PortForwardTable: React.FC<TableProps> = ({
     }
   }, [selectedConfigs, configs, configsByContext])
 
-  const handleSelectionChange = (config: Config, isSelected: boolean) => {
-    setSelectedConfigs(prevSelectedConfigs => {
-      const isSelectedCurrently = prevSelectedConfigs.some(
-        c => c.id === config.id,
-      )
+  const toggleExpandAll = () => {
+    const allContexts = Object.keys(configsByContext)
 
-      if (isSelected && !isSelectedCurrently) {
-        return [...prevSelectedConfigs, config]
-      } else if (!isSelected && isSelectedCurrently) {
-        return prevSelectedConfigs.filter(c => c.id !== config.id)
-      } else {
-        return prevSelectedConfigs
-      }
-    })
-  }
-
-  const handleContextSelectionChange = (
-    context: string,
-    isContextSelected: boolean,
-  ) => {
-    setIsCheckboxAction(true)
-    setSelectedConfigs(currentSelectedConfigs => {
-      const contextConfigs = configs.filter(
-        config => config.context === context,
-      )
-
-      return isContextSelected
-        ? addContextConfigs(currentSelectedConfigs, contextConfigs)
-        : removeContextConfigs(currentSelectedConfigs, context)
-    })
-  }
-
-  function addContextConfigs(
-    currentSelectedConfigs: Config[],
-    contextConfigs: Config[],
-  ) {
-    const newConfigsToAdd = contextConfigs.filter(
-      config =>
-        !currentSelectedConfigs.some(
-          selectedConfig => selectedConfig.id === config.id,
-        ),
+    setExpandedIndices(current =>
+      current.length === allContexts.length ? [] : allContexts,
     )
-
-    return [...currentSelectedConfigs, ...newConfigsToAdd]
   }
 
-  function removeContextConfigs(
-    currentSelectedConfigs: Config[],
-    context: string,
-  ) {
-    return currentSelectedConfigs.filter(config => config.context !== context)
+  const startSelectedPortForwarding = async () => {
+    const configsToStart = selectedConfigs.filter(config => !config.is_running)
+
+    if (configsToStart.length > 0) {
+      await initiatePortForwarding(configsToStart)
+    }
   }
+
+  const handleAccordionChange = (details: ValueChangeDetails) => {
+    if (!isCheckboxAction) {
+      setExpandedIndices(details.value)
+    }
+  }
+
+  const handleCheckboxChange = useCallback(
+    (context: string, isChecked: boolean) => {
+      setIsCheckboxAction(true)
+      const selectableConfigs = configs.filter(
+        config => config.context === context && !config.is_running,
+      )
+
+      setSelectedConfigs(prev => {
+        if (isChecked) {
+          const newSelections = [...prev]
+
+          selectableConfigs.forEach(config => {
+            if (!prev.some(p => p.id === config.id)) {
+              newSelections.push(config)
+            }
+          })
+
+          return newSelections
+        }
+
+        return prev.filter(config => config.context !== context)
+      })
+      setIsCheckboxAction(false)
+    },
+    [configs, setSelectedConfigs],
+  )
+
+  const handleSelectionChange = useCallback(
+    (config: Config, isSelected: boolean) => {
+      if (config.is_running) {
+        return
+      }
+
+      setSelectedConfigs(prev => {
+        const newSelection = isSelected
+          ? [...prev, config]
+          : prev.filter(c => c.id !== config.id)
+
+        const contextConfigs = configs.filter(
+          c => c.context === config.context && !c.is_running,
+        )
+        const allContextSelected = contextConfigs.every(contextConfig =>
+          newSelection.some(selected => selected.id === contextConfig.id),
+        )
+
+        setSelectedConfigsByContext(prev => ({
+          ...prev,
+          [config.context]: allContextSelected,
+        }))
+
+        return newSelection
+      })
+    },
+    [configs, setSelectedConfigs],
+  )
 
   return (
-    <Flex
-      direction='column'
-      height='100%'
-      overflow='hidden'
+    <Box
+      display='flex'
+      flexDirection='column'
+      height='88%'
       width='100%'
-      borderColor={borderColor}
+      overflow='hidden'
+      bg='transparent'
+      position='relative'
     >
-      <Flex
-        direction='row'
-        alignItems='center'
-        justifyContent='space-between'
-        position='sticky'
-        top='0'
-        bg='gray.800'
-        borderRadius='lg'
-        width='98.4%'
-        borderColor={borderColor}
+      {/* Header Section */}
+      <Box position='sticky' top={0} zIndex={10} bg='transparent' mb={2}>
+        <Box display='flex' flexDirection='column' width='100%' gap={0}>
+          <Header search={search} setSearch={setSearch} />
+          <HeaderMenu
+            isSelectAllChecked={isSelectAllChecked}
+            setIsSelectAllChecked={setIsSelectAllChecked}
+            configs={configs}
+            selectedConfigs={selectedConfigs}
+            setSelectedConfigs={setSelectedConfigs}
+            initiatePortForwarding={initiatePortForwarding}
+            startSelectedPortForwarding={startSelectedPortForwarding}
+            stopAllPortForwarding={stopAllPortForwarding}
+            isInitiating={isInitiating}
+            isStopping={isStopping}
+            toggleExpandAll={toggleExpandAll}
+            expandedIndices={expandedIndices}
+            configsByContext={configsByContext}
+          />
+        </Box>
+      </Box>
+
+      {/* Content Section */}
+      <Box
+        className='table-container'
+        css={{
+          flex: 1,
+          overflowY: 'auto',
+          backgroundColor: '#161616',
+          borderRadius: 'var(--border-radius)',
+          padding: '4px',
+          border: '1px solid rgba(255, 255, 255, 0.08)',
+        }}
       >
-        <Header search={search} setSearch={setSearch} />
-      </Flex>
-      <Flex
-        direction='row'
-        alignItems='center'
-        mt='2'
-        justifyContent='space-between'
-        position='relative'
-        top='0'
-        bg='gray.900'
-        p='2'
-        boxShadow={boxShadow}
-        borderRadius='lg'
-        border='1px'
-        width='98.4%'
-        borderColor={borderColor}
-      >
-        <HeaderMenu
-          isSelectAllChecked={isSelectAllChecked}
-          setIsSelectAllChecked={setIsSelectAllChecked}
-          configs={configs}
-          selectedConfigs={selectedConfigs}
-          setSelectedConfigs={setSelectedConfigs}
-          initiatePortForwarding={initiatePortForwarding}
-          startSelectedPortForwarding={startSelectedPortForwarding}
-          stopAllPortForwarding={stopAllPortForwarding}
-          isInitiating={isInitiating}
-          isStopping={isStopping}
-          toggleExpandAll={toggleExpandAll}
-          expandedIndices={expandedIndices}
-          configsByContext={configsByContext}
-        />
-      </Flex>
-      <Flex
-        direction='column'
-        maxHeight='100%'
-        mt='5'
-        overflowY='scroll'
-        width='100%'
-        borderBottom='none'
-        borderRadius='lg'
-        background='gray.1000'
-        boxShadow='0 0 1px rgba(20, 20, 20, 0.50)'
-        marginTop='1'
-      >
-        <Accordion
-          allowMultiple
-          index={expandedIndices}
-          onChange={handleAccordionChange}
-          borderColor={borderColor}
-          width='full'
+        <AccordionRoot
+          className='accordion-root'
+          multiple
+          value={expandedIndices}
+          onValueChange={handleAccordionChange}
         >
-          {Object.entries(configsByContext).map(
-            ([context, contextConfigs], _contextIndex) => (
-              <ContextsAccordion
-                key={context}
-                context={context}
-                contextConfigs={contextConfigs}
-                selectedConfigs={selectedConfigs}
-                handleDeleteConfig={handleDeleteConfig}
-                confirmDeleteConfig={confirmDeleteConfig}
-                handleEditConfig={handleEditConfig}
-                isAlertOpen={isAlertOpen}
-                setIsAlertOpen={setIsAlertOpen}
-                handleSelectionChange={handleSelectionChange}
-                selectedConfigsByContext={selectedConfigsByContext}
-                handleCheckboxChange={handleCheckboxChange}
-                isInitiating={isInitiating}
-                setIsInitiating={setIsInitiating}
-                isStopping={isStopping}
-              />
-            ),
-          )}
-        </Accordion>
-      </Flex>
-    </Flex>
+          {Object.entries(configsByContext).map(([context, contextConfigs]) => (
+            <ContextsAccordion
+              key={context}
+              context={context}
+              contextConfigs={contextConfigs}
+              selectedConfigs={selectedConfigs}
+              handleDeleteConfig={handleDeleteConfig}
+              confirmDeleteConfig={confirmDeleteConfig}
+              handleEditConfig={handleEditConfig}
+              isAlertOpen={isAlertOpen}
+              setIsAlertOpen={setIsAlertOpen}
+              handleSelectionChange={handleSelectionChange}
+              selectedConfigsByContext={selectedConfigsByContext}
+              handleCheckboxChange={handleCheckboxChange}
+              isInitiating={isInitiating}
+              setIsInitiating={setIsInitiating}
+              isStopping={isStopping}
+            />
+          ))}
+        </AccordionRoot>
+      </Box>
+    </Box>
   )
 }
 

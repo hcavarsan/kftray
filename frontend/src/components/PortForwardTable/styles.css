@@ -1,0 +1,335 @@
+:root {
+  --row-height: 42px;
+  --border-radius: 4px;
+  --padding-x: 8px;
+  --icon-size: 18px;
+  --font-size-small: 11px;
+  --font-size-normal: 12px;
+  --transition-speed: 0.1s;
+  --accordion-padding: 12px;
+  --icon-small: 10px;
+  --border-width: 1px;
+}
+
+.table-container {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+  scrollbar-gutter: stable;
+  border: none;
+  overflow-y: auto;
+}
+
+.table-root {
+  border: none;
+}
+
+.table-container::-webkit-scrollbar {
+  width: 2px;
+}
+
+.table-container::-webkit-scrollbar-track {
+  background: transparent;
+  border-radius: 2px;
+}
+
+.table-container::-webkit-scrollbar-thumb {
+  background-color: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+}
+
+.table-container::-webkit-scrollbar-thumb:hover {
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+.accordion-trigger {
+  padding: 8px var(--padding-x);
+  min-height: var(--row-height);
+  background: transparent;
+}
+
+.accordion-content {
+  padding: 8px;
+  background-color: rgba(22, 22, 22, 0.3);
+  border: none;
+}
+
+.table-header {
+  height: 28px;
+  font-size: var(--font-size-small);
+  color: rgba(255, 255, 255, 0.5);
+  text-transform: uppercase;
+  letter-spacing: 0.25em;
+  border: none;
+}
+
+.table-row {
+  height: var(--row-height);
+  background-color: rgba(22, 22, 22, 0.4);
+  border: none;
+}
+
+.table-row:hover {
+  background-color: rgba(255, 255, 255, 0.03);
+}
+
+.table-cell {
+  padding: 0 var(--padding-x);
+  height: var(--row-height);
+  font-size: var(--font-size-normal);
+  border: none;
+}
+
+.icon-button {
+  min-width: var(--icon-size);
+  height: var(--icon-size);
+  padding: 0;
+  color: rgba(255, 255, 255, 0.4);
+}
+
+.checkbox {
+  width: 24px;
+  height: 24px;
+  margin-left: 4px;
+}
+
+.tag {
+  padding: 2px 6px;
+  font-size: var(--font-size-small);
+  border-radius: var(--border-radius);
+}
+
+.progress-bar {
+  width: 40px;
+  height: 3px;
+}
+
+.menu-content {
+  min-width: 100px;
+  padding: 4px;
+}
+
+.menu-item {
+  padding: 6px 8px;
+  font-size: var(--font-size-normal);
+  gap: 4px;
+}
+
+.accordion-root {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.accordion-item {
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: var(--border-radius);
+  margin: 1px 0;
+  background-color: rgba(22, 22, 22, 0.3);
+  overflow: auto;
+}
+
+.accordion-trigger {
+  width: 100%;
+  padding: 8px var(--accordion-padding);
+  min-height: var(--row-height);
+  display: flex;
+  align-items: center;
+  transition: background-color var(--transition-speed) ease;
+}
+
+.accordion-trigger:hover {
+  background-color: rgba(255, 255, 255, 0.02);
+}
+
+.accordion-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.accordion-content {
+  padding: var(--accordion-padding);
+  background-color: rgba(22, 22, 22, 0.3);
+  border: none;
+}
+
+.table-wrapper {
+  width: 100%;
+  padding: 0;
+  border: none;
+}
+
+.table-root {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+.table-header {
+  height: 25px;
+  border: none;
+}
+
+.table-header-cell {
+  padding: 4px var(--padding-x);
+  font-size: var(--font-size-small);
+  color: rgba(255, 255, 255, 0.5);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-weight: 500;
+  text-align: left;
+  border: none;
+}
+
+.table-header-cell-alias {
+  padding-left: 40px;
+}
+
+.table-row {
+  height: var(--row-height);
+  border: none;
+}
+
+.table-cell {
+  padding: 2px var(--padding-x);
+  height: var(--row-height);
+  font-size: var(--font-size-normal);
+}
+
+.checkbox-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.context-tag {
+  padding: 2px 6px;
+  font-size: var(--font-size-small);
+  background-color: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--border-radius);
+  color: rgba(255, 255, 255, 0.9);
+}
+
+.status-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px;
+  font-size: var(--font-size-small);
+  background-color: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 10px;
+}
+
+.status-icon {
+  width: var(--icon-small);
+  height: var(--icon-small);
+}
+
+.progress-wrapper {
+  width: 50px;
+  height: 3px;
+  background-color: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  background-color: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(4px);
+  z-index: 9999;
+}
+
+.dialog-content {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  max-width: 400px;
+  width: 90vw;
+  background-color: #111111;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 0;
+  z-index: 10000;
+}
+
+.dialog-header {
+  padding: 12px 16px;
+  background-color: #161616;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.dialog-body {
+  padding: 16px;
+}
+
+.dialog-footer {
+  padding: 12px 16px;
+  background-color: #111111;
+  border-top: 1px solid rgba(255, 255, 255, 0.05);
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.dialog-button {
+  height: 28px;
+  min-width: 60px;
+  font-size: 12px;
+  padding: 0 12px;
+  border-radius: 4px;
+  transition: background-color 0.2s ease;
+}
+
+.dialog-button:hover {
+  background-color: rgba(255, 255, 255, 0.05);
+}
+
+.dialog-button-primary {
+  background-color: rgb(59, 130, 246);
+  color: white;
+}
+
+.dialog-button-primary:hover {
+  background-color: rgb(37, 99, 235);
+}
+
+.switch {
+  position: relative;
+  width: 30px !important;
+  height: 14px !important;
+  background-color: rgba(255, 255, 255, 0.06) !important;
+  border-radius: 10px !important;
+  transition: all 0.2s ease;
+}
+
+.switch[data-state='checked'] {
+  background-color: rgba(59, 130, 246, 0.3) !important;
+}
+
+.switch[data-disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.switch::before {
+  content: '';
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  background-color: rgba(255, 255, 255, 0.7);
+  border-radius: 50%;
+  transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.switch[data-state='checked']::before {
+  transform: translateX(16px);
+  background-color: rgb(59, 130, 246);
+}

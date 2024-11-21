@@ -27,3 +27,4 @@ target*/*
 target*
 frontend/dist/*
 !frontend/dist/.gitkeep
+package-lock.json

@@ -1,6 +1,6 @@
 {
   "name": "@kftray/ui",
-  "version": "0.14.9",
+  "version": "0.15.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -14,14 +14,17 @@
     "taze:minor": "taze minor -w"
   },
   "dependencies": {
-    "@chakra-ui/icons": "^2.1.1",
-    "@chakra-ui/react": "^2.8.2",
-    "@emotion/styled": "^11.13.0",
+    "@chakra-ui/react": "^3.1.1",
+    "@chakra-ui/theme-tools": "^2.2.7",
+    "@emotion/react": "^11.13.3",
     "@fortawesome/fontawesome-svg-core": "^6.6.0",
     "@fortawesome/free-solid-svg-icons": "^6.6.0",
     "@fortawesome/react-fontawesome": "^0.2.2",
     "@vitejs/plugin-react-swc": "^3.7.0",
-    "framer-motion": "^11.9.0",
+    "lodash": "^4.17",
+    "@types/lodash": "^4.17",
+    "lucide-react": "^0.456.0",
+    "next-themes": "^0.4.3",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-icons": "^5.3.0",
@@ -35,9 +38,9 @@
     "@types/node": "^22.7.4",
     "@types/react": "^18.3.10",
     "@types/react-dom": "^18.3.0",
-    "@typescript-eslint/eslint-plugin": "^8.7.0",
-    "@typescript-eslint/parser": "^8.7.0",
-    "@typescript-eslint/typescript-estree": "^8.11.0",
+    "@typescript-eslint/eslint-plugin": "^8.14.0",
+    "@typescript-eslint/parser": "^8.14.0",
+    "@typescript-eslint/typescript-estree": "^8.14.0",
     "core-js": "^3.38.1",
     "eslint": "^9.11.1",
     "eslint-config-prettier": "^9.1.0",
@@ -50,6 +53,7 @@
     "react-query": "^3.39.3",
     "react-refresh": "^0.14.2",
     "typescript": "5.6.3",
-    "vite": "^5.4.8"
+    "vite": "^5.4.11",
+    "vite-tsconfig-paths": "^5.1.2"
   }
 }

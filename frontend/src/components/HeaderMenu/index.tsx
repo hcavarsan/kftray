@@ -1,14 +1,13 @@
-import React from 'react'
-import { MdClose, MdRefresh } from 'react-icons/md'
+import React, { useMemo } from 'react'
+import { ChevronDown, ChevronUp, RefreshCw, X } from 'lucide-react'
 
-import { ChevronDownIcon, ChevronUpIcon } from '@chakra-ui/icons'
-import { Button, ButtonGroup, Checkbox } from '@chakra-ui/react'
+import { Box, Group } from '@chakra-ui/react'
 
-import { HeaderMenuProps } from '../../types'
+import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
+import { HeaderMenuProps } from '@/types'
 
 const HeaderMenu: React.FC<HeaderMenuProps> = ({
-  isSelectAllChecked,
-  setIsSelectAllChecked,
   configs,
   selectedConfigs,
   initiatePortForwarding,
@@ -21,76 +20,153 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
   configsByContext,
   setSelectedConfigs,
 }) => {
+  const isSelectAllChecked = useMemo(() => {
+    const selectableConfigs = configs.filter(config => !config.is_running)
+
+    return (
+      selectableConfigs.length > 0 &&
+      selectableConfigs.every(config =>
+        selectedConfigs.some(selected => selected.id === config.id),
+      )
+    )
+  }, [configs, selectedConfigs])
+
+  const handleCheckboxChange = ({
+    checked,
+  }: {
+    checked: boolean | 'indeterminate'
+  }) => {
+    const selectableConfigs = configs.filter(config => !config.is_running)
+
+    setSelectedConfigs(checked === true ? selectableConfigs : [])
+  }
+
   return (
-    <>
-      <ButtonGroup variant='outline'>
+    <Box
+      display='flex'
+      alignItems='center'
+      justifyContent='space-between'
+      width='100%'
+      bg='#161616'
+      px={3}
+      py={3}
+      borderTopRadius='none'
+      borderTop='none'
+      borderBottomRadius='lg'
+      border='1px solid rgba(255, 255, 255, 0.08)'
+      borderTopColor='rgba(255, 255, 255, 0.04)'
+      mt='-1px'
+    >
+      <Group display='flex' alignItems='center' gap={3}>
+        {/* Checkbox */}
         <Checkbox
-          isChecked={isSelectAllChecked}
-          onChange={e => {
-            setIsSelectAllChecked(e.target.checked)
-            if (e.target.checked) {
-              setSelectedConfigs(configs)
-            } else {
-              setSelectedConfigs([])
-            }
-          }}
-          mr={2}
           ml={2}
           size='sm'
+          checked={isSelectAllChecked}
+          onCheckedChange={handleCheckboxChange}
+          css={{
+            '& input': {
+              width: '10px',
+              height: '10px',
+              background: '#1A1A1A',
+              border: '1px solid rgba(255, 255, 255, 0.15)',
+              borderRadius: '3px',
+              '&:hover': {
+                borderColor: 'rgba(255, 255, 255, 0.25)',
+              },
+            },
+            '& input:checked': {
+              background: '#3182CE',
+              borderColor: '#3182CE',
+            },
+          }}
         />
-        <Button
-          leftIcon={<MdRefresh />}
-          colorScheme='facebook'
-          isLoading={isInitiating}
-          loadingText={isInitiating ? 'Starting...' : null}
-          onClick={
-            selectedConfigs.length > 0
-              ? startSelectedPortForwarding
-              : () =>
-                initiatePortForwarding(
-                  configs.filter(config => !config.is_running),
-                )
-          }
-          isDisabled={
-            isInitiating ||
-            (!selectedConfigs.length &&
-              !configs.some(config => !config.is_running))
-          }
-          size='xs'
-        >
-          {selectedConfigs.length > 0 ? 'Start Selected' : 'Start All'}
-        </Button>
-        <Button
-          leftIcon={<MdClose />}
-          colorScheme='facebook'
-          isLoading={isStopping}
-          loadingText='Stopping...'
-          onClick={stopAllPortForwarding}
-          isDisabled={isStopping || !configs.some(config => config.is_running)}
-          size='xs'
-        >
-          Stop All
-        </Button>
-      </ButtonGroup>
 
+        {/* Action Buttons */}
+        <Group display='flex' alignItems='center' gap={2}>
+          <Button
+            size='xs'
+            variant='ghost'
+            disabled={
+              isInitiating ||
+              (!selectedConfigs.length &&
+                !configs.some(config => !config.is_running))
+            }
+            loading={isInitiating}
+            loadingText='Starting...'
+            onClick={
+              selectedConfigs.length > 0
+                ? startSelectedPortForwarding
+                : () =>
+                  initiatePortForwarding(
+                    configs.filter(config => !config.is_running),
+                  )
+            }
+            _hover={{ bg: 'whiteAlpha.100' }}
+            height='26px'
+            minWidth='90px'
+            bg='whiteAlpha.50'
+            px={2}
+            borderRadius='md'
+            border='1px solid rgba(255, 255, 255, 0.08)'
+          >
+            <Box as={RefreshCw} width='12px' height='12px' marginRight={1.5} />
+            <span style={{ fontSize: '11px' }}>
+              {selectedConfigs.length > 0 ? 'Start Selected' : 'Start All'}
+            </span>
+          </Button>
+
+          <Button
+            size='xs'
+            variant='ghost'
+            disabled={isStopping || !configs.some(config => config.is_running)}
+            loading={isStopping}
+            loadingText='Stopping...'
+            onClick={stopAllPortForwarding}
+            _hover={{ bg: 'whiteAlpha.100' }}
+            height='26px'
+            minWidth='70px'
+            bg='whiteAlpha.50'
+            px={2}
+            borderRadius='md'
+            border='1px solid rgba(255, 255, 255, 0.08)'
+          >
+            <Box as={X} width='12px' height='12px' marginRight={1.5} />
+            <span style={{ fontSize: '11px' }}>Stop All</span>
+          </Button>
+        </Group>
+      </Group>
+
+      {/* Expand/Collapse Button */}
       <Button
-        onClick={toggleExpandAll}
         size='xs'
-        colorScheme='facebook'
-        variant='outline'
-        rightIcon={
-          expandedIndices.length === Object.keys(configsByContext).length ? (
-            <ChevronUpIcon />
-          ) : (
-            <ChevronDownIcon />
-          )
-        }
+        variant='ghost'
+        onClick={toggleExpandAll}
+        _hover={{ bg: 'whiteAlpha.100' }}
+        height='26px'
+        minWidth='90px'
+        bg='whiteAlpha.50'
+        px={2}
+        borderRadius='md'
+        border='1px solid rgba(255, 255, 255, 0.08)'
       >
-        {expandedIndices.length === Object.keys(configsByContext).length
-          ? 'Collapse All'
-          : 'Expand All'}
+        <span style={{ fontSize: '11px' }}>
+          {expandedIndices.length === Object.keys(configsByContext).length
+            ? 'Collapse All'
+            : 'Expand All'}
+        </span>
+        <Box
+          as={
+            expandedIndices.length === Object.keys(configsByContext).length
+              ? ChevronUp
+              : ChevronDown
+          }
+          width='12px'
+          height='12px'
+          marginLeft={1.5}
+        />
       </Button>
-    </>
+    </Box>
   )
 }
 

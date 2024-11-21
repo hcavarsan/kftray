@@ -1,60 +1,56 @@
 import React, { useEffect, useState } from 'react'
 import { useQuery } from 'react-query'
-import ReactSelect, { ActionMeta, GroupBase, SingleValue } from 'react-select'
+import ReactSelect, { ActionMeta, SingleValue } from 'react-select'
 
-import { InfoIcon } from '@chakra-ui/icons'
 import {
   Button,
-  Center,
-  Divider,
+  Dialog,
   Flex,
-  FormControl,
-  FormLabel,
-  Modal,
-  ModalBody,
-  ModalContent,
-  ModalOverlay,
+  HStack,
   Spinner,
+  Stack,
   Text,
-  Tooltip,
   VStack,
 } from '@chakra-ui/react'
 import { open } from '@tauri-apps/api/dialog'
 import { invoke } from '@tauri-apps/api/tauri'
 
-import { AutoImportModalProps, Config, KubeContext, Option } from '../../types'
-import { customStyles, fetchKubeContexts } from '../AddConfigModal/utils'
-import useCustomToast from '../CustomToast'
+import { fetchKubeContexts } from '@/components/AddConfigModal/utils'
+import { toaster } from '@/components/ui/toaster'
+import {
+  AutoImportModalProps,
+  Config,
+  KubeContext,
+  StringOption,
+} from '@/types'
+
+import { autoImportSelectStyles } from './styles'
 
 const AutoImportModal: React.FC<AutoImportModalProps> = ({
   isOpen,
   onClose,
 }) => {
-  const [selectedContext, setSelectedContext] = useState<Option | null>(null)
-  const [kubeConfig, setKubeConfig] = useState<string>('default')
-  const [isImporting, setIsImporting] = useState(false)
-  const toast = useCustomToast()
+  const [state, setState] = useState({
+    selectedContext: null as SingleValue<StringOption>,
+    kubeConfig: 'default',
+    isImporting: false,
+  })
 
   const contextQuery = useQuery<KubeContext[]>(
-    ['kube-contexts', kubeConfig],
-    () => fetchKubeContexts(kubeConfig),
+    ['kube-contexts', state.kubeConfig],
+    () => fetchKubeContexts(state.kubeConfig),
     {
       enabled: isOpen,
       onError: error => {
         console.error('Error fetching contexts:', error)
-        if (error instanceof Error) {
-          toast({
-            title: 'Error fetching contexts',
-            description: error.message,
-            status: 'error',
-          })
-        } else {
-          toast({
-            title: 'Error fetching contexts',
-            description: 'An unknown error occurred',
-            status: 'error',
-          })
-        }
+        toaster.error({
+          title: 'Error fetching contexts',
+          description:
+            error instanceof Error
+              ? error.message
+              : 'An unknown error occurred',
+          duration: 1000,
+        })
       },
     },
   )
@@ -74,219 +70,275 @@ const AutoImportModal: React.FC<AutoImportModalProps> = ({
           ? selectedPath[0]
           : selectedPath
 
-        setKubeConfig(filePath ?? 'default')
-      } else {
-        console.log('No file selected')
+        setState(prev => ({ ...prev, kubeConfig: filePath ?? 'default' }))
       }
     } catch (error) {
       console.error('Error selecting a file: ', error)
-      setKubeConfig('default')
-      toast({
+      setState(prev => ({ ...prev, kubeConfig: 'default' }))
+      toaster.error({
         title: 'Error',
         description: 'Failed to select kubeconfig file.',
-        status: 'error',
+        duration: 1000,
       })
     }
   }
 
-  const handleSelectChange = (
-    newValue: SingleValue<Option>,
-    { name }: ActionMeta<Option>,
-  ) => {
-    if (name === 'context') {
-      setSelectedContext(newValue)
-    }
-  }
-
   const handleImport = async () => {
-    if (!selectedContext) {
-      toast({
+    if (!state.selectedContext) {
+      toaster.error({
         title: 'Error',
         description: 'Please select a context.',
-        status: 'error',
+        duration: 1000,
       })
 
       return
     }
 
-    setIsImporting(true)
+    setState(prev => ({ ...prev, isImporting: true }))
     try {
       const configs = await invoke<Config[]>('get_services_with_annotations', {
-        contextName: selectedContext.value,
-        kubeconfigPath: kubeConfig,
+        contextName: state.selectedContext.value,
+        kubeconfigPath: state.kubeConfig,
       })
 
       for (const config of configs) {
         await invoke('insert_config_cmd', { config })
       }
 
-      toast({
+      toaster.success({
         title: 'Success',
         description: 'Configs imported successfully.',
-        status: 'success',
+        duration: 1000,
       })
       onClose()
     } catch (error) {
       console.error('Failed to import configs:', error)
-      toast({
+      toaster.error({
         title: 'Error',
         description: 'Failed to import configs.',
-        status: 'error',
+        duration: 1000,
       })
     } finally {
-      setIsImporting(false)
+      setState(prev => ({ ...prev, isImporting: false }))
     }
+  }
+
+  const handleSelectChange = (
+    newValue: SingleValue<StringOption>,
+    _actionMeta: ActionMeta<StringOption>,
+  ) => {
+    setState(prev => ({
+      ...prev,
+      selectedContext: newValue,
+    }))
   }
 
   useEffect(() => {
     if (!isOpen) {
-      setSelectedContext(null)
-      setKubeConfig('default')
+      setState(prev => ({
+        ...prev,
+        selectedContext: null,
+        kubeConfig: 'default',
+      }))
     }
   }, [isOpen])
 
   return (
-    <Center>
-      <Modal isOpen={isOpen} onClose={onClose} size='sm'>
-        <ModalOverlay bg='transparent' />
-        <ModalContent bg='transparent' borderRadius='20px' marginTop='10'>
-          <ModalBody p={0}>
-            <form>
-              <VStack
-                spacing={3}
-                align='inherit'
-                p={4}
-                border='1px'
-                borderColor='gray.700'
-                borderRadius='20px'
-                bg='gray.800'
-                boxShadow={`
-                  inset 0 2px 6px rgba(0, 0, 0, 0.6),
-                  inset 0 -2px 6px rgba(0, 0, 0, 0.6),
-                  inset 0 0 0 4px rgba(45, 60, 81, 0.9)
-                `}
-              >
-                <Flex justifyContent='space-between' alignItems='center'>
-                  <Text fontSize='xs' fontWeight='bold' color='white'>
-                    Auto Import
-                  </Text>
-                  <Button
-                    size='xs'
-                    height='26px'
-                    width='35%'
-                    variant='outline'
-                    onClick={handleSetKubeConfig}
-                    px={4}
-                    borderColor='gray.600'
-                  >
-                    <Tooltip
-                      label={`Current kubeconfig: ${kubeConfig}`}
-                      aria-label='Kubeconfig Details'
-                      placement='top'
-                      hasArrow
-                    >
-                      <Flex align='center'>
-                        <Text fontSize='10px' mr={2}>
-                          Set Kubeconfig
-                        </Text>
-                        <InfoIcon color='gray.500' w={2} h={2} />
-                      </Flex>
-                    </Tooltip>
-                  </Button>
-                </Flex>
-                <Divider />
+    <Dialog.Root open={isOpen} onOpenChange={onClose}>
+      <Dialog.Backdrop
+        bg='transparent'
+        backdropFilter='blur(4px)'
+        borderRadius='lg'
+        height='100vh'
+      />
+      <Dialog.Positioner overflow='hidden'>
+        <Dialog.Content
+          onClick={e => e.stopPropagation()}
+          maxWidth='400px'
+          width='90vw'
+          bg='#111111'
+          borderRadius='lg'
+          border='1px solid rgba(255, 255, 255, 0.08)'
+          overflow='hidden'
+          mt={70}
+        >
+          <Dialog.Header
+            p={1.5}
+            bg='#161616'
+            borderBottom='1px solid rgba(255, 255, 255, 0.05)'
+          >
+            <Text fontSize='sm' fontWeight='medium' color='gray.100'>
+              Auto Import
+            </Text>
+          </Dialog.Header>
 
-                {/* Select Context */}
-                <FormControl isRequired>
-                  <FormLabel htmlFor='context' fontSize='12px' mb='0'>
-                    Context
-                  </FormLabel>
-                  {contextQuery.isLoading ? (
-                    <Flex justifyContent='center' py={2}>
-                      <Spinner size='sm' color='white' />
-                    </Flex>
-                  ) : (
-                    <ReactSelect<Option, false, GroupBase<Option>>
-                      styles={customStyles}
-                      name='context'
-                      options={contextQuery.data?.map(context => ({
-                        name: context.name,
-                        label: context.name,
-                        value: context.name,
-                      }))}
-                      value={selectedContext}
-                      onChange={handleSelectChange}
-                      isClearable
-                      isDisabled={
-                        contextQuery.isLoading || contextQuery.isError
-                      }
-                      placeholder='Select context'
-                      theme={theme => ({
-                        ...theme,
-                        borderRadius: 4,
-                        colors: {
-                          ...theme.colors,
-                          primary25: 'lightgrey',
-                          primary: 'grey',
-                        },
-                      })}
-                    />
-                  )}
-                  {contextQuery.isError && (
-                    <Text color='red.500' fontSize='xs'>
-                      Error: select a valid kubeconfig
-                    </Text>
-                  )}
-                </FormControl>
-
-                {/* Instructions */}
-                <VStack align='start' spacing={2} mt={4} mb={4}>
+          <Dialog.Body p={3}>
+            <Stack gap={4}>
+              <Stack gap={1.5}>
+                <Flex align='center' justify='space-between'>
                   <Text fontSize='xs' color='gray.400'>
-                    - Select a context to automatically import services with the
-                    annotation{' '}
-                    <Text as='span' color='cyan.400' fontWeight='bold'>
+                    Kubeconfig *
+                  </Text>
+                  <Flex gap={2}>
+                    <Button
+                      size='xs'
+                      variant={
+                        state.kubeConfig === 'default' ? 'solid' : 'ghost'
+                      }
+                      onClick={() =>
+                        setState(prev => ({ ...prev, kubeConfig: 'default' }))
+                      }
+                      bg={
+                        state.kubeConfig === 'default'
+                          ? 'whiteAlpha.100'
+                          : 'transparent'
+                      }
+                      _hover={{
+                        bg:
+                          state.kubeConfig === 'default'
+                            ? 'whiteAlpha.200'
+                            : 'whiteAlpha.50',
+                      }}
+                      height='22px'
+                    >
+                      <Text fontSize='xs'>Default</Text>
+                    </Button>
+                    <Button
+                      size='xs'
+                      variant={
+                        state.kubeConfig !== 'default' ? 'solid' : 'ghost'
+                      }
+                      onClick={handleSetKubeConfig}
+                      bg={
+                        state.kubeConfig !== 'default'
+                          ? 'whiteAlpha.100'
+                          : 'transparent'
+                      }
+                      _hover={{
+                        bg:
+                          state.kubeConfig !== 'default'
+                            ? 'whiteAlpha.200'
+                            : 'whiteAlpha.50',
+                      }}
+                      height='22px'
+                    >
+                      <Text fontSize='xs'>Set Custom Kubeconfig</Text>
+                    </Button>
+                  </Flex>
+                </Flex>
+
+                {state.kubeConfig !== 'default' && (
+                  <Flex
+                    bg='#161616'
+                    border='1px solid rgba(255, 255, 255, 0.08)'
+                    borderRadius='md'
+                    height='35px'
+                    align='center'
+                    justify='space-between'
+                    px={2}
+                    _hover={{ borderColor: 'rgba(255, 255, 255, 0.15)' }}
+                  >
+                    <Text
+                      fontSize='xs'
+                      color='gray.300'
+                      truncate
+                      maxW='250px'
+                      title={state.kubeConfig}
+                    >
+                      {state.kubeConfig}
+                    </Text>
+                    <Button
+                      size='xs'
+                      variant='ghost'
+                      onClick={handleSetKubeConfig}
+                      bg='whiteAlpha.50'
+                      _hover={{ bg: 'whiteAlpha.100' }}
+                      height='22px'
+                      minW='70px'
+                    >
+                      Browse
+                    </Button>
+                  </Flex>
+                )}
+                {contextQuery.isError && (
+                  <Text color='red.300' fontSize='xs'>
+                    Please select a valid kubeconfig file
+                  </Text>
+                )}
+              </Stack>
+
+              <Stack gap={1.5}>
+                <Text fontSize='xs' color='gray.400'>
+                  Context *
+                </Text>
+                {contextQuery.isLoading ? (
+                  <Flex justify='center' py={2}>
+                    <Spinner size='sm' color='blue.400' />
+                  </Flex>
+                ) : (
+                  <ReactSelect<StringOption>
+                    options={contextQuery.data?.map(context => ({
+                      label: context.name,
+                      value: context.name,
+                    }))}
+                    value={state.selectedContext}
+                    onChange={handleSelectChange}
+                    styles={autoImportSelectStyles}
+                  />
+                )}
+                {contextQuery.isError && (
+                  <Text color='red.300' fontSize='xs'>
+                    Please select a valid kubeconfig file
+                  </Text>
+                )}
+              </Stack>
+
+              <VStack align='start' gap={2.5} mt={2}>
+                <Text fontSize='xs' color='gray.300'>
+                  Services must have:
+                </Text>
+                <Stack gap={1.5}>
+                  <Text fontSize='xs' color='gray.400'>
+                    • Annotation{' '}
+                    <Text as='span' color='blue.300' fontFamily='mono'>
                       kftray.app/enabled: true
                     </Text>
-                    .
                   </Text>
                   <Text fontSize='xs' color='gray.400'>
-                    - If a service has{' '}
-                    <Text as='span' color='cyan.400' fontWeight='bold'>
-                      kftray.app/configs: &quot;test-9999-http&quot;
+                    • Config format:{' '}
+                    <Text as='span' color='blue.300' fontFamily='mono'>
+                      alias-localPort-targetPort
                     </Text>
-                    , it will use &apos;test&apos; as alias, &apos;9999&apos; as
-                    local port, and &apos;http&apos; as target port.
                   </Text>
-                </VStack>
-
-                {/* Action Buttons */}
-                <Flex justifyContent='flex-end' pt={4} width='100%'>
-                  <Button
-                    onClick={onClose}
-                    size='xs'
-                    height='20px'
-                    variant='outline'
-                    mr={2}
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    height='20px'
-                    colorScheme='blue'
-                    size='xs'
-                    onClick={handleImport}
-                    isLoading={isImporting}
-                    isDisabled={isImporting || !selectedContext}
-                  >
-                    Import
-                  </Button>
-                </Flex>
+                </Stack>
               </VStack>
-            </form>
-          </ModalBody>
-        </ModalContent>
-      </Modal>
-    </Center>
+
+              <HStack justify='flex-end' gap={2} mt={2}>
+                <Button
+                  size='xs'
+                  variant='ghost'
+                  onClick={onClose}
+                  _hover={{ bg: 'whiteAlpha.50' }}
+                  height='28px'
+                >
+                  Cancel
+                </Button>
+                <Button
+                  size='xs'
+                  bg='blue.500'
+                  _hover={{ bg: 'blue.600' }}
+                  onClick={handleImport}
+                  disabled={!state.selectedContext || state.isImporting}
+                  height='28px'
+                >
+                  Import
+                </Button>
+              </HStack>
+            </Stack>
+          </Dialog.Body>
+        </Dialog.Content>
+      </Dialog.Positioner>
+    </Dialog.Root>
   )
 }
 

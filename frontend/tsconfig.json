@@ -10,7 +10,7 @@
     "strict": true,
     "forceConsistentCasingInFileNames": true,
     "module": "ESNext",
-    "moduleResolution": "Node",
+    "moduleResolution": "Bundler",
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
@@ -21,7 +21,7 @@
       "@/*": ["src/*"]
     }
   },
-  "include": ["frontend/src/**/*", "frontend/vite.config.ts"],
-  "exclude": ["frontend/node_modules", "crates", "frontend/dist", "target", "node_modules"],
-  "references": [{ "path": "./tsconfig.node.json" }]
+  "include": ["./src/**/*"],
+  "exclude": ["node_modules", "crates", "dist", "target"],
+   "references": [{ "path": "./tsconfig.node.json" }]
 }
