@@ -63,6 +63,7 @@ export interface GitSyncModalProps {
   setCredentialsSaved: (value: boolean) => void
   setPollingInterval: (value: number) => void
   pollingInterval: number
+  onSuccessfulSave?: () => void
 }
 
 export interface TableProps {
@@ -109,6 +110,7 @@ export interface FooterProps {
   pollingInterval: number
   setSelectedConfigs: (configs: Config[]) => void
   configs: Config[]
+  syncConfigsKey: number
 }
 
 export interface SyncConfigsButtonProps {

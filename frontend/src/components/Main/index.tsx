@@ -50,6 +50,8 @@ const KFTray = () => {
   const [isAlertOpen, setIsAlertOpen] = useState(false)
   const [configToDelete, setConfigToDelete] = useState<number | undefined>()
   const [isAutoImportModalOpen, setIsAutoImportModalOpen] = useState(false)
+  const [syncConfigsKey, setSyncConfigsKey] = useState(0)
+
   const fetchConfigsWithState = useCallback(async () => {
     try {
       const configsResponse = await invoke<Config[]>('get_configs_cmd')
@@ -498,6 +500,10 @@ const KFTray = () => {
     setPollingInterval(value)
   }, [])
 
+  const handleSuccessfulSave = () => {
+    setSyncConfigsKey(prev => prev + 1)
+  }
+
   return (
     <Box
       position='fixed'
@@ -575,6 +581,7 @@ const KFTray = () => {
               pollingInterval={pollingInterval}
               setSelectedConfigs={setSelectedConfigs}
               configs={configs}
+              syncConfigsKey={syncConfigsKey}
             />
           </Box>
         </Box>
@@ -587,6 +594,7 @@ const KFTray = () => {
           credentialsSaved={credentialsSaved}
           setPollingInterval={handleSetPollingInterval}
           pollingInterval={pollingInterval}
+          onSuccessfulSave={handleSuccessfulSave}
         />
 
         <AddConfigModal

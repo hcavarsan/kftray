@@ -27,6 +27,7 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
   setCredentialsSaved,
   setPollingInterval,
   pollingInterval,
+  onSuccessfulSave,
 }) => {
   const [repoUrl, setRepoUrl] = useState('')
   const [configPath, setConfigPath] = useState('')
@@ -152,6 +153,8 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
         description: 'Settings saved successfully',
         duration: 1000,
       })
+
+      onSuccessfulSave?.()
       closeGitSyncModal()
     } catch (error) {
       console.error('Failed to save settings:', error)
@@ -188,13 +191,11 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
           <Dialog.Content
             onClick={e => e.stopPropagation()}
             maxWidth='400px'
-            width='90vw'
             maxHeight='95vh'
             height='100vh'
             bg='#111111'
             borderRadius='lg'
             border='1px solid rgba(255, 255, 255, 0.08)'
-            overflow='auto'
             mt={3}
           >
             <Dialog.Header
@@ -207,14 +208,9 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
               </Text>
             </Dialog.Header>
 
-            <Dialog.Body
-              p={3}
-              position='relative'
-              height='calc(100% - 45px)'
-              overflow='auto'
-            >
+            <Dialog.Body p={3} position='relative' height='calc(100% - 50px)'>
               <form onSubmit={handleSaveSettings}>
-                <Stack gap={4} overflow='auto'>
+                <Stack gap={4}>
                   {/* Repository URL */}
                   <Stack gap={2}>
                     <Text fontSize='xs' color='gray.400'>
@@ -226,9 +222,18 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
                       placeholder='https://github.com/username/repo'
                       bg='#161616'
                       borderColor='rgba(255, 255, 255, 0.08)'
-                      _hover={{ borderColor: 'rgba(255, 255, 255, 0.15)' }}
+                      position='relative'
+                      css={{
+                        '&:hover': {
+                          borderColor: 'rgba(255, 255, 255, 0.20)',
+                          bg: '#161616',
+                          zIndex: 2,
+                        },
+                      }}
                       height='30px'
                       fontSize='12px'
+                      borderRadius='md'
+                      px={2}
                     />
                   </Stack>
 
@@ -243,7 +248,10 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
                       placeholder='path/to/config.json'
                       bg='#161616'
                       borderColor='rgba(255, 255, 255, 0.08)'
-                      _hover={{ borderColor: 'rgba(255, 255, 255, 0.15)' }}
+                      _hover={{
+                        borderColor: 'rgba(255, 255, 255, 0.20)',
+                        bg: '#161616',
+                      }}
                       height='30px'
                       fontSize='12px'
                     />
@@ -296,7 +304,10 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
                         placeholder='Enter your GitHub token'
                         bg='#161616'
                         borderColor='rgba(255, 255, 255, 0.08)'
-                        _hover={{ borderColor: 'rgba(255, 255, 255, 0.15)' }}
+                        _hover={{
+                          borderColor: 'rgba(255, 255, 255, 0.20)',
+                          bg: '#161616',
+                        }}
                         height='30px'
                         fontSize='12px'
                       />

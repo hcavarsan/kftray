@@ -32,6 +32,7 @@ const Footer: React.FC<FooterProps> = ({
   selectedConfigs,
   setSelectedConfigs,
   configs,
+  syncConfigsKey,
 }) => {
   const [logState, setLogState] = useState({
     size: 0,
@@ -201,6 +202,7 @@ const Footer: React.FC<FooterProps> = ({
         </Tooltip>
 
         <SyncConfigsButton
+          key={syncConfigsKey}
           serviceName='kftray'
           accountName='github_config'
           onSyncFailure={handleSyncFailure}
