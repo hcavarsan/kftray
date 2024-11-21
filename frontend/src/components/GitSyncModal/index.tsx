@@ -11,11 +11,12 @@ import {
   Stack,
   Text,
 } from '@chakra-ui/react'
-import { invoke } from '@tauri-apps/api/tauri'
 
 import { Radio, RadioGroup } from '@/components/ui/radio'
 import { toaster } from '@/components/ui/toaster'
 import { Tooltip } from '@/components/ui/tooltip'
+import { useGitSync } from '@/contexts/GitSyncContext'
+import { gitService } from '@/services/gitService'
 import { GitSyncModalProps } from '@/types'
 
 type AuthMethod = 'none' | 'system' | 'token'
@@ -23,97 +24,42 @@ type AuthMethod = 'none' | 'system' | 'token'
 const GitSyncModal: React.FC<GitSyncModalProps> = ({
   isGitSyncModalOpen,
   closeGitSyncModal,
-  credentialsSaved,
-  setCredentialsSaved,
-  setPollingInterval,
-  pollingInterval,
-  onSuccessfulSave,
 }) => {
-  const [repoUrl, setRepoUrl] = useState('')
-  const [configPath, setConfigPath] = useState('')
-  const [authMethod, setAuthMethod] = useState<AuthMethod>('none')
-  const [gitToken, setGitToken] = useState('')
-  const [isLoading, setIsLoading] = useState(false)
+  const {
+    credentials,
+    isLoading,
+    saveCredentials,
+    deleteCredentials,
+    updatePollingInterval,
+    syncStatus,
+  } = useGitSync()
+
+  const [formState, setFormState] = useState(() => ({
+    repoUrl: credentials?.repoUrl || '',
+    configPath: credentials?.configPath || '',
+    authMethod: (credentials?.authMethod || 'none') as AuthMethod,
+    gitToken: credentials?.token || '',
+    pollingInterval: syncStatus.pollingInterval || 60,
+  }))
+
   const [isImportAlertOpen, setIsImportAlertOpen] = useState(false)
 
-  const serviceName = 'kftray'
-  const accountName = 'github_config'
-
   useEffect(() => {
-    let isComponentMounted = true
-
-    async function getCredentials() {
-      if (!isGitSyncModalOpen) {
-        return
-      }
-
-      setIsLoading(true)
-      try {
-        const credentialsString = await invoke<string>('get_key', {
-          service: serviceName,
-          name: accountName,
-        })
-
-        if (typeof credentialsString === 'string' && isComponentMounted) {
-          const credentials = JSON.parse(credentialsString)
-
-          setRepoUrl(credentials.repoUrl || '')
-          setConfigPath(credentials.configPath || '')
-          setAuthMethod(credentials.authMethod || 'none')
-          setGitToken(credentials.token || '')
-          setPollingInterval(credentials.pollingInterval || 60)
-          setCredentialsSaved(true)
-        }
-      } catch (error) {
-        console.error('Failed to get git config:', error)
-      } finally {
-        if (isComponentMounted) {
-          setIsLoading(false)
-        }
-      }
+    if (isGitSyncModalOpen && credentials) {
+      setFormState(prev => ({
+        ...prev,
+        repoUrl: credentials.repoUrl,
+        configPath: credentials.configPath,
+        authMethod: credentials.authMethod,
+        gitToken: credentials.token || '',
+      }))
     }
+  }, [isGitSyncModalOpen, credentials])
 
-    getCredentials()
-
-    return () => {
-      isComponentMounted = false
-    }
-  }, [isGitSyncModalOpen, setCredentialsSaved, setPollingInterval])
-
-  const handleDeleteGitConfig = async () => {
-    setIsLoading(true)
-    try {
-      await invoke('delete_key', {
-        service: serviceName,
-        name: accountName,
-      })
-
-      setRepoUrl('')
-      setConfigPath('')
-      setAuthMethod('none')
-      setPollingInterval(0)
-      setGitToken('')
-
-      setCredentialsSaved(false)
-      closeGitSyncModal()
-      toaster.success({
-        title: 'Success',
-        description: 'Git configuration deleted successfully',
-        duration: 1000,
-      })
-    } catch (error) {
-      console.error('Failed to delete git config:', error)
-      toaster.error({
-        title: 'Error deleting git configuration',
-        description:
-          error instanceof Error ? error.message : 'An unknown error occurred',
-        duration: 1000,
-      })
-    } finally {
-      setIsLoading(false)
-    }
+  const handlePollingIntervalChange = (value: number) => {
+    setFormState(prev => ({ ...prev, pollingInterval: value }))
+    updatePollingInterval(value)
   }
-
   const handleSaveSettings = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
     setIsImportAlertOpen(true)
@@ -121,61 +67,55 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
 
   const onConfirmImport = async () => {
     setIsImportAlertOpen(false)
-    setIsLoading(true)
-
-    const credentials = {
-      repoUrl,
-      configPath,
-      authMethod,
-      token: authMethod === 'token' ? gitToken : '',
-      pollingInterval,
-      flush: true,
-    }
-
     try {
-      await invoke('import_configs_from_github', {
-        repoUrl,
-        configPath,
-        useSystemCredentials: authMethod === 'system',
-        flush: true,
-        githubToken: authMethod === 'token' ? gitToken : null,
-      })
+      const newCredentials = {
+        ...formState,
+        token: formState.authMethod === 'token' ? formState.gitToken : '',
+      }
 
-      await invoke('store_key', {
-        service: serviceName,
-        name: accountName,
-        password: JSON.stringify(credentials),
-      })
+      await gitService.importConfigs(newCredentials)
 
-      setCredentialsSaved(true)
+      await saveCredentials(newCredentials)
+
       toaster.success({
         title: 'Success',
-        description: 'Settings saved successfully',
-        duration: 1000,
+        description:
+          'Configurations imported and credentials saved successfully',
+        duration: 2000,
       })
 
-      onSuccessfulSave?.()
       closeGitSyncModal()
     } catch (error) {
-      console.error('Failed to save settings:', error)
-      toaster.error({
-        title: 'Error saving settings',
-        description:
-          error instanceof Error ? error.message : 'An unknown error occurred',
-        duration: 1000,
-      })
-    } finally {
-      setIsLoading(false)
+      handleError(error)
+    }
+  }
+
+  const handleDeleteConfig = async () => {
+    try {
+      await deleteCredentials()
+      closeGitSyncModal()
+    } catch (error) {
+      handleError(error)
     }
   }
 
   const handleAuthMethodChange = (event: React.FormEvent<HTMLDivElement>) => {
     const value = (event.target as HTMLInputElement).value as AuthMethod
 
-    setAuthMethod(value)
+    setFormState(prev => ({ ...prev, authMethod: value }))
     if (value !== 'token') {
-      setGitToken('')
+      setFormState(prev => ({ ...prev, gitToken: '' }))
     }
+  }
+
+  const handleError = (error: unknown) => {
+    console.error('Failed to save settings:', error)
+    toaster.error({
+      title: 'Error saving settings',
+      description:
+        error instanceof Error ? error.message : 'An unknown error occurred',
+      duration: 1000,
+    })
   }
 
   return (
@@ -217,8 +157,13 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
                       GitHub Repository URL
                     </Text>
                     <Input
-                      value={repoUrl}
-                      onChange={e => setRepoUrl(e.target.value)}
+                      value={formState.repoUrl}
+                      onChange={e =>
+                        setFormState(prev => ({
+                          ...prev,
+                          repoUrl: e.target.value,
+                        }))
+                      }
                       placeholder='https://github.com/username/repo'
                       bg='#161616'
                       borderColor='rgba(255, 255, 255, 0.08)'
@@ -243,8 +188,13 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
                       Config Path
                     </Text>
                     <Input
-                      value={configPath}
-                      onChange={e => setConfigPath(e.target.value)}
+                      value={formState.configPath}
+                      onChange={e =>
+                        setFormState(prev => ({
+                          ...prev,
+                          configPath: e.target.value,
+                        }))
+                      }
                       placeholder='path/to/config.json'
                       bg='#161616'
                       borderColor='rgba(255, 255, 255, 0.08)'
@@ -271,7 +221,7 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
                       border='1px solid rgba(255, 255, 255, 0.08)'
                     >
                       <RadioGroup
-                        value={authMethod}
+                        value={formState.authMethod}
                         onChange={handleAuthMethodChange}
                         size='xs'
                       >
@@ -296,11 +246,16 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
                     </Stack>
 
                     {/* Token Input (only shown when token auth is selected) */}
-                    {authMethod === 'token' && (
+                    {formState.authMethod === 'token' && (
                       <Input
                         type='password'
-                        value={gitToken}
-                        onChange={e => setGitToken(e.target.value)}
+                        value={formState.gitToken}
+                        onChange={e =>
+                          setFormState(prev => ({
+                            ...prev,
+                            gitToken: e.target.value,
+                          }))
+                        }
                         placeholder='Enter your GitHub token'
                         bg='#161616'
                         borderColor='rgba(255, 255, 255, 0.08)'
@@ -319,19 +274,20 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
                       Polling Interval (minutes)
                     </Text>
                     <Tooltip
-                      content={`${pollingInterval} minutes`}
+                      content={`${formState.pollingInterval} minutes`}
                       positioning={{
                         placement: 'bottom-start',
                       }}
+                      open={true}
                     >
                       <Box>
                         <Slider.Root
-                          value={[pollingInterval]}
+                          value={[formState.pollingInterval]}
                           min={0}
                           max={120}
                           step={5}
-                          onValueChange={(details: { value: number[] }) =>
-                            setPollingInterval(details.value[0])
+                          onValueChange={details =>
+                            handlePollingIntervalChange(details.value[0])
                           }
                         >
                           <Slider.Control>
@@ -366,11 +322,11 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
                   >
                     <Flex justify='space-between' width='100%'>
                       <Box>
-                        {credentialsSaved && (
+                        {credentials && (
                           <Button
                             size='xs'
                             variant='ghost'
-                            onClick={handleDeleteGitConfig}
+                            onClick={handleDeleteConfig}
                             color='red.300'
                             _hover={{ bg: 'whiteAlpha.50' }}
                             height='28px'
@@ -397,9 +353,10 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
                           _hover={{ bg: 'blue.600' }}
                           disabled={
                             isLoading ||
-                            !repoUrl ||
-                            !configPath ||
-                            (authMethod === 'token' && !gitToken)
+                            !formState.repoUrl ||
+                            !formState.configPath ||
+                            (formState.authMethod === 'token' &&
+                              !formState.gitToken)
                           }
                           height='28px'
                         >

@@ -1,110 +1,73 @@
-import React, { useCallback, useState } from 'react'
+import React, { useCallback, useMemo, useRef, useState } from 'react'
+import debounce from 'lodash/debounce'
 import { RepeatIcon } from 'lucide-react'
 
 import { Box, Button, Spinner, Text } from '@chakra-ui/react'
-import { invoke } from '@tauri-apps/api/tauri'
 
-import { toaster } from '@/components/ui/toaster'
 import { Tooltip } from '@/components/ui/tooltip'
-import { useGitCredentials } from '@/hooks/useGitCredentials'
-import { GitConfig, SyncConfigsButtonProps } from '@/types'
+import { useGitSync } from '@/contexts/GitSyncContext'
+import { SyncConfigsButtonProps } from '@/types'
 
-const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
-  serviceName,
-  accountName,
+const SYNC_DEBOUNCE_MS = 1000
+const MAX_RETRIES = 3
+
+export const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
   onSyncFailure,
-  credentialsSaved,
-  setCredentialsSaved,
-  isGitSyncModalOpen,
+  onSyncComplete,
 }) => {
-  const [syncState, setSyncState] = useState({
-    lastSync: null as string | null,
-    nextSync: null as string | null,
-  })
+  const {
+    credentials,
+    syncStatus,
+    lastSync,
+    nextSync,
+    syncConfigs
+  } = useGitSync()
 
-  const handleSyncError = useCallback(
-    (error: unknown) => {
-      if (!String(error).includes('No matching entry')) {
-        onSyncFailure?.(
-          error instanceof Error ? error : new Error(String(error)),
-        )
-        toaster.error({
-          title: 'Error syncing configs',
-          description: error instanceof Error ? error.message : String(error),
-          duration: 1000,
-        })
+  const retryCount = useRef(0)
+  const [isSyncing, setIsSyncing] = useState(false)
+
+  const handleSync = useCallback(async () => {
+    try {
+      await syncConfigs()
+      retryCount.current = 0
+      onSyncComplete?.()
+    } catch (error) {
+      if (retryCount.current < MAX_RETRIES) {
+        retryCount.current++
+        await handleSync()
+      } else {
+        retryCount.current = 0
+        onSyncFailure(error instanceof Error ? error : new Error(String(error)))
       }
-    },
-    [onSyncFailure],
-  )
-
-  const { credentials, isLoading, setIsLoading } = useGitCredentials(
-    serviceName,
-    accountName,
-    isGitSyncModalOpen,
-    handleSyncError,
-    setCredentialsSaved,
-  )
-
-  const syncConfigs = useCallback(
-    async (credentials: GitConfig) => {
-      if (!credentials) {
-        return
-      }
-
-      try {
-        await invoke('import_configs_from_github', {
-          repoUrl: credentials.repoUrl,
-          configPath: credentials.configPath,
-          useSystemCredentials: credentials.authMethod === 'system',
-          flush: true,
-          githubToken:
-            credentials.authMethod === 'token' ? credentials.token : null,
-        })
-
-        const now = new Date()
-        const lastSyncDate = now.toLocaleTimeString()
-        const nextSyncDate = new Date(
-          now.getTime() + credentials.pollingInterval * 60000,
-        ).toLocaleTimeString()
-
-        setSyncState({
-          lastSync: lastSyncDate,
-          nextSync: nextSyncDate,
-        })
-
-        toaster.success({
-          title: 'Success',
-          description: 'Configs synced successfully',
-          duration: 1000,
-        })
-      } catch (error) {
-        handleSyncError(error)
-      }
-    },
-    [handleSyncError],
-  )
-
-  const handleSyncConfigs = useCallback(async () => {
-    if (!credentials) {
-      return
     }
+  }, [syncConfigs, onSyncComplete, onSyncFailure])
 
-    setIsLoading(true)
-    await syncConfigs(credentials)
-    setIsLoading(false)
-  }, [credentials, setIsLoading, syncConfigs])
+  const debouncedSync = useMemo(
+    () => debounce(async () => {
+      await handleSync()
+      setIsSyncing(false)
+    }, SYNC_DEBOUNCE_MS),
+    [handleSync]
+  )
+
+  const handleClick = useCallback(() => {
+    if (!isSyncing) {
+      setIsSyncing(true)
+      debouncedSync()
+    }
+  }, [debouncedSync, isSyncing])
+
   const tooltipContent = (
     <Box fontSize='xs' lineHeight='tight'>
-      {credentialsSaved ? (
+      {credentials ? (
         <>
           <Text>Github Sync Enabled</Text>
-          <Text>Repo URL: {credentials?.repoUrl}</Text>
-          <Text>Config Path: {credentials?.configPath}</Text>
-          <Text>Auth Method: {credentials?.authMethod}</Text>
-          <Text>Polling Interval: {credentials?.pollingInterval} minutes</Text>
-          <Text>Last Sync: {syncState.lastSync ?? ''}</Text>
-          <Text>Next Sync: {syncState.nextSync ?? ''}</Text>
+          <Text>Repo URL: {credentials.repoUrl}</Text>
+          <Text>Config Path: {credentials.configPath}</Text>
+          <Text>Auth Method: {credentials.authMethod}</Text>
+          <Text>Polling Interval: {syncStatus.pollingInterval} minutes</Text>
+          <Text>Last Sync: {lastSync ?? ''}</Text>
+          <Text>Next Sync: {nextSync ?? ''}</Text>
         </>
       ) : (
         <Text>Github Sync Disabled</Text>
@@ -116,17 +79,13 @@ const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
     <Tooltip
       content={tooltipContent}
       portalled
-      positioning={{
-        strategy: 'absolute',
-        placement: 'top-end',
-        offset: { mainAxis: 8, crossAxis: 0 },
-      }}
+      positioning={{ placement: 'top-start' }}
     >
       <Button
         size='sm'
         variant='ghost'
-        onClick={handleSyncConfigs}
-        disabled={!credentialsSaved || isLoading}
+        onClick={handleClick}
+        disabled={!credentials || isSyncing}
         height='32px'
         minWidth='70px'
         bg='whiteAlpha.50'
@@ -137,16 +96,15 @@ const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
         _active={{ bg: 'whiteAlpha.200' }}
       >
         <Box display='flex' alignItems='center' gap={1}>
-          {isLoading ? (
+          {isSyncing ? (
             <Spinner size='sm' />
           ) : (
-            <Box as={RepeatIcon} width='12px' height='12px' />
+		  <Box as={RepeatIcon} width='12px' height='12px' />
           )}
           <Box fontSize='11px'>Sync</Box>
-        </Box>
+	  </Box>
       </Button>
     </Tooltip>
   )
 }
-
 export default SyncConfigsButton

@@ -97,6 +97,13 @@ export interface PortForwardRowProps {
   isStopping: boolean
 }
 
+export interface SyncStatus {
+  lastSyncTime: number | null
+  isSuccessful: boolean
+  pollingInterval: number
+  isSyncing: boolean
+}
+
 export interface FooterProps {
   openModal: () => void
   openGitSyncModal: () => void
@@ -110,18 +117,21 @@ export interface FooterProps {
   pollingInterval: number
   setSelectedConfigs: (configs: Config[]) => void
   configs: Config[]
-  syncConfigsKey: number
+  syncStatus: SyncStatus
+  onSyncComplete: () => void
 }
 
 export interface SyncConfigsButtonProps {
   serviceName: string
   accountName: string
-  onSyncFailure?: (error: Error) => void
+  onSyncFailure: (error: Error) => void
   credentialsSaved: boolean
   setCredentialsSaved: (value: boolean) => void
   isGitSyncModalOpen: boolean
   setPollingInterval: (value: number) => void
   pollingInterval: number
+  syncStatus: SyncStatus
+  onSyncComplete?: () => void
 }
 
 export interface Namespace {

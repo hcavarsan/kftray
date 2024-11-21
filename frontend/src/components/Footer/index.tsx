@@ -32,7 +32,8 @@ const Footer: React.FC<FooterProps> = ({
   selectedConfigs,
   setSelectedConfigs,
   configs,
-  syncConfigsKey,
+  syncStatus,
+  onSyncComplete,
 }) => {
   const [logState, setLogState] = useState({
     size: 0,
@@ -200,9 +201,7 @@ const Footer: React.FC<FooterProps> = ({
             </Box>
           </Button>
         </Tooltip>
-
         <SyncConfigsButton
-          key={syncConfigsKey}
           serviceName='kftray'
           accountName='github_config'
           onSyncFailure={handleSyncFailure}
@@ -211,6 +210,8 @@ const Footer: React.FC<FooterProps> = ({
           isGitSyncModalOpen={isGitSyncModalOpen}
           setPollingInterval={setPollingInterval}
           pollingInterval={pollingInterval}
+          syncStatus={syncStatus}
+          onSyncComplete={onSyncComplete}
         />
       </Group>
 
