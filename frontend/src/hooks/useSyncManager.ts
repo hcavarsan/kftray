@@ -29,6 +29,8 @@ export function useSyncManager({
   }, [])
 
   const syncConfigs = useCallback(async () => {
+    updateSyncStatus({ isSyncing: true })
+
     try {
       const credentials = await gitService.getCredentials(
         'kftray',
@@ -43,17 +45,18 @@ export function useSyncManager({
       updateSyncStatus({
         lastSyncTime: Date.now(),
         isSuccessful: true,
+        isSyncing: false,
       })
       onSyncComplete()
     } catch (error) {
       updateSyncStatus({
         isSuccessful: false,
+        isSyncing: false,
       })
       onSyncFailure(error instanceof Error ? error : new Error('Sync failed'))
     }
   }, [onSyncFailure, onSyncComplete, updateSyncStatus])
 
-  // Setup polling effect
   useEffect(() => {
     if (!credentialsSaved || syncStatus.pollingInterval <= 0) {
       return

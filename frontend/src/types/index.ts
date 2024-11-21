@@ -99,8 +99,8 @@ export interface PortForwardRowProps {
 
 export interface SyncStatus {
   lastSyncTime: number | null
-  isSuccessful: boolean
   pollingInterval: number
+  isSuccessful: boolean
   isSyncing: boolean
 }
 

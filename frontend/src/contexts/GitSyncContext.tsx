@@ -87,8 +87,6 @@ export const GitSyncProvider: React.FC<{ children: React.ReactNode }> = ({
         CREDENTIALS_CACHE_KEY,
         JSON.stringify(newCredentials),
       )
-    } catch (error) {
-      throw error
     } finally {
       setIsLoading(false)
     }
