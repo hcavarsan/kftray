@@ -1,200 +1,182 @@
-import React from 'react'
+import React, { useMemo } from 'react'
+import { InfoIcon, RepeatIcon } from 'lucide-react'
 
-import { InfoIcon, RepeatIcon } from '@chakra-ui/icons'
 import {
-  AccordionButton,
-  AccordionIcon,
-  AccordionItem,
-  AccordionPanel,
   Box,
-  Checkbox,
   Flex,
-  Icon,
-  Progress,
-  Table,
-  Tag,
-  Tbody,
-  Text,
-  Th,
-  Thead,
-  Tooltip,
-  Tr,
-  useColorModeValue,
+  TableBody,
+  TableColumnHeader,
+  TableHeader,
+  TableRoot,
 } from '@chakra-ui/react'
 
-import { ContextsAccordionProps } from '../../../types'
-
-import PortForwardRow from './PortForwardRow'
+import PortForwardRow from '@/components/PortForwardTable/ContextsAccordion/PortForwardRow'
+import {
+  AccordionItem,
+  AccordionItemContent,
+  AccordionItemTrigger,
+} from '@/components/ui/accordion'
+import { Checkbox } from '@/components/ui/checkbox'
+import { ProgressBar, ProgressRoot } from '@/components/ui/progress'
+import { Tooltip } from '@/components/ui/tooltip'
+import { ContextsAccordionProps } from '@/types'
 
 const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
   context,
   contextConfigs,
   selectedConfigs,
+  handleSelectionChange,
+  handleCheckboxChange,
+  isInitiating,
+  setIsInitiating,
+  isStopping,
   handleDeleteConfig,
   confirmDeleteConfig,
   handleEditConfig,
   isAlertOpen,
   setIsAlertOpen,
-  handleSelectionChange,
-  selectedConfigsByContext,
-  handleCheckboxChange,
-  isInitiating,
-  setIsInitiating,
-  isStopping,
 }) => {
-  const bg = useColorModeValue('gray.50', 'gray.700')
-  const accordionBg = useColorModeValue('gray.100', 'gray.800')
-  const borderColor = useColorModeValue('gray.200', 'gray.700')
-  const textColor = useColorModeValue('gray.800', 'white')
-  const boxShadow = useColorModeValue('base', 'lg')
-  const fontFamily = '\'Inter\', sans-serif'
+  const isContextSelected = useMemo(() => {
+    const selectableConfigs = contextConfigs.filter(
+      config => !config.is_running,
+    )
+
+    if (selectableConfigs.length === 0) {
+      return false
+    }
+
+    return selectableConfigs.every(config =>
+      selectedConfigs.some(selected => selected.id === config.id),
+    )
+  }, [contextConfigs, selectedConfigs])
 
   const contextRunningCount = contextConfigs.filter(
     config => config.is_running,
   ).length
   const contextTotalCount = contextConfigs.length
-  const contextTagColorScheme = contextRunningCount > 0 ? 'facebook' : 'gray'
   const contextProgressValue = (contextRunningCount / contextTotalCount) * 100
+  const columns = [
+    { width: '40%', label: 'Alias' },
+    { width: '20%', label: 'Port' },
+    { width: '20%', label: 'Status' },
+    { width: '20%', label: 'Actions' },
+  ]
 
   return (
-    <AccordionItem key={context} border='none'>
-      <AccordionButton
-        bg={accordionBg}
-        mt={2}
-        borderRadius='lg'
-        border='1px'
-        borderColor={borderColor}
-        boxShadow='lg'
-        _hover={{ bg: bg }}
-        _expanded={{ bg: accordionBg, boxShadow: 'lg' }}
-        width='full'
-        fontSize='10px'
-      >
-        <Box flex='1' textAlign='left' fontSize='sm' color={textColor}>
-          <div onClick={event => event.stopPropagation()}>
-            <Checkbox
-              size='sm'
-              isChecked={
-                selectedConfigsByContext[context] ||
-                contextConfigs.every(config => config.is_running)
-              }
-              onChange={event => {
-                event.stopPropagation()
-                handleCheckboxChange(
-                  context,
-                  !selectedConfigsByContext[context],
-                )
-              }}
-              onClick={event => event.stopPropagation()}
-              isDisabled={contextConfigs.every(config => config.is_running)}
-            >
-              <Tag
-                size='sm'
-                colorScheme='facebook'
-                mr={2}
-                p={1.5}
-                fontWeight='semibold'
-                fontSize='xs'
-                borderRadius='lg'
-                borderWidth='0px'
-              >
-                {context}
-              </Tag>
-            </Checkbox>
-          </div>
-        </Box>
-
-        <Flex alignItems='center'>
-          <Tooltip
-            hasArrow
-            label={`${contextRunningCount} running out of ${contextTotalCount} total`}
-            bg='gray.300'
-            fontSize='xs'
-            lineHeight='tight'
-          >
-            <Tag
-              size='sm'
-              colorScheme={contextTagColorScheme}
-              borderRadius='full'
-              mr={2}
-            >
-              <Flex alignItems='center' justifyContent='center' width='100%'>
-                {contextRunningCount > 0 ? (
-                  <Icon as={RepeatIcon} />
-                ) : (
-                  <Icon as={InfoIcon} />
-                )}
-              </Flex>
-            </Tag>
-          </Tooltip>
-          <Progress
-            value={contextProgressValue}
-            size='xs'
-            colorScheme={contextTagColorScheme}
-            borderRadius='lg'
-            width='50px'
-          />
-        </Flex>
-
-        <AccordionIcon color={textColor} />
-      </AccordionButton>
-      <AccordionPanel pb={4} borderColor={borderColor} fontFamily={fontFamily}>
-        {contextConfigs.length > 0 ? (
-          <Flex direction='column' width='100%' mt={0} p={0}>
-            <Box>
-              <Table
-                variant='simple'
-                size='sm'
-                border='none'
-                style={{ tableLayout: 'fixed' }}
-              >
-                <Thead>
-                  <Tr boxShadow={boxShadow}>
-                    <Th fontFamily={fontFamily} fontSize='10px' width='40%'>
-                      Alias
-                    </Th>
-                    <Th fontFamily={fontFamily} fontSize='10px'>
-                      Port
-                    </Th>
-                    <Th fontFamily={fontFamily} fontSize='10px'>
-                      On/Off
-                    </Th>
-                    <Th fontFamily={fontFamily} fontSize='10px'>
-                      Action
-                    </Th>
-                  </Tr>
-                </Thead>
-                <Tbody width='full'>
-                  {contextConfigs.map(config => (
-                    <PortForwardRow
-                      key={config.id}
-                      config={config}
-                      handleDeleteConfig={handleDeleteConfig}
-                      confirmDeleteConfig={confirmDeleteConfig}
-                      handleEditConfig={handleEditConfig}
-                      isAlertOpen={isAlertOpen}
-                      selected={selectedConfigs.some(
-                        selectedConfig => selectedConfig.id === config.id,
-                      )}
-                      onSelectionChange={isSelected =>
-                        handleSelectionChange(config, isSelected)
-                      }
-                      setIsAlertOpen={setIsAlertOpen}
-                      isInitiating={isInitiating}
-                      setIsInitiating={setIsInitiating}
-                      isStopping={isStopping}
-                    />
-                  ))}
-                </Tbody>
-              </Table>
+    <AccordionItem value={context} className='accordion-item'>
+      <AccordionItemTrigger className='accordion-trigger'>
+        <div className='accordion-header'>
+          <div className='checkbox-wrapper'>
+            <Box onClick={e => e.stopPropagation()}>
+              <Checkbox
+                className='checkbox'
+                size='xs'
+                checked={isContextSelected}
+                onCheckedChange={e =>
+                  handleCheckboxChange(context, e.checked === true)
+                }
+                disabled={contextConfigs.every(config => config.is_running)}
+              />
             </Box>
+            <span className='context-tag'>{context}</span>
+          </div>
+
+          <Flex align='center' gap={2}>
+            <Tooltip
+              content={`${contextRunningCount} running out of ${contextTotalCount} total`}
+            >
+              <span className='status-tag'>
+                {contextRunningCount > 0 ? (
+                  <RepeatIcon className='status-icon animate-spin' />
+                ) : (
+                  <InfoIcon className='status-icon' />
+                )}
+                <span>
+                  {contextRunningCount}/{contextTotalCount}
+                </span>
+              </span>
+            </Tooltip>
+            <ProgressRoot
+              value={contextProgressValue}
+              css={{
+                width: '40px',
+                height: '3px',
+                backgroundColor: 'rgba(255, 255, 255, 0.1)',
+                borderRadius: '2px',
+              }}
+            >
+              <ProgressBar
+                css={{
+                  height: '100%',
+                  width: `${contextProgressValue}%`,
+                  transition: 'all 0.2s ease-in-out',
+                  backgroundColor:
+                    contextProgressValue === 100
+                      ? 'rgb(59, 130, 246)'
+                      : contextProgressValue > 0
+                        ? 'rgba(59, 130, 246, 0.8)'
+                        : 'rgba(255, 255, 255, 0.2)',
+                }}
+              />
+            </ProgressRoot>
           </Flex>
-        ) : (
-          <Flex justify='center' p={6}>
-            <Text>No Configurations Found for {context}</Text>
-          </Flex>
-        )}
-      </AccordionPanel>
+        </div>
+      </AccordionItemTrigger>
+      <AccordionItemContent>
+        <Box
+          width='100%'
+          px={1}
+          py={0.5}
+          bg='rgba(22, 22, 22, 0.5)'
+          borderRadius='md'
+          border='none'
+        >
+          <TableRoot
+            size='sm'
+            variant='outline'
+            border='none'
+            borderRadius='md'
+            interactive
+            className='table-root'
+          >
+            <TableHeader>
+              <tr>
+                {columns.map(column => (
+                  <TableColumnHeader
+                    key={column.label}
+                    className={`table-header-cell ${column.label === 'Alias' ? 'table-header-cell-alias' : ''}`}
+                    style={{ width: column.width }}
+                  >
+                    {column.label}
+                  </TableColumnHeader>
+                ))}
+              </tr>
+            </TableHeader>
+            <TableBody border='none'>
+              {contextConfigs.map(config => (
+                <PortForwardRow
+                  key={config.id}
+                  config={config}
+                  handleDeleteConfig={handleDeleteConfig}
+                  confirmDeleteConfig={confirmDeleteConfig}
+                  handleEditConfig={handleEditConfig}
+                  isAlertOpen={isAlertOpen}
+                  selected={selectedConfigs.some(
+                    selectedConfig => selectedConfig.id === config.id,
+                  )}
+                  onSelectionChange={isSelected =>
+                    handleSelectionChange(config, isSelected)
+                  }
+                  setIsAlertOpen={setIsAlertOpen}
+                  isInitiating={isInitiating}
+                  setIsInitiating={setIsInitiating}
+                  isStopping={isStopping}
+                />
+              ))}
+            </TableBody>
+          </TableRoot>
+        </Box>
+      </AccordionItemContent>
     </AccordionItem>
   )
 }
