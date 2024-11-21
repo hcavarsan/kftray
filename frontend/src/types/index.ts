@@ -33,13 +33,16 @@ export interface Response {
   stderr: string
 }
 
+export type AuthMethod = 'none' | 'system' | 'token'
+
 export interface GitConfig {
   repoUrl: string
   configPath: string
-  isPrivate: boolean
+  authMethod: AuthMethod
+  token?: string
+  isPrivate?: boolean
   pollingInterval: number
-  token: string
-  flush: boolean
+  flush?: boolean
 }
 
 export interface ConfigProps {

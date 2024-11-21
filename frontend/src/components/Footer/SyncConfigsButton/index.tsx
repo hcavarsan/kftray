@@ -53,7 +53,15 @@ const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
       }
 
       try {
-        await invoke('import_configs_from_github', credentials)
+        await invoke('import_configs_from_github', {
+          repoUrl: credentials.repoUrl,
+          configPath: credentials.configPath,
+          useSystemCredentials: credentials.authMethod === 'system',
+          flush: false,
+          githubToken:
+            credentials.authMethod === 'token' ? credentials.token : null,
+        })
+
         const now = new Date()
         const lastSyncDate = now.toLocaleTimeString()
         const nextSyncDate = new Date(
