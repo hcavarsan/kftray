@@ -33,13 +33,16 @@ export interface Response {
   stderr: string
 }
 
+export type AuthMethod = 'none' | 'system' | 'token'
+
 export interface GitConfig {
   repoUrl: string
   configPath: string
-  isPrivate: boolean
+  authMethod: AuthMethod
+  token?: string
+  isPrivate?: boolean
   pollingInterval: number
-  token: string
-  flush: boolean
+  flush?: boolean
 }
 
 export interface ConfigProps {
@@ -60,6 +63,7 @@ export interface GitSyncModalProps {
   setCredentialsSaved: (value: boolean) => void
   setPollingInterval: (value: number) => void
   pollingInterval: number
+  onSuccessfulSave?: () => void
 }
 
 export interface TableProps {
@@ -93,6 +97,13 @@ export interface PortForwardRowProps {
   isStopping: boolean
 }
 
+export interface SyncStatus {
+  lastSyncTime: number | null
+  pollingInterval: number
+  isSuccessful: boolean
+  isSyncing: boolean
+}
+
 export interface FooterProps {
   openModal: () => void
   openGitSyncModal: () => void
@@ -106,17 +117,21 @@ export interface FooterProps {
   pollingInterval: number
   setSelectedConfigs: (configs: Config[]) => void
   configs: Config[]
+  syncStatus: SyncStatus
+  onSyncComplete: () => void
 }
 
 export interface SyncConfigsButtonProps {
   serviceName: string
   accountName: string
-  onSyncFailure?: (error: Error) => void
+  onSyncFailure: (error: Error) => void
   credentialsSaved: boolean
   setCredentialsSaved: (value: boolean) => void
   isGitSyncModalOpen: boolean
   setPollingInterval: (value: number) => void
   pollingInterval: number
+  syncStatus: SyncStatus
+  onSyncComplete?: () => void
 }
 
 export interface Namespace {
