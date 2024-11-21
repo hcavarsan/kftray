@@ -12,7 +12,8 @@ import Footer from '@/components/Footer'
 import GitSyncModal from '@/components/GitSyncModal'
 import PortForwardTable from '@/components/PortForwardTable'
 import { toaster } from '@/components/ui/toaster'
-import { Config, Response } from '@/types'
+import { useSyncManager } from '@/hooks/useSyncManager'
+import { Config } from '@/types'
 
 const initialRemotePort = 0
 const initialLocalPort = 0
@@ -470,7 +471,7 @@ const KFTray = () => {
       } else {
         const errorMessages = responses
         .filter(res => res.status !== initialStatus)
-        .map(res => `${res.service}: ${res.stderr}`)
+        .map(res => `${res.status}: ${res.statusText}`)
         .join(', ')
 
         toaster.error({
@@ -494,9 +495,34 @@ const KFTray = () => {
     setCredentialsSaved(value)
   }, [])
 
-  const handleSetPollingInterval = useCallback((value: number) => {
-    setPollingInterval(value)
+  const handleSyncComplete = useCallback(() => {
+    updateConfigsWithState()
+  }, [updateConfigsWithState])
+
+  const handleSyncFailure = useCallback((error: Error) => {
+    console.error('Sync failed:', error)
+    toaster.error({
+      title: 'Sync Failed',
+      description: error.message,
+      duration: 3000,
+    })
   }, [])
+
+  const { syncStatus, updateSyncStatus } = useSyncManager({
+    onSyncFailure: handleSyncFailure,
+    onSyncComplete: handleSyncComplete,
+    credentialsSaved,
+  })
+
+  const handleSetPollingInterval = useCallback(
+    (value: number) => {
+      setPollingInterval(value)
+      updateSyncStatus({
+        pollingInterval: value,
+      })
+    },
+    [updateSyncStatus],
+  )
 
   return (
     <Box
@@ -575,6 +601,8 @@ const KFTray = () => {
               pollingInterval={pollingInterval}
               setSelectedConfigs={setSelectedConfigs}
               configs={configs}
+              syncStatus={syncStatus}
+              onSyncComplete={handleSyncComplete}
             />
           </Box>
         </Box>
