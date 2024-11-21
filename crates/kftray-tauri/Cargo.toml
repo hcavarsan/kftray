@@ -1,6 +1,6 @@
 [package]
 name = "kftray-tauri"
-version = "0.15.0"
+version = "0.15.1"
 description = "A cross-platform system tray app for Kubernetes port-forward management"
 authors = ["Henrique Cavarsan <hencavarsan@gmail.com>"]
 license = "MIT"
@@ -63,6 +63,8 @@ kftray-commons = { path = "../kftray-commons" }
 netstat2 = { git = "https://github.com/hcavarsan/netstat2-rs" }
 sysinfo = "0.32.0"
 secrecy = "0.10.3"
+git2 = "0.19.0"
+url = "2.5.3"
 
 [dev-dependencies]
 tempfile = "3.13"
