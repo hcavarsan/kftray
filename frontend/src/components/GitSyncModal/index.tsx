@@ -14,7 +14,6 @@ import {
 
 import { Radio, RadioGroup } from '@/components/ui/radio'
 import { toaster } from '@/components/ui/toaster'
-import { Tooltip } from '@/components/ui/tooltip'
 import { useGitSync } from '@/contexts/GitSyncContext'
 import { gitService } from '@/services/gitService'
 import { GitSyncModalProps } from '@/types'
@@ -269,39 +268,51 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
                     )}
                   </Stack>
 
-                  <Stack gap={2}>
-                    <Text fontSize='xs' color='gray.400'>
-                      Polling Interval (minutes)
-                    </Text>
-                    <Tooltip
-                      content={`${formState.pollingInterval} minutes`}
-                      positioning={{
-                        placement: 'bottom-start',
-                      }}
-                      open={true}
-                    >
-                      <Box>
-                        <Slider.Root
-                          value={[formState.pollingInterval]}
-                          min={0}
-                          max={120}
-                          step={5}
-                          onValueChange={details =>
-                            handlePollingIntervalChange(details.value[0])
-                          }
-                        >
-                          <Slider.Control>
-                            <Slider.Track>
-                              <Slider.Range />
-                            </Slider.Track>
-                            <Slider.Thumb index={0} />
-                          </Slider.Control>
-                        </Slider.Root>
-                      </Box>
-                    </Tooltip>
-                    <Flex justify='space-between' mt={2}>
+                  <Stack gap={2} mt={2}>
+                    <Flex justify='space-between' align='center'>
                       <Text fontSize='xs' color='gray.400'>
-                        0 min
+                        Polling Interval (minutes)
+                      </Text>
+                      <Input
+                        value={
+                          formState.pollingInterval === 0
+                            ? 'off'
+                            : `${formState.pollingInterval} min`
+                        }
+                        readOnly
+                        width='65px'
+                        height='24px'
+                        textAlign='center'
+                        bg='#161616'
+                        borderColor='rgba(255, 255, 255, 0.08)'
+                        fontSize='11px'
+                        _disabled={{
+                          opacity: 0.8,
+                          cursor: 'default',
+                        }}
+                      />
+                    </Flex>
+                    <Box>
+                      <Slider.Root
+                        value={[formState.pollingInterval]}
+                        min={0}
+                        max={120}
+                        step={5}
+                        onValueChange={details =>
+                          handlePollingIntervalChange(details.value[0])
+                        }
+                      >
+                        <Slider.Control>
+                          <Slider.Track>
+                            <Slider.Range />
+                          </Slider.Track>
+                          <Slider.Thumb index={0} />
+                        </Slider.Control>
+                      </Slider.Root>
+                    </Box>
+                    <Flex justify='space-between' align='center'>
+                      <Text fontSize='xs' color='gray.400'>
+                        Disabled
                       </Text>
                       <Text fontSize='xs' color='gray.400'>
                         120 min

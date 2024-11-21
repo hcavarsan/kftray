@@ -15,13 +15,8 @@ export const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
   onSyncFailure,
   onSyncComplete,
 }) => {
-  const {
-    credentials,
-    syncStatus,
-    lastSync,
-    nextSync,
-    syncConfigs
-  } = useGitSync()
+  const { credentials, syncStatus, lastSync, nextSync, syncConfigs } =
+    useGitSync()
 
   const retryCount = useRef(0)
   const [isSyncing, setIsSyncing] = useState(false)
@@ -43,11 +38,12 @@ export const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
   }, [syncConfigs, onSyncComplete, onSyncFailure])
 
   const debouncedSync = useMemo(
-    () => debounce(async () => {
-      await handleSync()
-      setIsSyncing(false)
-    }, SYNC_DEBOUNCE_MS),
-    [handleSync]
+    () =>
+      debounce(async () => {
+        await handleSync()
+        setIsSyncing(false)
+      }, SYNC_DEBOUNCE_MS),
+    [handleSync],
   )
 
   const handleClick = useCallback(() => {
@@ -99,10 +95,10 @@ export const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
           {isSyncing ? (
             <Spinner size='sm' />
           ) : (
-		  <Box as={RepeatIcon} width='12px' height='12px' />
+            <Box as={RepeatIcon} width='12px' height='12px' />
           )}
           <Box fontSize='11px'>Sync</Box>
-	  </Box>
+        </Box>
       </Button>
     </Tooltip>
   )
