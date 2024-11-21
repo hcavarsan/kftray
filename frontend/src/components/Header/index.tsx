@@ -1,25 +1,17 @@
 import React, { useEffect, useRef, useState } from 'react'
+import { GripVertical, Search } from 'lucide-react'
 import { MdClose } from 'react-icons/md'
 import { TiPin, TiPinOutline } from 'react-icons/ti'
 
-import { DragHandleIcon, SearchIcon } from '@chakra-ui/icons'
-import {
-  Box,
-  Flex,
-  Icon,
-  IconButton,
-  Image,
-  Input,
-  InputGroup,
-  InputLeftElement,
-  Tooltip,
-} from '@chakra-ui/react'
+import { Box, Image, Input } from '@chakra-ui/react'
 import { app } from '@tauri-apps/api'
 import { invoke } from '@tauri-apps/api/tauri'
 import { appWindow } from '@tauri-apps/api/window'
 
-import logo from '../../assets/logo.webp'
-import { HeaderProps } from '../../types'
+import logo from '@/assets/logo.webp'
+import { Button } from '@/components/ui/button'
+import { Tooltip } from '@/components/ui/tooltip'
+import { HeaderProps } from '@/types'
 
 const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
   const [version, setVersion] = useState('')
@@ -30,10 +22,6 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
   useEffect(() => {
     app.getVersion().then(setVersion).catch(console.error)
   }, [])
-
-  const handleSearchChange = (event: React.ChangeEvent<HTMLInputElement>) => {
-    setSearch(event.target.value)
-  }
 
   useEffect(() => {
     if (!dragHandleRef.current) {
@@ -75,9 +63,6 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
     }
   }
 
-  const handleMouseEnter = () => setTooltipOpen(true)
-  const handleMouseLeave = () => setTooltipOpen(false)
-
   const togglePinWindow = async () => {
     setIsPinned(!isPinned)
     await invoke('toggle_pin_state')
@@ -88,111 +73,140 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
   }
 
   return (
-    <Flex
+    <Box
+      display='flex'
       alignItems='center'
       justifyContent='space-between'
-      backgroundColor='gray.800'
+      bg='#161616'
       borderRadius='lg'
+      borderBottomRadius='none'
       width='100%'
-      borderColor='gray.200'
-      padding='2px'
+      px={3}
+      py={3}
+      borderBottom='none'
+      border='1px solid rgba(255, 255, 255, 0.08)'
     >
-      <Flex justifyContent='flex-start' alignItems='center'>
-        <Box
-          ref={dragHandleRef}
-          className='drag-handle'
-          onMouseEnter={handleMouseEnter}
-          onMouseLeave={handleMouseLeave}
-        >
-          <Tooltip
-            label='Move Window Position'
-            aria-label='position'
-            fontSize='xs'
-            lineHeight='tight'
-            closeOnMouseDown={true}
-            isOpen={tooltipOpen}
+      {/* Left Section */}
+      <Box display='flex' alignItems='center' gap={3}>
+        <Box display='flex' alignItems='center' gap={2}>
+          <Box
+            ref={dragHandleRef}
+            className='drag-handle'
+            onMouseEnter={() => setTooltipOpen(true)}
+            onMouseLeave={() => setTooltipOpen(false)}
+            cursor='move'
+            _hover={{ color: 'whiteAlpha.700' }}
+            mb={0.5}
           >
-            <Icon
-              as={DragHandleIcon}
-              height='17px'
-              width='17px'
-              color='gray.500'
-              data-drag
+            <Tooltip content='Move Window Position' open={tooltipOpen}>
+              <Box
+                as={GripVertical}
+                width='22px'
+                height='22px'
+                color='whiteAlpha.500'
+                data-drag
+              />
+            </Tooltip>
+          </Box>
+
+          <Tooltip content={`Kftray v${version}`}>
+            <Image
+              src={logo}
+              alt='Kftray Logo'
+              width='33px'
+              height='33px'
+              objectFit='contain'
+              filter='brightness(0.9)'
+              _hover={{ filter: 'brightness(1)' }}
+              transition='filter 0.2s'
             />
           </Tooltip>
         </Box>
-        <Tooltip
-          label={`Kftray v${version}`}
-          aria-label='Kftray version'
-          fontSize='xs'
-          lineHeight='tight'
-          placement='top-end'
-        >
-          <Image src={logo} alt='Kftray Logo' boxSize='32px' ml={3} mt={0.5} />
+
+        {/* Search Input */}
+        <Box position='relative' width='200px' ml={12}>
+          <Box
+            as={Search}
+            position='absolute'
+            zIndex={100}
+            left={2}
+            top='50%'
+            transform='translateY(-50%)'
+            width='14px'
+            height='14px'
+            color='whiteAlpha.500'
+          />
+          <Input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder='Search...'
+            size='sm'
+            pl={8}
+            bg='#1A1A1A'
+            border='1px solid rgba(255, 255, 255, 0.08)'
+            _hover={{
+              borderColor: 'rgba(255, 255, 255, 0.15)',
+            }}
+            _focus={{
+              borderColor: 'blue.400',
+              boxShadow: 'none',
+            }}
+            height='28px'
+            fontSize='13px'
+            width='100%'
+            color='whiteAlpha.900'
+            _placeholder={{
+              color: 'whiteAlpha.400',
+            }}
+          />
+        </Box>
+      </Box>
+
+      {/* Right Section - Window Controls */}
+      <Box display='flex' alignItems='center' gap={1}>
+        <Tooltip content={isPinned ? 'Unpin Window' : 'Pin Window'}>
+          <Button
+            variant='ghost'
+            size='sm'
+            onClick={togglePinWindow}
+            height='28px'
+            width='28px'
+            minWidth='28px'
+            p={0}
+            _hover={{ bg: 'whiteAlpha.100' }}
+            _active={{ bg: 'whiteAlpha.200' }}
+          >
+            <Box
+              as={isPinned ? TiPin : TiPinOutline}
+              width='16px'
+              height='16px'
+              color='whiteAlpha.700'
+            />
+          </Button>
         </Tooltip>
-      </Flex>
 
-      <Flex alignItems='center' direction={'row'} mt='0'>
-        <Flex
-          alignItems='center'
-          justifyContent='flex-end'
-          direction={'row'}
-          mt={-1}
-          mr={1}
-        >
-          <InputGroup size='xs' width='200px' mt='1'>
-            <InputLeftElement pointerEvents='none'>
-              <SearchIcon color='gray.300' />
-            </InputLeftElement>
-            <Input
-              height='25px'
-              type='text'
-              placeholder='Search'
-              value={search}
-              onChange={handleSearchChange}
-              borderRadius='md'
-            />
-          </InputGroup>
-        </Flex>
-        <Flex alignItems='center' justifyContent='flex-end' direction={'row'}>
-          <Tooltip
-            label={isPinned ? 'Unpin Window' : 'Pin Window'}
-            bg='gray.300'
-            fontSize='xs'
-            lineHeight='tight'
+        <Tooltip content='Close Window'>
+          <Button
+            variant='ghost'
+            size='sm'
+            onClick={handleStopPortForwardsAndExit}
+            height='28px'
+            width='28px'
+            minWidth='28px'
+            p={0}
+            _hover={{ bg: 'whiteAlpha.100' }}
+            _active={{ bg: 'whiteAlpha.200' }}
           >
-            <IconButton
-              icon={isPinned ? <TiPin /> : <TiPinOutline />}
-              aria-label='Pin Window'
-              onClick={togglePinWindow}
-              size='sm'
-              variant='ghost'
-              color='gray.500'
-              _hover={{ backgroundColor: 'transparent' }}
-              _active={{ backgroundColor: 'transparent' }}
+            <Box
+              as={MdClose}
+              width='16px'
+              height='16px'
+              color='whiteAlpha.700'
             />
-          </Tooltip>
-
-          <Tooltip
-            label='Close Window'
-            bg='gray.300'
-            fontSize='xs'
-            lineHeight='tight'
-          >
-            <IconButton
-              icon={<MdClose />}
-              aria-label='Close Window'
-              onClick={handleStopPortForwardsAndExit}
-              size='sm'
-              variant='ghost'
-              color='gray.500'
-              _hover={{ backgroundColor: 'transparent' }}
-              _active={{ backgroundColor: 'transparent' }}
-            />
-          </Tooltip>
-        </Flex>
-      </Flex>
-    </Flex>
+          </Button>
+        </Tooltip>
+      </Box>
+    </Box>
   )
 }
 

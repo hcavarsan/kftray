@@ -1,18 +1,9 @@
 import React from 'react'
 
-import { ChakraProvider } from '@chakra-ui/react'
-
-import theme from './assets/theme'
-import Main from './components/Main'
-
-import './assets/style.css'
+import Main from '@/components/Main'
 
 const App: React.FC = () => {
-  return (
-    <ChakraProvider theme={theme}>
-      <Main />
-    </ChakraProvider>
-  )
+  return <Main />
 }
 
 export default App

@@ -1,133 +1,192 @@
 import React, { useState } from 'react'
+import { createPortal } from 'react-dom'
 import { MdDelete } from 'react-icons/md'
 
-import {
-  AlertDialog,
-  AlertDialogBody,
-  AlertDialogContent,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogOverlay,
-  Box,
-  Button,
-  IconButton,
-  Tooltip,
-} from '@chakra-ui/react'
+import { Box, Button, HStack, Text } from '@chakra-ui/react'
 import { invoke } from '@tauri-apps/api/tauri'
 
-import { BulkDeleteButtonProps } from '../../../types'
-import useCustomToast from '../../CustomToast'
+import { toaster } from '@/components/ui/toaster'
+import { Tooltip } from '@/components/ui/tooltip'
+import { BulkDeleteButtonProps } from '@/types'
+
+const DeleteDialog = ({
+  isOpen,
+  onClose,
+  onConfirm,
+}: {
+  isOpen: boolean
+  onClose: () => void
+  onConfirm: () => void
+}) => {
+  if (!isOpen) {
+    return null
+  }
+
+  return createPortal(
+    <Box
+      position='fixed'
+      top={0}
+      left={0}
+      right={0}
+      bottom={0}
+      zIndex={9999}
+      display='flex'
+      alignItems='center'
+      justifyContent='center'
+    >
+      <Box
+        position='fixed'
+        top={0}
+        left={0}
+        right={0}
+        bottom={0}
+        bg='rgba(0, 0, 0, 0.4)'
+        backdropFilter='blur(4px)'
+        onClick={onClose}
+      />
+      <Box
+        position='relative'
+        maxWidth='400px'
+        width='90vw'
+        bg='#111111'
+        borderRadius='lg'
+        border='1px solid rgba(255, 255, 255, 0.08)'
+        zIndex={10000}
+      >
+        <Box
+          p={1.5}
+          bg='#161616'
+          borderBottom='1px solid rgba(255, 255, 255, 0.05)'
+        >
+          <Text fontSize='sm' fontWeight='medium' color='gray.100'>
+            Delete Config(s)
+          </Text>
+        </Box>
+
+        <Box p={3}>
+          <Text fontSize='xs' color='gray.400'>
+            Are you sure you want to delete the selected config(s)? This action
+            cannot be undone.
+          </Text>
+        </Box>
+
+        <Box p={3} borderTop='1px solid rgba(255, 255, 255, 0.05)' bg='#111111'>
+          <HStack justify='flex-end' gap={2}>
+            <Button
+              size='xs'
+              variant='ghost'
+              onClick={onClose}
+              _hover={{ bg: 'whiteAlpha.50' }}
+              height='28px'
+            >
+              Cancel
+            </Button>
+            <Button
+              size='xs'
+              bg='blue.500'
+              _hover={{ bg: 'blue.600' }}
+              onClick={onConfirm}
+              height='28px'
+            >
+              Delete
+            </Button>
+          </HStack>
+        </Box>
+      </Box>
+    </Box>,
+    document.body,
+  )
+}
 
 const BulkDeleteButton: React.FC<BulkDeleteButtonProps> = ({
   selectedConfigs,
   setSelectedConfigs,
 }) => {
-  const cancelRef = React.useRef<HTMLButtonElement>(null)
-  const [isBulkAlertOpen, setIsBulkAlertOpen] = useState(false)
-  const [configsToDelete, setConfigsToDelete] = useState<number[]>([])
-  const toast = useCustomToast()
+  const [state, setState] = useState({
+    configsToDelete: [] as number[],
+    isDialogOpen: false,
+  })
 
-  const handleDeleteConfigs = (selectedIds: number[]) => {
-    setConfigsToDelete(selectedIds)
-    setIsBulkAlertOpen(true)
+  const handleDeleteClick = (selectedIds: number[]) => {
+    setState(prev => ({
+      ...prev,
+      configsToDelete: selectedIds,
+      isDialogOpen: true,
+    }))
   }
 
-  const confirmDeleteConfigs = async () => {
-    if (!Array.isArray(configsToDelete) || !configsToDelete.length) {
-      toast({
+  const handleClose = () => {
+    setState(prev => ({ ...prev, isDialogOpen: false }))
+  }
+
+  const handleConfirmDelete = async () => {
+    if (!state.configsToDelete.length) {
+      toaster.error({
         title: 'Error',
         description: 'No configurations selected for deletion.',
-        status: 'error',
+        duration: 1000,
       })
 
       return
     }
 
     try {
-      await invoke('delete_configs_cmd', { ids: configsToDelete })
-
+      await invoke('delete_configs_cmd', { ids: state.configsToDelete })
       setSelectedConfigs([])
-
-      toast({
+      setState(prev => ({ ...prev, isDialogOpen: false }))
+      toaster.success({
         title: 'Success',
         description: 'Configurations deleted successfully.',
-        status: 'success',
+        duration: 1000,
       })
     } catch (error) {
       console.error('Failed to delete configurations:', error)
-      toast({
+      toaster.error({
         title: 'Error',
-        description: 'Failed to delete configurations: "unknown error"',
-        status: 'error',
+        description: 'Failed to delete configurations.',
+        duration: 1000,
       })
     }
+  }
 
-    setIsBulkAlertOpen(false)
+  if (!selectedConfigs.length) {
+    return null
   }
 
   return (
     <Box>
-      {selectedConfigs.length > 0 && (
-        <Tooltip
-          label='Delete Configs'
-          placement='top'
-          fontSize='xs'
-          lineHeight='tight'
-        >
-          <IconButton
-            colorScheme='red'
-            variant='outline'
-            onClick={() =>
-              handleDeleteConfigs(selectedConfigs.map(config => config.id))
-            }
-            size='sm'
-            aria-label='Delete selected configs'
-            borderColor='gray.700'
-            icon={<MdDelete />}
-            ml={2}
-          />
-        </Tooltip>
-      )}
-
-      <AlertDialog
-        isOpen={isBulkAlertOpen}
-        leastDestructiveRef={cancelRef}
-        onClose={() => setIsBulkAlertOpen(false)}
+      <Tooltip
+        content='Delete Selected Configs'
+        portalled
+        positioning={{
+          strategy: 'absolute',
+          placement: 'top-end',
+          offset: { mainAxis: 8, crossAxis: 0 },
+        }}
       >
-        <AlertDialogOverlay
-          style={{ alignItems: 'flex-start', justifyContent: 'flex-start' }}
-          bg='transparent'
+        <Button
+          size='sm'
+          variant='ghost'
+          onClick={() =>
+            handleDeleteClick(selectedConfigs.map(config => config.id))
+          }
+          height='32px'
+          minWidth='32px'
+          bg='red.500'
+          px={1.5}
+          borderRadius='md'
+          border='1px solid rgba(255, 255, 255, 0.08)'
+          _hover={{ bg: 'red.600' }}
         >
-          <AlertDialogContent>
-            <AlertDialogHeader fontSize='xs' fontWeight='bold'>
-              Delete Config(s)
-            </AlertDialogHeader>
+          <Box as={MdDelete} width='12px' height='12px' />
+        </Button>
+      </Tooltip>
 
-            <AlertDialogBody fontSize='xs'>
-              Are you sure you want to delete the selected config(s)? This
-              action cannot be undone.
-            </AlertDialogBody>
-
-            <AlertDialogFooter>
-              <Button
-                ref={cancelRef}
-                onClick={() => setIsBulkAlertOpen(false)}
-                size='xs'
-              >
-                Cancel
-              </Button>
-              <Button
-                colorScheme='red'
-                onClick={confirmDeleteConfigs}
-                ml={3}
-                size='xs'
-              >
-                Delete
-              </Button>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialogOverlay>
-      </AlertDialog>
+      <DeleteDialog
+        isOpen={state.isDialogOpen}
+        onClose={handleClose}
+        onConfirm={handleConfirmDelete}
+      />
     </Box>
   )
 }

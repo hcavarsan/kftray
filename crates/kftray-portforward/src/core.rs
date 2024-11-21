@@ -533,10 +533,7 @@ pub async fn stop_port_forward(config_id: String) -> Result<CustomResponse, Stri
 
         match kftray_commons::config::get_configs().await {
             Ok(configs) => {
-                if let Some(config) = configs
-                    .iter()
-                    .find(|c| c.id.map_or(false, |id| id == config_id_parsed))
-                {
+                if let Some(config) = configs.iter().find(|c| c.id == Some(config_id_parsed)) {
                     if config.domain_enabled.unwrap_or_default() {
                         let hostfile_comment = format!(
                             "kftray custom host for {} - {}",

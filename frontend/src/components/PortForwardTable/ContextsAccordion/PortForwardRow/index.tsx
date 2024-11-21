@@ -1,106 +1,129 @@
-/* eslint-disable complexity */
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
+import { ExternalLinkIcon, FileIcon } from 'lucide-react'
 
-import { ExternalLinkIcon } from '@chakra-ui/icons'
 import {
-  AlertDialog,
-  AlertDialogBody,
-  AlertDialogContent,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogOverlay,
   Box,
   Button,
-  Checkbox,
+  DialogBackdrop,
+  DialogCloseTrigger,
+  DialogContent,
+  DialogRoot,
   Flex,
   IconButton,
-  Menu,
-  MenuButton,
-  MenuItem,
-  MenuList,
-  Portal,
-  Switch,
-  Td,
+  Table,
   Text,
-  Tooltip,
-  Tr,
-  useColorModeValue,
-  useDisclosure,
 } from '@chakra-ui/react'
 import {
   faBars,
-  faFileAlt,
   faInfoCircle,
   faPen,
   faTrash,
 } from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
-import { open } from '@tauri-apps/api/shell'
+import { open as openShell } from '@tauri-apps/api/shell'
 import { invoke } from '@tauri-apps/api/tauri'
 
-import { PortForwardRowProps } from '../../../../types'
-import useCustomToast from '../../../CustomToast'
+import { Checkbox } from '@/components/ui/checkbox'
+import {
+  MenuContent,
+  MenuItem,
+  MenuRoot,
+  MenuTrigger,
+} from '@/components/ui/menu'
+import { Switch } from '@/components/ui/switch'
+import { toaster } from '@/components/ui/toaster'
+import { Tooltip } from '@/components/ui/tooltip'
+import { PortForwardRowProps } from '@/types'
+
+import '../../styles.css'
 
 const PortForwardRow: React.FC<PortForwardRowProps> = ({
   config,
   confirmDeleteConfig,
   handleDeleteConfig,
   handleEditConfig,
-  setIsAlertOpen,
-  isAlertOpen,
-  showContext = false,
   selected,
   onSelectionChange,
   isInitiating,
   setIsInitiating,
 }) => {
-  const { isOpen, onOpen } = useDisclosure()
-  const textColor = useColorModeValue('gray.300', 'gray.300')
-  const cancelRef = React.useRef<HTMLButtonElement>(null)
-  const toast = useCustomToast()
   const [httpLogsEnabled, setHttpLogsEnabled] = useState<{
     [key: string]: boolean
   }>({})
-
   const prevConfigIdRef = useRef<number | null>(null)
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
+
+  const fetchHttpLogState = useCallback(async () => {
+    try {
+      const enabled = await invoke('get_http_logs_cmd', { configId: config.id })
+
+      setHttpLogsEnabled(prev => ({ ...prev, [config.id]: enabled }))
+    } catch (error) {
+      console.error('Error fetching HTTP log state:', error)
+    }
+  }, [config.id])
 
   useEffect(() => {
     if (prevConfigIdRef.current !== config.id) {
       prevConfigIdRef.current = config.id
-
-      const fetchHttpLogState = async () => {
-        try {
-          const enabled = await invoke('get_http_logs_cmd', {
-            configId: config.id,
-          })
-
-          setHttpLogsEnabled(prevState => ({
-            ...prevState,
-            [config.id]: enabled,
-          }))
-        } catch (error) {
-          console.error('Error fetching HTTP log state:', error)
-        }
-      }
-
-      setHttpLogsEnabled(prevState => ({
-        ...prevState,
-        [config.id]: false,
-      }))
-
       fetchHttpLogState()
     }
-  }, [config.id])
+  }, [config.id, fetchHttpLogState])
+
+  const handleToggleHttpLogs = async () => {
+    try {
+      const newState = !httpLogsEnabled[config.id]
+
+      await invoke('set_http_logs_cmd', {
+        configId: config.id,
+        enable: newState,
+      })
+      setHttpLogsEnabled(prevState => ({ ...prevState, [config.id]: newState }))
+    } catch (error) {
+      console.error('Error toggling HTTP logs:', error)
+      toaster.error({
+        title: 'Error toggling HTTP logs',
+        description: error instanceof Error ? error.message : String(error),
+        duration: 1000,
+      })
+    }
+  }
+
+  const handleInspectLogs = async () => {
+    try {
+      const logFileName = `${config.id}_${config.local_port}.log`
+
+      await invoke('open_log_file', { logFileName: logFileName })
+    } catch (error) {
+      console.error('Error opening log file:', error)
+      toaster.error({
+        title: 'Error opening log file',
+        description: error instanceof Error ? error.message : String(error),
+        duration: 1000,
+      })
+    }
+  }
 
   const handleOpenLocalURL = () => {
     const baseUrl = config.domain_enabled ? config.alias : config.local_address
 
-    open(`http://${baseUrl}:${config.local_port}`).catch(error => {
-      console.error('Error opening the URL:', error)
-    })
+    openShell(`http://${baseUrl}:${config.local_port}`).catch(console.error)
   }
 
-  const openLocalURLIcon = <ExternalLinkIcon style={{ fontSize: '10px' }} />
+  const togglePortForwarding = async (isChecked: boolean) => {
+    setIsInitiating(true)
+    try {
+      if (isChecked) {
+        await startPortForwarding()
+      } else {
+        await stopPortForwarding()
+      }
+    } catch (error) {
+      console.error('Error toggling port-forwarding:', error)
+    } finally {
+      setIsInitiating(false)
+    }
+  }
 
   const startPortForwarding = async () => {
     try {
@@ -121,14 +144,10 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
         throw new Error(`Unsupported workload type: ${config.workload_type}`)
       }
     } catch (error) {
-      console.error('An error occurred during port forwarding start:', error)
-      const errorMessage =
-        error instanceof Error ? error.message : String(error)
-
-      toast({
+      toaster.error({
         title: 'Error starting port forwarding',
-        description: errorMessage,
-        status: 'error',
+        description: error instanceof Error ? error.message : String(error),
+        duration: 1000,
       })
     }
   }
@@ -162,360 +181,227 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
         throw new Error(`Unsupported workload type: ${config.workload_type}`)
       }
     } catch (error) {
-      console.error('An error occurred during port forwarding stop:', error)
-      const errorMessage =
-        error instanceof Error ? error.message : String(error)
-
-      toast({
+      toaster.error({
         title: 'Error stopping port forwarding',
-        description: errorMessage,
-        status: 'error',
-      })
-    } finally {
-      console.log('stopPortForwarding finally')
-    }
-  }
-
-  const togglePortForwarding = async (isChecked: boolean) => {
-    setIsInitiating(true)
-    try {
-      if (isChecked) {
-        await startPortForwarding()
-      } else {
-        await stopPortForwarding()
-      }
-    } catch (error) {
-      console.error('Error toggling port-forwarding:', error)
-    } finally {
-      console.log('togglePortForwarding finally')
-      setIsInitiating(false)
-    }
-  }
-
-  const handleDeleteClick = () => {
-    onOpen()
-  }
-
-  const handleInspectLogs = async () => {
-    try {
-      const logFileName = `${config.id}_${config.local_port}.log`
-
-      await invoke('open_log_file', { logFileName: logFileName })
-    } catch (error) {
-      console.error('Error opening log file:', error)
-      const errorMessage =
-        error instanceof Error ? error.message : String(error)
-
-      toast({
-        title: 'Error opening log file',
-        description: errorMessage,
-        status: 'error',
-        duration: 3000,
-        isClosable: true,
+        description: error instanceof Error ? error.message : String(error),
+        duration: 1000,
       })
     }
   }
 
-  const handleToggleHttpLogs = async () => {
-    try {
-      const newState = !httpLogsEnabled[config.id]
-
-      await invoke('set_http_logs_cmd', {
-        configId: config.id,
-        enable: newState,
-      })
-      setHttpLogsEnabled(prevState => ({ ...prevState, [config.id]: newState }))
-    } catch (error) {
-      console.error('Error toggling HTTP logs:', error)
-      const errorMessage =
-        error instanceof Error ? error.message : String(error)
-
-      toast({
-        title: 'Error toggling HTTP logs',
-        description: errorMessage,
-        status: 'error',
-      })
-    }
+  const handleOpenChange = (details: { open: boolean }) => {
+    setIsDeleteDialogOpen(details.open)
   }
 
-  const infoIcon = (
-    <FontAwesomeIcon icon={faInfoCircle} style={{ fontSize: '10px' }} />
-  )
-
-  const tooltipLabel = (
-    <>
-      <Box as='span' fontWeight='semibold'>
-        Workload Type:
-      </Box>{' '}
-      {config.workload_type.startsWith('proxy')
-        ? config.workload_type
-        : config.workload_type === 'pod'
-          ? 'Pod'
-          : 'Service'}
-      <br />
-      <Box as='span' fontWeight='semibold'>
-        {config.workload_type.startsWith('proxy')
-          ? 'Remote Address:'
-          : config.workload_type === 'pod'
-            ? 'Pod Label:'
-            : 'Service:'}
-      </Box>{' '}
-      {config.workload_type.startsWith('proxy')
-        ? config.remote_address
-        : config.workload_type === 'pod'
-          ? config.target
-          : config.service}
-      <br />
-      <Box as='span' fontWeight='semibold'>
-        Context:
-      </Box>{' '}
-      {config.context}
-      <br />
-      <Box as='span' fontWeight='semibold'>
-        Namespace:
-      </Box>{' '}
-      {config.namespace}
-      <br />
-      <Box as='span' fontWeight='semibold'>
-        Target Port:
-      </Box>{' '}
-      {config.remote_port}
-      <br />
-      <Box as='span' fontWeight='semibold'>
-        Local Address:
-      </Box>{' '}
-      {config.local_address}
-      <br />
-      <Box as='span' fontWeight='semibold'>
-        Local Port:
-      </Box>{' '}
-      {config.local_port}
-      <br />
-      <Box as='span' fontWeight='semibold'>
-        Protocol:
-      </Box>{' '}
-      {config.protocol}
-      <br />
-      <Box as='span' fontWeight='semibold'>
-        Domain Enabled:
-      </Box>{' '}
-      {config.domain_enabled ? 'true' : 'false'}
-      <br />
-      <Box as='span' fontWeight='semibold'>
-        kubeconfig
-      </Box>{' '}
-      {config.kubeconfig}
-      <br />
-    </>
-  )
-
-  const fontFamily = '\'Open Sans\', sans-serif'
-  const fontSize = '13px'
+  const handleOpenDeleteDialog = () => {
+    handleDeleteConfig(config.id)
+    setIsDeleteDialogOpen(true)
+  }
 
   return (
     <>
-      <Tr key={config.id}>
-        {showContext && <Td>{config.context}</Td>}
-        <Td
-          color={textColor}
-          fontFamily={fontFamily}
-          fontSize={fontSize}
-          width='39%'
-        >
-          <Checkbox
-            size='sm'
-            isChecked={selected || config.is_running}
-            onChange={event => {
-              event.stopPropagation()
-              onSelectionChange(!selected)
-            }}
-            disabled={config.is_running}
-            ml={-4}
-            mr={2}
-            mt={1}
-            variant='ghost'
-          />
-          {config.alias}
-          <Tooltip
-            hasArrow
-            label={tooltipLabel}
-            placement='right'
-            bg={useColorModeValue('white', 'gray.300')}
-            p={2}
-          >
-            <span>
-              <IconButton
-                size='xs'
-                aria-label='Info configuration'
-                icon={infoIcon}
-                variant='ghost'
-              />
-            </span>
-          </Tooltip>
-        </Td>
+      <Table.Row className='table-row'>
+        <Table.Cell className='table-cell'>
+          <Flex align='center' gap={1.5}>
+            <Tooltip content={getTooltipContent(config)} portalled>
+              <Flex align='center' gap={1.5}>
+                <Checkbox
+                  size='xs'
+                  checked={selected || config.is_running}
+                  onCheckedChange={e => {
+                    if (!config.is_running) {
+                      onSelectionChange(e.checked === true)
+                    }
+                  }}
+                  disabled={config.is_running}
+                  className='checkbox'
+                />
 
-        <Td
-          color={textColor}
-          fontFamily={fontFamily}
-          fontSize={fontSize}
-          textAlign='center'
-        >
-          <Text ml={-3}>{config.local_port}</Text>
-        </Td>
+                <IconButton
+                  size='xs'
+                  variant='ghost'
+                  aria-label='Info'
+                  className='icon-button'
+                >
+                  <FontAwesomeIcon icon={faInfoCircle} size='xs' />
+                </IconButton>
 
-        <Td>
-          <Flex alignItems='center'>
+                <Text className='text-normal' truncate maxWidth='100px'>
+                  {config.alias}
+                </Text>
+              </Flex>
+            </Tooltip>
+          </Flex>
+        </Table.Cell>
+
+        <Table.Cell className='table-cell'>
+          <Text>{config.local_port}</Text>
+        </Table.Cell>
+
+        <Table.Cell className='table-cell'>
+          <Flex align='center' gap={1.5}>
             <Switch
-              ml={2}
-              colorScheme='facebook'
-              isChecked={config.is_running && !isInitiating}
               size='sm'
-              onChange={e => togglePortForwarding(e.target.checked)}
-              isDisabled={isInitiating}
+              checked={config.is_running && !isInitiating}
+              onCheckedChange={details => togglePortForwarding(details.checked)}
+              disabled={isInitiating}
+              data-loading={isInitiating ? '' : undefined}
+              unstyled={true}
+              className='switch'
             />
             {config.is_running && (
-              <Tooltip
-                hasArrow
-                label='Open URL'
-                placement='top-start'
-                bg='gray.300'
-                p={1}
-                size='xs'
-                fontSize='xs'
-              >
-                <IconButton
-                  aria-label='Open local URL'
-                  icon={openLocalURLIcon}
-                  onClick={handleOpenLocalURL}
-                  size='xs'
-                  variant='ghost'
-                  _hover={{
-                    background: 'none',
-                    transform: 'none',
-                  }}
-                />
-              </Tooltip>
-            )}
-            {config.is_running &&
-              (config.workload_type === 'service' ||
-                config.workload_type === 'pod') &&
-              config.protocol === 'tcp' &&
-              httpLogsEnabled[config.id] && (
-              <Tooltip
-                hasArrow
-                label='HTTP trace logs'
-                placement='top-start'
-                bg='gray.300'
-                p={1}
-                size='xs'
-                fontSize='xs'
-              >
-                <IconButton
-                  aria-label='HTTP trace logs'
-                  icon={
-                    <FontAwesomeIcon
-                      icon={faFileAlt}
-                      style={{ fontSize: '10px' }}
-                    />
-                  }
-                  onClick={handleInspectLogs}
-                  size='xs'
-                  variant='ghost'
-                  _hover={{
-                    background: 'none',
-                    transform: 'none',
-                  }}
-                />
-              </Tooltip>
+              <Flex gap={1.5}>
+                <Tooltip content='Open in browser' portalled>
+                  <IconButton
+                    size='2xs'
+                    variant='ghost'
+                    aria-label='Open URL'
+                    onClick={handleOpenLocalURL}
+                    className='icon-button'
+                  >
+                    <ExternalLinkIcon size={12} />
+                  </IconButton>
+                </Tooltip>
+                {httpLogsEnabled[config.id] && (
+                  <Tooltip content='View HTTP logs' portalled>
+                    <IconButton
+                      size='2xs'
+                      variant='ghost'
+                      onClick={handleInspectLogs}
+                      aria-label='HTTP Logs'
+                      className='icon-button'
+                    >
+                      <FileIcon size={10} />
+                    </IconButton>
+                  </Tooltip>
+                )}
+              </Flex>
             )}
           </Flex>
-        </Td>
-        <Td fontSize={fontSize} align='center'>
-          <Menu>
-            <MenuButton
-              as={IconButton}
-              aria-label='Options'
-              icon={
-                <FontAwesomeIcon icon={faBars} style={{ fontSize: '10px' }} />
-              }
-              variant='ghost'
-              size='xs'
-              ml={2}
-            />
-            <Portal>
-              <MenuList zIndex='popover' fontSize='xs' minW='150px'>
-                <MenuItem
-                  icon={
-                    <FontAwesomeIcon
-                      icon={faPen}
-                      style={{ fontSize: '10px' }}
-                    />
-                  }
-                  onClick={() => handleEditConfig(config.id)}
-                >
+        </Table.Cell>
+
+        <Table.Cell className='table-cell'>
+          <MenuRoot>
+            <MenuTrigger asChild>
+              <IconButton
+                size='xs'
+                ml={5}
+                variant='ghost'
+                aria-label='Actions'
+                className='icon-button'
+              >
+                <FontAwesomeIcon icon={faBars} size='xs' />
+              </IconButton>
+            </MenuTrigger>
+            <MenuContent className='menu-content'>
+              <MenuItem
+                className='menu-item'
+                value='edit'
+                onClick={() => handleEditConfig(config.id)}
+              >
+                <FontAwesomeIcon icon={faPen} size='xs' />
+                <Text ml={2} fontSize='xs'>
                   Edit
-                </MenuItem>
+                </Text>
+              </MenuItem>
+              <MenuItem
+                className='menu-item'
+                value='delete'
+                onClick={handleOpenDeleteDialog}
+              >
+                <FontAwesomeIcon icon={faTrash} size='xs' />
+                <Text ml={2} fontSize='xs'>
+                  Delete
+                </Text>
+              </MenuItem>
+              {config.protocol === 'tcp' && (
                 <MenuItem
-                  icon={
-                    <FontAwesomeIcon
-                      icon={faTrash}
-                      style={{ fontSize: '10px' }}
-                    />
-                  }
-                  onClick={() => {
-                    setIsAlertOpen(true)
-                    handleDeleteClick()
-                    handleDeleteConfig(config.id)
-                  }}
+                  className='menu-item'
+                  value='http-logs'
+                  onClick={handleToggleHttpLogs}
                 >
-                  Delete
+                  <FileIcon size={12} />
+                  <Text ml={2} fontSize='xs'>
+                    {httpLogsEnabled[config.id] ? 'Disable' : 'Enable'} HTTP
+                    Logs
+                  </Text>
                 </MenuItem>
-                {config.protocol === 'tcp' && (
-                  <MenuItem
-                    icon={
-                      <FontAwesomeIcon
-                        icon={faFileAlt}
-                        style={{ fontSize: '10px' }}
-                      />
-                    }
-                    onClick={handleToggleHttpLogs}
-                  >
-                    {httpLogsEnabled[config.id]
-                      ? 'Disable HTTP Logs'
-                      : 'Enable HTTP Logs'}
-                  </MenuItem>
-                )}
-              </MenuList>
-            </Portal>
-          </Menu>
-        </Td>
-      </Tr>
-      {isAlertOpen && (
-        <AlertDialog
-          isOpen={isOpen}
-          leastDestructiveRef={cancelRef}
-          onClose={() => setIsAlertOpen(false)}
-        >
-          <AlertDialogOverlay bg='transparent'>
-            <AlertDialogContent>
-              <AlertDialogHeader fontSize='lg' fontWeight='bold'>
+              )}
+            </MenuContent>
+          </MenuRoot>
+        </Table.Cell>
+      </Table.Row>
+
+      {isDeleteDialogOpen && (
+        <DialogRoot open={isDeleteDialogOpen} onOpenChange={handleOpenChange}>
+          <DialogBackdrop className='dialog-backdrop' />
+          <DialogContent className='dialog-content'>
+            <Box className='dialog-header'>
+              <Text fontSize='sm' fontWeight='medium' color='gray.100'>
                 Delete Configuration
-              </AlertDialogHeader>
-              <AlertDialogBody>
-                {'Are you sure? You can\'t undo this action afterwards.'}
-              </AlertDialogBody>
-              <AlertDialogFooter>
-                <Button onClick={() => setIsAlertOpen(false)}>Cancel</Button>
-                <Button colorScheme='red' onClick={confirmDeleteConfig} ml={3}>
-                  Delete
+              </Text>
+            </Box>
+
+            <Box className='dialog-body'>
+              <Text fontSize='xs' color='gray.400'>
+                Are you sure? You can&lsquo;t undo this action afterwards.
+              </Text>
+            </Box>
+
+            <Box className='dialog-footer'>
+              <DialogCloseTrigger asChild>
+                <Button size='xs' variant='ghost' className='dialog-button'>
+                  Cancel
                 </Button>
-              </AlertDialogFooter>
-            </AlertDialogContent>
-          </AlertDialogOverlay>
-        </AlertDialog>
+              </DialogCloseTrigger>
+              <Button
+                size='xs'
+                className='dialog-button dialog-button-primary'
+                onClick={() => {
+                  confirmDeleteConfig()
+                  setIsDeleteDialogOpen(false)
+                }}
+              >
+                Delete
+              </Button>
+            </Box>
+          </DialogContent>
+        </DialogRoot>
       )}
     </>
   )
 }
+
+const getTooltipContent = (config: any) => (
+  <Box p={1.5}>
+    <Text fontSize='xs'>
+      <strong>Alias:</strong> {config.alias}
+    </Text>
+    <Text fontSize='xs'>
+      <strong>Workload Type:</strong> {config.workload_type}
+    </Text>
+    <Text fontSize='xs'>
+      <strong>Service:</strong> {config.service}
+    </Text>
+    <Text fontSize='xs'>
+      <strong>Context:</strong> {config.context}
+    </Text>
+    <Text fontSize='xs'>
+      <strong>Namespace:</strong> {config.namespace}
+    </Text>
+    <Text fontSize='xs'>
+      <strong>Target Port:</strong> {config.remote_port}
+    </Text>
+    <Text fontSize='xs'>
+      <strong>Local Address:</strong> {config.local_address}
+    </Text>
+    <Text fontSize='xs'>
+      <strong>Protocol:</strong> {config.protocol}
+    </Text>
+    <Text fontSize='xs'>
+      <strong>Domain Enabled:</strong> {config.domain_enabled ? 'Yes' : 'No'}
+    </Text>
+  </Box>
+)
 
 export default PortForwardRow

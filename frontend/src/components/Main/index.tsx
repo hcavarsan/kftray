@@ -1,19 +1,18 @@
-/* eslint-disable @typescript-eslint/no-explicit-any */
 import React, { useCallback, useEffect, useState } from 'react'
 
-import { Box, useColorModeValue, VStack } from '@chakra-ui/react'
+import { Box, VStack } from '@chakra-ui/react'
 import { open, save } from '@tauri-apps/api/dialog'
 import { listen } from '@tauri-apps/api/event'
 import { readTextFile, writeTextFile } from '@tauri-apps/api/fs'
 import { invoke } from '@tauri-apps/api/tauri'
 
-import { Config, Response } from '../../types'
-import AddConfigModal from '../AddConfigModal'
-import AutoImportModal from '../AutoImportModal'
-import useCustomToast from '../CustomToast'
-import Footer from '../Footer'
-import GitSyncModal from '../GitSyncModal'
-import PortForwardTable from '../PortForwardTable'
+import AddConfigModal from '@/components/AddConfigModal'
+import AutoImportModal from '@/components/AutoImportModal'
+import Footer from '@/components/Footer'
+import GitSyncModal from '@/components/GitSyncModal'
+import PortForwardTable from '@/components/PortForwardTable'
+import { toaster } from '@/components/ui/toaster'
+import { Config, Response } from '@/types'
 
 const initialRemotePort = 0
 const initialLocalPort = 0
@@ -21,7 +20,6 @@ const initialId = 0
 const initialStatus = 0
 
 const KFTray = () => {
-  const toast = useCustomToast()
   const [pollingInterval, setPollingInterval] = useState(0)
   const [configs, setConfigs] = useState<Config[]>([])
   const [isModalOpen, setIsModalOpen] = useState(false)
@@ -97,14 +95,28 @@ const KFTray = () => {
 
     fetchConfigs()
 
-    const unlisten = listen('config_state_changed', async () => {
-      await updateConfigsWithState()
-      console.log('config_state_changed')
-    })
+    let unsubscribe: (() => void) | undefined
+
+    const setupListener = async () => {
+      try {
+        unsubscribe = await listen('config_state_changed', async () => {
+          if (isMounted) {
+            await updateConfigsWithState()
+            console.log('config_state_changed')
+          }
+        })
+      } catch (error) {
+        console.error('Failed to setup event listener:', error)
+      }
+    }
+
+    setupListener()
 
     return () => {
       isMounted = false
-      unlisten.then(unsub => unsub())
+      if (unsubscribe) {
+        unsubscribe()
+      }
     }
   }, [fetchConfigsWithState, updateConfigsWithState])
 
@@ -145,14 +157,14 @@ const KFTray = () => {
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target
-    const updatedValue =
-      name === 'local_port' || name === 'remote_port'
-        ? value === Number(0).toString()
-          ? Number(0).toString()
-          : Number(value)
-        : value
 
-    setNewConfig(prev => ({ ...prev, [name]: updatedValue }))
+    setNewConfig(prev => ({
+      ...prev,
+      [name]:
+        name === 'local_port' || name === 'remote_port'
+          ? Number(value || 0)
+          : value,
+    }))
   }
 
   const handleExportConfigs = async () => {
@@ -173,10 +185,10 @@ const KFTray = () => {
 
       if (filePath) {
         await writeTextFile(filePath, json)
-        toast({
+        toaster.success({
           title: 'Success',
           description: 'Configuration exported successfully.',
-          status: 'success',
+          duration: 1000,
         })
       }
     } catch (error) {
@@ -184,10 +196,10 @@ const KFTray = () => {
         error instanceof Error ? error.message : String(error)
 
       console.error('Failed to export configs:', errorMessage)
-      toast({
+      toaster.error({
         title: 'Failed to export configs',
         description: errorMessage,
-        status: 'error',
+        duration: 1000,
       })
     }
   }
@@ -206,24 +218,24 @@ const KFTray = () => {
         const jsonContent = await readTextFile(selected)
 
         await invoke('import_configs_cmd', { json: jsonContent })
-        toast({
+        toaster.success({
           title: 'Success',
           description: 'Configuration imported successfully.',
-          status: 'success',
+          duration: 1000,
         })
       } else {
-        toast({
+        toaster.error({
           title: 'Error',
           description: 'Failed to import configurations.',
-          status: 'error',
+          duration: 1000,
         })
       }
     } catch (error) {
       console.error('Error during import:', error)
-      toast({
+      toaster.error({
         title: 'Error',
         description: 'Failed to import configurations.',
-        status: 'error',
+        duration: 1000,
       })
     }
   }
@@ -247,17 +259,17 @@ const KFTray = () => {
     e.preventDefault()
     try {
       await invoke('update_config_cmd', { config: newConfig })
-      toast({
+      toaster.success({
         title: 'Success',
         description: 'Configuration updated successfully.',
-        status: 'success',
+        duration: 1000,
       })
       closeModal()
     } catch (error) {
-      toast({
+      toaster.error({
         title: 'Error',
-        description: `Failed to update configuration. ${error.message}`,
-        status: 'error',
+        description: `Failed to update configuration. ${error instanceof Error ? error.message : 'Unknown error'}`,
+        duration: 1000,
       })
     }
   }
@@ -288,20 +300,18 @@ const KFTray = () => {
         await startPortForwardingForConfig(newConfig)
       }
 
-      toast({
+      toaster.success({
         title: 'Success',
-        description: `Configuration ${
-          isEdit ? 'updated' : 'added'
-        } successfully.`,
-        status: 'success',
+        description: `Configuration ${isEdit ? 'updated' : 'added'} successfully.`,
+        duration: 1000,
       })
       closeModal()
     } catch (error) {
       console.error(`Failed to ${isEdit ? 'update' : 'add'} config:`, error)
-      toast({
+      toaster.error({
         title: 'Error',
         description: `Failed to ${isEdit ? 'update' : 'add'} configuration.`,
-        status: 'error',
+        duration: 1000,
       })
     }
   }
@@ -367,17 +377,19 @@ const KFTray = () => {
 
     const errors = results
     .map(result => (result.status === 'fulfilled' ? result.value : null))
-    .filter(result => result && result.error) as { id: number; error: any }[]
+    .filter(
+      (result): result is { id: number; error: any } => result?.error != null,
+    )
 
     if (errors.length > 0) {
       const errorMessage = errors
       .map(e => `Config ID: ${e.id}, Error: ${e.error}`)
       .join(', ')
 
-      toast({
+      toaster.error({
         title: 'Error Starting Port Forwarding',
         description: `Some configs failed: ${errorMessage}`,
-        status: 'error',
+        duration: 1000,
       })
     }
 
@@ -415,10 +427,10 @@ const KFTray = () => {
 
   const confirmDeleteConfig = async () => {
     if (typeof configToDelete !== 'number') {
-      toast({
+      toaster.error({
         title: 'Error',
         description: 'Configuration id is undefined.',
-        status: 'error',
+        duration: 1000,
       })
 
       return
@@ -426,18 +438,17 @@ const KFTray = () => {
 
     try {
       await invoke('delete_config_cmd', { id: configToDelete })
-
-      toast({
+      toaster.success({
         title: 'Success',
         description: 'Configuration deleted successfully.',
-        status: 'success',
+        duration: 1000,
       })
     } catch (error) {
       console.error('Failed to delete configuration:', error)
-      toast({
+      toaster.error({
         title: 'Error',
         description: 'Failed to delete configuration: "unknown error"',
-        status: 'error',
+        duration: 1000,
       })
     }
     setIsAlertOpen(false)
@@ -450,11 +461,11 @@ const KFTray = () => {
       const allStopped = responses.every(res => res.status === initialStatus)
 
       if (allStopped) {
-        toast({
+        toaster.success({
           title: 'Success',
           description:
             'Port forwarding stopped successfully for all configurations.',
-          status: 'success',
+          duration: 1000,
         })
       } else {
         const errorMessages = responses
@@ -462,24 +473,30 @@ const KFTray = () => {
         .map(res => `${res.service}: ${res.stderr}`)
         .join(', ')
 
-        toast({
+        toaster.error({
           title: 'Error',
           description: `Port forwarding failed for some configurations: ${errorMessages}`,
-          status: 'error',
+          duration: 1000,
         })
       }
     } catch (error) {
       console.error('An error occurred while stopping port forwarding:', error)
-      toast({
+      toaster.error({
         title: 'Error',
         description: `An error occurred while stopping port forwarding: ${error}`,
-        status: 'error',
+        duration: 1000,
       })
     }
     setIsStopping(false)
   }
 
-  const cardBg = useColorModeValue('gray.800', 'gray.800')
+  const handleSetCredentialsSaved = useCallback((value: boolean) => {
+    setCredentialsSaved(value)
+  }, [])
+
+  const handleSetPollingInterval = useCallback((value: number) => {
+    setPollingInterval(value)
+  }, [])
 
   return (
     <Box
@@ -489,61 +506,89 @@ const KFTray = () => {
       maxHeight='100%'
       maxW='100%'
       overflow='hidden'
-      borderRadius='20px'
-      bg={cardBg}
-      boxShadow={`
-		/* Inset shadow for top & bottom inner border effect using dark gray */
-		inset 0 2px 4px rgba(0, 0, 0, 0.3),
-		inset 0 -2px 4px rgba(0, 0, 0, 0.3),
-		/* Inset shadow for an inner border all around using dark gray */
-		inset 0 0 0 4px rgba(45, 57, 81, 0.9)
-	  `}
+      bg='#111111'
+      borderRadius='lg'
     >
       <VStack
-        css={{
-          '&::-webkit-scrollbar': {
-            width: '5px',
-            background: 'transparent',
-          },
-          '&::-webkit-scrollbar-thumb': {
-            background: '#555',
-          },
-          '&::-webkit-scrollbar-thumb:hover': {
-            background: '#666',
-          },
-        }}
         height='100%'
-        maxH='100%'
-        w='100%'
-        maxW='100%'
+        width='100%'
+        gap={0}
+        position='relative'
         overflow='hidden'
-        padding='15px'
-        position='fixed'
-        mt='2px'
       >
-        <PortForwardTable
-          configs={configs}
-          initiatePortForwarding={initiatePortForwarding}
-          isInitiating={isInitiating}
-          setIsInitiating={setIsInitiating}
-          isStopping={isStopping}
-          handleEditConfig={handleEditConfig}
-          stopAllPortForwarding={stopAllPortForwarding}
-          handleDeleteConfig={handleDeleteConfig}
-          confirmDeleteConfig={confirmDeleteConfig}
-          isAlertOpen={isAlertOpen}
-          setIsAlertOpen={setIsAlertOpen}
-          selectedConfigs={selectedConfigs}
-          setSelectedConfigs={setSelectedConfigs}
-        />
+        {/* Main Content Area */}
+        <Box
+          flex={1}
+          width='100%'
+          height='100%'
+          position='relative'
+          overflow='hidden'
+          bg='#111111'
+        >
+          {/* Port Forward Table */}
+          <Box
+            position='absolute'
+            top={0}
+            left={0}
+            right={0}
+            bottom={0}
+            overflow='auto'
+            padding='5px'
+          >
+            <PortForwardTable
+              configs={configs}
+              initiatePortForwarding={initiatePortForwarding}
+              isInitiating={isInitiating}
+              setIsInitiating={setIsInitiating}
+              isStopping={isStopping}
+              handleEditConfig={handleEditConfig}
+              stopAllPortForwarding={stopAllPortForwarding}
+              handleDeleteConfig={handleDeleteConfig}
+              confirmDeleteConfig={confirmDeleteConfig}
+              isAlertOpen={isAlertOpen}
+              setIsAlertOpen={setIsAlertOpen}
+              selectedConfigs={selectedConfigs}
+              setSelectedConfigs={setSelectedConfigs}
+            />
+          </Box>
+
+          {/* Footer Area */}
+          <Box
+            position='absolute'
+            left={0}
+            right={0}
+            bottom={0}
+            overflow='hidden'
+            padding='5px'
+            zIndex={10}
+          >
+            <Footer
+              openModal={openModal}
+              openGitSyncModal={openGitSyncModal}
+              handleExportConfigs={handleExportConfigs}
+              handleImportConfigs={handleImportConfigs}
+              setCredentialsSaved={handleSetCredentialsSaved}
+              credentialsSaved={credentialsSaved}
+              isGitSyncModalOpen={isGitSyncModalOpen}
+              selectedConfigs={selectedConfigs}
+              setPollingInterval={handleSetPollingInterval}
+              pollingInterval={pollingInterval}
+              setSelectedConfigs={setSelectedConfigs}
+              configs={configs}
+            />
+          </Box>
+        </Box>
+
+        {/* Modals */}
         <GitSyncModal
           isGitSyncModalOpen={isGitSyncModalOpen}
           closeGitSyncModal={closeGitSyncModal}
-          setCredentialsSaved={setCredentialsSaved}
+          setCredentialsSaved={handleSetCredentialsSaved}
           credentialsSaved={credentialsSaved}
-          setPollingInterval={setPollingInterval}
+          setPollingInterval={handleSetPollingInterval}
           pollingInterval={pollingInterval}
         />
+
         <AddConfigModal
           isModalOpen={isModalOpen}
           closeModal={closeModal}
@@ -555,20 +600,7 @@ const KFTray = () => {
           cancelRef={cancelRef}
           setNewConfig={setNewConfig}
         />
-        <Footer
-          openModal={openModal}
-          openGitSyncModal={openGitSyncModal}
-          handleExportConfigs={handleExportConfigs}
-          handleImportConfigs={handleImportConfigs}
-          setCredentialsSaved={setCredentialsSaved}
-          credentialsSaved={credentialsSaved}
-          isGitSyncModalOpen={isGitSyncModalOpen}
-          selectedConfigs={selectedConfigs}
-          setPollingInterval={setPollingInterval}
-          pollingInterval={pollingInterval}
-          setSelectedConfigs={setSelectedConfigs}
-          configs={configs}
-        />
+
         <AutoImportModal
           isOpen={isAutoImportModalOpen}
           onClose={() => setIsAutoImportModalOpen(false)}

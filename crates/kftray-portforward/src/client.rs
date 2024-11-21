@@ -349,7 +349,7 @@ async fn create_rustls_https_connector(
     Ok(client)
 }
 
-async fn create_insecure_http_client<'a>(
+async fn create_insecure_http_client(
     config: &Config,
 ) -> Result<Client, Box<dyn std::error::Error + Send + Sync>> {
     let http_connector = HttpConnector::new();
@@ -458,7 +458,7 @@ pub async fn get_services_with_annotation(
             let annotations = service.metadata.annotations.clone()?;
             if annotations
                 .get("kftray.app/enabled")
-                .map_or(false, |v| v == "true")
+                .is_some_and(|v| v == "true")
             {
                 let ports = extract_ports_from_service(&service);
                 let annotations_hashmap: HashMap<String, String> =
