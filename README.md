@@ -1,7 +1,9 @@
 <div align="center">
   <br>
-  <img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/logo.png" width="128px" alt="kftray Logo" />
-  <br><br>
+<div align="center">
+<img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/refs/heads/main/public/img/kftray-head.webp" alt="Kftray github"/>
+</div>
+
   <a href="https://kftray.app"><strong>Visit kftray.app »</strong></a>
   <br><br>
   <a href="https://join.slack.com/t/kftray/shared_invite/zt-2q6lwn15f-Y8Mi_4NlenH9TuEDMjxPUA">
