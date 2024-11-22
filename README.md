@@ -1,7 +1,7 @@
 <div align="center">
   <br>
 <div align="center">
-<img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/refs/heads/main/public/img/kftray-head.webp" alt="Kftray github"/>
+<img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/refs/heads/main/public/img/kftools.webp" alt="Kftray github"/>
 </div>
 
   <a href="https://kftray.app"><strong>Visit kftray.app »</strong></a>
