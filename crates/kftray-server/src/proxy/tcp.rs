@@ -30,6 +30,7 @@ const BUFFER_SIZE: usize = 65536;
 const MAX_CONNECTIONS: usize = 1000;
 const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
 const READ_TIMEOUT: Duration = Duration::from_secs(600);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(30);
 const KEEPALIVE_RETRY_COUNT: u32 = 5;
 
@@ -87,7 +88,6 @@ async fn handle_client(
         let fd = client_stream.as_raw_fd();
 
         unsafe {
-            // Enable TCP keepalive
             let optval: libc::c_int = 1;
             libc::setsockopt(
                 fd,
@@ -144,23 +144,37 @@ async fn handle_client(
         }
     }
 
-    let server_stream =
-        match TcpStream::connect(format!("{}:{}", config.target_host, config.target_port)).await {
-            Ok(stream) => {
-                info!(
-                    "Connected to target {}:{}",
-                    config.target_host, config.target_port
-                );
-                stream
-            }
-            Err(e) => {
-                error!("Failed to connect to target: {}", e);
-                return Err(ProxyError::Connection(format!(
-                    "Failed to connect to target: {}",
-                    e
-                )));
-            }
-        };
+    let server_stream = match tokio::time::timeout(
+        CONNECT_TIMEOUT,
+        TcpStream::connect(format!("{}:{}", config.target_host, config.target_port)),
+    )
+    .await
+    {
+        Ok(Ok(stream)) => {
+            info!(
+                "Connected to target {}:{}",
+                config.target_host, config.target_port
+            );
+            stream
+        }
+        Ok(Err(e)) => {
+            error!("Failed to connect to target: {}", e);
+            return Err(ProxyError::Connection(format!(
+                "Failed to connect to target: {}",
+                e
+            )));
+        }
+        Err(_) => {
+            error!(
+                "Connection to target timed out after {} seconds",
+                CONNECT_TIMEOUT.as_secs()
+            );
+            return Err(ProxyError::Connection(format!(
+                "Connection timeout after {} seconds",
+                CONNECT_TIMEOUT.as_secs()
+            )));
+        }
+    };
 
     server_stream.set_nodelay(true)?;
 
@@ -233,14 +247,6 @@ async fn relay_stream(
                     Ok(Ok(n)) => {
                         consecutive_timeouts = 0;
                         debug!("[{}] Relaying {} bytes", direction, n);
-
-                        // Check if the data contains an HTTP response
-                        if let Ok(data) = std::str::from_utf8(&buffer[..n]) {
-                            if data.starts_with("HTTP/1.1 401") || data.starts_with("HTTP/1.1 404") {
-                                debug!("[{}] Received HTTP {} response, maintaining connection", direction,
-                                    if data.starts_with("HTTP/1.1 401") { "401" } else { "404" });
-                            }
-                        }
 
                         match tokio::time::timeout(
                             WRITE_TIMEOUT,
