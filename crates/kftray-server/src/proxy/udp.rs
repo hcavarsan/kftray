@@ -23,7 +23,7 @@ use crate::proxy::{
 };
 
 const UDP_TIMEOUT: Duration = Duration::from_secs(5);
-const MAX_UDP_SIZE: usize = 65535;
+const MAX_UDP_PAYLOAD_SIZE: usize = 65507;
 
 pub async fn start_proxy(
     config: ProxyConfig, shutdown: std::sync::Arc<Notify>,
@@ -80,9 +80,11 @@ async fn handle_client(
                         let size = u32::from_be_bytes(size_buf);
                         debug!("Read size: {}", size);
 
-                        if size as usize > MAX_UDP_SIZE {
-                            error!("UDP packet size too large: {}", size);
-                            return Err(ProxyError::Configuration("UDP packet size too large".into()));
+                        if size as usize > MAX_UDP_PAYLOAD_SIZE {
+                            return Err(ProxyError::InvalidData(format!(
+                                "UDP packet size {} exceeds maximum allowed {}",
+                                size, MAX_UDP_PAYLOAD_SIZE
+                            )));
                         }
 
                         let mut buffer = vec![0u8; size as usize];
@@ -92,7 +94,7 @@ async fn handle_client(
                                 udp_socket.send(&buffer).await?;
                                 debug!("Sent {} bytes to UDP", size);
 
-                                let mut response = vec![0u8; MAX_UDP_SIZE];
+                                let mut response = vec![0u8; MAX_UDP_PAYLOAD_SIZE];
                                 match tokio::time::timeout(UDP_TIMEOUT, udp_socket.recv(&mut response)).await {
                                     Ok(Ok(n)) => {
                                         debug!("Received {} bytes from UDP", n);
@@ -158,7 +160,7 @@ mod tests {
         let shutdown_clone = shutdown.clone();
 
         tokio::spawn(async move {
-            let mut buf = vec![0; MAX_UDP_SIZE];
+            let mut buf = vec![0; MAX_UDP_PAYLOAD_SIZE];
             while let Ok((n, peer)) = socket.recv_from(&mut buf).await {
                 socket.send_to(&buf[..n], peer).await.unwrap();
             }
@@ -171,12 +173,13 @@ mod tests {
     async fn test_udp_proxy() {
         let (server_addr, _shutdown) = setup_test_udp_server().await;
 
-        let config = ProxyConfig::new(
-            server_addr.ip().to_string(),
-            server_addr.port(),
-            0,
-            crate::proxy::config::ProxyType::Udp,
-        );
+        let config = ProxyConfig::builder()
+            .target_host(server_addr.ip().to_string())
+            .target_port(server_addr.port())
+            .proxy_port(0)
+            .proxy_type(crate::proxy::config::ProxyType::Udp)
+            .build()
+            .unwrap();
 
         let shutdown = std::sync::Arc::new(Notify::new());
         let shutdown_clone = shutdown.clone();

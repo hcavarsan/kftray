@@ -179,12 +179,13 @@ mod tests {
     async fn test_tcp_proxy() {
         let (server_addr, _shutdown) = setup_test_server().await;
 
-        let config = ProxyConfig::new(
-            server_addr.ip().to_string(),
-            server_addr.port(),
-            0,
-            crate::proxy::config::ProxyType::Tcp,
-        );
+        let config = ProxyConfig::builder()
+            .target_host(server_addr.ip().to_string())
+            .target_port(server_addr.port())
+            .proxy_port(0)
+            .proxy_type(crate::proxy::config::ProxyType::Tcp)
+            .build()
+            .unwrap();
 
         let shutdown = std::sync::Arc::new(Notify::new());
         let shutdown_clone = shutdown.clone();

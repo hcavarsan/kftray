@@ -5,6 +5,10 @@ use std::{
     sync::Arc,
 };
 
+use log::{
+    error,
+    info,
+};
 use proxy::{
     config::{
         ProxyConfig,
@@ -15,6 +19,7 @@ use proxy::{
     tcp,
     udp,
 };
+use tokio::signal;
 use tokio::sync::Notify;
 
 #[tokio::main]
@@ -23,6 +28,19 @@ async fn main() -> Result<(), ProxyError> {
 
     let config = load_config()?;
     let shutdown = Arc::new(Notify::new());
+    let shutdown_signal = shutdown.clone();
+
+    tokio::spawn(async move {
+        match signal::ctrl_c().await {
+            Ok(()) => {
+                info!("Shutdown signal received");
+                shutdown_signal.notify_one();
+            }
+            Err(err) => {
+                error!("Error handling shutdown signal: {}", err);
+            }
+        }
+    });
 
     match config.proxy_type {
         ProxyType::Http => {
@@ -69,10 +87,10 @@ fn load_config() -> Result<ProxyConfig, ProxyError> {
         }
     };
 
-    Ok(ProxyConfig::new(
-        target_host,
-        target_port,
-        proxy_port,
-        proxy_type,
-    ))
+    Ok(ProxyConfig::builder()
+        .target_host(target_host)
+        .target_port(target_port)
+        .proxy_port(proxy_port)
+        .proxy_type(proxy_type)
+        .build()?)
 }

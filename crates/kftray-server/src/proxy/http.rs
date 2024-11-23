@@ -158,12 +158,13 @@ mod tests {
     async fn test_proxy_relay() {
         let (echo_port, _shutdown) = setup_test_server().await;
 
-        let config = ProxyConfig::new(
-            "127.0.0.1".to_string(),
-            echo_port,
-            0,
-            crate::proxy::config::ProxyType::Http,
-        );
+        let config = ProxyConfig::builder()
+            .target_host("127.0.0.1".to_string())
+            .target_port(echo_port)
+            .proxy_port(0)
+            .proxy_type(crate::proxy::config::ProxyType::Http)
+            .build()
+            .unwrap();
 
         let shutdown = std::sync::Arc::new(Notify::new());
 

@@ -2929,6 +2929,7 @@ dependencies = [
  "byteorder",
  "env_logger",
  "futures",
+ "futures-io",
  "log",
  "mockall",
  "thiserror 2.0.3",
