@@ -103,4 +103,4 @@ jobs:
           push: true
           tags: |
             ghcr.io/${{ github.repository_owner }}/kftray-server:${{ github.sha }}
-            ghcr.io/${{ github.repository_owner }}/kftray-server:${{ github.ref_name }}
+            ghcr.io/${{ github.repository_owner }}/kftray-server:${{ github.head_ref}}
