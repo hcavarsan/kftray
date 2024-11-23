@@ -1,3 +1,8 @@
+use std::sync::atomic::{
+    AtomicUsize,
+    Ordering,
+};
+
 use log::{
     debug,
     error,
@@ -21,26 +26,36 @@ use crate::proxy::{
 };
 
 const BUFFER_SIZE: usize = 65536;
+const MAX_CONNECTIONS: usize = 1000;
 
 pub async fn start_proxy(
     config: ProxyConfig, shutdown: std::sync::Arc<Notify>,
 ) -> Result<(), ProxyError> {
     let listener = TcpListener::bind(format!("0.0.0.0:{}", config.proxy_port)).await?;
     info!("TCP Proxy started on port {}", config.proxy_port);
+    let connection_count = std::sync::Arc::new(AtomicUsize::new(0));
 
     loop {
         tokio::select! {
             accept_result = listener.accept() => {
                 match accept_result {
-                    Ok((client_stream, addr)) => {
+                    Ok((stream, addr)) => {
+                        let current_connections = connection_count.load(Ordering::Relaxed);
+                        if current_connections >= MAX_CONNECTIONS {
+                            error!("Maximum connection limit reached, rejecting connection from {}", addr);
+                            continue;
+                        }
+                        connection_count.fetch_add(1, Ordering::Relaxed);
                         info!("Accepted connection from {}", addr);
                         let config = config.clone();
                         let shutdown = shutdown.clone();
+                        let connection_count = connection_count.clone();
 
                         tokio::spawn(async move {
-                            if let Err(e) = handle_client(client_stream, config, shutdown).await {
+                            if let Err(e) = handle_client(stream, config, shutdown).await {
                                 error!("Error handling client: {}", e);
                             }
+                            connection_count.fetch_sub(1, Ordering::Relaxed);
                         });
                     }
                     Err(e) => error!("Failed to accept connection: {}", e),
@@ -78,20 +93,7 @@ async fn handle_client(
     let client_to_server = relay_stream(client_reader, server_writer, shutdown.clone());
     let server_to_client = relay_stream(server_reader, client_writer, shutdown);
 
-    tokio::select! {
-        result = client_to_server => {
-            if let Err(e) = &result {
-                error!("Client to server relay error: {}", e);
-            }
-            result?
-        },
-        result = server_to_client => {
-            if let Err(e) = &result {
-                error!("Server to client relay error: {}", e);
-            }
-            result?
-        },
-    }
+    tokio::try_join!(client_to_server, server_to_client)?;
 
     Ok(())
 }
@@ -109,17 +111,11 @@ async fn relay_stream(
                     Ok(0) => {
                         debug!("Stream closed by peer");
                         break;
-                    },
+                    }
                     Ok(n) => {
                         debug!("Relaying {} bytes", n);
-                        if let Err(e) = write_stream.write_all(&buffer[..n]).await {
-                            error!("Write error: {}", e);
-                            return Err(ProxyError::Io(e));
-                        }
-                        if let Err(e) = write_stream.flush().await {
-                            error!("Flush error: {}", e);
-                            return Err(ProxyError::Io(e));
-                        }
+                        write_stream.write_all(&buffer[..n]).await?;
+                        write_stream.flush().await?;
                     }
                     Err(e) => {
                         error!("Read error: {}", e);
@@ -134,11 +130,7 @@ async fn relay_stream(
         }
     }
 
-    if let Err(e) = write_stream.shutdown().await {
-        error!("Shutdown error: {}", e);
-        return Err(ProxyError::Io(e));
-    }
-
+    write_stream.shutdown().await?;
     Ok(())
 }
 
@@ -179,10 +171,13 @@ mod tests {
     async fn test_tcp_proxy() {
         let (server_addr, _shutdown) = setup_test_server().await;
 
+        // Use a specific port for testing
+        let proxy_port = 50000;
+
         let config = ProxyConfig::builder()
             .target_host(server_addr.ip().to_string())
             .target_port(server_addr.port())
-            .proxy_port(0)
+            .proxy_port(proxy_port)
             .proxy_type(crate::proxy::config::ProxyType::Tcp)
             .build()
             .unwrap();
@@ -190,13 +185,15 @@ mod tests {
         let shutdown = std::sync::Arc::new(Notify::new());
         let shutdown_clone = shutdown.clone();
 
-        tokio::spawn(async move {
+        let proxy_handle = tokio::spawn(async move {
             start_proxy(config, shutdown).await.unwrap();
         });
 
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
-        let mut client = TcpStream::connect("127.0.0.1:0").await.unwrap();
+        let mut client = TcpStream::connect(format!("127.0.0.1:{}", proxy_port))
+            .await
+            .unwrap();
 
         let test_data = b"Hello, proxy!";
         client.write_all(test_data).await.unwrap();
@@ -207,5 +204,6 @@ mod tests {
         assert_eq!(&response, test_data);
 
         shutdown_clone.notify_one();
+        proxy_handle.await.unwrap();
     }
 }
