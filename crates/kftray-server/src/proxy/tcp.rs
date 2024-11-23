@@ -18,6 +18,7 @@ use tokio::{
         TcpStream,
     },
     sync::Notify,
+    time::Duration,
 };
 
 use crate::proxy::{
@@ -27,6 +28,8 @@ use crate::proxy::{
 
 const BUFFER_SIZE: usize = 65536;
 const MAX_CONNECTIONS: usize = 1000;
+const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
+const READ_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub async fn start_proxy(
     config: ProxyConfig, shutdown: std::sync::Arc<Notify>,
@@ -74,63 +77,126 @@ pub async fn start_proxy(
 async fn handle_client(
     client_stream: TcpStream, config: ProxyConfig, shutdown: std::sync::Arc<Notify>,
 ) -> Result<(), ProxyError> {
-    let server_stream =
-        TcpStream::connect(format!("{}:{}", config.target_host, config.target_port))
-            .await
-            .map_err(|e| ProxyError::Connection(format!("Failed to connect to target: {}", e)))?;
-
-    info!(
-        "Connected to target {}:{}",
-        config.target_host, config.target_port
-    );
-
     client_stream.set_nodelay(true)?;
+
+    let server_stream =
+        match TcpStream::connect(format!("{}:{}", config.target_host, config.target_port)).await {
+            Ok(stream) => {
+                info!(
+                    "Connected to target {}:{}",
+                    config.target_host, config.target_port
+                );
+                stream
+            }
+            Err(e) => {
+                error!("Failed to connect to target: {}", e);
+                return Err(ProxyError::Connection(format!(
+                    "Failed to connect to target: {}",
+                    e
+                )));
+            }
+        };
+
     server_stream.set_nodelay(true)?;
 
     let (client_reader, client_writer) = client_stream.into_split();
     let (server_reader, server_writer) = server_stream.into_split();
 
-    let client_to_server = relay_stream(client_reader, server_writer, shutdown.clone());
-    let server_to_client = relay_stream(server_reader, client_writer, shutdown);
+    let client_to_server = relay_stream(
+        "client->server",
+        client_reader,
+        server_writer,
+        shutdown.clone(),
+    );
+    let server_to_client = relay_stream("server->client", server_reader, client_writer, shutdown);
 
-    tokio::try_join!(client_to_server, server_to_client)?;
-
-    Ok(())
+    match tokio::try_join!(client_to_server, server_to_client) {
+        Ok(_) => {
+            debug!("Connection closed gracefully");
+            Ok(())
+        }
+        Err(e) => match e {
+            ProxyError::Io(ref io_err) if io_err.kind() == std::io::ErrorKind::BrokenPipe => {
+                debug!("Connection closed by peer (broken pipe)");
+                Ok(())
+            }
+            ProxyError::Io(ref io_err) if io_err.kind() == std::io::ErrorKind::ConnectionReset => {
+                debug!("Connection reset by peer");
+                Ok(())
+            }
+            _ => {
+                error!("Connection error: {}", e);
+                Err(e)
+            }
+        },
+    }
 }
 
 async fn relay_stream(
-    mut read_stream: impl AsyncReadExt + Unpin, mut write_stream: impl AsyncWriteExt + Unpin,
-    shutdown: std::sync::Arc<Notify>,
+    direction: &'static str, mut read_stream: impl AsyncReadExt + Unpin,
+    mut write_stream: impl AsyncWriteExt + Unpin, shutdown: std::sync::Arc<Notify>,
 ) -> Result<(), ProxyError> {
     let mut buffer = vec![0u8; BUFFER_SIZE];
 
     loop {
         tokio::select! {
-            read_result = read_stream.read(&mut buffer) => {
+            read_result = tokio::time::timeout(READ_TIMEOUT, read_stream.read(&mut buffer)) => {
                 match read_result {
-                    Ok(0) => {
-                        debug!("Stream closed by peer");
+                    Ok(Ok(0)) => {
+                        debug!("[{}] Stream closed by peer", direction);
                         break;
                     }
-                    Ok(n) => {
-                        debug!("Relaying {} bytes", n);
-                        write_stream.write_all(&buffer[..n]).await?;
-                        write_stream.flush().await?;
+                    Ok(Ok(n)) => {
+                        debug!("[{}] Relaying {} bytes", direction, n);
+                        match tokio::time::timeout(
+                            WRITE_TIMEOUT,
+                            write_stream.write_all(&buffer[..n])
+                        ).await {
+                            Ok(Ok(())) => {
+                                if let Err(e) = write_stream.flush().await {
+                                    if e.kind() != std::io::ErrorKind::BrokenPipe {
+                                        error!("[{}] Flush error: {}", direction, e);
+                                        return Err(ProxyError::Io(e));
+                                    }
+                                    break;
+                                }
+                            }
+                            Ok(Err(e)) => {
+                                if e.kind() != std::io::ErrorKind::BrokenPipe {
+                                    error!("[{}] Write error: {}", direction, e);
+                                    return Err(ProxyError::Io(e));
+                                }
+                                break;
+                            }
+                            Err(_) => {
+                                error!("[{}] Write timeout", direction);
+                                return Err(ProxyError::Connection("Write timeout".into()));
+                            }
+                        }
                     }
-                    Err(e) => {
-                        error!("Read error: {}", e);
-                        return Err(ProxyError::Io(e));
+                    Ok(Err(e)) => {
+                        if e.kind() != std::io::ErrorKind::ConnectionReset {
+                            error!("[{}] Read error: {}", direction, e);
+                            return Err(ProxyError::Io(e));
+                        }
+                        break;
+                    }
+                    Err(_) => {
+                        error!("[{}] Read timeout", direction);
+                        return Err(ProxyError::Connection("Read timeout".into()));
                     }
                 }
             }
             _ = shutdown.notified() => {
-                debug!("Relay shutdown requested");
+                debug!("[{}] Relay shutdown requested", direction);
                 break;
             }
         }
     }
 
-    write_stream.shutdown().await?;
+    if let Err(e) = write_stream.shutdown().await {
+        debug!("[{}] Shutdown error (expected): {}", direction, e);
+    }
     Ok(())
 }
 
@@ -171,7 +237,6 @@ mod tests {
     async fn test_tcp_proxy() {
         let (server_addr, _shutdown) = setup_test_server().await;
 
-        // Use a specific port for testing
         let proxy_port = 50000;
 
         let config = ProxyConfig::builder()
