@@ -34,7 +34,7 @@ pub async fn start_proxy(
     let local_addr = listener.local_addr()?;
     info!("UDP-over-TCP Proxy started on port {}", config.proxy_port);
 
-    let _accept_handle = tokio::spawn({
+    let accept_handle = tokio::spawn({
         let shutdown = shutdown.clone();
         let config = config.clone();
         async move {
@@ -63,6 +63,12 @@ pub async fn start_proxy(
                 }
             }
         }
+    });
+
+    tokio::spawn(async move {
+        shutdown.notified().await;
+        accept_handle.abort();
+        let _ = accept_handle.await;
     });
 
     Ok(local_addr)
