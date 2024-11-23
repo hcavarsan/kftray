@@ -1,9 +1,5 @@
-use byteorder::{
-    BigEndian,
-    ReadBytesExt,
-    WriteBytesExt,
-};
 use log::{
+    debug,
     error,
     info,
 };
@@ -18,12 +14,16 @@ use tokio::{
         UdpSocket,
     },
     sync::Notify,
+    time::Duration,
 };
 
 use crate::proxy::{
     config::ProxyConfig,
     error::ProxyError,
 };
+
+const UDP_TIMEOUT: Duration = Duration::from_secs(5);
+const MAX_UDP_SIZE: usize = 65535;
 
 pub async fn start_proxy(
     config: ProxyConfig, shutdown: std::sync::Arc<Notify>,
@@ -60,79 +60,83 @@ pub async fn start_proxy(
 }
 
 async fn handle_client(
-    tcp_stream: TcpStream, config: ProxyConfig, shutdown: std::sync::Arc<Notify>,
+    mut tcp_stream: TcpStream, config: ProxyConfig, shutdown: std::sync::Arc<Notify>,
 ) -> Result<(), ProxyError> {
     let udp_socket = UdpSocket::bind("0.0.0.0:0").await?;
     udp_socket
-        .connect((config.target_host, config.target_port))
+        .connect((config.target_host.as_str(), config.target_port))
         .await?;
+    debug!(
+        "Connected UDP socket to {}:{}",
+        config.target_host, config.target_port
+    );
 
-    let (tcp_reader, tcp_writer) = tcp_stream.into_split();
-    let udp_socket = std::sync::Arc::new(udp_socket);
-
-    let tcp_to_udp = handle_tcp_to_udp(tcp_reader, udp_socket.clone(), shutdown.clone());
-    let udp_to_tcp = handle_udp_to_tcp(udp_socket, tcp_writer, shutdown);
-
-    tokio::select! {
-        result = tcp_to_udp => result?,
-        result = udp_to_tcp => result?,
-    }
-
-    Ok(())
-}
-
-async fn handle_tcp_to_udp(
-    mut tcp_reader: impl AsyncReadExt + Unpin, udp_socket: std::sync::Arc<UdpSocket>,
-    shutdown: std::sync::Arc<Notify>,
-) -> Result<(), ProxyError> {
     let mut size_buf = [0u8; 4];
-
     loop {
         tokio::select! {
-            read_result = tcp_reader.read_exact(&mut size_buf) => {
+            read_result = tcp_stream.read_exact(&mut size_buf) => {
                 match read_result {
                     Ok(_) => {
-                        let mut rdr = &size_buf[..];
-                        let size = ReadBytesExt::read_u32::<BigEndian>(&mut rdr)
-                            .map_err(ProxyError::Io)?;
+                        let size = u32::from_be_bytes(size_buf);
+                        debug!("Read size: {}", size);
+
+                        if size as usize > MAX_UDP_SIZE {
+                            error!("UDP packet size too large: {}", size);
+                            return Err(ProxyError::Configuration("UDP packet size too large".into()));
+                        }
+
                         let mut buffer = vec![0u8; size as usize];
-                        tcp_reader.read_exact(&mut buffer).await?;
-                        udp_socket.send(&buffer).await?;
+                        match tcp_stream.read_exact(&mut buffer).await {
+                            Ok(_) => {
+                                debug!("Received {} bytes from TCP", size);
+                                udp_socket.send(&buffer).await?;
+                                debug!("Sent {} bytes to UDP", size);
+
+                                let mut response = vec![0u8; MAX_UDP_SIZE];
+                                match tokio::time::timeout(UDP_TIMEOUT, udp_socket.recv(&mut response)).await {
+                                    Ok(Ok(n)) => {
+                                        debug!("Received {} bytes from UDP", n);
+                                        // Write response size first
+                                        tcp_stream.write_all(&(n as u32).to_be_bytes()).await?;
+                                        // Then write the actual response
+                                        tcp_stream.write_all(&response[..n]).await?;
+                                        tcp_stream.flush().await?;
+                                        debug!("Sent response back to TCP client");
+                                    }
+                                    Ok(Err(e)) => {
+                                        error!("UDP receive error: {}", e);
+                                        return Err(ProxyError::Io(e));
+                                    }
+                                    Err(_) => {
+                                        error!("UDP response timeout");
+                                        // Send empty response on timeout
+                                        tcp_stream.write_all(&0u32.to_be_bytes()).await?;
+                                        tcp_stream.flush().await?;
+                                    }
+                                }
+                            }
+                            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                                debug!("TCP connection closed while reading payload");
+                                break;
+                            }
+                            Err(e) => {
+                                error!("Error reading TCP payload: {}", e);
+                                return Err(ProxyError::Io(e));
+                            }
+                        }
                     }
-                    Err(e) => return Err(ProxyError::Io(e)),
+                    Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+                        debug!("TCP connection closed");
+                        break;
+                    }
+                    Err(e) => {
+                        error!("TCP read error: {}", e);
+                        return Err(ProxyError::Io(e));
+                    }
                 }
             }
             _ = shutdown.notified() => {
-                break;
-            }
-        }
-    }
-
-    Ok(())
-}
-
-async fn handle_udp_to_tcp(
-    udp_socket: std::sync::Arc<UdpSocket>, mut tcp_writer: impl AsyncWriteExt + Unpin,
-    shutdown: std::sync::Arc<Notify>,
-) -> Result<(), ProxyError> {
-    let mut buffer = vec![0u8; 65535];
-
-    loop {
-        tokio::select! {
-            recv_result = udp_socket.recv(&mut buffer) => {
-                match recv_result {
-                    Ok(size) => {
-                        let mut size_buf = Vec::new();
-                        WriteBytesExt::write_u32::<BigEndian>(&mut size_buf, size as u32)
-                            .map_err(ProxyError::Io)?;
-                        tcp_writer.write_all(&size_buf).await?;
-                        tcp_writer.write_all(&buffer[..size]).await?;
-                        tcp_writer.flush().await?;
-                    }
-                    Err(e) => return Err(ProxyError::Io(e)),
-                }
-            }
-            _ = shutdown.notified() => {
+                debug!("Received shutdown signal");
                 break;
             }
         }
@@ -145,8 +149,6 @@ async fn handle_udp_to_tcp(
 mod tests {
     use std::net::SocketAddr;
 
-    use tokio::net::UdpSocket;
-
     use super::*;
 
     async fn setup_test_udp_server() -> (SocketAddr, std::sync::Arc<Notify>) {
@@ -156,7 +158,7 @@ mod tests {
         let shutdown_clone = shutdown.clone();
 
         tokio::spawn(async move {
-            let mut buf = vec![0; 65535];
+            let mut buf = vec![0; MAX_UDP_SIZE];
             while let Ok((n, peer)) = socket.recv_from(&mut buf).await {
                 socket.send_to(&buf[..n], peer).await.unwrap();
             }
@@ -179,24 +181,23 @@ mod tests {
         let shutdown = std::sync::Arc::new(Notify::new());
         let shutdown_clone = shutdown.clone();
 
-        tokio::spawn(async move {
+        let proxy_handle = tokio::spawn(async move {
             start_proxy(config, shutdown).await.unwrap();
         });
 
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
 
         let mut client = TcpStream::connect("127.0.0.1:0").await.unwrap();
         let test_data = b"Hello, UDP proxy!";
 
-        let mut size_buf = Vec::new();
-        WriteBytesExt::write_u32::<BigEndian>(&mut size_buf, test_data.len() as u32).unwrap();
-        client.write_all(&size_buf).await.unwrap();
+        let size = test_data.len() as u32;
+        let size_bytes = size.to_be_bytes();
+        client.write_all(&size_bytes).await.unwrap();
         client.write_all(test_data).await.unwrap();
 
         let mut response_size = [0u8; 4];
         client.read_exact(&mut response_size).await.unwrap();
-        let mut rdr = &response_size[..];
-        let response_len = ReadBytesExt::read_u32::<BigEndian>(&mut rdr).unwrap();
+        let response_len = u32::from_be_bytes(response_size);
 
         let mut response = vec![0; response_len as usize];
         client.read_exact(&mut response).await.unwrap();
@@ -204,5 +205,6 @@ mod tests {
         assert_eq!(&response, test_data);
 
         shutdown_clone.notify_one();
+        proxy_handle.await.unwrap();
     }
 }

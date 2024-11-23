@@ -1,4 +1,5 @@
 use log::{
+    debug,
     error,
     info,
 };
@@ -68,6 +69,9 @@ async fn handle_client(
         config.target_host, config.target_port
     );
 
+    client_stream.set_nodelay(true)?;
+    server_stream.set_nodelay(true)?;
+
     let (client_reader, client_writer) = client_stream.into_split();
     let (server_reader, server_writer) = server_stream.into_split();
 
@@ -75,8 +79,18 @@ async fn handle_client(
     let server_to_client = relay_stream(server_reader, client_writer, shutdown);
 
     tokio::select! {
-        result = client_to_server => result?,
-        result = server_to_client => result?,
+        result = client_to_server => {
+            if let Err(e) = &result {
+                error!("Client to server relay error: {}", e);
+            }
+            result?
+        },
+        result = server_to_client => {
+            if let Err(e) = &result {
+                error!("Server to client relay error: {}", e);
+            }
+            result?
+        },
     }
 
     Ok(())
@@ -92,21 +106,39 @@ async fn relay_stream(
         tokio::select! {
             read_result = read_stream.read(&mut buffer) => {
                 match read_result {
-                    Ok(0) => break, // EOF
+                    Ok(0) => {
+                        debug!("Stream closed by peer");
+                        break;
+                    },
                     Ok(n) => {
-                        write_stream.write_all(&buffer[..n]).await
-                            .map_err(ProxyError::Io)?;
+                        debug!("Relaying {} bytes", n);
+                        if let Err(e) = write_stream.write_all(&buffer[..n]).await {
+                            error!("Write error: {}", e);
+                            return Err(ProxyError::Io(e));
+                        }
+                        if let Err(e) = write_stream.flush().await {
+                            error!("Flush error: {}", e);
+                            return Err(ProxyError::Io(e));
+                        }
                     }
-                    Err(e) => return Err(ProxyError::Io(e)),
+                    Err(e) => {
+                        error!("Read error: {}", e);
+                        return Err(ProxyError::Io(e));
+                    }
                 }
             }
             _ = shutdown.notified() => {
+                debug!("Relay shutdown requested");
                 break;
             }
         }
     }
 
-    write_stream.shutdown().await?;
+    if let Err(e) = write_stream.shutdown().await {
+        error!("Shutdown error: {}", e);
+        return Err(ProxyError::Io(e));
+    }
+
     Ok(())
 }
 
@@ -163,7 +195,6 @@ mod tests {
 
         tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
-        // Test connection and data transfer
         let mut client = TcpStream::connect("127.0.0.1:0").await.unwrap();
 
         let test_data = b"Hello, proxy!";
