@@ -19,6 +19,7 @@ thiserror = "2.0.2"
 async-trait = "0.1"
 futures = "0.3"
 futures-io = "0.3.31"
+libc = "0.2"
 
 [dev-dependencies]
 mockall = "0.13"

@@ -2930,6 +2930,7 @@ dependencies = [
  "env_logger",
  "futures",
  "futures-io",
+ "libc",
  "log",
  "mockall",
  "thiserror 2.0.3",

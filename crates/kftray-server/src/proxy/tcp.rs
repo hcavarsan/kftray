@@ -28,8 +28,10 @@ use crate::proxy::{
 
 const BUFFER_SIZE: usize = 65536;
 const MAX_CONNECTIONS: usize = 1000;
-const WRITE_TIMEOUT: Duration = Duration::from_secs(5);
-const READ_TIMEOUT: Duration = Duration::from_secs(30);
+const WRITE_TIMEOUT: Duration = Duration::from_secs(10);
+const READ_TIMEOUT: Duration = Duration::from_secs(600);
+const KEEPALIVE_INTERVAL: Duration = Duration::from_secs(30);
+const KEEPALIVE_RETRY_COUNT: u32 = 5;
 
 pub async fn start_proxy(
     config: ProxyConfig, shutdown: std::sync::Arc<Notify>,
@@ -79,6 +81,69 @@ async fn handle_client(
 ) -> Result<(), ProxyError> {
     client_stream.set_nodelay(true)?;
 
+    #[cfg(unix)]
+    {
+        use std::os::unix::io::AsRawFd;
+        let fd = client_stream.as_raw_fd();
+
+        unsafe {
+            // Enable TCP keepalive
+            let optval: libc::c_int = 1;
+            libc::setsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_KEEPALIVE,
+                &optval as *const _ as *const libc::c_void,
+                std::mem::size_of_val(&optval) as libc::socklen_t,
+            );
+
+            #[cfg(target_os = "macos")]
+            {
+                let keepalive_time = KEEPALIVE_INTERVAL.as_secs() as libc::c_int;
+                libc::setsockopt(
+                    fd,
+                    libc::IPPROTO_TCP,
+                    libc::TCP_KEEPALIVE,
+                    &keepalive_time as *const _ as *const libc::c_void,
+                    std::mem::size_of_val(&keepalive_time) as libc::socklen_t,
+                );
+            }
+
+            #[cfg(target_os = "linux")]
+            {
+                let keepalive_time = KEEPALIVE_INTERVAL.as_secs() as libc::c_int;
+                libc::setsockopt(
+                    fd,
+                    libc::IPPROTO_TCP,
+                    libc::TCP_KEEPIDLE,
+                    &keepalive_time as *const _ as *const libc::c_void,
+                    std::mem::size_of_val(&keepalive_time) as libc::socklen_t,
+                );
+            }
+
+            #[cfg(any(target_os = "linux", target_os = "macos"))]
+            {
+                let keepalive_retry = KEEPALIVE_RETRY_COUNT as libc::c_int;
+                libc::setsockopt(
+                    fd,
+                    libc::IPPROTO_TCP,
+                    libc::TCP_KEEPCNT,
+                    &keepalive_retry as *const _ as *const libc::c_void,
+                    std::mem::size_of_val(&keepalive_retry) as libc::socklen_t,
+                );
+
+                let keepalive_intvl = 5 as libc::c_int;
+                libc::setsockopt(
+                    fd,
+                    libc::IPPROTO_TCP,
+                    libc::TCP_KEEPINTVL,
+                    &keepalive_intvl as *const _ as *const libc::c_void,
+                    std::mem::size_of_val(&keepalive_intvl) as libc::socklen_t,
+                );
+            }
+        }
+    }
+
     let server_stream =
         match TcpStream::connect(format!("{}:{}", config.target_host, config.target_port)).await {
             Ok(stream) => {
@@ -98,6 +163,23 @@ async fn handle_client(
         };
 
     server_stream.set_nodelay(true)?;
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::io::AsRawFd;
+        let fd = server_stream.as_raw_fd();
+
+        unsafe {
+            let optval: libc::c_int = 1;
+            libc::setsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_KEEPALIVE,
+                &optval as *const _ as *const libc::c_void,
+                std::mem::size_of_val(&optval) as libc::socklen_t,
+            );
+        }
+    }
 
     let (client_reader, client_writer) = client_stream.into_split();
     let (server_reader, server_writer) = server_stream.into_split();
@@ -137,6 +219,8 @@ async fn relay_stream(
     mut write_stream: impl AsyncWriteExt + Unpin, shutdown: std::sync::Arc<Notify>,
 ) -> Result<(), ProxyError> {
     let mut buffer = vec![0u8; BUFFER_SIZE];
+    let mut consecutive_timeouts = 0;
+    const MAX_CONSECUTIVE_TIMEOUTS: u32 = 3;
 
     loop {
         tokio::select! {
@@ -147,7 +231,17 @@ async fn relay_stream(
                         break;
                     }
                     Ok(Ok(n)) => {
+                        consecutive_timeouts = 0;
                         debug!("[{}] Relaying {} bytes", direction, n);
+
+                        // Check if the data contains an HTTP response
+                        if let Ok(data) = std::str::from_utf8(&buffer[..n]) {
+                            if data.starts_with("HTTP/1.1 401") || data.starts_with("HTTP/1.1 404") {
+                                debug!("[{}] Received HTTP {} response, maintaining connection", direction,
+                                    if data.starts_with("HTTP/1.1 401") { "401" } else { "404" });
+                            }
+                        }
+
                         match tokio::time::timeout(
                             WRITE_TIMEOUT,
                             write_stream.write_all(&buffer[..n])
@@ -182,8 +276,14 @@ async fn relay_stream(
                         break;
                     }
                     Err(_) => {
-                        error!("[{}] Read timeout", direction);
-                        return Err(ProxyError::Connection("Read timeout".into()));
+                        consecutive_timeouts += 1;
+                        if consecutive_timeouts >= MAX_CONSECUTIVE_TIMEOUTS {
+                            error!("[{}] Maximum consecutive read timeouts reached", direction);
+                            return Err(ProxyError::Connection("Maximum read timeouts exceeded".into()));
+                        }
+                        debug!("[{}] Read timeout ({}/{}), connection idle",
+                            direction, consecutive_timeouts, MAX_CONSECUTIVE_TIMEOUTS);
+                        continue;
                     }
                 }
             }
