@@ -1,3 +1,4 @@
+use std::net::SocketAddr;
 use log::{
     debug,
     error,
@@ -27,8 +28,9 @@ const MAX_UDP_PAYLOAD_SIZE: usize = 65507;
 
 pub async fn start_proxy(
     config: ProxyConfig, shutdown: std::sync::Arc<Notify>,
-) -> Result<(), ProxyError> {
+) -> Result<SocketAddr, ProxyError> {
     let listener = TcpListener::bind(format!("0.0.0.0:{}", config.proxy_port)).await?;
+    let local_addr = listener.local_addr()?;
     info!("UDP-over-TCP Proxy started on port {}", config.proxy_port);
 
     loop {
@@ -56,7 +58,7 @@ pub async fn start_proxy(
         }
     }
 
-    Ok(())
+    Ok(local_addr)
 }
 
 async fn handle_client(
@@ -151,6 +153,8 @@ async fn handle_client(
 mod tests {
     use std::net::SocketAddr;
 
+    use tokio::sync::oneshot;
+
     use super::*;
 
     async fn setup_test_udp_server() -> (SocketAddr, std::sync::Arc<Notify>) {
@@ -172,6 +176,7 @@ mod tests {
     #[tokio::test]
     async fn test_udp_proxy() {
         let (server_addr, _shutdown) = setup_test_udp_server().await;
+        let (tx, rx) = oneshot::channel();
 
         let config = ProxyConfig::builder()
             .target_host(server_addr.ip().to_string())
@@ -185,12 +190,15 @@ mod tests {
         let shutdown_clone = shutdown.clone();
 
         let proxy_handle = tokio::spawn(async move {
-            start_proxy(config, shutdown).await.unwrap();
+            let addr = start_proxy(config, shutdown).await.unwrap();
+            tx.send(addr).unwrap();
         });
 
-        tokio::time::sleep(Duration::from_millis(100)).await;
+        // Wait for proxy to start and get its address
+        let proxy_addr = rx.await.unwrap();
 
-        let mut client = TcpStream::connect("127.0.0.1:0").await.unwrap();
+        // Connect to the actual proxy address
+        let mut client = TcpStream::connect(proxy_addr).await.unwrap();
         let test_data = b"Hello, UDP proxy!";
 
         let size = test_data.len() as u32;

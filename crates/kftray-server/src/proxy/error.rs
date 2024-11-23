@@ -34,15 +34,23 @@ impl Error for ProxyError {
 
 impl From<futures_io::Error> for ProxyError {
     fn from(err: futures_io::Error) -> Self {
-        ProxyError::Io(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            err.to_string(),
-        ))
+        use std::io::ErrorKind;
+        let kind = match err.kind() {
+            futures_io::ErrorKind::NotFound => ErrorKind::NotFound,
+            futures_io::ErrorKind::PermissionDenied => ErrorKind::PermissionDenied,
+            futures_io::ErrorKind::ConnectionRefused => ErrorKind::ConnectionRefused,
+            futures_io::ErrorKind::ConnectionReset => ErrorKind::ConnectionReset,
+            futures_io::ErrorKind::ConnectionAborted => ErrorKind::ConnectionAborted,
+            futures_io::ErrorKind::NotConnected => ErrorKind::NotConnected,
+            futures_io::ErrorKind::TimedOut => ErrorKind::TimedOut,
+            _ => ErrorKind::Other,
+        };
+        ProxyError::Io(std::io::Error::new(kind, err.to_string()))
     }
 }
 
 impl From<String> for ProxyError {
-    fn from(err: String) -> Self {
-        ProxyError::Configuration(err)
+    fn from(msg: String) -> Self {
+        ProxyError::Configuration(msg)
     }
 }

@@ -221,9 +221,10 @@ check_dns_response() {
 
 curl_with_logging() {
     local url=$1
-    local extra_args=$2
+    shift
+    local extra_args=("$@")
 
-    curl -v --max-time 10 "$extra_args" "$url" 2>&1 | while IFS= read -r line; do
+    curl -v --max-time 10 "${extra_args[@]}" "$url" 2>&1 | while IFS= read -r line; do
         log_debug "CURL: $line"
     done
 }
@@ -238,7 +239,7 @@ docker build -t kftray-server . || handle_error $? "Failed to build Docker image
 cd "$original_dir" || handle_error $? "Failed to return to root directory"
 
 log_info "Starting TCP proxy to example.com:80..."
-docker run -d --name $TCP_CONTAINER \
+docker run -d --name "$TCP_CONTAINER" \
     -p 8080:8080 \
     -e REMOTE_ADDRESS=example.com \
     -e REMOTE_PORT=80 \
@@ -250,7 +251,7 @@ handle_error $? "Failed to start TCP proxy container"
 check_container_health $TCP_CONTAINER || handle_error $? "TCP proxy container failed health check"
 
 log_info "Starting HTTP proxy to httpbin.org..."
-docker run -d --name $HTTP_CONTAINER \
+docker run -d --name "$HTTP_CONTAINER" \
     -p 8081:8080 \
     -e REMOTE_ADDRESS=httpbin.org \
     -e REMOTE_PORT=80 \
@@ -262,7 +263,7 @@ handle_error $? "Failed to start HTTP proxy container"
 check_container_health $HTTP_CONTAINER || handle_error $? "HTTP proxy container failed health check"
 
 log_info "Starting UDP proxy to Google DNS (8.8.8.8:53)..."
-docker run -d --name $UDP_CONTAINER \
+docker run -d --name "$UDP_CONTAINER" \
     -p 8082:8080 \
     -e REMOTE_ADDRESS=8.8.8.8 \
     -e REMOTE_PORT=53 \
