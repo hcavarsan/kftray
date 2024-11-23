@@ -1,142 +1,78 @@
-#![allow(clippy::needless_return)]
-mod http_proxy;
-mod udp_over_tcp_proxy;
+mod proxy;
 
 use std::{
     env,
-    process::exit,
-    sync::{
-        atomic::{
-            AtomicBool,
-            Ordering,
-        },
-        Arc,
-    },
-    time::Duration,
+    sync::Arc,
 };
 
-use log::{
-    error,
-    info,
-    warn,
+use proxy::{
+    config::{
+        ProxyConfig,
+        ProxyType,
+    },
+    error::ProxyError,
+    http,
+    tcp,
+    udp,
 };
-use tokio::{
-    sync::Notify,
-    time::sleep,
-};
+use tokio::sync::Notify;
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), ProxyError> {
     env_logger::init();
 
-    let shutdown_notify = Arc::new(Notify::new());
-    let is_running = Arc::new(AtomicBool::new(true));
-    let is_running_signal = is_running.clone();
-    let shutdown_notify_signal = Arc::clone(&shutdown_notify);
+    let config = load_config()?;
+    let shutdown = Arc::new(Notify::new());
 
-    ctrlc::set_handler(move || {
-        info!("Ctrl-C handler triggered");
-        is_running_signal.store(false, Ordering::SeqCst);
-        shutdown_notify_signal.notify_one();
-    })
-    .expect("Error setting Ctrl-C handler");
+    match config.proxy_type {
+        ProxyType::Http => {
+            http::start_proxy(config, shutdown.clone()).await?;
+        }
+        ProxyType::Tcp => {
+            tcp::start_proxy(config, shutdown.clone()).await?;
+        }
+        ProxyType::Udp => {
+            udp::start_proxy(config, shutdown.clone()).await?;
+        }
+    }
 
-    let target_host = env::var("REMOTE_ADDRESS").unwrap_or_else(|_| {
-        error!("REMOTE_ADDRESS not set.");
-        exit(1);
-    });
+    shutdown.notified().await;
+    Ok(())
+}
 
-    let resolved_target_host = match target_host.parse::<std::net::IpAddr>() {
-        Ok(ip_addr) => ip_addr.to_string(),
-        Err(_) => match tokio::net::lookup_host((target_host.as_str(), 0)).await {
-            Ok(mut ip_iter) => ip_iter
-                .next()
-                .map(|socket_addr| socket_addr.ip().to_string())
-                .unwrap_or_else(|| {
-                    error!("Failed to resolve the domain to an IP.");
-                    exit(1);
-                }),
-            Err(_) => {
-                error!("Unable to resolve the REMOTE_ADDRESS domain.");
-                exit(1);
-            }
-        },
+fn load_config() -> Result<ProxyConfig, ProxyError> {
+    let target_host = env::var("REMOTE_ADDRESS")
+        .map_err(|_| ProxyError::Configuration("REMOTE_ADDRESS not set".into()))?;
+
+    let target_port = env::var("REMOTE_PORT")
+        .map_err(|_| ProxyError::Configuration("REMOTE_PORT not set".into()))?
+        .parse()
+        .map_err(|_| ProxyError::Configuration("Invalid REMOTE_PORT".into()))?;
+
+    let proxy_port = env::var("LOCAL_PORT")
+        .map_err(|_| ProxyError::Configuration("LOCAL_PORT not set".into()))?
+        .parse()
+        .map_err(|_| ProxyError::Configuration("Invalid LOCAL_PORT".into()))?;
+
+    let proxy_type = match env::var("PROXY_TYPE")
+        .map_err(|_| ProxyError::Configuration("PROXY_TYPE not set".into()))?
+        .as_str()
+    {
+        "tcp" => ProxyType::Tcp,
+        "http" => ProxyType::Http,
+        "udp" => ProxyType::Udp,
+        t => {
+            return Err(ProxyError::Configuration(format!(
+                "Invalid proxy type: {}",
+                t
+            )))
+        }
     };
 
-    let target_port: u16 = env::var("REMOTE_PORT")
-        .unwrap_or_else(|_| {
-            error!("REMOTE_PORT not set.");
-            exit(1);
-        })
-        .parse()
-        .unwrap_or_else(|_| {
-            error!("REMOTE_PORT must be a valid port number.");
-            exit(1);
-        });
-
-    let proxy_port: u16 = env::var("LOCAL_PORT")
-        .unwrap_or_else(|_| {
-            error!("LOCAL_PORT not set.");
-            exit(1);
-        })
-        .parse()
-        .unwrap_or_else(|_| {
-            error!("LOCAL_PORT must be a valid port number.");
-            exit(1);
-        });
-
-    let proxy_type = env::var("PROXY_TYPE").unwrap_or_else(|_| {
-        error!("PROXY_TYPE not set.");
-        exit(1);
-    });
-
-    match proxy_type.as_str() {
-        "tcp" | "http" => {
-            info!("Starting HTTP proxy...");
-
-            let config = http_proxy::ProxyConfig {
-                target_host: resolved_target_host,
-                target_port,
-                proxy_port,
-            };
-
-            if let Err(e) = http_proxy::start_http_proxy(
-                config,
-                Arc::clone(&is_running),
-                Arc::clone(&shutdown_notify),
-            )
-            .await
-            {
-                error!("Failed to start the HTTP proxy: {:?}", e);
-            }
-        }
-        "udp" => {
-            info!("Starting UDP over TCP proxy...");
-
-            if let Err(e) = udp_over_tcp_proxy::start_udp_over_tcp_proxy(
-                &resolved_target_host,
-                target_port,
-                proxy_port,
-                Arc::clone(&is_running),
-            ) {
-                error!("UDP over TCP Proxy failed with error: {}", e);
-            }
-        }
-        _ => {
-            error!("Unsupported PROXY_TYPE: {}", proxy_type);
-            exit(1);
-        }
-    }
-
-    info!("Proxy is up and running.");
-
-    while is_running.load(Ordering::SeqCst) {
-        info!("Waiting for shutdown signal...");
-        shutdown_notify.notified().await;
-        info!("Shutdown signal received...");
-        sleep(Duration::from_secs(1)).await;
-    }
-
-    warn!("Shutdown initiated...");
-    info!("Exiting...")
+    Ok(ProxyConfig::new(
+        target_host,
+        target_port,
+        proxy_port,
+        proxy_type,
+    ))
 }
