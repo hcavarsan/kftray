@@ -7,7 +7,7 @@ authors = [
 ]
 license = "MIT"
 homepage = "https://kftray.app"
-repository = "https://github.com/hencavarsan/kftray"
+repository = "https://github.com/hcavarsan/kftray"
 edition = "2021"
 
 [dependencies]
