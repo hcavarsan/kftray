@@ -1,142 +1,130 @@
-#![allow(clippy::needless_return)]
-mod http_proxy;
-mod udp_over_tcp_proxy;
+mod proxy;
 
-use std::{
-    env,
-    process::exit,
-    sync::{
-        atomic::{
-            AtomicBool,
-            Ordering,
-        },
-        Arc,
-    },
-    time::Duration,
-};
+use std::env;
+use std::net::ToSocketAddrs;
+use std::sync::Arc;
 
 use log::{
     error,
     info,
-    warn,
 };
-use tokio::{
-    sync::Notify,
-    time::sleep,
+use tokio::signal;
+use url::Url;
+
+use crate::proxy::{
+    config::{
+        ProxyConfig,
+        ProxyType,
+    },
+    error::ProxyError,
+    server::ProxyServer,
 };
 
-#[tokio::main]
-async fn main() {
-    env_logger::init();
+/// Loads proxy configuration from environment variables
+///
+/// # Returns
+/// * `Result<ProxyConfig, ProxyError>` - Parsed configuration or error details
+///
+/// # Environment Variables
+/// * `REMOTE_ADDRESS` - Target server hostname/IP
+/// * `REMOTE_PORT` - Target server port
+/// * `LOCAL_PORT` - Local proxy listening port
+/// * `PROXY_TYPE` - Protocol type ("tcp" or "udp")
+fn load_config() -> Result<ProxyConfig, ProxyError> {
+    let target_host = env::var("REMOTE_ADDRESS")
+        .map_err(|_| ProxyError::Configuration("REMOTE_ADDRESS not set".into()))?;
 
-    let shutdown_notify = Arc::new(Notify::new());
-    let is_running = Arc::new(AtomicBool::new(true));
-    let is_running_signal = is_running.clone();
-    let shutdown_notify_signal = Arc::clone(&shutdown_notify);
+    let resolved_host = if target_host.contains("://") {
+        let url = Url::parse(&target_host)
+            .map_err(|e| ProxyError::Configuration(format!("Invalid URL: {}", e)))?;
 
-    ctrlc::set_handler(move || {
-        info!("Ctrl-C handler triggered");
-        is_running_signal.store(false, Ordering::SeqCst);
-        shutdown_notify_signal.notify_one();
-    })
-    .expect("Error setting Ctrl-C handler");
-
-    let target_host = env::var("REMOTE_ADDRESS").unwrap_or_else(|_| {
-        error!("REMOTE_ADDRESS not set.");
-        exit(1);
-    });
-
-    let resolved_target_host = match target_host.parse::<std::net::IpAddr>() {
-        Ok(ip_addr) => ip_addr.to_string(),
-        Err(_) => match tokio::net::lookup_host((target_host.as_str(), 0)).await {
-            Ok(mut ip_iter) => ip_iter
-                .next()
-                .map(|socket_addr| socket_addr.ip().to_string())
-                .unwrap_or_else(|| {
-                    error!("Failed to resolve the domain to an IP.");
-                    exit(1);
-                }),
-            Err(_) => {
-                error!("Unable to resolve the REMOTE_ADDRESS domain.");
-                exit(1);
+        url.host_str()
+            .ok_or_else(|| ProxyError::Configuration("No host found in URL".into()))?
+            .to_string()
+    } else {
+        let test_url = format!("http://{}", target_host);
+        if let Ok(url) = Url::parse(&test_url) {
+            if let Some(host) = url.host_str() {
+                host.to_string()
+            } else {
+                target_host
             }
-        },
+        } else {
+            target_host
+        }
     };
 
-    let target_port: u16 = env::var("REMOTE_PORT")
-        .unwrap_or_else(|_| {
-            error!("REMOTE_PORT not set.");
-            exit(1);
-        })
+    let socket_addr = format!("{}:0", resolved_host)
+        .to_socket_addrs()
+        .map_err(|e| ProxyError::Configuration(format!("Failed to resolve hostname: {}", e)))?
+        .next()
+        .ok_or_else(|| ProxyError::Configuration("No IP addresses found for hostname".into()))?;
+
+    let target_port = env::var("REMOTE_PORT")
+        .map_err(|_| ProxyError::Configuration("REMOTE_PORT not set".into()))?
         .parse()
-        .unwrap_or_else(|_| {
-            error!("REMOTE_PORT must be a valid port number.");
-            exit(1);
-        });
+        .map_err(|_| ProxyError::Configuration("Invalid REMOTE_PORT".into()))?;
 
-    let proxy_port: u16 = env::var("LOCAL_PORT")
-        .unwrap_or_else(|_| {
-            error!("LOCAL_PORT not set.");
-            exit(1);
-        })
+    let proxy_port = env::var("LOCAL_PORT")
+        .map_err(|_| ProxyError::Configuration("LOCAL_PORT not set".into()))?
         .parse()
-        .unwrap_or_else(|_| {
-            error!("LOCAL_PORT must be a valid port number.");
-            exit(1);
-        });
+        .map_err(|_| ProxyError::Configuration("Invalid LOCAL_PORT".into()))?;
 
-    let proxy_type = env::var("PROXY_TYPE").unwrap_or_else(|_| {
-        error!("PROXY_TYPE not set.");
-        exit(1);
-    });
+    let proxy_type = match env::var("PROXY_TYPE")
+        .map_err(|_| ProxyError::Configuration("PROXY_TYPE not set".into()))?
+        .to_lowercase()
+        .as_str()
+    {
+        "tcp" => ProxyType::Tcp,
+        "udp" => ProxyType::Udp,
+        t => {
+            return Err(ProxyError::Configuration(format!(
+                "Invalid proxy type: {}",
+                t
+            )))
+        }
+    };
 
-    match proxy_type.as_str() {
-        "tcp" | "http" => {
-            info!("Starting HTTP proxy...");
+    Ok(ProxyConfig::builder()
+        .target_host(socket_addr.ip().to_string())
+        .target_port(target_port)
+        .proxy_port(proxy_port)
+        .proxy_type(proxy_type)
+        .build()?)
+}
 
-            let config = http_proxy::ProxyConfig {
-                target_host: resolved_target_host,
-                target_port,
-                proxy_port,
-            };
+/// Main entry point for the proxy server application
+///
+/// Sets up logging, loads configuration, starts the proxy server,
+/// and handles shutdown signals (Ctrl+C and SIGTERM)
+#[tokio::main]
+async fn main() -> Result<(), ProxyError> {
+    env_logger::init();
 
-            if let Err(e) = http_proxy::start_http_proxy(
-                config,
-                Arc::clone(&is_running),
-                Arc::clone(&shutdown_notify),
-            )
-            .await
-            {
-                error!("Failed to start the HTTP proxy: {:?}", e);
+    let config = load_config()?;
+    let server = Arc::new(ProxyServer::new(config));
+    let server_clone = Arc::clone(&server);
+
+    let server_handle = tokio::spawn(async move { server_clone.run().await });
+
+    tokio::select! {
+        _ = signal::ctrl_c() => {
+            info!("Received Ctrl+C signal");
+        }
+        _ = async {
+            if let Ok(mut sigterm) = signal::unix::signal(signal::unix::SignalKind::terminate()) {
+                let _ = sigterm.recv().await;
+                info!("Received SIGTERM signal");
             }
-        }
-        "udp" => {
-            info!("Starting UDP over TCP proxy...");
-
-            if let Err(e) = udp_over_tcp_proxy::start_udp_over_tcp_proxy(
-                &resolved_target_host,
-                target_port,
-                proxy_port,
-                Arc::clone(&is_running),
-            ) {
-                error!("UDP over TCP Proxy failed with error: {}", e);
-            }
-        }
-        _ => {
-            error!("Unsupported PROXY_TYPE: {}", proxy_type);
-            exit(1);
-        }
+        } => {}
     }
 
-    info!("Proxy is up and running.");
+    server.shutdown();
 
-    while is_running.load(Ordering::SeqCst) {
-        info!("Waiting for shutdown signal...");
-        shutdown_notify.notified().await;
-        info!("Shutdown signal received...");
-        sleep(Duration::from_secs(1)).await;
+    if let Err(e) = tokio::time::timeout(tokio::time::Duration::from_secs(5), server_handle).await {
+        error!("Server shutdown timed out: {}", e);
     }
 
-    warn!("Shutdown initiated...");
-    info!("Exiting...")
+    info!("Server shutdown complete");
+    Ok(())
 }

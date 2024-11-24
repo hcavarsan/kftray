@@ -966,16 +966,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ctrlc"
-version = "3.4.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "90eeab0aa92f3f9b4e87f258c72b139c207d251f9cbc1080a0086b86a8870dd3"
-dependencies = [
- "nix 0.29.0",
- "windows-sys 0.59.0",
-]
-
-[[package]]
 name = "darling"
 version = "0.20.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2935,12 +2925,13 @@ dependencies = [
 name = "kftray-server"
 version = "0.15.1"
 dependencies = [
- "byteorder",
- "ctrlc",
+ "async-trait",
  "env_logger",
  "log",
  "mockall",
  "tokio",
+ "tokio-test",
+ "url",
 ]
 
 [[package]]
@@ -3478,9 +3469,9 @@ dependencies = [
 
 [[package]]
 name = "mockall"
-version = "0.13.0"
+version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d4c28b3fb6d753d28c20e826cd46ee611fda1cf3cde03a443a974043247c065a"
+checksum = "39a6bfcc6c8c7eed5ee98b9c3e33adc726054389233e201c95dab2d41a3839d2"
 dependencies = [
  "cfg-if",
  "downcast",
@@ -3492,9 +3483,9 @@ dependencies = [
 
 [[package]]
 name = "mockall_derive"
-version = "0.13.0"
+version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "341014e7f530314e9a1fdbc7400b244efea7122662c96bfa248c31da5bfb2020"
+checksum = "25ca3004c2efe9011bd4e461bd8256445052b9615405b4f7ea43fc8ca5c20898"
 dependencies = [
  "cfg-if",
  "proc-macro2",
@@ -6395,6 +6386,19 @@ dependencies = [
  "futures-core",
  "pin-project-lite",
  "tokio",
+]
+
+[[package]]
+name = "tokio-test"
+version = "0.4.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2468baabc3311435b55dd935f702f42cd1b8abb7e754fb7dfb16bd36aa88f9f7"
+dependencies = [
+ "async-stream",
+ "bytes",
+ "futures-core",
+ "tokio",
+ "tokio-stream",
 ]
 
 [[package]]
