@@ -4,11 +4,11 @@ A network proxy server written in Rust that forwards traffic between clients and
 
 ## Introduction
 
-KFtray Server helps solve network connectivity issues by acting as an intermediary between clients and servers. It can handle both TCP and UDP protocols,
+KFtray Server helps solve network connectivity issues by acting as an intermediary between clients and servers. It can handle TCP, UDP, and SSH protocols.
 
 ## How It Works
 
-The server operates in two modes:
+The server operates in three modes:
 
 ```mermaid
 graph TD
@@ -18,8 +18,6 @@ graph TD
     end
 ```
 
-In TCP mode, the server creates a direct connection between the client and target server, forwarding all traffic between them.
-
 ```mermaid
 graph TD
     subgraph UDP Mode
@@ -28,7 +26,13 @@ graph TD
     end
 ```
 
-In UDP mode, the server accepts TCP connections from clients and converts them to UDP packets before sending to the target server. This helps when UDP traffic needs to traverse networks that only allow TCP.
+```mermaid
+graph TD
+    subgraph SSH Mode
+        G[SSH Client] -->|SSH| H[KFtray Server]
+        H -->|SSH| I[Target SSH Server]
+    end
+```
 
 ## Configuration
 
@@ -38,7 +42,7 @@ The server uses environment variables for configuration:
 REMOTE_ADDRESS=target.host    # The address of your target server
 REMOTE_PORT=8080             # The port on your target server
 LOCAL_PORT=8080             # The port KFtray listens on
-PROXY_TYPE=tcp             # Either 'tcp' or 'udp'
+PROXY_TYPE=tcp             # Either 'tcp', 'udp', or 'ssh'
 ```
 
 ## Running with Docker

@@ -16,6 +16,9 @@ log = "0.4"
 env_logger = "0.11.5"
 url = "2.5.0"
 async-trait = "0.1"
+russh = "0.46"
+russh-keys = "0.46"
+rand_core = "0.6"
 
 [dev-dependencies]
 mockall = "0.13"

@@ -81,4 +81,6 @@ pub enum ProxyType {
     Tcp,
     /// UDP proxy mode
     Udp,
+    /// SSH proxy mode
+    Ssh,
 }

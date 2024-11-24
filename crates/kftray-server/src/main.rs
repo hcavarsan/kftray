@@ -77,9 +77,10 @@ fn load_config() -> Result<ProxyConfig, ProxyError> {
     {
         "tcp" => ProxyType::Tcp,
         "udp" => ProxyType::Udp,
+        "ssh" => ProxyType::Ssh,
         t => {
             return Err(ProxyError::Configuration(format!(
-                "Invalid proxy type: {}",
+                "Invalid proxy type: {}. Must be 'tcp', 'udp', or 'ssh'",
                 t
             )))
         }
