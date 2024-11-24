@@ -1,12 +1,18 @@
 use std::net::SocketAddr;
-use tokio::{
-    net::{TcpListener, UdpSocket},
-    sync::oneshot,
-    io::{AsyncReadExt, AsyncWriteExt},
-};
 
 use tokio::net::TcpStream;
 use tokio::time::Duration;
+use tokio::{
+    io::{
+        AsyncReadExt,
+        AsyncWriteExt,
+    },
+    net::{
+        TcpListener,
+        UdpSocket,
+    },
+    sync::oneshot,
+};
 
 pub const TEST_BUFFER_SIZE: usize = 1024;
 

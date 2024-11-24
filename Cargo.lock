@@ -2925,6 +2925,7 @@ dependencies = [
 name = "kftray-server"
 version = "0.15.1"
 dependencies = [
+ "async-trait",
  "env_logger",
  "log",
  "mockall",

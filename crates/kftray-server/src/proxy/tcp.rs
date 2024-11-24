@@ -77,9 +77,7 @@ impl TcpProxy {
     /// * `inbound` - Client connection stream
     /// * `config` - Proxy configuration
     async fn handle_tcp_connection(
-        &self,
-        inbound: TcpStream,
-        config: &ProxyConfig,
+        &self, inbound: TcpStream, config: &ProxyConfig,
     ) -> Result<(), ProxyError> {
         let outbound = self.connect_to_target(config).await?;
         let (mut inbound, mut outbound) = (inbound, outbound);
@@ -115,14 +113,18 @@ impl TcpProxy {
 
 #[async_trait]
 impl ProxyHandler for TcpProxy {
-    /// Starts the proxy server with the given configuration and shutdown signal.
+    /// Starts the proxy server with the given configuration and shutdown
+    /// signal.
     ///
     /// # Parameters
-    /// * `config` - Configuration containing proxy settings like ports and target details
-    /// * `shutdown` - Notification mechanism to signal when the proxy should stop
+    /// * `config` - Configuration containing proxy settings like ports and
+    ///   target details
+    /// * `shutdown` - Notification mechanism to signal when the proxy should
+    ///   stop
     ///
     /// # Returns
-    /// * `Result<(), ProxyError>` - Success if proxy runs and shuts down cleanly, or error details
+    /// * `Result<(), ProxyError>` - Success if proxy runs and shuts down
+    ///   cleanly, or error details
     async fn start(&self, config: ProxyConfig, shutdown: Arc<Notify>) -> Result<(), ProxyError> {
         let addr: SocketAddr = format!("0.0.0.0:{}", config.proxy_port).parse()?;
         let listener = TcpListener::bind(addr).await?;
@@ -160,16 +162,27 @@ impl ProxyHandler for TcpProxy {
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        net::SocketAddr,
+        time::Duration,
+    };
+
+    use tokio::{
+        io::{
+            AsyncReadExt,
+            AsyncWriteExt,
+        },
+        net::TcpStream,
+    };
+
     use super::*;
     use crate::proxy::{
         config::ProxyType,
-        test_utils::{self, TestServer},
+        test_utils::{
+            self,
+            TestServer,
+        },
     };
-    use tokio::{
-        net::TcpStream,
-        io::{AsyncReadExt, AsyncWriteExt},
-    };
-    use std::{time::Duration, net::SocketAddr};
 
     const TEST_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -197,7 +210,10 @@ mod tests {
         });
 
         // Wait for the proxy to be ready
-        assert!(test_utils::wait_for_port(addr).await, "Proxy failed to start");
+        assert!(
+            test_utils::wait_for_port(addr).await,
+            "Proxy failed to start"
+        );
 
         (echo_server, shutdown_clone, addr)
     }
@@ -214,10 +230,10 @@ mod tests {
         stream.write_all(test_data).await.unwrap();
         stream.flush().await.unwrap();
 
-        let n = tokio::time::timeout(
-            TEST_TIMEOUT,
-            stream.read_exact(&mut response)
-        ).await.unwrap().unwrap();
+        let n = tokio::time::timeout(TEST_TIMEOUT, stream.read_exact(&mut response))
+            .await
+            .unwrap()
+            .unwrap();
 
         // Assert
         assert_eq!(n, test_data.len());
@@ -240,10 +256,10 @@ mod tests {
         stream.write_all(&test_data).await.unwrap();
         stream.flush().await.unwrap();
 
-        let n = tokio::time::timeout(
-            TEST_TIMEOUT,
-            stream.read_exact(&mut response)
-        ).await.unwrap().unwrap();
+        let n = tokio::time::timeout(TEST_TIMEOUT, stream.read_exact(&mut response))
+            .await
+            .unwrap()
+            .unwrap();
 
         // Assert
         assert_eq!(n, test_data.len());
@@ -280,8 +296,17 @@ mod tests {
         // Assert
         for handle in handles {
             let (client_id, n, response) = handle.await.unwrap();
-            assert_eq!(n, test_data.len(), "Client {} received wrong data length", client_id);
-            assert_eq!(&response, test_data, "Client {} received incorrect data", client_id);
+            assert_eq!(
+                n,
+                test_data.len(),
+                "Client {} received wrong data length",
+                client_id
+            );
+            assert_eq!(
+                &response, test_data,
+                "Client {} received incorrect data",
+                client_id
+            );
         }
 
         // Cleanup

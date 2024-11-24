@@ -189,16 +189,27 @@ impl ProxyHandler for UdpProxy {
 
 #[cfg(test)]
 mod tests {
+    use std::{
+        net::SocketAddr,
+        time::Duration,
+    };
+
+    use tokio::{
+        io::{
+            AsyncReadExt,
+            AsyncWriteExt,
+        },
+        net::TcpStream,
+    };
+
     use super::*;
     use crate::proxy::{
         config::ProxyType,
-        test_utils::{self, TestServer},
+        test_utils::{
+            self,
+            TestServer,
+        },
     };
-    use tokio::{
-        net::TcpStream,
-        io::{AsyncReadExt, AsyncWriteExt},
-    };
-    use std::{time::Duration, net::SocketAddr};
 
     const TEST_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -224,8 +235,10 @@ mod tests {
             let _ = proxy.start(config, shutdown).await;
         });
 
-
-        assert!(test_utils::wait_for_port(addr).await, "Proxy failed to start");
+        assert!(
+            test_utils::wait_for_port(addr).await,
+            "Proxy failed to start"
+        );
 
         (echo_server, shutdown_clone, addr)
     }
@@ -261,10 +274,10 @@ mod tests {
 
         // Act
         let mut stream = TcpStream::connect(proxy_addr).await.unwrap();
-        let response = tokio::time::timeout(
-            TEST_TIMEOUT,
-            send_udp_packet(&mut stream, test_data)
-        ).await.unwrap().unwrap();
+        let response = tokio::time::timeout(TEST_TIMEOUT, send_udp_packet(&mut stream, test_data))
+            .await
+            .unwrap()
+            .unwrap();
 
         // Assert
         assert_eq!(response, test_data);
@@ -282,10 +295,10 @@ mod tests {
 
         // Act
         let mut stream = TcpStream::connect(proxy_addr).await.unwrap();
-        let response = tokio::time::timeout(
-            TEST_TIMEOUT,
-            send_udp_packet(&mut stream, &test_data)
-        ).await.unwrap().unwrap();
+        let response = tokio::time::timeout(TEST_TIMEOUT, send_udp_packet(&mut stream, &test_data))
+            .await
+            .unwrap()
+            .unwrap();
 
         // Assert
         assert_eq!(response, test_data);
@@ -306,10 +319,11 @@ mod tests {
         let mut stream = TcpStream::connect(proxy_addr).await.unwrap();
 
         for i in 0..packet_count {
-            let response = tokio::time::timeout(
-                TEST_TIMEOUT,
-                send_udp_packet(&mut stream, test_data)
-            ).await.unwrap().unwrap();
+            let response =
+                tokio::time::timeout(TEST_TIMEOUT, send_udp_packet(&mut stream, test_data))
+                    .await
+                    .unwrap()
+                    .unwrap();
 
             // Assert
             assert_eq!(response, test_data, "Packet {} was not echoed correctly", i);

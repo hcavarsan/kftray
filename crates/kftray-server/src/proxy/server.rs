@@ -45,7 +45,8 @@ impl ProxyServer {
     /// Starts the proxy server and begins handling connections
     ///
     /// # Returns
-    /// * `Result<(), ProxyError>` - Success if server runs and shuts down cleanly
+    /// * `Result<(), ProxyError>` - Success if server runs and shuts down
+    ///   cleanly
     pub async fn run(&self) -> Result<(), ProxyError> {
         self.handler
             .start(self.config.clone(), self.shutdown.clone())
