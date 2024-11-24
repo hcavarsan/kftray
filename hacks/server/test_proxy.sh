@@ -1,7 +1,6 @@
 #!/bin/bash
 
 readonly TCP_CONTAINER="kftray-tcp-proxy"
-readonly HTTP_CONTAINER="kftray-http-proxy"
 readonly UDP_CONTAINER="kftray-udp-proxy"
 readonly MAX_RETRIES=3
 readonly HEALTH_CHECK_TIMEOUT=30
@@ -15,7 +14,6 @@ START_TIME=$(date +%s)
 WAIT_MODE=false
 
 TCP_TEST_RESULT="SKIPPED"
-HTTP_TEST_RESULT="SKIPPED"
 UDP_TEST_RESULT="SKIPPED"
 
 log_info() { echo "$LOG_PREFIX INFO: $*" | sed 's/\x1B\[[0-9;]*[JKmsu]//g'; }
@@ -39,7 +37,6 @@ setup_containers() {
 		handle_error $? "Failed to build Docker image"
 
 	start_proxy_container "$TCP_CONTAINER" "tcp" "httpbin.org" "80" "8080"
-	start_proxy_container "$HTTP_CONTAINER" "http" "httpbin.org" "80" "8081"
 	start_proxy_container "$UDP_CONTAINER" "udp" "8.8.8.8" "53" "8082"
 }
 
@@ -147,13 +144,20 @@ check_dns_response() {
 run_tcp_tests() {
 	log_info "Running TCP proxy tests..."
 	local status_code
+	local response
 
 	for i in $(seq 1 $MAX_RETRIES); do
 		log_info "TCP test attempt $i/$MAX_RETRIES"
 
-		status_code=$(curl -s -o /dev/null --max-time "2" -w "%{http_code}" -H "Host: httpbin.org" http://localhost:8080/get)
+		# Use -i to show request headers
+		response=$(curl -i -v -s -H "Host: httpbin.org" http://localhost:8080/get 2>&1)
+		status_code=$?
 
-		if [[ "$status_code" =~ ^(200|301|302|308)$ ]]; then
+		log_debug "Curl exit code: $status_code"
+		log_debug "Full response:"
+		log_debug "$response"
+
+		if echo "$response" | grep -q '"url": "http://httpbin.org/get"'; then
 			TCP_TEST_RESULT="PASSED"
 			return 0
 		fi
@@ -165,26 +169,7 @@ run_tcp_tests() {
 	return 1
 }
 
-run_http_tests() {
-	log_info "Running HTTP proxy tests..."
-	local status_code
 
-	for i in $(seq 1 $MAX_RETRIES); do
-		log_info "HTTP test attempt $i/$MAX_RETRIES"
-
-		status_code=$(curl -s -o /dev/null --max-time "2" -w "%{http_code}" -H "Host: httpbin.org" http://localhost:8081/get)
-
-		if [ "$status_code" = "200" ]; then
-			HTTP_TEST_RESULT="PASSED"
-			return 0
-		fi
-
-		[ "$i" -lt $MAX_RETRIES ] && sleep 2
-	done
-
-	HTTP_TEST_RESULT="FAILED"
-	return 1
-}
 
 run_udp_tests() {
 	log_info "Running UDP proxy tests..."
@@ -239,11 +224,10 @@ print_summary() {
 	echo "Total duration: ${total_time}s"
 	echo
 	echo "TCP Proxy (localhost:8080 -> httpbin.org:80): $TCP_TEST_RESULT"
-	echo "HTTP Proxy (localhost:8081 -> httpbin.org:80): $HTTP_TEST_RESULT"
 	echo "UDP Proxy (localhost:8082 -> 8.8.8.8:53): $UDP_TEST_RESULT"
 	echo "=================================="
 
-	if [[ "$TCP_TEST_RESULT" == "FAILED" || "$HTTP_TEST_RESULT" == "FAILED" || "$UDP_TEST_RESULT" == "FAILED" ]]; then
+	if [[ "$TCP_TEST_RESULT" == "FAILED" ||  "$UDP_TEST_RESULT" == "FAILED" ]]; then
 		echo
 		echo "=== DETAILED LOGS FOR FAILED TESTS ==="
 		for container in "${CONTAINERS[@]}"; do
@@ -276,7 +260,6 @@ main() {
 
 	setup_containers
 	run_tcp_tests
-	run_http_tests
 	run_udp_tests
 
 	print_summary

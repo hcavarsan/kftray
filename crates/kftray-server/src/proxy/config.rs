@@ -1,11 +1,17 @@
+/// Configuration settings for a proxy instance
 #[derive(Debug, Clone)]
 pub struct ProxyConfig {
+    /// Host address of the target server to proxy to
     pub target_host: String,
+    /// Port number of the target server
     pub target_port: u16,
+    /// Local port number the proxy listens on
     pub proxy_port: u16,
+    /// Type of proxy protocol (TCP or UDP)
     pub proxy_type: ProxyType,
 }
 
+/// Builder pattern implementation for creating ProxyConfig instances
 #[derive(Default)]
 pub struct ProxyConfigBuilder {
     target_host: Option<String>,
@@ -68,9 +74,11 @@ impl ProxyConfig {
     }
 }
 
+/// Supported proxy protocol types
 #[derive(Debug, Clone)]
 pub enum ProxyType {
-    Http,
+    /// TCP proxy mode
     Tcp,
+    /// UDP proxy mode
     Udp,
 }

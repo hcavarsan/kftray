@@ -1,14 +1,20 @@
-use std::error::Error;
-use std::fmt;
-use std::io;
+use std::{
+    error::Error,
+    fmt,
+    io,
+    net::AddrParseError,
+};
 
-use futures_io;
-
+/// Represents the various error types that can occur during proxy operations.
 #[derive(Debug)]
 pub enum ProxyError {
+    /// Wraps standard IO errors from networking operations
     Io(io::Error),
+    /// Indicates invalid configuration settings or parameters
     Configuration(String),
+    /// Represents failures in establishing or maintaining connections
     Connection(String),
+    /// Indicates invalid or malformed data received during proxy operations
     InvalidData(String),
 }
 
@@ -32,25 +38,20 @@ impl Error for ProxyError {
     }
 }
 
-impl From<futures_io::Error> for ProxyError {
-    fn from(err: futures_io::Error) -> Self {
-        use std::io::ErrorKind;
-        let kind = match err.kind() {
-            futures_io::ErrorKind::NotFound => ErrorKind::NotFound,
-            futures_io::ErrorKind::PermissionDenied => ErrorKind::PermissionDenied,
-            futures_io::ErrorKind::ConnectionRefused => ErrorKind::ConnectionRefused,
-            futures_io::ErrorKind::ConnectionReset => ErrorKind::ConnectionReset,
-            futures_io::ErrorKind::ConnectionAborted => ErrorKind::ConnectionAborted,
-            futures_io::ErrorKind::NotConnected => ErrorKind::NotConnected,
-            futures_io::ErrorKind::TimedOut => ErrorKind::TimedOut,
-            _ => ErrorKind::Other,
-        };
-        ProxyError::Io(std::io::Error::new(kind, err.to_string()))
+impl From<io::Error> for ProxyError {
+    fn from(err: io::Error) -> Self {
+        ProxyError::Io(err)
     }
 }
 
 impl From<String> for ProxyError {
     fn from(msg: String) -> Self {
         ProxyError::Configuration(msg)
+    }
+}
+
+impl From<AddrParseError> for ProxyError {
+    fn from(err: AddrParseError) -> Self {
+        ProxyError::Configuration(format!("Invalid address format: {}", err))
     }
 }
