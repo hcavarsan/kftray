@@ -1,4 +1,4 @@
-FROM rust:1.82.0-alpine3.19 AS builder
+FROM rust:1.82.0-alpine3.20 AS builder
 
 RUN apk add --no-cache musl-dev
 
@@ -23,4 +23,3 @@ ENV PROXY_TYPE=tcp
 EXPOSE 8080
 
 CMD ["/kftray-server"]
-
