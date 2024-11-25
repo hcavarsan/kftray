@@ -1,11 +1,15 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{
+    Duration,
+    Instant,
+};
 
 use async_trait::async_trait;
 use log::{
     error,
     info,
+    warn,
 };
 use russh::server::{
     self,
@@ -34,27 +38,51 @@ use crate::proxy::{
     traits::ProxyHandler,
 };
 
+/// Default timeout for inactive SSH connections in seconds
 const INACTIVITY_TIMEOUT: u64 = 3600;
+/// Time delay between authentication attempts in seconds
 const AUTH_REJECTION_TIME: u64 = 3;
+/// Maximum number of connections per client
+const MAX_CONNECTIONS_PER_CLIENT: usize = 10;
+/// Connection timeout in seconds
+const CONNECTION_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Represents a forwarded port configuration
 #[derive(Clone)]
+#[allow(dead_code)]
 struct ForwardedPort {
+    /// Address the port is bound to
     bind_address: String,
+    /// Port number being forwarded
     port: u32,
 }
 
+/// Stores information about a connected SSH client
 #[derive(Clone)]
+#[allow(dead_code)]
 struct ClientInfo {
+    /// Handle to the SSH server for this client
     handle: russh::server::Handle,
+    /// ID of the currently active channel, if any
     channel_id: Option<ChannelId>,
+    /// Map of forwarded ports for this client
     forwarded_ports: HashMap<(String, u32), ForwardedPort>,
+    /// Number of active connections for this client
+    connection_count: usize,
+    /// Time of the last connection attempt for this client
+    last_connection: Instant,
 }
 
+/// SSH proxy implementation that handles SSH connections and port forwarding
 #[derive(Clone)]
 pub struct SshProxy {
+    /// Map of connected clients indexed by client ID
     clients: Arc<Mutex<HashMap<usize, ClientInfo>>>,
+    /// List of spawned async tasks
     tasks: Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>,
+    /// Unique identifier for this proxy instance
     id: usize,
+    /// Counter for generating next client ID
     next_id: Arc<Mutex<usize>>,
 }
 
@@ -70,10 +98,12 @@ impl Default for SshProxy {
 }
 
 impl SshProxy {
+    /// Creates a new SSH proxy instance
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Creates the SSH server configuration with default settings
     fn create_config() -> server::Config {
         let key = KeyPair::generate_ed25519();
         server::Config {
@@ -93,6 +123,7 @@ impl SshProxy {
 impl server::Server for SshProxy {
     type Handler = Self;
 
+    /// Creates a new client handler with a unique ID
     fn new_client(&mut self, _: Option<std::net::SocketAddr>) -> Self {
         let mut s = self.clone();
         s.id = {
@@ -110,25 +141,60 @@ impl server::Server for SshProxy {
 impl server::Handler for SshProxy {
     type Error = russh::Error;
 
+    /// Handles authentication requests using the 'none' method
     async fn auth_none(&mut self, user: &str) -> Result<server::Auth, Self::Error> {
         info!("Accepting none authentication for user: {}", user);
         Ok(server::Auth::Accept)
     }
 
+    /// Handles authentication requests using the 'publickey' method
+    async fn auth_publickey(
+        &mut self, user: &str, public_key: &russh_keys::key::PublicKey,
+    ) -> Result<server::Auth, Self::Error> {
+        info!("Attempting public key authentication for user: {}", user);
+
+        // TODO: Implement proper key validation against authorized_keys
+        // For now, we'll continue accepting connections but log the attempt
+        warn!(
+            "Public key authentication not properly implemented - accepting connection for testing"
+        );
+        info!("Public key fingerprint: {}", public_key.fingerprint());
+
+        Ok(server::Auth::Accept)
+    }
+
+    /// Handles requests to open a new SSH session
     async fn channel_open_session(
         &mut self, channel: Channel<Msg>, session: &mut Session,
     ) -> Result<bool, Self::Error> {
         let mut clients = self.clients.lock().await;
+
+        if let Some(client) = clients.get(&self.id) {
+            if client.connection_count >= MAX_CONNECTIONS_PER_CLIENT {
+                error!("Too many connections for client {}", self.id);
+                return Ok(false);
+            }
+
+            if client.last_connection.elapsed() < CONNECTION_TIMEOUT {
+                error!("Connection attempt too soon for client {}", self.id);
+                return Ok(false);
+            }
+        }
+
         clients.insert(
             self.id,
             ClientInfo {
                 channel_id: Some(channel.id()),
                 handle: session.handle(),
                 forwarded_ports: HashMap::new(),
+                connection_count: 1,
+                last_connection: Instant::now(),
             },
         );
+
         Ok(true)
     }
+    /// Handles TCP port forwarding requests
     async fn tcpip_forward(
         &mut self, address: &str, port: &mut u32, session: &mut Session,
     ) -> Result<bool, Self::Error> {
@@ -164,7 +230,7 @@ impl server::Handler for SshProxy {
                 let handle = session.handle();
                 let client_id = self.id;
                 let port = *port;
-                let address = address.to_string(); // Clone the address here
+                let address = address.to_string();
 
                 let accept_task = tokio::spawn(async move {
                     while let Ok((inbound, addr)) = listener.accept().await {
@@ -175,7 +241,7 @@ impl server::Handler for SshProxy {
 
                         let _ = inbound.set_nodelay(true);
                         let handle = handle.clone();
-                        let address = address.clone(); // Clone for the inner spawn
+                        let address = address.clone();
 
                         tokio::spawn(async move {
                             match handle
@@ -301,8 +367,9 @@ impl Drop for SshProxy {
                 task.abort();
             }
 
-            let mut clients = clients.lock().await;
-            clients.remove(&id);
+            if let Ok(mut clients) = clients.try_lock() {
+                clients.remove(&id);
+            }
         });
     }
 }
