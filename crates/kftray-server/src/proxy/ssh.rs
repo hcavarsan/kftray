@@ -380,11 +380,16 @@ impl Drop for SshProxy {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use russh::server::{
+        Auth,
+        Handler,
+    };
+    use russh_keys::key::KeyPair;
+
     use super::*;
     use crate::proxy::config::ProxyType;
-    use russh::server::{Auth, Handler};
-    use russh_keys::key::KeyPair;
-    use std::sync::Arc;
 
     // Helper function to create a test config with random available port
     async fn create_test_config() -> ProxyConfig {
@@ -447,7 +452,9 @@ mod tests {
         let mut proxy = SshProxy::new();
 
         // Test 'none' authentication
-        let auth_result = <SshProxy as Handler>::auth_none(&mut proxy, "test_user").await.unwrap();
+        let auth_result = <SshProxy as Handler>::auth_none(&mut proxy, "test_user")
+            .await
+            .unwrap();
         assert!(
             matches!(auth_result, Auth::Accept),
             "None auth should be accepted"
@@ -456,13 +463,10 @@ mod tests {
         // Test public key authentication
         let key_pair = KeyPair::generate_ed25519();
         let public_key = key_pair.clone_public_key().unwrap(); // Unwrap the Result
-        let auth_result = <SshProxy as Handler>::auth_publickey(
-            &mut proxy,
-            "test_user",
-            &public_key
-        )
-        .await
-        .unwrap();
+        let auth_result =
+            <SshProxy as Handler>::auth_publickey(&mut proxy, "test_user", &public_key)
+                .await
+                .unwrap();
         assert!(
             matches!(auth_result, Auth::Accept),
             "Public key auth should be accepted"
@@ -472,7 +476,10 @@ mod tests {
     #[tokio::test]
     async fn test_config_creation() {
         let config = SshProxy::create_config();
-        assert!(!config.keys.is_empty(), "SSH config should have at least one key");
+        assert!(
+            !config.keys.is_empty(),
+            "SSH config should have at least one key"
+        );
         assert_eq!(
             config.auth_rejection_time,
             Duration::from_secs(AUTH_REJECTION_TIME),
