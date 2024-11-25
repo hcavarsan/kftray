@@ -80,7 +80,7 @@ jobs:
         run: cargo clippy --workspace --all-targets --allow-dirty --allow-staged --all-features --fix -- -D warnings
 
   rust-server-test:
-    name: Rust Tests
+    name: Run server tests
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -96,6 +96,7 @@ jobs:
         run: cargo test --package kftray-server
 
   build-and-push-docker:
+    name: Build and push server Docker image
     needs: rust-server-test
     permissions:
       contents: write
