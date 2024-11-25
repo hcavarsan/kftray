@@ -1,6 +1,5 @@
 #!/bin/bash
-set -e  # Exit on error
-
+set -e
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -8,7 +7,6 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Logging functions
 log_info() {
     echo -e "${BLUE}[INFO]${NC} $1"
 }
@@ -32,7 +30,6 @@ log_debug() {
 NAMESPACE="test-ssh"
 EXPECTED_CONTEXT="kind-kind-cluster"
 
-# Check and set kubernetes context
 log_info "Checking kubernetes context..."
 CURRENT_CONTEXT=$(kubectl config current-context)
 if [ "$CURRENT_CONTEXT" != "$EXPECTED_CONTEXT" ]; then
@@ -43,13 +40,14 @@ fi
 log_success "Using correct kubernetes context: $CURRENT_CONTEXT"
 
 log_info "Building Docker image..."
-cd $(git rev-parse --show-toplevel)  # Go to project root
+cd $(git rev-parse --show-toplevel)
 docker build -t kftray-server:latest -f crates/kftray-server/Dockerfile .
 log_success "Docker image built successfully"
 
 log_info "Cleaning up old images from kind cluster..."
 NODE_NAME="kind-cluster-control-plane"
-# Get all images related to kftray-server
+
+
 IMAGES=$(docker exec $NODE_NAME crictl images | grep 'kftray-server' | awk '{print $3}')
 if [ ! -z "$IMAGES" ]; then
     for IMG_ID in $IMAGES; do
@@ -64,11 +62,11 @@ kind load docker-image kftray-server:latest --name kind-cluster --quiet
 log_success "Image loaded into kind cluster"
 
 log_info "Setting up test environment..."
-# Create namespace if it doesn't exist
+
 kubectl create namespace $NAMESPACE 2>/dev/null || true
 log_success "Namespace $NAMESPACE ready"
 
-# Clean up any previous instances
+
 log_info "Cleaning up any previous instances..."
 kubectl delete service kftray-server -n $NAMESPACE 2>/dev/null || true
 kubectl delete pod kftray-server --force --grace-period=0 -n $NAMESPACE 2>/dev/null || true
@@ -107,7 +105,6 @@ EOF
 python3 /tmp/test_server.py &
 HTTP_PID=$!
 
-# Add a small delay to ensure the server is ready
 sleep 2
 
 log_debug "HTTP server PID: $HTTP_PID"
@@ -173,10 +170,9 @@ EOF
 
 log_info "Waiting for pod to be ready..."
 kubectl wait --for=condition=ready pod/kftray-server -n $NAMESPACE --timeout=60s
-sleep 2  # Add extra delay to ensure the SSH server is fully initialized
+sleep 2
 log_success "kftray-server pod is ready"
 
-# Function to wait for port to be available
 wait_for_port() {
     local port=$1
     local max_attempts=30
@@ -193,7 +189,6 @@ wait_for_port() {
     return 1
 }
 
-# Wait for ports to be available
 log_info "Waiting for ports to be available..."
 wait_for_port 2222 || (log_error "Port 2222 is still in use" && exit 1)
 
@@ -202,7 +197,6 @@ kubectl port-forward pod/kftray-server -n $NAMESPACE 2222:2222 &
 PORTFORWARD_PID=$!
 sleep 5
 
-# Verify port-forward is working
 if ! ps -p $PORTFORWARD_PID > /dev/null; then
     log_error "Port forwarding failed to start"
     exit 1
@@ -223,7 +217,6 @@ SSH_CMD="ssh  \
 
 $SSH_CMD &
 
-# Wait longer for SSH tunnel to establish
 log_info "Waiting for SSH tunnel to establish..."
 sleep 15
 
@@ -236,7 +229,6 @@ log_info "Verifying SSH tunnel..."
 kubectl exec -n $NAMESPACE kftray-server -- ss -tlnp || true
 
 log_info "Testing connection through the tunnel..."
-# Create a test pod to verify the connection
 cat <<EOF | kubectl apply -n $NAMESPACE -f -
 apiVersion: v1
 kind: Pod
