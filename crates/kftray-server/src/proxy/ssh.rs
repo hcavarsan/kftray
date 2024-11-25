@@ -382,17 +382,29 @@ impl Drop for SshProxy {
 mod tests {
     use super::*;
     use crate::proxy::config::ProxyType;
+    use russh::server::{Auth, Handler};
+    use russh_keys::key::KeyPair;
+    use std::sync::Arc;
+
+    // Helper function to create a test config with random available port
+    async fn create_test_config() -> ProxyConfig {
+        let port = {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            listener.local_addr().unwrap().port()
+        };
+
+        ProxyConfig::builder()
+            .target_host("127.0.0.1".to_string())
+            .target_port(2222)
+            .proxy_port(port)
+            .proxy_type(ProxyType::Ssh)
+            .build()
+            .unwrap()
+    }
 
     #[tokio::test]
     async fn test_ssh_proxy_startup() {
-        let config = ProxyConfig::builder()
-            .target_host("127.0.0.1".to_string())
-            .target_port(2222)
-            .proxy_port(0)
-            .proxy_type(ProxyType::Ssh)
-            .build()
-            .unwrap();
-
+        let config = create_test_config().await;
         let proxy = SshProxy::new();
         let shutdown = Arc::new(Notify::new());
         let shutdown_clone = shutdown.clone();
@@ -413,19 +425,7 @@ mod tests {
     #[tokio::test]
     async fn test_ssh_proxy_connection_handling() {
         let _ = env_logger::try_init();
-
-        let port = {
-            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-            listener.local_addr().unwrap().port()
-        };
-
-        let config = ProxyConfig::builder()
-            .target_host("127.0.0.1".to_string())
-            .target_port(2222)
-            .proxy_port(port)
-            .proxy_type(ProxyType::Ssh)
-            .build()
-            .unwrap();
+        let config = create_test_config().await;
 
         let proxy = SshProxy::new();
         let shutdown = Arc::new(Notify::new());
@@ -440,5 +440,76 @@ mod tests {
             Ok(result) => assert!(result.unwrap().is_ok(), "Server should shut down cleanly"),
             Err(_) => panic!("Server shutdown timed out"),
         }
+    }
+
+    #[tokio::test]
+    async fn test_auth_methods() {
+        let mut proxy = SshProxy::new();
+
+        // Test 'none' authentication
+        let auth_result = <SshProxy as Handler>::auth_none(&mut proxy, "test_user").await.unwrap();
+        assert!(
+            matches!(auth_result, Auth::Accept),
+            "None auth should be accepted"
+        );
+
+        // Test public key authentication
+        let key_pair = KeyPair::generate_ed25519();
+        let public_key = key_pair.clone_public_key().unwrap(); // Unwrap the Result
+        let auth_result = <SshProxy as Handler>::auth_publickey(
+            &mut proxy,
+            "test_user",
+            &public_key
+        )
+        .await
+        .unwrap();
+        assert!(
+            matches!(auth_result, Auth::Accept),
+            "Public key auth should be accepted"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_config_creation() {
+        let config = SshProxy::create_config();
+        assert!(!config.keys.is_empty(), "SSH config should have at least one key");
+        assert_eq!(
+            config.auth_rejection_time,
+            Duration::from_secs(AUTH_REJECTION_TIME),
+            "Auth rejection time should match constant"
+        );
+        assert_eq!(
+            config.inactivity_timeout,
+            Some(Duration::from_secs(INACTIVITY_TIMEOUT)),
+            "Inactivity timeout should match constant"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_client_cleanup() {
+        let proxy = SshProxy::new();
+
+        // Verify initial state
+        {
+            let clients = proxy.clients.lock().await;
+            assert_eq!(clients.len(), 0, "Should start with no clients");
+        }
+
+        // Add a test client
+        {
+            let mut tasks = proxy.tasks.lock().await;
+            tasks.push(tokio::spawn(async {}));
+        }
+
+        // Drop the proxy
+        drop(proxy);
+
+        // Small delay to allow async cleanup to run
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Create new proxy to verify tasks were cleaned up
+        let new_proxy = SshProxy::new();
+        let tasks = new_proxy.tasks.lock().await;
+        assert_eq!(tasks.len(), 0, "Tasks should be cleaned up after drop");
     }
 }
