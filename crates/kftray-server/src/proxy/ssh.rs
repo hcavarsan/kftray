@@ -169,7 +169,7 @@ impl server::Handler for SshProxy {
     ) -> Result<bool, Self::Error> {
         let mut clients = self.clients.lock().await;
 
-        if let Some(client) = clients.get(&self.id) {
+        if let Some(client) = clients.get_mut(&self.id) {
             if client.connection_count >= MAX_CONNECTIONS_PER_CLIENT {
                 error!("Too many connections for client {}", self.id);
                 return Ok(false);
@@ -179,19 +179,23 @@ impl server::Handler for SshProxy {
                 error!("Connection attempt too soon for client {}", self.id);
                 return Ok(false);
             }
+
+            // Update connection count and last_connection
+            client.connection_count += 1;
+            client.last_connection = Instant::now();
+        } else {
+            // Insert new client
+            clients.insert(
+                self.id,
+                ClientInfo {
+                    channel_id: Some(channel.id()),
+                    handle: session.handle(),
+                    forwarded_ports: HashMap::new(),
+                    connection_count: 1,
+                    last_connection: Instant::now(),
+                },
+            );
         }
-
-        clients.insert(
-            self.id,
-            ClientInfo {
-                channel_id: Some(channel.id()),
-                handle: session.handle(),
-                forwarded_ports: HashMap::new(),
-                connection_count: 1,
-                last_connection: Instant::now(),
-            },
-        );
-
         Ok(true)
     }
     /// Handles TCP port forwarding requests
