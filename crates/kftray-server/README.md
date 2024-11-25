@@ -29,9 +29,12 @@ graph TD
 ```mermaid
 graph TD
     subgraph SSH Mode
-        G[SSH Client] -->|SSH| H[KFtray Server]
         H -->|SSH| I[Target SSH Server]
-    end
+        A[SSH Client] -->|Reverse Tunnel| B[KFtray Server]
+        B -->|Forward Connection| C[Target SSH Server]
+        C -->|Return Traffic| B
+        B -->|Tunneled Response| A
+     end
 ```
 
 ## Configuration
