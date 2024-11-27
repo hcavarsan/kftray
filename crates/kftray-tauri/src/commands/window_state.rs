@@ -18,27 +18,33 @@ pub fn close_save_dialog(state: State<SaveDialogState>) {
 
 #[tauri::command]
 pub fn toggle_pin_state(app_state: tauri::State<AppState>, window: tauri::Window) {
-    let is_pinned = app_state.is_pinned.load(Ordering::SeqCst);
-    let new_pin_state = !is_pinned;
+    let new_pin_state = !app_state.is_pinned.load(Ordering::SeqCst);
     app_state.is_pinned.store(new_pin_state, Ordering::SeqCst);
 
-    if let Err(e) = window.set_always_on_top(new_pin_state) {
-        eprintln!("Failed to toggle pin state: {:?}", e);
+    if new_pin_state && !window.is_visible().unwrap_or(true) {
+        let _ = window.show();
+        let _ = window.set_focus();
     }
 
-    // Update tray menu item text
-    let app_handle = window.app_handle();
-    let tray_handle = app_handle.tray_handle();
-    let new_text = if new_pin_state {
+    if let Err(e) = window.set_always_on_top(new_pin_state) {
+        error!("Failed to toggle pin state: {:?}", e);
+    }
+
+    let menu_title = if new_pin_state {
         "Unpin Window"
     } else {
         "Pin Window"
     };
-    if let Err(e) = tray_handle.get_item("pin").set_title(new_text) {
+
+    if let Err(e) = window
+        .app_handle()
+        .tray_handle()
+        .get_item("pin")
+        .set_title(menu_title)
+    {
         error!("Failed to update menu item text: {:?}", e);
     }
 
-    // Emit event for frontend
     if let Err(e) = window.emit("pin-state-changed", new_pin_state) {
         error!("Failed to emit pin state event: {:?}", e);
     }
