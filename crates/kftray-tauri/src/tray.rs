@@ -15,12 +15,14 @@ use tauri::{
     SystemTray,
     SystemTrayEvent,
     SystemTrayMenu,
+    SystemTrayMenuItem,
     SystemTraySubmenu,
 };
 use tauri_plugin_positioner::Position;
 use tokio::time::sleep;
 
 use crate::commands::portforward::handle_exit_app;
+use crate::commands::window_state::toggle_pin_state;
 use crate::window::{
     adjust_window_size_and_position,
     reset_window_position,
@@ -33,6 +35,7 @@ use crate::window::{
 pub fn create_tray_menu() -> SystemTray {
     let quit = CustomMenuItem::new("quit".to_string(), "Quit").accelerator("CmdOrCtrl+Shift+Q");
     let open = CustomMenuItem::new("toggle".to_string(), "Toggle App");
+    let pin = CustomMenuItem::new("pin".to_string(), "Pin Window");
 
     let set_center_position = CustomMenuItem::new("set_center_position".to_string(), "Center");
     let set_top_right_position =
@@ -68,6 +71,8 @@ pub fn create_tray_menu() -> SystemTray {
 
     let system_tray_menu = SystemTrayMenu::new()
         .add_item(open)
+        .add_item(pin)
+        .add_native_item(SystemTrayMenuItem::Separator)
         .add_submenu(set_window_position_submenu)
         .add_item(quit);
 
@@ -230,6 +235,22 @@ pub fn handle_system_tray_event(app: &tauri::AppHandle, event: SystemTrayEvent) 
             "set_traycenter_position" => {
                 let window = app.get_window("main").unwrap();
                 set_window_position(&window, Position::TrayCenter);
+            }
+            "pin" => {
+                if let Some(window) = app.get_window("main") {
+                    toggle_pin_state(app.state::<AppState>(), window);
+
+                    let tray_handle = app.tray_handle();
+                    let is_pinned = app.state::<AppState>().is_pinned.load(Ordering::SeqCst);
+                    let new_text = if is_pinned {
+                        "Unpin Window"
+                    } else {
+                        "Pin Window"
+                    };
+                    if let Err(e) = tray_handle.get_item("pin").set_title(new_text) {
+                        error!("Failed to update menu item text: {:?}", e);
+                    }
+                }
             }
             _ => {}
         },

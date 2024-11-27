@@ -2,6 +2,7 @@ use std::sync::atomic::Ordering;
 
 use kftray_commons::models::window::AppState;
 use kftray_commons::models::window::SaveDialogState;
+use log::error;
 use tauri::State;
 
 #[tauri::command]
@@ -21,5 +22,9 @@ pub fn toggle_pin_state(app_state: tauri::State<AppState>, window: tauri::Window
 
     if let Err(e) = window.set_always_on_top(!is_pinned) {
         eprintln!("Failed to toggle pin state: {:?}", e);
+    }
+
+    if let Err(e) = window.emit("pin-state-changed", !is_pinned) {
+        error!("Failed to emit pin state event: {:?}", e);
     }
 }
