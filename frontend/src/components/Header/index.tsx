@@ -5,6 +5,7 @@ import { TiPin, TiPinOutline } from 'react-icons/ti'
 
 import { Box, Image, Input } from '@chakra-ui/react'
 import { app } from '@tauri-apps/api'
+import { listen } from '@tauri-apps/api/event'
 import { invoke } from '@tauri-apps/api/tauri'
 import { appWindow } from '@tauri-apps/api/window'
 
@@ -21,6 +22,14 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
 
   useEffect(() => {
     app.getVersion().then(setVersion).catch(console.error)
+
+    const unlisten = listen<boolean>('pin-state-changed', event => {
+      setIsPinned(event.payload)
+    })
+
+    return () => {
+      unlisten.then(unlistenFn => unlistenFn())
+    }
   }, [])
 
   useEffect(() => {
