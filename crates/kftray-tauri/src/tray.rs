@@ -239,17 +239,6 @@ pub fn handle_system_tray_event(app: &tauri::AppHandle, event: SystemTrayEvent) 
             "pin" => {
                 if let Some(window) = app.get_window("main") {
                     toggle_pin_state(app.state::<AppState>(), window);
-
-                    let tray_handle = app.tray_handle();
-                    let is_pinned = app.state::<AppState>().is_pinned.load(Ordering::SeqCst);
-                    let new_text = if is_pinned {
-                        "Unpin Window"
-                    } else {
-                        "Pin Window"
-                    };
-                    if let Err(e) = tray_handle.get_item("pin").set_title(new_text) {
-                        error!("Failed to update menu item text: {:?}", e);
-                    }
                 }
             }
             _ => {}
