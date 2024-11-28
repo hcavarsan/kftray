@@ -5,6 +5,7 @@ use std::sync::Mutex as StdMutex;
 use std::time::Duration;
 
 use anyhow::Context;
+use bytes::Bytes;
 use futures::TryStreamExt;
 use kftray_commons::logging::{
     create_log_file_path,
@@ -15,22 +16,23 @@ use kube::{
     Client,
 };
 use lazy_static::lazy_static;
-use tokio::net::TcpStream;
-use tokio::net::UdpSocket as TokioUdpSocket;
-use tokio::sync::Mutex;
-use tokio::sync::Notify;
-use tokio::{
-    io::{
-        AsyncReadExt,
-        AsyncWriteExt,
-    },
-    net::TcpListener,
-    task::JoinHandle,
-    time::timeout,
+use tokio::io::{
+    AsyncReadExt,
+    AsyncWriteExt,
 };
+use tokio::net::{
+    TcpListener,
+    TcpStream,
+    UdpSocket as TokioUdpSocket,
+};
+use tokio::sync::{
+    Mutex,
+    Notify,
+};
+use tokio::task::JoinHandle;
+use tokio::time::timeout;
 use tokio_stream::wrappers::TcpListenerStream;
 use tracing::{
-    debug,
     error,
     info,
     trace,
@@ -43,13 +45,14 @@ use crate::models::kube::{
 };
 use crate::pod_finder::TargetPodFinder;
 
+const BUFFER_SIZE: usize = 131072;
+const DEFAULT_TIMEOUT: Duration = Duration::from_secs(600);
+
 lazy_static! {
     pub static ref CHILD_PROCESSES: Arc<StdMutex<HashMap<String, JoinHandle<()>>>> =
         Arc::new(StdMutex::new(HashMap::new()));
     pub static ref CANCEL_NOTIFIER: Arc<Notify> = Arc::new(Notify::new());
 }
-
-const BUFFER_SIZE: usize = 131072;
 
 impl PortForward {
     pub async fn new(
@@ -70,6 +73,7 @@ impl PortForward {
                 context_name.clone().unwrap_or_default()
             )
         })?;
+
         let namespace = target.namespace.name_any();
 
         Ok(Self {
@@ -78,46 +82,49 @@ impl PortForward {
             local_address: local_address.into(),
             pod_api: Api::namespaced(client.clone(), &namespace),
             svc_api: Api::namespaced(client, &namespace),
-            context_name: context_name.clone(),
+            context_name,
             config_id,
             workload_type,
             connection: Arc::new(Mutex::new(None)),
         })
     }
 
-    pub fn local_port(&self) -> u16 {
-        self.local_port.unwrap_or(0)
-    }
-
-    pub fn local_address(&self) -> Option<String> {
-        self.local_address.clone()
-    }
-
     pub async fn port_forward_tcp(
         self, http_log_state: Arc<HttpLogState>,
-    ) -> anyhow::Result<(u16, tokio::task::JoinHandle<()>)> {
-        let local_addr = self
-            .local_address()
-            .unwrap_or_else(|| "127.0.0.1".to_string());
+    ) -> anyhow::Result<(u16, JoinHandle<()>)> {
+        let target = self.finder().find(&self.target).await?;
+        let (pod_name, pod_port) = target.into_parts();
+        let pod_port = u16::try_from(pod_port).context("Invalid port number")?;
 
-        let addr = format!("{}:{}", local_addr, self.local_port())
-            .parse::<SocketAddr>()
-            .expect("Invalid local address");
+        let mut forwarder = self.pod_api.portforward(&pod_name, &[pod_port]).await?;
+        let _upstream_conn = forwarder
+            .take_stream(pod_port)
+            .context("port not found in forwarder")?;
 
-        let bind = TcpListener::bind(addr).await?;
+        let listener = self.create_tcp_listener().await?;
+        let port = listener.local_addr()?.port();
 
-        let port = bind.local_addr()?.port();
+        let server_handle = self.spawn_tcp_server(listener, http_log_state);
 
-        trace!(port, "Bound to local address and port");
+        Ok((port, server_handle))
+    }
 
-        let server = {
-            let cancel_notifier = CANCEL_NOTIFIER.clone();
-            let http_log_state = http_log_state.clone();
-            TcpListenerStream::new(bind).try_for_each(move |client_conn| {
+    async fn create_tcp_listener(&self) -> anyhow::Result<TcpListener> {
+        let addr = self.get_bind_address()?;
+        let listener = TcpListener::bind(addr).await?;
+        trace!(port = ?listener.local_addr()?, "Bound to local address and port");
+        Ok(listener)
+    }
+
+    fn spawn_tcp_server(
+        self, listener: TcpListener, http_log_state: Arc<HttpLogState>,
+    ) -> JoinHandle<()> {
+        tokio::spawn(async move {
+            let server = TcpListenerStream::new(listener).try_for_each(|client_conn| {
                 let pf = self.clone();
                 let client_conn = Arc::new(Mutex::new(client_conn));
                 let http_log_state = http_log_state.clone();
-                let cancel_notifier = cancel_notifier.clone();
+
                 async move {
                     if let Ok(peer_addr) = client_conn.lock().await.peer_addr() {
                         trace!(%peer_addr, "new connection");
@@ -128,11 +135,11 @@ impl PortForward {
                         conn.set_nodelay(true)?;
                     }
 
-                    let cancel_notifier_clone = cancel_notifier.clone();
+                    let cancel_notifier = CANCEL_NOTIFIER.clone();
 
                     tokio::spawn(async move {
                         if let Err(e) = pf
-                            .forward_connection(client_conn, http_log_state, cancel_notifier_clone)
+                            .handle_tcp_connection(client_conn, http_log_state, cancel_notifier)
                             .await
                         {
                             error!(
@@ -144,423 +151,291 @@ impl PortForward {
 
                     Ok(())
                 }
-            })
-        };
+            });
 
-        Ok((
-            port,
-            tokio::spawn(async {
-                if let Err(e) = server.await {
-                    error!(error = &e as &dyn std::error::Error, "server error");
-                }
-            }),
-        ))
+            if let Err(e) = server.await {
+                error!(error = &e as &dyn std::error::Error, "server error");
+            }
+        })
     }
 
-    pub fn finder(&self) -> TargetPodFinder {
+    async fn handle_tcp_connection(
+        &self, client_conn: Arc<Mutex<TcpStream>>, http_log_state: Arc<HttpLogState>,
+        cancel_notifier: Arc<Notify>,
+    ) -> anyhow::Result<()> {
+        let target = self.finder().find(&self.target).await?;
+        let (pod_name, pod_port) = target.into_parts();
+        let pod_port = u16::try_from(pod_port).context("Invalid port number")?;
+
+        // Get pod IP for connection
+        let pod = self.pod_api.get(&pod_name).await?;
+        let pod_ip = pod
+            .status
+            .and_then(|s| s.pod_ip)
+            .context("Pod IP not found")?;
+
+        info!(
+            "Connecting to pod {} ({}:{}) for forwarding",
+            pod_name, pod_ip, pod_port
+        );
+
+        let mut forwarder = self.pod_api.portforward(&pod_name, &[pod_port]).await?;
+        let upstream_conn = forwarder
+            .take_stream(pod_port)
+            .context("port not found in forwarder")?;
+
+        let logger = self.create_logger().await?;
+        let request_id = Arc::new(Mutex::new(None));
+
+        let mut client_conn_guard = client_conn.lock().await;
+        let (mut client_reader, mut client_writer) = tokio::io::split(&mut *client_conn_guard);
+        let (mut upstream_reader, mut upstream_writer) = tokio::io::split(upstream_conn);
+
+        let client_to_upstream = self.process_client_to_upstream(
+            &mut client_reader,
+            &mut upstream_writer,
+            logger.as_ref(),
+            &http_log_state,
+            Arc::clone(&request_id),
+            cancel_notifier.clone(),
+        );
+
+        let upstream_to_client = self.process_upstream_to_client(
+            &mut upstream_reader,
+            &mut client_writer,
+            logger.as_ref(),
+            &http_log_state,
+            Arc::clone(&request_id),
+            cancel_notifier.clone(),
+        );
+
+        tokio::try_join!(client_to_upstream, upstream_to_client)?;
+
+        Ok(())
+    }
+
+    pub async fn port_forward_udp(self) -> anyhow::Result<(u16, JoinHandle<()>)> {
+        let local_socket = self.create_udp_socket().await?;
+        let local_port = local_socket.local_addr()?.port();
+
+        let handle = self.spawn_udp_handler(local_socket);
+
+        Ok((local_port, handle))
+    }
+
+    async fn create_udp_socket(&self) -> anyhow::Result<Arc<TokioUdpSocket>> {
+        let addr = self.get_bind_address()?;
+        let socket = TokioUdpSocket::bind(&addr)
+            .await
+            .context("Failed to bind local UDP socket")?;
+
+        info!("Local UDP socket bound to {}", addr);
+        Ok(Arc::new(socket))
+    }
+
+    fn spawn_udp_handler(self, local_socket: Arc<TokioUdpSocket>) -> JoinHandle<()> {
+        tokio::spawn(async move {
+            if let Err(e) = self.handle_udp_forwarding(local_socket).await {
+                error!("UDP forwarding error: {}", e);
+            }
+        })
+    }
+
+    async fn handle_udp_forwarding(&self, local_socket: Arc<TokioUdpSocket>) -> anyhow::Result<()> {
+        let target = self.finder().find(&self.target).await?;
+        let (pod_name, pod_port) = target.into_parts();
+        let pod_port = u16::try_from(pod_port).context("Invalid port number")?;
+
+        let mut forwarder = self
+            .pod_api
+            .portforward(&pod_name, &[pod_port])
+            .await
+            .context("Failed to start port forwarding to pod")?;
+
+        let stream = forwarder
+            .take_stream(pod_port)
+            .context("port not found in forwarder")?;
+
+        let (mut tcp_read, mut tcp_write) = tokio::io::split(stream);
+
+        self.process_udp_forwarding(local_socket, &mut tcp_read, &mut tcp_write)
+            .await
+    }
+
+    fn get_bind_address(&self) -> anyhow::Result<SocketAddr> {
+        let local_addr = self
+            .local_address
+            .clone()
+            .unwrap_or_else(|| "127.0.0.1".to_string());
+        let addr = format!("{}:{}", local_addr, self.local_port.unwrap_or(0))
+            .parse()
+            .context("Invalid bind address")?;
+        Ok(addr)
+    }
+
+    async fn create_logger(&self) -> anyhow::Result<Option<Logger>> {
+        if self.workload_type == "service" || self.workload_type == "pod" {
+            let log_file_path =
+                create_log_file_path(self.config_id, self.local_port.unwrap_or(0)).await?;
+            Ok(Some(Logger::new(log_file_path).await?))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn finder(&self) -> TargetPodFinder {
         TargetPodFinder {
             pod_api: &self.pod_api,
             svc_api: &self.svc_api,
         }
     }
 
-    async fn forward_connection(
-        self, client_conn: Arc<Mutex<TcpStream>>, http_log_state: Arc<HttpLogState>,
-        cancel_notifier: Arc<Notify>,
-    ) -> anyhow::Result<()> {
-        let target = self.finder().find(&self.target).await?;
-
-        debug!("Forwarding connection to target pod");
-        debug!("Target pod: {:?}", target);
-
-        let (pod_name, pod_port) = target.into_parts();
-
-        debug!("Pod name: {}", pod_name);
-        debug!("Pod port: {}", pod_port);
-
-        let mut forwarder = self.pod_api.portforward(&pod_name, &[pod_port]).await?;
-
-        debug!("Forwarder created");
-
-        let upstream_conn = forwarder
-            .take_stream(pod_port)
-            .context("port not found in forwarder")?;
-
-        let local_port = self.local_port();
-        debug!("Local port: {}", local_port);
-        let config_id = self.config_id;
-        debug!("Config ID: {}", config_id);
-        let workload_type = self.workload_type.clone();
-        debug!("Workload type: {}", workload_type);
-
-        trace!(local_port, pod_port, pod_name = %pod_name, "forwarding connections");
-
-        let logger = if workload_type == "service" || workload_type == "pod" {
-            let log_file_path = create_log_file_path(config_id, local_port).await?;
-            let logger = Logger::new(log_file_path).await?;
-            Some(logger)
-        } else {
-            None
-        };
-
-        debug!("Logger created");
-        debug!("Logger: {:?}", logger);
-
-        let request_id = Arc::new(Mutex::new(None));
-
-        debug!("Request ID created");
-        debug!("Request ID: {:?}", request_id);
-
-        let mut client_conn_guard = client_conn.lock().await;
-        client_conn_guard.set_nodelay(true)?;
-        let (mut client_reader, mut client_writer) = tokio::io::split(&mut *client_conn_guard);
-
-        let (mut upstream_reader, mut upstream_writer) = tokio::io::split(upstream_conn);
-
-        let client_to_upstream = self.create_client_to_upstream_task(
-            &mut client_reader,
-            &mut upstream_writer,
-            logger.clone(),
-            &http_log_state,
-            Arc::clone(&request_id),
-            cancel_notifier.clone(),
-        );
-
-        let upstream_to_client = self.create_upstream_to_client_task(
-            &mut upstream_reader,
-            &mut client_writer,
-            logger.clone(),
-            &http_log_state,
-            Arc::clone(&request_id),
-            cancel_notifier.clone(),
-        );
-
-        let join_result = tokio::try_join!(client_to_upstream, upstream_to_client);
-
-        let result = tokio::select! {
-            res = async { join_result } => res,
-            _ = self.detect_connection_close(client_conn.clone(), &mut upstream_reader, cancel_notifier) => {
-                Err(anyhow::anyhow!("Connection closed"))
-            }
-        };
-
-        match result {
-            Ok(_) => {
-                trace!(local_port, pod_port, pod_name = %pod_name, "connection closed normally");
-            }
-            Err(e) => {
-                error!(
-                    error = e.as_ref() as &dyn std::error::Error,
-                    "connection closed with error"
-                );
-            }
-        }
-
-        drop(client_conn_guard);
-        drop(upstream_reader);
-        trace!(local_port, pod_port, pod_name = %pod_name, "connection fully closed");
-
-        Ok(())
-    }
-
-    async fn create_client_to_upstream_task<'a>(
-        &'a self, client_reader: &'a mut tokio::io::ReadHalf<&mut TcpStream>,
-        upstream_writer: &'a mut tokio::io::WriteHalf<
-            impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
-        >,
-        logger: Option<Logger>, http_log_state: &HttpLogState,
-        request_id: Arc<Mutex<Option<String>>>, cancel_notifier: Arc<Notify>,
-    ) -> anyhow::Result<()> {
-        let mut buffer = [0; BUFFER_SIZE];
-        let mut timeout_duration = Duration::from_secs(600);
-        let mut request_buffer = Vec::new();
-
-        loop {
-            tokio::select! {
-                n = timeout(timeout_duration, client_reader.read(&mut buffer)) => {
-                    let n = match n {
-                        Ok(Ok(n)) => n,
-                        Ok(Err(e)) => {
-                            error!("Error reading from client: {:?}", e);
-                            return Err(e.into());
-                        }
-                        Err(_) => {
-                            error!("Timeout reading from client");
-                            return Err(anyhow::anyhow!("Timeout reading from client"));
-                        }
-                    };
-
-                    if n == 0 {
-                        break;
-                    }
-
-                    trace!("Read {} bytes from client", n);
-                    request_buffer.extend_from_slice(&buffer[..n]);
-
-                        if http_log_state.get_http_logs(self.config_id).await {
-                            if let Some(logger) = &logger {
-                                let mut req_id_guard = request_id.lock().await;
-                                let new_request_id =
-                                    logger.log_request(request_buffer.clone().into()).await;
-                                trace!("Generated new request ID: {}", new_request_id);
-                                *req_id_guard = Some(new_request_id);
-                            }
-                        }
-
-                        if let Err(e) = upstream_writer.write_all(&request_buffer).await {
-                            error!("Error writing to upstream: {:?}", e);
-                            return Err(e.into());
-                        }
-                        request_buffer.clear();
-                },
-
-                _ = cancel_notifier.notified() => {
-                    trace!("Client to upstream task cancelled");
-                    break;
-                }
-            }
-
-            timeout_duration = Duration::from_secs(600);
-        }
-
-        if let Err(e) = upstream_writer.shutdown().await {
-            error!("Error shutting down upstream writer: {:?}", e);
-        }
-
-        Ok(())
-    }
-
-    async fn create_upstream_to_client_task<'a>(
-        &'a self,
-        upstream_reader: &'a mut tokio::io::ReadHalf<
-            impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
-        >,
-        client_writer: &'a mut tokio::io::WriteHalf<&mut TcpStream>, logger: Option<Logger>,
+    async fn process_client_to_upstream(
+        &self, client_reader: &mut (impl AsyncReadExt + Unpin),
+        upstream_writer: &mut (impl AsyncWriteExt + Unpin), logger: Option<&Logger>,
         http_log_state: &HttpLogState, request_id: Arc<Mutex<Option<String>>>,
         cancel_notifier: Arc<Notify>,
     ) -> anyhow::Result<()> {
-        let mut buffer = [0; BUFFER_SIZE];
-        let mut timeout_duration = Duration::from_secs(600);
-        let mut response_buffer = Vec::new();
+        let mut buffer = vec![0; BUFFER_SIZE];
 
         loop {
             tokio::select! {
-                n = timeout(timeout_duration, upstream_reader.read(&mut buffer)) => {
-                    let n = match n {
-                        Ok(Ok(n)) => n,
-                        Ok(Err(e)) => {
-                            error!("Error reading from upstream: {:?}", e);
-                            return Err(e.into());
+                n = timeout(DEFAULT_TIMEOUT, client_reader.read(&mut buffer)) => {
+                    match n {
+                        Ok(Ok(0)) => break,
+                        Ok(Ok(n)) => {
+                            self.handle_client_data(&buffer[..n], upstream_writer, logger, http_log_state, &request_id).await?;
                         }
-                        Err(_) => {
-                            error!("Timeout reading from upstream");
-                            return Err(anyhow::anyhow!("Timeout reading from upstream"));
-                        }
-                    };
-
-                    if n == 0 {
-                        break;
+                        Ok(Err(e)) => return Err(e.into()),
+                        Err(_) => return Err(anyhow::anyhow!("Client read timeout")),
                     }
+                }
+                _ = cancel_notifier.notified() => break,
+            }
+        }
 
-                    trace!("Read {} bytes from upstream", n);
-                    response_buffer.extend_from_slice(&buffer[..n]);
+        upstream_writer.shutdown().await?;
+        Ok(())
+    }
 
-                        if http_log_state.get_http_logs(self.config_id).await {
-                            if let Some(logger) = &logger {
-                                let req_id_guard = request_id.lock().await;
-                                if let Some(req_id) = &*req_id_guard {
-                                    trace!("Logging response for request ID: {}", req_id);
-                                    logger
-                                        .log_response(response_buffer.clone().into(), req_id.clone())
-                                        .await;
-                                }
-                            }
+    async fn process_upstream_to_client(
+        &self, upstream_reader: &mut (impl AsyncReadExt + Unpin),
+        client_writer: &mut (impl AsyncWriteExt + Unpin), logger: Option<&Logger>,
+        http_log_state: &HttpLogState, request_id: Arc<Mutex<Option<String>>>,
+        cancel_notifier: Arc<Notify>,
+    ) -> anyhow::Result<()> {
+        let mut buffer = vec![0; BUFFER_SIZE];
+
+        loop {
+            tokio::select! {
+                n = timeout(DEFAULT_TIMEOUT, upstream_reader.read(&mut buffer)) => {
+                    match n {
+                        Ok(Ok(0)) => break,
+                        Ok(Ok(n)) => {
+                            self.handle_upstream_data(&buffer[..n], client_writer, logger, http_log_state, &request_id).await?;
                         }
+                        Ok(Err(e)) => return Err(e.into()),
+                        Err(_) => return Err(anyhow::anyhow!("Upstream read timeout")),
+                    }
+                }
+                _ = cancel_notifier.notified() => break,
+            }
+        }
 
-                        if let Err(e) = client_writer.write_all(&response_buffer).await {
-                            error!("Error writing to client: {:?}", e);
-                            return Err(e.into());
-                        }
+        client_writer.shutdown().await?;
+        Ok(())
+    }
 
-                        response_buffer.clear();
+    async fn handle_client_data(
+        &self, data: &[u8], upstream_writer: &mut (impl AsyncWriteExt + Unpin),
+        logger: Option<&Logger>, http_log_state: &HttpLogState,
+        request_id: &Arc<Mutex<Option<String>>>,
+    ) -> anyhow::Result<()> {
+        if http_log_state.get_http_logs(self.config_id).await {
+            if let Some(logger) = logger {
+                let mut req_id_guard = request_id.lock().await;
+                let new_request_id = logger.log_request(Bytes::from(data.to_vec())).await;
+                *req_id_guard = Some(new_request_id);
+            }
+        }
 
+        upstream_writer.write_all(data).await?;
+        Ok(())
+    }
 
-                    timeout_duration = Duration::from_secs(600);
-                },
-                _ = cancel_notifier.notified() => {
-                    trace!("Upstream to client task cancelled");
-                    break;
+    async fn handle_upstream_data(
+        &self, data: &[u8], client_writer: &mut (impl AsyncWriteExt + Unpin),
+        logger: Option<&Logger>, http_log_state: &HttpLogState,
+        request_id: &Arc<Mutex<Option<String>>>,
+    ) -> anyhow::Result<()> {
+        if http_log_state.get_http_logs(self.config_id).await {
+            if let Some(logger) = logger {
+                let req_id_guard = request_id.lock().await;
+                if let Some(req_id) = &*req_id_guard {
+                    logger
+                        .log_response(Bytes::from(data.to_vec()), req_id.clone())
+                        .await;
                 }
             }
         }
 
-        if let Err(e) = client_writer.shutdown().await {
-            error!("Error shutting down client writer: {:?}", e);
+        client_writer.write_all(data).await?;
+        Ok(())
+    }
+
+    async fn process_udp_forwarding(
+        &self, local_socket: Arc<TokioUdpSocket>, tcp_read: &mut (impl AsyncReadExt + Unpin),
+        tcp_write: &mut (impl AsyncWriteExt + Unpin),
+    ) -> anyhow::Result<()> {
+        let mut udp_buffer = [0u8; BUFFER_SIZE];
+        let mut peer: Option<std::net::SocketAddr> = None;
+
+        loop {
+            tokio::select! {
+                result = local_socket.recv_from(&mut udp_buffer) => {
+                    match result {
+                        Ok((len, src)) => {
+                            peer = Some(src);
+                            self.handle_udp_to_tcp(tcp_write, &udp_buffer[..len]).await?;
+                        }
+                        Err(e) => return Err(e.into()),
+                    }
+                }
+                result = Self::read_tcp_packet(tcp_read) => {
+                    match result? {
+                        Some(packet) => {
+                            if let Some(peer) = peer {
+                                local_socket.send_to(&packet, &peer).await?;
+                            }
+                        }
+                        None => break,
+                    }
+                }
+            }
         }
 
         Ok(())
     }
-    async fn detect_connection_close(
-        &self, client_conn: Arc<Mutex<TcpStream>>,
-        upstream_reader: &mut (impl tokio::io::AsyncRead + Unpin), cancel_notifier: Arc<Notify>,
+
+    async fn handle_udp_to_tcp(
+        &self, tcp_write: &mut (impl AsyncWriteExt + Unpin), data: &[u8],
     ) -> anyhow::Result<()> {
-        let mut client_buffer = [0; 1];
-        let mut upstream_buffer = [0; 1];
-
-        let mut client_conn_guard = client_conn.lock().await;
-        let (mut client_reader, _) = tokio::io::split(&mut *client_conn_guard);
-
-        loop {
-            tokio::select! {
-                result = client_reader.read(&mut client_buffer) => {
-                    match result {
-                        Ok(0) => {
-                            debug!("Client connection closed");
-                            return Ok(());
-                        }
-                        Ok(_) => continue,
-                        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => continue,
-                        Err(e) => {
-                            error!("Error reading from client: {:?}", e);
-                            return Err(e.into());
-                        }
-                    }
-                }
-                result = upstream_reader.read(&mut upstream_buffer) => {
-                    match result {
-                        Ok(0) => {
-                            debug!("Upstream connection closed");
-                            return Ok(());
-                        }
-                        Ok(_) => continue,
-                        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => continue,
-                        Err(e) => {
-                            error!("Error reading from upstream: {:?}", e);
-                            return Err(e.into());
-                        }
-                    }
-                }
-                _ = cancel_notifier.notified() => {
-                    debug!("Cancellation signal received");
-                    return Ok(());
-                }
-            }
-        }
+        let packet_len = (data.len() as u32).to_be_bytes();
+        tcp_write.write_all(&packet_len).await?;
+        tcp_write.write_all(data).await?;
+        tcp_write.flush().await?;
+        Ok(())
     }
 
-    pub async fn port_forward_udp(self) -> anyhow::Result<(u16, JoinHandle<()>)> {
-        let local_address = self
-            .local_address()
-            .unwrap_or_else(|| "127.0.0.1".to_string());
-
-        let local_udp_addr = format!("{}:{}", local_address, self.local_port());
-
-        let local_udp_socket = Arc::new(
-            TokioUdpSocket::bind(&local_udp_addr)
-                .await
-                .context("Failed to bind local UDP socket")?,
-        );
-
-        let local_port = local_udp_socket.local_addr()?.port();
-
-        info!("Local UDP socket bound to {}", local_udp_addr);
-
-        let target = self.finder().find(&self.target).await?;
-
-        let (pod_name, pod_port) = target.into_parts();
-
-        let mut port_forwarder = self
-            .pod_api
-            .portforward(&pod_name, &[pod_port])
-            .await
-            .context("Failed to start port forwarding to pod")?;
-
-        let (mut tcp_read, mut tcp_write) = tokio::io::split(
-            port_forwarder
-                .take_stream(pod_port)
-                .context("port not found in forwarder")?,
-        );
-
-        let local_udp_socket_read = local_udp_socket.clone();
-
-        let local_udp_socket_write = local_udp_socket;
-
-        let handle = tokio::spawn(async move {
-            let mut udp_buffer = [0u8; BUFFER_SIZE];
-            let mut peer: Option<std::net::SocketAddr> = None;
-
-            loop {
-                tokio::select! {
-                    result = local_udp_socket_read.recv_from(&mut udp_buffer) => {
-                        match result {
-                            Ok((len, src)) => {
-                                peer = Some(src);
-
-                                let packet_len = (len as u32).to_be_bytes();
-                                if let Err(e) = tcp_write.write_all(&packet_len).await {
-                                    error!("Failed to write packet length to TCP stream: {:?}", e);
-                                    break;
-                                }
-                                if let Err(e) = tcp_write.write_all(&udp_buffer[..len]).await {
-                                    error!("Failed to write UDP packet to TCP stream: {:?}", e);
-                                    break;
-                                }
-                                if let Err(e) = tcp_write.flush().await {
-                                    error!("Failed to flush TCP stream: {:?}", e);
-                                    break;
-                                }
-                            },
-                            Err(e) => {
-                                error!("Failed to receive from UDP socket: {:?}", e);
-                                break;
-                            }
-                        }
-                    },
-
-                    result = Self::read_tcp_length_and_packet(&mut tcp_read) => {
-                        match result {
-                            Ok(Some(packet)) => {
-                                if let Some(peer) = peer {
-                                    if let Err(e) = local_udp_socket_write.send_to(&packet, &peer).await {
-                                        error!("Failed to send UDP packet to peer: {:?}", e);
-                                        break;
-                                    }
-                                } else {
-                                    error!("No UDP peer to send to");
-                                    break;
-                                }
-                            },
-                            Ok(None) => {
-                                break;
-                            }
-                            Err(e) => {
-                                error!("Failed to read from TCP stream or send to UDP socket: {:?}", e);
-                                break;
-                            }
-                        }
-                    }
-                }
-            }
-
-            if let Err(e) = tcp_write.shutdown().await {
-                error!("Error shutting down TCP writer: {:?}", e);
-            }
-        });
-
-        Ok((local_port, handle))
-    }
-
-    pub async fn read_tcp_length_and_packet(
+    async fn read_tcp_packet(
         tcp_read: &mut (impl AsyncReadExt + Unpin),
     ) -> anyhow::Result<Option<Vec<u8>>> {
         let mut len_bytes = [0u8; 4];
-
         if tcp_read.read_exact(&mut len_bytes).await.is_err() {
             return Ok(None);
         }
 
         let len = u32::from_be_bytes(len_bytes) as usize;
-
         let mut packet = vec![0u8; len];
 
         if tcp_read.read_exact(&mut packet).await.is_err() {

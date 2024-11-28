@@ -4,6 +4,7 @@ members = [
 	"crates/kftui",
 	"crates/kftray-portforward",
 	"crates/kftray-server",
+	"crates/kftray-expose",
 ]
 
 resolver = "2"

@@ -63,6 +63,27 @@ log_success "Image loaded into kind cluster"
 
 log_info "Setting up test environment..."
 
+# Add new function to generate SSH keys
+generate_ssh_keys() {
+    log_info "Generating SSH keys..."
+
+    # Create temporary directory for keys
+    SSH_KEY_DIR=$(mktemp -d)
+    SSH_KEY_FILE="$SSH_KEY_DIR/id_ed25519"
+
+    # Generate SSH key pair
+    ssh-keygen -t ed25519 -f "$SSH_KEY_FILE" -N "" -C "test@kftray.app"
+
+    # Get the public key content
+    SSH_PUB_KEY=$(cat "${SSH_KEY_FILE}.pub")
+
+    log_success "SSH keys generated at $SSH_KEY_DIR"
+    echo "Private key: $SSH_KEY_FILE"
+    echo "Public key: ${SSH_KEY_FILE}.pub"
+}
+
+generate_ssh_keys
+
 kubectl create namespace $NAMESPACE 2>/dev/null || true
 log_success "Namespace $NAMESPACE ready"
 
@@ -163,6 +184,10 @@ spec:
       value: "0.0.0.0"
     - name: RUST_LOG
       value: "trace"
+    - name: SSH_AUTH
+      value: "true"
+    - name: SSH_AUTHORIZED_KEYS
+      value: "${SSH_PUB_KEY}"
     securityContext:
       capabilities:
         add: ["NET_BIND_SERVICE"]
@@ -204,7 +229,8 @@ fi
 log_success "Port forwarding established"
 
 log_info "Creating SSH reverse tunnel..."
-SSH_CMD="ssh  \
+SSH_CMD="ssh \
+    -i $SSH_KEY_FILE \
     -o StrictHostKeyChecking=no \
     -o UserKnownHostsFile=/dev/null \
     -o ExitOnForwardFailure=yes \
@@ -216,6 +242,7 @@ SSH_CMD="ssh  \
     -N localhost"
 
 $SSH_CMD &
+SSH_PID=$!
 
 log_info "Waiting for SSH tunnel to establish..."
 sleep 15
@@ -277,3 +304,44 @@ kubectl exec -n $NAMESPACE curl-test -- curl -v --max-time 5 http://kftray-serve
 #log_success "Cleanup completed"
 
 log_success "Test complete"
+
+# Add authentication test cases
+log_info "Testing SSH authentication..."
+
+# Test with valid key
+log_info "Testing with valid SSH key..."
+ssh -i "$SSH_KEY_FILE" -p 2222 -o StrictHostKeyChecking=no localhost exit
+if [ $? -eq 0 ]; then
+    log_success "Authentication successful with valid key"
+else
+    log_error "Authentication failed with valid key"
+    exit 1
+fi
+
+# Test with invalid key
+log_info "Testing with invalid SSH key..."
+ssh-keygen -t ed25519 -f "/tmp/invalid_key" -N "" -C "invalid@test.com" > /dev/null 2>&1
+if ssh -i "/tmp/invalid_key" -p 2222 -o StrictHostKeyChecking=no localhost exit 2>/dev/null; then
+    log_error "Authentication succeeded with invalid key (should fail)"
+    exit 1
+else
+    log_success "Authentication correctly rejected invalid key"
+fi
+
+# Add cleanup for SSH keys
+log_info "Cleaning up SSH keys..."
+rm -rf "$SSH_KEY_DIR" "/tmp/invalid_key" "/tmp/invalid_key.pub"
+
+# Cleanup section
+cleanup() {
+    log_info "Cleaning up..."
+    kill $SSH_PID 2>/dev/null || true
+    kill $HTTP_PID 2>/dev/null || true
+    kill $PORTFORWARD_PID 2>/dev/null || true
+    kubectl delete pod kftray-server -n $NAMESPACE 2>/dev/null || true
+    kubectl delete pod curl-test -n $NAMESPACE 2>/dev/null || true
+    rm -rf "$SSH_KEY_DIR" "/tmp/invalid_key" "/tmp/invalid_key.pub" 2>/dev/null || true
+    log_success "Cleanup completed"
+}
+
+trap cleanup EXIT

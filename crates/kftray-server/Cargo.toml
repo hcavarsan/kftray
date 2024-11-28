@@ -21,6 +21,7 @@ russh-keys = "0.46"
 rand_core = "0.6"
 socket2 = "0.5"
 futures = "0.3.31"
+base64 = "0.21"
 
 [dev-dependencies]
 mockall = "0.13"

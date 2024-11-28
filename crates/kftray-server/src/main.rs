@@ -30,6 +30,8 @@ use crate::proxy::{
 /// * `REMOTE_PORT` - Target server port
 /// * `LOCAL_PORT` - Local proxy listening port
 /// * `PROXY_TYPE` - Protocol type ("tcp" or "udp")
+/// * `SSH_AUTH` - Enable/disable SSH authentication (true/false)
+/// * `SSH_AUTHORIZED_KEYS` - SSH authorized keys (comma-separated)
 fn load_config() -> Result<ProxyConfig, ProxyError> {
     let target_host = env::var("REMOTE_ADDRESS")
         .map_err(|_| ProxyError::Configuration("REMOTE_ADDRESS not set".into()))?;
@@ -86,11 +88,30 @@ fn load_config() -> Result<ProxyConfig, ProxyError> {
         }
     };
 
+    let ssh_auth_enabled = env::var("SSH_AUTH")
+        .map(|v| v.to_lowercase() == "true")
+        .unwrap_or(false);
+
+    let ssh_authorized_keys = if ssh_auth_enabled {
+        match env::var("SSH_AUTHORIZED_KEYS") {
+            Ok(keys) => Some(keys.split(',').map(String::from).collect()),
+            Err(_) => {
+                return Err(ProxyError::Configuration(
+                    "SSH_AUTHORIZED_KEYS required when SSH_AUTH=true".into(),
+                ))
+            }
+        }
+    } else {
+        None
+    };
+
     Ok(ProxyConfig::builder()
         .target_host(socket_addr.ip().to_string())
         .target_port(target_port)
         .proxy_port(proxy_port)
         .proxy_type(proxy_type)
+        .ssh_auth_enabled(ssh_auth_enabled)
+        .ssh_authorized_keys(ssh_authorized_keys)
         .build()?)
 }
 

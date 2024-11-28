@@ -6,6 +6,7 @@ use std::time::{
 };
 
 use async_trait::async_trait;
+use base64::Engine as _;
 use log::{
     error,
     info,
@@ -37,6 +38,7 @@ use crate::proxy::{
     error::ProxyError,
     traits::ProxyHandler,
 };
+use crate::ProxyType;
 
 /// Default timeout for inactive SSH connections in seconds
 const INACTIVITY_TIMEOUT: u64 = 3600;
@@ -84,6 +86,8 @@ pub struct SshProxy {
     id: usize,
     /// Counter for generating next client ID
     next_id: Arc<Mutex<usize>>,
+    /// Proxy configuration
+    config: ProxyConfig,
 }
 
 impl Default for SshProxy {
@@ -93,6 +97,13 @@ impl Default for SshProxy {
             tasks: Arc::new(Mutex::new(Vec::new())),
             id: 0,
             next_id: Arc::new(Mutex::new(0)),
+            config: ProxyConfig::builder()
+                .target_host("localhost".to_string())
+                .target_port(22)
+                .proxy_port(2222)
+                .proxy_type(ProxyType::Ssh)
+                .build()
+                .unwrap(),
         }
     }
 }
@@ -143,24 +154,87 @@ impl server::Handler for SshProxy {
 
     /// Handles authentication requests using the 'none' method
     async fn auth_none(&mut self, user: &str) -> Result<server::Auth, Self::Error> {
-        info!("Accepting none authentication for user: {}", user);
-        Ok(server::Auth::Accept)
+        if !self.config.ssh_auth_enabled {
+            info!(
+                "SSH authentication disabled, accepting connection for user: {}",
+                user
+            );
+            return Ok(server::Auth::Accept);
+        }
+        info!("Authentication required for user: {}", user);
+        Ok(server::Auth::Reject {
+            proceed_with_methods: None,
+        })
+    }
+
+    /// Handles authentication requests using the 'password' method
+    async fn auth_password(
+        &mut self, user: &str, _password: &str,
+    ) -> Result<server::Auth, Self::Error> {
+        warn!("Password authentication not supported for user: {}", user);
+        Ok(server::Auth::Reject {
+            proceed_with_methods: None,
+        })
     }
 
     /// Handles authentication requests using the 'publickey' method
     async fn auth_publickey(
         &mut self, user: &str, public_key: &russh_keys::key::PublicKey,
     ) -> Result<server::Auth, Self::Error> {
-        info!("Attempting public key authentication for user: {}", user);
+        if !self.config.ssh_auth_enabled {
+            info!(
+                "SSH authentication disabled, accepting public key for user: {}",
+                user
+            );
+            return Ok(server::Auth::Accept);
+        }
 
-        // TODO: Implement proper key validation against authorized_keys
-        // For now, we'll continue accepting connections but log the attempt
-        warn!(
-            "Public key authentication not properly implemented - accepting connection for testing"
-        );
-        info!("Public key fingerprint: {}", public_key.fingerprint());
+        if let Some(ref authorized_keys) = self.config.ssh_authorized_keys {
+            let key_fingerprint = public_key.fingerprint();
 
-        Ok(server::Auth::Accept)
+            match authorized_keys.iter().any(|authorized_key| {
+                // Split the authorized key into parts (typically format is "ssh-rsa AAAA...
+                // comment")
+                let parts: Vec<&str> = authorized_key.split_whitespace().collect();
+                if parts.len() < 2 {
+                    error!("Invalid authorized key format");
+                    return false;
+                }
+
+                let algo = parts[0].as_bytes();
+                // Decode the base64 key data using the STANDARD engine
+                if let Ok(key_data) =
+                    base64::engine::general_purpose::STANDARD.decode(parts[1].as_bytes())
+                {
+                    match russh_keys::key::PublicKey::parse(algo, &key_data) {
+                        Ok(auth_key) => auth_key.fingerprint() == key_fingerprint,
+                        Err(e) => {
+                            error!("Failed to parse authorized key: {}", e);
+                            false
+                        }
+                    }
+                } else {
+                    error!("Failed to decode base64 key data");
+                    false
+                }
+            }) {
+                true => {
+                    info!("Public key authentication successful for user: {}", user);
+                    Ok(server::Auth::Accept)
+                }
+                false => {
+                    warn!("Invalid public key for user: {}", user);
+                    Ok(server::Auth::Reject {
+                        proceed_with_methods: None,
+                    })
+                }
+            }
+        } else {
+            error!("SSH authentication enabled but no authorized keys configured");
+            Ok(server::Auth::Reject {
+                proceed_with_methods: None,
+            })
+        }
     }
 
     /// Handles requests to open a new SSH session
@@ -335,12 +409,13 @@ impl server::Handler for SshProxy {
 #[async_trait]
 impl ProxyHandler for SshProxy {
     async fn start(&self, config: ProxyConfig, shutdown: Arc<Notify>) -> Result<(), ProxyError> {
+        let mut server = self.clone();
+        server.config = config.clone();
+
         let ssh_config = Arc::new(Self::create_config());
         let addr = ("0.0.0.0".to_string(), config.proxy_port);
 
         info!("Starting SSH proxy server on {}:{}", addr.0, addr.1);
-
-        let mut server = self.clone();
 
         tokio::select! {
             result = server.run_on_address(ssh_config, addr) => {

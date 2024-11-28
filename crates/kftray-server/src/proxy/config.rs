@@ -9,6 +9,9 @@ pub struct ProxyConfig {
     pub proxy_port: u16,
     /// Type of proxy protocol (TCP or UDP)
     pub proxy_type: ProxyType,
+    /// Simplified SSH auth fields
+    pub ssh_auth_enabled: bool,
+    pub ssh_authorized_keys: Option<Vec<String>>,
 }
 
 /// Builder pattern implementation for creating ProxyConfig instances
@@ -18,6 +21,8 @@ pub struct ProxyConfigBuilder {
     target_port: Option<u16>,
     proxy_port: Option<u16>,
     proxy_type: Option<ProxyType>,
+    ssh_auth_enabled: Option<bool>,
+    ssh_authorized_keys: Option<Vec<String>>,
 }
 
 impl ProxyConfigBuilder {
@@ -45,6 +50,16 @@ impl ProxyConfigBuilder {
         self
     }
 
+    pub fn ssh_auth_enabled(mut self, enabled: bool) -> Self {
+        self.ssh_auth_enabled = Some(enabled);
+        self
+    }
+
+    pub fn ssh_authorized_keys(mut self, keys: Option<Vec<String>>) -> Self {
+        self.ssh_authorized_keys = keys;
+        self
+    }
+
     pub fn build(self) -> Result<ProxyConfig, String> {
         let target_host = self
             .target_host
@@ -59,11 +74,20 @@ impl ProxyConfigBuilder {
             .proxy_type
             .ok_or_else(|| "proxy_type is required".to_string())?;
 
+        let ssh_auth_enabled = self.ssh_auth_enabled.unwrap_or(false);
+        let ssh_authorized_keys = if ssh_auth_enabled {
+            self.ssh_authorized_keys
+        } else {
+            None
+        };
+
         Ok(ProxyConfig {
             target_host,
             target_port,
             proxy_port,
             proxy_type,
+            ssh_auth_enabled,
+            ssh_authorized_keys,
         })
     }
 }

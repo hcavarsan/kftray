@@ -45,7 +45,23 @@ REMOTE_ADDRESS=target.host    # The address of your target server
 REMOTE_PORT=8080             # The port on your target server
 LOCAL_PORT=8080             # The port KFtray listens on
 PROXY_TYPE=tcp             # Either 'tcp', 'udp', or 'ssh'
+SSH_AUTH=false            # Enable/disable SSH authentication
+SSH_AUTHORIZED_KEYS=""    # Comma-separated list of authorized public keys
 ```
+
+### SSH Authentication Example
+
+To enable SSH authentication:
+
+```bash
+# Enable SSH authentication
+export SSH_AUTH=true
+
+# Add authorized public keys
+export SSH_AUTHORIZED_KEYS="ssh-rsa AAAA...,ssh-ed25519 AAAA..."
+```
+
+When SSH_AUTH is false, all SSH connections will be accepted without authentication (not recommended for production use).
 
 ## Running with Docker
 
@@ -54,6 +70,8 @@ docker run -e REMOTE_ADDRESS=target.host \
           -e REMOTE_PORT=8080 \
           -e LOCAL_PORT=8080 \
           -e PROXY_TYPE=tcp \
+          -e SSH_AUTH=false \
+          -e SSH_AUTHORIZED_KEYS="" \
           -p 8080:8080 \
           kftray-server
 ```
