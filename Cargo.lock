@@ -3410,7 +3410,7 @@ dependencies = [
 
 [[package]]
 name = "kftray-server"
-version = "0.15.1"
+version = "0.15.2"
 dependencies = [
  "async-trait",
  "base64 0.21.7",
@@ -3429,7 +3429,7 @@ dependencies = [
 
 [[package]]
 name = "kftray-tauri"
-version = "0.15.1"
+version = "0.15.2"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3476,7 +3476,7 @@ dependencies = [
 
 [[package]]
 name = "kftui"
-version = "0.15.1"
+version = "0.15.2"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -5876,21 +5876,9 @@ dependencies = [
 
 [[package]]
 name = "rustls"
-version = "0.21.12"
+version = "0.23.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3f56a14d1f48b391359b22f731fd4bd7e43c97f3c50eee276f3aa09c94784d3e"
-dependencies = [
- "log",
- "ring",
- "rustls-webpki 0.101.7",
- "sct",
-]
-
-[[package]]
-name = "rustls"
-version = "0.23.19"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "934b404430bb06b3fae2cba809eb45a1ab1aecd64491213d7c3301b88393f8d1"
+checksum = "eee87ff5d9b36712a58574e12e9f0ea80f915a5b0ac518d322b24a465617925e"
 dependencies = [
  "log",
  "once_cell",
