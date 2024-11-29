@@ -1,7 +1,15 @@
+use std::future::Future;
+use std::time::Duration;
+
+use k8s_openapi::NamespaceResourceScope;
+use k8s_openapi::Resource;
 use kftray_commons::config_model::Config;
 use kube::Client;
-use serde_json::json;
-use serde_json::Value;
+use serde_json::{
+    Map,
+    Value,
+};
+use tokio::try_join;
 
 use super::{
     manifest::ManifestLoader,
@@ -13,6 +21,14 @@ use super::{
     },
 };
 use crate::error::Error;
+use crate::kubernetes::resources::ResourceOperations;
+
+const POD_READY_TIMEOUT: Duration = Duration::from_secs(60);
+const POD_READY_INTERVAL: Duration = Duration::from_secs(2);
+const RESOURCE_CREATION_TIMEOUT: Duration = Duration::from_secs(30);
+
+#[allow(dead_code)]
+const RESOURCE_DELETION_TIMEOUT: Duration = Duration::from_secs(30);
 
 pub struct ResourceManager {
     client: Client,
@@ -23,7 +39,6 @@ pub struct ResourceManager {
 impl ResourceManager {
     pub async fn new(client: Client, namespace: String) -> Result<Self, Error> {
         let manifest_loader = ManifestLoader::new().await?;
-
         Ok(Self {
             client,
             namespace,
@@ -31,42 +46,48 @@ impl ResourceManager {
         })
     }
 
-    pub async fn create_resources(
-        &self, values: &serde_json::Map<String, Value>,
-    ) -> Result<(), Error> {
+    pub async fn create_resources(&self, values: &Map<String, Value>) -> Result<(), Error> {
         let manifest = self.manifest_loader.load_and_render(values)?;
 
-        // Create pod (required)
+        // Create pod first
         let pod = PodResource::from_manifest(&manifest)?;
-        pod.create(self.client.clone(), &self.namespace).await?;
+        self.with_timeout(
+            pod.create(self.client.clone(), &self.namespace),
+            RESOURCE_CREATION_TIMEOUT,
+        )
+        .await?;
 
-        // Create service if present in manifest
-        if manifest.get("service").is_some() {
-            let service = ServiceResource::from_manifest(&manifest)?;
-            service.create(self.client.clone(), &self.namespace).await?;
+        // Create other resources concurrently
+        let service_future = self.create_optional_resource::<ServiceResource>(&manifest);
+        let secret_future = self.create_optional_resource::<SecretResource>(&manifest);
+
+        try_join!(service_future, secret_future)?;
+
+        self.wait_for_pod_ready(&pod).await
+    }
+
+    async fn create_optional_resource<T>(&self, manifest: &Value) -> Result<(), Error>
+    where
+        T: KubeResource + Send + Sync,
+        T::ApiType: Resource<Scope = NamespaceResourceScope>,
+    {
+        if manifest.get(T::resource_type()).is_some() {
+            let resource = T::from_manifest(manifest)?;
+            resource
+                .create(self.client.clone(), &self.namespace)
+                .await?;
         }
-
-        // Create secret if present in manifest
-        if manifest.get("secret").is_some() {
-            let secret = SecretResource::from_manifest(&manifest)?;
-            secret.create(self.client.clone(), &self.namespace).await?;
-        }
-
-        // Wait for pod to be ready
-        self.wait_for_pod_ready(&pod).await?;
-
         Ok(())
     }
 
     async fn wait_for_pod_ready(&self, pod: &PodResource) -> Result<(), Error> {
-        let max_retries = 30;
-        let retry_interval = std::time::Duration::from_secs(2);
+        let start = std::time::Instant::now();
 
-        for _ in 0..max_retries {
+        while start.elapsed() < POD_READY_TIMEOUT {
             if pod.is_ready(self.client.clone(), &self.namespace).await? {
                 return Ok(());
             }
-            tokio::time::sleep(retry_interval).await;
+            tokio::time::sleep(POD_READY_INTERVAL).await;
         }
 
         Err(Error::PodNotReady(
@@ -101,47 +122,42 @@ impl ResourceManager {
     pub async fn create_proxy_resources(
         &self, pod_name: &str, config: &Config,
     ) -> Result<(), Error> {
-        let mut values = serde_json::Map::new();
-        values.insert("hashed_name".to_string(), json!(pod_name));
-        values.insert("namespace".to_string(), json!(config.namespace));
-        values.insert(
-            "config_id".to_string(),
-            json!(config.id.unwrap_or_default().to_string()),
-        );
-
-        // Convert port values to integers before inserting
-        if let Some(local_port) = config.local_port {
-            values.insert("local_port".to_string(), json!(local_port));
-        }
-        if let Some(remote_port) = config.remote_port {
-            values.insert("remote_port".to_string(), json!(remote_port));
-        }
-        values.insert(
-            "remote_address".to_string(),
-            json!(config
-                .remote_address
-                .clone()
-                .unwrap_or_else(|| config.service.clone().unwrap_or_default())),
-        );
-        values.insert(
-            "protocol".to_string(),
-            json!(config.protocol.to_uppercase()),
-        );
-
         let manifest = self
             .manifest_loader
             .create_proxy_pod_manifest(pod_name, config)?;
 
-        // Create service if present in manifest
-        if manifest.get("service").is_some() {
-            let service = ServiceResource::from_manifest(&manifest)?;
-            self.create_service(&service).await?;
-        }
+        match config.workload_type.as_deref() {
+            Some("proxy") => {
+                // For proxy type, only create the pod
+                let pod = PodResource::from_manifest(&manifest)?;
+                self.with_timeout(
+                    pod.create(self.client.clone(), &self.namespace),
+                    RESOURCE_CREATION_TIMEOUT,
+                )
+                .await?;
+            }
+            Some("expose") => {
+                // For expose type, create all resources
+                let pod = PodResource::from_manifest(&manifest)?;
+                self.with_timeout(
+                    pod.create(self.client.clone(), &self.namespace),
+                    RESOURCE_CREATION_TIMEOUT,
+                )
+                .await?;
 
-        // Create secret if present in manifest
-        if manifest.get("secret").is_some() {
-            let secret = SecretResource::from_manifest(&manifest)?;
-            self.create_secret(&secret).await?;
+                // Create service if present in manifest
+                if manifest.get("service").is_some() {
+                    let service = ServiceResource::from_manifest(&manifest)?;
+                    self.create_service(&service).await?;
+                }
+
+                // Create secret if present in manifest
+                if manifest.get("secret").is_some() {
+                    let secret = SecretResource::from_manifest(&manifest)?;
+                    self.create_secret(&secret).await?;
+                }
+            }
+            _ => return Err(Error::Config("Invalid workload type".into())),
         }
 
         Ok(())
@@ -177,5 +193,58 @@ impl ResourceManager {
 
     async fn delete_secret(&self, secret: &SecretResource) -> Result<(), Error> {
         secret.delete(self.client.clone(), &self.namespace).await
+    }
+
+    async fn with_timeout<F, T>(&self, operation: F, timeout: Duration) -> Result<T, Error>
+    where
+        F: Future<Output = Result<T, Error>>,
+    {
+        tokio::time::timeout(timeout, operation)
+            .await
+            .map_err(|_| Error::Timeout("Operation timed out".into()))?
+    }
+
+    pub async fn cleanup_proxy_resources(&self, config: &Config) -> Result<(), Error> {
+        let manifest = self
+            .manifest_loader
+            .load_and_render(&serde_json::Map::new())?;
+        let label_selector = format!(
+            "app=kftray-server,config_id={}",
+            config.id.unwrap_or_default()
+        );
+
+        match config.workload_type.as_deref() {
+            Some("proxy") => {
+                // For proxy type, only delete the pod
+                let pod = PodResource::from_manifest(&manifest)?;
+                pod.delete_by_label(self.client.clone(), &self.namespace, &label_selector)
+                    .await?;
+            }
+            Some("expose") => {
+                // For expose type, delete all resources
+                let pod = PodResource::from_manifest(&manifest)?;
+                pod.delete_by_label(self.client.clone(), &self.namespace, &label_selector)
+                    .await?;
+
+                // Delete service if present
+                if manifest.get("service").is_some() {
+                    let service = ServiceResource::from_manifest(&manifest)?;
+                    service
+                        .delete_by_label(self.client.clone(), &self.namespace, &label_selector)
+                        .await?;
+                }
+
+                // Delete secret if present
+                if manifest.get("secret").is_some() {
+                    let secret = SecretResource::from_manifest(&manifest)?;
+                    secret
+                        .delete_by_label(self.client.clone(), &self.namespace, &label_selector)
+                        .await?;
+                }
+            }
+            _ => return Err(Error::Config("Invalid workload type".into())),
+        }
+
+        Ok(())
     }
 }

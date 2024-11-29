@@ -12,7 +12,6 @@ pub use client::*;
 pub use error::Error;
 pub use expose::{
     handle_expose,
-    KubernetesManager,
     SshTunnel,
     TunnelConfig,
 };

@@ -137,7 +137,6 @@ fn main() {
             commands::kubecontext::list_ports,
             commands::kubecontext::get_services_with_annotations,
             commands::portforward::deploy_and_forward_pod_cmd,
-            commands::portforward::stop_proxy_forward_cmd,
             commands::httplogs::set_http_logs_cmd,
             commands::httplogs::get_http_logs_cmd,
             commands::config::get_configs_cmd,

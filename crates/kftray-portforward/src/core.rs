@@ -2,8 +2,6 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use hostsfile::HostsBuilder;
-use k8s_openapi::api::core::v1::Pod;
-use k8s_openapi::api::core::v1::Service;
 use kftray_commons::{
     models::{
         config_model::Config,
@@ -12,26 +10,17 @@ use kftray_commons::{
     },
     utils::config_state::update_config_state,
 };
-use kube::api::{
-    Api,
-    DeleteParams,
-    ListParams,
-};
 use log::{
     error,
     info,
     warn,
 };
-use rand::{
-    distributions::Alphanumeric,
-    Rng,
-};
-use serde::de::DeserializeOwned;
-use serde_json::json;
+use rand::Rng;
 use tokio::task::JoinHandle;
 
 use crate::kubernetes::ResourceManager;
 use crate::{
+    error::Error,
     models::kube::{
         HttpLogState,
         Port,
@@ -45,12 +34,39 @@ use crate::{
     },
 };
 
+#[derive(Debug, thiserror::Error)]
+pub enum CoreError {
+    #[error("Configuration error: {0}")]
+    Config(String),
+    #[error("Port forwarding error: {0}")]
+    PortForward(String),
+    #[error("Kubernetes client error: {0}")]
+    KubeClient(String),
+    #[error("Resource cleanup error: {0}")]
+    Cleanup(String),
+    #[error("Other error: {0}")]
+    Other(String),
+}
+
+impl From<Error> for CoreError {
+    fn from(e: Error) -> Self {
+        match e {
+            Error::Config(e) => CoreError::Config(e),
+            Error::Kubernetes(e) => CoreError::KubeClient(e.to_string()),
+            Error::PodNotReady(e) => CoreError::PortForward(e),
+            Error::Timeout(e) => CoreError::PortForward(e),
+            Error::Resource(e) => CoreError::Cleanup(e),
+            e => CoreError::Other(e.to_string()),
+        }
+    }
+}
+
 pub async fn start_port_forward(
     configs: Vec<Config>, protocol: &str, http_log_state: Arc<HttpLogState>,
-) -> Result<Vec<CustomResponse>, String> {
-    let mut responses = Vec::new();
+) -> Result<Vec<CustomResponse>, CoreError> {
+    let mut responses = Vec::with_capacity(configs.len());
     let mut errors = Vec::new();
-    let mut child_handles = Vec::new();
+    let mut child_handles = Vec::with_capacity(configs.len());
 
     for config in configs {
         match forward_single_config(&config, protocol, http_log_state.clone()).await {
@@ -58,13 +74,13 @@ pub async fn start_port_forward(
                 responses.push(response);
                 child_handles.push(handle_key);
             }
-            Err(e) => errors.push(e),
+            Err(e) => errors.push(e.to_string()),
         }
     }
 
     if !errors.is_empty() {
         cleanup_handles(&child_handles).await;
-        return Err(errors.join("\n"));
+        return Err(CoreError::PortForward(errors.join("; ")));
     }
 
     Ok(responses)
@@ -72,25 +88,24 @@ pub async fn start_port_forward(
 
 async fn forward_single_config(
     config: &Config, protocol: &str, http_log_state: Arc<HttpLogState>,
-) -> Result<(CustomResponse, String), String> {
+) -> Result<(CustomResponse, String), CoreError> {
     let target = create_target_from_config(config);
-    let port_forward = create_port_forward(config, target).await?;
+    let port_forward = create_port_forward(config, target)
+        .await
+        .map_err(CoreError::PortForward)?;
 
-    let (actual_local_port, handle) = match protocol {
+    let (actual_local_port, handle) = match protocol.to_lowercase().as_str() {
         "udp" => port_forward.port_forward_udp().await,
         "tcp" => port_forward.port_forward_tcp(http_log_state).await,
-        _ => return Err("Unsupported protocol".into()),
+        _ => return Err(CoreError::Config("Unsupported protocol".into())),
     }
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| CoreError::PortForward(e.to_string()))?;
 
-    let handle_key = format!(
-        "{}_{}",
-        config.id.unwrap(),
-        config.service.clone().unwrap_or_default()
-    );
+    let handle_key = create_handle_key(config);
+
     CHILD_PROCESSES
         .lock()
-        .unwrap()
+        .map_err(|e| CoreError::PortForward(e.to_string()))?
         .insert(handle_key.clone(), handle);
 
     if config.domain_enabled.unwrap_or_default() {
@@ -99,11 +114,11 @@ async fn forward_single_config(
 
     update_config_state(&ConfigState {
         id: None,
-        config_id: config.id.unwrap(),
+        config_id: config.id.unwrap_or_default(),
         is_running: true,
     })
     .await
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| CoreError::Config(e.to_string()))?;
 
     Ok((
         create_response(config, actual_local_port, protocol),
@@ -116,17 +131,14 @@ fn create_target_from_config(config: &Config) -> Target {
         Some("pod") => TargetSelector::PodLabel(config.target.clone().unwrap_or_default()),
         Some("proxy") => TargetSelector::PodLabel(format!(
             "app=kftray-server,config_id={}",
-            config.id.unwrap()
+            config.id.unwrap_or_default()
         )),
         _ => TargetSelector::ServiceName(config.service.clone().unwrap_or_default()),
     };
 
-    let remote_port = config.remote_port.unwrap_or(0);
-    let port = Port::Number(remote_port as i32);
-
     Target::new(
         selector,
-        port,
+        Port::Number(config.remote_port.unwrap_or(0) as i32),
         config.namespace.clone(),
         config.remote_address.clone(),
     )
@@ -146,27 +158,23 @@ async fn create_port_forward(config: &Config, target: Target) -> Result<PortForw
     .map_err(|e| e.to_string())
 }
 
-fn setup_hosts_file(config: &Config) -> Result<(), String> {
+fn setup_hosts_file(config: &Config) -> Result<(), CoreError> {
     if let (Some(service_name), Some(local_address)) = (&config.service, &config.local_address) {
-        let hostfile_comment = format!(
+        let comment = format!(
             "kftray custom host for {} - {}",
             service_name,
             config.id.unwrap_or_default()
         );
 
-        let mut hosts_builder = HostsBuilder::new(hostfile_comment);
+        let mut hosts_builder = HostsBuilder::new(comment);
 
-        match local_address.parse() {
-            Ok(ip_addr) => {
-                hosts_builder.add_hostname(ip_addr, config.alias.clone().unwrap_or_default());
-                hosts_builder.write().map_err(|e| {
-                    error!("Failed to write to hostfile: {}", e);
-                    e.to_string()
-                })?;
-            }
-            Err(_) => {
-                warn!("Invalid IP address format: {}", local_address);
-            }
+        if let Ok(ip_addr) = local_address.parse() {
+            hosts_builder.add_hostname(ip_addr, config.alias.clone().unwrap_or_default());
+            hosts_builder
+                .write()
+                .map_err(|e| CoreError::Config(format!("Failed to write to hostfile: {}", e)))?;
+        } else {
+            warn!("Invalid IP address format: {}", local_address);
         }
     }
     Ok(())
@@ -201,18 +209,24 @@ async fn cleanup_handles(handles: &[String]) {
     }
 }
 
+fn create_handle_key(config: &Config) -> String {
+    format!(
+        "{}_{}",
+        config.id.unwrap_or_default(),
+        config.service.clone().unwrap_or_default()
+    )
+}
+
 pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
     info!("Stopping all port forwards");
     CANCEL_NOTIFIER.notify_waiters();
 
-    // Get active configs first
     let (configs, running_configs) = get_active_configs().await?;
     if running_configs.is_empty() {
         info!("No active configs found, nothing to stop");
         return Ok(Vec::new());
     }
 
-    // Stop port forwards first
     let handle_map = {
         let mut processes = CHILD_PROCESSES.lock().unwrap();
         processes
@@ -225,130 +239,29 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
         .filter_map(|c| c.id.map(|id| (id, c)))
         .collect();
 
-    // Get proxy configs that need cleanup
-    let proxy_configs: Vec<(&Config, i64)> = configs
-        .iter()
-        .filter_map(|config| {
-            let config_id = config.id?;
+    // Stop regular port forwards
+    let port_forward_responses = stop_port_forwards(handle_map, &config_map).await;
+
+    // Clean up proxy/expose resources
+    for config in &configs {
+        if let (Some(config_id), Some(workload_type)) = (config.id, config.workload_type.as_deref())
+        {
             if running_configs.contains(&config_id)
-                && config.workload_type.as_deref() == Some("proxy")
+                && (workload_type == "proxy" || workload_type == "expose")
             {
-                Some((config, config_id))
-            } else {
-                None
-            }
-        })
-        .collect();
-
-    // Execute all cleanups concurrently
-    let cleanup_futures = proxy_configs.into_iter().map(|(config, config_id)| {
-        let namespace = config.namespace.clone();
-        let service = config.service.clone().unwrap_or_default();
-        async move { stop_proxy_forward(config_id, &namespace, service).await }
-    });
-
-    let (port_forward_responses, proxy_results) = tokio::join!(
-        stop_port_forwards(handle_map, &config_map),
-        futures::future::join_all(cleanup_futures)
-    );
-
-    // Collect any errors from proxy cleanups
-    let proxy_errors: Vec<String> = proxy_results
-        .into_iter()
-        .filter_map(|result| result.err())
-        .collect();
-
-    if !proxy_errors.is_empty() {
-        warn!("Errors during proxy cleanup: {}", proxy_errors.join("; "));
-    }
-
-    // Final cleanup of config states
-    cleanup_resources(&configs, &running_configs).await?;
-
-    Ok(port_forward_responses)
-}
-
-// Helper function to stop proxy forwards
-pub async fn stop_proxy_forward(
-    config_id: i64, namespace: &str, service_name: String,
-) -> Result<CustomResponse, String> {
-    info!(
-        "Stopping proxy forward for config_id: {} in namespace: {}",
-        config_id, namespace
-    );
-
-    let config = kftray_commons::config::get_config(config_id)
-        .await
-        .map_err(|e| format!("Failed to get config {}: {}", config_id, e))?;
-
-    let (client_opt, _, _) = crate::client::create_client_with_specific_context(
-        config.kubeconfig.clone(),
-        Some(&config.context),
-    )
-    .await
-    .map_err(|e| format!("Failed to create client: {}", e))?;
-
-    let client = client_opt.ok_or_else(|| "Failed to create kubernetes client".to_string())?;
-
-    // Delete resources in parallel
-    let (pod_result, svc_result) = tokio::join!(
-        delete_resources::<Pod>(client.clone(), namespace, config_id),
-        delete_resources::<Service>(client, namespace, config_id)
-    );
-
-    // Log any errors but don't fail the operation
-    if let Err(e) = pod_result {
-        warn!("Error deleting pods: {}", e);
-    }
-    if let Err(e) = svc_result {
-        warn!("Error deleting services: {}", e);
-    }
-
-    Ok(CustomResponse {
-        id: Some(config_id),
-        service: service_name,
-        namespace: namespace.to_string(),
-        local_port: 0,
-        remote_port: 0,
-        context: String::new(),
-        protocol: String::new(),
-        stdout: "Proxy resources cleanup completed".to_string(),
-        stderr: String::new(),
-        status: 0,
-    })
-}
-
-// Generic function to delete kubernetes resources
-async fn delete_resources<K>(
-    client: kube::Client, namespace: &str, config_id: i64,
-) -> Result<(), String>
-where
-    K: kube::api::Resource<Scope = kube::core::NamespaceResourceScope>
-        + Clone
-        + DeserializeOwned
-        + std::fmt::Debug,
-    K::DynamicType: Default,
-{
-    let api: Api<K> = Api::namespaced(client, namespace);
-    let label_selector = format!("app=kftray-server,config_id={}", config_id);
-    let list_params = ListParams::default().labels(&label_selector);
-
-    let resources = api
-        .list(&list_params)
-        .await
-        .map_err(|e| format!("Failed to list resources: {}", e))?;
-
-    for resource in resources.items {
-        if let Some(ref name) = resource.meta().name {
-            if let Err(e) = api.delete(name, &DeleteParams::default()).await {
-                if !e.to_string().contains("not found") {
-                    return Err(format!("Failed to delete resource {}: {}", name, e));
+                if let Err(e) = cleanup_proxy_resources(config).await {
+                    warn!(
+                        "Error cleaning up {} resources for config {}: {}",
+                        workload_type, config_id, e
+                    );
                 }
             }
         }
     }
 
-    Ok(())
+    cleanup_resources(&configs, &running_configs).await?;
+
+    Ok(port_forward_responses)
 }
 
 async fn get_active_configs() -> Result<(Vec<Config>, Vec<i64>), String> {
@@ -370,7 +283,7 @@ async fn get_active_configs() -> Result<(Vec<Config>, Vec<i64>), String> {
 async fn stop_port_forwards(
     handle_map: HashMap<String, JoinHandle<()>>, config_map: &HashMap<i64, &Config>,
 ) -> Vec<CustomResponse> {
-    let mut responses = Vec::new();
+    let mut responses = Vec::with_capacity(handle_map.len());
 
     for (composite_key, handle) in handle_map {
         if let Some(response) = stop_single_forward(&composite_key, handle, config_map).await {
@@ -384,16 +297,22 @@ async fn stop_port_forwards(
 async fn stop_single_forward(
     composite_key: &str, handle: JoinHandle<()>, config_map: &HashMap<i64, &Config>,
 ) -> Option<CustomResponse> {
-    let parts: Vec<&str> = composite_key.split('_').collect();
-    if parts.len() != 2 {
-        error!("Invalid composite key format: {}", composite_key);
-        return None;
-    }
-
-    let (config_id_str, service_id) = (parts[0], parts[1]);
-    let config_id = config_id_str.parse::<i64>().ok()?;
+    let (config_id_str, service_id) = parse_handle_key(composite_key)?;
+    let config_id = config_id_str.parse().ok()?;
 
     if let Some(config) = config_map.get(&config_id) {
+        // Handle proxy/expose cleanup
+        if let Some(workload_type) = &config.workload_type {
+            if workload_type == "proxy" || workload_type == "expose" {
+                if let Err(e) = cleanup_proxy_resources(config).await {
+                    warn!(
+                        "Error cleaning up {} resources for config {}: {}",
+                        workload_type, config_id, e
+                    );
+                }
+            }
+        }
+
         cleanup_host_entry(config, service_id, config_id_str);
     }
 
@@ -413,13 +332,8 @@ async fn stop_single_forward(
     })
 }
 
-fn cleanup_host_entry(config: &Config, service_id: &str, config_id_str: &str) {
-    if config.domain_enabled.unwrap_or_default() {
-        let hostfile_comment = format!("kftray custom host for {} - {}", service_id, config_id_str);
-        if let Err(e) = HostsBuilder::new(hostfile_comment).write() {
-            error!("Failed to clean up hostfile entry: {}", e);
-        }
-    }
+fn parse_handle_key(handle_key: &str) -> Option<(&str, &str)> {
+    handle_key.split_once('_')
 }
 
 async fn cleanup_resources(configs: &[Config], running_configs: &[i64]) -> Result<(), String> {
@@ -441,18 +355,39 @@ async fn cleanup_resources(configs: &[Config], running_configs: &[i64]) -> Resul
 pub async fn stop_port_forward(config_id: String) -> Result<CustomResponse, String> {
     CANCEL_NOTIFIER.notify_waiters();
 
+    let configs = kftray_commons::utils::config::get_configs()
+        .await
+        .map_err(|e| format!("Failed to get configs: {}", e))?;
+
+    let config = configs
+        .iter()
+        .find(|c| c.id.map(|id| id.to_string()) == Some(config_id.clone()))
+        .ok_or_else(|| format!("Config not found for id: {}", config_id))?;
+
+    // Handle proxy/expose cleanup first if applicable
+    if let Some(workload_type) = &config.workload_type {
+        if workload_type == "proxy" || workload_type == "expose" {
+            if let Err(e) = cleanup_proxy_resources(config).await {
+                warn!(
+                    "Error cleaning up {} resources for config {}: {}",
+                    workload_type, config_id, e
+                );
+            }
+        }
+    }
+
     let handle_key = find_handle_key(&config_id)?;
     let join_handle = remove_handle(&handle_key)?;
-
-    let (config_id_str, service_name) = parse_handle_key(&handle_key)?;
+    let (config_id_str, service_name) =
+        parse_handle_key(&handle_key).ok_or_else(|| "Invalid handle key format".to_string())?;
     let config_id_parsed = config_id_str.parse::<i64>().unwrap_or_default();
 
-    cleanup_config(config_id_parsed, &service_name).await?;
+    cleanup_config(config_id_parsed, service_name).await?;
     join_handle.abort();
 
     Ok(CustomResponse {
         id: None,
-        service: service_name,
+        service: service_name.to_string(),
         namespace: String::new(),
         local_port: 0,
         remote_port: 0,
@@ -462,6 +397,23 @@ pub async fn stop_port_forward(config_id: String) -> Result<CustomResponse, Stri
         stderr: String::new(),
         status: 0,
     })
+}
+
+async fn cleanup_config(config_id: i64, service_name: &str) -> Result<(), String> {
+    if let Ok(configs) = kftray_commons::config::get_configs().await {
+        if let Some(config) = configs.iter().find(|c| c.id == Some(config_id)) {
+            cleanup_host_entry(config, service_name, &config_id.to_string());
+        }
+    }
+
+    let config_state = ConfigState {
+        id: None,
+        config_id,
+        is_running: false,
+    };
+    update_config_state(&config_state)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 fn find_handle_key(config_id: &str) -> Result<String, String> {
@@ -485,33 +437,15 @@ fn remove_handle(handle_key: &str) -> Result<JoinHandle<()>, String> {
         .ok_or_else(|| "Failed to remove handle".to_string())
 }
 
-fn parse_handle_key(handle_key: &str) -> Result<(String, String), String> {
-    handle_key
-        .split_once('_')
-        .map(|(id, service)| (id.to_string(), service.to_string()))
-        .ok_or_else(|| "Invalid handle key format".to_string())
-}
-
-async fn cleanup_config(config_id: i64, service_name: &str) -> Result<(), String> {
-    if let Ok(configs) = kftray_commons::config::get_configs().await {
-        if let Some(config) = configs.iter().find(|c| c.id == Some(config_id)) {
-            if config.domain_enabled.unwrap_or_default() {
-                cleanup_host_entry(config, service_name, &config_id.to_string());
-            }
+fn cleanup_host_entry(config: &Config, service_id: &str, config_id_str: &str) {
+    if config.domain_enabled.unwrap_or_default() {
+        let hostfile_comment = format!("kftray custom host for {} - {}", service_id, config_id_str);
+        if let Err(e) = HostsBuilder::new(hostfile_comment).write() {
+            error!("Failed to clean up hostfile entry: {}", e);
         }
     }
-
-    let config_state = ConfigState {
-        id: None,
-        config_id,
-        is_running: false,
-    };
-    update_config_state(&config_state)
-        .await
-        .map_err(|e| e.to_string())
 }
 
-// Add these missing functions
 pub async fn retrieve_service_configs(
     context: &str, kubeconfig: Option<String>,
 ) -> Result<Vec<Config>, String> {
@@ -520,23 +454,23 @@ pub async fn retrieve_service_configs(
             .await
             .map_err(|e| e.to_string())?;
 
-    let client = client_opt.ok_or_else(|| "Client not created".to_string())?;
-    let annotation = "kftray.app/configs";
-
+    let client = client_opt.ok_or("Client not created")?;
     let namespaces = crate::client::list_all_namespaces(client.clone())
         .await
         .map_err(|e| e.to_string())?;
 
     let mut all_configs = Vec::new();
-
     for namespace in namespaces {
-        let services =
-            crate::client::get_services_with_annotation(client.clone(), &namespace, annotation)
-                .await
-                .map_err(|e| e.to_string())?;
+        let services = crate::client::get_services_with_annotation(
+            client.clone(),
+            &namespace,
+            "kftray.app/configs",
+        )
+        .await
+        .map_err(|e| e.to_string())?;
 
         for (service_name, annotations, ports) in services {
-            if let Some(configs_str) = annotations.get(annotation) {
+            if let Some(configs_str) = annotations.get("kftray.app/configs") {
                 all_configs.extend(parse_service_configs(
                     configs_str,
                     context,
@@ -560,92 +494,6 @@ pub async fn retrieve_service_configs(
     Ok(all_configs)
 }
 
-// In core.rs, update the pod name generation:
-
-// In core.rs, update the values creation:
-
-pub async fn deploy_and_forward_pod(
-    configs: Vec<Config>, http_log_state: Arc<HttpLogState>,
-) -> Result<Vec<CustomResponse>, String> {
-    let mut responses = Vec::new();
-
-    for config in configs {
-        let pod_name = format!(
-            "pkf-{}-{}-{}",
-            whoami::username()
-                .to_lowercase()
-                .chars()
-                .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
-                .collect::<String>(),
-            config.protocol.to_lowercase(),
-            rand::thread_rng()
-                .sample_iter(Alphanumeric)
-                .take(6)
-                .map(char::from)
-                .map(|c| c.to_ascii_lowercase())
-                .collect::<String>()
-        );
-
-        let (client, _, _) = crate::client::create_client_with_specific_context(
-            config.kubeconfig.clone(),
-            Some(&config.context),
-        )
-        .await
-        .map_err(|e| e.to_string())?;
-
-        let client = client.ok_or_else(|| "Client not created".to_string())?;
-
-        let resource_manager = ResourceManager::new(client.clone(), config.namespace.clone())
-            .await
-            .map_err(|e| e.to_string())?;
-
-        // Create manifest values with proper types
-        let mut values = serde_json::Map::new();
-        values.insert("hashed_name".to_string(), json!(pod_name));
-        values.insert("namespace".to_string(), json!(config.namespace));
-        values.insert(
-            "config_id".to_string(),
-            json!(config.id.unwrap_or_default().to_string()),
-        );
-
-        // Convert ports to integers with default values
-        let local_port = config.local_port.unwrap_or(0) as i32;
-        let remote_port = config.remote_port.unwrap_or(0) as i32;
-
-        values.insert("local_port".to_string(), json!(local_port));
-        values.insert("remote_port".to_string(), json!(remote_port));
-
-        values.insert(
-            "remote_address".to_string(),
-            json!(config
-                .remote_address
-                .clone()
-                .unwrap_or_else(|| config.service.clone().unwrap_or_default())),
-        );
-        values.insert(
-            "protocol".to_string(),
-            json!(config.protocol.to_uppercase()),
-        );
-
-        // Create resources using the resource manager
-        resource_manager
-            .create_resources(&values)
-            .await
-            .map_err(|e| e.to_string())?;
-
-        let mut config_clone = config.clone();
-        config_clone.service = Some(pod_name.clone());
-
-        let forward_response =
-            start_port_forward(vec![config_clone], &config.protocol, http_log_state.clone())
-                .await?;
-
-        responses.extend(forward_response);
-    }
-
-    Ok(responses)
-}
-
 fn parse_service_configs(
     configs_str: &str, context: &str, namespace: &str, service_name: &str,
     ports: &HashMap<String, i32>, kubeconfig: Option<String>,
@@ -658,12 +506,13 @@ fn parse_service_configs(
                 return None;
             }
 
-            let alias = parts[0].to_string();
-            let local_port: u16 = parts[1].parse().ok()?;
-            let target_port = parts[2]
+            let (alias, local_port_str, target_port_str) = (parts[0], parts[1], parts[2]);
+            let local_port = local_port_str.parse().ok()?;
+            let target_port = target_port_str
                 .parse()
                 .ok()
-                .or_else(|| ports.get(parts[2]).map(|&p| p as u16))?;
+                .or_else(|| ports.get(target_port_str).copied())
+                .map(|p| p as u16)?;
 
             Some(Config {
                 id: None,
@@ -671,7 +520,7 @@ fn parse_service_configs(
                 kubeconfig: kubeconfig.clone(),
                 namespace: namespace.to_string(),
                 service: Some(service_name.to_string()),
-                alias: Some(alias),
+                alias: Some(alias.to_string()),
                 local_port: Some(local_port),
                 remote_port: Some(target_port),
                 protocol: "tcp".to_string(),
@@ -688,7 +537,7 @@ fn create_default_service_configs(
 ) -> Vec<Config> {
     ports
         .iter()
-        .map(|(_port_name, &port)| Config {
+        .map(|(_, &port)| Config {
             id: None,
             context: context.to_string(),
             kubeconfig: kubeconfig.clone(),
@@ -702,4 +551,116 @@ fn create_default_service_configs(
             ..Default::default()
         })
         .collect()
+}
+
+pub async fn deploy_and_forward_pod(
+    configs: Vec<Config>, http_log_state: Arc<HttpLogState>,
+) -> Result<Vec<CustomResponse>, CoreError> {
+    let mut responses = Vec::with_capacity(configs.len());
+
+    for config in configs {
+        let pod_name = generate_pod_name(&config)?;
+        let (client, _, _) = crate::client::create_client_with_specific_context(
+            config.kubeconfig.clone(),
+            Some(&config.context),
+        )
+        .await
+        .map_err(|e| CoreError::KubeClient(e.to_string()))?;
+
+        let client = client.ok_or_else(|| CoreError::Config("Client not created".into()))?;
+        let resource_manager = ResourceManager::new(client, config.namespace.clone())
+            .await
+            .map_err(|e| CoreError::KubeClient(e.to_string()))?;
+
+        let values = create_manifest_values(&config, &pod_name)?;
+        resource_manager
+            .create_resources(&values)
+            .await
+            .map_err(|e| CoreError::KubeClient(e.to_string()))?;
+
+        let mut config_clone = config.clone();
+        config_clone.service = Some(pod_name);
+
+        let forward_response =
+            start_port_forward(vec![config_clone], &config.protocol, http_log_state.clone())
+                .await?;
+
+        responses.extend(forward_response);
+    }
+
+    Ok(responses)
+}
+
+fn create_manifest_values(
+    config: &Config, pod_name: &str,
+) -> Result<serde_json::Map<String, serde_json::Value>, CoreError> {
+    use serde_json::json;
+    let mut values = serde_json::Map::new();
+
+    values.insert("hashed_name".to_string(), json!(pod_name));
+    values.insert("namespace".to_string(), json!(config.namespace));
+    values.insert(
+        "config_id".to_string(),
+        json!(config.id.unwrap_or_default().to_string()),
+    );
+
+    let local_port = config.local_port.unwrap_or(0) as i32;
+    let remote_port = config.remote_port.unwrap_or(0) as i32;
+
+    values.insert("local_port".to_string(), json!(local_port));
+    values.insert("remote_port".to_string(), json!(remote_port));
+    values.insert(
+        "remote_address".to_string(),
+        json!(config
+            .remote_address
+            .clone()
+            .unwrap_or_else(|| config.service.clone().unwrap_or_default())),
+    );
+    values.insert(
+        "protocol".to_string(),
+        json!(config.protocol.to_uppercase()),
+    );
+
+    Ok(values)
+}
+
+fn generate_pod_name(config: &Config) -> Result<String, CoreError> {
+    let username = whoami::username()
+        .to_lowercase()
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .collect::<String>();
+
+    let random_suffix: String = rand::thread_rng()
+        .sample_iter(&rand::distributions::Alphanumeric)
+        .take(6)
+        .map(char::from)
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
+
+    Ok(format!(
+        "pkf-{}-{}-{}",
+        username,
+        config.protocol.to_lowercase(),
+        random_suffix
+    ))
+}
+
+async fn cleanup_proxy_resources(config: &Config) -> Result<(), String> {
+    let (client_opt, _, _) = crate::client::create_client_with_specific_context(
+        config.kubeconfig.clone(),
+        Some(&config.context),
+    )
+    .await
+    .map_err(|e| e.to_string())?;
+
+    let client = client_opt.ok_or("Failed to create kubernetes client")?;
+    let resource_manager = ResourceManager::new(client, config.namespace.clone())
+        .await
+        .map_err(|e| e.to_string())?;
+
+    resource_manager
+        .cleanup_proxy_resources(config)
+        .await
+        .map_err(|e| e.to_string())
 }

@@ -4,12 +4,12 @@ use kftray_commons::config::get_configs;
 use kftray_commons::models::config_model::Config;
 use kftray_commons::models::response::CustomResponse;
 use kftray_commons::utils::config_state::get_configs_state;
+use kftray_portforward::core::CoreError;
 use kftray_portforward::core::{
     deploy_and_forward_pod,
     start_port_forward,
     stop_all_port_forward,
     stop_port_forward,
-    stop_proxy_forward,
 };
 use kftray_portforward::models::kube::HttpLogState;
 use log::error;
@@ -91,6 +91,7 @@ pub async fn start_port_forward_udp_cmd(
         Arc::new(http_log_state.inner().clone()),
     )
     .await
+    .map_err(|e: CoreError| e.to_string())
 }
 
 #[tauri::command]
@@ -104,6 +105,7 @@ pub async fn start_port_forward_tcp_cmd(
         Arc::new(http_log_state.inner().clone()),
     )
     .await
+    .map_err(|e: CoreError| e.to_string())
 }
 
 #[tauri::command]
@@ -125,18 +127,9 @@ pub async fn deploy_and_forward_pod_cmd(
     configs: Vec<Config>, http_log_state: tauri::State<'_, HttpLogState>,
     _app_handle: tauri::AppHandle,
 ) -> Result<Vec<CustomResponse>, String> {
-    deploy_and_forward_pod(configs.clone(), Arc::new(http_log_state.inner().clone())).await
-}
-
-#[tauri::command]
-pub async fn stop_proxy_forward_cmd(
-    config_id: String, namespace: &str, service_name: String, _app_handle: tauri::AppHandle,
-) -> Result<CustomResponse, String> {
-    let config_id = config_id
-        .parse::<i64>()
-        .map_err(|e| format!("Failed to parse config_id: {}", e))?;
-
-    stop_proxy_forward(config_id, namespace, service_name).await
+    deploy_and_forward_pod(configs.clone(), Arc::new(http_log_state.inner().clone()))
+        .await
+        .map_err(|e: CoreError| e.to_string())
 }
 
 #[tauri::command]

@@ -47,6 +47,7 @@ openssh-keys = "0.6"
 russh-keys = "0.46"
 thiserror = "1.0"
 regex = "1.10.2"
+parking_lot = "0.12"
 
 [lib]
 name = "kftray_portforward"

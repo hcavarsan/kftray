@@ -24,9 +24,6 @@ pub enum Error {
     #[error("Configuration error: {0}")]
     Config(String),
 
-    #[error("Other error: {0}")]
-    Other(#[from] anyhow::Error),
-
     #[error("SSH key error: {0}")]
     SshKey(String),
 
@@ -48,7 +45,6 @@ pub enum Error {
     #[error("Timeout error: {0}")]
     Timeout(String),
 
-    // Add this new variant for Regex errors
     #[error("Regex error: {0}")]
     Regex(#[from] regex::Error),
 
@@ -57,15 +53,15 @@ pub enum Error {
 
     #[error("Failed to parse integer: {0}")]
     ParseInt(#[from] ParseIntError),
+
+    #[error("Resource failed: {0}")]
+    ResourceFailed(String),
+
+    #[error("Other error: {0}")]
+    Other(#[from] anyhow::Error),
 }
 
-impl From<async_ssh2_lite::Error> for Error {
-    fn from(e: async_ssh2_lite::Error) -> Self {
-        Error::Ssh(e.to_string())
-    }
-}
-
-impl From<std::string::String> for Error {
+impl From<String> for Error {
     fn from(e: String) -> Self {
         Error::Other(anyhow::anyhow!(e))
     }
@@ -74,5 +70,11 @@ impl From<std::string::String> for Error {
 impl From<&str> for Error {
     fn from(e: &str) -> Self {
         Error::Other(anyhow::anyhow!(e.to_string()))
+    }
+}
+
+impl From<async_ssh2_lite::Error> for Error {
+    fn from(e: async_ssh2_lite::Error) -> Self {
+        Error::Ssh(e.to_string())
     }
 }
