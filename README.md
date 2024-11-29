@@ -1,9 +1,7 @@
 <div align="center">
   <br>
-<div align="center">
-<img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/refs/heads/main/public/img/kftools.webp" alt="Kftray github"/>
-</div>
-
+  <img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/logo.png" width="128px" alt="kftray Logo" />
+  <br><br>
   <a href="https://kftray.app"><strong>Visit kftray.app »</strong></a>
   <br><br>
   <a href="https://join.slack.com/t/kftray/shared_invite/zt-2q6lwn15f-Y8Mi_4NlenH9TuEDMjxPUA">
@@ -18,9 +16,10 @@
   <br><br>
 </div>
 
-
 <p align="center">
-
+<div align="center">
+<img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/refs/heads/main/public/img/kftools.webp" alt="Kftray github"/>
+</div>
   kftray and kftui are independent, cross-platform applications. They help you set up and manage multiple port-forwarding settings easily. Both apps are part of the same open-source project and aim to make working with Kubernetes easier. kftray has a desktop interface, while kftui has a terminal interface, so you can choose the one that suits you best.
 
 </p>
