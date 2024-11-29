@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt;
 use std::sync::atomic::{
     AtomicBool,
     Ordering,
@@ -25,18 +26,6 @@ impl NameSpace {
     }
 }
 
-impl From<i32> for Port {
-    fn from(port: i32) -> Self {
-        Self::Number(port)
-    }
-}
-
-impl From<&str> for Port {
-    fn from(port: &str) -> Self {
-        Self::Name(port.to_string())
-    }
-}
-
 impl From<IntOrString> for Port {
     fn from(port: IntOrString) -> Self {
         match port {
@@ -56,18 +45,19 @@ impl TargetPod {
         })
     }
 
-    pub fn into_parts(self) -> (String, u16) {
-        (self.pod_name, self.port_number)
+    pub fn into_parts(self) -> (String, i32) {
+        (self.pod_name, self.port_number as i32)
     }
 }
 impl Target {
     pub fn new<I: Into<Option<T>>, T: Into<String>, P: Into<Port>>(
-        selector: TargetSelector, port: P, namespace: I,
+        selector: TargetSelector, port: P, namespace: I, remote_address: Option<String>,
     ) -> Self {
         Self {
             selector,
             port: port.into(),
             namespace: NameSpace(namespace.into().map(Into::into)),
+            remote_address,
         }
     }
 
@@ -157,16 +147,11 @@ pub enum TargetSelector {
 }
 
 #[derive(Clone, Debug)]
-pub enum Port {
-    Number(i32),
-    Name(String),
-}
-
-#[derive(Clone, Debug)]
 pub struct Target {
     pub selector: TargetSelector,
     pub port: Port,
     pub namespace: NameSpace,
+    pub remote_address: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -227,5 +212,59 @@ impl PodSelection for AnyReady {
         ))?;
 
         Ok(pod)
+    }
+}
+
+impl From<String> for Port {
+    fn from(port: String) -> Self {
+        match port.parse::<i32>() {
+            Ok(num) => Self::Number(num),
+            Err(_) => Self::Name(port),
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum Port {
+    Number(i32),
+    Name(String),
+}
+
+impl fmt::Display for Port {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Port::Number(n) => write!(f, "{}", n),
+            Port::Name(s) => write!(f, "{}", s),
+        }
+    }
+}
+
+impl From<u16> for Port {
+    fn from(port: u16) -> Self {
+        Self::Number(port as i32)
+    }
+}
+
+impl From<i32> for Port {
+    fn from(port: i32) -> Self {
+        Self::Number(port)
+    }
+}
+
+impl Port {
+    pub fn as_i32(&self) -> i32 {
+        match self {
+            Port::Number(n) => *n,
+            Port::Name(s) => s.parse().unwrap_or(0),
+        }
+    }
+}
+
+impl From<&str> for Port {
+    fn from(port: &str) -> Self {
+        match port.parse::<i32>() {
+            Ok(num) => Self::Number(num),
+            Err(_) => Self::Name(port.to_string()),
+        }
     }
 }

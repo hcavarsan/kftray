@@ -318,46 +318,30 @@ const KFTray = () => {
   }
 
   const stopPortForwardingForConfig = async (config: Config) => {
-    if (
-      (config.workload_type === 'service' || config.workload_type === 'pod') &&
-      config.protocol === 'tcp'
-    ) {
+    try {
       await invoke('stop_port_forward_cmd', {
-        serviceName: config.service,
         configId: config.id.toString(),
       })
-    } else if (
-      config.workload_type.startsWith('proxy') ||
-      ((config.workload_type === 'service' || config.workload_type === 'pod') &&
-        config.protocol === 'udp')
-    ) {
-      await invoke('stop_proxy_forward_cmd', {
-        configId: config.id.toString(),
-        namespace: config.namespace,
-        serviceName: config.service,
-        localPort: config.local_port,
-        remoteAddress: config.remote_address,
-        protocol: 'tcp',
-      })
-    } else {
-      throw new Error(`Unsupported workload type: ${config.workload_type}`)
+    } catch (error) {
+      console.error('Failed to stop port forwarding:', error)
+      throw error
     }
   }
 
   const startPortForwardingForConfig = async (config: Config) => {
-    if (
-      (config.workload_type === 'service' || config.workload_type === 'pod') &&
-      config.protocol === 'tcp'
-    ) {
-      await invoke('start_port_forward_tcp_cmd', { configs: [config] })
-    } else if (
-      config.workload_type.startsWith('proxy') ||
-      ((config.workload_type === 'service' || config.workload_type === 'pod') &&
-        config.protocol === 'udp')
-    ) {
-      await invoke('deploy_and_forward_pod_cmd', { configs: [config] })
-    } else {
-      throw new Error(`Unsupported workload type: ${config.workload_type}`)
+    try {
+      if (config.protocol === 'tcp') {
+        await invoke('start_port_forward_tcp_cmd', { configs: [config] })
+      } else if (config.protocol === 'udp') {
+        await invoke('start_port_forward_udp_cmd', { configs: [config] })
+      } else if (config.workload_type === 'proxy' || config.workload_type === 'expose') {
+        await invoke('deploy_and_forward_pod_cmd', { configs: [config] })
+      } else {
+        throw new Error(`Unsupported protocol: ${config.protocol}`)
+      }
+    } catch (error) {
+      console.error('Failed to start port forwarding:', error)
+      throw error
     }
   }
 
@@ -397,26 +381,25 @@ const KFTray = () => {
     setIsInitiating(false)
   }
   const handlePortForwarding = async (config: Config) => {
-    switch (config.workload_type) {
-    case 'service':
-    case 'pod':
-      if (config.protocol === 'tcp') {
+    try {
+      if (config.workload_type === 'proxy' || config.workload_type === 'expose') {
+        await invoke<Response>('deploy_and_forward_pod_cmd', {
+          configs: [config],
+        })
+      } else if (config.protocol === 'tcp') {
         await invoke<Response>('start_port_forward_tcp_cmd', {
           configs: [config],
         })
       } else if (config.protocol === 'udp') {
-        await invoke<Response>('deploy_and_forward_pod_cmd', {
+        await invoke<Response>('start_port_forward_udp_cmd', {
           configs: [config],
         })
+      } else {
+        throw new Error(`Unsupported configuration: workload_type=${config.workload_type}, protocol=${config.protocol}`)
       }
-      break
-    case 'proxy':
-      await invoke<Response>('deploy_and_forward_pod_cmd', {
-        configs: [config],
-      })
-      break
-    default:
-      throw new Error(`Unsupported workload type: ${config.workload_type}`)
+    } catch (error) {
+      console.error('Port forwarding failed:', error)
+      throw error
     }
   }
 

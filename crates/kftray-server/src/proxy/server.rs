@@ -9,6 +9,7 @@ use crate::proxy::{
         ProxyType,
     },
     error::ProxyError,
+    ssh::SshProxy,
     tcp::TcpProxy,
     traits::ProxyHandler,
     udp::UdpProxy,
@@ -33,6 +34,7 @@ impl ProxyServer {
         let handler: Box<dyn ProxyHandler> = match config.proxy_type {
             ProxyType::Tcp => Box::new(TcpProxy::new()),
             ProxyType::Udp => Box::new(UdpProxy::new()),
+            ProxyType::Ssh => Box::new(SshProxy::new()),
         };
 
         Self {

@@ -127,21 +127,14 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
 
   const startPortForwarding = async () => {
     try {
-      if (
-        (config.workload_type === 'service' ||
-          config.workload_type === 'pod') &&
-        config.protocol === 'tcp'
-      ) {
-        await invoke('start_port_forward_tcp_cmd', { configs: [config] })
-      } else if (
-        config.workload_type.startsWith('proxy') ||
-        ((config.workload_type === 'service' ||
-          config.workload_type === 'pod') &&
-          config.protocol === 'udp')
-      ) {
+      if (config.workload_type === 'proxy' || config.workload_type === 'expose') {
         await invoke('deploy_and_forward_pod_cmd', { configs: [config] })
+      } else if (config.protocol === 'tcp') {
+        await invoke('start_port_forward_tcp_cmd', { configs: [config] })
+      } else if (config.protocol === 'udp') {
+        await invoke('start_port_forward_udp_cmd', { configs: [config] })
       } else {
-        throw new Error(`Unsupported workload type: ${config.workload_type}`)
+        throw new Error(`Unsupported configuration: workload_type=${config.workload_type}, protocol=${config.protocol}`)
       }
     } catch (error) {
       toaster.error({
@@ -154,32 +147,9 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
 
   const stopPortForwarding = async () => {
     try {
-      if (
-        (config.workload_type === 'service' ||
-          config.workload_type === 'pod') &&
-        config.protocol === 'tcp'
-      ) {
-        await invoke('stop_port_forward_cmd', {
-          serviceName: config.service,
-          configId: config.id.toString(),
-        })
-      } else if (
-        config.workload_type.startsWith('proxy') ||
-        ((config.workload_type === 'service' ||
-          config.workload_type === 'pod') &&
-          config.protocol === 'udp')
-      ) {
-        await invoke('stop_proxy_forward_cmd', {
-          configId: config.id.toString(),
-          namespace: config.namespace,
-          serviceName: config.service,
-          localPort: config.local_port,
-          remoteAddress: config.remote_address,
-          protocol: 'tcp',
-        })
-      } else {
-        throw new Error(`Unsupported workload type: ${config.workload_type}`)
-      }
+      await invoke('stop_port_forward_cmd', {
+        configId: config.id.toString(),
+      })
     } catch (error) {
       toaster.error({
         title: 'Error stopping port forwarding',

@@ -10,14 +10,13 @@ use crossterm::{
     },
 };
 use kftray_commons::models::config_model::Config;
-use kftray_portforward::core::stop_all_port_forward;
 use kftray_portforward::core::{
     deploy_and_forward_pod,
     start_port_forward,
     stop_port_forward,
-    stop_proxy_forward,
 };
 use kftray_portforward::models::kube::HttpLogState;
+use kftray_portforward::stop_all_port_forward;
 use log::error;
 
 use crate::tui::input::{
@@ -65,13 +64,7 @@ pub async fn start_port_forwarding(app: &mut App, config: Config) {
 pub async fn stop_port_forwarding(app: &mut App, config: Config) {
     match config.workload_type.as_deref() {
         Some("proxy") => {
-            if let Err(e) = stop_proxy_forward(
-                config.id.unwrap_or_default(),
-                &config.namespace,
-                config.service.clone().unwrap_or_default(),
-            )
-            .await
-            {
+            if let Err(e) = stop_port_forward(config.id.unwrap_or_default().to_string()).await {
                 error!("Failed to stop proxy forward: {:?}", e);
                 app.error_message = Some(format!("Failed to stop proxy forward: {:?}", e));
                 app.state = AppState::ShowErrorPopup;

@@ -79,7 +79,25 @@ jobs:
       - name: Run Clippy
         run: cargo clippy --workspace --all-targets --allow-dirty --allow-staged --all-features --fix -- -D warnings
 
+  rust-server-test:
+    name: Run server tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev libsoup2.4-dev
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run tests
+        run: cargo test --package kftray-server
+
   build-and-push-docker:
+    name: Build and push server Docker image
+    needs: rust-server-test
     permissions:
       contents: write
       packages: write
@@ -105,7 +123,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           platforms: linux/amd64,linux/arm64
-          context: ./crates/kftray-server
+          context: .
           file: ./crates/kftray-server/Dockerfile
           push: true
           tags: |
