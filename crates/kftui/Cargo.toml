@@ -23,7 +23,7 @@ tauri = { version = "1.8", default-features = false, features = [
 	"icon-png",
 	"devtools",
 ] }
-tokio = { version = "1.41.1", features = ["rt-multi-thread", "macros", "full"] }
+tokio = { version = "1.42.0", features = ["rt-multi-thread", "macros", "full"] }
 sqlx = { version = "0.8.2", features = ["sqlite", "runtime-tokio-native-tls"] }
 dirs = "5.0.1"
 base64 = "0.22.1"
@@ -58,7 +58,7 @@ kftray-commons = { path = "../kftray-commons" }
 kftray-portforward = { path = "../kftray-portforward" }
 ratatui = { version = "0.28", features = ["unstable-widget-ref"] }
 crossterm = { version = "0.28.1", optional = false }
-tui-logger = "0.13.2"
+tui-logger = "0.14.0"
 
 # https://github.com/tatounee/ratatui-explorer/pull/2/files
 ratatui-explorer = "0.1.2"
