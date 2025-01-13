@@ -17,7 +17,7 @@ pub struct TargetPodFinder<'a> {
     pub svc_api: &'a Api<k8s_openapi::api::core::v1::Service>,
 }
 
-impl<'a> TargetPodFinder<'a> {
+impl TargetPodFinder<'_> {
     pub(crate) async fn find(&self, target: &Target) -> Result<TargetPod> {
         let ready_pod = AnyReady {};
 
