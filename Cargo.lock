@@ -3010,7 +3010,7 @@ dependencies = [
  "log",
  "once_cell",
  "rand 0.8.5",
- "ratatui 0.28.1",
+ "ratatui",
  "ratatui-explorer",
  "serde",
  "serde_json",
@@ -4651,39 +4651,18 @@ dependencies = [
  "strum_macros",
  "unicode-segmentation",
  "unicode-truncate",
- "unicode-width 0.1.14",
-]
-
-[[package]]
-name = "ratatui"
-version = "0.29.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eabd94c2f37801c20583fc49dd5cd6b0ba68c716787c2dd6ed18571e1e63117b"
-dependencies = [
- "bitflags 2.7.0",
- "cassowary",
- "compact_str",
- "crossterm",
- "indoc",
- "instability",
- "itertools",
- "lru",
- "paste",
- "strum",
- "unicode-segmentation",
- "unicode-truncate",
- "unicode-width 0.2.0",
+ "unicode-width",
 ]
 
 [[package]]
 name = "ratatui-explorer"
-version = "0.1.3"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7f13288c679ba58f8444664ddd7c2446aa979c4f79538519d793f236b8630a6"
+checksum = "bde42516edac6d3f0b92bacc47644adda0d1c6cd0aefc4ac1f4ffb80c094999e"
 dependencies = [
  "crossterm",
  "derivative",
- "ratatui 0.29.0",
+ "ratatui",
 ]
 
 [[package]]
@@ -6668,7 +6647,7 @@ dependencies = [
  "lazy_static",
  "log",
  "parking_lot",
- "ratatui 0.28.1",
+ "ratatui",
 ]
 
 [[package]]
@@ -6753,7 +6732,7 @@ checksum = "b3644627a5af5fa321c95b9b235a72fd24cd29c648c2c379431e6628655627bf"
 dependencies = [
  "itertools",
  "unicode-segmentation",
- "unicode-width 0.1.14",
+ "unicode-width",
 ]
 
 [[package]]
@@ -6761,12 +6740,6 @@ name = "unicode-width"
 version = "0.1.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7dd6e30e90baa6f72411720665d41d89b9a3d039dc45b8faea1ddd07f617f6af"
-
-[[package]]
-name = "unicode-width"
-version = "0.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1fc81956842c57dac11422a97c3b8195a1ff727f06e85c84ed2e8aa277c9a0fd"
 
 [[package]]
 name = "unsafe-libyaml"
