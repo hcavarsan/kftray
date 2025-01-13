@@ -126,6 +126,14 @@ fn bump_version(bump_type: &str) -> io::Result<()> {
 
     println!("tauri.conf.json updated");
 
+    update_file_content(
+        "../../package.json",
+        new_version,
+        update_json_version,
+    )?;
+
+    println!("Root package.json updated");
+
     println!("All versions updated to: {}", new_version);
 
     Ok(())
