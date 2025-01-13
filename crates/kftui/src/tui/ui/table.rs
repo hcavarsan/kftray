@@ -125,7 +125,7 @@ pub fn draw_configs_table(
             )
             .title(Span::styled(title, Style::default().fg(MAUVE))),
     )
-    .highlight_style(Style::default().bg(SURFACE1).fg(TEXT));
+    .row_highlight_style(Style::default().bg(SURFACE1).fg(TEXT));
 
     frame.render_stateful_widget(table, area, state);
 
