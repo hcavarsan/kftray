@@ -625,7 +625,7 @@ const KFTray = () => {
           handleSaveConfig={handleSaveConfig}
           isEdit={isEdit}
           handleEditSubmit={handleEditSubmit}
-          cancelRef={cancelRef}
+          cancelRef={cancelRef as React.RefObject<HTMLElement>}
           setNewConfig={setNewConfig}
         />
 
