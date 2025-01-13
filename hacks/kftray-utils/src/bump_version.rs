@@ -60,7 +60,10 @@ fn bump_version(bump_type: &str) -> io::Result<()> {
     let absolute_dir = current_dir.join(dir);
 
     println!("Current directory: {:?}", current_dir);
-    println!("Bumping version to {} in directory {:?}", bump_type, absolute_dir);
+    println!(
+        "Bumping version to {} in frontend directory {:?}",
+        bump_type, absolute_dir
+    );
 
     let npm_output = Command::new("npm")
         .args(["version", bump_type, "--no-git-tag-version"])
@@ -69,8 +72,24 @@ fn bump_version(bump_type: &str) -> io::Result<()> {
 
     if !npm_output.status.success() {
         let error_output = String::from_utf8_lossy(&npm_output.stderr).to_string();
-        println!("Error: NPM command failed: {}", error_output);
+        println!("Error: NPM command failed in frontend: {}", error_output);
+        return Err(io::Error::new(io::ErrorKind::Other, error_output));
+    }
 
+    let root_dir = current_dir.join("../..");
+    println!(
+        "Bumping version to {} in root directory {:?}",
+        bump_type, root_dir
+    );
+
+    let root_npm_output = Command::new("npm")
+        .args(["version", bump_type, "--no-git-tag-version"])
+        .current_dir(&root_dir)
+        .output()?;
+
+    if !root_npm_output.status.success() {
+        let error_output = String::from_utf8_lossy(&root_npm_output.stderr).to_string();
+        println!("Error: NPM command failed in root: {}", error_output);
         return Err(io::Error::new(io::ErrorKind::Other, error_output));
     }
 
@@ -86,7 +105,7 @@ fn bump_version(bump_type: &str) -> io::Result<()> {
         .strip_prefix('v')
         .unwrap_or(&new_version_tag);
 
-    println!("NPM version successfully bumped to: {}", new_version);
+    println!("NPM versions successfully bumped to: {}", new_version);
 
     println!("Updating version in Cargo.toml, README.md and tauri.conf.json");
 
@@ -114,7 +133,11 @@ fn bump_version(bump_type: &str) -> io::Result<()> {
 
     println!("kftui Cargo.toml updated");
 
-    update_file_content("../../docs/kftray/INSTALL.md", new_version, update_markdown_version)?;
+    update_file_content(
+        "../../docs/kftray/INSTALL.md",
+        new_version,
+        update_markdown_version,
+    )?;
 
     println!("README.md updated");
 
@@ -125,16 +148,6 @@ fn bump_version(bump_type: &str) -> io::Result<()> {
     )?;
 
     println!("tauri.conf.json updated");
-
-    update_file_content(
-        "../../package.json",
-        new_version,
-        update_json_version,
-    )?;
-
-    println!("Root package.json updated");
-
-    println!("All versions updated to: {}", new_version);
 
     Ok(())
 }
