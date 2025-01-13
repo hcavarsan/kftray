@@ -325,7 +325,7 @@ jobs:
     permissions:
       contents: write
     runs-on: macos-latest
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') && !contains(github.ref, '-beta') && !contains(github.ref, '-alpha')
     steps:
       - name: Checkout main repository
         uses: actions/checkout@v4
