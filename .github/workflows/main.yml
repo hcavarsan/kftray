@@ -14,15 +14,21 @@ jobs:
     permissions:
       contents: write
     runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.create_release.outputs.id }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
       - name: Create release draft
-        run: |
-          echo "Creating release draft for tag: ${{ github.ref_name }}"
-          gh release create ${{ github.ref_name }} --draft --title "KFtray - ${{ github.ref_name }}" --notes "See the assets to download this version and install."
+        id: create_release
+        uses: actions/create-release@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ github.ref_name }}
+          release_name: "KFtray - ${{ github.ref_name }}"
+          draft: true
+          prerelease: false
 
   kftray-tauri:
     needs: create-release-draft
@@ -320,8 +326,48 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/kftray-server:${{ github.sha }}
             ghcr.io/${{ github.repository_owner }}/kftray-server:${{ github.ref_name }}
             ghcr.io/${{ github.repository_owner }}/kftray-server:latest
+
+  update-release:
+    needs: [kftray-tauri, kftui, kftray-server, create-release-draft]
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate changelog
+        uses: orhun/git-cliff-action@v4
+        id: git-cliff
+        with:
+          config: cliff.toml
+          args: --latest --strip header
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update release notes
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          script: |
+            await github.rest.repos.updateRelease({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: ${{ needs.create-release-draft.outputs.release_id }},
+              body: `${{ steps.git-cliff.outputs.content }}`
+            });
+
+      - name: Publish release
+        uses: eregon/publish-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          release_id: ${{ needs.create-release-draft.outputs.release_id }}
+
   update-homebrew:
-    needs: [kftray-tauri]
+    needs: [update-release]
     permissions:
       contents: write
     runs-on: macos-latest
