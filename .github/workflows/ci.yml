@@ -19,7 +19,7 @@ env:
 jobs:
   eslint-format:
     name: ESLint
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -43,13 +43,16 @@ jobs:
 
   rust-format:
     name: rustfmt
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev
+        run: |
+          echo "deb http://gb.archive.ubuntu.com/ubuntu jammy main" | sudo tee /etc/apt/sources.list.d/ubuntu-jammy-main.list
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -65,13 +68,16 @@ jobs:
 
   rust-lint:
     name: Clippy
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev libsoup2.4-dev
+        run: |
+          echo "deb http://gb.archive.ubuntu.com/ubuntu jammy main" | sudo tee /etc/apt/sources.list.d/ubuntu-jammy-main.list
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.0-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev libsoup2.4-dev
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -83,7 +89,7 @@ jobs:
     permissions:
       contents: write
       packages: write
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
