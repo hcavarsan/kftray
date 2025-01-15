@@ -39,12 +39,14 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          release_id=$(gh api repos/${{ github.repository }}/releases/tags/${{ github.ref_name }} --jq .id || echo "")
-          if [ ! -z "$release_id" ]; then
+          # Attempt to get release ID and check if it's a valid number
+          release_id=$(gh api repos/${{ github.repository }}/releases/tags/${{ github.ref_name }} --jq .id 2>/dev/null || echo "")
+          if [[ "$release_id" =~ ^[0-9]+$ ]]; then
             echo "Release already exists with ID: $release_id"
             echo "release_exists=true" >> $GITHUB_OUTPUT
             echo "existing_release_id=$release_id" >> $GITHUB_OUTPUT
           else
+            echo "Release does not exist"
             echo "release_exists=false" >> $GITHUB_OUTPUT
           fi
 
