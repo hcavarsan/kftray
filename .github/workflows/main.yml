@@ -395,6 +395,10 @@ jobs:
     permissions:
       contents: write
     runs-on: ubuntu-24.04
+    if: |
+      startsWith(github.ref, 'refs/tags/v') &&
+      !contains(github.ref, '-beta') &&
+      !contains(github.ref, '-alpha')
     steps:
       - name: Checkout
         uses: actions/checkout@v4
