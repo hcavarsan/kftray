@@ -2955,7 +2955,7 @@ dependencies = [
 
 [[package]]
 name = "kftray-server"
-version = "0.15.6"
+version = "0.15.7"
 dependencies = [
  "async-trait",
  "env_logger",
@@ -2968,7 +2968,7 @@ dependencies = [
 
 [[package]]
 name = "kftray-tauri"
-version = "0.15.6"
+version = "0.15.7"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3015,7 +3015,7 @@ dependencies = [
 
 [[package]]
 name = "kftui"
-version = "0.15.6"
+version = "0.15.7"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
