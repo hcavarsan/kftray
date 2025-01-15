@@ -433,7 +433,9 @@ jobs:
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 release_id: ${{ needs.create-release-draft.outputs.release_id }},
-                body: `${{ steps.git-cliff.outputs.content }}`
+                body: `${{ steps.git-cliff.outputs.content }}`,
+                tag_name: process.env.GITHUB_REF_NAME,
+                name: `KFtray - ${process.env.GITHUB_REF_NAME}`
               });
             } catch (error) {
               console.error('Failed to update release notes:', error);
@@ -444,7 +446,9 @@ jobs:
                   owner: context.repo.owner,
                   repo: context.repo.repo,
                   release_id: ${{ needs.create-release-draft.outputs.release_id }},
-                  body: `${{ steps.git-cliff.outputs.content }}`
+                  body: `${{ steps.git-cliff.outputs.content }}`,
+                  tag_name: process.env.GITHUB_REF_NAME,
+                  name: `KFtray - ${process.env.GITHUB_REF_NAME}`
                 });
               } else {
                 throw error;
