@@ -1,9 +1,12 @@
 {
 	"name": "kftray",
-	"version": "0.15.7",
+	"version": "0.15.8",
 	"private": true,
 	"scripts": {
 		"build": "pnpm --filter @kftray/ui run build",
+		"bump:patch": "cd hacks/kftray-utils && cargo run --bin bump_version patch",
+		"bump:minor": "cd hacks/kftray-utils && cargo run --bin bump_version minor",
+		"bump:major": "cd hacks/kftray-utils && cargo run --bin bump_version major",
 		"check": "pnpm --filter @kftray/ui run check",
 		"dev": "pnpm --filter @kftray/ui run dev",
 		"format": "pnpm run format:front && pnpm run format:back",
