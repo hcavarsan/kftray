@@ -134,6 +134,22 @@ fn bump_version(bump_type: &str) -> io::Result<()> {
     println!("kftui Cargo.toml updated");
 
     update_file_content(
+        "../../crates/kftray-portforward/Cargo.toml",
+        new_version,
+        update_cargo_toml_version,
+    )?;
+
+    println!("kftray-portforward Cargo.toml updated");
+
+    update_file_content(
+        "../../crates/kftray-commons/Cargo.toml",
+        new_version,
+        update_cargo_toml_version,
+    )?;
+
+    println!("kftray-commons Cargo.toml updated");
+
+    update_file_content(
         "../../docs/kftray/INSTALL.md",
         new_version,
         update_markdown_version,
