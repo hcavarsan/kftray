@@ -61,7 +61,7 @@ open = "5.3.2"
 kftray-portforward = { path = "../kftray-portforward" }
 kftray-commons = { path = "../kftray-commons" }
 netstat2 = { git = "https://github.com/hcavarsan/netstat2-rs" }
-sysinfo = "0.33.0"
+sysinfo = "0.33.1"
 secrecy = "0.10.3"
 git2 = "0.20.0"
 url = "2.5.3"
