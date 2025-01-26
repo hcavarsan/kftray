@@ -23,7 +23,7 @@
     "@vitejs/plugin-react-swc": "^3.7.0",
     "lodash": "^4.17",
     "@types/lodash": "^4.17",
-    "lucide-react": "^0.471.0",
+    "lucide-react": "^0.474.0",
     "next-themes": "^0.4.3",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
