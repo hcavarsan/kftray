@@ -7,17 +7,22 @@ use log::info;
 pub async fn set_http_logs_cmd(
     state: tauri::State<'_, HttpLogState>, config_id: i64, enable: bool,
 ) -> Result<(), String> {
-    state.set_http_logs(config_id, enable).await;
-    Ok(())
+    state
+        .set_http_logs(config_id, enable)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn get_http_logs_cmd(
     state: tauri::State<'_, HttpLogState>, config_id: i64,
 ) -> Result<bool, String> {
-    let current_state = state.get_http_logs(config_id).await;
-    Ok(current_state)
+    state
+        .get_http_logs(config_id)
+        .await
+        .map_err(|e| e.to_string())
 }
+
 #[tauri::command]
 pub async fn clear_http_logs() -> Result<(), String> {
     use std::fs;

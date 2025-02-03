@@ -29,6 +29,7 @@ use tokio::sync::mpsc::{
 };
 use tokio::sync::RwLock;
 use tokio::task;
+use tokio::time::Duration;
 use tracing::{
     debug,
     error,
@@ -39,6 +40,7 @@ use uuid::Uuid;
 pub struct Logger {
     log_sender: Sender<LogMessage>,
     trace_map: TraceMap,
+    shutdown: Arc<tokio::sync::watch::Sender<()>>,
 }
 
 type TraceMap = Arc<DashMap<String, TraceInfo>>;
@@ -61,30 +63,77 @@ impl Logger {
         )));
         let trace_map: TraceMap = Arc::new(DashMap::new());
 
-        tokio::spawn(async move {
-            while let Some(log_message) = log_receiver.recv().await {
-                if let Err(e) = write_log(&log_file, log_message).await {
-                    error!("Failed to write log: {:?}", e);
+        let (shutdown_tx, mut shutdown_rx) = tokio::sync::watch::channel(());
+        let mut shutdown_rx_writer = shutdown_rx.clone();
+
+        // Spawn log writer with shutdown handling
+        let _log_writer = {
+            let log_file = log_file.clone();
+            tokio::spawn(async move {
+                loop {
+                    tokio::select! {
+                        Some(log_message) = log_receiver.recv() => {
+                            if let Err(e) = write_log(&log_file, log_message).await {
+                                error!("Failed to write log: {:?}", e);
+                            }
+                        }
+                        _ = shutdown_rx_writer.changed() => {
+                            debug!("Shutting down log writer");
+                            break;
+                        }
+                    }
                 }
-            }
-        });
+            })
+        };
+
+        // Spawn cleanup task with shutdown handling
+        let _cleanup_task = {
+            let trace_map = trace_map.clone();
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(Duration::from_secs(300));
+                loop {
+                    tokio::select! {
+                        _ = interval.tick() => {
+                            let now = Utc::now();
+                            trace_map.retain(|_, trace_info| {
+                                now.signed_duration_since(trace_info.timestamp)
+                                    .num_minutes() < 30
+                            });
+                        }
+                        _ = shutdown_rx.changed() => {
+                            debug!("Shutting down cleanup task");
+                            break;
+                        }
+                    }
+                }
+            })
+        };
 
         Ok(Self {
             log_sender,
             trace_map,
+            shutdown: Arc::new(shutdown_tx),
         })
     }
 
     pub async fn log_request(&self, buffer: Bytes) -> String {
         let request_id = Uuid::new_v4().to_string();
         let timestamp = Utc::now();
-        debug!("Generated request ID: {}", request_id);
-
         let trace_id = request_id.clone();
-        debug!(
-            "Generated trace ID: {} for request ID: {}",
-            trace_id, request_id
-        );
+
+        // Log request before spawning async task
+        let log_sender = self.log_sender.clone();
+        if let Err(e) = log_request(
+            buffer.clone(),
+            log_sender.clone(),
+            trace_id.clone(),
+            timestamp,
+        )
+        .await
+        {
+            error!("Failed to log request: {:?}", e);
+        }
+
         self.trace_map.insert(
             request_id.clone(),
             TraceInfo {
@@ -92,13 +141,6 @@ impl Logger {
                 timestamp,
             },
         );
-
-        let log_sender = self.log_sender.clone();
-        tokio::spawn(async move {
-            log_request(buffer, log_sender, trace_id, timestamp)
-                .await
-                .unwrap_or_else(|e| error!("Failed to log request: {:?}", e));
-        });
 
         request_id
     }
@@ -118,6 +160,10 @@ impl Logger {
         } else {
             error!("Trace ID not found for request ID: {}", request_id);
         }
+    }
+
+    pub async fn shutdown(&self) {
+        let _ = self.shutdown.send(());
     }
 }
 
@@ -215,7 +261,10 @@ async fn format_request_log(
                 })
                 .unwrap_or(0);
 
-            if let Some(body) = buffer.get(body_start..body_start + content_length) {
+            let body_end = body_start.saturating_add(content_length);
+            if body_end > buffer.len() {
+                log_entry.push_str("\n\nBody:\n<invalid content length>\n");
+            } else if let Some(body) = buffer.get(body_start..body_end) {
                 if req.headers.iter().any(|h| {
                     h.name.eq_ignore_ascii_case("content-encoding")
                         && h.value.eq_ignore_ascii_case(b"gzip")
@@ -280,7 +329,10 @@ async fn format_response_log(
                 })
                 .unwrap_or(0);
 
-            if let Some(body) = buffer.get(body_start..body_start + content_length) {
+            let body_end = body_start.saturating_add(content_length);
+            if body_end > buffer.len() {
+                log_entry.push_str("\n\nBody:\n<invalid content length>\n");
+            } else if let Some(body) = buffer.get(body_start..body_end) {
                 if res.headers.iter().any(|h| {
                     h.name.eq_ignore_ascii_case("content-encoding")
                         && h.value.eq_ignore_ascii_case(b"gzip")
@@ -306,9 +358,29 @@ async fn format_response_log(
     Ok(log_entry)
 }
 
+const MAX_CONTENT_LENGTH: usize = 10 * 1024 * 1024; // 10MB
+
 async fn log_body(
     body: &[u8], log_entry: &mut String, headers: &[httparse::Header<'_>],
 ) -> anyhow::Result<()> {
+    let content_length = headers
+        .iter()
+        .find_map(|h| {
+            if h.name.eq_ignore_ascii_case("content-length") {
+                std::str::from_utf8(h.value)
+                    .ok()
+                    .and_then(|v| v.parse::<usize>().ok())
+            } else {
+                None
+            }
+        })
+        .unwrap_or(0);
+
+    if content_length > MAX_CONTENT_LENGTH {
+        log_entry.push_str("\n\nBody:\n<content too large>\n");
+        return Ok(());
+    }
+
     if !body.is_empty() {
         log_entry.push_str("\n\nBody:\n");
         if let Ok(body_str) = std::str::from_utf8(body) {

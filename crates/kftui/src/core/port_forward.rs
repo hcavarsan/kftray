@@ -10,7 +10,7 @@ use crossterm::{
     },
 };
 use kftray_commons::models::config_model::Config;
-use kftray_portforward::kube::models::HttpLogState;
+use kftray_portforward::http_logs::HttpLogState;
 use kftray_portforward::kube::stop_all_port_forward;
 use kftray_portforward::kube::{
     deploy_and_forward_pod,

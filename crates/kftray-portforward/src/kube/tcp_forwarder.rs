@@ -121,12 +121,18 @@ impl TcpForwarder {
                     trace!("Read {} bytes from client", n);
                     request_buffer.extend_from_slice(&buffer[..n]);
 
-                    if http_log_state.get_http_logs(self.config_id).await {
-                        if let Some(logger) = &logger {
-                            let mut req_id_guard = request_id.lock().await;
-                            let new_request_id = logger.log_request(request_buffer.clone().into()).await;
-                            trace!("Generated new request ID: {}", new_request_id);
-                            *req_id_guard = Some(new_request_id);
+                    match http_log_state.get_http_logs(self.config_id).await {
+                        Ok(true) => {
+                            if let Some(logger) = &logger {
+                                let mut req_id_guard = request_id.lock().await;
+                                let new_request_id = logger.log_request(request_buffer.clone().into()).await;
+                                trace!("Generated new request ID: {}", new_request_id);
+                                *req_id_guard = Some(new_request_id);
+                            }
+                        }
+                        Ok(false) => {},
+                        Err(e) => {
+                            error!("Failed to check HTTP logging state: {:?}", e);
                         }
                     }
 
@@ -136,7 +142,6 @@ impl TcpForwarder {
                     }
                     request_buffer.clear();
                 },
-
                 _ = cancel_notifier.notified() => {
                     trace!("Client to upstream task cancelled");
                     break;
@@ -185,15 +190,21 @@ impl TcpForwarder {
                     trace!("Read {} bytes from upstream", n);
                     response_buffer.extend_from_slice(&buffer[..n]);
 
-                    if http_log_state.get_http_logs(self.config_id).await {
-                        if let Some(logger) = &logger {
-                            let req_id_guard = request_id.lock().await;
-                            if let Some(req_id) = &*req_id_guard {
-                                trace!("Logging response for request ID: {}", req_id);
-                                logger
-                                    .log_response(response_buffer.clone().into(), req_id.clone())
-                                    .await;
+                    match http_log_state.get_http_logs(self.config_id).await {
+                        Ok(true) => {
+                            if let Some(logger) = &logger {
+                                let req_id_guard = request_id.lock().await;
+                                if let Some(req_id) = &*req_id_guard {
+                                    trace!("Logging response for request ID: {}", req_id);
+                                    logger
+                                        .log_response(response_buffer.clone().into(), req_id.clone())
+                                        .await;
+                                }
                             }
+                        }
+                        Ok(false) => {},
+                        Err(e) => {
+                            error!("Failed to check HTTP logging state: {:?}", e);
                         }
                     }
 
