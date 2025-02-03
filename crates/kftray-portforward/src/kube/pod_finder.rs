@@ -5,7 +5,7 @@ use kube::api::{
 };
 use tracing::debug;
 
-use crate::models::kube::{
+use crate::kube::models::{
     AnyReady,
     PodSelection,
     Target,

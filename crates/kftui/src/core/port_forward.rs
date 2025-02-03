@@ -10,14 +10,14 @@ use crossterm::{
     },
 };
 use kftray_commons::models::config_model::Config;
-use kftray_portforward::core::stop_all_port_forward;
-use kftray_portforward::core::{
+use kftray_portforward::kube::models::HttpLogState;
+use kftray_portforward::kube::stop_all_port_forward;
+use kftray_portforward::kube::{
     deploy_and_forward_pod,
     start_port_forward,
     stop_port_forward,
     stop_proxy_forward,
 };
-use kftray_portforward::models::kube::HttpLogState;
 use log::error;
 
 use crate::tui::input::{

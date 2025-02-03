@@ -4,14 +4,14 @@ use kftray_commons::config::get_configs;
 use kftray_commons::models::config_model::Config;
 use kftray_commons::models::response::CustomResponse;
 use kftray_commons::utils::config_state::get_configs_state;
-use kftray_portforward::core::{
+use kftray_portforward::http_logs::HttpLogState;
+use kftray_portforward::kube::{
     deploy_and_forward_pod,
     start_port_forward,
     stop_all_port_forward,
     stop_port_forward,
     stop_proxy_forward,
 };
-use kftray_portforward::models::kube::HttpLogState;
 use log::error;
 use log::info;
 use tauri::AppHandle;
