@@ -11,6 +11,7 @@ use k8s_openapi::chrono::{
     DateTime,
     Utc,
 };
+use kftray_commons::utils::config_dir::get_log_folder_path;
 use serde_json::Value;
 use tokio::fs::{
     self,
@@ -33,8 +34,6 @@ use tracing::{
     error,
 };
 use uuid::Uuid;
-
-use crate::utils::config_dir::get_log_folder_path;
 
 #[derive(Clone, Debug)]
 pub struct Logger {

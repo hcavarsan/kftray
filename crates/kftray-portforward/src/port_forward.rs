@@ -21,15 +21,15 @@ use tracing::{
     trace,
 };
 
-use crate::models::kube::HttpLogState;
-use crate::models::kube::{
+use crate::http_logs::HttpLogState;
+use crate::kube::client::create_client_with_specific_context;
+use crate::kube::models::{
     PortForward,
     Target,
 };
-use crate::pod_finder::TargetPodFinder;
-use crate::tcp_forwarder::TcpForwarder;
-use crate::udp_forwarder::UdpForwarder;
-
+use crate::kube::pod_finder::TargetPodFinder;
+use crate::kube::tcp_forwarder::TcpForwarder;
+use crate::kube::udp_forwarder::UdpForwarder;
 lazy_static! {
     pub static ref CHILD_PROCESSES: Arc<StdMutex<HashMap<String, JoinHandle<()>>>> =
         Arc::new(StdMutex::new(HashMap::new()));
@@ -43,8 +43,7 @@ impl PortForward {
         kubeconfig: Option<String>, config_id: i64, workload_type: String,
     ) -> anyhow::Result<Self> {
         let (client, _, _) = if let Some(ref context_name) = context_name {
-            crate::client::create_client_with_specific_context(kubeconfig, Some(context_name))
-                .await?
+            create_client_with_specific_context(kubeconfig, Some(context_name)).await?
         } else {
             (Some(Client::try_default().await?), None, Vec::new())
         };

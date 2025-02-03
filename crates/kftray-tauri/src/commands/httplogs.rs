@@ -1,5 +1,5 @@
 use kftray_commons::utils::config_dir::get_log_folder_path;
-use kftray_portforward::models::kube::HttpLogState;
+use kftray_portforward::http_logs::HttpLogState;
 use log::error;
 use log::info;
 

@@ -49,7 +49,7 @@ use openssl::ssl::{
 use secrecy::ExposeSecret;
 use tower::ServiceBuilder;
 
-use crate::models::kube::KubeContextInfo;
+use crate::kube::models::KubeContextInfo;
 
 trait ConfigExtClone {
     fn clone_with_invalid_certs(&self, accept_invalid_certs: bool) -> Self;
