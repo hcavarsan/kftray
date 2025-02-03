@@ -1,7 +1,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use kftray_commons::logging::Logger;
 use tokio::io::{
     AsyncReadExt,
     AsyncWriteExt,
@@ -15,7 +14,8 @@ use tracing::{
     trace,
 };
 
-use crate::models::kube::HttpLogState;
+use crate::http_logs::HttpLogState;
+use crate::http_logs::Logger;
 
 const BUFFER_SIZE: usize = 131072;
 
@@ -40,7 +40,7 @@ impl TcpForwarder {
     ) -> anyhow::Result<()> {
         let logger = if self.workload_type == "service" || self.workload_type == "pod" {
             let log_file_path =
-                kftray_commons::logging::create_log_file_path(self.config_id, local_port).await?;
+                crate::http_logs::logging::create_log_file_path(self.config_id, local_port).await?;
             let logger = Logger::new(log_file_path).await?;
             Some(logger)
         } else {

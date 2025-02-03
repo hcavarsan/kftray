@@ -24,7 +24,7 @@ use std::sync::atomic::Ordering;
 
 use kftray_commons::models::window::AppState;
 use kftray_commons::models::window::SaveDialogState;
-use kftray_portforward::models::kube::HttpLogState;
+use kftray_portforward::http_logs::HttpLogState;
 use tauri::{
     GlobalShortcutManager,
     Manager,
