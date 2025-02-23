@@ -1,6 +1,6 @@
 {
 	"name": "kftray",
-	"version": "0.15.8",
+	"version": "0.15.9",
 	"private": true,
 	"scripts": {
 		"build": "pnpm --filter @kftray/ui run build",
@@ -23,6 +23,6 @@
 		"tauri": "tauri"
 	},
 	"devDependencies": {
-		"@tauri-apps/cli": "^1.6.2"
+		"@tauri-apps/cli": "^1.6.3"
 	}
 }

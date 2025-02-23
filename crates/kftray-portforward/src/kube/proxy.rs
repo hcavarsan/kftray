@@ -29,9 +29,9 @@ use log::{
     error,
     info,
 };
-use rand::{
-    distributions::Alphanumeric,
-    Rng,
+use rand::distr::{
+    Alphanumeric,
+    SampleString,
 };
 
 use crate::create_client_with_specific_context;
@@ -59,10 +59,9 @@ pub async fn deploy_and_forward_pod(
             .map_err(|e| e.to_string())?
             .as_secs();
 
-        let random_string: String = rand::thread_rng()
-            .sample_iter(&Alphanumeric)
-            .take(6)
-            .map(char::from)
+        let random_string: String = Alphanumeric
+            .sample_string(&mut rand::rng(), 6)
+            .chars()
             .map(|c| c.to_ascii_lowercase())
             .collect();
 
@@ -83,11 +82,7 @@ pub async fn deploy_and_forward_pod(
             .id
             .map_or_else(|| "default".into(), |id| id.to_string());
 
-        if config
-            .remote_address
-            .as_ref()
-            .map_or(true, String::is_empty)
-        {
+        if config.remote_address.as_ref().is_none_or(String::is_empty) {
             config.remote_address.clone_from(&config.service);
         }
 
