@@ -1,9 +1,6 @@
 [workspace]
 members = [
-    "crates/kftray-tauri",
-	"crates/kftui",
-	"crates/kftray-portforward",
-	"crates/kftray-server",
+    "crates/*",
 ]
 
 resolver = "2"

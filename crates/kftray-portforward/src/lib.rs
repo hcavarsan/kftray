@@ -1,10 +1,9 @@
-pub mod http_logs;
 pub mod kube;
 pub mod port_forward;
 
-pub use http_logs::{
+pub use kftray_http_logs::{
     HttpLogState,
-    Logger,
+    HttpLogger as Logger,
 };
 pub use kube::client::*;
 pub use kube::models::{

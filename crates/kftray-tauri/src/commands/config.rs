@@ -42,7 +42,6 @@ pub async fn insert_config_cmd(config: Config) -> Result<(), String> {
 pub async fn get_configs_cmd() -> Result<Vec<Config>, String> {
     info!("get_configs called");
     let configs = get_configs().await?;
-    info!("{:?}", configs);
     Ok(configs)
 }
 

@@ -9,6 +9,7 @@ use kftray_commons::{
     },
     utils::config_state::update_config_state,
 };
+use kftray_http_logs::HttpLogState;
 use log::{
     debug,
     error,
@@ -17,7 +18,6 @@ use log::{
 };
 
 use crate::{
-    http_logs::HttpLogState,
     kube::models::{
         Port,
         PortForward,

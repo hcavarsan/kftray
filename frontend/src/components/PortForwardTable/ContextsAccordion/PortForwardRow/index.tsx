@@ -91,7 +91,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
 
   const handleInspectLogs = async () => {
     try {
-      const logFileName = `${config.id}_${config.local_port}.log`
+      const logFileName = `${config.id}_${config.local_port}.http`
 
       await invoke('open_log_file', { logFileName: logFileName })
     } catch (error) {
