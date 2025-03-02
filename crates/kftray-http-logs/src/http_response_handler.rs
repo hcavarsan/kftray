@@ -360,7 +360,7 @@ impl HttpResponseHandler {
                     }
                 };
                 formatted.push_str(status_line);
-                formatted.push_str("\n");
+                formatted.push('\n');
             } else {
                 debug!("No status line found, adding default");
                 formatted.push_str("HTTP/1.1 200 OK\n");
@@ -374,7 +374,7 @@ impl HttpResponseHandler {
                     formatted.push_str(&format!("{}: {}\n", name, value));
                 }
             }
-            formatted.push_str("\n");
+            formatted.push('\n');
 
             if !body.is_empty() {
                 debug!("Processing response body with size: {} bytes", body.len());

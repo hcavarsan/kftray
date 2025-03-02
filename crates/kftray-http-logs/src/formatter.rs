@@ -104,7 +104,7 @@ impl MessageFormatter {
                     log_entry.push_str("HTTP/1.1 200 OK\n<unparseable headers>\n\n");
                 }
 
-                if body_bytes.len() > 0 {
+                if !body_bytes.is_empty() {
                     let mut content_type = None;
                     let mut is_gzipped = false;
                     let mut is_chunked = false;
@@ -157,19 +157,15 @@ impl MessageFormatter {
                     let content_type_str = content_type.unwrap_or("text/plain");
                     Self::format_content(&mut log_entry, content_type_str, &processed_body);
                 }
-            } else {
-                if let Ok(content) = std::str::from_utf8(buffer) {
-                    log_entry.push_str(content);
-                } else {
-                    log_entry.push_str("<binary content>");
-                }
-            }
-        } else {
-            if let Ok(content) = std::str::from_utf8(buffer) {
+            } else if let Ok(content) = std::str::from_utf8(buffer) {
                 log_entry.push_str(content);
             } else {
                 log_entry.push_str("<binary content>");
             }
+        } else if let Ok(content) = std::str::from_utf8(buffer) {
+            log_entry.push_str(content);
+        } else {
+            log_entry.push_str("<binary content>");
         }
 
         Self::append_log_separator(&mut log_entry);

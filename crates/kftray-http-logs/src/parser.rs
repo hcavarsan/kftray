@@ -300,18 +300,16 @@ impl RequestParser {
                     consumed: chunk_data.len(),
                 })
             }
+        } else if chunk_start < chunk_data.len() {
+            Ok(ChunkParseResult::Incomplete {
+                chunk_data: Some(&chunk_data[chunk_start..]),
+                consumed: chunk_data.len(),
+            })
         } else {
-            if chunk_start < chunk_data.len() {
-                Ok(ChunkParseResult::Incomplete {
-                    chunk_data: Some(&chunk_data[chunk_start..]),
-                    consumed: chunk_data.len(),
-                })
-            } else {
-                Ok(ChunkParseResult::Incomplete {
-                    chunk_data: None,
-                    consumed: chunk_data.len(),
-                })
-            }
+            Ok(ChunkParseResult::Incomplete {
+                chunk_data: None,
+                consumed: chunk_data.len(),
+            })
         }
     }
 
@@ -558,10 +556,10 @@ impl BodyParser {
                             data.len(),
                             decompressed_data.len()
                         );
-                        return Ok(decompressed_data);
+                        Ok(decompressed_data)
                     } else {
                         debug!("Brotli decompression produced empty result, using original");
-                        return Ok(data);
+                        Ok(data)
                     }
                 }
                 Err(e) => {
@@ -754,7 +752,7 @@ impl BodyParser {
 
             ContentCategory::Binary => {
                 let content_desc = content_type.unwrap_or("binary");
-                let preview = if body.len() > 0 {
+                let preview = if !body.is_empty() {
                     let preview_size = std::cmp::min(body.len(), 64);
                     let bytes: Vec<String> = body[..preview_size]
                         .iter()

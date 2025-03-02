@@ -270,13 +270,11 @@ impl HttpLogger {
                 {
                     error!("Failed to send preformatted response log: {:?}", e);
                 }
-            } else {
-                if let Err(e) = self
-                    .send_response_log(buffer, request_id.clone(), timestamp, took_ms)
-                    .await
-                {
-                    error!("Failed to send response log: {:?}", e);
-                }
+            } else if let Err(e) = self
+                .send_response_log(buffer, request_id.clone(), timestamp, took_ms)
+                .await
+            {
+                error!("Failed to send response log: {:?}", e);
             }
         } else {
             debug!("No trace info found for request ID: {}", request_id);
@@ -290,13 +288,11 @@ impl HttpLogger {
                 {
                     error!("Failed to send preformatted response log: {:?}", e);
                 }
-            } else {
-                if let Err(e) = self
-                    .send_response_log(buffer, request_id.clone(), timestamp, 0)
-                    .await
-                {
-                    error!("Failed to send response log: {:?}", e);
-                }
+            } else if let Err(e) = self
+                .send_response_log(buffer, request_id.clone(), timestamp, 0)
+                .await
+            {
+                error!("Failed to send response log: {:?}", e);
             }
         }
     }
