@@ -44,20 +44,12 @@ impl TargetPodFinder<'_> {
                         .collect::<Vec<_>>()
                         .join(",");
 
-                    debug!("Selector for service '{}': {}", name, label_selector_str);
-
                     let pods = self
                         .pod_api
                         .list(&ListParams::default().labels(&label_selector_str))
                         .await?;
 
-                    debug!(
-                        "Pods found for selector '{}': {:?}",
-                        label_selector_str, pods.items
-                    );
-
                     let pod = ready_pod.select(&pods.items, &label_selector_str)?;
-                    debug!("Pod found for service '{}': {:?}", name, pod);
                     target.find(pod, None)
                 } else {
                     Err(anyhow::anyhow!("No selector found for service '{}'", name))
@@ -75,11 +67,6 @@ impl TargetPodFinder<'_> {
                     .pod_api
                     .list(&ListParams::default().labels(&label_selector_str))
                     .await?;
-
-                debug!(
-                    "Pods found for label '{}': {:?}",
-                    label_selector_str, pods.items
-                );
 
                 let pod = ready_pod.select(&pods.items, &label_selector_str)?;
                 target.find(pod, None)

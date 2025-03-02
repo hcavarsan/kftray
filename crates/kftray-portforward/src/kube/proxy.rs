@@ -17,6 +17,7 @@ use kftray_commons::{
     },
     utils::config_dir::get_pod_manifest_path,
 };
+use kftray_http_logs::HttpLogState;
 use kube::api::ListParams;
 use kube::api::{
     Api,
@@ -35,7 +36,6 @@ use rand::distr::{
 };
 
 use crate::create_client_with_specific_context;
-use crate::http_logs::HttpLogState;
 
 pub async fn deploy_and_forward_pod(
     configs: Vec<Config>, http_log_state: Arc<HttpLogState>,

@@ -1,6 +1,6 @@
 [package]
 name = "kftui"
-version = "0.15.8"
+version = "0.16.0"
 description = "KFtray TUI is a Rust application that manage multiple kubectl port forward configurations"
 authors = [
     "Henrique Cavarsan <hencavarsan@gmail.com>",
@@ -56,6 +56,7 @@ h2 = { optional = true, version = "0.4.7" }
 libc = "0.2"
 kftray-commons = { path = "../kftray-commons" }
 kftray-portforward = { path = "../kftray-portforward" }
+kftray-http-logs = { path = "../kftray-http-logs" }
 ratatui = { version = "0.29", features = ["unstable-widget-ref"] }
 crossterm = { version = "0.28.1", optional = false }
 tui-logger = "0.14"
