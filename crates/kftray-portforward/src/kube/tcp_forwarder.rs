@@ -257,8 +257,9 @@ impl TcpForwarder {
                                 let req_id_guard = request_id.lock().await;
                                 if let Some(req_id) = &*req_id_guard {
                                     debug!("Connection closed, logging final response data for request ID: {}", req_id);
+                                    let buffer_for_logging = response_buffer.clone();
                                     logger
-                                        .log_response(response_buffer.clone().into(), req_id.clone())
+                                        .log_response(buffer_for_logging.into(), req_id.clone())
                                         .await;
                                 }
                                 drop(req_id_guard);
@@ -380,7 +381,13 @@ impl TcpForwarder {
 
                                 debug!("Response successfully logged for ID: {}", response_id);
 
-                                let can_clear_buffer = found_end_marker || !is_chunked;
+
+                                let can_clear_buffer = if is_chunked {
+                                    found_end_marker
+                                } else {
+                                    kftray_http_logs::http_response_analyzer::HttpResponseAnalyzer::check_content_length_match(&response_buffer)
+                                };
+
                                 if can_clear_buffer {
                                     debug!("Response fully logged, resetting buffer for next response");
                                     response_buffer.clear();

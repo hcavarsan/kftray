@@ -34,6 +34,12 @@ pub struct ResponseLoggingState {
     pub is_chunked: bool,
 }
 
+impl Default for ResponseLoggingState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ResponseLoggingState {
     pub fn new() -> Self {
         Self {
