@@ -21,11 +21,12 @@ pub enum HttpMessage {
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum LogMessage {
     Request(String),
     Response(String),
     PreformattedResponse(String),
+    TriggerFlush,
 }
 
 impl LogMessage {
@@ -34,11 +35,15 @@ impl LogMessage {
             LogMessage::Request(log) => log.as_bytes(),
             LogMessage::Response(log) => log.as_bytes(),
             LogMessage::PreformattedResponse(log) => log.as_bytes(),
+            LogMessage::TriggerFlush => &[],
         }
     }
 
     pub fn size(&self) -> usize {
-        self.as_bytes().len()
+        match self {
+            LogMessage::TriggerFlush => 0,
+            _ => self.as_bytes().len(),
+        }
     }
 
     pub fn message_type(&self) -> &'static str {
@@ -46,6 +51,7 @@ impl LogMessage {
             LogMessage::Request(_) => "Request",
             LogMessage::Response(_) => "Response",
             LogMessage::PreformattedResponse(_) => "PreformattedResponse",
+            LogMessage::TriggerFlush => "TriggerFlush",
         }
     }
 
@@ -54,6 +60,10 @@ impl LogMessage {
             self,
             LogMessage::Response(_) | LogMessage::PreformattedResponse(_)
         )
+    }
+
+    pub fn is_flush_trigger(&self) -> bool {
+        matches!(self, LogMessage::TriggerFlush)
     }
 
     pub fn new_preformatted_response(
