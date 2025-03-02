@@ -59,12 +59,17 @@ pub enum ChunkParseResult<'a> {
     },
 }
 
+pub type RequestParseResult<'a> = (
+    Option<&'a str>,
+    Option<&'a str>,
+    Option<u16>,
+    Vec<Header<'a>>,
+);
+
 pub struct RequestParser;
 
 impl RequestParser {
-    pub fn parse(
-        buffer: &[u8],
-    ) -> Result<(Option<&str>, Option<&str>, Option<u16>, Vec<Header<'_>>)> {
+    pub fn parse(buffer: &[u8]) -> Result<RequestParseResult> {
         let mut headers = [EMPTY_HEADER; MAX_HEADERS];
         let mut req = HttpRequest::new(&mut headers);
 

@@ -11,6 +11,7 @@ use tracing::{
     debug,
     error,
     trace,
+    warn,
 };
 
 fn find_headers_end(data: &[u8]) -> Option<usize> {
@@ -25,6 +26,55 @@ use crate::models::HttpLogState;
 use crate::HttpLogger;
 
 pub const DEFAULT_MIN_LOG_SYNC_MS: u64 = 50;
+
+pub struct ResponseLoggingState {
+    pub complete_response: Vec<u8>,
+    pub already_logged: bool,
+    pub logging_enabled: bool,
+    pub is_chunked: bool,
+}
+
+impl ResponseLoggingState {
+    pub fn new() -> Self {
+        Self {
+            complete_response: Vec::new(),
+            already_logged: false,
+            logging_enabled: false,
+            is_chunked: false,
+        }
+    }
+}
+
+pub struct ResponseChunkContext {
+    pub complete_response: Vec<u8>,
+    pub is_chunked: bool,
+    pub found_end_marker: bool,
+    pub total_chunks_received: usize,
+    pub response_logged: Arc<Mutex<bool>>,
+    pub request_id: Arc<Mutex<Option<String>>>,
+}
+
+impl ResponseChunkContext {
+    pub fn new(response_logged: Arc<Mutex<bool>>, request_id: Arc<Mutex<Option<String>>>) -> Self {
+        Self {
+            complete_response: Vec::new(),
+            is_chunked: false,
+            found_end_marker: false,
+            total_chunks_received: 0,
+            response_logged,
+            request_id,
+        }
+    }
+}
+
+pub struct ResponseLoggingContext {
+    pub complete_response: Vec<u8>,
+    pub is_chunked: bool,
+    pub found_end_marker: bool,
+    pub response_logged: Arc<Mutex<bool>>,
+    pub request_id: Arc<Mutex<Option<String>>>,
+    pub first_chunk_time: Option<Instant>,
+}
 
 #[derive(Debug, Clone)]
 pub struct ResponseHandlerConfig {
@@ -66,162 +116,134 @@ impl HttpResponseHandler {
     }
 
     pub async fn check_response_logging_status(
-        &self, buffer: &[u8], n: usize, complete_response: &mut Vec<u8>, already_logged: &mut bool,
-        logging_enabled: &mut bool, is_chunked: &mut bool, http_log_state: &HttpLogState,
+        &self, buffer: &[u8], n: usize, state: &mut ResponseLoggingState,
+        http_log_state: &HttpLogState,
     ) -> Result<()> {
         match http_log_state.get_http_logs(self.config_id).await {
             Ok(true) => {
-                *logging_enabled = true;
-                *already_logged = true;
+                state.logging_enabled = true;
+                state.already_logged = true;
 
-                complete_response.extend_from_slice(&buffer[..n]);
+                if n > 0 {
+                    state.complete_response.extend_from_slice(&buffer[..n]);
 
-                if complete_response.len() >= 16 {
-                    *is_chunked = HttpResponseAnalyzer::detect_chunked_encoding(complete_response);
-                    if *is_chunked {
-                        trace!("Detected chunked transfer encoding in response - will wait for all chunks");
-                    }
-                } else {
-                    trace!("Initial response too small to determine encoding type ({}B), will check on subsequent chunks",
-                         complete_response.len());
-                }
-
-                if let Some(headers_end) = find_headers_end(complete_response) {
-                    let headers = &complete_response[..headers_end];
-                    if let Ok(headers_str) = std::str::from_utf8(headers) {
-                        let h_lower = headers_str.to_lowercase();
-                        if h_lower.contains("upgrade: websocket")
-                            && h_lower.contains("connection: upgrade")
-                        {
-                            debug!("Initial detection of WebSocket upgrade response");
-
-                            *is_chunked = false;
-                        }
+                    if let Some(headers_end) = find_headers_end(&state.complete_response) {
+                        let headers_data = &state.complete_response[..headers_end];
+                        state.is_chunked = Self::is_chunked_transfer(headers_data);
                     }
                 }
 
                 Ok(())
             }
             Ok(false) => {
-                *already_logged = true;
+                state.already_logged = true;
                 Ok(())
             }
             Err(e) => {
-                error!("Failed to check HTTP logging state: {:?}", e);
-                *already_logged = true;
-                Err(e)
+                warn!("Failed to check HTTP logging status: {}", e);
+                state.already_logged = true;
+                Ok(())
             }
         }
     }
 
     pub async fn process_response_chunk(
-        &self, buffer: &[u8], n: usize, complete_response: &mut Vec<u8>, is_chunked: &mut bool,
-        found_end_marker: &mut bool, total_chunks_received: &mut usize,
-        response_logged: &Arc<Mutex<bool>>, request_id: &Arc<Mutex<Option<String>>>,
+        &self, buffer: &[u8], n: usize, context: &mut ResponseChunkContext,
         logger: &Option<HttpLogger>,
     ) -> Result<()> {
-        complete_response.extend_from_slice(&buffer[..n]);
+        context.complete_response.extend_from_slice(&buffer[..n]);
+        context.total_chunks_received += 1;
 
-        let response_size = complete_response.len();
-        if response_size > 500_000 && *total_chunks_received % 10 == 0 {
-            debug!(
-                "Large response accumulating: {}B after {} chunks",
-                response_size, *total_chunks_received
-            );
-        }
+        let response_size = context.complete_response.len();
+        trace!(
+            "Processing response chunk #{}: {}B, total: {}B",
+            context.total_chunks_received,
+            n,
+            response_size
+        );
 
-        if !*is_chunked && complete_response.len() >= 64 {
-            let detected_chunked = HttpResponseAnalyzer::detect_chunked_encoding(complete_response);
-            if detected_chunked {
-                debug!("Detected chunked encoding in subsequent response data");
-                *is_chunked = true;
+        if !context.is_chunked {
+            if let Some(headers_end) = find_headers_end(&context.complete_response) {
+                let headers_data = &context.complete_response[..headers_end];
+                context.is_chunked = Self::is_chunked_transfer(headers_data);
             }
         }
 
-        HttpResponseAnalyzer::process_chunk(
-            &buffer[..n],
-            *is_chunked,
-            found_end_marker,
-            total_chunks_received,
-        );
+        if context.is_chunked && !context.found_end_marker {
+            context.found_end_marker =
+                HttpResponseAnalyzer::has_chunked_end_marker(&context.complete_response);
+            if context.found_end_marker {
+                debug!(
+                    "Found end marker in chunked response after {} chunks, {}B",
+                    context.total_chunks_received, response_size
+                );
 
-        let first_chunk_time = if *total_chunks_received <= 1 {
-            Some(Instant::now())
-        } else {
-            None
-        };
+                let mut logging_context = ResponseLoggingContext {
+                    complete_response: std::mem::take(&mut context.complete_response),
+                    is_chunked: context.is_chunked,
+                    found_end_marker: context.found_end_marker,
+                    response_logged: context.response_logged.clone(),
+                    request_id: context.request_id.clone(),
+                    first_chunk_time: None,
+                };
 
-        self.check_and_log_complete_response(
-            complete_response,
-            *is_chunked,
-            *found_end_marker,
-            response_logged,
-            request_id,
-            logger,
-            first_chunk_time,
-        )
-        .await?;
+                let result = self
+                    .check_and_log_complete_response(&mut logging_context, logger)
+                    .await;
+
+                // Restore the complete_response
+                context.complete_response = logging_context.complete_response;
+
+                result?;
+            }
+        }
 
         Ok(())
     }
 
     pub async fn check_and_log_complete_response(
-        &self, complete_response: &mut Vec<u8>, is_chunked: bool, found_end_marker: bool,
-        response_logged: &Arc<Mutex<bool>>, request_id: &Arc<Mutex<Option<String>>>,
-        logger: &Option<HttpLogger>, first_chunk_time: Option<Instant>,
+        &self, context: &mut ResponseLoggingContext, logger: &Option<HttpLogger>,
     ) -> Result<()> {
-        let mut response_logged_guard = response_logged.lock().await;
+        let mut response_logged_guard = context.response_logged.lock().await;
 
-        if !complete_response.is_empty() && !*response_logged_guard {
-            let is_websocket_upgrade =
-                if let Some(headers_end) = find_headers_end(complete_response) {
-                    let headers = &complete_response[..headers_end];
-                    let headers_str = std::str::from_utf8(headers).unwrap_or("");
-
-                    headers_str.to_lowercase().contains("upgrade: websocket")
-                        && headers_str.to_lowercase().contains("connection: upgrade")
-                        && headers_str.to_lowercase().contains("sec-websocket-accept:")
-                } else {
-                    false
-                };
-
-            if is_websocket_upgrade {
-                debug!("WebSocket upgrade response detected - logging immediately");
-                *response_logged_guard = true;
-
-                drop(response_logged_guard);
-
-                self.log_response(complete_response, response_logged, request_id, logger)
-                    .await?;
-
-                return Ok(());
-            }
-
-            let ready_by_content = self.analyzer.is_ready_for_logging_with_config(
-                complete_response,
-                is_chunked,
-                found_end_marker,
-            );
-
-            let ready_by_time = if let Some(start_time) = first_chunk_time {
-                self.check_time_based_logging(complete_response, start_time)
+        if !context.complete_response.is_empty() && !*response_logged_guard {
+            let should_log = if context.is_chunked {
+                context.found_end_marker
+                    || self.analyzer.is_ready_for_logging_with_config(
+                        &context.complete_response,
+                        context.is_chunked,
+                        context.found_end_marker,
+                    )
+            } else if let Some(start_time) = context.first_chunk_time {
+                self.check_time_based_logging(&context.complete_response, start_time)
             } else {
-                false
+                self.analyzer.appears_complete(
+                    &context.complete_response,
+                    context.is_chunked,
+                    context.found_end_marker,
+                )
             };
 
-            if ready_by_content || ready_by_time {
+            if should_log {
+                debug!(
+                    "Logging complete response: {}B, chunked: {}, end marker: {}",
+                    context.complete_response.len(),
+                    context.is_chunked,
+                    context.found_end_marker
+                );
+
+                self.log_response(
+                    &mut context.complete_response,
+                    &context.response_logged,
+                    &context.request_id,
+                    logger,
+                )
+                .await?;
+
                 *response_logged_guard = true;
-
-                drop(response_logged_guard);
-
-                self.log_response(complete_response, response_logged, request_id, logger)
-                    .await?;
-
-                return Ok(());
             }
         }
 
-        drop(response_logged_guard);
         Ok(())
     }
 
@@ -454,7 +476,7 @@ impl HttpResponseHandler {
     }
 
     pub async fn log_response(
-        &self, complete_response: &mut Vec<u8>, _response_logged: &Arc<Mutex<bool>>,
+        &self, complete_response: &mut [u8], _response_logged: &Arc<Mutex<bool>>,
         request_id: &Arc<Mutex<Option<String>>>, logger: &Option<HttpLogger>,
     ) -> Result<()> {
         if let Some(logger) = logger {
@@ -516,9 +538,8 @@ impl HttpResponseHandler {
     }
 
     pub async fn handle_remaining_response_data(
-        &self, complete_response: &Vec<u8>, logging_enabled: bool,
-        response_logged: &Arc<Mutex<bool>>, request_id: &Arc<Mutex<Option<String>>>,
-        logger: &Option<HttpLogger>,
+        &self, complete_response: &[u8], logging_enabled: bool, response_logged: &Arc<Mutex<bool>>,
+        request_id: &Arc<Mutex<Option<String>>>, logger: &Option<HttpLogger>,
     ) -> Result<()> {
         if complete_response.is_empty() {
             debug!("No response data to log at connection end");
@@ -594,6 +615,22 @@ impl HttpResponseHandler {
 
         Ok(())
     }
+
+    fn is_chunked_transfer(headers_data: &[u8]) -> bool {
+        if let Ok(headers_str) = std::str::from_utf8(headers_data) {
+            let h_lower = headers_str.to_lowercase();
+            if h_lower.contains("transfer-encoding: chunked") {
+                trace!("Detected chunked transfer encoding in response - will wait for all chunks");
+                return true;
+            }
+
+            if h_lower.contains("upgrade: websocket") && h_lower.contains("connection: upgrade") {
+                debug!("Initial detection of WebSocket upgrade response");
+                return false;
+            }
+        }
+        false
+    }
 }
 
 pub use DEFAULT_MIN_LOG_SYNC_MS as MIN_LOG_SYNC_MS;
@@ -611,28 +648,17 @@ mod tests {
         http_log_state.set_http_logs(123, true).await.unwrap();
 
         let buffer = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\ndata";
-        let mut complete_response = Vec::new();
-        let mut already_logged = false;
-        let mut logging_enabled = false;
-        let mut is_chunked = false;
+        let mut state = ResponseLoggingState::new();
 
         handler
-            .check_response_logging_status(
-                buffer,
-                buffer.len(),
-                &mut complete_response,
-                &mut already_logged,
-                &mut logging_enabled,
-                &mut is_chunked,
-                &http_log_state,
-            )
+            .check_response_logging_status(buffer, buffer.len(), &mut state, &http_log_state)
             .await
             .unwrap();
 
-        assert!(already_logged);
-        assert!(logging_enabled);
-        assert!(is_chunked);
-        assert_eq!(complete_response, buffer);
+        assert!(state.already_logged);
+        assert!(state.logging_enabled);
+        assert!(state.is_chunked);
+        assert_eq!(state.complete_response, buffer);
     }
 
     #[tokio::test]

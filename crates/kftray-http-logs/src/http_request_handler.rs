@@ -31,11 +31,10 @@ impl HttpRequestHandler {
                 if let Some(logger) = logger {
                     let mut req_id_guard = request_id.lock().await;
                     let req_data = Bytes::copy_from_slice(request_buffer);
-                    match logger.log_request(req_data).await {
-                        new_request_id => {
-                            trace!("Generated new request ID: {}", new_request_id);
-                            *req_id_guard = Some(new_request_id);
-                        }
+                    let new_request_id = logger.log_request(req_data).await;
+                    {
+                        trace!("Generated new request ID: {}", new_request_id);
+                        *req_id_guard = Some(new_request_id);
                     }
                 }
                 Ok(())

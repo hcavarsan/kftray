@@ -317,7 +317,7 @@ impl TcpForwarder {
 
                             if is_chunked && found_end_marker && force_log_time.is_none() {
                                 debug!("Found end marker for chunked response after {} chunks", total_chunks_received);
-                                let delay = if response_buffer.len() > 0 &&
+                                let delay = if !response_buffer.is_empty() &&
                                              response_buffer.len() < 40_000 &&
                                              total_chunks_received < 20 {
                                     debug!("Setting delayed logging for chunked response to collect all data");

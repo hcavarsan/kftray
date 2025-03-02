@@ -192,9 +192,7 @@ pub async fn open_log_file(log_file_name: String) -> Result<(), String> {
 
     // Verify the file is actually within the log directory
     if !canonical_file_path.starts_with(&canonical_log_folder) {
-        return Err(format!(
-            "Invalid log file path: file is outside the log directory"
-        ));
+        return Err("Invalid log file path: file is outside the log directory".to_string());
     }
 
     validate_file_exists(&canonical_file_path)?;
