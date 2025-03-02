@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 
 use futures::TryStreamExt;
+use kftray_http_logs::HttpLogState;
 use kube::{
     api::Api,
     Client,
@@ -21,7 +22,6 @@ use tracing::{
     trace,
 };
 
-use crate::http_logs::HttpLogState;
 use crate::kube::client::create_client_with_specific_context;
 use crate::kube::models::{
     PortForward,
@@ -133,7 +133,11 @@ impl PortForward {
                         )
                     })?;
 
-                    let forwarder = TcpForwarder::new(pf.config_id, pf.workload_type.clone());
+                    let mut forwarder = TcpForwarder::new(pf.config_id, pf.workload_type.clone());
+
+                    if let Err(e) = forwarder.initialize_logger(&http_log_state, port).await {
+                        error!("Failed to initialize HTTP logger: {:?}", e);
+                    }
 
                     tokio::spawn(async move {
                         if let Err(e) = forwarder

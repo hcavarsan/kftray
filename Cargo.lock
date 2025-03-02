@@ -464,13 +464,34 @@ dependencies = [
 
 [[package]]
 name = "brotli"
+version = "3.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d640d25bc63c50fb1f0b545ffd80207d2e10a4c965530809b40ba3386825c391"
+dependencies = [
+ "alloc-no-stdlib",
+ "alloc-stdlib",
+ "brotli-decompressor 2.5.1",
+]
+
+[[package]]
+name = "brotli"
 version = "7.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cc97b8f16f944bba54f0433f07e30be199b6dc2bd25937444bbad560bcea29bd"
 dependencies = [
  "alloc-no-stdlib",
  "alloc-stdlib",
- "brotli-decompressor",
+ "brotli-decompressor 4.0.2",
+]
+
+[[package]]
+name = "brotli-decompressor"
+version = "2.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4e2e4afe60d7dd600fdd3de8d0f08c2b7ec039712e3b6137ff98b7004e82de4f"
+dependencies = [
+ "alloc-no-stdlib",
+ "alloc-stdlib",
 ]
 
 [[package]]
@@ -654,8 +675,10 @@ checksum = "7e36cc9d416881d2e24f9a963be5fb1cd90966419ac844274161d10488b3e825"
 dependencies = [
  "android-tzdata",
  "iana-time-zone",
+ "js-sys",
  "num-traits",
  "serde",
+ "wasm-bindgen",
  "windows-targets 0.52.6",
 ]
 
@@ -2894,7 +2917,7 @@ dependencies = [
 
 [[package]]
 name = "kftray-commons"
-version = "0.15.8"
+version = "0.16.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2920,8 +2943,29 @@ dependencies = [
 ]
 
 [[package]]
-name = "kftray-portforward"
+name = "kftray-http-logs"
 version = "0.15.8"
+dependencies = [
+ "anyhow",
+ "brotli 3.5.0",
+ "bytes",
+ "chrono",
+ "dashmap",
+ "dirs",
+ "flate2",
+ "httparse",
+ "lazy_static",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
+name = "kftray-portforward"
+version = "0.16.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2938,6 +2982,7 @@ dependencies = [
  "hyper-util",
  "k8s-openapi",
  "kftray-commons",
+ "kftray-http-logs",
  "kube",
  "kube-runtime",
  "lazy_static",
@@ -2958,7 +3003,7 @@ dependencies = [
 
 [[package]]
 name = "kftray-server"
-version = "0.15.8"
+version = "0.16.0"
 dependencies = [
  "async-trait",
  "env_logger",
@@ -2971,7 +3016,7 @@ dependencies = [
 
 [[package]]
 name = "kftray-tauri"
-version = "0.15.8"
+version = "0.16.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -2987,6 +3032,7 @@ dependencies = [
  "k8s-openapi",
  "keyring",
  "kftray-commons",
+ "kftray-http-logs",
  "kftray-portforward",
  "kube",
  "kube-runtime",
@@ -3018,7 +3064,7 @@ dependencies = [
 
 [[package]]
 name = "kftui"
-version = "0.15.8"
+version = "0.16.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3032,6 +3078,7 @@ dependencies = [
  "hyper-util",
  "k8s-openapi",
  "kftray-commons",
+ "kftray-http-logs",
  "kftray-portforward",
  "kube",
  "kube-runtime",
@@ -3928,9 +3975,9 @@ dependencies = [
 
 [[package]]
 name = "openssl"
-version = "0.10.70"
+version = "0.10.71"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "61cfb4e166a8bb8c9b55c500bc2308550148ece889be90f609377e58140f42c6"
+checksum = "5e14130c6a98cd258fdcb0fb6d744152343ff729cbfcb28c656a9d12b999fbcd"
 dependencies = [
  "bitflags 2.8.0",
  "cfg-if",
@@ -3969,9 +4016,9 @@ dependencies = [
 
 [[package]]
 name = "openssl-sys"
-version = "0.9.105"
+version = "0.9.106"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8b22d5b84be05a8d6947c7cb71f7c849aa0f112acd4bf51c2a7c1c988ac0a9dc"
+checksum = "8bb61ea9811cc39e3c2069f40b8b8e2e70d8569b361f879786cc7ed48b777cdd"
 dependencies = [
  "cc",
  "libc",
@@ -6109,7 +6156,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "53438d78c4a037ffe5eafa19e447eea599bedfb10844cb08ec53c2471ac3ac3f"
 dependencies = [
  "base64 0.21.7",
- "brotli",
+ "brotli 7.0.0",
  "ico",
  "json-patch 2.0.0",
  "plist",
@@ -6204,7 +6251,7 @@ version = "1.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c357952645e679de02cd35007190fcbce869b93ffc61b029f33fe02648453774"
 dependencies = [
- "brotli",
+ "brotli 7.0.0",
  "ctor",
  "dunce",
  "glob",
