@@ -1,7 +1,6 @@
 /* eslint-disable complexity */
 
 import React, { useEffect, useMemo, useState } from 'react'
-import { useQuery } from 'react-query'
 import Select, { ActionMeta, MultiValue, SingleValue } from 'react-select'
 
 import {
@@ -16,6 +15,7 @@ import {
   Text,
   Tooltip,
 } from '@chakra-ui/react'
+import { useQuery } from '@tanstack/react-query'
 import { open } from '@tauri-apps/api/dialog'
 import { invoke } from '@tauri-apps/api/tauri'
 
@@ -153,77 +153,93 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     }
   }
 
-  const contextQuery = useQuery(
-    ['kube-contexts', uiState.kubeConfig],
-    () =>
+  const contextQuery = useQuery<{ name: string }[]>({
+    queryKey: ['kube-contexts', uiState.kubeConfig],
+    queryFn: () =>
       invoke<{ name: string }[]>('list_kube_contexts', {
         kubeconfig: uiState.kubeConfig,
       }),
-    {
-      enabled:
-        isModalOpen &&
-        (uiState.isContextDropdownFocused || uiState.kubeConfig !== 'default'),
-      onError: error => handleError(error, 'Error fetching contexts'),
-    },
-  )
+    enabled:
+      isModalOpen &&
+      (uiState.isContextDropdownFocused || uiState.kubeConfig !== 'default'),
+  })
 
-  const namespaceQuery = useQuery(
-    ['kube-namespaces', newConfig.context],
-    () =>
+  // Handle context query errors
+  useEffect(() => {
+    if (contextQuery.error) {
+      handleError(contextQuery.error, 'Error fetching contexts')
+    }
+  }, [contextQuery.error])
+
+  const namespaceQuery = useQuery<{ name: string }[]>({
+    queryKey: ['kube-namespaces', newConfig.context],
+    queryFn: () =>
       invoke<{ name: string }[]>('list_namespaces', {
         contextName: newConfig.context,
         kubeconfig: uiState.kubeConfig,
       }),
-    {
-      enabled: isModalOpen && !!newConfig.context,
-      onError: error => handleError(error, 'Error fetching namespaces'),
-    },
-  )
+    enabled: isModalOpen && !!newConfig.context,
+  })
 
-  const serviceQuery = useQuery<ServiceData[]>(
-    ['services', newConfig.context, newConfig.namespace],
-    () =>
+  // Handle namespace query errors
+  useEffect(() => {
+    if (namespaceQuery.error) {
+      handleError(namespaceQuery.error, 'Error fetching namespaces')
+    }
+  }, [namespaceQuery.error])
+
+  const serviceQuery = useQuery<ServiceData[]>({
+    queryKey: ['services', newConfig.context, newConfig.namespace],
+    queryFn: () =>
       invoke<ServiceData[]>('list_services', {
         contextName: newConfig.context,
         namespace: newConfig.namespace,
         kubeconfig: uiState.kubeConfig,
       }),
-    {
-      enabled:
-        isModalOpen &&
-        !!newConfig.context &&
-        !!newConfig.namespace &&
-        newConfig.workload_type === 'service',
-      onError: error => handleError(error, 'Error fetching services'),
-    },
-  )
+    enabled:
+      isModalOpen &&
+      !!newConfig.context &&
+      !!newConfig.namespace &&
+      newConfig.workload_type === 'service',
+  })
 
-  const podsQuery = useQuery(
-    ['kube-pods', newConfig.context, newConfig.namespace],
-    () =>
+  // Handle service query errors
+  useEffect(() => {
+    if (serviceQuery.error) {
+      handleError(serviceQuery.error, 'Error fetching services')
+    }
+  }, [serviceQuery.error])
+
+  const podsQuery = useQuery<{ labels_str: string }[]>({
+    queryKey: ['kube-pods', newConfig.context, newConfig.namespace],
+    queryFn: () =>
       invoke<{ labels_str: string }[]>('list_pods', {
         contextName: newConfig.context,
         namespace: newConfig.namespace,
         kubeconfig: uiState.kubeConfig,
       }),
-    {
-      enabled:
-        isModalOpen &&
-        !!newConfig.context &&
-        !!newConfig.namespace &&
-        newConfig.workload_type === 'pod',
-      onError: error => handleError(error, 'Error fetching pods'),
-    },
-  )
+    enabled:
+      isModalOpen &&
+      !!newConfig.context &&
+      !!newConfig.namespace &&
+      newConfig.workload_type === 'pod',
+  })
 
-  const portQuery = useQuery(
-    [
+  // Handle pods query errors
+  useEffect(() => {
+    if (podsQuery.error) {
+      handleError(podsQuery.error, 'Error fetching pods')
+    }
+  }, [podsQuery.error])
+
+  const portQuery = useQuery<{ name: string; port: number }[]>({
+    queryKey: [
       'kube-service-ports',
       newConfig.context,
       newConfig.namespace,
       newConfig.workload_type === 'pod' ? newConfig.target : newConfig.service,
     ],
-    async () => {
+    queryFn: async () => {
       const params = {
         contextName: newConfig.context,
         namespace: newConfig.namespace,
@@ -250,18 +266,22 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
               : (p.port as number),
       }))
     },
-    {
-      enabled:
-        isModalOpen &&
-        !!newConfig.context &&
-        !!newConfig.namespace &&
-        !!(newConfig.workload_type === 'pod'
-          ? newConfig.target
-          : newConfig.service) &&
-        newConfig.workload_type !== 'proxy',
-      onError: error => handleError(error, 'Error fetching service ports'),
-    },
-  )
+    enabled:
+      isModalOpen &&
+      !!newConfig.context &&
+      !!newConfig.namespace &&
+      !!(newConfig.workload_type === 'pod'
+        ? newConfig.target
+        : newConfig.service) &&
+      newConfig.workload_type !== 'proxy',
+  })
+
+  // Handle port query errors
+  useEffect(() => {
+    if (portQuery.error) {
+      handleError(portQuery.error, 'Error fetching service ports')
+    }
+  }, [portQuery.error])
 
   const getServiceOrTargetValue = (config: Config) => {
     if (config.service) {
