@@ -52,6 +52,18 @@ fn main() {
     let runtime = Arc::new(Runtime::new().expect("Failed to create a Tokio runtime"));
     let http_log_state = HttpLogState::new();
 
+    // TODO: Remove this workaround when the tauri issue is resolved
+    // tauri Issue: https://github.com/tauri-apps/tauri/issues/9394
+    // kftray Issue: https://github.com/hcavarsan/kftray/issues/366
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "dragonfly",
+        target_os = "openbsd",
+        target_os = "netbsd"
+    ))]
+    std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
+
     let app = tauri::Builder::default()
         .manage(SaveDialogState::default())
         .manage(AppState {
