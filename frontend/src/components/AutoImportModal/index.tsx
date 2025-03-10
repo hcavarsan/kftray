@@ -1,5 +1,4 @@
 import React, { useEffect, useState } from 'react'
-import { useQuery } from 'react-query'
 import ReactSelect, { ActionMeta, SingleValue } from 'react-select'
 
 import {
@@ -12,6 +11,7 @@ import {
   Text,
   VStack,
 } from '@chakra-ui/react'
+import { useQuery } from '@tanstack/react-query'
 import { open } from '@tauri-apps/api/dialog'
 import { invoke } from '@tauri-apps/api/tauri'
 
@@ -36,24 +36,11 @@ const AutoImportModal: React.FC<AutoImportModalProps> = ({
     isImporting: false,
   })
 
-  const contextQuery = useQuery<KubeContext[]>(
-    ['kube-contexts', state.kubeConfig],
-    () => fetchKubeContexts(state.kubeConfig),
-    {
-      enabled: isOpen,
-      onError: error => {
-        console.error('Error fetching contexts:', error)
-        toaster.error({
-          title: 'Error fetching contexts',
-          description:
-            error instanceof Error
-              ? error.message
-              : 'An unknown error occurred',
-          duration: 1000,
-        })
-      },
-    },
-  )
+  const contextQuery = useQuery<KubeContext[]>({
+    queryKey: ['kube-contexts', state.kubeConfig],
+    queryFn: () => fetchKubeContexts(state.kubeConfig),
+    enabled: isOpen,
+  })
 
   const handleSetKubeConfig = async () => {
     try {
@@ -142,6 +129,20 @@ const AutoImportModal: React.FC<AutoImportModalProps> = ({
       }))
     }
   }, [isOpen])
+
+  useEffect(() => {
+    if (contextQuery.error) {
+      console.error('Error fetching contexts:', contextQuery.error)
+      toaster.error({
+        title: 'Error fetching contexts',
+        description:
+          contextQuery.error instanceof Error
+            ? contextQuery.error.message
+            : 'An unknown error occurred',
+        duration: 1000,
+      })
+    }
+  }, [contextQuery.error])
 
   return (
     <Dialog.Root open={isOpen} onOpenChange={onClose}>
