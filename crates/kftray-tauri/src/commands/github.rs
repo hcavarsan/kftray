@@ -131,59 +131,110 @@ mod credentials {
         try_stored_credentials()
     }
 
-    fn try_ssh_authentication(username: &str) -> Result<Cred, git2::Error> {
-        if let Ok(cred) = Cred::ssh_key_from_agent(username) {
-            info!("Successfully authenticated with SSH agent");
-            return Ok(cred);
-        }
-
-        if let Ok(config) = git2::Config::open_default() {
-            if let Ok(key_path_str) = config.get_string("core.sshCommand") {
-                if let Some(key_arg_pos) = key_path_str.find(" -i ") {
-                    let key_path_start = key_arg_pos + 4;
-                    let key_path_end = key_path_str[key_path_start..]
-                        .find(' ')
-                        .map(|pos| key_path_start + pos)
-                        .unwrap_or(key_path_str.len());
-
-                    let key_path_str = &key_path_str[key_path_start..key_path_end];
-                    let key_path = Path::new(key_path_str);
-
-                    if key_path.exists() {
-                        info!("Trying SSH key from git config: {}", key_path.display());
-                        if let Ok(cred) = Cred::ssh_key(username, None, key_path, None) {
-                            info!("Successfully authenticated with SSH key from git config");
-                            return Ok(cred);
-                        }
-                    }
-                }
+    fn try_ssh_agent(username: &str) -> Result<Cred, git2::Error> {
+        match Cred::ssh_key_from_agent(username) {
+            Ok(cred) => {
+                info!("Successfully authenticated with SSH agent");
+                Ok(cred)
+            }
+            Err(e) => {
+                info!("SSH agent authentication failed: {}", e);
+                Err(e)
             }
         }
+    }
 
-        let home_dir = std::env::var("HOME")
-            .or_else(|_| std::env::var("USERPROFILE"))
-            .unwrap_or_default();
+    fn try_git_ssh_config(username: &str) -> Result<Cred, git2::Error> {
+        let config = git2::Config::open_default()?;
 
-        if let Ok(key_path_str) = std::env::var("SSH_KEY_PATH") {
-            let key_path = PathBuf::from(key_path_str);
-            if key_path.exists() {
-                info!("Trying SSH key from SSH_KEY_PATH: {}", key_path.display());
-                if let Ok(cred) = Cred::ssh_key(username, None, &key_path, None) {
-                    info!("Successfully authenticated with SSH key from environment variable");
-                    return Ok(cred);
-                }
-            }
+        let key_path_str = config.get_string("core.sshCommand").map_err(|e| {
+            info!("No core.sshCommand in git config: {}", e);
+            e
+        })?;
+
+        let key_arg_pos = key_path_str.find(" -i ").ok_or_else(|| {
+            info!("No -i flag in core.sshCommand");
+            git2::Error::from_str("No -i flag in core.sshCommand")
+        })?;
+
+        let key_path_start = key_arg_pos + 4;
+        let key_path_end = key_path_str[key_path_start..]
+            .find(' ')
+            .map(|pos| key_path_start + pos)
+            .unwrap_or(key_path_str.len());
+
+        let key_path_str = &key_path_str[key_path_start..key_path_end];
+        let key_path = Path::new(key_path_str);
+
+        if !key_path.exists() {
+            info!(
+                "SSH key from git config doesn't exist: {}",
+                key_path.display()
+            );
+            return Err(git2::Error::from_str(
+                "SSH key from git config doesn't exist",
+            ));
         }
 
-        let mut ssh_dirs = vec![PathBuf::from(&home_dir).join(".ssh")];
+        info!("Trying SSH key from git config: {}", key_path.display());
+        match Cred::ssh_key(username, None, key_path, None) {
+            Ok(cred) => {
+                info!("Successfully authenticated with SSH key from git config");
+                Ok(cred)
+            }
+            Err(e) => {
+                info!("Failed to use SSH key from git config: {}", e);
+                Err(e)
+            }
+        }
+    }
+
+    fn try_env_ssh_key(username: &str) -> Result<Cred, git2::Error> {
+        let key_path_str = std::env::var("SSH_KEY_PATH")
+            .map_err(|_| git2::Error::from_str("SSH_KEY_PATH environment variable not set"))?;
+
+        let key_path = PathBuf::from(key_path_str);
+        if !key_path.exists() {
+            info!(
+                "SSH key from environment variable doesn't exist: {}",
+                key_path.display()
+            );
+            return Err(git2::Error::from_str(
+                "SSH key from environment variable doesn't exist",
+            ));
+        }
+
+        info!("Trying SSH key from SSH_KEY_PATH: {}", key_path.display());
+        match Cred::ssh_key(username, None, &key_path, None) {
+            Ok(cred) => {
+                info!("Successfully authenticated with SSH key from environment variable");
+                Ok(cred)
+            }
+            Err(e) => {
+                info!("Failed to use SSH key from environment variable: {}", e);
+                Err(e)
+            }
+        }
+    }
+
+    fn get_ssh_directories() -> Vec<PathBuf> {
+        let mut ssh_dirs = Vec::new();
+
+        if let Ok(home_dir) = std::env::var("HOME").or_else(|_| std::env::var("USERPROFILE")) {
+            ssh_dirs.push(PathBuf::from(home_dir).join(".ssh"));
+        }
 
         if let Ok(custom_ssh_dir) = std::env::var("SSH_DIR") {
             ssh_dirs.push(PathBuf::from(custom_ssh_dir));
         }
 
+        ssh_dirs
+    }
+
+    fn try_standard_key_names(username: &str, ssh_dirs: &[PathBuf]) -> Result<Cred, git2::Error> {
         let key_names = ["id_ed25519", "id_rsa", "id_ecdsa", "id_dsa"];
 
-        for dir in &ssh_dirs {
+        for dir in ssh_dirs {
             if !dir.exists() || !dir.is_dir() {
                 continue;
             }
@@ -203,109 +254,161 @@ mod credentials {
             }
         }
 
-        for dir in ssh_dirs {
-            if !dir.exists() || !dir.is_dir() {
+        Err(git2::Error::from_str(
+            "No standard SSH keys found or none worked",
+        ))
+    }
+
+    fn try_key_file(username: &str, path: &Path) -> Result<Cred, git2::Error> {
+        if let Some(file_name) = path.file_name().and_then(|n| n.to_str()) {
+            if file_name.ends_with(".pub")
+                || file_name == "known_hosts"
+                || file_name == "authorized_keys"
+                || file_name == "config"
+            {
+                return Err(git2::Error::from_str("Not a private key file"));
+            }
+        } else {
+            return Err(git2::Error::from_str("Invalid file name"));
+        }
+
+        info!("Trying potential SSH key: {}", path.display());
+        match Cred::ssh_key(username, None, path, None) {
+            Ok(cred) => {
+                info!(
+                    "Successfully authenticated with SSH key: {}",
+                    path.display()
+                );
+                Ok(cred)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    fn scan_directory_for_keys(username: &str, dir: &Path) -> Result<Cred, git2::Error> {
+        if !dir.exists() || !dir.is_dir() {
+            return Err(git2::Error::from_str(
+                "Directory doesn't exist or is not a directory",
+            ));
+        }
+
+        info!("Scanning for SSH keys in: {}", dir.display());
+
+        let entries = match std::fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(e) => {
+                info!("Failed to read SSH directory {}: {}", dir.display(), e);
+                return Err(git2::Error::from_str(&format!(
+                    "Failed to read directory: {}",
+                    e
+                )));
+            }
+        };
+
+        for entry in entries {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(_) => continue,
+            };
+
+            let path = entry.path();
+
+            if !path.is_file() {
                 continue;
             }
 
-            info!("Scanning for SSH keys in: {}", dir.display());
+            if let Ok(cred) = try_key_file(username, &path) {
+                return Ok(cred);
+            }
+        }
 
-            let entries = match std::fs::read_dir(&dir) {
-                Ok(entries) => entries,
-                Err(e) => {
-                    info!("Failed to read SSH directory {}: {}", dir.display(), e);
-                    continue;
-                }
+        Err(git2::Error::from_str(
+            "No valid SSH keys found in directory",
+        ))
+    }
+
+    fn scan_subdirectories_for_keys(username: &str, dir: &Path) -> Result<Cred, git2::Error> {
+        if !dir.exists() || !dir.is_dir() {
+            return Err(git2::Error::from_str(
+                "Directory doesn't exist or is not a directory",
+            ));
+        }
+
+        let subdirs = match std::fs::read_dir(dir) {
+            Ok(entries) => entries,
+            Err(e) => {
+                info!("Failed to read directory {}: {}", dir.display(), e);
+                return Err(git2::Error::from_str(&format!(
+                    "Failed to read directory: {}",
+                    e
+                )));
+            }
+        };
+
+        for subdir_entry in subdirs {
+            let subdir_entry = match subdir_entry {
+                Ok(entry) => entry,
+                Err(_) => continue,
             };
 
-            for entry in entries {
-                let entry = match entry {
-                    Ok(entry) => entry,
-                    Err(_) => continue,
-                };
-
-                let path = entry.path();
-
-                if !path.is_file() {
-                    continue;
-                }
-
-                let file_name = match path.file_name().and_then(|n| n.to_str()) {
-                    Some(name) => name,
-                    None => continue,
-                };
-
-                if file_name.ends_with(".pub")
-                    || file_name == "known_hosts"
-                    || file_name == "authorized_keys"
-                    || file_name == "config"
-                {
-                    continue;
-                }
-
-                info!("Trying potential SSH key: {}", path.display());
-                if let Ok(cred) = Cred::ssh_key(username, None, &path, None) {
-                    info!(
-                        "Successfully authenticated with SSH key: {}",
-                        path.display()
-                    );
-                    return Ok(cred);
-                }
+            let subdir_path = subdir_entry.path();
+            if !subdir_path.is_dir() {
+                continue;
             }
 
-            let subdirs = match std::fs::read_dir(&dir) {
+            let subdir_entries = match std::fs::read_dir(&subdir_path) {
                 Ok(entries) => entries,
                 Err(_) => continue,
             };
 
-            for subdir_entry in subdirs {
-                let subdir_entry = match subdir_entry {
+            for file_entry in subdir_entries {
+                let file_entry = match file_entry {
                     Ok(entry) => entry,
                     Err(_) => continue,
                 };
 
-                let subdir_path = subdir_entry.path();
-                if !subdir_path.is_dir() {
+                let file_path = file_entry.path();
+                if !file_path.is_file() {
                     continue;
                 }
 
-                let subdir_entries = match std::fs::read_dir(&subdir_path) {
-                    Ok(entries) => entries,
-                    Err(_) => continue,
-                };
-
-                for file_entry in subdir_entries {
-                    let file_entry = match file_entry {
-                        Ok(entry) => entry,
-                        Err(_) => continue,
-                    };
-
-                    let file_path = file_entry.path();
-                    if !file_path.is_file() {
-                        continue;
-                    }
-
-                    let file_name = match file_path.file_name().and_then(|n| n.to_str()) {
-                        Some(name) => name,
-                        None => continue,
-                    };
-
-                    if file_name.ends_with(".pub") {
-                        continue;
-                    }
-
-                    info!(
-                        "Trying potential SSH key from subdirectory: {}",
-                        file_path.display()
-                    );
-                    if let Ok(cred) = Cred::ssh_key(username, None, &file_path, None) {
-                        info!(
-                            "Successfully authenticated with SSH key: {}",
-                            file_path.display()
-                        );
-                        return Ok(cred);
-                    }
+                if let Ok(cred) = try_key_file(username, &file_path) {
+                    return Ok(cred);
                 }
+            }
+        }
+
+        Err(git2::Error::from_str(
+            "No valid SSH keys found in subdirectories",
+        ))
+    }
+
+    fn try_ssh_authentication(username: &str) -> Result<Cred, git2::Error> {
+        if let Ok(cred) = try_ssh_agent(username) {
+            return Ok(cred);
+        }
+
+        if let Ok(cred) = try_git_ssh_config(username) {
+            return Ok(cred);
+        }
+
+        if let Ok(cred) = try_env_ssh_key(username) {
+            return Ok(cred);
+        }
+
+        let ssh_dirs = get_ssh_directories();
+
+        if let Ok(cred) = try_standard_key_names(username, &ssh_dirs) {
+            return Ok(cred);
+        }
+
+        for dir in &ssh_dirs {
+            if let Ok(cred) = scan_directory_for_keys(username, dir) {
+                return Ok(cred);
+            }
+
+            if let Ok(cred) = scan_subdirectories_for_keys(username, dir) {
+                return Ok(cred);
             }
         }
 
