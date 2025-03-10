@@ -64,7 +64,7 @@ kftray-http-logs = { path = "../kftray-http-logs" }
 netstat2 = { git = "https://github.com/hcavarsan/netstat2-rs" }
 sysinfo = "0.33.1"
 secrecy = "0.10.3"
-git2 = { version = "0.17.1", features = ["ssh"] }
+git2 = { version = "0.20.0", features = ["ssh"] }
 url = "2.5.3"
 
 [dev-dependencies]
