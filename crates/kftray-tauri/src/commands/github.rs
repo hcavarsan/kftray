@@ -526,13 +526,45 @@ fn setup_repo_builder(callbacks: RemoteCallbacks) -> git2::build::RepoBuilder {
 fn clone_repository(
     builder: &mut git2::build::RepoBuilder, repo_url: &str, path: &Path,
 ) -> Result<Repository, String> {
-    builder.clone(repo_url, path).map_err(|e| {
-        error!("Repository clone failed: {}", e);
-        format!(
-            "Failed to clone repository: {}. Please check your credentials and repository URL.",
-            e
-        )
-    })
+    match builder.clone(repo_url, path) {
+        Ok(repo) => Ok(repo),
+        Err(e) => {
+            error!("Repository clone failed: {}", e);
+            info!("Trying fallback with system git command");
+
+            try_clone_with_system_git(repo_url, path).or_else(|err| {
+                Err(format!(
+                    "Failed to clone repository. Please check your credentials and repository URL. Error: {}",
+                    err
+                ))
+            })
+        }
+    }
+}
+
+fn try_clone_with_system_git(repo_url: &str, path: &Path) -> Result<Repository, String> {
+    use std::process::Command;
+
+    let output = Command::new("git")
+        .arg("clone")
+        .arg("--depth=1")
+        .arg("--single-branch")
+        .arg("--no-tags")
+        .arg("--filter=blob:none")
+        .arg("--recurse-submodules=no")
+        .arg(repo_url)
+        .arg(path)
+        .output()
+        .map_err(|e| format!("Failed to execute git command: {}", e))?;
+
+    if output.status.success() {
+        info!("Successfully cloned repository using system git");
+        Repository::open(path).map_err(|e| format!("Failed to open repository: {}", e))
+    } else {
+        let error_msg = String::from_utf8_lossy(&output.stderr);
+        error!("System git clone failed: {}", error_msg);
+        Err(format!("System git clone failed: {}", error_msg))
+    }
 }
 
 fn read_config_file(temp_dir: &Path, config_path: &str) -> Result<String, String> {
