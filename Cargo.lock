@@ -2896,7 +2896,7 @@ dependencies = [
 
 [[package]]
 name = "kftray-commons"
-version = "0.16.2"
+version = "0.16.3"
 dependencies = [
  "anyhow",
  "bytes",
@@ -2944,7 +2944,7 @@ dependencies = [
 
 [[package]]
 name = "kftray-portforward"
-version = "0.16.2"
+version = "0.16.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2982,7 +2982,7 @@ dependencies = [
 
 [[package]]
 name = "kftray-server"
-version = "0.16.2"
+version = "0.16.3"
 dependencies = [
  "async-trait",
  "env_logger",
@@ -2995,7 +2995,7 @@ dependencies = [
 
 [[package]]
 name = "kftray-tauri"
-version = "0.16.2"
+version = "0.16.3"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3043,7 +3043,7 @@ dependencies = [
 
 [[package]]
 name = "kftui"
-version = "0.16.2"
+version = "0.16.3"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
