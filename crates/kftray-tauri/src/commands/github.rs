@@ -21,6 +21,7 @@ use kftray_commons::{
 use log::{
     error,
     info,
+    warn,
 };
 use reqwest::Url;
 use tauri::{
@@ -529,8 +530,10 @@ fn clone_repository(
     match builder.clone(repo_url, path) {
         Ok(repo) => Ok(repo),
         Err(e) => {
-            error!("Repository clone failed: {}", e);
-            info!("Trying fallback with system git command");
+            warn!(
+                "Repository clone failed: {}, trying fallback with system git command",
+                e
+            );
 
             try_clone_with_system_git(repo_url, path).or_else(|err| {
                 Err(format!(
