@@ -1,4 +1,5 @@
 pub mod kube;
+pub mod network_utils;
 pub mod port_forward;
 
 pub use kftray_http_logs::{

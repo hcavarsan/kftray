@@ -535,12 +535,10 @@ fn clone_repository(
                 e
             );
 
-            try_clone_with_system_git(repo_url, path).or_else(|err| {
-                Err(format!(
+            try_clone_with_system_git(repo_url, path).map_err(|err| format!(
                     "Failed to clone repository. Please check your credentials and repository URL. Error: {}",
                     err
                 ))
-            })
         }
     }
 }
