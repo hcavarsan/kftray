@@ -1,3 +1,4 @@
+use std::future::Future;
 use std::sync::Arc;
 
 use kftray_commons::config::get_config;
@@ -14,6 +15,7 @@ use log::{
     debug,
     error,
     info,
+    warn,
 };
 use netstat2::{
     get_sockets_info,
@@ -25,57 +27,104 @@ use sysinfo::{
     Pid,
     System,
 };
+use tokio;
+
+async fn fetch_configs_in_parallel(
+    running_configs: Vec<ConfigState>,
+) -> Vec<(i64, Result<Config, String>)> {
+    let mut config_tasks = Vec::with_capacity(running_configs.len());
+
+    for config_state in running_configs {
+        let config_id = config_state.config_id;
+        let task = tokio::spawn(async move {
+            let result = get_config(config_id)
+                .await
+                .map_err(|e| format!("Failed to retrieve config {}: {}", config_id, e));
+            (config_id, result)
+        });
+        config_tasks.push(task);
+    }
+
+    let mut results = Vec::with_capacity(config_tasks.len());
+    for task in config_tasks {
+        match task.await {
+            Ok((config_id, result)) => {
+                results.push((config_id, result));
+            }
+            Err(e) => {
+                error!("Task for fetching config failed: {}", e);
+            }
+        }
+    }
+
+    results
+}
+
+async fn run_with_timeout<T, E, F>(
+    future: F, timeout_secs: u64, timeout_message: &str,
+) -> Result<T, String>
+where
+    F: Future<Output = Result<T, E>>,
+    E: std::fmt::Display,
+{
+    match tokio::time::timeout(tokio::time::Duration::from_secs(timeout_secs), future).await {
+        Ok(result) => result.map_err(|e| e.to_string()),
+        Err(_) => Err(timeout_message.to_string()),
+    }
+}
 
 pub async fn check_and_manage_ports() -> Result<(), String> {
-    let config_states = match get_configs_state().await {
-        Ok(states) => states,
+    let running_configs = match get_configs_state().await {
+        Ok(states) => states
+            .into_iter()
+            .filter(|state| state.is_running)
+            .collect::<Vec<_>>(),
         Err(e) => {
             error!("Failed to retrieve config states: {:?}", e);
             return Err(e);
         }
     };
 
-    let running_configs = config_states
-        .into_iter()
-        .filter(|state| state.is_running)
-        .collect::<Vec<_>>();
-
-    let mut config_tasks = Vec::new();
-    for config_state in running_configs {
-        let task = tokio::spawn(async move {
-            match get_config(config_state.config_id).await {
-                Ok(config) => Some((config_state.config_id, config)),
-                Err(_) => {
-                    error!(
-                        "Could not retrieve config with ID {}",
-                        config_state.config_id
-                    );
-                    None
-                }
-            }
-        });
-        config_tasks.push(task);
+    if running_configs.is_empty() {
+        debug!("No running port forwards found to restore");
+        return Ok(());
     }
 
-    let mut configs = Vec::new();
-    for task in config_tasks {
-        if let Ok(Some((config_id, config))) = task.await {
-            configs.push((config_id, config));
+    info!("Restoring {} running port forwards", running_configs.len());
+
+    let config_results = fetch_configs_in_parallel(running_configs).await;
+
+    let mut port_tasks = Vec::new();
+    let mut fetch_errors = Vec::new();
+
+    for (config_id, result) in config_results {
+        match result {
+            Ok(config) => {
+                let task = tokio::spawn(async move {
+                    if let Err(err) = check_and_manage_port(config).await {
+                        error!("Error checking state for config {}: {}", config_id, err);
+                    }
+                });
+                port_tasks.push(task);
+            }
+            Err(e) => {
+                fetch_errors.push(format!("Config ID {}: {}", config_id, e));
+            }
         }
     }
 
-    let mut port_tasks = Vec::new();
-    for (config_id, config) in configs {
-        let task = tokio::spawn(async move {
-            if let Err(err) = check_and_manage_port(config).await {
-                error!("Error check state for config {}: {}", config_id, err);
-            }
-        });
-        port_tasks.push(task);
+    for task in port_tasks {
+        match task.await {
+            Ok(_) => {}
+            Err(e) => error!("Port forward task failed: {}", e),
+        }
     }
 
-    for task in port_tasks {
-        let _ = task.await;
+    if !fetch_errors.is_empty() {
+        warn!(
+            "Failed to retrieve some configs: {}",
+            fetch_errors.join(", ")
+        );
     }
 
     Ok(())
@@ -96,17 +145,17 @@ async fn check_and_manage_port(config: Config) -> Result<(), Box<dyn std::error:
 async fn handle_existing_process(
     config: Config, port: u16, pid: i32, process_name: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    info!(
+    debug!(
         "Process '{}' (pid: {}) is using port {}.",
         process_name, pid, port
     );
 
     if process_name.eq_ignore_ascii_case("kftray") || process_name.eq_ignore_ascii_case("kftui") {
-        info!("Process '{}' is internal, skipping...", process_name);
+        debug!("Process '{}' is internal, skipping...", process_name);
     } else {
         info!(
-            "External process '{}' found, updating state to 'not running'...",
-            process_name
+            "External process '{}' found on port {}, updating state to 'not running'",
+            process_name, port
         );
         let config_state = ConfigState {
             id: None,
@@ -120,9 +169,11 @@ async fn handle_existing_process(
 }
 
 async fn start_port_forwarding(config: Config) -> Result<(), String> {
-    info!(
-        "No process is occupying port {}. Starting port forwarding...",
-        config.local_port.unwrap_or(0)
+    let port = config.local_port.unwrap_or(0);
+    debug!(
+        "No process is occupying port {}. Starting port forwarding for '{}'...",
+        port,
+        config.alias.as_deref().unwrap_or("unknown")
     );
 
     let protocol = config.protocol.as_str();
@@ -134,6 +185,11 @@ async fn start_port_forwarding(config: Config) -> Result<(), String> {
         .await;
 
     let configs = vec![config.clone()];
+    let config_id = config.id.unwrap();
+    let config_alias = config
+        .alias
+        .clone()
+        .unwrap_or_else(|| format!("ID:{}", config_id));
 
     let forward_future = async {
         match config.workload_type.as_deref() {
@@ -142,48 +198,41 @@ async fn start_port_forwarding(config: Config) -> Result<(), String> {
         }
     };
 
-    let forward_result =
-        match tokio::time::timeout(tokio::time::Duration::from_secs(15), forward_future).await {
-            Ok(result) => result,
-            Err(_) => {
-                error!(
-                    "Port forwarding for {:?} timed out after 15 seconds",
-                    config.alias
-                );
-                let config_state = ConfigState {
-                    id: None,
-                    config_id: config.id.unwrap(),
-                    is_running: false,
-                };
-                update_config_state(&config_state).await?;
-                return Err("Port forwarding timed out".to_string());
-            }
-        };
+    let timeout_message = format!(
+        "Port forwarding for '{}' timed out after 15 seconds",
+        config_alias
+    );
+    let forward_result = run_with_timeout(forward_future, 15, &timeout_message).await;
 
     match forward_result {
         Ok(responses) => {
             debug!(
-                "Port forwarding response for {:?}: {:?}",
-                config.alias, responses
+                "Port forwarding response for '{}': {:?}",
+                config_alias, responses
             );
             let config_state = ConfigState {
                 id: None,
-                config_id: config.id.unwrap(),
+                config_id,
                 is_running: true,
             };
-            update_config_state(&config_state).await?;
+            update_config_state(&config_state)
+                .await
+                .map_err(|e| format!("Failed to update config state: {}", e))?;
         }
         Err(e) => {
             error!(
-                "Failed to start port forwarding for {:?}: {}",
-                config.alias, e
+                "Failed to start port forwarding for '{}': {}",
+                config_alias, e
             );
             let config_state = ConfigState {
                 id: None,
-                config_id: config.id.unwrap(),
+                config_id,
                 is_running: false,
             };
-            update_config_state(&config_state).await?;
+            update_config_state(&config_state)
+                .await
+                .map_err(|e| format!("Failed to update config state: {}", e))?;
+            return Err(e);
         }
     }
 
@@ -191,6 +240,10 @@ async fn start_port_forwarding(config: Config) -> Result<(), String> {
 }
 
 async fn find_process_by_port(port: u16) -> Option<(i32, String)> {
+    if port == 0 {
+        return None;
+    }
+
     let af_flags = AddressFamilyFlags::IPV4 | AddressFamilyFlags::IPV6;
     let proto_flags = ProtocolFlags::TCP | ProtocolFlags::UDP;
 
