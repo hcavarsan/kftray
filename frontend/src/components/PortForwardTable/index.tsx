@@ -104,7 +104,7 @@ const PortForwardTable: React.FC<TableProps> = ({
   const handleCheckboxChange = useCallback(
     (context: string, isChecked: boolean) => {
       setIsCheckboxAction(true)
-      const selectableConfigs = configs.filter(
+      const selectableConfigs = filteredConfigs.filter(
         config => config.context === context && !config.is_running,
       )
 
@@ -121,11 +121,21 @@ const PortForwardTable: React.FC<TableProps> = ({
           return newSelections
         }
 
-        return prev.filter(config => config.context !== context)
+        const configIdsFiltered = new Set(
+          prev
+          .filter(
+            config =>
+              config.context !== context ||
+                !filteredConfigs.some(fc => fc.id === config.id),
+          )
+          .map(config => config.id),
+        )
+
+        return prev.filter(config => configIdsFiltered.has(config.id))
       })
       setIsCheckboxAction(false)
     },
-    [configs, setSelectedConfigs],
+    [filteredConfigs, setSelectedConfigs],
   )
 
   const handleSelectionChange = useCallback(
@@ -174,7 +184,7 @@ const PortForwardTable: React.FC<TableProps> = ({
           <HeaderMenu
             isSelectAllChecked={isSelectAllChecked}
             setIsSelectAllChecked={setIsSelectAllChecked}
-            configs={configs}
+            configs={search ? filteredConfigs : configs}
             selectedConfigs={selectedConfigs}
             setSelectedConfigs={setSelectedConfigs}
             initiatePortForwarding={initiatePortForwarding}
