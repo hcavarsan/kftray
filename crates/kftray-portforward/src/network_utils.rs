@@ -52,11 +52,6 @@ pub async fn ensure_loopback_address(addr: &str) -> Result<()> {
         configure_loopback_windows(addr)?;
     }
 
-    #[cfg(target_os = "freebsd")]
-    {
-        configure_loopback_freebsd(addr)?;
-    }
-
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows",)))]
     {
         return Err(anyhow!(
