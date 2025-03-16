@@ -146,8 +146,7 @@ fn pod_manifest_file_exists() -> bool {
 }
 
 fn create_server_config_manifest() -> Result<(), std::io::Error> {
-    let manifest_path =
-        get_pod_manifest_path().map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let manifest_path = get_pod_manifest_path().map_err(std::io::Error::other)?;
 
     let manifest_dir = manifest_path.parent().ok_or_else(|| {
         std::io::Error::new(
@@ -209,8 +208,7 @@ fn db_file_exists() -> bool {
 }
 
 fn create_db_file() -> Result<(), std::io::Error> {
-    let db_path =
-        get_db_file_path().map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
+    let db_path = get_db_file_path().map_err(std::io::Error::other)?;
 
     let db_dir = Path::new(&db_path)
         .parent()

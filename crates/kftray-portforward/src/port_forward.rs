@@ -85,6 +85,17 @@ impl PortForward {
             .clone()
             .unwrap_or_else(|| "127.0.0.1".to_string());
 
+        if let Err(e) = crate::network_utils::ensure_loopback_address(&local_addr).await {
+            error!(
+                "Failed to configure loopback address {}: {:?}",
+                local_addr, e
+            );
+            return Err(anyhow::anyhow!(
+                "Failed to configure loopback address: {}",
+                e
+            ));
+        }
+
         let addr = format!("{}:{}", local_addr, self.local_port())
             .parse::<SocketAddr>()
             .expect("Invalid local address");
@@ -192,6 +203,18 @@ impl PortForward {
             .local_address
             .clone()
             .unwrap_or_else(|| "127.0.0.1".to_string());
+
+        if let Err(e) = crate::network_utils::ensure_loopback_address(&local_addr).await {
+            error!(
+                "Failed to configure loopback address {}: {:?}",
+                local_addr, e
+            );
+            return Err(anyhow::anyhow!(
+                "Failed to configure loopback address: {}",
+                e
+            ));
+        }
+
         let local_port = self.local_port();
 
         UdpForwarder::bind_and_forward(local_addr, local_port, upstream_conn).await
