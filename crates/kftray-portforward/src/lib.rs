@@ -1,3 +1,4 @@
+pub mod hostsfile;
 pub mod kube;
 pub mod network_utils;
 pub mod port_forward;
