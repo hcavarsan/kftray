@@ -1,6 +1,5 @@
 use std::sync::Arc;
 
-use hostsfile::HostsBuilder;
 use kftray_commons::{
     models::{
         config_model::Config,
@@ -18,6 +17,10 @@ use log::{
 };
 
 use crate::{
+    hostsfile::{
+        add_host_entry,
+        HostEntry,
+    },
     kube::models::{
         Port,
         PortForward,
@@ -110,23 +113,19 @@ pub async fn start_port_forward(
                         child_handles.push(handle_key.clone());
 
                         if config.domain_enabled.unwrap_or_default() {
-                            let hostfile_comment = format!(
-                                "kftray custom host for {} - {}",
-                                config.service.clone().unwrap_or_default(),
-                                config.id.unwrap_or_default()
-                            );
-
-                            let mut hosts_builder = HostsBuilder::new(hostfile_comment);
-
                             if let Some(service_name) = &config.service {
                                 if let Some(local_address) = &config.local_address {
                                     match local_address.parse::<std::net::IpAddr>() {
                                         Ok(ip_addr) => {
-                                            hosts_builder.add_hostname(
-                                                ip_addr,
-                                                config.alias.clone().unwrap_or_default(),
-                                            );
-                                            if let Err(e) = hosts_builder.write() {
+                                            let entry_id =
+                                                format!("{}", config.id.unwrap_or_default());
+
+                                            let host_entry = HostEntry {
+                                                ip: ip_addr,
+                                                hostname: config.alias.clone().unwrap_or_default(),
+                                            };
+
+                                            if let Err(e) = add_host_entry(entry_id, host_entry) {
                                                 let error_message = format!(
                                                     "Failed to write to the hostfile for {}: {}",
                                                     service_name, e

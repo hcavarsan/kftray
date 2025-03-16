@@ -4,7 +4,6 @@ use futures::stream::{
     FuturesUnordered,
     StreamExt,
 };
-use hostsfile::HostsBuilder;
 use k8s_openapi::api::core::v1::Pod;
 use kftray_commons::config_model::Config;
 use kftray_commons::config_state::get_configs_state;
@@ -30,6 +29,10 @@ use log::{
 use tokio::task::JoinHandle;
 
 use crate::create_client_with_specific_context;
+use crate::hostsfile::{
+    remove_all_host_entries,
+    remove_host_entry,
+};
 use crate::port_forward::{
     CANCEL_NOTIFIER,
     CHILD_PROCESSES,
@@ -109,24 +112,11 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
 
                 if let Some(config) = config_option {
                     if config.domain_enabled.unwrap_or_default() {
-                        let hostfile_comment =
-                            format!("kftray custom host for {} - {}", service_id, config_id_str);
-                        let hosts_builder = HostsBuilder::new(&hostfile_comment);
-
-                        if let Err(e) = hosts_builder.write() {
-                            error!("Failed to write to the hostfile for {}: {}", service_id, e);
-                            return CustomResponse {
-                                id: Some(config_id_parsed),
-                                service: service_id.clone(),
-                                namespace: empty_str_clone.clone(),
-                                local_port: 0,
-                                remote_port: 0,
-                                context: empty_str_clone.clone(),
-                                protocol: empty_str_clone.clone(),
-                                stdout: empty_str_clone.clone(),
-                                stderr: e.to_string(),
-                                status: 1,
-                            };
+                        if let Err(e) = remove_host_entry(config_id_str) {
+                            error!(
+                                "Failed to remove host entry for ID {}: {}",
+                                config_id_str, e
+                            );
                         }
                     }
                 } else {
@@ -264,6 +254,10 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
 
     update_config_tasks.collect::<Vec<_>>().await;
 
+    if let Err(e) = remove_all_host_entries() {
+        error!("Failed to clean up all host entries: {}", e);
+    }
+
     info!(
         "Port forward stopping process completed with {} responses",
         responses.len()
@@ -303,17 +297,10 @@ pub async fn stop_port_forward(config_id: String) -> Result<CustomResponse, Stri
             Ok(configs) => {
                 if let Some(config) = configs.iter().find(|c| c.id == Some(config_id_parsed)) {
                     if config.domain_enabled.unwrap_or_default() {
-                        let hostfile_comment = format!(
-                            "kftray custom host for {} - {}",
-                            service_name, config_id_str
-                        );
-
-                        let hosts_builder = HostsBuilder::new(hostfile_comment);
-
-                        if let Err(e) = hosts_builder.write() {
+                        if let Err(e) = remove_host_entry(config_id_str) {
                             error!(
-                                "Failed to remove from the hostfile for {}: {}",
-                                service_name, e
+                                "Failed to remove host entry for ID {}: {}",
+                                config_id_str, e
                             );
 
                             let config_state = ConfigState {
