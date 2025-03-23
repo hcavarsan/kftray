@@ -74,7 +74,7 @@
     },
     "systemTray": {
       "iconAsTemplate": true,
-      "iconPath": "icons/trayico.png",
+      "iconPath": "icons/tray.ico",
       "menuOnLeftClick": false
     },
     "updater": {
