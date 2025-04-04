@@ -37,7 +37,7 @@ kftray-http-logs = { path = "../kftray-http-logs" }
 tower = { version = "0.5.2", features = ["util"] }
 hyper-util = "0.1.10"
 dirs = "6.0.0"
-openssl = { version = "0.10.71", features = ["vendored"] }
+openssl = { version = "0.10.72", features = ["vendored"] }
 openssl-sys = { version = "0.9.104", features = ["vendored"] }
 hyper = "1.4.1"
 base64 = "0.22.1"
