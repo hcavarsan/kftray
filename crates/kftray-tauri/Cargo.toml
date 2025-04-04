@@ -62,7 +62,7 @@ kftray-portforward = { path = "../kftray-portforward" }
 kftray-commons = { path = "../kftray-commons" }
 kftray-http-logs = { path = "../kftray-http-logs" }
 netstat2 = { git = "https://github.com/hcavarsan/netstat2-rs" }
-sysinfo = "0.33.1"
+sysinfo = "0.34.0"
 secrecy = "0.10.3"
 git2 = { version = "0.20.0", features = ["ssh"] }
 url = "2.5.3"

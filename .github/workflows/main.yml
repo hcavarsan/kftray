@@ -356,7 +356,7 @@ jobs:
 
       - name: Sign and notarize the release build
         if: matrix.os == 'macos-latest'
-        uses: toitlang/action-macos-sign-notarize@v1.2.0
+        uses: toitlang/action-macos-sign-notarize@v1.2.1
         with:
           certificate: ${{ secrets.APPLE_CERTIFICATE }}
           certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
