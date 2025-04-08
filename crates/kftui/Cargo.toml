@@ -23,7 +23,7 @@ tauri = { version = "1.8", default-features = false, features = [
 	"icon-png",
 	"devtools",
 ] }
-tokio = { version = "1.43.0", features = ["rt-multi-thread", "macros", "full"] }
+tokio = { version = "1.44.2", features = ["rt-multi-thread", "macros", "full"] }
 sqlx = { version = "0.8.3", features = ["sqlite", "runtime-tokio-native-tls"] }
 dirs = "6.0.0"
 base64 = "0.22.1"
