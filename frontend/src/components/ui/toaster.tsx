@@ -13,6 +13,11 @@ import {
   Toaster as ChakraToaster,
 } from '@chakra-ui/react'
 
+interface StatusChangeDetails {
+  status: 'visible' | 'dismissing' | 'unmounted'
+  src?: string
+}
+
 interface ToastOptions {
   title?: string
   description?: string
@@ -21,21 +26,38 @@ interface ToastOptions {
     label: string
     onClick: () => void
   }
-  onStatusChange?: (details: { status: string }) => void
+  onStatusChange?: (details: StatusChangeDetails) => void
 }
 
-type ToastFunction = (options: ToastOptions) => string | undefined
+interface Options<T = any> {
+  title?: T
+  description?: T
+  duration?: number
+  removeDelay?: number
+  id?: string
+  type?: 'success' | 'error' | 'loading' | 'info' | (string & {})
+  onStatusChange?: (details: StatusChangeDetails) => void
+  action?: {
+    label: string
+    onClick: () => void
+  }
+  closable?: boolean
+  meta?: Record<string, any>
+}
+
+type ChakraToastFunction = (data: Options<any>) => string
+type CustomToastFunction = (options: ToastOptions) => string
 
 const createToastWrapper = (
   originalToaster: ReturnType<typeof createToaster>,
 ) => {
   const wrapToastFunction =
-    (fn: ToastFunction): ToastFunction =>
+    (fn: ChakraToastFunction): CustomToastFunction =>
       (options: ToastOptions) => {
         const id = fn({
           ...options,
           duration: options.duration ?? 1000,
-          onStatusChange: (details: { status: string }) => {
+          onStatusChange: (details: StatusChangeDetails) => {
             options.onStatusChange?.(details)
           },
         })
@@ -45,9 +67,15 @@ const createToastWrapper = (
 
   return {
     ...originalToaster,
-    success: wrapToastFunction(originalToaster.success),
-    error: wrapToastFunction(originalToaster.error),
-    loading: wrapToastFunction(originalToaster.loading),
+    success: wrapToastFunction(
+      originalToaster.success as unknown as ChakraToastFunction,
+    ),
+    error: wrapToastFunction(
+      originalToaster.error as unknown as ChakraToastFunction,
+    ),
+    loading: wrapToastFunction(
+      originalToaster.loading as unknown as ChakraToastFunction,
+    ),
     create: wrapToastFunction(originalToaster.create),
   }
 }
