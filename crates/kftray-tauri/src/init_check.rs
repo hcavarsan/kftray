@@ -27,7 +27,6 @@ use sysinfo::{
     Pid,
     System,
 };
-use tokio;
 
 async fn fetch_configs_in_parallel(
     running_configs: Vec<ConfigState>,

@@ -16,6 +16,7 @@ use log::{
 mod commands;
 mod init_check;
 mod logging;
+mod network_monitor;
 mod tray;
 mod window;
 
@@ -32,6 +33,7 @@ use tauri::{
 use tokio::runtime::Runtime;
 
 use crate::commands::portforward::check_and_emit_changes;
+use crate::network_monitor::start_network_monitor;
 use crate::tray::{
     create_tray_menu,
     handle_run_event,
@@ -106,6 +108,10 @@ fn main() {
             let app_handle_clone = app_handle.clone();
             tauri::async_runtime::spawn(async move {
                 check_and_emit_changes(app_handle_clone).await;
+            });
+
+            tauri::async_runtime::spawn(async move {
+                start_network_monitor().await;
             });
 
             #[cfg(target_os = "macos")]
