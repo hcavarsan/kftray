@@ -39,7 +39,12 @@ pub async fn ensure_loopback_address(addr: &str) -> Result<()> {
 
     #[cfg(target_os = "macos")]
     {
-        configure_loopback_macos(addr)?;
+        // Try without admin privileges first
+        let result = execute_command("ifconfig", &["lo0", "alias", addr, "up"]);
+        if result.is_err() {
+            debug!("Failed to configure loopback without admin privileges, trying with privileges");
+            configure_loopback_macos(addr)?;
+        }
     }
 
     #[cfg(target_os = "linux")]
@@ -63,6 +68,47 @@ pub async fn ensure_loopback_address(addr: &str) -> Result<()> {
     Ok(())
 }
 
+pub async fn remove_loopback_address(addr: &str) -> Result<()> {
+    if !is_loopback_address(addr) {
+        return Ok(());
+    }
+
+    if addr == "127.0.0.1" {
+        return Ok(());
+    }
+
+    debug!("Removing loopback address {}", addr);
+
+    #[cfg(target_os = "macos")]
+    {
+        let result = execute_command("ifconfig", &["lo0", "-alias", addr]);
+        if result.is_err() {
+            debug!("Failed to remove loopback without admin privileges, trying with privileges");
+            remove_loopback_macos(addr)?;
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        remove_loopback_linux(addr)?;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        Ok(())
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows",)))]
+    {
+        return Err(anyhow!(
+            "Loopback address removal not supported on this platform"
+        ));
+    }
+
+    debug!("Successfully removed loopback address: {}", addr);
+    Ok(())
+}
+
 async fn is_address_accessible(addr: &str) -> bool {
     let socket_addr = format!("{}:0", addr);
     tokio::net::TcpListener::bind(socket_addr).await.is_ok()
@@ -76,6 +122,20 @@ fn configure_loopback_macos(addr: &str) -> Result<()> {
         info!("Admin privileges required to configure loopback address");
         let script = format!(
             r#"do shell script "ifconfig lo0 alias {} up" with administrator privileges"#,
+            addr
+        );
+        execute_command("osascript", &["-e", &script])
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn remove_loopback_macos(addr: &str) -> Result<()> {
+    if std::env::var("SUDO_USER").is_ok() {
+        execute_command("ifconfig", &["lo0", "-alias", addr])
+    } else {
+        info!("Admin privileges required to remove loopback address");
+        let script = format!(
+            r#"do shell script "ifconfig lo0 -alias {}" with administrator privileges"#,
             addr
         );
         execute_command("osascript", &["-e", &script])
@@ -96,24 +156,80 @@ fn configure_loopback_linux(addr: &str) -> Result<()> {
             Ok(())
         })
     } else {
-        execute_command("pkexec", &["ip", "addr", "add", addr, "dev", "lo"])
-            .or_else(|_| execute_command("sudo", &["ip", "addr", "add", addr, "dev", "lo"]))?;
+        // Try without admin privileges first
+        let result = execute_command("ip", &["addr", "add", addr, "dev", "lo"]);
+        if result.is_err() {
+            debug!("Failed to configure loopback without admin privileges, trying with privileges");
+            execute_command("pkexec", &["ip", "addr", "add", addr, "dev", "lo"])
+                .or_else(|_| execute_command("sudo", &["ip", "addr", "add", addr, "dev", "lo"]))?;
+        }
 
-        execute_command(
-            "pkexec",
-            &["ip", "route", "add", &format!("{}/32", addr), "dev", "lo"],
-        )
-        .or_else(|_| {
+        let route_result = execute_command(
+            "ip",
+            &["route", "add", &format!("{}/32", addr), "dev", "lo"],
+        );
+        if route_result.is_err() {
             execute_command(
-                "sudo",
+                "pkexec",
                 &["ip", "route", "add", &format!("{}/32", addr), "dev", "lo"],
             )
-        })
-        .or_else(|e| {
-            debug!("Route might already exist: {}", e);
-            Ok(())
-        })
+            .or_else(|_| {
+                execute_command(
+                    "sudo",
+                    &["ip", "route", "add", &format!("{}/32", addr), "dev", "lo"],
+                )
+            })
+            .or_else(|e| {
+                debug!("Route might already exist: {}", e);
+                Ok(())
+            })?;
+        }
     }
+
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn remove_loopback_linux(addr: &str) -> Result<()> {
+    if unsafe { libc::geteuid() } == 0 {
+        execute_command("ip", &["route", "del", &format!("{}/32", addr), "dev", "lo"])
+            .or_else(|e| {
+                debug!("Route might not exist: {}", e);
+                Ok(())
+            })?;
+
+        execute_command("ip", &["addr", "del", addr, "dev", "lo"])
+    } else {
+        // Try without admin privileges first
+        let route_result = execute_command(
+            "ip",
+            &["route", "del", &format!("{}/32", addr), "dev", "lo"],
+        );
+        if route_result.is_err() {
+            execute_command(
+                "pkexec",
+                &["ip", "route", "del", &format!("{}/32", addr), "dev", "lo"],
+            )
+            .or_else(|_| {
+                execute_command(
+                    "sudo",
+                    &["ip", "route", "del", &format!("{}/32", addr), "dev", "lo"],
+                )
+            })
+            .or_else(|e| {
+                debug!("Route might not exist: {}", e);
+                Ok(())
+            })?;
+        }
+
+        let addr_result = execute_command("ip", &["addr", "del", addr, "dev", "lo"]);
+        if addr_result.is_err() {
+            execute_command("pkexec", &["ip", "addr", "del", addr, "dev", "lo"])
+                .or_else(|_| execute_command("sudo", &["ip", "addr", "del", addr, "dev", "lo"]))?;
+        }
+    }
+
+    Ok(())
 }
 
 #[cfg(target_os = "windows")]
