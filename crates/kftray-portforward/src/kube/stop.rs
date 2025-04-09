@@ -262,7 +262,9 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
     let loopback_cleanup_tasks: FuturesUnordered<_> = configs
         .iter()
         .filter_map(|config| config.local_address.as_ref())
-        .filter(|local_addr| crate::network_utils::is_loopback_address(local_addr) && *local_addr != "127.0.0.1")
+        .filter(|local_addr| {
+            crate::network_utils::is_loopback_address(local_addr) && *local_addr != "127.0.0.1"
+        })
         .map(|local_addr| {
             let local_addr = local_addr.clone();
             async move {
@@ -273,7 +275,7 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
             }
         })
         .collect();
-    
+
     loopback_cleanup_tasks.collect::<Vec<_>>().await;
 
     info!(
@@ -332,13 +334,19 @@ pub async fn stop_port_forward(config_id: String) -> Result<CustomResponse, Stri
                             return Err(e.to_string());
                         }
                     }
-                    
+
                     // Clean up loopback addresses if needed
                     if let Some(local_addr) = &config.local_address {
-                        if crate::network_utils::is_loopback_address(local_addr) && local_addr != "127.0.0.1" {
+                        if crate::network_utils::is_loopback_address(local_addr)
+                            && local_addr != "127.0.0.1"
+                        {
                             match crate::network_utils::remove_loopback_address(local_addr).await {
-                                Ok(_) => debug!("Successfully removed loopback address: {}", local_addr),
-                                Err(e) => warn!("Failed to remove loopback address {}: {}", local_addr, e),
+                                Ok(_) => {
+                                    debug!("Successfully removed loopback address: {}", local_addr)
+                                }
+                                Err(e) => {
+                                    warn!("Failed to remove loopback address {}: {}", local_addr, e)
+                                }
                             }
                         }
                     }

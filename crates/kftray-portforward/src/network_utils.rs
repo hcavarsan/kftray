@@ -192,11 +192,14 @@ fn configure_loopback_linux(addr: &str) -> Result<()> {
 #[cfg(target_os = "linux")]
 fn remove_loopback_linux(addr: &str) -> Result<()> {
     if unsafe { libc::geteuid() } == 0 {
-        execute_command("ip", &["route", "del", &format!("{}/32", addr), "dev", "lo"])
-            .or_else(|e| {
-                debug!("Route might not exist: {}", e);
-                Ok(())
-            })?;
+        execute_command(
+            "ip",
+            &["route", "del", &format!("{}/32", addr), "dev", "lo"],
+        )
+        .or_else(|e| {
+            debug!("Route might not exist: {}", e);
+            Ok(())
+        })?;
 
         execute_command("ip", &["addr", "del", addr, "dev", "lo"])
     } else {
