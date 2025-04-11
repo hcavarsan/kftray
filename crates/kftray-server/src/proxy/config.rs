@@ -82,3 +82,103 @@ pub enum ProxyType {
     /// UDP proxy mode
     Udp,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_config_builder_valid() {
+        let config = ProxyConfig::builder()
+            .target_host("localhost".to_string())
+            .target_port(8080)
+            .proxy_port(9090)
+            .proxy_type(ProxyType::Tcp)
+            .build()
+            .unwrap();
+
+        assert_eq!(config.target_host, "localhost");
+        assert_eq!(config.target_port, 8080);
+        assert_eq!(config.proxy_port, 9090);
+        assert!(matches!(config.proxy_type, ProxyType::Tcp));
+    }
+
+    #[test]
+    fn test_config_builder_missing_fields() {
+        let result = ProxyConfig::builder().build();
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "target_host is required");
+
+        let result = ProxyConfig::builder()
+            .target_host("localhost".to_string())
+            .build();
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "target_port is required");
+
+        let result = ProxyConfig::builder()
+            .target_host("localhost".to_string())
+            .target_port(8080)
+            .build();
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "proxy_port is required");
+
+        let result = ProxyConfig::builder()
+            .target_host("localhost".to_string())
+            .target_port(8080)
+            .proxy_port(9090)
+            .build();
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "proxy_type is required");
+    }
+
+    #[test]
+    fn test_config_builder_udp() {
+        let config = ProxyConfig::builder()
+            .target_host("localhost".to_string())
+            .target_port(8080)
+            .proxy_port(9090)
+            .proxy_type(ProxyType::Udp)
+            .build()
+            .unwrap();
+
+        assert_eq!(config.target_host, "localhost");
+        assert_eq!(config.target_port, 8080);
+        assert_eq!(config.proxy_port, 9090);
+        assert!(matches!(config.proxy_type, ProxyType::Udp));
+    }
+
+    #[test]
+    fn test_config_builder_chaining() {
+        let builder = ProxyConfig::builder()
+            .target_host("first".to_string())
+            .target_host("second".to_string())
+            .target_port(1234)
+            .target_port(5678);
+
+        let config = builder
+            .proxy_port(9090)
+            .proxy_type(ProxyType::Tcp)
+            .build()
+            .unwrap();
+
+        assert_eq!(config.target_host, "second");
+        assert_eq!(config.target_port, 5678);
+    }
+
+    #[test]
+    fn test_config_clone() {
+        let config = ProxyConfig::builder()
+            .target_host("localhost".to_string())
+            .target_port(8080)
+            .proxy_port(9090)
+            .proxy_type(ProxyType::Tcp)
+            .build()
+            .unwrap();
+
+        let cloned = config.clone();
+        assert_eq!(config.target_host, cloned.target_host);
+        assert_eq!(config.target_port, cloned.target_port);
+        assert_eq!(config.proxy_port, cloned.proxy_port);
+        assert!(matches!(cloned.proxy_type, ProxyType::Tcp));
+    }
+}

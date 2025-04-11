@@ -131,3 +131,15 @@ async fn handle_reconnect() {
 
     info!("Network reconnection handling completed");
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_check_network_connectivity() {
+        // This is a basic connectivity test - will pass or fail based on actual network
+        let _result = check_network().await;
+        // Not asserting result as it depends on actual network connectivity
+    }
+}

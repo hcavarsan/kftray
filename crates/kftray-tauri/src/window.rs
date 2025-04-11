@@ -222,3 +222,26 @@ pub fn adjust_window_size_and_position(
 
     reset_plugin_moving_state_after_delay(&app_state);
 }
+
+#[cfg(test)]
+mod tests {
+    use tempfile::TempDir;
+
+    use super::*;
+
+    #[test]
+    fn test_handle_corrupted_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let test_file = temp_dir.path().join("corrupted.json");
+
+        // Create the file
+        fs::write(&test_file, "corrupted data").unwrap();
+        assert!(test_file.exists());
+
+        // Handle corrupted file
+        handle_corrupted_file(&test_file, "Test error");
+
+        // File should be deleted
+        assert!(!test_file.exists());
+    }
+}

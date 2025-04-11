@@ -266,3 +266,61 @@ fn render_json_template(template: &str, values: &HashMap<&str, String>) -> Strin
 
     rendered_template
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use super::*;
+
+    #[test]
+    fn test_render_json_template() {
+        let template = r#"{
+            "name": "{hashed_name}",
+            "config_id": "{config_id}",
+            "service": "{service_name}",
+            "port": {remote_port}
+        }"#;
+
+        let mut values = HashMap::new();
+        values.insert("hashed_name", "test-pod".to_string());
+        values.insert("config_id", "123".to_string());
+        values.insert("service_name", "test-service".to_string());
+        values.insert("remote_port", "8080".to_string());
+
+        let rendered = render_json_template(template, &values);
+
+        assert!(rendered.contains("\"name\": \"test-pod\""));
+        assert!(rendered.contains("\"config_id\": \"123\""));
+        assert!(rendered.contains("\"service\": \"test-service\""));
+        assert!(rendered.contains("\"port\": 8080"));
+    }
+
+    #[test]
+    fn test_render_json_template_with_missing_values() {
+        let template = r#"{
+            "name": "{hashed_name}",
+            "config_id": "{config_id}",
+            "missing": "{missing_value}"
+        }"#;
+
+        let mut values = HashMap::new();
+        values.insert("hashed_name", "test-pod".to_string());
+        values.insert("config_id", "123".to_string());
+
+        let rendered = render_json_template(template, &values);
+
+        assert!(rendered.contains("\"name\": \"test-pod\""));
+        assert!(rendered.contains("\"config_id\": \"123\""));
+        assert!(rendered.contains("\"missing\": \"{missing_value}\""));
+    }
+
+    #[test]
+    fn test_render_json_template_with_empty_values() {
+        let template = r#"{"name": "{hashed_name}"}"#;
+        let values = HashMap::new();
+
+        let rendered = render_json_template(template, &values);
+        assert_eq!(rendered, r#"{"name": "{hashed_name}"}"#);
+    }
+}

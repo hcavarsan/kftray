@@ -2,6 +2,7 @@ import path from 'node:path'
 import { defineConfig, type Plugin, type UserConfig } from 'vite'
 import tsconfigPaths from 'vite-tsconfig-paths'
 
+import { codecovVitePlugin } from '@codecov/vite-plugin'
 import terser from '@rollup/plugin-terser'
 import react from '@vitejs/plugin-react-swc'
 
@@ -37,7 +38,12 @@ export default defineConfig({
   plugins: [
     asPlugin(react()),
     asPlugin(tsconfigPaths()),
-    ...(!process.env.TAURI_DEBUG ? [asPlugin(terser(terserConfig))] : [])
+    ...(!process.env.TAURI_DEBUG ? [asPlugin(terser(terserConfig))] : []),
+    codecovVitePlugin({
+      enableBundleAnalysis: process.env.CODECOV_TOKEN !== undefined,
+      bundleName: 'kftray',
+      uploadToken: process.env.CODECOV_TOKEN,
+    })
   ],
 
   clearScreen: false,

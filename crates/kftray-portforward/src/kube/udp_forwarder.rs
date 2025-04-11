@@ -130,3 +130,94 @@ impl UdpForwarder {
         Ok(Some(packet))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use tokio::io::duplex;
+    use tokio::net::UdpSocket;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn test_read_tcp_length_and_packet() {
+        let (mut reader, mut writer) = duplex(1024);
+
+        let packet = b"hello world";
+        let len = packet.len() as u32;
+        let len_bytes = len.to_be_bytes();
+
+        writer.write_all(&len_bytes).await.unwrap();
+        writer.write_all(packet).await.unwrap();
+        writer.flush().await.unwrap();
+
+        let result = UdpForwarder::read_tcp_length_and_packet(&mut reader).await;
+        assert!(result.is_ok());
+
+        let data = result.unwrap();
+        assert!(data.is_some());
+        assert_eq!(data.unwrap(), packet);
+    }
+
+    #[tokio::test]
+    async fn test_read_tcp_length_and_packet_empty() {
+        let (mut reader, _) = duplex(0);
+
+        let result = UdpForwarder::read_tcp_length_and_packet(&mut reader).await;
+        assert!(result.is_ok());
+
+        let data = result.unwrap();
+        assert!(data.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_bind_and_forward_basic() {
+        let (_, server_stream) = duplex(1024);
+
+        let result =
+            UdpForwarder::bind_and_forward("127.0.0.1".to_string(), 0, server_stream).await;
+
+        assert!(result.is_ok());
+
+        let (port, handle) = result.unwrap();
+        assert!(port > 0);
+
+        let client_socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        client_socket
+            .connect(format!("127.0.0.1:{}", port))
+            .await
+            .unwrap();
+
+        client_socket.send(b"hello").await.unwrap();
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        handle.abort();
+    }
+
+    #[tokio::test]
+    async fn test_read_tcp_length_and_packet_partial() {
+        let (mut reader, mut writer) = duplex(1024);
+
+        let packet = b"hello world";
+        let len = packet.len() as u32;
+        let len_bytes = len.to_be_bytes();
+
+        writer.write_all(&len_bytes).await.unwrap();
+        writer.write_all(&packet[0..5]).await.unwrap();
+        writer.flush().await.unwrap();
+
+        let read_task =
+            tokio::spawn(
+                async move { UdpForwarder::read_tcp_length_and_packet(&mut reader).await },
+            );
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        drop(writer);
+
+        let result = tokio::time::timeout(Duration::from_secs(1), read_task).await;
+        assert!(result.is_ok(), "Test timed out");
+    }
+}

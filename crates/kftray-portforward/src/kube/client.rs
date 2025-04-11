@@ -502,3 +502,137 @@ fn resolve_named_port(spec: &ServiceSpec, name: &str) -> Option<i32> {
         }
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use super::*;
+
+    #[test]
+    fn test_get_kubeconfig_paths_from_option() {
+        let custom_path =
+            get_kubeconfig_paths_from_option(Some("/path1:/path2".to_string())).unwrap();
+        assert_eq!(custom_path.len(), 2);
+        assert_eq!(custom_path[0], Path::new("/path1"));
+        assert_eq!(custom_path[1], Path::new("/path2"));
+    }
+
+    #[test]
+    fn test_merge_kubeconfigs_empty() {
+        let (_config, contexts, errors) = merge_kubeconfigs(&[]).unwrap();
+        assert!(contexts.is_empty());
+        assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn test_list_contexts() {
+        let kubeconfig = Kubeconfig {
+            contexts: vec![
+                kube::config::NamedContext {
+                    name: "context1".to_string(),
+                    context: Some(kube::config::Context::default()),
+                },
+                kube::config::NamedContext {
+                    name: "context2".to_string(),
+                    context: Some(kube::config::Context::default()),
+                },
+            ],
+            ..Default::default()
+        };
+
+        let contexts = list_contexts(&kubeconfig);
+        assert_eq!(contexts.len(), 2);
+        assert_eq!(contexts[0], "context1");
+        assert_eq!(contexts[1], "context2");
+    }
+
+    #[test]
+    fn test_is_pkcs8_key() {
+        assert!(is_pkcs8_key(
+            b"-----BEGIN PRIVATE KEY-----\ndata\n-----END PRIVATE KEY-----"
+        ));
+        assert!(!is_pkcs8_key(
+            b"-----BEGIN RSA PRIVATE KEY-----\ndata\n-----END RSA PRIVATE KEY-----"
+        ));
+        assert!(!is_pkcs8_key(b"random data"));
+    }
+
+    #[test]
+    fn test_extract_ports_from_service() {
+        let mut service = k8s_openapi::api::core::v1::Service::default();
+
+        let spec = k8s_openapi::api::core::v1::ServiceSpec {
+            ports: Some(vec![
+                k8s_openapi::api::core::v1::ServicePort {
+                    name: Some("http".to_string()),
+                    port: 80,
+                    target_port: Some(IntOrString::Int(8080)),
+                    ..Default::default()
+                },
+                k8s_openapi::api::core::v1::ServicePort {
+                    name: Some("https".to_string()),
+                    port: 443,
+                    target_port: Some(IntOrString::Int(8443)),
+                    ..Default::default()
+                },
+                k8s_openapi::api::core::v1::ServicePort {
+                    name: Some("named-port".to_string()),
+                    port: 9000,
+                    target_port: Some(IntOrString::String("web".to_string())),
+                    ..Default::default()
+                },
+                k8s_openapi::api::core::v1::ServicePort {
+                    name: None,
+                    port: 9090,
+                    target_port: Some(IntOrString::Int(9090)),
+                    ..Default::default()
+                },
+            ]),
+            ..Default::default()
+        };
+
+        service.spec = Some(spec.clone());
+
+        let ports = extract_ports_from_service(&service);
+
+        assert_eq!(ports.len(), 4);
+        assert_eq!(ports.get("http"), Some(&8080));
+        assert_eq!(ports.get("https"), Some(&8443));
+        assert_eq!(ports.get("named-port"), Some(&0));
+        assert_eq!(ports.get("9090"), Some(&9090));
+
+        service.spec = None;
+        let ports = extract_ports_from_service(&service);
+        assert!(ports.is_empty());
+    }
+
+    #[test]
+    fn test_resolve_named_port() {
+        let spec = k8s_openapi::api::core::v1::ServiceSpec {
+            ports: Some(vec![
+                k8s_openapi::api::core::v1::ServicePort {
+                    name: Some("http".to_string()),
+                    port: 80,
+                    ..Default::default()
+                },
+                k8s_openapi::api::core::v1::ServicePort {
+                    name: Some("https".to_string()),
+                    port: 443,
+                    ..Default::default()
+                },
+            ]),
+            ..Default::default()
+        };
+
+        assert_eq!(resolve_named_port(&spec, "http"), Some(80));
+        assert_eq!(resolve_named_port(&spec, "https"), Some(443));
+        assert_eq!(resolve_named_port(&spec, "nonexistent"), None);
+
+        let empty_spec = k8s_openapi::api::core::v1::ServiceSpec {
+            ports: None,
+            ..Default::default()
+        };
+        assert_eq!(resolve_named_port(&empty_spec, "http"), None);
+    }
+}

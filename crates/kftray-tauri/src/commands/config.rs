@@ -69,3 +69,25 @@ pub async fn import_configs_cmd(json: String) -> Result<(), String> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_get_configs_cmd_format() {
+        let _ = get_configs_cmd().await;
+    }
+
+    #[tokio::test]
+    async fn test_get_config_cmd_format() {
+        let id = 123;
+        let _ = get_config_cmd(id).await;
+    }
+
+    #[tokio::test]
+    async fn test_delete_config_cmd_format() {
+        let id = 123;
+        let _ = delete_config_cmd(id).await;
+    }
+}

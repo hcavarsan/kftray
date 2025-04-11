@@ -33,6 +33,7 @@ use tauri::{
 use tokio::runtime::Runtime;
 
 use crate::commands::portforward::check_and_emit_changes;
+use crate::init_check::RealPortOperations;
 use crate::network_monitor::start_network_monitor;
 use crate::tray::{
     create_tray_menu,
@@ -89,8 +90,8 @@ fn main() {
                     error!("Failed to initialize database: {}", e);
                 }
 
-                if let Err(e) = kftray_commons::utils::migration::migrate_configs().await {
-                    error!("Failed to migrate configs: {}", e);
+                if let Err(e) = kftray_commons::utils::migration::migrate_configs(None).await {
+                    error!("Database migration failed during setup: {}", e);
                 }
             });
 
@@ -98,9 +99,12 @@ fn main() {
                 alert_multiple_configs(app_handle_clone).await;
             });
 
+            let port_ops = Arc::new(RealPortOperations);
+            let port_ops_clone = Arc::clone(&port_ops);
+
             tauri::async_runtime::spawn(async move {
                 info!("Starting port management checks");
-                if let Err(e) = init_check::check_and_manage_ports().await {
+                if let Err(e) = init_check::check_and_manage_ports(port_ops_clone).await {
                     error!("Error in port management: {}", e);
                 }
             });

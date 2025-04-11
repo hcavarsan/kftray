@@ -17,12 +17,14 @@
 		"lint:back": "cargo clippy --workspace --all-targets --all-features",
 		"lint:front": "pnpm --filter @kftray/ui run lint",
 		"test:server": "bash hacks/test_proxy.sh",
-		"precommit": "pnpm run format && pnpm run lint",
+		"test:back": "RUST_BACKTRACE=1 cargo llvm-cov nextest --profile ci --config-file .cargo/nextest.toml --locked --workspace --all-features --lib --bins --examples --tests --lcov --output-path lcov.info",
+		"precommit": "pnpm run format && pnpm run lint && pnpm run test:back",
 		"release:minor": "cargo run --bin bump_version minor && git add . && git commit -m 'chore: release new version'",
 		"release:patch": "cargo run --bin bump_version patch && git add . && git commit -m 'chore: release new version'",
 		"tauri": "tauri"
 	},
 	"devDependencies": {
+		"@codecov/vite-plugin": "^1.9.0",
 		"@tauri-apps/cli": "^1.6.3"
 	}
 }

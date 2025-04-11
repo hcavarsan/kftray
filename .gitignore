@@ -28,3 +28,7 @@ target*
 frontend/dist/*
 !frontend/dist/.gitkeep
 package-lock.json
+build_rs*
+lcov.info
+lcov*
+llvm-cov*

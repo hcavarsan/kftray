@@ -19,7 +19,7 @@ const BATCH_DELAY_MS: u64 = 100;
 
 const KFTRAY_HOSTS_TAG: &str = "kftray-hosts";
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct HostEntry {
     pub ip: IpAddr,
     pub hostname: String,
@@ -205,6 +205,115 @@ fn update_hosts_file() -> std::io::Result<()> {
         Err(e) => {
             error!("Failed to write to hosts file: {}", e);
             Err(std::io::Error::new(std::io::ErrorKind::Other, e))
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::Ipv4Addr;
+    use std::sync::Once;
+
+    use super::*;
+
+    static INIT: Once = Once::new();
+
+    fn init() {
+        INIT.call_once(|| {
+            let _ = env_logger::builder().is_test(true).try_init();
+        });
+    }
+
+    fn get_test_entry() -> HostEntry {
+        HostEntry {
+            ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2)),
+            hostname: "test.local".to_string(),
+        }
+    }
+
+    #[test]
+    fn test_add_and_remove_host_entry() {
+        init();
+        let _ = remove_all_host_entries();
+
+        let id = "test-id-1".to_string();
+        let entry = get_test_entry();
+
+        let result = add_host_entry(id.clone(), entry.clone());
+        assert!(result.is_ok());
+
+        {
+            let mut writer_running = WRITER_RUNNING.lock().unwrap();
+            assert!(*writer_running);
+
+            *writer_running = false;
+        }
+
+        {
+            let entries = HOST_ENTRIES.read().unwrap();
+            assert!(
+                entries.contains_key(&id),
+                "Entry should be in the map after add_host_entry"
+            );
+            assert_eq!(entries.get(&id), Some(&entry));
+        }
+
+        let result = remove_host_entry(&id);
+        assert!(result.is_ok());
+
+        {
+            let mut writer_running = WRITER_RUNNING.lock().unwrap();
+            *writer_running = false;
+        }
+
+        let entries = HOST_ENTRIES.read().unwrap();
+        assert!(
+            !entries.contains_key(&id),
+            "Entry should not be in the map after remove_host_entry"
+        );
+    }
+
+    #[test]
+    fn test_remove_all_host_entries() {
+        init();
+
+        let id1 = "test-id-1".to_string();
+        let id2 = "test-id-2".to_string();
+        let entry = get_test_entry();
+
+        {
+            let mut entries = HOST_ENTRIES.write().unwrap();
+            entries.insert(id1, entry.clone());
+            entries.insert(id2, entry.clone());
+        }
+
+        {
+            let mut entries = HOST_ENTRIES.write().unwrap();
+            entries.clear();
+        }
+
+        let entries = HOST_ENTRIES.read().unwrap();
+        assert!(entries.is_empty());
+    }
+
+    #[test]
+    fn test_writer_flags() {
+        init();
+
+        {
+            let mut writer_running = WRITER_RUNNING.lock().unwrap();
+            *writer_running = true;
+            assert!(*writer_running);
+            *writer_running = false;
+            assert!(!*writer_running);
+        }
+
+        {
+            let mut needs_update = NEEDS_UPDATE.lock().unwrap();
+            *needs_update = true;
+            assert!(*needs_update);
+            *needs_update = false;
+            assert!(!*needs_update);
         }
     }
 }

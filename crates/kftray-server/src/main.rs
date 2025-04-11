@@ -1,3 +1,5 @@
+#![allow(clippy::literal_string_with_formatting_args)]
+
 mod proxy;
 
 use std::env;
@@ -42,19 +44,26 @@ fn load_config() -> Result<ProxyConfig, ProxyError> {
             .ok_or_else(|| ProxyError::Configuration("No host found in URL".into()))?
             .to_string()
     } else {
-        let test_url = format!("http://{}", target_host);
-        if let Ok(url) = Url::parse(&test_url) {
-            if let Some(host) = url.host_str() {
-                host.to_string()
+        // Try parsing as IP address first
+        if let Ok(ip) = target_host.parse::<std::net::IpAddr>() {
+            ip.to_string()
+        } else {
+            // If not an IP, try as URL
+            let test_url = format!("http://{}", target_host);
+            if let Ok(url) = Url::parse(&test_url) {
+                if let Some(host) = url.host_str() {
+                    host.to_string()
+                } else {
+                    target_host.clone()
+                }
             } else {
                 target_host
             }
-        } else {
-            target_host
         }
     };
 
-    let socket_addr = format!("{}:0", resolved_host)
+    // Try to resolve the host to validate it
+    let _socket_addr = format!("{}:0", resolved_host)
         .to_socket_addrs()
         .map_err(|e| ProxyError::Configuration(format!("Failed to resolve hostname: {}", e)))?
         .next()
@@ -70,27 +79,36 @@ fn load_config() -> Result<ProxyConfig, ProxyError> {
         .parse()
         .map_err(|_| ProxyError::Configuration("Invalid LOCAL_PORT".into()))?;
 
-    let proxy_type = match env::var("PROXY_TYPE")
-        .map_err(|_| ProxyError::Configuration("PROXY_TYPE not set".into()))?
-        .to_lowercase()
-        .as_str()
-    {
+    let proxy_type_str = env::var("PROXY_TYPE")
+        .map_err(|_| ProxyError::Configuration("PROXY_TYPE not set".into()))?;
+
+    println!("Raw PROXY_TYPE value: '{}'", proxy_type_str);
+    let proxy_type_lower = proxy_type_str.to_lowercase();
+    println!("Lowercased PROXY_TYPE value: '{}'", proxy_type_lower);
+
+    let proxy_type = match proxy_type_lower.as_str() {
         "tcp" => ProxyType::Tcp,
         "udp" => ProxyType::Udp,
-        t => {
+        invalid_type => {
+            println!("Invalid proxy type encountered: '{}'", invalid_type);
             return Err(ProxyError::Configuration(format!(
                 "Invalid proxy type: {}",
-                t
-            )))
+                invalid_type
+            )));
         }
     };
 
-    Ok(ProxyConfig::builder()
-        .target_host(socket_addr.ip().to_string())
+    println!("Selected proxy type: {:?}", proxy_type);
+
+    let config = ProxyConfig::builder()
+        .target_host(resolved_host)
         .target_port(target_port)
         .proxy_port(proxy_port)
         .proxy_type(proxy_type)
-        .build()?)
+        .build()?;
+
+    println!("Final config proxy type: {:?}", config.proxy_type);
+    Ok(config)
 }
 
 /// Main entry point for the proxy server application
@@ -127,4 +145,179 @@ async fn main() -> Result<(), ProxyError> {
 
     info!("Server shutdown complete");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::env;
+    use std::net::IpAddr;
+    use std::sync::Mutex;
+
+    use lazy_static::lazy_static;
+
+    use super::*;
+
+    lazy_static! {
+        static ref ENV_TEST_MUTEX: Mutex<()> = Mutex::new(());
+    }
+
+    struct EnvVarGuard {
+        key: String,
+        original_value: Option<String>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &str, value: &str) -> Self {
+            let key = key.to_string();
+            let original_value = env::var(&key).ok();
+            env::set_var(&key, value);
+            EnvVarGuard {
+                key,
+                original_value,
+            }
+        }
+
+        fn remove(key: &str) -> Self {
+            let key = key.to_string();
+            let original_value = env::var(&key).ok();
+            env::remove_var(&key);
+            EnvVarGuard {
+                key,
+                original_value,
+            }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match &self.original_value {
+                Some(val) => env::set_var(&self.key, val),
+                None => env::remove_var(&self.key),
+            }
+        }
+    }
+
+    #[test]
+    fn test_load_config_valid_tcp() {
+        let _lock = ENV_TEST_MUTEX.lock().unwrap();
+        let _guard_addr = EnvVarGuard::set("REMOTE_ADDRESS", "127.0.0.1");
+        let _guard_rport = EnvVarGuard::set("REMOTE_PORT", "8080");
+        let _guard_lport = EnvVarGuard::set("LOCAL_PORT", "9090");
+        let _guard_type = EnvVarGuard::set("PROXY_TYPE", "tcp");
+        let _guard_home = EnvVarGuard::remove("HOME");
+        let _guard_xdg = EnvVarGuard::remove("XDG_CONFIG_HOME");
+
+        let result = load_config();
+        assert!(result.is_ok(), "load_config failed: {:?}", result.err());
+
+        let config = result.unwrap();
+        let ip = config.target_host.parse::<IpAddr>().unwrap();
+        assert!(ip.to_string() == "127.0.0.1" || config.target_host == "127.0.0.1");
+        assert_eq!(config.target_port, 8080);
+        assert_eq!(config.proxy_port, 9090);
+
+        match config.proxy_type {
+            ProxyType::Tcp => {}
+            ProxyType::Udp => panic!("Expected TCP proxy type, got UDP"),
+        }
+    }
+
+    #[test]
+    fn test_load_config_valid_udp() {
+        let _lock = ENV_TEST_MUTEX.lock().unwrap();
+        let _guard_addr = EnvVarGuard::set("REMOTE_ADDRESS", "127.0.0.1");
+        let _guard_rport = EnvVarGuard::set("REMOTE_PORT", "8080");
+        let _guard_lport = EnvVarGuard::set("LOCAL_PORT", "9090");
+        let _guard_type = EnvVarGuard::set("PROXY_TYPE", "udp");
+        let _guard_home = EnvVarGuard::remove("HOME");
+        let _guard_xdg = EnvVarGuard::remove("XDG_CONFIG_HOME");
+
+        let result = load_config();
+        assert!(result.is_ok(), "load_config failed: {:?}", result.err());
+
+        let config = result.unwrap();
+        assert_eq!(config.target_port, 8080);
+        assert_eq!(config.proxy_port, 9090);
+
+        match config.proxy_type {
+            ProxyType::Udp => {}
+            ProxyType::Tcp => panic!("Expected UDP proxy type, got TCP"),
+        }
+    }
+
+    #[test]
+    fn test_load_config_with_url() {
+        let _lock = ENV_TEST_MUTEX.lock().unwrap();
+        let _guard_addr = EnvVarGuard::set("REMOTE_ADDRESS", "http://example.com");
+        let _guard_rport = EnvVarGuard::set("REMOTE_PORT", "8080");
+        let _guard_lport = EnvVarGuard::set("LOCAL_PORT", "9090");
+        let _guard_type = EnvVarGuard::set("PROXY_TYPE", "tcp");
+        let _guard_home = EnvVarGuard::remove("HOME");
+        let _guard_xdg = EnvVarGuard::remove("XDG_CONFIG_HOME");
+
+        let result = load_config();
+        assert!(result.is_ok(), "load_config failed: {:?}", result.err());
+
+        let config = result.unwrap();
+        assert_eq!(config.target_port, 8080);
+        assert_eq!(config.proxy_port, 9090);
+
+        match config.proxy_type {
+            ProxyType::Tcp => {}
+            ProxyType::Udp => panic!("Expected TCP proxy type, got UDP"),
+        }
+    }
+
+    #[test]
+    fn test_load_config_missing_remote_address() {
+        let _lock = ENV_TEST_MUTEX.lock().unwrap();
+        let _guard_addr = EnvVarGuard::remove("REMOTE_ADDRESS");
+        let _guard_rport = EnvVarGuard::set("REMOTE_PORT", "8080");
+        let _guard_lport = EnvVarGuard::set("LOCAL_PORT", "9090");
+        let _guard_type = EnvVarGuard::set("PROXY_TYPE", "tcp");
+        let _guard_home = EnvVarGuard::remove("HOME");
+        let _guard_xdg = EnvVarGuard::remove("XDG_CONFIG_HOME");
+
+        assert!(load_config().is_err());
+    }
+
+    #[test]
+    fn test_load_config_invalid_proxy_type() {
+        let _lock = ENV_TEST_MUTEX.lock().unwrap();
+        let _guard_addr = EnvVarGuard::set("REMOTE_ADDRESS", "127.0.0.1");
+        let _guard_rport = EnvVarGuard::set("REMOTE_PORT", "8080");
+        let _guard_lport = EnvVarGuard::set("LOCAL_PORT", "9090");
+        let _guard_type = EnvVarGuard::set("PROXY_TYPE", "invalid");
+        let _guard_home = EnvVarGuard::remove("HOME");
+        let _guard_xdg = EnvVarGuard::remove("XDG_CONFIG_HOME");
+
+        let result = load_config();
+        assert!(result.is_err());
+
+        match result {
+            Err(ProxyError::Configuration(_)) => {}
+            _ => panic!("Expected ProxyError::Configuration"),
+        }
+    }
+
+    #[test]
+    fn test_load_config_invalid_ports() {
+        let _lock = ENV_TEST_MUTEX.lock().unwrap();
+        let _guard_addr = EnvVarGuard::set("REMOTE_ADDRESS", "127.0.0.1");
+        let _guard_lport = EnvVarGuard::set("LOCAL_PORT", "9090");
+        let _guard_type = EnvVarGuard::set("PROXY_TYPE", "tcp");
+        let _guard_home = EnvVarGuard::remove("HOME");
+        let _guard_xdg = EnvVarGuard::remove("XDG_CONFIG_HOME");
+
+        {
+            let _guard_rport = EnvVarGuard::set("REMOTE_PORT", "invalid");
+            assert!(load_config().is_err());
+        }
+
+        {
+            let _guard_rport = EnvVarGuard::set("REMOTE_PORT", "8080");
+            let _guard_lport_invalid = EnvVarGuard::set("LOCAL_PORT", "invalid");
+            assert!(load_config().is_err());
+        }
+    }
 }

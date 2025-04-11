@@ -1,0 +1,40 @@
+comment:
+  layout: "header, diff, flags, components"
+
+component_management:
+  default_rules:
+    statuses:
+      - type: project
+        target: auto
+        threshold: 5%
+
+  individual_components:
+    - component_id: kftray-commons
+      name: kftray-commons
+      paths:
+        - "crates/kftray-commons/**"
+
+    - component_id: kftray-http-logs
+      name: kftray-http-logs
+      paths:
+        - "crates/kftray-http-logs/**"
+
+    - component_id: kftray-portforward
+      name: kftray-portforward
+      paths:
+        - "crates/kftray-portforward/**"
+
+    - component_id: kftray-server
+      name: kftray-server
+      paths:
+        - "crates/kftray-server/**"
+
+    - component_id: kftray-tauri
+      name: kftray-tauri
+      paths:
+        - "crates/kftray-tauri/**"
+
+    - component_id: kftui
+      name: kftui
+      paths:
+        - "crates/kftui/**"
