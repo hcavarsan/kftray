@@ -1,3 +1,7 @@
+coverage:
+  status:
+    project: true
+
 comment:
   layout: "header, diff, flags, components"
 
