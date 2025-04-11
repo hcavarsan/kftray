@@ -1190,6 +1190,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 
 [[package]]
+name = "dyn-clone"
+version = "1.0.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1c7a8fb8a9fbf66c1f703fe16184d10ca0ee9d23be5b4436400408ba54a95005"
+
+[[package]]
 name = "educe"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1619,6 +1625,12 @@ name = "futures-task"
 version = "0.3.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f90f7dce0722e95104fcb095585910c0977252f286e354b5e3bd38902cd99988"
+
+[[package]]
+name = "futures-timer"
+version = "3.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f288b0a4f20f9a56b5d1da57e2227c661b7b16168e2f72365f57b63326e29b24"
 
 [[package]]
 name = "futures-util"
@@ -2945,7 +2957,9 @@ dependencies = [
  "dirs",
  "flate2",
  "httparse",
+ "kftray-commons",
  "lazy_static",
+ "mockall",
  "serde",
  "serde_json",
  "tempfile",
@@ -2964,9 +2978,11 @@ dependencies = [
  "bytes",
  "dashmap",
  "dirs",
+ "env_logger",
  "flate2",
  "futures",
  "hostsfile",
+ "http 1.2.0",
  "httparse",
  "hyper 1.6.0",
  "hyper-openssl",
@@ -2988,7 +3004,9 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tower",
+ "tower-test",
  "tracing",
+ "tracing-subscriber",
  "uuid",
  "whoami",
 ]
@@ -2999,6 +3017,7 @@ version = "0.18.1"
 dependencies = [
  "async-trait",
  "env_logger",
+ "lazy_static",
  "log",
  "mockall",
  "tokio",
@@ -3011,6 +3030,7 @@ name = "kftray-tauri"
 version = "0.18.1"
 dependencies = [
  "anyhow",
+ "async-trait",
  "base64 0.22.1",
  "dirs",
  "env_logger",
@@ -3030,12 +3050,15 @@ dependencies = [
  "kube-runtime",
  "lazy_static",
  "log",
+ "mockall",
  "netstat2",
+ "once_cell",
  "open 5.3.2",
  "openssl",
  "openssl-sys",
  "rand 0.9.0",
  "reqwest 0.12.12",
+ "rstest",
  "secrecy",
  "serde",
  "serde_json",
@@ -3103,6 +3126,8 @@ dependencies = [
  "k8s-openapi",
  "kube-client",
  "kube-core",
+ "kube-derive",
+ "kube-runtime",
 ]
 
 [[package]]
@@ -3156,10 +3181,25 @@ dependencies = [
  "http 1.2.0",
  "json-patch 4.0.0",
  "k8s-openapi",
+ "schemars",
  "serde",
  "serde-value",
  "serde_json",
  "thiserror 2.0.11",
+]
+
+[[package]]
+name = "kube-derive"
+version = "0.99.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c562f58dc9f7ca5feac8a6ee5850ca221edd6f04ce0dd2ee873202a88cd494c9"
+dependencies = [
+ "darling",
+ "proc-macro2",
+ "quote",
+ "serde",
+ "serde_json",
+ "syn 2.0.98",
 ]
 
 [[package]]
@@ -4844,6 +4884,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2b15c43186be67a4fd63bee50d0303afffcef381492ebe2c5d87f324e1b8815c"
 
 [[package]]
+name = "relative-path"
+version = "1.9.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ba39f3699c378cd8970968dcbff9c43159ea4cfbd88d43c00b22f2ef10a435d2"
+
+[[package]]
 name = "reqwest"
 version = "0.11.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4988,6 +5034,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "rstest"
+version = "0.25.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6fc39292f8613e913f7df8fa892b8944ceb47c247b78e1b1ae2f09e019be789d"
+dependencies = [
+ "futures-timer",
+ "futures-util",
+ "rstest_macros",
+ "rustc_version",
+]
+
+[[package]]
+name = "rstest_macros"
+version = "0.25.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1f168d99749d307be9de54d23fd226628d99768225ef08f6ffb52e0182a27746"
+dependencies = [
+ "cfg-if",
+ "glob",
+ "proc-macro-crate 3.2.0",
+ "proc-macro2",
+ "quote",
+ "regex",
+ "relative-path",
+ "rustc_version",
+ "syn 2.0.98",
+ "unicode-ident",
+]
+
+[[package]]
 name = "rustc-demangle"
 version = "0.1.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5121,6 +5197,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "schemars"
+version = "0.8.22"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3fbf2ae1b8bc8e02df939598064d22402220cd5bbcca1c76f7d6a310974d5615"
+dependencies = [
+ "dyn-clone",
+ "schemars_derive",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "schemars_derive"
+version = "0.8.22"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32e265784ad618884abaea0600a9adf15393368d840e0222d101a072f3f7534d"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "serde_derive_internals",
+ "syn 2.0.98",
+]
+
+[[package]]
 name = "scoped-tls"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5230,6 +5330,17 @@ name = "serde_derive"
 version = "1.0.217"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5a9bf7cf98d04a2b28aead066b7496853d4779c9cc183c440dbac457641e19a0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.98",
+]
+
+[[package]]
+name = "serde_derive_internals"
+version = "0.29.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "18d26a20a969b9e3fdf2fc2d9f21eda6c40e2de84c9408bb5d3b05d499aae711"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6639,6 +6750,20 @@ name = "tower-service"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8df9b6e13f2d32c91b9bd719c00d1958837bc7dec474d94952798cc8e69eeec3"
+
+[[package]]
+name = "tower-test"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a4546773ffeab9e4ea02b8872faa49bb616a80a7da66afc2f32688943f97efa7"
+dependencies = [
+ "futures-util",
+ "pin-project",
+ "tokio",
+ "tokio-test",
+ "tower-layer",
+ "tower-service",
+]
 
 [[package]]
 name = "tracing"

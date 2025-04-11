@@ -229,3 +229,71 @@ pub async fn start_port_forward(
 
     Ok(responses)
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+
+    use kftray_http_logs::HttpLogState;
+    use tokio::net::TcpListener;
+    use tokio::task::JoinHandle;
+
+    use super::*;
+
+    fn setup_test_config() -> Config {
+        Config {
+            id: Some(1),
+            context: "test-context".to_string(),
+            kubeconfig: None,
+            namespace: "test-namespace".to_string(),
+            service: Some("test-service".to_string()),
+            alias: Some("test-alias".to_string()),
+            local_port: Some(0),
+            remote_port: Some(8080),
+            protocol: "tcp".to_string(),
+            workload_type: Some("service".to_string()),
+            target: None,
+            local_address: None,
+            remote_address: None,
+            domain_enabled: None,
+        }
+    }
+
+    #[allow(dead_code)]
+    fn setup_pod_config() -> Config {
+        let mut config = setup_test_config();
+        config.workload_type = Some("pod".to_string());
+        config.target = Some("app=test".to_string());
+        config
+    }
+
+    #[allow(dead_code)]
+    fn setup_mock_tcp_server(port: u16) -> JoinHandle<()> {
+        tokio::spawn(async move {
+            let addr = format!("127.0.0.1:{}", port);
+            let listener = TcpListener::bind(&addr).await.unwrap();
+            loop {
+                let _ = listener.accept().await;
+            }
+        })
+    }
+
+    #[tokio::test]
+    async fn test_start_port_forward_empty_configs() {
+        let configs = Vec::new();
+        let http_log_state = Arc::new(HttpLogState::new());
+
+        let result = start_port_forward(configs, "tcp", http_log_state).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_start_port_forward_invalid_protocol() {
+        let configs = vec![setup_test_config()];
+        let http_log_state = Arc::new(HttpLogState::new());
+
+        let result = start_port_forward(configs, "invalid", http_log_state).await;
+        assert!(result.is_err());
+    }
+}

@@ -20,3 +20,4 @@ async-trait = "0.1"
 [dev-dependencies]
 mockall = "0.13"
 tokio-test = "0.4"
+lazy_static = "1.4.0"

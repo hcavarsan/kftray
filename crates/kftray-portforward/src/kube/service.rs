@@ -167,3 +167,136 @@ fn create_default_configs(
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_configs() {
+        let mut ports = HashMap::new();
+        ports.insert("http".to_string(), 8080);
+        ports.insert("https".to_string(), 8443);
+        ports.insert("grpc".to_string(), 9090);
+
+        let configs_str = "web-3000-8080,api-3001-http,admin-3002-grpc";
+        let configs = parse_configs(
+            configs_str,
+            "test-context",
+            "test-namespace",
+            "test-service",
+            &ports,
+            Some("/path/to/config".to_string()),
+        );
+
+        assert_eq!(configs.len(), 3);
+
+        let web_config = &configs[0];
+        assert_eq!(web_config.context, "test-context");
+        assert_eq!(web_config.namespace, "test-namespace");
+        assert_eq!(web_config.service, Some("test-service".to_string()));
+        assert_eq!(web_config.alias, Some("web".to_string()));
+        assert_eq!(web_config.local_port, Some(3000));
+        assert_eq!(web_config.remote_port, Some(8080));
+        assert_eq!(web_config.protocol, "tcp");
+        assert_eq!(web_config.kubeconfig, Some("/path/to/config".to_string()));
+        assert_eq!(web_config.workload_type, Some("service".to_string()));
+
+        let api_config = &configs[1];
+        assert_eq!(api_config.alias, Some("api".to_string()));
+        assert_eq!(api_config.local_port, Some(3001));
+        assert_eq!(api_config.remote_port, Some(8080));
+
+        let admin_config = &configs[2];
+        assert_eq!(admin_config.alias, Some("admin".to_string()));
+        assert_eq!(admin_config.local_port, Some(3002));
+        assert_eq!(admin_config.remote_port, Some(9090));
+    }
+
+    #[test]
+    fn test_parse_configs_invalid_format() {
+        let mut ports = HashMap::new();
+        ports.insert("http".to_string(), 8080);
+
+        let configs_str = "invalid-format,web-3000-8080,missing-parts";
+        let configs = parse_configs(
+            configs_str,
+            "test-context",
+            "test-namespace",
+            "test-service",
+            &ports,
+            None,
+        );
+
+        assert_eq!(configs.len(), 1);
+        assert_eq!(configs[0].alias, Some("web".to_string()));
+        assert_eq!(configs[0].local_port, Some(3000));
+        assert_eq!(configs[0].remote_port, Some(8080));
+    }
+
+    #[test]
+    fn test_parse_configs_invalid_ports() {
+        let ports = HashMap::new();
+
+        let configs_str = "web-invalid-8080,api-3001-unknown";
+        let configs = parse_configs(
+            configs_str,
+            "test-context",
+            "test-namespace",
+            "test-service",
+            &ports,
+            None,
+        );
+
+        assert_eq!(configs.len(), 0);
+    }
+
+    #[test]
+    fn test_create_default_configs() {
+        let mut ports = HashMap::new();
+        ports.insert("http".to_string(), 8080);
+        ports.insert("https".to_string(), 8443);
+
+        let configs = create_default_configs(
+            "test-context",
+            "test-namespace",
+            "test-service",
+            &ports,
+            Some("/path/to/config".to_string()),
+        );
+
+        assert_eq!(configs.len(), 2);
+
+        let http_config = configs
+            .iter()
+            .find(|c| c.remote_port == Some(8080))
+            .unwrap();
+        assert_eq!(http_config.context, "test-context");
+        assert_eq!(http_config.namespace, "test-namespace");
+        assert_eq!(http_config.service, Some("test-service".to_string()));
+        assert_eq!(http_config.alias, Some("test-service".to_string()));
+        assert_eq!(http_config.local_port, Some(8080));
+        assert_eq!(http_config.protocol, "tcp");
+        assert_eq!(http_config.kubeconfig, Some("/path/to/config".to_string()));
+        assert_eq!(http_config.workload_type, Some("service".to_string()));
+
+        let https_config = configs
+            .iter()
+            .find(|c| c.remote_port == Some(8443))
+            .unwrap();
+        assert_eq!(https_config.local_port, Some(8443));
+    }
+
+    #[test]
+    fn test_create_default_configs_empty_ports() {
+        let ports = HashMap::new();
+        let configs = create_default_configs(
+            "test-context",
+            "test-namespace",
+            "test-service",
+            &ports,
+            None,
+        );
+        assert!(configs.is_empty());
+    }
+}

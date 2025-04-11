@@ -424,3 +424,187 @@ impl TcpForwarder {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_new() {
+        let forwarder = TcpForwarder::new(1, "pod".to_string());
+        assert_eq!(forwarder.config_id, 1);
+        assert_eq!(forwarder.workload_type, "pod");
+        assert!(forwarder.logger.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_initialize_logger_non_service_workload() {
+        let mut forwarder = TcpForwarder::new(1, "deployment".to_string());
+        let http_log_state = kftray_http_logs::HttpLogState::new();
+        let result = forwarder.initialize_logger(&http_log_state, 8080).await;
+        assert!(result.is_ok());
+        assert!(forwarder.logger.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_update_logger_state() {
+        let mut forwarder = TcpForwarder::new(1, "pod".to_string());
+        let http_log_state = kftray_http_logs::HttpLogState::new();
+
+        let result = forwarder.update_logger_state(&http_log_state, 8080).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_forward_connection_basic() {
+        let (mut client_to_upstream, mut client_reader) = tokio::io::duplex(1024);
+        let (mut upstream_to_client, mut upstream_reader) = tokio::io::duplex(1024);
+
+        let test_request = b"GET /test HTTP/1.1\r\n\r\n";
+        let test_response = b"HTTP/1.1 200 OK\r\nContent-Length: 11\r\n\r\nHello World";
+
+        let (tx, rx) = tokio::sync::oneshot::channel::<Vec<u8>>();
+
+        let _forwarder = TcpForwarder::new(1, "pod".to_string());
+        let cancel_notifier = Arc::new(Notify::new());
+        let cancel_clone = Arc::clone(&cancel_notifier);
+
+        let upstream_task = tokio::spawn(async move {
+            let mut buf = vec![0u8; 1024];
+            let n = client_reader
+                .read(&mut buf)
+                .await
+                .expect("Read should succeed");
+            buf.truncate(n);
+
+            tx.send(buf).expect("Channel send should succeed");
+
+            upstream_to_client
+                .write_all(test_response)
+                .await
+                .expect("Write should succeed");
+
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            cancel_clone.notify_one();
+        });
+
+        // Simulate client sending a request
+        let client_task = tokio::spawn(async move {
+            client_to_upstream
+                .write_all(test_request)
+                .await
+                .expect("Write should succeed");
+            client_to_upstream
+                .flush()
+                .await
+                .expect("Flush should succeed");
+
+            let mut response_buf = vec![0u8; 1024];
+            let n = upstream_reader
+                .read(&mut response_buf)
+                .await
+                .expect("Read should succeed");
+            response_buf.truncate(n);
+
+            assert_eq!(
+                response_buf, test_response,
+                "Response should match expected"
+            );
+        });
+
+        let received_request = tokio::time::timeout(Duration::from_millis(300), rx)
+            .await
+            .expect("Should complete in time")
+            .expect("Channel should return data");
+
+        assert_eq!(
+            received_request, test_request,
+            "Request should match expected"
+        );
+
+        let _ = tokio::join!(upstream_task, client_task);
+    }
+
+    #[tokio::test]
+    async fn test_handle_client_to_upstream_early_cancel() {
+        let (client_read, mut client_write) = tokio::io::duplex(1024);
+        let (upstream_write, mut upstream_read) = tokio::io::duplex(1024);
+
+        let forwarder = TcpForwarder::new(1, "pod".to_string());
+        let http_log_state = HttpLogState::new();
+        let request_id = Arc::new(Mutex::new(None));
+        let cancel_notifier = Arc::new(Notify::new());
+        let cancel_clone = cancel_notifier.clone();
+
+        tokio::spawn(async move {
+            client_write.write_all(b"test data").await.unwrap();
+            client_write.flush().await.unwrap();
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            cancel_clone.notify_one();
+        });
+
+        tokio::spawn(async move {
+            let mut buf = [0u8; 1024];
+            let _ = upstream_read.read(&mut buf).await;
+        });
+
+        let mut client_reader = client_read;
+        let mut upstream_writer = upstream_write;
+
+        let result = forwarder
+            .handle_client_to_upstream(
+                &mut client_reader,
+                &mut upstream_writer,
+                None,
+                &http_log_state,
+                request_id,
+                cancel_notifier,
+            )
+            .await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_handle_upstream_to_client_early_cancel() {
+        let (upstream_read, mut upstream_write) = tokio::io::duplex(1024);
+        let (client_write, mut client_read) = tokio::io::duplex(1024);
+
+        let forwarder = TcpForwarder::new(1, "pod".to_string());
+        let http_log_state = HttpLogState::new();
+        let request_id = Arc::new(Mutex::new(Some("req123".to_string())));
+        let cancel_notifier = Arc::new(Notify::new());
+        let cancel_clone = cancel_notifier.clone();
+
+        tokio::spawn(async move {
+            upstream_write
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 9\r\n\r\ntest data")
+                .await
+                .unwrap();
+            upstream_write.flush().await.unwrap();
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            cancel_clone.notify_one();
+        });
+
+        tokio::spawn(async move {
+            let mut buf = [0u8; 1024];
+            let _ = client_read.read(&mut buf).await;
+        });
+
+        let mut upstream_reader = upstream_read;
+        let mut client_writer = client_write;
+
+        let result = forwarder
+            .handle_upstream_to_client(
+                &mut upstream_reader,
+                &mut client_writer,
+                None,
+                &http_log_state,
+                request_id,
+                cancel_notifier,
+            )
+            .await;
+
+        assert!(result.is_ok());
+    }
+}

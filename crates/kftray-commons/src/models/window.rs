@@ -34,3 +34,16 @@ pub struct AppState {
     pub is_pinned: Arc<AtomicBool>,
     pub runtime: Arc<Runtime>,
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::Ordering;
+
+    use super::*;
+
+    #[test]
+    fn test_save_dialog_state_default() {
+        let state = SaveDialogState::default();
+        assert!(!state.is_open.load(Ordering::Relaxed));
+    }
+}

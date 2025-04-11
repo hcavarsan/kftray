@@ -680,3 +680,532 @@ impl MessageFormatter {
         }
     }
 }
+
+#[test]
+fn test_format_content_json_pretty() {
+    let mut log_entry = String::new();
+    let json_body = b"{\"name\":\"test\", \"value\":123}";
+    MessageFormatter::format_content(&mut log_entry, "application/json", json_body);
+    let expected = "{\n  \"name\": \"test\",\n  \"value\": 123\n}";
+    assert_eq!(log_entry.trim(), expected.trim());
+}
+
+#[test]
+fn test_format_content_json_with_charset() {
+    let mut log_entry = String::new();
+    let json_body = b"{\"name\":\"test\"}";
+    MessageFormatter::format_content(&mut log_entry, "application/json; charset=utf-8", json_body);
+    let expected = "{\n  \"name\": \"test\"\n}";
+    assert_eq!(log_entry.trim(), expected.trim());
+}
+
+#[test]
+fn test_format_content_javascript() {
+    let mut log_entry = String::new();
+    let js_body = b"function test() { console.log('hello'); }";
+    MessageFormatter::format_content(&mut log_entry, "application/javascript", js_body);
+    assert_eq!(log_entry, "function test() { console.log('hello'); }");
+
+    log_entry.clear();
+    MessageFormatter::format_content(&mut log_entry, "text/javascript", js_body);
+    assert_eq!(log_entry, "function test() { console.log('hello'); }");
+}
+
+#[test]
+fn test_format_content_html() {
+    let mut log_entry = String::new();
+    let html_body = b"<html><body><h1>Title</h1></body></html>";
+    MessageFormatter::format_content(&mut log_entry, "text/html", html_body);
+    assert_eq!(log_entry, "<html><body><h1>Title</h1></body></html>");
+}
+
+#[test]
+fn test_format_content_xml() {
+    let mut log_entry = String::new();
+    let xml_body = b"<root><item>value</item></root>";
+    MessageFormatter::format_content(&mut log_entry, "application/xml", xml_body);
+    assert_eq!(log_entry, "<root><item>value</item></root>");
+
+    log_entry.clear();
+    MessageFormatter::format_content(&mut log_entry, "text/xml", xml_body);
+    assert_eq!(log_entry, "<root><item>value</item></root>");
+}
+
+#[test]
+fn test_format_content_plain_text() {
+    let mut log_entry = String::new();
+    let text_body = b"Just some plain text.";
+    MessageFormatter::format_content(&mut log_entry, "text/plain", text_body);
+    assert_eq!(log_entry, "Just some plain text.");
+}
+
+#[test]
+fn test_format_content_other_text() {
+    let mut log_entry = String::new();
+    let csv_body = b"col1,col2\nval1,val2";
+    MessageFormatter::format_content(&mut log_entry, "text/csv", csv_body);
+    assert_eq!(log_entry, "col1,col2\nval1,val2");
+}
+
+#[test]
+fn test_format_content_binary() {
+    let mut log_entry = String::new();
+    let binary_body = &[0x01, 0x02, 0x03, 0x00, 0x1f, 0x8b];
+    MessageFormatter::format_content(&mut log_entry, "application/octet-stream", binary_body);
+    assert_eq!(
+        log_entry,
+        format!("# <binary content: {} bytes>", binary_body.len())
+    );
+}
+
+#[test]
+fn test_format_content_pseudo_binary_text() {
+    let mut log_entry = String::new();
+    let text_body = "Contains \t tab and \n newline and \r CR".as_bytes();
+    MessageFormatter::format_content(&mut log_entry, "application/unknown", text_body);
+    assert_eq!(log_entry, "Contains \t tab and \n newline and \r CR");
+}
+
+#[test]
+fn test_format_content_empty_body() {
+    let mut log_entry = String::new();
+    let empty_body = b"";
+    MessageFormatter::format_content(&mut log_entry, "text/plain", empty_body);
+    assert!(log_entry.is_empty());
+
+    log_entry.clear();
+    MessageFormatter::format_content(&mut log_entry, "application/json", empty_body);
+    assert!(log_entry.is_empty());
+}
+
+#[cfg(test)]
+mod formatter_tests {
+    use bytes::Bytes;
+    use chrono::Utc;
+    use httparse::Header;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn test_decompress_gzip_async() {
+        let test_data = b"test text";
+        let mut encoder = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        std::io::Write::write_all(&mut encoder, test_data).unwrap();
+        let gzip_data = encoder.finish().unwrap();
+
+        assert!(gzip_data.len() > 2 && gzip_data[0] == 0x1f && gzip_data[1] == 0x8b);
+
+        let result = MessageFormatter::decompress_gzip_async(&gzip_data).await;
+        assert!(
+            result.is_ok(),
+            "Gzip decompression failed: {:?}",
+            result.err()
+        );
+        let decompressed = result.unwrap();
+        assert_eq!(decompressed, test_data);
+    }
+
+    #[tokio::test]
+    async fn test_decompress_gzip_invalid_header() {
+        let invalid_data = vec![0x01, 0x02, 0x03, 0x04, 0x05];
+
+        let result = MessageFormatter::decompress_gzip(&invalid_data);
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_try_decompress_brotli() {
+        let test_data = b"hello world";
+        let mut encoder = brotli::CompressorReader::new(test_data.as_slice(), 4096, 11, 22);
+        let mut compressed = Vec::new();
+        std::io::copy(&mut encoder, &mut compressed).unwrap();
+
+        let result = MessageFormatter::try_decompress_brotli(&compressed).await;
+        assert!(
+            result.is_ok(),
+            "Brotli decompression failed: {:?}",
+            result.err()
+        );
+        let decompressed = result.unwrap();
+        assert_eq!(decompressed, test_data);
+    }
+
+    #[tokio::test]
+    async fn test_try_decompress_deflate() {
+        let test_data = b"test data for deflate";
+        let mut encoder =
+            flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::default());
+        std::io::Write::write_all(&mut encoder, test_data).unwrap();
+        let deflate_data = encoder.finish().unwrap();
+
+        let result = MessageFormatter::try_decompress_deflate(&deflate_data).await;
+        assert!(
+            result.is_ok(),
+            "Deflate decompression failed: {:?}",
+            result.err()
+        );
+        let decompressed = result.unwrap();
+        assert_eq!(decompressed, test_data);
+    }
+
+    #[tokio::test]
+    async fn test_dechunk_body() {
+        let chunked_body = b"4\r\ntest\r\n5\r\nchunk\r\n0\r\n\r\n";
+
+        let result = MessageFormatter::dechunk_body(chunked_body);
+        assert_eq!(result, b"testchunk");
+    }
+
+    #[tokio::test]
+    async fn test_dechunk_body_with_extension() {
+        let chunked_body = b"4;extension=value\r\ntest\r\n0\r\n\r\n";
+
+        let result = MessageFormatter::dechunk_body(chunked_body);
+        assert_eq!(result, b"test");
+    }
+
+    #[tokio::test]
+    async fn test_dechunk_body_incomplete() {
+        let chunked_body = b"4\r\ntest\r\n5\r\nchun";
+
+        let result = MessageFormatter::dechunk_body(chunked_body);
+        assert_eq!(result, b"testchun");
+    }
+
+    #[tokio::test]
+    async fn test_dechunk_body_invalid_size() {
+        let chunked_body = b"XYZ\r\ntest\r\n";
+
+        let result = MessageFormatter::dechunk_body(chunked_body);
+        assert_eq!(result, Vec::<u8>::new());
+    }
+
+    #[test]
+    fn test_find_headers_end() {
+        let headers = b"Header1: Value1\r\nHeader2: Value2\r\n\r\nBody";
+
+        let pos = MessageFormatter::find_headers_end(headers);
+        println!("CRLF CRLF position: {:?}", pos);
+
+        assert_eq!(pos, Some(36));
+
+        let headers = b"Header1: Value1\nHeader2: Value2\n\nBody";
+
+        let pos = MessageFormatter::find_headers_end(headers);
+        println!("LF LF position: {:?}", pos);
+
+        assert_eq!(pos, Some(33));
+
+        let headers = b"Header1: Value1\nHeader2: Value2\nBody";
+        assert_eq!(MessageFormatter::find_headers_end(headers), None);
+    }
+
+    #[test]
+    fn test_create_metadata_header() {
+        let trace_id = "abc123";
+        let timestamp = Utc::now();
+
+        let request_header = MessageFormatter::create_metadata_header(trace_id, timestamp, None);
+        assert!(request_header.contains("# Trace ID: abc123"));
+        assert!(request_header.contains("# Request at:"));
+        assert!(!request_header.contains("# Took:"));
+
+        let took = 150;
+        let response_header =
+            MessageFormatter::create_metadata_header(trace_id, timestamp, Some(took));
+        assert!(response_header.contains("# Trace ID: abc123"));
+        assert!(response_header.contains("# Response at:"));
+        assert!(response_header.contains("# Took: 150 ms"));
+    }
+
+    #[test]
+    fn test_append_headers() {
+        let mut log_entry = String::new();
+
+        let header1_name = "Content-Type";
+        let header1_value = b"application/json";
+        let header2_name = "Content-Length";
+        let header2_value = b"42";
+
+        let headers = vec![
+            Header {
+                name: header1_name,
+                value: header1_value,
+            },
+            Header {
+                name: header2_name,
+                value: header2_value,
+            },
+        ];
+
+        MessageFormatter::append_headers(&headers, &mut log_entry);
+
+        assert!(log_entry.contains("Content-Type: application/json\n"));
+        assert!(log_entry.contains("Content-Length: 42\n"));
+    }
+
+    #[test]
+    fn test_status_text() {
+        assert_eq!(MessageFormatter::status_text(200), "OK");
+        assert_eq!(MessageFormatter::status_text(404), "Not Found");
+        assert_eq!(MessageFormatter::status_text(500), "Internal Server Error");
+        assert_eq!(MessageFormatter::status_text(999), "Unknown Status");
+    }
+
+    #[test]
+    fn test_extract_content_type() {
+        let header1_name = "Content-Type";
+        let header1_value = b"application/json";
+        let header2_name = "Content-Length";
+        let header2_value = b"42";
+
+        let headers = vec![
+            Header {
+                name: header1_name,
+                value: header1_value,
+            },
+            Header {
+                name: header2_name,
+                value: header2_value,
+            },
+        ];
+
+        let content_type = MessageFormatter::extract_content_type(&headers);
+        assert_eq!(content_type, Some("application/json"));
+
+        let headers_no_ct = vec![Header {
+            name: "Content-Length",
+            value: b"42",
+        }];
+
+        let content_type = MessageFormatter::extract_content_type(&headers_no_ct);
+        assert_eq!(content_type, None);
+    }
+
+    #[tokio::test]
+    async fn test_format_request() {
+        let request = b"GET /api/test HTTP/1.1\r\nHost: example.com\r\nContent-Type: application/json\r\n\r\n{\"test\": true}";
+        let trace_id = "req123";
+        let timestamp = Utc::now();
+
+        let result =
+            MessageFormatter::format_request(&Bytes::from(&request[..]), trace_id, timestamp)
+                .await
+                .unwrap();
+
+        if let LogMessage::Request(formatted) = result {
+            assert!(
+                formatted.contains("# Trace ID: req123"),
+                "Should contain trace ID"
+            );
+            assert!(
+                formatted.contains("GET /api/test HTTP/1.1"),
+                "Should contain request line"
+            );
+            assert!(
+                formatted.contains("Host: example.com"),
+                "Should contain host header"
+            );
+            assert!(
+                formatted.contains("Content-Type: application/json"),
+                "Should contain content-type header"
+            );
+
+            assert!(formatted.contains("test"), "Should contain JSON key");
+            assert!(formatted.contains("true"), "Should contain JSON value");
+
+            println!("Formatted request: {}", formatted);
+        } else {
+            panic!("Expected Request LogMessage");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_format_response() {
+        let response = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 16\r\n\r\n{\"status\":\"ok\"}";
+        let trace_id = "resp123";
+        let timestamp = Utc::now();
+        let took = 100;
+
+        let result = MessageFormatter::format_response(
+            &Bytes::from(&response[..]),
+            trace_id,
+            timestamp,
+            took,
+        )
+        .await
+        .unwrap();
+
+        if let LogMessage::Response(formatted) = result {
+            assert!(formatted.contains("# Trace ID: resp123"));
+            assert!(formatted.contains("# Took: 100 ms"));
+            assert!(formatted.contains("HTTP/1.1 200 OK"));
+            assert!(formatted.contains("Content-Type: application/json"));
+            assert!(formatted.contains("{\n  \"status\": \"ok\"\n}"));
+        } else {
+            panic!("Expected Response LogMessage");
+        }
+    }
+
+    #[test]
+    fn test_format_preformatted_response() {
+        let response =
+            b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 5\r\n\r\nHello";
+        let trace_id = "pre123";
+        let timestamp = Utc::now();
+        let took = 50;
+
+        let formatted = MessageFormatter::format_preformatted_response(
+            trace_id,
+            timestamp,
+            took,
+            &Bytes::from(&response[..]),
+        );
+
+        assert!(formatted.contains("# Trace ID: pre123"));
+        assert!(formatted.contains("# Took: 50 ms"));
+        assert!(formatted.contains("HTTP/1.1 200 OK"));
+        assert!(formatted.contains("Content-Type: text/plain"));
+        assert!(formatted.contains("Hello"));
+    }
+
+    #[test]
+    fn test_format_preformatted_response_gzipped() {
+        let response = b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Encoding: gzip\r\n\r\n\x1f\x8b";
+        let trace_id = "gzip123";
+        let timestamp = Utc::now();
+        let took = 75;
+
+        let formatted = MessageFormatter::format_preformatted_response(
+            trace_id,
+            timestamp,
+            took,
+            &Bytes::from(&response[..]),
+        );
+
+        assert!(formatted.contains("# Trace ID: gzip123"));
+        assert!(formatted.contains("Content-Type: application/json"));
+        assert!(formatted.contains("Content-Encoding: gzip"));
+    }
+
+    #[test]
+    fn test_process_response_body() {
+        let headers = vec![Header {
+            name: "Transfer-Encoding",
+            value: b"chunked",
+        }];
+
+        let chunked_body = b"4\r\ntest\r\n5\r\nchunk\r\n0\r\n\r\n";
+
+        let processed = MessageFormatter::process_response_body(chunked_body, &headers);
+
+        assert_eq!(processed, b"testchunk");
+
+        let normal_body = b"normal body";
+        let headers_normal = vec![Header {
+            name: "Content-Length",
+            value: b"11",
+        }];
+
+        let processed_normal =
+            MessageFormatter::process_response_body(normal_body, &headers_normal);
+        assert_eq!(processed_normal, normal_body);
+    }
+
+    #[tokio::test]
+    async fn test_handle_decompression_error() {
+        let mut log_entry = String::new();
+        let body = b"plain text body";
+        let headers = vec![Header {
+            name: "Content-Type",
+            value: b"text/plain",
+        }];
+
+        let error = anyhow::anyhow!("Test decompression error");
+
+        let result =
+            MessageFormatter::handle_decompression_error(body, &headers, &mut log_entry, error)
+                .unwrap();
+
+        assert!(log_entry.contains("Failed to process content: Test decompression error"));
+
+        assert!(
+            log_entry.contains("plain text body"),
+            "Log entry should contain the body text"
+        );
+        assert_eq!(
+            result,
+            Vec::<u8>::new(),
+            "Result should be empty vec for text content"
+        );
+
+        let mut js_log_entry = String::new();
+        let js_headers = vec![Header {
+            name: "Content-Type",
+            value: b"application/javascript",
+        }];
+
+        let js_result = MessageFormatter::handle_decompression_error(
+            b"console.log('test')",
+            &js_headers,
+            &mut js_log_entry,
+            anyhow::anyhow!("JS error"),
+        )
+        .unwrap();
+
+        assert!(js_log_entry.contains("JavaScript content could not be fully decompressed"));
+        assert!(js_result.is_empty());
+
+        let mut bin_log_entry = String::new();
+        let bin_headers = vec![Header {
+            name: "Content-Type",
+            value: b"application/octet-stream",
+        }];
+
+        let binary_body = &[0xFF, 0xFE, 0xFD];
+        let bin_result = MessageFormatter::handle_decompression_error(
+            binary_body,
+            &bin_headers,
+            &mut bin_log_entry,
+            anyhow::anyhow!("Binary error"),
+        )
+        .unwrap();
+
+        assert!(bin_log_entry.contains("Failed to process content: Binary error"));
+        assert_eq!(bin_result, binary_body);
+    }
+
+    #[tokio::test]
+    async fn test_try_decompress_body() {
+        let body = b"plain body";
+        let headers = vec![Header {
+            name: "Content-Type",
+            value: b"text/plain",
+        }];
+
+        let result = MessageFormatter::try_decompress_body(body, &headers)
+            .await
+            .unwrap();
+        assert_eq!(result, body);
+
+        let identity_headers = vec![Header {
+            name: "Content-Encoding",
+            value: b"identity",
+        }];
+
+        let identity_result = MessageFormatter::try_decompress_body(body, &identity_headers)
+            .await
+            .unwrap();
+        assert_eq!(identity_result, body);
+
+        let unsupported_headers = vec![Header {
+            name: "Content-Encoding",
+            value: b"unknown-encoding",
+        }];
+
+        let unsupported_result = MessageFormatter::try_decompress_body(body, &unsupported_headers)
+            .await
+            .unwrap();
+        assert_eq!(unsupported_result, body);
+    }
+}
