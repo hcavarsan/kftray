@@ -239,7 +239,6 @@ mod tests {
     use std::sync::Arc;
 
     use kftray_http_logs::HttpLogState;
-    use tokio::task::JoinHandle;
 
     use super::*;
 
@@ -283,7 +282,6 @@ mod tests {
         config
     }
 
-
     async fn test_protocol_validation(protocol: &str) -> Result<(), String> {
         match protocol {
             "tcp" | "udp" => Ok(()),
@@ -303,7 +301,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_start_port_forward_invalid_protocol() {
-
         let result = test_protocol_validation("invalid").await;
         assert!(result.is_err());
         let err = result.unwrap_err();
@@ -317,7 +314,6 @@ mod tests {
 
         let result = start_port_forward(configs, "tcp", http_log_state).await;
         assert!(result.is_err());
-
     }
 
     #[tokio::test]
@@ -327,7 +323,6 @@ mod tests {
 
         let result = start_port_forward(configs, "tcp", http_log_state).await;
         assert!(result.is_err());
-
     }
 
     #[tokio::test]
