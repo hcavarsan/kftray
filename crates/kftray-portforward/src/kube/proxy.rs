@@ -270,6 +270,10 @@ fn render_json_template(template: &str, values: &HashMap<&str, String>) -> Strin
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::sync::Arc;
+
+    use kftray_commons::models::config_model::Config;
+    use kftray_http_logs::HttpLogState;
 
     use super::*;
 
@@ -322,5 +326,90 @@ mod tests {
 
         let rendered = render_json_template(template, &values);
         assert_eq!(rendered, r#"{"name": "{hashed_name}"}"#);
+    }
+
+    #[test]
+    fn test_render_json_template_complex() {
+        let template = r#"{
+            "apiVersion": "v1",
+            "kind": "Pod",
+            "metadata": {
+                "name": "{hashed_name}",
+                "labels": {
+                    "app": "kftray-forward",
+                    "config_id": "{config_id}"
+                }
+            },
+            "spec": {
+                "containers": [
+                    {
+                        "name": "proxy",
+                        "image": "alpine:latest",
+                        "command": ["/bin/sh"],
+                        "args": ["-c", "while true; do sleep 60; done"],
+                        "ports": [
+                            {
+                                "containerPort": {remote_port},
+                                "protocol": "{protocol}"
+                            }
+                        ]
+                    }
+                ]
+            }
+        }"#;
+
+        let mut values = HashMap::new();
+        values.insert("hashed_name", "test-pod-abc123".to_string());
+        values.insert("config_id", "456".to_string());
+        values.insert("remote_port", "9090".to_string());
+        values.insert("protocol", "TCP".to_string());
+
+        let rendered = render_json_template(template, &values);
+
+        assert!(rendered.contains("\"name\": \"test-pod-abc123\""));
+        assert!(rendered.contains("\"config_id\": \"456\""));
+        assert!(rendered.contains("\"containerPort\": 9090"));
+        assert!(rendered.contains("\"protocol\": \"TCP\""));
+    }
+
+    #[tokio::test]
+    async fn test_deploy_and_forward_pod_empty_config() {
+        let configs = Vec::new();
+        let http_log_state = Arc::new(HttpLogState::new());
+
+        let result = deploy_and_forward_pod(configs, http_log_state).await;
+        assert!(result.is_ok());
+        assert!(result.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_deploy_and_forward_pod_invalid_kubeconfig() {
+        let config = Config {
+            id: Some(1),
+            context: "invalid-context".to_string(),
+            kubeconfig: Some("invalid-kubeconfig".to_string()),
+            namespace: "default".to_string(),
+            service: Some("test-service".to_string()),
+            alias: None,
+            local_port: Some(8080),
+            remote_port: Some(8080),
+            protocol: "tcp".to_string(),
+            workload_type: Some("service".to_string()),
+            target: None,
+            local_address: None,
+            remote_address: None,
+            domain_enabled: None,
+        };
+
+        let http_log_state = Arc::new(HttpLogState::new());
+
+        let result = deploy_and_forward_pod(vec![config], http_log_state).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_stop_proxy_forward_invalid_config() {
+        let result = stop_proxy_forward(999, "default", "nonexistent-service".to_string()).await;
+        assert!(result.is_err());
     }
 }
