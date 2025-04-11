@@ -516,6 +516,12 @@ mod tests {
         assert_eq!(custom_path.len(), 2);
         assert_eq!(custom_path[0], Path::new("/path1"));
         assert_eq!(custom_path[1], Path::new("/path2"));
+
+        let default_path = get_kubeconfig_paths_from_option(Some("default".to_string())).unwrap();
+        assert!(!default_path.is_empty());
+
+        let none_path = get_kubeconfig_paths_from_option(None).unwrap();
+        assert!(!none_path.is_empty());
     }
 
     #[test]
@@ -523,6 +529,14 @@ mod tests {
         let (_config, contexts, errors) = merge_kubeconfigs(&[]).unwrap();
         assert!(contexts.is_empty());
         assert!(errors.is_empty());
+    }
+
+    #[test]
+    fn test_merge_kubeconfigs_with_invalid_path() {
+        let paths = vec![PathBuf::from("/invalid/path/that/should/not/exist")];
+        let (_config, contexts, errors) = merge_kubeconfigs(&paths).unwrap();
+        assert!(contexts.is_empty());
+        assert!(!errors.is_empty());
     }
 
     #[test]
@@ -559,6 +573,38 @@ mod tests {
     }
 
     #[test]
+    fn test_config_ext_clone() {
+        let mut config = Config::new("https://example.com".parse().unwrap());
+        config.accept_invalid_certs = false;
+
+        let cloned_config = config.clone_with_invalid_certs(true);
+        assert!(cloned_config.accept_invalid_certs);
+
+        let cloned_config_false = config.clone_with_invalid_certs(false);
+        assert!(!cloned_config_false.accept_invalid_certs);
+    }
+
+    #[tokio::test]
+    async fn test_create_config_with_context() {
+        let mut kubeconfig = Kubeconfig::default();
+        let context_name = "test-context";
+
+        let named_context = kube::config::NamedContext {
+            name: context_name.to_string(),
+            context: Some(kube::config::Context::default()),
+        };
+        kubeconfig.contexts = vec![named_context];
+
+        let result = create_config_with_context(&kubeconfig, context_name).await;
+        assert!(result.is_err());
+    }
+    #[tokio::test]
+    async fn test_list_kube_contexts_empty() {
+        let result = list_kube_contexts(Some("invalid".to_string())).await;
+        assert!(result.is_err());
+    }
+
+    #[test]
     fn test_extract_ports_from_service() {
         let mut service = k8s_openapi::api::core::v1::Service::default();
 
@@ -588,6 +634,12 @@ mod tests {
                     target_port: Some(IntOrString::Int(9090)),
                     ..Default::default()
                 },
+                k8s_openapi::api::core::v1::ServicePort {
+                    name: Some("no-target".to_string()),
+                    port: 8888,
+                    target_port: None,
+                    ..Default::default()
+                },
             ]),
             ..Default::default()
         };
@@ -601,6 +653,7 @@ mod tests {
         assert_eq!(ports.get("https"), Some(&8443));
         assert_eq!(ports.get("named-port"), Some(&0));
         assert_eq!(ports.get("9090"), Some(&9090));
+        assert_eq!(ports.get("no-target"), None);
 
         service.spec = None;
         let ports = extract_ports_from_service(&service);
@@ -634,5 +687,42 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(resolve_named_port(&empty_spec, "http"), None);
+
+        let spec_no_names = k8s_openapi::api::core::v1::ServiceSpec {
+            ports: Some(vec![k8s_openapi::api::core::v1::ServicePort {
+                name: None,
+                port: 80,
+                ..Default::default()
+            }]),
+            ..Default::default()
+        };
+        assert_eq!(resolve_named_port(&spec_no_names, "http"), None);
+    }
+
+    #[test]
+    fn test_get_services_with_annotation_filter() {
+        let mut service = k8s_openapi::api::core::v1::Service::default();
+        let mut metadata = k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta::default();
+
+        let mut annotations = std::collections::BTreeMap::new();
+        annotations.insert("kftray.app/enabled".to_string(), "true".to_string());
+
+        metadata.name = Some("test-service".to_string());
+        metadata.annotations = Some(annotations);
+        service.metadata = metadata;
+
+        service.spec = Some(k8s_openapi::api::core::v1::ServiceSpec {
+            ports: Some(vec![k8s_openapi::api::core::v1::ServicePort {
+                name: Some("http".to_string()),
+                port: 80,
+                target_port: Some(IntOrString::Int(8080)),
+                ..Default::default()
+            }]),
+            ..Default::default()
+        });
+
+        let ports = extract_ports_from_service(&service);
+        assert_eq!(ports.len(), 1);
+        assert_eq!(ports.get("http"), Some(&8080));
     }
 }

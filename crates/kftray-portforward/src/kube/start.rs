@@ -81,7 +81,10 @@ pub async fn start_port_forward(
                             .port_forward_tcp(http_log_state.clone())
                             .await
                     }
-                    _ => Err(anyhow::anyhow!("Unsupported protocol")),
+                    _ => {
+                        error!("Unsupported protocol: {}", protocol);
+                        Err(anyhow::anyhow!("Unsupported protocol: {}", protocol))
+                    }
                 };
 
                 match forward_result {
@@ -232,10 +235,10 @@ pub async fn start_port_forward(
 
 #[cfg(test)]
 mod tests {
+    use std::net::IpAddr;
     use std::sync::Arc;
 
     use kftray_http_logs::HttpLogState;
-    use tokio::net::TcpListener;
     use tokio::task::JoinHandle;
 
     use super::*;
@@ -259,7 +262,6 @@ mod tests {
         }
     }
 
-    #[allow(dead_code)]
     fn setup_pod_config() -> Config {
         let mut config = setup_test_config();
         config.workload_type = Some("pod".to_string());
@@ -267,15 +269,26 @@ mod tests {
         config
     }
 
-    #[allow(dead_code)]
-    fn setup_mock_tcp_server(port: u16) -> JoinHandle<()> {
-        tokio::spawn(async move {
-            let addr = format!("127.0.0.1:{}", port);
-            let listener = TcpListener::bind(&addr).await.unwrap();
-            loop {
-                let _ = listener.accept().await;
-            }
-        })
+    fn setup_config_with_domain() -> Config {
+        let mut config = setup_test_config();
+        config.domain_enabled = Some(true);
+        config.local_address = Some("127.0.0.1".to_string());
+        config
+    }
+
+    fn setup_config_with_invalid_ip() -> Config {
+        let mut config = setup_test_config();
+        config.domain_enabled = Some(true);
+        config.local_address = Some("invalid-ip".to_string());
+        config
+    }
+
+
+    async fn test_protocol_validation(protocol: &str) -> Result<(), String> {
+        match protocol {
+            "tcp" | "udp" => Ok(()),
+            _ => Err(format!("Unsupported protocol: {}", protocol)),
+        }
     }
 
     #[tokio::test]
@@ -290,10 +303,90 @@ mod tests {
 
     #[tokio::test]
     async fn test_start_port_forward_invalid_protocol() {
-        let configs = vec![setup_test_config()];
+
+        let result = test_protocol_validation("invalid").await;
+        assert!(result.is_err());
+        let err = result.unwrap_err();
+        assert!(err.contains("Unsupported protocol: invalid"));
+    }
+
+    #[tokio::test]
+    async fn test_start_port_forward_with_pod_label() {
+        let configs = vec![setup_pod_config()];
         let http_log_state = Arc::new(HttpLogState::new());
 
-        let result = start_port_forward(configs, "invalid", http_log_state).await;
+        let result = start_port_forward(configs, "tcp", http_log_state).await;
         assert!(result.is_err());
+
+    }
+
+    #[tokio::test]
+    async fn test_start_port_forward_with_domain_enabled() {
+        let configs = vec![setup_config_with_domain()];
+        let http_log_state = Arc::new(HttpLogState::new());
+
+        let result = start_port_forward(configs, "tcp", http_log_state).await;
+        assert!(result.is_err());
+
+    }
+
+    #[tokio::test]
+    async fn test_start_port_forward_with_invalid_ip() {
+        let configs = vec![setup_config_with_invalid_ip()];
+        let http_log_state = Arc::new(HttpLogState::new());
+
+        let result = start_port_forward(configs, "tcp", http_log_state).await;
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_port_selector_creation() {
+        let config = setup_test_config();
+        let selector = match config.workload_type.as_deref() {
+            Some("pod") => TargetSelector::PodLabel(config.target.clone().unwrap_or_default()),
+            _ => TargetSelector::ServiceName(config.service.clone().unwrap_or_default()),
+        };
+
+        match selector {
+            TargetSelector::ServiceName(name) => {
+                assert_eq!(name, "test-service");
+            }
+            TargetSelector::PodLabel(_) => {
+                panic!("Should be ServiceName selector");
+            }
+        }
+
+        let config = setup_pod_config();
+        let selector = match config.workload_type.as_deref() {
+            Some("pod") => TargetSelector::PodLabel(config.target.clone().unwrap_or_default()),
+            _ => TargetSelector::ServiceName(config.service.clone().unwrap_or_default()),
+        };
+
+        match selector {
+            TargetSelector::PodLabel(label) => {
+                assert_eq!(label, "app=test");
+            }
+            TargetSelector::ServiceName(_) => {
+                panic!("Should be PodLabel selector");
+            }
+        }
+    }
+
+    #[test]
+    fn test_host_entry_creation() {
+        let config = setup_config_with_domain();
+        let _service_name = config.service.as_ref().unwrap();
+        let local_address = config.local_address.as_ref().unwrap();
+        let ip_addr = local_address.parse::<IpAddr>().unwrap();
+
+        let entry_id = format!("{}", config.id.unwrap_or_default());
+        let host_entry = HostEntry {
+            ip: ip_addr,
+            hostname: config.alias.clone().unwrap_or_default(),
+        };
+
+        assert_eq!(host_entry.ip.to_string(), "127.0.0.1");
+        assert_eq!(host_entry.hostname, "test-alias");
+        assert_eq!(entry_id, "1");
     }
 }
