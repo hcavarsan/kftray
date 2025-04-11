@@ -753,7 +753,7 @@ impl BodyParser {
         debug!("Content category identified as: {:?}", category);
 
         let result = match category {
-            ContentCategory::Empty => "#<empty body>".to_string(),
+            ContentCategory::Empty => "# <empty body>".to_string(),
 
             ContentCategory::Binary => {
                 let content_desc = content_type.unwrap_or("binary");
@@ -768,7 +768,7 @@ impl BodyParser {
                     "".to_string()
                 };
                 format!(
-                    "#<binary data: {} format, {} bytes>{}",
+                    "# <binary data: {} format, {} bytes>{}",
                     content_desc,
                     body.len(),
                     preview
@@ -777,7 +777,11 @@ impl BodyParser {
 
             ContentCategory::Font => {
                 let font_type = content_type.unwrap_or("font");
-                format!("#<binary data: {} format, {} bytes>", font_type, body.len())
+                format!(
+                    "# <binary data: {} format, {} bytes>",
+                    font_type,
+                    body.len()
+                )
             }
 
             ContentCategory::Json => {
@@ -988,6 +992,229 @@ mod tests {
     }
 
     #[test]
+    fn test_request_parser_partial() {
+        let partial_request = b"GET /api/";
+        let (method, path, version, headers) = RequestParser::parse(partial_request).unwrap();
+
+        assert_eq!(method, None);
+        assert_eq!(path, None);
+        assert_eq!(version, None);
+        assert!(headers.is_empty());
+    }
+
+    #[test]
+    fn test_get_content_length() {
+        let mut headers = [EMPTY_HEADER; 2];
+        headers[0].name = "Content-Length";
+        headers[0].value = b"1024";
+        headers[1].name = "Host";
+        headers[1].value = b"example.com";
+
+        let length = RequestParser::get_content_length(&headers);
+        assert_eq!(length, 1024);
+
+        let empty_headers: [Header; 0] = [];
+        assert_eq!(RequestParser::get_content_length(&empty_headers), 0);
+
+        headers[0].value = b"invalid";
+        assert_eq!(RequestParser::get_content_length(&headers), 0);
+    }
+
+    #[test]
+    fn test_get_content_encoding() {
+        let mut headers = [EMPTY_HEADER; 2];
+        headers[0].name = "Content-Encoding";
+        headers[0].value = b"gzip";
+        headers[1].name = "Host";
+        headers[1].value = b"example.com";
+
+        let encoding = RequestParser::get_content_encoding(&headers);
+        assert_eq!(encoding, Some("gzip"));
+
+        headers[0].value = b"br";
+        assert_eq!(RequestParser::get_content_encoding(&headers), Some("br"));
+
+        let empty_headers: [Header; 0] = [];
+        assert_eq!(RequestParser::get_content_encoding(&empty_headers), None);
+    }
+
+    #[test]
+    fn test_is_gzip_encoded() {
+        let mut headers = [EMPTY_HEADER; 1];
+        headers[0].name = "Content-Encoding";
+        headers[0].value = b"gzip";
+
+        assert!(RequestParser::is_gzip_encoded(&headers));
+
+        headers[0].value = b"br";
+        assert!(!RequestParser::is_gzip_encoded(&headers));
+
+        let empty_headers: [Header; 0] = [];
+        assert!(!RequestParser::is_gzip_encoded(&empty_headers));
+    }
+
+    #[test]
+    fn test_is_brotli_encoded() {
+        let mut headers = [EMPTY_HEADER; 1];
+        headers[0].name = "Content-Encoding";
+        headers[0].value = b"br";
+
+        assert!(RequestParser::is_brotli_encoded(&headers));
+
+        headers[0].value = b"gzip";
+        assert!(!RequestParser::is_brotli_encoded(&headers));
+
+        let empty_headers: [Header; 0] = [];
+        assert!(!RequestParser::is_brotli_encoded(&empty_headers));
+    }
+
+    #[test]
+    fn test_is_chunked_transfer() {
+        let mut headers = [EMPTY_HEADER; 1];
+        headers[0].name = "Transfer-Encoding";
+        headers[0].value = b"chunked";
+
+        assert!(RequestParser::is_chunked_transfer(&headers));
+
+        headers[0].value = b"compress";
+        assert!(!RequestParser::is_chunked_transfer(&headers));
+
+        let empty_headers: [Header; 0] = [];
+        assert!(!RequestParser::is_chunked_transfer(&empty_headers));
+    }
+
+    #[test]
+    fn test_extract_body() {
+        let request = b"GET /api/users HTTP/1.1\r\nHost: example.com\r\n\r\nHello World";
+        let body = RequestParser::extract_body(request);
+        assert_eq!(body, Some(b"Hello World" as &[u8]));
+
+        let no_body = b"GET /api/users HTTP/1.1\r\nHost: example.com";
+        assert_eq!(RequestParser::extract_body(no_body), None);
+    }
+
+    #[test]
+    fn test_process_chunked_body() {
+        let chunked_body = b"7\r\nHello, \r\n5\r\nWorld\r\n0\r\n\r\n";
+        let processed = RequestParser::process_chunked_body(chunked_body);
+        assert_eq!(processed, b"Hello, World");
+
+        let empty_body = b"";
+        let processed = RequestParser::process_chunked_body(empty_body);
+        assert!(processed.is_empty());
+
+        let incomplete = b"7\r\nHello,";
+        let processed = RequestParser::process_chunked_body(incomplete);
+        assert!(processed.len() >= 6);
+        assert!(processed.starts_with(b"Hello,"));
+
+        let invalid = b"XYZ\r\nHello";
+        let processed = RequestParser::process_chunked_body(invalid);
+        assert!(processed.len() >= 5);
+        assert!(processed.ends_with(b"Hello"));
+
+        let complex = b"5\r\nHello\r\n5\r\nWorld\r\n0\r\n\r\nExtra";
+        let processed = RequestParser::process_chunked_body(complex);
+        assert_eq!(processed, b"HelloWorld");
+    }
+
+    #[test]
+    fn test_parse_chunk() {
+        let mut chunks_found = 0;
+
+        let data = b"5\r\nHello\r\n";
+        let result = RequestParser::parse_chunk(data, &mut chunks_found).unwrap();
+        match result {
+            ChunkParseResult::Complete {
+                chunk_data,
+                next_pos,
+            } => {
+                assert_eq!(chunk_data, b"Hello");
+                assert_eq!(next_pos, data.len());
+                assert_eq!(chunks_found, 1);
+            }
+            _ => panic!("Expected Complete result"),
+        }
+
+        chunks_found = 0;
+        let data = b"0\r\n\r\n";
+        let result = RequestParser::parse_chunk(data, &mut chunks_found).unwrap();
+        match result {
+            ChunkParseResult::EndOfChunks { next_pos } => {
+                assert_eq!(next_pos, 5);
+                assert_eq!(chunks_found, 1);
+            }
+            _ => panic!("Expected EndOfChunks result"),
+        }
+
+        chunks_found = 0;
+        let data = b"5\r\nHel";
+        let result = RequestParser::parse_chunk(data, &mut chunks_found).unwrap();
+        match result {
+            ChunkParseResult::Incomplete {
+                chunk_data,
+                consumed,
+            } => {
+                assert_eq!(chunk_data, Some(b"Hel" as &[u8]));
+                assert_eq!(consumed, data.len());
+                assert_eq!(chunks_found, 1);
+            }
+            _ => panic!("Expected Incomplete result"),
+        }
+
+        chunks_found = 0;
+        let data = b"\r\nignore";
+        let result = RequestParser::parse_chunk(data, &mut chunks_found).unwrap();
+        match result {
+            ChunkParseResult::Skip { consumed } => {
+                assert_eq!(consumed, 2);
+                assert_eq!(chunks_found, 0);
+            }
+            _ => panic!("Expected Skip result"),
+        }
+
+        chunks_found = 0;
+        let data = b"A;extension=value\r\n1234567890\r\n";
+        let result = RequestParser::parse_chunk(data, &mut chunks_found).unwrap();
+        match result {
+            ChunkParseResult::Complete {
+                chunk_data,
+                next_pos,
+            } => {
+                assert_eq!(chunk_data, b"1234567890");
+                assert_eq!(next_pos, data.len());
+                assert_eq!(chunks_found, 1);
+            }
+            _ => panic!("Expected Complete result"),
+        }
+    }
+
+    #[test]
+    fn test_handle_chunked_edge_cases() {
+        let body = b"";
+        let result = Vec::new();
+        let output = RequestParser::handle_chunked_edge_cases(body, result, 0, false);
+        assert!(output.is_empty());
+
+        let body = b"Hello World";
+        let result = Vec::new();
+        let output = RequestParser::handle_chunked_edge_cases(body, result, 0, false);
+        assert_eq!(output, body);
+
+        let body = b"5\r\nHello\r\n3\r\nWor";
+        let mut result = Vec::new();
+        result.extend_from_slice(b"Hello");
+        let output = RequestParser::handle_chunked_edge_cases(body, result, 1, true);
+        assert!(output.contains(&b'H'));
+        assert!(output.contains(&b'e'));
+        assert!(output.contains(&b'l'));
+        assert!(output.contains(&b'o'));
+        assert!(output.contains(&b'W'));
+        assert!(output.contains(&b'o'));
+        assert!(output.contains(&b'r'));
+    }
+
+    #[test]
     fn test_response_parser() {
         let response =
             b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: 2\r\n\r\n{}";
@@ -1003,6 +1230,15 @@ mod tests {
     }
 
     #[test]
+    fn test_response_parser_partial() {
+        let partial_response = b"HTTP/1.1 20";
+        let (status, headers) = ResponseParser::parse(partial_response).unwrap();
+
+        assert_eq!(status, None);
+        assert!(headers.is_empty());
+    }
+
+    #[test]
     fn test_is_image() {
         let mut headers = [EMPTY_HEADER; 1];
         headers[0].name = "Content-Type";
@@ -1012,6 +1248,175 @@ mod tests {
 
         headers[0].value = b"text/plain";
         assert!(!BodyParser::is_image(&headers));
+    }
+
+    #[test]
+    fn test_get_content_type() {
+        let mut headers = [EMPTY_HEADER; 1];
+        headers[0].name = "Content-Type";
+        headers[0].value = b"application/json";
+
+        let content_type = BodyParser::get_content_type(&headers);
+        assert_eq!(content_type, Some("application/json"));
+
+        headers[0].value = b"text/html; charset=utf-8";
+        let content_type = BodyParser::get_content_type(&headers);
+        assert_eq!(content_type, Some("text/html; charset=utf-8"));
+
+        let empty_headers: [Header; 0] = [];
+        assert_eq!(BodyParser::get_content_type(&empty_headers), None);
+    }
+
+    #[tokio::test]
+    async fn test_gzip_decompression() {
+        let short_data = &[0x1F];
+        let result = BodyParser::decompress_gzip(short_data).await.unwrap();
+        assert_eq!(result, short_data);
+
+        let non_gzip_data = b"Hello World";
+        let result = BodyParser::decompress_gzip(non_gzip_data).await.unwrap();
+        assert_eq!(result, non_gzip_data);
+
+        let data_with_gzip_header = b"prefix\x1F\x8Bgzipped";
+        let index = BodyParser::find_gzip_header(data_with_gzip_header);
+        assert_eq!(index, Some(6));
+    }
+
+    #[tokio::test]
+    async fn test_brotli_decompression() {
+        let empty_data = &[];
+        let result = BodyParser::decompress_brotli(empty_data).await.unwrap();
+        assert_eq!(result, empty_data);
+
+        let short_data = &[0x01, 0x02, 0x03];
+        let result = BodyParser::decompress_brotli(short_data).await.unwrap();
+        assert_eq!(result, short_data);
+
+        let non_br_data = b"Hello World";
+        let result = BodyParser::decompress_brotli(non_br_data).await.unwrap();
+        assert_eq!(result, non_br_data);
+    }
+
+    #[test]
+    fn test_bytes_to_utf8_string() {
+        let valid_utf8 = b"Hello World";
+        let result = BodyParser::bytes_to_utf8_string(valid_utf8);
+        assert_eq!(result, "Hello World");
+
+        let invalid_utf8 = &[0xFF, 0xFE, 0xFD];
+        let result = BodyParser::bytes_to_utf8_string(invalid_utf8);
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn test_identify_content_category() {
+        // Empty body test
+        assert_eq!(
+            BodyParser::identify_content_category(None, b""),
+            ContentCategory::Empty
+        );
+
+        // Content-Type based tests
+        assert_eq!(
+            BodyParser::identify_content_category(Some("image/png"), b"data"),
+            ContentCategory::Binary
+        );
+
+        assert_eq!(
+            BodyParser::identify_content_category(Some("application/json"), b"data"),
+            ContentCategory::Json
+        );
+
+        assert_eq!(
+            BodyParser::identify_content_category(Some("text/javascript"), b"data"),
+            ContentCategory::JavaScript
+        );
+
+        assert_eq!(
+            BodyParser::identify_content_category(Some("text/css"), b"data"),
+            ContentCategory::Css
+        );
+
+        assert_eq!(
+            BodyParser::identify_content_category(Some("text/html"), b"data"),
+            ContentCategory::Html
+        );
+
+        assert_eq!(
+            BodyParser::identify_content_category(Some("text/xml"), b"data"),
+            ContentCategory::Xml
+        );
+
+        assert_eq!(
+            BodyParser::identify_content_category(Some("image/svg+xml"), b"data"),
+            ContentCategory::Svg
+        );
+
+        assert_eq!(
+            BodyParser::identify_content_category(Some("text/plain"), b"data"),
+            ContentCategory::Text
+        );
+
+        assert_eq!(
+            BodyParser::identify_content_category(Some("font/ttf"), b"data"),
+            ContentCategory::Font
+        );
+
+        // Content-based detection
+        assert_eq!(
+            BodyParser::identify_content_category(None, b"{\"key\":\"value\"}"),
+            ContentCategory::Json
+        );
+
+        assert_eq!(
+            BodyParser::identify_content_category(None, b"<html><body>Hello</body></html>"),
+            ContentCategory::Html
+        );
+
+        assert_eq!(
+            BodyParser::identify_content_category(None, b"<svg width=\"100\"></svg>"),
+            ContentCategory::Svg
+        );
+
+        // Binary detection based on magic numbers
+        assert_eq!(
+            BodyParser::identify_content_category(None, &[0xFF, 0xD8, 0xFF]),
+            ContentCategory::Binary
+        );
+
+        assert_eq!(
+            BodyParser::identify_content_category(None, &[0x89, 0x50, 0x4E, 0x47]),
+            ContentCategory::Binary
+        );
+
+        assert_eq!(
+            BodyParser::identify_content_category(None, &[0x47, 0x49, 0x46]),
+            ContentCategory::Binary
+        );
+    }
+
+    #[tokio::test]
+    async fn test_process_response_body() {
+        let mut headers = [EMPTY_HEADER; 1];
+        headers[0].name = "Transfer-Encoding";
+        headers[0].value = b"chunked";
+
+        let chunked_body = b"5\r\nHello\r\n6\r\n World\r\n0\r\n\r\n";
+        let result = BodyParser::process_response_body(chunked_body, &headers)
+            .await
+            .unwrap();
+        assert_eq!(result, b"Hello World");
+
+        let mut headers = [EMPTY_HEADER; 1];
+        headers[0].name = "Content-Encoding";
+        headers[0].value = b"gzip";
+
+        let headers: [Header; 0] = [];
+        let body = b"Hello World";
+        let result = BodyParser::process_response_body(body, &headers)
+            .await
+            .unwrap();
+        assert_eq!(result, body);
     }
 
     #[tokio::test]
@@ -1040,8 +1445,12 @@ mod tests {
             formatted
         );
 
-        let binary_data = &[0xFF, 0xD8, 0xFF, 0xE0];
-        let formatted = BodyParser::format_body_async(binary_data, &[])
+        let jpeg_binary_data = &[0xFF, 0xD8, 0xFF, 0xE0];
+        let mut headers = [EMPTY_HEADER; 1];
+        headers[0].name = "Content-Type";
+        headers[0].value = b"image/jpeg";
+
+        let formatted = BodyParser::format_body_async(jpeg_binary_data, &headers)
             .await
             .unwrap();
         assert!(
@@ -1049,5 +1458,62 @@ mod tests {
             "Expected image format message, got: {}",
             formatted
         );
+
+        let css_body = b"body { color: red; }";
+        let mut headers = [EMPTY_HEADER; 1];
+        headers[0].name = "Content-Type";
+        headers[0].value = b"text/css";
+
+        let formatted = BodyParser::format_body_async(css_body, &headers)
+            .await
+            .unwrap();
+        assert!(formatted.contains("CSS content"));
+
+        let html_body = b"<html><body>Hello</body></html>";
+        let mut headers = [EMPTY_HEADER; 1];
+        headers[0].name = "Content-Type";
+        headers[0].value = b"text/html";
+
+        let formatted = BodyParser::format_body_async(html_body, &headers)
+            .await
+            .unwrap();
+        assert!(formatted.contains("HTML content"));
+
+        let xml_body = b"<?xml version=\"1.0\"?><root><item>test</item></root>";
+        let mut headers = [EMPTY_HEADER; 1];
+        headers[0].name = "Content-Type";
+        headers[0].value = b"application/xml";
+
+        let formatted = BodyParser::format_body_async(xml_body, &headers)
+            .await
+            .unwrap();
+        assert!(formatted.contains("XML content"));
+
+        let svg_body = b"<svg width=\"100\" height=\"100\"></svg>";
+        let mut headers = [EMPTY_HEADER; 1];
+        headers[0].name = "Content-Type";
+        headers[0].value = b"image/svg+xml";
+
+        let formatted = BodyParser::format_body_async(svg_body, &headers)
+            .await
+            .unwrap();
+        assert!(formatted.contains("SVG content"));
+
+        let js_body = b"function test() { return 1; }";
+        let mut headers = [EMPTY_HEADER; 1];
+        headers[0].name = "Content-Type";
+        headers[0].value = b"application/javascript";
+
+        let formatted = BodyParser::format_body_async(js_body, &headers)
+            .await
+            .unwrap();
+        assert!(formatted.contains("function"));
+    }
+
+    #[test]
+    fn test_is_content_too_large() {
+        assert!(BodyParser::is_content_too_large(101 * 1024 * 1024));
+
+        assert!(!BodyParser::is_content_too_large(10 * 1024 * 1024));
     }
 }

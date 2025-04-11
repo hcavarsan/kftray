@@ -32,8 +32,8 @@ use crate::tui::ui::draw_ui;
 pub async fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
     init().await?;
 
-    if let Err(e) = migrate_configs().await {
-        error!("Failed to migrate configs: {}", e);
+    if let Err(e) = migrate_configs(None).await {
+        error!("Database migration failed: {}", e);
     }
 
     enable_raw_mode()?;

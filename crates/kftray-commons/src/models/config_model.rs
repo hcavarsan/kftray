@@ -58,3 +58,31 @@ impl Default for Config {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_config_default() {
+        let config = Config::default();
+
+        assert_eq!(config.id, None);
+        assert_eq!(config.service, Some("default-service".to_string()));
+        assert_eq!(config.namespace, "default-namespace".to_string());
+        assert_eq!(config.local_port, Some(0));
+        assert_eq!(config.remote_port, Some(0));
+        assert_eq!(config.context, "default-context".to_string());
+        assert_eq!(config.workload_type, Some("default-workload".to_string()));
+        assert_eq!(config.protocol, "protocol".to_string());
+        assert_eq!(
+            config.remote_address,
+            Some("default-remote-address".to_string())
+        );
+        assert_eq!(config.local_address, Some("127.0.0.1".to_string()));
+        assert_eq!(config.domain_enabled, Some(false));
+        assert_eq!(config.alias, Some("default-alias".to_string()));
+        assert_eq!(config.kubeconfig, Some("default".to_string()));
+        assert_eq!(config.target, Some("default-target".to_string()));
+    }
+}

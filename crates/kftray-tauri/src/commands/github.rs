@@ -605,7 +605,7 @@ async fn import_configurations(configs: &[Config]) -> Result<(), String> {
 }
 
 async fn migrate_configurations() -> Result<(), String> {
-    match migrate_configs().await {
+    match migrate_configs(None).await {
         Ok(_) => {
             info!("Configuration import completed successfully");
             Ok(())

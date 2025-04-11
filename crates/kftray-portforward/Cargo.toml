@@ -44,6 +44,7 @@ base64 = "0.22.1"
 hyper-openssl = "0.10.2"
 secrecy = "0.10.3"
 libc = "0.2"
+env_logger = "0.11"
 
 [lib]
 name = "kftray_portforward"

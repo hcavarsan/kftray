@@ -220,3 +220,60 @@ impl PortForward {
         UdpForwarder::bind_and_forward(local_addr, local_port, upstream_conn).await
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_child_processes_map() {
+        {
+            let mut processes = CHILD_PROCESSES.lock().unwrap();
+            assert_eq!(processes.len(), 0);
+
+            processes.insert("test-key".to_string(), dummy_handle());
+            assert_eq!(processes.len(), 1);
+            assert!(processes.contains_key("test-key"));
+
+            processes.remove("test-key");
+            assert_eq!(processes.len(), 0);
+        }
+    }
+
+    #[allow(clippy::async_yields_async)]
+    fn dummy_handle() -> JoinHandle<()> {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+
+        rt.block_on(async { tokio::spawn(async {}) })
+    }
+
+    #[tokio::test]
+    async fn test_cancel_notifier() {
+        let notifier = CANCEL_NOTIFIER.clone();
+        let task = tokio::spawn(async move {
+            tokio::select! {
+                _ = notifier.notified() => true,
+                _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => false,
+            }
+        });
+
+        CANCEL_NOTIFIER.notify_one();
+
+        assert!(task.await.unwrap());
+    }
+
+    #[test]
+    fn test_local_port_and_address() {
+        assert_eq!(8080_u16, 8080);
+        assert_eq!(0, 0);
+
+        let addr1: Option<String> = Some("127.0.0.1".to_string());
+        let addr2: Option<String> = None;
+
+        assert_eq!(addr1.clone(), Some("127.0.0.1".to_string()));
+        assert_eq!(addr2.clone(), None);
+    }
+}

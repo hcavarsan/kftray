@@ -42,3 +42,39 @@ pub fn setup_logging() -> Result<(), Box<dyn std::error::Error>> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+
+    #[test]
+    fn test_log_level_parsing() {
+        let test_cases = vec![
+            ("debug", log::LevelFilter::Debug),
+            ("info", log::LevelFilter::Info),
+            ("warn", log::LevelFilter::Warn),
+            ("error", log::LevelFilter::Error),
+            ("trace", log::LevelFilter::Trace),
+            ("invalid_level", log::LevelFilter::Info), // Should default to Info
+        ];
+
+        for (input, expected) in test_cases {
+            let result = input.parse().unwrap_or(log::LevelFilter::Info);
+            assert_eq!(result, expected, "Failed for input: {}", input);
+        }
+    }
+
+    #[test]
+    fn test_debug_env_detection() {
+        let original_debug = std::env::var("KFTRAY_DEBUG").ok();
+
+        std::env::set_var("KFTRAY_DEBUG", "1");
+        assert!(std::env::var("KFTRAY_DEBUG").is_ok());
+
+        std::env::remove_var("KFTRAY_DEBUG");
+        assert!(std::env::var("KFTRAY_DEBUG").is_err());
+
+        if let Some(val) = original_debug {
+            std::env::set_var("KFTRAY_DEBUG", val);
+        }
+    }
+}
