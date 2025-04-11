@@ -1,6 +1,6 @@
-use std::future::Future;
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use kftray_commons::config::get_config;
 use kftray_commons::config_state::{
     get_configs_state,
@@ -28,15 +28,69 @@ use sysinfo::{
     System,
 };
 
+#[cfg_attr(test, mockall::automock)]
+#[async_trait]
+pub trait PortOperations: Send + Sync {
+    async fn get_configs_state(&self) -> Result<Vec<ConfigState>, String>;
+    async fn get_config(&self, id: i64) -> Result<Config, String>;
+    async fn update_config_state(&self, state: &ConfigState) -> Result<(), String>;
+    async fn find_process_by_port(&self, port: u16) -> Option<(i32, String)>;
+    async fn start_port_forward(
+        &self, configs: Vec<Config>, protocol: &str, http_log_state: Arc<HttpLogState>,
+    ) -> Result<Vec<String>, String>;
+    async fn deploy_and_forward_pod(
+        &self, configs: Vec<Config>, http_log_state: Arc<HttpLogState>,
+    ) -> Result<Vec<String>, String>;
+}
+
+pub struct RealPortOperations;
+
+#[async_trait]
+impl PortOperations for RealPortOperations {
+    async fn get_configs_state(&self) -> Result<Vec<ConfigState>, String> {
+        get_configs_state().await
+    }
+
+    async fn get_config(&self, id: i64) -> Result<Config, String> {
+        get_config(id).await
+    }
+
+    async fn update_config_state(&self, state: &ConfigState) -> Result<(), String> {
+        update_config_state(state).await
+    }
+
+    async fn find_process_by_port(&self, port: u16) -> Option<(i32, String)> {
+        find_process_by_port_internal(port).await
+    }
+
+    async fn start_port_forward(
+        &self, configs: Vec<Config>, protocol: &str, http_log_state: Arc<HttpLogState>,
+    ) -> Result<Vec<String>, String> {
+        start_port_forward(configs, protocol, http_log_state)
+            .await
+            .map(|responses| responses.into_iter().map(|r| format!("{:?}", r)).collect())
+    }
+
+    async fn deploy_and_forward_pod(
+        &self, configs: Vec<Config>, http_log_state: Arc<HttpLogState>,
+    ) -> Result<Vec<String>, String> {
+        deploy_and_forward_pod(configs, http_log_state)
+            .await
+            .map(|responses| responses.into_iter().map(|r| format!("{:?}", r)).collect())
+    }
+}
+
 async fn fetch_configs_in_parallel(
-    running_configs: Vec<ConfigState>,
+    port_ops: Arc<dyn PortOperations>, running_configs: Vec<ConfigState>,
 ) -> Vec<(i64, Result<Config, String>)> {
     let mut config_tasks = Vec::with_capacity(running_configs.len());
 
     for config_state in running_configs {
         let config_id = config_state.config_id;
+        let port_ops = Arc::clone(&port_ops);
         let task = tokio::spawn(async move {
-            let result = get_config(config_id)
+            let result = port_ops
+                .get_config(config_id)
                 .await
                 .map_err(|e| format!("Failed to retrieve config {}: {}", config_id, e));
             (config_id, result)
@@ -59,21 +113,8 @@ async fn fetch_configs_in_parallel(
     results
 }
 
-async fn run_with_timeout<T, E, F>(
-    future: F, timeout_secs: u64, timeout_message: &str,
-) -> Result<T, String>
-where
-    F: Future<Output = Result<T, E>>,
-    E: std::fmt::Display,
-{
-    match tokio::time::timeout(tokio::time::Duration::from_secs(timeout_secs), future).await {
-        Ok(result) => result.map_err(|e| e.to_string()),
-        Err(_) => Err(timeout_message.to_string()),
-    }
-}
-
-pub async fn check_and_manage_ports() -> Result<(), String> {
-    let running_configs = match get_configs_state().await {
+pub async fn check_and_manage_ports(port_ops: Arc<dyn PortOperations>) -> Result<(), String> {
+    let running_configs = match port_ops.get_configs_state().await {
         Ok(states) => states
             .into_iter()
             .filter(|state| state.is_running)
@@ -91,7 +132,7 @@ pub async fn check_and_manage_ports() -> Result<(), String> {
 
     info!("Restoring {} running port forwards", running_configs.len());
 
-    let config_results = fetch_configs_in_parallel(running_configs).await;
+    let config_results = fetch_configs_in_parallel(Arc::clone(&port_ops), running_configs).await;
 
     let mut port_tasks = Vec::new();
     let mut fetch_errors = Vec::new();
@@ -99,8 +140,9 @@ pub async fn check_and_manage_ports() -> Result<(), String> {
     for (config_id, result) in config_results {
         match result {
             Ok(config) => {
+                let port_ops = Arc::clone(&port_ops);
                 let task = tokio::spawn(async move {
-                    if let Err(err) = check_and_manage_port(config).await {
+                    if let Err(err) = check_and_manage_port(port_ops, config).await {
                         error!("Error checking state for config {}: {}", config_id, err);
                     }
                 });
@@ -129,20 +171,22 @@ pub async fn check_and_manage_ports() -> Result<(), String> {
     Ok(())
 }
 
-async fn check_and_manage_port(config: Config) -> Result<(), Box<dyn std::error::Error>> {
+async fn check_and_manage_port(
+    port_ops: Arc<dyn PortOperations>, config: Config,
+) -> Result<(), Box<dyn std::error::Error>> {
     let port = config.local_port.unwrap_or(0);
 
-    if let Some((pid, process_name)) = find_process_by_port(port).await {
-        handle_existing_process(config, port, pid, process_name).await?;
+    if let Some((pid, process_name)) = port_ops.find_process_by_port(port).await {
+        handle_existing_process(Arc::clone(&port_ops), config, port, pid, process_name).await?;
     } else {
-        start_port_forwarding(config).await?;
+        start_port_forwarding(port_ops, config).await?;
     }
 
     Ok(())
 }
 
 async fn handle_existing_process(
-    config: Config, port: u16, pid: i32, process_name: String,
+    port_ops: Arc<dyn PortOperations>, config: Config, port: u16, pid: i32, process_name: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
     debug!(
         "Process '{}' (pid: {}) is using port {}.",
@@ -161,13 +205,15 @@ async fn handle_existing_process(
             config_id: config.id.unwrap(),
             is_running: false,
         };
-        update_config_state(&config_state).await?;
+        port_ops.update_config_state(&config_state).await?;
     }
 
     Ok(())
 }
 
-async fn start_port_forwarding(config: Config) -> Result<(), String> {
+async fn start_port_forwarding(
+    port_ops: Arc<dyn PortOperations>, config: Config,
+) -> Result<(), String> {
     let port = config.local_port.unwrap_or(0);
     debug!(
         "No process is occupying port {}. Starting port forwarding for '{}'...",
@@ -190,55 +236,49 @@ async fn start_port_forwarding(config: Config) -> Result<(), String> {
         .clone()
         .unwrap_or_else(|| format!("ID:{}", config_id));
 
-    let forward_future = async {
-        match config.workload_type.as_deref() {
-            Some("proxy") => deploy_and_forward_pod(configs, http_log_state.clone()).await,
-            _ => start_port_forward(configs, protocol, http_log_state.clone()).await,
+    let result = match config.workload_type.as_deref() {
+        Some("proxy") => {
+            port_ops
+                .deploy_and_forward_pod(configs, http_log_state.clone())
+                .await
+        }
+        _ => {
+            port_ops
+                .start_port_forward(configs, protocol, http_log_state.clone())
+                .await
         }
     };
 
-    let timeout_message = format!(
-        "Port forwarding for '{}' timed out after 15 seconds",
-        config_alias
-    );
-    let forward_result = run_with_timeout(forward_future, 15, &timeout_message).await;
-
-    match forward_result {
-        Ok(responses) => {
-            debug!(
-                "Port forwarding response for '{}': {:?}",
-                config_alias, responses
-            );
+    match result {
+        Ok(_) => {
             let config_state = ConfigState {
                 id: None,
                 config_id,
                 is_running: true,
             };
-            update_config_state(&config_state)
-                .await
-                .map_err(|e| format!("Failed to update config state: {}", e))?;
+            port_ops.update_config_state(&config_state).await?;
+            Ok(())
         }
         Err(e) => {
-            error!(
+            let error_msg = format!(
                 "Failed to start port forwarding for '{}': {}",
                 config_alias, e
             );
+            error!("{}", error_msg);
+
             let config_state = ConfigState {
                 id: None,
                 config_id,
                 is_running: false,
             };
-            update_config_state(&config_state)
-                .await
-                .map_err(|e| format!("Failed to update config state: {}", e))?;
-            return Err(e);
+            port_ops.update_config_state(&config_state).await?;
+
+            Err(error_msg)
         }
     }
-
-    Ok(())
 }
 
-async fn find_process_by_port(port: u16) -> Option<(i32, String)> {
+async fn find_process_by_port_internal(port: u16) -> Option<(i32, String)> {
     if port == 0 {
         return None;
     }
@@ -246,42 +286,197 @@ async fn find_process_by_port(port: u16) -> Option<(i32, String)> {
     let af_flags = AddressFamilyFlags::IPV4 | AddressFamilyFlags::IPV6;
     let proto_flags = ProtocolFlags::TCP | ProtocolFlags::UDP;
 
-    let sockets_info = match get_sockets_info(af_flags, proto_flags) {
-        Ok(info) => info,
-        Err(e) => {
-            error!("Failed to retrieve socket information: {}", e);
-            return None;
-        }
-    };
+    if let Ok(sockets_info) = get_sockets_info(af_flags, proto_flags) {
+        for socket in sockets_info {
+            let local_port = match &socket.protocol_socket_info {
+                ProtocolSocketInfo::Tcp(tcp_info) => tcp_info.local_port,
+                ProtocolSocketInfo::Udp(udp_info) => udp_info.local_port,
+            };
 
-    for socket in sockets_info {
-        match &socket.protocol_socket_info {
-            ProtocolSocketInfo::Tcp(tcp_info) if tcp_info.local_port == port => {
+            if local_port == port {
                 if let Some(&pid) = socket.associated_pids.first() {
                     let process_name = get_process_name_by_pid(pid as i32);
                     return Some((pid as i32, process_name));
                 }
             }
-            ProtocolSocketInfo::Udp(udp_info) if udp_info.local_port == port => {
-                if let Some(&pid) = socket.associated_pids.first() {
-                    let process_name = get_process_name_by_pid(pid as i32);
-                    return Some((pid as i32, process_name));
-                }
-            }
-            _ => continue,
         }
     }
 
-    None
+    None // Return None if no process found on the port
 }
 
 fn get_process_name_by_pid(pid: i32) -> String {
-    let mut system = System::new_all();
-    system.refresh_all();
+    let mut system = System::new();
+    system.refresh_processes(sysinfo::ProcessesToUpdate::All, false);
 
-    if let Some(process) = system.process(Pid::from(pid as usize)) {
-        process.name().to_string_lossy().into_owned()
-    } else {
-        format!("PID {} not found", pid)
+    system
+        .process(Pid::from(pid as usize))
+        .map(|process| process.name().to_string_lossy().into_owned())
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use mockall::predicate::*;
+
+    use super::*;
+
+    fn create_test_config(
+        id: i64, port: u16, protocol: &str, workload_type: Option<&str>,
+    ) -> Config {
+        Config {
+            id: Some(id),
+            alias: Some(format!("test-config-{}", id)),
+            local_port: Some(port),
+            protocol: protocol.to_string(),
+            workload_type: workload_type.map(String::from),
+            ..Default::default()
+        }
+    }
+
+    fn create_config_state(id: i64, is_running: bool) -> ConfigState {
+        ConfigState {
+            id: None,
+            config_id: id,
+            is_running,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_check_and_manage_ports_no_running_configs() {
+        let mut mock = MockPortOperations::new();
+        mock.expect_get_configs_state()
+            .times(1)
+            .returning(|| Ok(vec![]));
+
+        let result = check_and_manage_ports(Arc::new(mock)).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_check_and_manage_ports_with_configs() {
+        let mut mock = MockPortOperations::new();
+        let config_states = vec![create_config_state(1, true)];
+        let config = create_test_config(1, 8080, "tcp", None);
+
+        mock.expect_get_configs_state()
+            .times(1)
+            .returning(move || Ok(config_states.clone()));
+
+        mock.expect_get_config()
+            .with(eq(1))
+            .times(1)
+            .returning(move |_| Ok(config.clone()));
+
+        mock.expect_find_process_by_port()
+            .with(eq(8080))
+            .times(1)
+            .returning(|_| None);
+
+        mock.expect_start_port_forward()
+            .times(1)
+            .returning(|_, _, _| Ok(vec!["Port forwarding started".to_string()]));
+
+        mock.expect_update_config_state()
+            .times(1)
+            .returning(|_| Ok(()));
+
+        let result = check_and_manage_ports(Arc::new(mock)).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_check_and_manage_port_existing_process() {
+        let mut mock = MockPortOperations::new();
+        let config = create_test_config(1, 8080, "tcp", None);
+
+        mock.expect_find_process_by_port()
+            .with(eq(8080))
+            .times(1)
+            .returning(|_| Some((1234, "nginx".to_string())));
+
+        mock.expect_update_config_state()
+            .with(function(|state: &ConfigState| {
+                state.config_id == 1 && !state.is_running
+            }))
+            .times(1)
+            .returning(|_| Ok(()));
+
+        let result = check_and_manage_port(Arc::new(mock), config).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_check_and_manage_port_internal_process() {
+        let mut mock = MockPortOperations::new();
+        let config = create_test_config(1, 8080, "tcp", None);
+
+        mock.expect_find_process_by_port()
+            .with(eq(8080))
+            .times(1)
+            .returning(|_| Some((1234, "kftray".to_string())));
+
+        let result = check_and_manage_port(Arc::new(mock), config).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_start_port_forwarding_success() {
+        let mut mock = MockPortOperations::new();
+        let config = create_test_config(1, 8080, "tcp", None);
+
+        mock.expect_start_port_forward()
+            .times(1)
+            .returning(|_, _, _| Ok(vec!["Port forwarding started".to_string()]));
+
+        mock.expect_update_config_state()
+            .with(function(|state: &ConfigState| {
+                state.config_id == 1 && state.is_running
+            }))
+            .times(1)
+            .returning(|_| Ok(()));
+
+        let result = start_port_forwarding(Arc::new(mock), config).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_start_port_forwarding_proxy_workload() {
+        let mut mock = MockPortOperations::new();
+        let config = create_test_config(1, 8080, "tcp", Some("proxy"));
+
+        mock.expect_deploy_and_forward_pod()
+            .times(1)
+            .returning(|_, _| Ok(vec!["Proxy pod deployed and forwarded".to_string()]));
+
+        mock.expect_update_config_state()
+            .with(function(|state: &ConfigState| {
+                state.config_id == 1 && state.is_running
+            }))
+            .times(1)
+            .returning(|_| Ok(()));
+
+        let result = start_port_forwarding(Arc::new(mock), config).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_start_port_forwarding_failure() {
+        let mut mock = MockPortOperations::new();
+        let config = create_test_config(1, 8080, "tcp", None);
+
+        mock.expect_start_port_forward()
+            .times(1)
+            .returning(|_, _, _| Err("Port forwarding failed".to_string()));
+
+        mock.expect_update_config_state()
+            .with(function(|state: &ConfigState| {
+                state.config_id == 1 && !state.is_running
+            }))
+            .times(1)
+            .returning(|_| Ok(()));
+
+        let result = start_port_forwarding(Arc::new(mock), config).await;
+        assert!(result.is_err());
     }
 }

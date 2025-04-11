@@ -13,6 +13,9 @@
   <a href="https://github.com/hcavarsan/kftray">
     <img src="https://img.shields.io/github/downloads/hcavarsan/kftray/total?style=for-the-badge" alt="Total Downloads">
   </a>
+  <a href="https://codecov.io/gh/hcavarsan/kftray">
+    <img src="https://img.shields.io/codecov/c/github/hcavarsan/kftray?style=for-the-badge&logo=codecov" alt="Codecov Coverage">
+  </a>
   <br><br>
 </div>
 

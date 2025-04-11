@@ -25,9 +25,11 @@ tokio = { version = "1.44.2", features = ["rt-multi-thread", "macros", "full"] }
 tracing = "0.1.41"
 uuid = { version = "1.11.1", features = ["v4"] }
 brotli = "7.0.0"
+kftray-commons = { path = "../kftray-commons" }
 
 [dev-dependencies]
 tempfile = "3.15.0"
+mockall = "0.13.1"
 
 [lib]
 name = "kftray_http_logs"

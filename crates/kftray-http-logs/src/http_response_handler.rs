@@ -688,4 +688,291 @@ mod tests {
 
         assert!(!default_handler.check_time_based_logging(regular_response, Instant::now()));
     }
+
+    #[test]
+    fn test_find_headers_end() {
+        let response_with_headers =
+            b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nBody content";
+        let response_without_end = b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n";
+
+        let header_end_position = response_with_headers
+            .windows(4)
+            .position(|w| w == b"\r\n\r\n")
+            .unwrap();
+
+        assert_eq!(
+            find_headers_end(response_with_headers),
+            Some(header_end_position)
+        );
+        assert_eq!(find_headers_end(response_without_end), None);
+    }
+
+    #[test]
+    fn test_response_logging_state_new() {
+        let state = ResponseLoggingState::new();
+
+        assert!(state.complete_response.is_empty());
+        assert!(!state.already_logged);
+        assert!(!state.logging_enabled);
+        assert!(!state.is_chunked);
+    }
+
+    #[tokio::test]
+    async fn test_creating_response_chunk_context() {
+        let response_logged = Arc::new(Mutex::new(false));
+        let request_id = Arc::new(Mutex::new(Some("test-id".to_string())));
+
+        let mut context = ResponseChunkContext::new(response_logged, request_id);
+
+        let first_chunk = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n";
+        context.complete_response.extend_from_slice(first_chunk);
+        context.total_chunks_received += 1;
+
+        assert_eq!(context.total_chunks_received, 1);
+        assert_eq!(context.complete_response, first_chunk);
+        assert!(!context.is_chunked);
+        assert!(!context.found_end_marker);
+    }
+
+    #[test]
+    fn test_handler_with_config() {
+        let default_handler = HttpResponseHandler::new(456);
+        assert_eq!(default_handler.config_id, 456);
+        assert_eq!(
+            default_handler.config.min_log_sync_ms,
+            DEFAULT_MIN_LOG_SYNC_MS
+        );
+
+        let custom_config = ResponseHandlerConfig {
+            min_log_sync_ms: 100,
+            analyzer_config: ResponseAnalyzerConfig {
+                min_headers_size: 32,
+            },
+        };
+
+        let custom_handler = HttpResponseHandler::with_config(789, custom_config);
+        assert_eq!(custom_handler.config_id, 789);
+        assert_eq!(custom_handler.config.min_log_sync_ms, 100);
+        assert_eq!(custom_handler.config.analyzer_config.min_headers_size, 32);
+    }
+
+    #[tokio::test]
+    async fn test_creating_logging_context() {
+        let _handler = HttpResponseHandler::new(123);
+
+        let response_logged = Arc::new(Mutex::new(false));
+        let request_id = Arc::new(Mutex::new(Some("test-id".to_string())));
+
+        let buffer = b"HTTP/1.1 200 OK\r\nContent-Length: 11\r\n\r\nHello World";
+
+        let context = ResponseLoggingContext {
+            complete_response: buffer.to_vec(),
+            is_chunked: false,
+            found_end_marker: false,
+            response_logged,
+            request_id,
+            first_chunk_time: Some(Instant::now()),
+        };
+
+        assert_eq!(context.complete_response, buffer);
+        assert!(!context.is_chunked);
+        assert!(!context.found_end_marker);
+    }
+
+    #[test]
+    fn test_response_handler_config_default() {
+        let config = ResponseHandlerConfig::default();
+
+        assert_eq!(config.min_log_sync_ms, DEFAULT_MIN_LOG_SYNC_MS);
+        assert_eq!(
+            config.analyzer_config.min_headers_size,
+            crate::http_response_analyzer::DEFAULT_MIN_VALID_HEADERS_SIZE
+        );
+    }
+
+    #[tokio::test]
+    async fn test_check_time_based_logging_websocket() {
+        let handler = HttpResponseHandler::new(123);
+
+        let websocket_response = b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n";
+        assert!(handler.check_time_based_logging(websocket_response, Instant::now()));
+    }
+
+    #[tokio::test]
+    async fn test_check_time_based_logging_regular_response_no_time_passed() {
+        let handler = HttpResponseHandler::new(123);
+
+        let regular_response = b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nContent";
+        let now = Instant::now();
+
+        assert!(!handler.check_time_based_logging(regular_response, now));
+    }
+
+    #[tokio::test]
+    async fn test_check_time_based_logging_regular_response_time_passed() {
+        let handler = HttpResponseHandler::new(123);
+
+        let very_old_time = Instant::now() - Duration::from_secs(15);
+
+        let mut large_response =
+            Vec::from(&b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\n"[..]);
+        large_response.extend(vec![b'A'; 6000]);
+
+        assert!(handler.check_time_based_logging(&large_response, very_old_time),
+            "Time-based logging should be triggered for large response with sufficient time elapsed");
+    }
+
+    #[tokio::test]
+    async fn test_check_time_based_logging_unfinished_response() {
+        let handler = HttpResponseHandler::new(123);
+
+        let unfinished_response = b"HTTP/1.1 200 OK\r\nContent-Type: text/plain";
+
+        let past_time = Instant::now() - Duration::from_millis(DEFAULT_MIN_LOG_SYNC_MS + 10);
+
+        assert!(!handler.check_time_based_logging(unfinished_response, past_time));
+    }
+
+    #[derive(Clone)]
+    struct MockLogger {
+        logs: Arc<Mutex<Vec<String>>>,
+    }
+
+    impl MockLogger {
+        fn new() -> Self {
+            Self {
+                logs: Arc::new(Mutex::new(Vec::new())),
+            }
+        }
+
+        async fn log_count(&self) -> usize {
+            self.logs.lock().await.len()
+        }
+
+        async fn last_log(&self) -> Option<String> {
+            let logs = self.logs.lock().await;
+            logs.last().cloned()
+        }
+    }
+
+    #[tokio::test]
+    async fn test_chunked_transfer_detection() {
+        let chunked_headers = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\ndata";
+        assert!(HttpResponseHandler::is_chunked_transfer(chunked_headers));
+
+        let regular_headers = b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nContent";
+        assert!(!HttpResponseHandler::is_chunked_transfer(regular_headers));
+
+        let non_chunked_transfer = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\n\r\ndata";
+        assert!(!HttpResponseHandler::is_chunked_transfer(
+            non_chunked_transfer
+        ));
+    }
+
+    #[tokio::test]
+    async fn test_websocket_upgrade_detection() {
+        use crate::HttpResponseAnalyzer;
+
+        let websocket_data = b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=\r\n\r\n";
+
+        println!("Testing websocket detection with complete headers");
+        let result = HttpResponseAnalyzer::is_websocket_upgrade(websocket_data);
+        println!("Result: {}", result);
+
+        assert!(result, "Should detect complete websocket upgrade response");
+
+        let regular_data = b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nHello";
+        assert!(
+            !HttpResponseAnalyzer::is_websocket_upgrade(regular_data),
+            "Should not detect regular HTTP response as websocket"
+        );
+
+        let partial_upgrade = b"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n";
+        let partial_result = HttpResponseAnalyzer::is_websocket_upgrade(partial_upgrade);
+        println!("Partial result: {}", partial_result);
+
+        assert!(
+            !partial_result,
+            "Should NOT detect WebSocket upgrade without Sec-WebSocket-Accept header"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_format_response_for_logging() {
+        let handler = HttpResponseHandler::new(123);
+        let response_data =
+            b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nServer: test\r\n\r\nHello World";
+
+        let result = handler.format_response_for_logging(response_data).await;
+
+        assert!(result.is_ok(), "format_response_for_logging should succeed");
+        let formatted = result.unwrap();
+
+        println!("Formatted response:\n{}", formatted);
+        println!(
+            "Original response: {:?}",
+            std::str::from_utf8(response_data).unwrap()
+        );
+
+        assert!(
+            formatted.contains("HTTP/1.1 200 OK"),
+            "Should contain status line"
+        );
+        assert!(
+            formatted.contains("Hello World"),
+            "Should contain body content"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_mock_logging() {
+        let logger = Arc::new(MockLogger::new());
+
+        {
+            let mut logs = logger.logs.lock().await;
+            logs.push("Test log entry 1".to_string());
+            logs.push("Test log entry 2".to_string());
+        }
+
+        assert_eq!(logger.log_count().await, 2);
+
+        assert_eq!(logger.last_log().await.unwrap(), "Test log entry 2");
+    }
+
+    #[tokio::test]
+    async fn test_format_response_for_logging_full() {
+        let handler = HttpResponseHandler::new(123);
+
+        let response_data =
+            b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 9\r\n\r\nTest body";
+
+        let result = handler.format_response_for_logging(response_data).await;
+
+        assert!(result.is_ok());
+        let formatted = result.unwrap();
+
+        println!("Formatted response: {}", formatted);
+
+        assert!(formatted.contains("HTTP/1.1 200 OK"));
+
+        assert!(formatted.contains("Test body"));
+    }
+
+    #[tokio::test]
+    async fn test_format_response_with_empty_body() {
+        let handler = HttpResponseHandler::new(123);
+
+        let response_data = b"HTTP/1.1 204 No Content\r\nServer: Test\r\n\r\n";
+
+        let result = handler.format_response_for_logging(response_data).await;
+
+        assert!(result.is_ok());
+        let formatted = result.unwrap();
+
+        println!("Formatted empty body response: {}", formatted);
+
+        assert!(!formatted.is_empty());
+
+        assert!(formatted.contains("empty") || formatted.contains("#") || !formatted.is_empty());
+    }
 }

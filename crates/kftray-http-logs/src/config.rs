@@ -134,4 +134,93 @@ mod tests {
 
         assert!(temp_dir.path().exists());
     }
+
+    #[test]
+    fn test_log_config_getters() {
+        let temp_dir = TempDir::new().unwrap();
+        let log_dir = temp_dir.path().to_path_buf();
+        let config = LogConfig {
+            log_dir: log_dir.clone(),
+            max_log_size: 500,
+            retention_days: 3,
+            file_extension: "log".to_string(),
+        };
+
+        assert_eq!(config.log_dir(), log_dir.as_path());
+        assert_eq!(config.max_log_size(), 500);
+        assert_eq!(config.retention_days(), 3);
+    }
+
+    #[test]
+    fn test_log_config_builder_defaults() {
+        let temp_dir = TempDir::new().unwrap();
+        let log_dir = temp_dir.path().to_path_buf();
+
+        let config = LogConfig::builder(log_dir.clone()).build();
+
+        assert_eq!(config.log_dir(), log_dir.as_path());
+        assert_eq!(config.max_log_size(), DEFAULT_MAX_LOG_SIZE);
+        assert_eq!(config.retention_days(), DEFAULT_LOG_RETENTION_DAYS);
+        assert_eq!(config.file_extension, HTTP_LOG_EXTENSION);
+    }
+
+    #[test]
+    fn test_log_config_builder_custom() {
+        let temp_dir = TempDir::new().unwrap();
+        let log_dir = temp_dir.path().to_path_buf();
+
+        let builder = LogConfigBuilder::new(log_dir.clone());
+        let config = builder.file_extension("testlog").build();
+
+        assert_eq!(config.log_dir(), log_dir.as_path());
+        assert_eq!(config.max_log_size(), DEFAULT_MAX_LOG_SIZE);
+        assert_eq!(config.retention_days(), DEFAULT_LOG_RETENTION_DAYS);
+        assert_eq!(config.file_extension, "testlog");
+    }
+
+    #[test]
+    fn test_default_log_directory_ok() {
+        let result = LogConfig::default_log_directory();
+        assert!(result.is_ok());
+        let path = result.unwrap();
+        assert!(path.ends_with(".kftray/http_logs"));
+    }
+
+    #[test]
+    fn test_create_rotated_log_path() {
+        let temp_dir = TempDir::new().unwrap();
+        let config = LogConfig::builder(temp_dir.path().to_path_buf())
+            .file_extension("rotated")
+            .build();
+
+        let rotated_path = config.create_rotated_log_path(99, 1234);
+
+        let filename = rotated_path.file_name().unwrap().to_str().unwrap();
+
+        assert!(filename.starts_with("99_1234_"));
+        assert!(filename.ends_with(".rotated"));
+
+        let parts: Vec<&str> = filename.split('.').next().unwrap().split('_').collect();
+        assert_eq!(parts.len(), 4);
+        assert_eq!(parts[0], "99");
+        assert_eq!(parts[1], "1234");
+        assert_eq!(parts[2].len(), 8);
+        assert_eq!(parts[3].len(), 6);
+        assert!(parts[2].chars().all(|c| c.is_ascii_digit()));
+        assert!(parts[3].chars().all(|c| c.is_ascii_digit()));
+    }
+
+    #[tokio::test]
+    async fn test_ensure_log_directory() {
+        let temp_dir = TempDir::new().unwrap();
+        let log_subdir = temp_dir.path().join("test_logs");
+
+        assert!(!log_subdir.exists());
+
+        let config = LogConfig::new(log_subdir.clone());
+        config.ensure_log_directory().await.unwrap();
+
+        assert!(log_subdir.exists());
+        assert!(log_subdir.is_dir());
+    }
 }

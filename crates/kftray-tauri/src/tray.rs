@@ -246,3 +246,14 @@ pub fn handle_system_tray_event(app: &tauri::AppHandle, event: SystemTrayEvent) 
         _ => {}
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_create_tray_menu() {
+        let _tray = create_tray_menu();
+        // This test verifies that the function doesn't panic
+    }
+}

@@ -527,3 +527,287 @@ impl HttpLogger {
         debug!("HTTP logger shutdown sequence completed");
     }
 }
+
+#[cfg(test)]
+mod tests {
+    #[allow(unused_imports)]
+    use std::io::Write;
+
+    use chrono::Utc;
+    use mockall::mock;
+    use tempfile::tempdir;
+    use tokio::io::AsyncWriteExt;
+
+    use super::*;
+
+    mock! {
+        pub MockFile {}
+    }
+
+    #[test]
+    fn test_trace_map_operations() {
+        let trace_map: Arc<DashMap<String, TraceInfo>> = Arc::new(DashMap::with_capacity(10));
+
+        let old_time = Utc::now() - chrono::Duration::seconds(TRACE_EXPIRY_SECS + 10);
+
+        for i in 0..5 {
+            let trace_id = format!("old-trace-{}", i);
+            trace_map.insert(
+                trace_id.clone(),
+                TraceInfo {
+                    trace_id,
+                    timestamp: old_time,
+                },
+            );
+        }
+
+        for i in 0..5 {
+            let trace_id = format!("recent-trace-{}", i);
+            trace_map.insert(
+                trace_id.clone(),
+                TraceInfo {
+                    trace_id,
+                    timestamp: Utc::now(),
+                },
+            );
+        }
+
+        assert_eq!(trace_map.len(), 10);
+
+        let now = Utc::now();
+        trace_map.retain(|_, info| {
+            let age_secs = (now - info.timestamp).num_seconds();
+            age_secs <= TRACE_EXPIRY_SECS
+        });
+
+        assert_eq!(trace_map.len(), 5);
+
+        for i in 0..5 {
+            let old_id = format!("old-trace-{}", i);
+            let recent_id = format!("recent-trace-{}", i);
+
+            assert!(!trace_map.contains_key(&old_id));
+            assert!(trace_map.contains_key(&recent_id));
+        }
+    }
+
+    #[test]
+    fn test_trace_info() {
+        let trace_id = "test-trace-123".to_string();
+        let timestamp = Utc::now();
+
+        let info = TraceInfo {
+            trace_id: trace_id.clone(),
+            timestamp,
+        };
+
+        assert_eq!(info.trace_id, trace_id);
+        assert_eq!(info.timestamp, timestamp);
+    }
+
+    #[test]
+    fn test_calculate_time_diff() {
+        let start = Utc::now();
+        let end = start + chrono::Duration::milliseconds(500);
+
+        let diff = calculate_time_diff(start, end);
+        assert_eq!(diff, 500);
+    }
+
+    #[test]
+    fn test_log_message_types() {
+        let req_content = "REQUEST: GET /test HTTP/1.1";
+        let resp_content = "RESPONSE: HTTP/1.1 200 OK";
+        let preformatted = "PREFORMATTED: Some special response";
+
+        let req_msg = LogMessage::Request(req_content.to_string());
+        let resp_msg = LogMessage::Response(resp_content.to_string());
+        let preformatted_msg = LogMessage::PreformattedResponse(preformatted.to_string());
+        let flush_msg = LogMessage::TriggerFlush;
+
+        assert_eq!(req_msg.message_type(), "Request");
+        assert_eq!(resp_msg.message_type(), "Response");
+        assert_eq!(preformatted_msg.message_type(), "PreformattedResponse");
+        assert_eq!(flush_msg.message_type(), "TriggerFlush");
+
+        assert!(!req_msg.is_response());
+        assert!(resp_msg.is_response());
+        assert!(preformatted_msg.is_response());
+        assert!(!flush_msg.is_response());
+
+        assert!(!req_msg.is_flush_trigger());
+        assert!(!resp_msg.is_flush_trigger());
+        assert!(!preformatted_msg.is_flush_trigger());
+        assert!(flush_msg.is_flush_trigger());
+
+        assert_eq!(req_msg.size(), req_content.len());
+        assert_eq!(resp_msg.size(), resp_content.len());
+        assert_eq!(preformatted_msg.size(), preformatted.len());
+        assert_eq!(flush_msg.size(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_sender_receiver_pattern() {
+        let (tx, mut rx) = mpsc::channel::<LogMessage>(10);
+
+        let test_request = LogMessage::Request("Test request".to_string());
+        let test_response = LogMessage::Response("Test response".to_string());
+
+        tx.send(test_request.clone()).await.unwrap();
+        tx.send(test_response.clone()).await.unwrap();
+
+        let received_request = rx.recv().await.unwrap();
+        let received_response = rx.recv().await.unwrap();
+
+        if let LogMessage::Request(content) = received_request {
+            assert_eq!(content, "Test request");
+        } else {
+            panic!("Expected LogMessage::Request");
+        }
+
+        if let LogMessage::Response(content) = received_response {
+            assert_eq!(content, "Test response");
+        } else {
+            panic!("Expected LogMessage::Response");
+        }
+    }
+
+    #[test]
+    fn test_create_unique_trace_id() {
+        let mut trace_ids = Vec::with_capacity(100);
+
+        for _ in 0..100 {
+            let id = Uuid::new_v4().to_string();
+            trace_ids.push(id);
+        }
+
+        use std::collections::HashSet;
+        let trace_id_set: HashSet<_> = trace_ids.into_iter().collect();
+
+        assert_eq!(trace_id_set.len(), 100);
+    }
+
+    #[tokio::test]
+    async fn test_http_logger_creation() {
+        let temp_dir = tempdir().unwrap();
+        let file_path = temp_dir.path().join("test_log.txt");
+
+        let config = LogConfig::new(temp_dir.path().to_path_buf());
+        let logger = HttpLogger::new(config, file_path.clone()).await.unwrap();
+
+        assert!(logger.log_sender.capacity() >= CHANNEL_CAPACITY);
+        assert!(logger.trace_map.capacity() >= 1024);
+
+        logger.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn test_log_write_batch() {
+        let temp_dir = tempdir().unwrap();
+        let file_path = temp_dir.path().join("batch_test.log");
+
+        let file = File::create(&file_path).await.unwrap();
+        let buf_writer = BufWriter::new(file);
+
+        let log_file = Arc::new(RwLock::new(buf_writer));
+
+        let messages = vec![
+            LogMessage::Request("Test request 1".to_string()),
+            LogMessage::Request("Test request 2".to_string()),
+            LogMessage::Response("Test response".to_string()),
+        ];
+
+        HttpLogger::write_log_batch(&log_file, &messages)
+            .await
+            .unwrap();
+
+        {
+            let mut writer = log_file.write().await;
+            writer.flush().await.unwrap();
+        }
+
+        let contents = tokio::fs::read_to_string(&file_path).await.unwrap();
+
+        assert!(contents.contains("Test request 1"));
+        assert!(contents.contains("Test request 2"));
+        assert!(contents.contains("Test response"));
+
+        let response_pos = contents.find("Test response").unwrap();
+        let request1_pos = contents.find("Test request 1").unwrap();
+
+        assert!(
+            response_pos < request1_pos,
+            "Responses should appear before requests in the log file"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_request_response_logging() {
+        let temp_dir = tempdir().unwrap();
+        let file_path = temp_dir.path().join("req_resp_test.log");
+
+        let config = LogConfig::new(temp_dir.path().to_path_buf());
+        let logger = HttpLogger::new(config, file_path.clone()).await.unwrap();
+
+        let request_data = Bytes::from_static(b"GET /test HTTP/1.1\r\nHost: example.com\r\n\r\n");
+        let response_data =
+            Bytes::from_static(b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nSuccess");
+
+        let request_id = logger.log_request(request_data).await;
+
+        assert!(!request_id.is_empty());
+        assert!(logger.trace_map.contains_key(&request_id));
+
+        tokio::time::sleep(Duration::from_millis(10)).await;
+
+        logger.log_response(response_data, request_id.clone()).await;
+
+        // Add a longer delay to ensure the response is written to disk
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        logger.flush().await.unwrap();
+
+        // Add another small delay after flushing
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        logger.shutdown().await;
+
+        // Add delay after shutdown
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        let contents = tokio::fs::read_to_string(&file_path).await.unwrap();
+
+        println!("Log file contents: {}", contents);
+
+        assert!(contents.contains("GET /test") || contents.contains("/test"));
+        assert!(contents.contains("200") || contents.contains("OK"));
+
+        let trace_info = logger.trace_map.get(&request_id).unwrap();
+        assert_eq!(trace_info.trace_id, request_id);
+    }
+
+    #[tokio::test]
+    async fn test_write_single_log() {
+        let temp_dir = tempdir().unwrap();
+        let file_path = temp_dir.path().join("single_log.txt");
+
+        let file = File::create(&file_path).await.unwrap();
+        let buf_writer = BufWriter::new(file);
+
+        let log_file = Arc::new(RwLock::new(buf_writer));
+
+        let message = LogMessage::Request("Single log test message".to_string());
+
+        HttpLogger::write_single_log(&log_file, &message)
+            .await
+            .unwrap();
+
+        {
+            let mut writer = log_file.write().await;
+            writer.flush().await.unwrap();
+        }
+
+        let contents = tokio::fs::read_to_string(&file_path).await.unwrap();
+        assert!(contents.contains("Single log test message"));
+    }
+}

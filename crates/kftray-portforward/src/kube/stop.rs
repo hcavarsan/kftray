@@ -46,6 +46,10 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
 
     let handle_map: HashMap<String, JoinHandle<()>> = {
         let mut processes = CHILD_PROCESSES.lock().unwrap();
+        if processes.is_empty() {
+            debug!("No port forwarding processes to stop");
+            return Ok(Vec::new());
+        }
         processes.drain().collect()
     };
 
@@ -367,5 +371,59 @@ pub async fn stop_port_forward(config_id: String) -> Result<CustomResponse, Stri
             "No port forwarding process found for config_id '{}'",
             config_id
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_stop_port_forward_nonexistent() {
+        let result = stop_port_forward("999".to_string()).await;
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .contains("No port forwarding process found"));
+    }
+
+    #[tokio::test]
+    async fn test_stop_all_port_forward_empty() {
+        {
+            let mut processes = CHILD_PROCESSES.lock().unwrap();
+            processes.clear();
+            assert!(processes.is_empty());
+        }
+
+        let result = stop_all_port_forward().await;
+
+        match result {
+            Ok(responses) => {
+                assert!(
+                    responses.is_empty(),
+                    "Expected empty responses for empty process list"
+                );
+            }
+            Err(e) => {
+                panic!("Expected Ok result but got error: {}", e);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn test_stop_port_forward_with_handle() {
+        let dummy_handle = tokio::spawn(async {
+            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+        });
+
+        {
+            let mut processes = CHILD_PROCESSES.lock().unwrap();
+            processes.insert("1_test-service".to_string(), dummy_handle);
+        }
+
+        let _result = stop_port_forward("1".to_string()).await;
+
+        let processes = CHILD_PROCESSES.lock().unwrap();
+        assert!(processes.is_empty());
     }
 }

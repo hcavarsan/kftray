@@ -139,3 +139,42 @@ fn execute_command(command: &str, args: &[&str]) -> Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_loopback_address() {
+        assert!(is_loopback_address("127.0.0.1"));
+        assert!(is_loopback_address("127.0.0.2"));
+        assert!(is_loopback_address("127.255.255.255"));
+        assert!(!is_loopback_address("192.168.1.1"));
+        assert!(!is_loopback_address("10.0.0.1"));
+        assert!(!is_loopback_address("invalid-ip"));
+    }
+
+    #[tokio::test]
+    async fn test_ensure_loopback_address_non_loopback() {
+        assert!(ensure_loopback_address("192.168.1.1").await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_ensure_loopback_address_default() {
+        assert!(ensure_loopback_address("127.0.0.1").await.is_ok());
+    }
+
+    #[cfg(test)]
+    #[cfg(target_os = "windows")]
+    #[tokio::test]
+    async fn test_configure_loopback_windows() {
+        assert!(configure_loopback_windows("127.0.0.2").is_ok());
+    }
+
+    #[test]
+    fn test_execute_command_failure() {
+        // Test with a command that should fail
+        let result = execute_command("nonexistentcommand", &[]);
+        assert!(result.is_err());
+    }
+}
