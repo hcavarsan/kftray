@@ -8,6 +8,9 @@ mod stop;
 pub mod tcp_forwarder;
 pub mod udp_forwarder;
 
+#[cfg(test)]
+mod tests;
+
 pub use proxy::{
     deploy_and_forward_pod,
     stop_proxy_forward,

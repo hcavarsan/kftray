@@ -376,7 +376,50 @@ pub async fn stop_port_forward(config_id: String) -> Result<CustomResponse, Stri
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
+    use kftray_commons::models::config_model::Config;
+
     use super::*;
+
+    async fn create_dummy_handle() -> JoinHandle<()> {
+        tokio::spawn(async {
+            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+        })
+    }
+
+    fn create_test_config() -> Config {
+        Config {
+            id: Some(1),
+            context: "test-context".to_string(),
+            kubeconfig: Some("test-kubeconfig".to_string()),
+            namespace: "test-namespace".to_string(),
+            service: Some("test-service".to_string()),
+            alias: Some("test-alias".to_string()),
+            local_port: Some(8080),
+            remote_port: Some(8080),
+            protocol: "tcp".to_string(),
+            workload_type: Some("service".to_string()),
+            target: None,
+            local_address: Some("127.0.0.1".to_string()),
+            remote_address: None,
+            domain_enabled: Some(true),
+        }
+    }
+
+    fn create_udp_config() -> Config {
+        let mut config = create_test_config();
+        config.id = Some(2);
+        config.protocol = "udp".to_string();
+        config
+    }
+
+    fn create_proxy_config() -> Config {
+        let mut config = create_test_config();
+        config.id = Some(3);
+        config.workload_type = Some("proxy".to_string());
+        config
+    }
 
     #[tokio::test]
     async fn test_stop_port_forward_nonexistent() {
@@ -412,18 +455,119 @@ mod tests {
 
     #[tokio::test]
     async fn test_stop_port_forward_with_handle() {
-        let dummy_handle = tokio::spawn(async {
-            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
-        });
+        let dummy_handle = create_dummy_handle().await;
 
         {
             let mut processes = CHILD_PROCESSES.lock().unwrap();
+            processes.clear();
             processes.insert("1_test-service".to_string(), dummy_handle);
         }
 
-        let _result = stop_port_forward("1".to_string()).await;
+        let _ = stop_port_forward("1".to_string()).await;
 
         let processes = CHILD_PROCESSES.lock().unwrap();
-        assert!(processes.is_empty());
+        assert!(processes.is_empty(), "Process handle should be removed");
+    }
+
+    #[tokio::test]
+    async fn test_stop_port_forward_with_multiple_handles() {
+        let dummy_handle1 = create_dummy_handle().await;
+        let dummy_handle2 = create_dummy_handle().await;
+        let dummy_handle3 = create_dummy_handle().await;
+
+        {
+            let mut processes = CHILD_PROCESSES.lock().unwrap();
+            processes.clear();
+            processes.insert("1_service1".to_string(), dummy_handle1);
+            processes.insert("2_service2".to_string(), dummy_handle2);
+            processes.insert("3_service3".to_string(), dummy_handle3);
+            assert_eq!(processes.len(), 3);
+        }
+
+        let _ = stop_port_forward("2".to_string()).await;
+
+        let processes = CHILD_PROCESSES.lock().unwrap();
+        assert_eq!(
+            processes.len(),
+            2,
+            "Only the specified process should be removed"
+        );
+        assert!(processes.contains_key("1_service1"));
+        assert!(!processes.contains_key("2_service2"));
+        assert!(processes.contains_key("3_service3"));
+    }
+
+    #[tokio::test]
+    async fn test_format_composite_key() {
+        let config_id = 123;
+        let service_id = "my-service";
+
+        let composite_key = format!("{}_{}", config_id, service_id);
+        assert_eq!(composite_key, "123_my-service");
+
+        let (config_id_str, service_name) = composite_key.split_once('_').unwrap();
+        assert_eq!(config_id_str, "123");
+        assert_eq!(service_name, "my-service");
+
+        let config_id_parsed = config_id_str.parse::<i64>().unwrap();
+        assert_eq!(config_id_parsed, 123);
+    }
+
+    #[tokio::test]
+    async fn test_invalid_composite_key() {
+        let invalid_key = "invalid-key-without-underscore";
+        let parts = invalid_key.split_once('_');
+        assert!(parts.is_none());
+    }
+
+    #[tokio::test]
+    async fn test_running_configs_filter() {
+        let configs = vec![
+            create_test_config(),
+            create_udp_config(),
+            create_proxy_config(),
+        ];
+
+        let running_configs_state = [1, 2, 3];
+
+        let filtered_configs: Vec<&Config> = configs
+            .iter()
+            .filter(|config| running_configs_state.contains(&config.id.unwrap_or_default()))
+            .filter(|config| {
+                config.protocol == "udp" || matches!(config.workload_type.as_deref(), Some("proxy"))
+            })
+            .collect();
+
+        assert_eq!(filtered_configs.len(), 2);
+        assert_eq!(filtered_configs[0].id, Some(2));
+        assert_eq!(filtered_configs[1].id, Some(3));
+    }
+
+    #[tokio::test]
+    async fn test_extract_config_with_id() {
+        let configs = vec![
+            create_test_config(),
+            create_udp_config(),
+            create_proxy_config(),
+        ];
+
+        let config_map: HashMap<i64, &Config> = configs
+            .iter()
+            .filter_map(|c| c.id.map(|id| (id, c)))
+            .collect();
+
+        assert_eq!(config_map.len(), 3);
+        assert!(config_map.contains_key(&1));
+        assert!(config_map.contains_key(&2));
+        assert!(config_map.contains_key(&3));
+
+        let config1 = config_map.get(&1).unwrap();
+        assert_eq!(config1.protocol, "tcp");
+
+        let config2 = config_map.get(&2).unwrap();
+        assert_eq!(config2.protocol, "udp");
+
+        let config3 = config_map.get(&3).unwrap();
+        assert_eq!(config3.workload_type, Some("proxy".to_string()));
     }
 }
