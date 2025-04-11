@@ -511,17 +511,78 @@ mod tests {
 
     #[test]
     fn test_get_kubeconfig_paths_from_option() {
-        let custom_path =
+        use std::env;
+        use std::fs;
+        use std::sync::Mutex;
+
+        use tempfile::TempDir;
+
+        lazy_static::lazy_static! {
+            static ref ENV_LOCK: Mutex<()> = Mutex::new(());
+        }
+        let _env_guard = ENV_LOCK.lock().unwrap();
+
+        let original_kubeconfig = env::var("KUBECONFIG").ok();
+        let original_home = env::var("HOME").ok();
+
+        let temp_dir = TempDir::new().unwrap();
+
+        let explicit_paths =
             get_kubeconfig_paths_from_option(Some("/path1:/path2".to_string())).unwrap();
-        assert_eq!(custom_path.len(), 2);
-        assert_eq!(custom_path[0], Path::new("/path1"));
-        assert_eq!(custom_path[1], Path::new("/path2"));
+        assert_eq!(explicit_paths.len(), 2);
+        assert_eq!(explicit_paths[0], Path::new("/path1"));
+        assert_eq!(explicit_paths[1], Path::new("/path2"));
 
-        let default_path = get_kubeconfig_paths_from_option(Some("default".to_string())).unwrap();
+        let mock_kubeconfig_path = temp_dir.path().join("mock_kubeconfig");
+        fs::write(&mock_kubeconfig_path, "mock kubeconfig content").unwrap();
+
+        env::set_var("KUBECONFIG", mock_kubeconfig_path.to_str().unwrap());
+
+        let default_path_result = get_kubeconfig_paths_from_option(Some("default".to_string()));
+        assert!(default_path_result.is_ok());
+        let default_path = default_path_result.unwrap();
         assert!(!default_path.is_empty());
+        assert_eq!(default_path[0], mock_kubeconfig_path);
 
-        let none_path = get_kubeconfig_paths_from_option(None).unwrap();
+        let none_path_result = get_kubeconfig_paths_from_option(None);
+        assert!(none_path_result.is_ok());
+        let none_path = none_path_result.unwrap();
         assert!(!none_path.is_empty());
+        assert_eq!(none_path[0], mock_kubeconfig_path);
+
+        let fake_home = temp_dir.path().join("fake_home");
+        fs::create_dir_all(fake_home.join(".kube")).unwrap();
+        let fake_kubeconfig = fake_home.join(".kube").join("config");
+        fs::write(&fake_kubeconfig, "home dir kubeconfig content").unwrap();
+
+        env::remove_var("KUBECONFIG");
+        env::set_var("HOME", fake_home.to_str().unwrap());
+
+        let home_fallback_result = get_kubeconfig_paths_from_option(None);
+        assert!(home_fallback_result.is_ok());
+        let home_fallback_path = home_fallback_result.unwrap();
+        assert!(!home_fallback_path.is_empty());
+        assert_eq!(home_fallback_path[0], fake_kubeconfig);
+
+        let nonexistent_dir = temp_dir.path().join("nonexistent");
+        env::set_var("HOME", nonexistent_dir.to_str().unwrap());
+        env::set_var(
+            "KUBECONFIG",
+            temp_dir.path().join("nonexistent_file").to_str().unwrap(),
+        );
+
+        let error_result = get_kubeconfig_paths_from_option(None);
+        assert!(error_result.is_err());
+
+        match original_kubeconfig {
+            Some(val) => env::set_var("KUBECONFIG", val),
+            None => env::remove_var("KUBECONFIG"),
+        }
+
+        match original_home {
+            Some(val) => env::set_var("HOME", val),
+            None => env::remove_var("HOME"),
+        }
     }
 
     #[test]
