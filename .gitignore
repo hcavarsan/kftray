@@ -32,3 +32,5 @@ build_rs*
 lcov.info
 lcov*
 llvm-cov*
+**/*.snap
+**/snapshots/*

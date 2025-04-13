@@ -45,6 +45,10 @@ pub fn setup_logging() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(test)]
 mod tests {
+    use std::env;
+    use std::fs;
+
+    use tempfile::tempdir;
 
     #[test]
     fn test_log_level_parsing() {
@@ -76,5 +80,56 @@ mod tests {
         if let Some(val) = original_debug {
             std::env::set_var("KFTRAY_DEBUG", val);
         }
+    }
+
+    #[test]
+    fn test_rust_log_env_var() {
+        let original_rust_log = env::var("RUST_LOG").ok();
+
+        env::set_var("RUST_LOG", "debug");
+        let filter = match env::var("RUST_LOG") {
+            Ok(filter) => filter.parse().unwrap_or(log::LevelFilter::Info),
+            Err(_) => log::LevelFilter::Off,
+        };
+        assert_eq!(filter, log::LevelFilter::Debug);
+
+        env::set_var("RUST_LOG", "not_a_valid_level");
+        let filter = match env::var("RUST_LOG") {
+            Ok(filter) => filter.parse().unwrap_or(log::LevelFilter::Info),
+            Err(_) => log::LevelFilter::Off,
+        };
+        assert_eq!(filter, log::LevelFilter::Info);
+
+        env::remove_var("RUST_LOG");
+        let filter = match env::var("RUST_LOG") {
+            Ok(filter) => filter.parse().unwrap_or(log::LevelFilter::Info),
+            Err(_) => log::LevelFilter::Off,
+        };
+        assert_eq!(filter, log::LevelFilter::Off);
+
+        if let Some(val) = original_rust_log {
+            env::set_var("RUST_LOG", val);
+        }
+    }
+
+    #[test]
+    fn test_log_directory_creation() {
+        let temp_dir = tempdir().unwrap();
+        let log_dir = temp_dir.path().join("logs");
+        let log_path = log_dir.join("app.log");
+
+        if log_dir.exists() {
+            fs::remove_dir_all(&log_dir).unwrap();
+        }
+
+        assert!(!log_dir.exists());
+
+        fs::create_dir_all(&log_dir).unwrap();
+
+        assert!(log_dir.exists());
+
+        let parent = log_path.parent();
+        assert!(parent.is_some());
+        assert_eq!(parent.unwrap(), log_dir);
     }
 }

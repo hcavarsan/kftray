@@ -234,14 +234,83 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let test_file = temp_dir.path().join("corrupted.json");
 
-        // Create the file
         fs::write(&test_file, "corrupted data").unwrap();
         assert!(test_file.exists());
 
-        // Handle corrupted file
         handle_corrupted_file(&test_file, "Test error");
 
-        // File should be deleted
         assert!(!test_file.exists());
+    }
+
+    #[test]
+    fn test_window_position_serialization() {
+        let position = WindowPosition { x: 100, y: 200 };
+        let json = serde_json::to_string(&position).unwrap();
+
+        assert!(json.contains("100"), "JSON should contain x value");
+        assert!(json.contains("200"), "JSON should contain y value");
+
+        let deserialized: WindowPosition = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.x, 100);
+        assert_eq!(deserialized.y, 200);
+    }
+
+    #[test]
+    fn test_save_load_window_position() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("window_state.json");
+
+        let position = WindowPosition { x: 100, y: 200 };
+        let json = serde_json::to_string(&position).unwrap();
+
+        fs::create_dir_all(file_path.parent().unwrap()).unwrap();
+        fs::write(&file_path, json).unwrap();
+
+        let content = fs::read_to_string(&file_path).unwrap();
+        let loaded_position: WindowPosition = serde_json::from_str(&content).unwrap();
+
+        assert_eq!(loaded_position.x, 100);
+        assert_eq!(loaded_position.y, 200);
+    }
+
+    #[test]
+    fn test_create_directory_for_window_position() {
+        let temp_dir = TempDir::new().unwrap();
+        let file_path = temp_dir.path().join("config/window_state.json");
+
+        if file_path.parent().unwrap().exists() {
+            fs::remove_dir_all(file_path.parent().unwrap()).unwrap();
+        }
+
+        if let Some(parent_dir) = file_path.parent() {
+            fs::create_dir_all(parent_dir).unwrap();
+            assert!(parent_dir.exists(), "Directory should be created");
+        }
+    }
+
+    #[test]
+    fn test_is_valid_position() {
+        let screen_width = 1920;
+        let screen_height = 1080;
+
+        let valid_positions = [(100, 100), (0, 0), (screen_width - 1, screen_height - 1)];
+
+        for (x, y) in valid_positions {
+            assert!(x >= 0 && x < screen_width, "X position should be valid");
+            assert!(y >= 0 && y < screen_height, "Y position should be valid");
+        }
+
+        let invalid_positions = [
+            (-100, 100),
+            (100, -100),
+            (screen_width + 100, screen_height + 100),
+        ];
+
+        for (x, y) in invalid_positions {
+            assert!(
+                !(x >= 0 && x < screen_width && y >= 0 && y < screen_height),
+                "Position should be invalid"
+            );
+        }
     }
 }

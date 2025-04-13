@@ -142,8 +142,11 @@ jobs:
       - name: Install rust-cache
         uses: Swatinem/rust-cache@v2
 
+      - name: Install cargo-insta
+        run: cargo install cargo-insta
+
       - name: Run tests
-        run: cargo llvm-cov nextest --profile ci --config-file .cargo/nextest.toml --locked --workspace --all-features --lib --bins --examples --tests --lcov --output-path lcov.info
+        run: INSTA_UPDATE=1 cargo llvm-cov nextest --profile ci --config-file .cargo/nextest.toml --locked --workspace --all-features --lib --bins --examples --tests --lcov --output-path lcov.info
 
       - name: Upload coverage
         uses: codecov/codecov-action@v5

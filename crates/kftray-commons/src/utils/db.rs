@@ -40,7 +40,7 @@ pub async fn init() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-static DB_POOL: OnceCell<Arc<SqlitePool>> = OnceCell::const_new();
+pub static DB_POOL: OnceCell<Arc<SqlitePool>> = OnceCell::const_new();
 
 pub async fn get_db_pool() -> Result<Arc<SqlitePool>, String> {
     DB_POOL

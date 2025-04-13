@@ -24,6 +24,7 @@ tauri = { version = "1.8", default-features = false, features = [
 	"system-tray",
 	"icon-png",
 	"devtools",
+	"test",
 ] }
 tauri-plugin-positioner = { version = "1.0.5", features = ["system-tray"] }
 tokio = { version = "1.44.2", features = ["rt-multi-thread", "macros", "full"] }
