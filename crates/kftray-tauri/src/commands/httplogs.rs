@@ -512,6 +512,7 @@ fn try_linux_fallbacks(file_path: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
+    use std::env;
     use std::io::Write;
     use std::sync::{
         Arc,
@@ -521,6 +522,31 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
+
+    struct EnvGuard {
+        vars: Vec<(String, Option<String>)>,
+    }
+
+    impl EnvGuard {
+        fn new(vars: &[&str]) -> Self {
+            let vars = vars
+                .iter()
+                .map(|&name| (name.to_string(), env::var(name).ok()))
+                .collect();
+            EnvGuard { vars }
+        }
+    }
+
+    impl Drop for EnvGuard {
+        fn drop(&mut self) {
+            for (name, value) in &self.vars {
+                match value {
+                    Some(val) => env::set_var(name, val),
+                    None => env::remove_var(name),
+                }
+            }
+        }
+    }
 
     struct MockHttpLogState {
         logs_enabled: Arc<Mutex<HashMap<i64, bool>>>,
@@ -714,5 +740,82 @@ mod tests {
             !is_editor_available("this_editor_does_not_exist_12345"),
             "Non-existent editor should not be available"
         );
+    }
+
+    #[test]
+    fn test_validate_file_exists() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir.path().join("test_file.txt");
+        std::fs::write(&file_path, "test content").unwrap();
+
+        // Test existing file
+        let result = validate_file_exists(&file_path);
+        assert!(result.is_ok(), "Should succeed for existing file");
+
+        // Test non-existent file
+        let non_existent = temp_dir.path().join("non_existent.txt");
+        let result = validate_file_exists(&non_existent);
+        assert!(
+            result.is_err(),
+            "Should fail for non-existent file but got Ok"
+        );
+        assert!(
+            result.unwrap_err().contains("does not exist"),
+            "Error should mention file does not exist"
+        );
+    }
+
+    #[test]
+    fn test_get_and_validate_log_folder() {
+        let _guard = EnvGuard::new(&["KFTRAY_CONFIG", "XDG_CONFIG_HOME", "HOME"]);
+        let temp_dir = tempfile::tempdir().unwrap();
+        let non_existent_path = temp_dir.path().join("non_existent");
+        env::set_var("KFTRAY_CONFIG", non_existent_path.to_str().unwrap());
+
+        let result = get_and_validate_log_folder();
+        assert!(
+            result.is_err(),
+            "Should fail when log folder doesn't exist but got Ok"
+        );
+        assert!(
+            result.unwrap_err().contains("does not exist"),
+            "Error should mention folder does not exist"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_open_log_file_validation() {
+        let _guard = EnvGuard::new(&["KFTRAY_CONFIG", "XDG_CONFIG_HOME", "HOME"]);
+
+        let temp_dir = tempfile::tempdir().unwrap();
+        let log_folder = temp_dir.path().join("http_logs");
+
+        env::set_var("KFTRAY_CONFIG", temp_dir.path().to_str().unwrap());
+        std::fs::create_dir_all(&log_folder).unwrap();
+
+        let outside_dir = tempfile::tempdir().unwrap();
+        let file_path = outside_dir.path().join("outside_logs.txt");
+        std::fs::write(&file_path, "test content").unwrap();
+
+        match open_log_file(file_path.to_string_lossy().to_string()).await {
+            Ok(_) => panic!("Should fail for file outside log directory"),
+            Err(e) => {
+                let contains_outside =
+                    e.contains("outside the log directory") || e.contains("Invalid log file path");
+                assert!(
+                    contains_outside,
+                    "Error '{}' should indicate file is outside log directory",
+                    e
+                );
+            }
+        }
+
+        match open_log_file("invalid_utf8_\u{FFFF}".to_string()).await {
+            Ok(_) => panic!("Should fail for invalid UTF-8 path"),
+            Err(e) => assert!(
+                !e.is_empty(),
+                "Error message should not be empty for invalid UTF-8 path"
+            ),
+        }
     }
 }

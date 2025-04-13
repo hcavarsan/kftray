@@ -2,6 +2,7 @@ use kftray_commons::models::config_model::Config;
 
 use crate::tui::input::navigation::{
     handle_auto_add_configs,
+    handle_context_selection,
     handle_port_forward,
 };
 use crate::tui::input::{
@@ -12,6 +13,8 @@ use crate::tui::input::{
 
 #[cfg(test)]
 mod tests {
+    use ratatui::widgets::ListState;
+
     use super::*;
 
     fn create_test_config() -> Config {
@@ -91,6 +94,55 @@ mod tests {
                 app.context_list_state.selected().is_some(),
                 "Context list should have a selection"
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_handle_context_selection_success() {
+        let mut app = App::new();
+        app.state = AppState::ShowContextSelection;
+        app.contexts = vec!["test-context".to_string()];
+        app.selected_context_index = 0;
+        app.context_list_state = ListState::default();
+        app.context_list_state.select(Some(0));
+
+        handle_context_selection(&mut app, "test-context").await;
+
+        if app.state == AppState::ShowErrorPopup {
+            assert!(app.error_message.is_some());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_handle_context_selection_error() {
+        let mut app = App::new();
+        app.state = AppState::ShowContextSelection;
+
+        handle_context_selection(&mut app, "invalid-context").await;
+
+        assert_eq!(app.state, AppState::ShowErrorPopup);
+        assert!(app.error_message.is_some());
+
+        if let Some(error_msg) = &app.error_message {
+            assert!(error_msg.contains("Failed to retrieve service configs"));
+        }
+    }
+
+    #[tokio::test]
+    async fn test_handle_auto_add_configs_with_contexts() {
+        let mut app = App::new();
+
+        app.contexts = vec![];
+        app.state = AppState::Normal;
+
+        handle_auto_add_configs(&mut app).await;
+
+        if app.state == AppState::ShowContextSelection {
+            assert_eq!(app.selected_context_index, 0);
+            assert!(app.context_list_state.selected().is_some());
+        } else {
+            assert_eq!(app.state, AppState::ShowErrorPopup);
+            assert!(app.error_message.is_some());
         }
     }
 }

@@ -1,18 +1,34 @@
 use crate::tui::input::{
     clear_selection,
+    handle_about_input,
+    handle_confirmation_popup_input,
+    handle_context_selection_input,
+    handle_delete_confirmation_input,
+    handle_details_input,
+    handle_error_popup_input,
+    handle_help_input,
+    handle_logs_input,
+    handle_menu_input,
+    handle_normal_input,
+    handle_running_table_input,
+    handle_stopped_table_input,
     select_first_row,
+    show_delete_confirmation,
     toggle_row_selection,
     toggle_select_all,
+    ActiveComponent,
     ActiveTable,
     App,
+    AppState,
+    DeleteButton,
 };
 
 #[cfg(test)]
 mod tests {
+    use crossterm::event::KeyCode;
     use kftray_commons::models::config_model::Config;
 
     use super::*;
-    use crate::tui::input::ActiveComponent;
 
     fn create_test_configs(count: usize) -> Vec<Config> {
         (1..=count)
@@ -195,5 +211,330 @@ mod tests {
 
         crate::tui::input::scroll_page_down(&mut app);
         assert_eq!(app.details_scroll_offset, 5);
+    }
+
+    #[test]
+    fn test_app_default() {
+        let app = App::default();
+        assert_eq!(app.state, AppState::Normal);
+        assert_eq!(app.active_component, ActiveComponent::StoppedTable);
+    }
+
+    #[tokio::test]
+    async fn test_handle_error_popup_input() {
+        let mut app = setup_app();
+        app.state = AppState::ShowErrorPopup;
+
+        handle_error_popup_input(&mut app, KeyCode::Esc).unwrap();
+        assert_eq!(app.state, AppState::Normal);
+
+        app.state = AppState::ShowErrorPopup;
+        handle_error_popup_input(&mut app, KeyCode::Enter).unwrap();
+        assert_eq!(app.state, AppState::Normal);
+    }
+
+    #[tokio::test]
+    async fn test_handle_confirmation_popup_input() {
+        let mut app = setup_app();
+        app.state = AppState::ShowConfirmationPopup;
+
+        handle_confirmation_popup_input(&mut app, KeyCode::Esc)
+            .await
+            .unwrap();
+        assert_eq!(app.state, AppState::Normal);
+
+        app.state = AppState::ShowConfirmationPopup;
+        handle_confirmation_popup_input(&mut app, KeyCode::Enter)
+            .await
+            .unwrap();
+        assert_eq!(app.state, AppState::Normal);
+    }
+
+    #[tokio::test]
+    async fn test_handle_help_input() {
+        let mut app = setup_app();
+        app.state = AppState::ShowHelp;
+
+        handle_help_input(&mut app, KeyCode::Esc).unwrap();
+        assert_eq!(app.state, AppState::Normal);
+
+        app.state = AppState::ShowHelp;
+        handle_help_input(&mut app, KeyCode::Enter).unwrap();
+        assert_eq!(app.state, AppState::Normal);
+    }
+
+    #[tokio::test]
+    async fn test_handle_about_input() {
+        let mut app = setup_app();
+        app.state = AppState::ShowAbout;
+
+        handle_about_input(&mut app, KeyCode::Esc).unwrap();
+        assert_eq!(app.state, AppState::Normal);
+
+        app.state = AppState::ShowAbout;
+        handle_about_input(&mut app, KeyCode::Enter).unwrap();
+        assert_eq!(app.state, AppState::Normal);
+    }
+
+    #[tokio::test]
+    async fn test_handle_delete_confirmation_input() {
+        let mut app = setup_app();
+        app.state = AppState::ShowDeleteConfirmation;
+        app.selected_delete_button = DeleteButton::Close;
+
+        handle_delete_confirmation_input(&mut app, KeyCode::Left)
+            .await
+            .unwrap();
+        assert_eq!(app.selected_delete_button, DeleteButton::Confirm);
+
+        handle_delete_confirmation_input(&mut app, KeyCode::Right)
+            .await
+            .unwrap();
+        assert_eq!(app.selected_delete_button, DeleteButton::Close);
+
+        handle_delete_confirmation_input(&mut app, KeyCode::Esc)
+            .await
+            .unwrap();
+        assert_eq!(app.state, AppState::Normal);
+
+        app.state = AppState::ShowDeleteConfirmation;
+        app.selected_delete_button = DeleteButton::Close;
+        handle_delete_confirmation_input(&mut app, KeyCode::Enter)
+            .await
+            .unwrap();
+        assert_eq!(app.state, AppState::Normal);
+    }
+
+    #[tokio::test]
+    async fn test_handle_context_selection_input() {
+        let mut app = setup_app();
+        app.state = AppState::ShowContextSelection;
+        app.contexts = vec!["context1".to_string(), "context2".to_string()];
+        app.selected_context_index = 0;
+        app.context_list_state.select(Some(0));
+
+        handle_context_selection_input(&mut app, KeyCode::Down)
+            .await
+            .unwrap();
+        assert_eq!(app.selected_context_index, 1);
+        assert_eq!(app.context_list_state.selected(), Some(1));
+
+        handle_context_selection_input(&mut app, KeyCode::Up)
+            .await
+            .unwrap();
+        assert_eq!(app.selected_context_index, 0);
+        assert_eq!(app.context_list_state.selected(), Some(0));
+
+        handle_context_selection_input(&mut app, KeyCode::Enter)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn test_handle_normal_input() {
+        let mut app = setup_app();
+        app.state = AppState::Normal;
+
+        app.active_component = ActiveComponent::Menu;
+        handle_normal_input(&mut app, KeyCode::Tab).await.unwrap();
+        assert_eq!(app.active_component, ActiveComponent::StoppedTable);
+
+        handle_normal_input(&mut app, KeyCode::Tab).await.unwrap();
+        assert_eq!(app.active_component, ActiveComponent::Details);
+
+        handle_normal_input(&mut app, KeyCode::Tab).await.unwrap();
+        assert_eq!(app.active_component, ActiveComponent::Menu);
+    }
+
+    #[tokio::test]
+    async fn test_handle_menu_input() {
+        let mut app = setup_app();
+        app.state = AppState::Normal;
+        app.active_component = ActiveComponent::Menu;
+        app.selected_menu_item = 2;
+
+        handle_menu_input(&mut app, KeyCode::Left).await.unwrap();
+        assert_eq!(app.selected_menu_item, 1);
+
+        handle_menu_input(&mut app, KeyCode::Right).await.unwrap();
+        assert_eq!(app.selected_menu_item, 2);
+
+        handle_menu_input(&mut app, KeyCode::Down).await.unwrap();
+        assert_eq!(app.active_component, ActiveComponent::StoppedTable);
+
+        app.active_component = ActiveComponent::Menu;
+        app.selected_menu_item = 0;
+        handle_menu_input(&mut app, KeyCode::Enter).await.unwrap();
+        assert_eq!(app.state, AppState::ShowHelp);
+
+        app.state = AppState::Normal;
+        app.active_component = ActiveComponent::Menu;
+        app.selected_menu_item = 4;
+        handle_menu_input(&mut app, KeyCode::Enter).await.unwrap();
+        assert_eq!(app.state, AppState::ShowAbout);
+    }
+
+    #[tokio::test]
+    async fn test_handle_stopped_table_input() {
+        let mut app = setup_app();
+        app.state = AppState::Normal;
+        app.active_component = ActiveComponent::StoppedTable;
+        app.active_table = ActiveTable::Stopped;
+        app.table_state_stopped.select(Some(1));
+        app.selected_row_stopped = 1;
+
+        app.selected_rows_stopped.clear();
+        handle_stopped_table_input(&mut app, KeyCode::Char('a'))
+            .await
+            .unwrap();
+        assert_eq!(app.selected_rows_stopped.len(), 3);
+
+        app.selected_rows_stopped.clear();
+        handle_stopped_table_input(&mut app, KeyCode::Char(' '))
+            .await
+            .unwrap();
+        assert!(app.selected_rows_stopped.contains(&1));
+
+        handle_stopped_table_input(&mut app, KeyCode::Right)
+            .await
+            .unwrap();
+        assert_eq!(app.active_component, ActiveComponent::RunningTable);
+
+        app.active_component = ActiveComponent::StoppedTable;
+        app.table_state_stopped.select(Some(0));
+        handle_stopped_table_input(&mut app, KeyCode::Up)
+            .await
+            .unwrap();
+        assert_eq!(app.active_component, ActiveComponent::Menu);
+
+        app.active_component = ActiveComponent::StoppedTable;
+        app.selected_rows_stopped.insert(1);
+        handle_stopped_table_input(&mut app, KeyCode::Char('d'))
+            .await
+            .unwrap();
+        assert_eq!(app.state, AppState::ShowDeleteConfirmation);
+    }
+
+    #[tokio::test]
+    async fn test_handle_running_table_input() {
+        let mut app = setup_app();
+        app.state = AppState::Normal;
+        app.active_component = ActiveComponent::RunningTable;
+        app.active_table = ActiveTable::Running;
+        app.table_state_running.select(Some(0));
+        app.selected_row_running = 0;
+
+        app.selected_rows_running.clear();
+        handle_running_table_input(&mut app, KeyCode::Char(' '))
+            .await
+            .unwrap();
+        assert!(app.selected_rows_running.contains(&0));
+
+        handle_running_table_input(&mut app, KeyCode::Left)
+            .await
+            .unwrap();
+        assert_eq!(app.active_component, ActiveComponent::StoppedTable);
+
+        app.active_component = ActiveComponent::RunningTable;
+        app.table_state_running.select(Some(0));
+        handle_running_table_input(&mut app, KeyCode::Up)
+            .await
+            .unwrap();
+        assert_eq!(app.active_component, ActiveComponent::Menu);
+
+        app.active_component = ActiveComponent::RunningTable;
+        app.table_state_running.select(Some(1));
+        app.selected_row_running = 1;
+        handle_running_table_input(&mut app, KeyCode::Down)
+            .await
+            .unwrap();
+        assert_eq!(app.active_component, ActiveComponent::Logs);
+    }
+
+    #[tokio::test]
+    async fn test_handle_details_input() {
+        let mut app = setup_app();
+        app.state = AppState::Normal;
+        app.active_component = ActiveComponent::Details;
+        app.visible_rows = 2;
+
+        handle_details_input(&mut app, KeyCode::Right)
+            .await
+            .unwrap();
+        assert_eq!(app.active_component, ActiveComponent::Logs);
+
+        app.active_component = ActiveComponent::Details;
+        handle_details_input(&mut app, KeyCode::Up).await.unwrap();
+        assert_eq!(app.active_component, ActiveComponent::StoppedTable);
+
+        app.active_component = ActiveComponent::Details;
+        app.details_scroll_offset = 5;
+        app.details_scroll_max_offset = 10;
+
+        handle_details_input(&mut app, KeyCode::PageUp)
+            .await
+            .unwrap();
+        assert_eq!(app.details_scroll_offset, 3);
+
+        handle_details_input(&mut app, KeyCode::PageDown)
+            .await
+            .unwrap();
+        assert_eq!(app.details_scroll_offset, 5);
+    }
+
+    #[tokio::test]
+    async fn test_handle_logs_input() {
+        let mut app = setup_app();
+        app.state = AppState::Normal;
+        app.active_component = ActiveComponent::Logs;
+
+        handle_logs_input(&mut app, KeyCode::Left).await.unwrap();
+        assert_eq!(app.active_component, ActiveComponent::Details);
+
+        app.active_component = ActiveComponent::Logs;
+        handle_logs_input(&mut app, KeyCode::Up).await.unwrap();
+        assert_eq!(app.active_component, ActiveComponent::RunningTable);
+
+        app.active_component = ActiveComponent::Logs;
+        handle_logs_input(&mut app, KeyCode::PageUp).await.unwrap();
+        handle_logs_input(&mut app, KeyCode::PageDown)
+            .await
+            .unwrap();
+        handle_logs_input(&mut app, KeyCode::Down).await.unwrap();
+        handle_logs_input(&mut app, KeyCode::Char('+'))
+            .await
+            .unwrap();
+        handle_logs_input(&mut app, KeyCode::Char('-'))
+            .await
+            .unwrap();
+        handle_logs_input(&mut app, KeyCode::Char(' '))
+            .await
+            .unwrap();
+        handle_logs_input(&mut app, KeyCode::Esc).await.unwrap();
+        handle_logs_input(&mut app, KeyCode::Char('h'))
+            .await
+            .unwrap();
+        handle_logs_input(&mut app, KeyCode::Char('f'))
+            .await
+            .unwrap();
+    }
+
+    #[test]
+    fn test_show_delete_confirmation() {
+        let mut app = setup_app();
+        app.active_table = ActiveTable::Stopped;
+        app.selected_rows_stopped.insert(1);
+
+        show_delete_confirmation(&mut app);
+
+        assert_eq!(app.state, AppState::ShowDeleteConfirmation);
+        assert!(app.delete_confirmation_message.is_some());
+
+        app.state = AppState::Normal;
+        app.selected_rows_stopped.clear();
+
+        show_delete_confirmation(&mut app);
+
+        assert_eq!(app.state, AppState::Normal);
     }
 }
