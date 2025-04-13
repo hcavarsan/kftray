@@ -259,7 +259,6 @@ mod tests {
 
     #[test]
     fn test_app_pin_state() {
-        // Create app state
         let app_state = AppState {
             is_moving: Arc::new(std::sync::Mutex::new(false)),
             is_plugin_moving: Arc::new(std::sync::atomic::AtomicBool::new(false)),

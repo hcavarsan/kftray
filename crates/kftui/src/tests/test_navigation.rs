@@ -40,6 +40,12 @@ mod tests {
         let config = create_test_config();
 
         handle_port_forward(&mut app, config).await;
+
+        assert_eq!(
+            app.active_table,
+            ActiveTable::Stopped,
+            "Active table should remain Stopped"
+        );
     }
 
     #[tokio::test]
@@ -49,6 +55,12 @@ mod tests {
         let config = create_test_config();
 
         handle_port_forward(&mut app, config).await;
+
+        assert_eq!(
+            app.active_table,
+            ActiveTable::Running,
+            "Active table should remain Running"
+        );
     }
 
     #[tokio::test]
@@ -58,11 +70,27 @@ mod tests {
         handle_auto_add_configs(&mut app).await;
 
         if app.state == AppState::ShowErrorPopup {
-            assert!(app.error_message.is_some());
+            assert!(
+                app.error_message.is_some(),
+                "Error message should be present in error state"
+            );
+            if let Some(error_msg) = &app.error_message {
+                println!("Error message: {}", error_msg);
+            }
         } else {
-            assert_eq!(app.state, AppState::ShowContextSelection);
-            assert_eq!(app.selected_context_index, 0);
-            assert!(app.context_list_state.selected().is_some());
+            assert_eq!(
+                app.state,
+                AppState::ShowContextSelection,
+                "App should be in context selection state"
+            );
+            assert_eq!(
+                app.selected_context_index, 0,
+                "First context should be selected"
+            );
+            assert!(
+                app.context_list_state.selected().is_some(),
+                "Context list should have a selection"
+            );
         }
     }
 }

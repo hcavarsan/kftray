@@ -72,7 +72,10 @@ pub async fn import_configs_cmd(json: String) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use lazy_static::lazy_static;
+    use sqlx::SqlitePool;
     use tokio::sync::Mutex;
 
     use super::*;
@@ -81,9 +84,20 @@ mod tests {
         static ref TEST_MUTEX: Mutex<()> = Mutex::new(());
     }
 
+    async fn setup_test_db() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        kftray_commons::utils::db::create_db_table(&pool)
+            .await
+            .unwrap();
+
+        let arc_pool = Arc::new(pool);
+        let _ = kftray_commons::utils::db::DB_POOL.set(arc_pool);
+    }
+
     #[tokio::test]
     async fn test_delete_config_cmd() {
         let _guard = TEST_MUTEX.lock().await;
+        setup_test_db().await;
 
         let _ = delete_all_configs().await;
 
@@ -110,6 +124,7 @@ mod tests {
     #[tokio::test]
     async fn test_delete_configs_cmd() {
         let _guard = TEST_MUTEX.lock().await;
+        setup_test_db().await;
 
         let _ = delete_all_configs().await;
 
@@ -147,6 +162,7 @@ mod tests {
     #[tokio::test]
     async fn test_delete_all_configs_cmd() {
         let _guard = TEST_MUTEX.lock().await;
+        setup_test_db().await;
 
         let config1 = Config::default();
         let config2 = Config::default();
@@ -179,6 +195,7 @@ mod tests {
     #[tokio::test]
     async fn test_insert_config_cmd() {
         let _guard = TEST_MUTEX.lock().await;
+        setup_test_db().await;
 
         let _ = delete_all_configs().await;
 
@@ -206,6 +223,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_configs_cmd() {
         let _guard = TEST_MUTEX.lock().await;
+        setup_test_db().await;
 
         let _ = delete_all_configs().await;
 
@@ -234,6 +252,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_config_cmd() {
         let _guard = TEST_MUTEX.lock().await;
+        setup_test_db().await;
 
         let _ = delete_all_configs().await;
 
@@ -272,6 +291,7 @@ mod tests {
     #[tokio::test]
     async fn test_update_config_cmd() {
         let _guard = TEST_MUTEX.lock().await;
+        setup_test_db().await;
 
         let _ = delete_all_configs().await;
 
@@ -309,6 +329,7 @@ mod tests {
     #[tokio::test]
     async fn test_export_configs_cmd() {
         let _guard = TEST_MUTEX.lock().await;
+        setup_test_db().await;
 
         let _ = delete_all_configs().await;
 
@@ -339,6 +360,7 @@ mod tests {
     #[tokio::test]
     async fn test_import_configs_cmd() {
         let _guard = TEST_MUTEX.lock().await;
+        setup_test_db().await;
 
         let _ = delete_all_configs().await;
 
@@ -349,12 +371,26 @@ mod tests {
         }])
         .to_string();
 
-        let _ = import_configs_cmd(test_config_json).await;
+        let result = import_configs_cmd(test_config_json).await;
+        assert!(result.is_ok(), "Import configs command should succeed");
+
+        let configs = get_configs()
+            .await
+            .expect("Failed to get configs after import");
+        assert!(
+            configs
+                .iter()
+                .any(|c| c.service == Some("import-test-service".to_string())
+                    && c.namespace == "import-test-namespace"
+                    && c.local_port == Some(5000)),
+            "Imported config should exist in the database"
+        );
     }
 
     #[tokio::test]
     async fn test_import_configs_cmd_error() {
         let _guard = TEST_MUTEX.lock().await;
+        setup_test_db().await;
 
         let invalid_json = "{\"service\": \"malformed\",";
 
@@ -364,17 +400,20 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_configs_cmd_format() {
+        setup_test_db().await;
         let _ = get_configs_cmd().await;
     }
 
     #[tokio::test]
     async fn test_get_config_cmd_format() {
+        setup_test_db().await;
         let id = 123;
         let _ = get_config_cmd(id).await;
     }
 
     #[tokio::test]
     async fn test_delete_config_cmd_format() {
+        setup_test_db().await;
         let id = 123;
         let _ = delete_config_cmd(id).await;
     }

@@ -316,7 +316,6 @@ mod tests {
             .get_item("pin")
             .set_title(menu_title);
 
-        // Emit event
         let _ = mock_window.emit("pin-state-changed", new_pin_state);
 
         assert!(

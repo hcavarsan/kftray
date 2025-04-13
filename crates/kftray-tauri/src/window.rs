@@ -234,14 +234,11 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let test_file = temp_dir.path().join("corrupted.json");
 
-        // Create the file
         fs::write(&test_file, "corrupted data").unwrap();
         assert!(test_file.exists());
 
-        // Handle corrupted file
         handle_corrupted_file(&test_file, "Test error");
 
-        // File should be deleted
         assert!(!test_file.exists());
     }
 
@@ -250,11 +247,9 @@ mod tests {
         let position = WindowPosition { x: 100, y: 200 };
         let json = serde_json::to_string(&position).unwrap();
 
-        // Test serialization
         assert!(json.contains("100"), "JSON should contain x value");
         assert!(json.contains("200"), "JSON should contain y value");
 
-        // Test deserialization
         let deserialized: WindowPosition = serde_json::from_str(&json).unwrap();
         assert_eq!(deserialized.x, 100);
         assert_eq!(deserialized.y, 200);

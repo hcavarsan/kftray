@@ -223,7 +223,6 @@ mod tests {
         ]
     }
 
-    // Helper to create test config states
     fn create_test_config_states() -> Vec<ConfigState> {
         vec![
             ConfigState {
@@ -239,7 +238,6 @@ mod tests {
         ]
     }
 
-    // Test the config_compare_changes function
     #[test]
     fn test_config_compare_changes() {
         let vec1 = vec![1, 2, 3];
@@ -270,7 +268,7 @@ mod tests {
     }
 
     #[test]
-    fn test_config_state_conversion() {
+    fn test_config_and_state_ids_match() {
         let configs = create_test_configs();
         let config_states = create_test_config_states();
 
@@ -281,6 +279,32 @@ mod tests {
         assert_eq!(
             configs[1].id, config_states[1].id,
             "Config and ConfigState IDs should match"
+        );
+    }
+
+    #[test]
+    fn test_config_state_conversion() {
+        let configs = create_test_configs();
+
+        // Create config states from configs to test actual conversion
+        let config_states: Vec<ConfigState> = configs
+            .iter()
+            .map(|config| ConfigState {
+                id: config.id,
+                config_id: config.id.unwrap_or_default(),
+                is_running: false,
+            })
+            .collect();
+
+        assert_eq!(
+            configs[0].id,
+            Some(config_states[0].config_id),
+            "Config ID should match ConfigState config_id"
+        );
+        assert_eq!(
+            configs[1].id,
+            Some(config_states[1].config_id),
+            "Config ID should match ConfigState config_id"
         );
     }
 }

@@ -548,7 +548,6 @@ mod tests {
     fn create_test_log_folder() -> TempDir {
         let temp_dir = tempfile::tempdir().unwrap();
 
-        // Create some test log files
         for i in 1..5 {
             let file_path = temp_dir.path().join(format!("test_log_{}.log", i));
             let mut file = std::fs::File::create(&file_path).unwrap();

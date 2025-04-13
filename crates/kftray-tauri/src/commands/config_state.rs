@@ -11,6 +11,8 @@ pub async fn get_config_states() -> Result<Vec<ConfigState>, String> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use kftray_commons::config::{
         delete_all_configs,
         insert_config,
@@ -18,6 +20,7 @@ mod tests {
     use kftray_commons::config_state::update_config_state;
     use kftray_commons::models::config_model::Config;
     use lazy_static::lazy_static;
+    use sqlx::SqlitePool;
     use tokio::sync::Mutex;
 
     use super::*;
@@ -26,9 +29,20 @@ mod tests {
         static ref TEST_MUTEX: Mutex<()> = Mutex::new(());
     }
 
+    async fn setup_test_db() {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        kftray_commons::utils::db::create_db_table(&pool)
+            .await
+            .unwrap();
+
+        let arc_pool = Arc::new(pool);
+        let _ = kftray_commons::utils::db::DB_POOL.set(arc_pool);
+    }
+
     #[tokio::test]
     async fn test_get_config_states() {
         let _guard = TEST_MUTEX.lock().await;
+        setup_test_db().await;
 
         let _ = delete_all_configs().await;
 
@@ -71,6 +85,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_config_states_with_running_state() {
         let _guard = TEST_MUTEX.lock().await;
+        setup_test_db().await;
 
         let _ = delete_all_configs().await;
 
@@ -105,6 +120,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_config_states_with_no_configs() {
         let _guard = TEST_MUTEX.lock().await;
+        setup_test_db().await;
 
         let _ = delete_all_configs().await;
 

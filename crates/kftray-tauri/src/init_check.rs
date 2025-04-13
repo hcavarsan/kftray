@@ -605,7 +605,6 @@ mod tests {
         assert_eq!(results.len(), 2);
         assert!(results.iter().all(|(_, result)| result.is_ok()));
 
-        // Verify we got the right configs
         let config_ids: Vec<i64> = results.iter().map(|(id, _)| *id).collect();
         assert!(config_ids.contains(&1));
         assert!(config_ids.contains(&2));
@@ -613,8 +612,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_find_process_by_port_internal() {
-        // Can't easily test this directly due to system calls
-        // Test with port 0, which should always return None
         let result = find_process_by_port_internal(0).await;
         assert!(result.is_none());
     }

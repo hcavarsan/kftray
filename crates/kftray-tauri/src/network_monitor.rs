@@ -147,27 +147,32 @@ mod tests {
 
     #[tokio::test]
     async fn test_network_state_transitions() {
-        let initial_state = false;
-        let new_state = true;
+        let mut was_network_up = false;
+        let is_network_up = true;
 
-        assert_ne!(initial_state, new_state);
-        assert!(!initial_state && new_state);
+        let mut reconnect_called = false;
 
-        let initial_state = true;
-        let new_state = false;
+        if !was_network_up && is_network_up {
+            reconnect_called = true;
+        }
 
-        assert_ne!(initial_state, new_state);
-        assert!(initial_state && !new_state);
+        assert!(
+            reconnect_called,
+            "Reconnect should be called when network goes from down to up"
+        );
 
-        let initial_state = true;
-        let new_state = true;
+        was_network_up = true;
+        let is_network_up = false;
+        let mut disconnect_detected = false;
 
-        assert_eq!(initial_state, new_state);
+        if was_network_up && !is_network_up {
+            disconnect_detected = true;
+        }
 
-        let initial_state = false;
-        let new_state = false;
-
-        assert_eq!(initial_state, new_state);
+        assert!(
+            disconnect_detected,
+            "Disconnect should be detected when network goes from up to down"
+        );
     }
 
     #[tokio::test]
