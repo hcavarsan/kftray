@@ -635,6 +635,8 @@ pub async fn import_configs_from_github(
 mod tests {
     use std::fs;
 
+    use kftray_commons::db::create_db_table;
+    use sqlx::sqlite::SqlitePool;
     use tempfile::tempdir;
 
     use super::*;
@@ -738,7 +740,20 @@ mod tests {
     async fn test_process_config_content() {
         let temp_dir = tempdir().expect("Failed to create temp directory");
         let db_path = temp_dir.path().join("test.db");
-        std::env::set_var("DATABASE_URL", format!("sqlite:{}", db_path.display()));
+
+        if let Some(parent) = db_path.parent() {
+            std::fs::create_dir_all(parent).expect("Failed to create database directory");
+        }
+
+        let db_url = format!("sqlite:{}", db_path.display());
+        std::env::set_var("DATABASE_URL", &db_url);
+
+        let pool = SqlitePool::connect(&db_url)
+            .await
+            .expect("Failed to create database pool");
+        create_db_table(&pool)
+            .await
+            .expect("Failed to create database tables");
 
         let config_content = r#"[{
             "name": "test_config",
@@ -764,6 +779,7 @@ mod tests {
         );
 
         std::env::remove_var("DATABASE_URL");
+        drop(pool);
     }
 
     #[test]
