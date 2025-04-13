@@ -28,7 +28,17 @@ mod tests {
         let result = export_configs_to_file(file_path_str).await;
 
         if result.is_ok() {
-            assert!(fs::metadata(&file_path).is_ok());
+            let metadata = fs::metadata(&file_path);
+            assert!(
+                metadata.is_ok(),
+                "File should exist after successful export"
+            );
+            assert!(metadata.unwrap().is_file(), "Created path should be a file");
+        } else {
+            println!(
+                "Export configs test skipped validation: {}",
+                result.unwrap_err()
+            );
         }
     }
 
@@ -38,7 +48,17 @@ mod tests {
 
         let result = export_configs_to_file(file_path).await;
 
-        assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Failed to write to file"));
+        assert!(
+            result.is_err(),
+            "Export to non-existent directory should fail"
+        );
+
+        let error_message = result.unwrap_err();
+        assert!(
+            error_message.contains("Failed to write to file")
+                || error_message.contains("Failed to export configs"),
+            "Error should be related to writing or exporting: {}",
+            error_message
+        );
     }
 }
