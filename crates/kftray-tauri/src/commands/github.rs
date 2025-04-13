@@ -738,19 +738,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_process_config_content() {
-        let temp_dir = tempdir().expect("Failed to create temp directory");
-        let db_path = temp_dir.path().join("test.db");
+        std::env::set_var("DATABASE_URL", "sqlite::memory:");
 
-        if let Some(parent) = db_path.parent() {
-            std::fs::create_dir_all(parent).expect("Failed to create database directory");
-        }
-
-        let db_url = format!("sqlite:{}", db_path.display());
-        std::env::set_var("DATABASE_URL", &db_url);
-
-        let pool = SqlitePool::connect(&db_url)
+        let pool = SqlitePool::connect("sqlite::memory:")
             .await
-            .expect("Failed to create database pool");
+            .expect("Failed to create in-memory database pool");
         create_db_table(&pool)
             .await
             .expect("Failed to create database tables");
