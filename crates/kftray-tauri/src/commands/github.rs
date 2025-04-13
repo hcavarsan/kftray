@@ -30,6 +30,7 @@ use tauri::{
 };
 use tempfile::TempDir;
 
+
 #[derive(Debug)]
 pub enum CustomError {
     Keyring(KeyringError),
@@ -634,6 +635,7 @@ pub async fn import_configs_from_github(
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::sync::Arc;
 
     use kftray_commons::db::create_db_table;
     use sqlx::sqlite::SqlitePool;
@@ -738,14 +740,20 @@ mod tests {
 
     #[tokio::test]
     async fn test_process_config_content() {
-        std::env::set_var("DATABASE_URL", "sqlite::memory:");
+        use kftray_commons::utils::db::DB_POOL;
 
+        // Initialize the global pool with in-memory database
         let pool = SqlitePool::connect("sqlite::memory:")
             .await
             .expect("Failed to create in-memory database pool");
         create_db_table(&pool)
             .await
             .expect("Failed to create database tables");
+
+        // Set the global pool
+        DB_POOL
+            .set(Arc::new(pool))
+            .expect("Failed to set global database pool");
 
         let config_content = r#"[{
             "name": "test_config",
@@ -769,9 +777,6 @@ mod tests {
             "Failed to process valid config content with flush: {:?}",
             result
         );
-
-        std::env::remove_var("DATABASE_URL");
-        drop(pool);
     }
 
     #[test]
