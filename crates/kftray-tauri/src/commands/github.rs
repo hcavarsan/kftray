@@ -30,7 +30,6 @@ use tauri::{
 };
 use tempfile::TempDir;
 
-
 #[derive(Debug)]
 pub enum CustomError {
     Keyring(KeyringError),
