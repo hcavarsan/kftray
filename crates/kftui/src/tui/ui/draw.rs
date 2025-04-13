@@ -188,7 +188,7 @@ pub fn draw_ui(f: &mut Frame, app: &mut App, config_states: &[ConfigState]) {
     }
 }
 
-fn log_level_to_color(level: log::Level) -> Style {
+pub fn log_level_to_color(level: log::Level) -> Style {
     match level {
         log::Level::Error => Style::default().fg(Color::Red),
         log::Level::Warn => Style::default().fg(Color::Yellow),

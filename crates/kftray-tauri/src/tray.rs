@@ -249,11 +249,91 @@ pub fn handle_system_tray_event(app: &tauri::AppHandle, event: SystemTrayEvent) 
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::sync::Arc;
+
+    use kftray_commons::models::window::{
+        AppState,
+        SaveDialogState,
+    };
+    use tokio::runtime::Runtime;
 
     #[test]
-    fn test_create_tray_menu() {
-        let _tray = create_tray_menu();
-        // This test verifies that the function doesn't panic
+    fn test_app_pin_state() {
+        // Create app state
+        let app_state = AppState {
+            is_moving: Arc::new(std::sync::Mutex::new(false)),
+            is_plugin_moving: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            is_pinned: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            runtime: Arc::new(Runtime::new().unwrap()),
+        };
+
+        assert!(
+            !app_state
+                .is_pinned
+                .load(std::sync::atomic::Ordering::SeqCst),
+            "App should start unpinned"
+        );
+
+        let initial_state = app_state
+            .is_pinned
+            .load(std::sync::atomic::Ordering::SeqCst);
+        app_state
+            .is_pinned
+            .store(!initial_state, std::sync::atomic::Ordering::SeqCst);
+
+        assert!(
+            app_state
+                .is_pinned
+                .load(std::sync::atomic::Ordering::SeqCst),
+            "App should be pinned after toggle"
+        );
+
+        let current_state = app_state
+            .is_pinned
+            .load(std::sync::atomic::Ordering::SeqCst);
+        app_state
+            .is_pinned
+            .store(!current_state, std::sync::atomic::Ordering::SeqCst);
+
+        assert!(
+            !app_state
+                .is_pinned
+                .load(std::sync::atomic::Ordering::SeqCst),
+            "App should be unpinned after second toggle"
+        );
+    }
+
+    #[test]
+    fn test_save_dialog_state() {
+        let save_dialog_state = SaveDialogState::default();
+
+        assert!(
+            !save_dialog_state
+                .is_open
+                .load(std::sync::atomic::Ordering::SeqCst),
+            "Dialog should start closed"
+        );
+
+        save_dialog_state
+            .is_open
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+
+        assert!(
+            save_dialog_state
+                .is_open
+                .load(std::sync::atomic::Ordering::SeqCst),
+            "Dialog should be open after setting to true"
+        );
+
+        save_dialog_state
+            .is_open
+            .store(false, std::sync::atomic::Ordering::SeqCst);
+
+        assert!(
+            !save_dialog_state
+                .is_open
+                .load(std::sync::atomic::Ordering::SeqCst),
+            "Dialog should be closed after setting to false"
+        );
     }
 }

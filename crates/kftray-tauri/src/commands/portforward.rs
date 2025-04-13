@@ -190,3 +190,97 @@ pub async fn handle_exit_app(app_handle: tauri::AppHandle) {
         app_handle.exit(0);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use kftray_commons::models::config_model::Config;
+    use kftray_commons::models::config_state_model::ConfigState;
+
+    use super::*;
+
+    fn create_test_configs() -> Vec<Config> {
+        vec![
+            Config {
+                id: Some(1),
+                service: Some("test-service-1".to_string()),
+                namespace: "test-namespace".to_string(),
+                local_port: Some(8080),
+                remote_port: Some(80),
+                context: "test-context".to_string(),
+                protocol: "tcp".to_string(),
+                ..Default::default()
+            },
+            Config {
+                id: Some(2),
+                service: Some("test-service-2".to_string()),
+                namespace: "test-namespace".to_string(),
+                local_port: Some(9090),
+                remote_port: Some(9000),
+                context: "test-context".to_string(),
+                protocol: "udp".to_string(),
+                ..Default::default()
+            },
+        ]
+    }
+
+    // Helper to create test config states
+    fn create_test_config_states() -> Vec<ConfigState> {
+        vec![
+            ConfigState {
+                id: Some(1),
+                config_id: 1,
+                is_running: true,
+            },
+            ConfigState {
+                id: Some(2),
+                config_id: 2,
+                is_running: false,
+            },
+        ]
+    }
+
+    // Test the config_compare_changes function
+    #[test]
+    fn test_config_compare_changes() {
+        let vec1 = vec![1, 2, 3];
+        let vec2 = vec![1, 2, 3];
+        assert!(
+            config_compare_changes(&vec1, &vec2),
+            "Identical vectors should return true"
+        );
+
+        let vec3 = vec![1, 2, 3, 4];
+        assert!(
+            !config_compare_changes(&vec1, &vec3),
+            "Different length vectors should return false"
+        );
+
+        let vec4 = vec![1, 2, 4];
+        assert!(
+            !config_compare_changes(&vec1, &vec4),
+            "Different content vectors should return false"
+        );
+
+        let vec5: Vec<i32> = vec![];
+        let vec6: Vec<i32> = vec![];
+        assert!(
+            config_compare_changes(&vec5, &vec6),
+            "Empty vectors should return true"
+        );
+    }
+
+    #[test]
+    fn test_config_state_conversion() {
+        let configs = create_test_configs();
+        let config_states = create_test_config_states();
+
+        assert_eq!(
+            configs[0].id, config_states[0].id,
+            "Config and ConfigState IDs should match"
+        );
+        assert_eq!(
+            configs[1].id, config_states[1].id,
+            "Config and ConfigState IDs should match"
+        );
+    }
+}

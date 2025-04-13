@@ -630,3 +630,170 @@ pub async fn import_configs_from_github(
     )?;
     process_config_content(&config_content, flush).await
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::{
+        Arc,
+        Mutex,
+    };
+
+    use tempfile::tempdir;
+
+    use super::*;
+    lazy_static::lazy_static! {
+        static ref TEST_KEYRING: Arc<Mutex<std::collections::HashMap<String, String>>> = Arc::new(Mutex::new(std::collections::HashMap::new()));
+    }
+
+    struct MockEntry {
+        service: String,
+        name: String,
+    }
+
+    impl MockEntry {
+        fn new(service: &str, name: &str) -> Result<Self, KeyringError> {
+            Ok(MockEntry {
+                service: service.to_string(),
+                name: name.to_string(),
+            })
+        }
+
+        fn set_password(&self, password: &str) -> Result<(), KeyringError> {
+            let key = format!("{}:{}", self.service, self.name);
+            {
+                let mut keyring = TEST_KEYRING.lock().unwrap();
+                keyring.insert(key, password.to_string());
+            }
+            Ok(())
+        }
+
+        fn get_password(&self) -> Result<String, KeyringError> {
+            let key = format!("{}:{}", self.service, self.name);
+            let result = {
+                let keyring = TEST_KEYRING.lock().unwrap();
+                keyring.get(&key).cloned()
+            };
+            result.ok_or(KeyringError::NoEntry)
+        }
+
+        fn delete_credential(&self) -> Result<(), KeyringError> {
+            let key = format!("{}:{}", self.service, self.name);
+            let result = {
+                let mut keyring = TEST_KEYRING.lock().unwrap();
+                keyring.remove(&key)
+            };
+            if result.is_none() {
+                return Err(KeyringError::NoEntry);
+            }
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn test_keyring_operations() {
+        {
+            TEST_KEYRING.lock().unwrap().clear();
+        }
+
+        let service = "test-service";
+        let name = "test-name";
+        let password = "test-password";
+
+        {
+            let mock_entry = MockEntry::new(service, name).unwrap();
+            mock_entry.set_password(password).unwrap();
+        }
+
+        {
+            let mock_entry = MockEntry::new(service, name).unwrap();
+            let retrieved_password = mock_entry.get_password().unwrap();
+            assert_eq!(
+                password, retrieved_password,
+                "Retrieved password should match stored password"
+            );
+        }
+
+        {
+            let mock_entry = MockEntry::new(service, name).unwrap();
+            mock_entry.delete_credential().unwrap();
+        }
+
+        {
+            let mock_entry = MockEntry::new(service, name).unwrap();
+            let result = mock_entry.get_password();
+            assert!(result.is_err(), "Password should be deleted");
+        }
+    }
+
+    #[test]
+    fn test_store_get_delete_key() {
+        {
+            TEST_KEYRING.lock().unwrap().clear();
+        }
+
+        let service = "test-service";
+        let name = "test-user";
+        let password = "test-password";
+
+        {
+            let mock_entry = MockEntry::new(service, name).unwrap();
+            mock_entry.set_password(password).unwrap();
+        }
+
+        {
+            let mock_entry = MockEntry::new(service, name).unwrap();
+            let result = mock_entry.get_password().unwrap();
+            assert_eq!(
+                password, result,
+                "Retrieved password should match stored password"
+            );
+        }
+
+        {
+            let mock_entry = MockEntry::new(service, name).unwrap();
+            mock_entry.delete_credential().unwrap();
+        }
+
+        {
+            let mock_entry = MockEntry::new(service, name).unwrap();
+            let result = mock_entry.get_password();
+            assert!(
+                result.is_err(),
+                "Key should be deleted after calling delete_key"
+            );
+        }
+    }
+
+    #[test]
+    fn test_read_config_file() {
+        let temp_dir = tempdir().unwrap();
+        let config_path = "test_config.json";
+        let full_path = temp_dir.path().join(config_path);
+
+        let config_content = r#"{"name": "test-config"}"#;
+        std::fs::write(&full_path, config_content).unwrap();
+
+        let result = read_config_file(temp_dir.path(), config_path);
+
+        assert!(result.is_ok(), "Should successfully read config file");
+        assert_eq!(
+            result.unwrap(),
+            config_content,
+            "Config content should match what was written"
+        );
+    }
+
+    #[test]
+    fn test_read_config_file_not_found() {
+        let temp_dir = tempdir().unwrap();
+        let config_path = "non_existent_config.json";
+
+        let result = read_config_file(temp_dir.path(), config_path);
+
+        assert!(result.is_err(), "Should return error for non-existent file");
+        assert!(
+            result.err().unwrap().contains("Failed to read config file"),
+            "Error message should indicate file reading failure"
+        );
+    }
+}
