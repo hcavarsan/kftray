@@ -736,6 +736,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_process_config_content() {
+        let temp_dir = tempdir().expect("Failed to create temp directory");
+        let db_path = temp_dir.path().join("test.db");
+        std::env::set_var("DATABASE_URL", format!("sqlite:{}", db_path.display()));
+
         let config_content = r#"[{
             "name": "test_config",
             "description": "test description",
@@ -745,16 +749,27 @@ mod tests {
             "service": "test-service"
         }]"#;
 
+        let result = process_config_content(config_content, false).await;
+        assert!(
+            result.is_ok(),
+            "Failed to process valid config content without flush: {:?}",
+            result
+        );
+
         let result = process_config_content(config_content, true).await;
-        assert!(result.is_ok(), "Failed to process valid config content");
+        assert!(
+            result.is_ok(),
+            "Failed to process valid config content with flush: {:?}",
+            result
+        );
+
+        std::env::remove_var("DATABASE_URL");
     }
 
     #[test]
     fn test_setup_git_callbacks() {
-        // Test with token
         let callbacks = setup_git_callbacks(true, Some("test_token".to_string()));
         let mut builder = setup_repo_builder(callbacks);
-        // Verify callbacks are configured by attempting a clone operation
         let result = builder.clone(
             "https://github.com/nonexistent/repo",
             std::path::Path::new("/tmp"),
@@ -764,10 +779,8 @@ mod tests {
             "Clone should fail but builder should be properly configured"
         );
 
-        // Test without token
         let callbacks = setup_git_callbacks(false, None);
         let mut builder = setup_repo_builder(callbacks);
-        // Verify callbacks are configured by attempting a clone operation
         let result = builder.clone(
             "https://github.com/nonexistent/repo",
             std::path::Path::new("/tmp"),

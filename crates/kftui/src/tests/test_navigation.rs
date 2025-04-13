@@ -105,11 +105,15 @@ mod tests {
         app.selected_context_index = 0;
         app.context_list_state = ListState::default();
         app.context_list_state.select(Some(0));
-
         handle_context_selection(&mut app, "test-context").await;
-
         if app.state == AppState::ShowErrorPopup {
             assert!(app.error_message.is_some());
+        } else {
+            assert_eq!(
+                app.state,
+                AppState::Normal,
+                "Expected app state to transition to Normal"
+            );
         }
     }
 
