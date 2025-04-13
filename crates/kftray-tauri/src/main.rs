@@ -188,3 +188,80 @@ fn main() {
 
     app.run(handle_run_event);
 }
+
+#[cfg(test)]
+mod tests {
+    use std::sync::atomic::AtomicBool;
+
+    use super::*;
+
+    #[test]
+    fn test_app_state_creation() {
+        let is_moving = Arc::new(Mutex::new(false));
+        let is_plugin_moving = Arc::new(AtomicBool::new(false));
+        let is_pinned = Arc::new(AtomicBool::new(false));
+        let runtime = Arc::new(Runtime::new().expect("Failed to create a Tokio runtime"));
+
+        let app_state = AppState {
+            is_moving: is_moving.clone(),
+            is_plugin_moving: is_plugin_moving.clone(),
+            is_pinned: is_pinned.clone(),
+            runtime: runtime.clone(),
+        };
+
+        assert!(!*app_state.is_moving.lock().unwrap());
+        assert!(!app_state.is_plugin_moving.load(Ordering::SeqCst));
+        assert!(!app_state.is_pinned.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_save_dialog_state() {
+        let state = SaveDialogState::default();
+        assert!(!state.is_open.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_http_log_state() {
+        let state = HttpLogState::new();
+        let rt = Runtime::new().unwrap();
+
+        rt.block_on(async {
+            assert!(!state.get_http_logs(1).await.unwrap());
+            state.set_http_logs(1, true).await.unwrap();
+            assert!(state.get_http_logs(1).await.unwrap());
+        });
+    }
+
+    #[test]
+    fn test_pin_state() {
+        let is_pinned = Arc::new(AtomicBool::new(false));
+        assert!(!is_pinned.load(Ordering::SeqCst));
+
+        is_pinned.store(true, Ordering::SeqCst);
+        assert!(is_pinned.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_moving_state() {
+        let is_moving = Arc::new(Mutex::new(false));
+        assert!(!*is_moving.lock().unwrap());
+
+        *is_moving.lock().unwrap() = true;
+        assert!(*is_moving.lock().unwrap());
+    }
+
+    #[test]
+    fn test_plugin_moving_state() {
+        let is_plugin_moving = Arc::new(AtomicBool::new(false));
+        assert!(!is_plugin_moving.load(Ordering::SeqCst));
+
+        is_plugin_moving.store(true, Ordering::SeqCst);
+        assert!(is_plugin_moving.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn test_setup_logging() {
+        let result = logging::setup_logging();
+        assert!(result.is_ok());
+    }
+}

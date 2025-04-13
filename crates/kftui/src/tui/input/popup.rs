@@ -6,7 +6,7 @@ use crate::tui::input::{
 };
 
 pub async fn handle_confirmation_popup_input(app: &mut App, key: KeyCode) -> std::io::Result<()> {
-    if key == KeyCode::Enter {
+    if key == KeyCode::Enter || key == KeyCode::Esc {
         app.state = AppState::Normal;
         app.import_export_message = None;
     }
@@ -14,14 +14,14 @@ pub async fn handle_confirmation_popup_input(app: &mut App, key: KeyCode) -> std
 }
 
 pub fn handle_help_input(app: &mut App, key: KeyCode) -> std::io::Result<()> {
-    if key == KeyCode::Esc || key == KeyCode::Char('h') {
+    if key == KeyCode::Esc || key == KeyCode::Enter || key == KeyCode::Char('h') {
         app.state = AppState::Normal;
     }
     Ok(())
 }
 
 pub fn handle_about_input(app: &mut App, key: KeyCode) -> std::io::Result<()> {
-    if key == KeyCode::Esc || key == KeyCode::Char('q') {
+    if key == KeyCode::Esc || key == KeyCode::Enter || key == KeyCode::Char('q') {
         app.state = AppState::Normal;
     }
     Ok(())

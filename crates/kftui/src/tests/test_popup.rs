@@ -35,9 +35,8 @@ mod tests {
         let mut app = App::new();
         app.state = AppState::ShowHelp;
 
-        // Enter should not change state
         handle_help_input(&mut app, KeyCode::Enter).unwrap();
-        assert_eq!(app.state, AppState::ShowHelp);
+        assert_eq!(app.state, AppState::Normal);
 
         app.state = AppState::ShowHelp;
         handle_help_input(&mut app, KeyCode::Esc).unwrap();
@@ -54,7 +53,7 @@ mod tests {
         app.state = AppState::ShowAbout;
 
         handle_about_input(&mut app, KeyCode::Enter).unwrap();
-        assert_eq!(app.state, AppState::ShowAbout);
+        assert_eq!(app.state, AppState::Normal);
 
         app.state = AppState::ShowAbout;
         handle_about_input(&mut app, KeyCode::Esc).unwrap();
