@@ -16,7 +16,9 @@ use crate::utils::config::{
 };
 use crate::utils::file::get_file_content;
 
-async fn handle_file_selection(app: &mut App, selected_path: &Path) -> Result<(), std::io::Error> {
+pub async fn handle_file_selection(
+    app: &mut App, selected_path: &Path,
+) -> Result<(), std::io::Error> {
     if selected_path.is_file() {
         if selected_path.extension().and_then(|s| s.to_str()) == Some("json") {
             match get_file_content(selected_path) {
@@ -32,7 +34,7 @@ async fn handle_file_selection(app: &mut App, selected_path: &Path) -> Result<()
     Ok(())
 }
 
-fn handle_file_error(app: &mut App, error: std::io::Error) {
+pub fn handle_file_error(app: &mut App, error: std::io::Error) {
     let error_message = format!("Failed to read file content: {}", error);
     app.file_content = None;
     app.import_export_message = Some(error_message.clone());
@@ -40,7 +42,7 @@ fn handle_file_error(app: &mut App, error: std::io::Error) {
     app.state = AppState::ShowErrorPopup;
 }
 
-async fn handle_import(app: &mut App, selected_path: &Path) -> Result<(), std::io::Error> {
+pub async fn handle_import(app: &mut App, selected_path: &Path) -> Result<(), std::io::Error> {
     if selected_path.is_file() {
         match import_configs_from_file(selected_path.to_str().unwrap()).await {
             Ok(_) => show_confirmation_popup(app, "Import successful".to_string()),
@@ -52,7 +54,7 @@ async fn handle_import(app: &mut App, selected_path: &Path) -> Result<(), std::i
     Ok(())
 }
 
-async fn handle_export(app: &mut App, export_path: &Path) -> Result<(), std::io::Error> {
+pub async fn handle_export(app: &mut App, export_path: &Path) -> Result<(), std::io::Error> {
     log::debug!("Starting export of configs to file: {:?}", export_path);
 
     match export_configs_to_file(export_path.to_str().unwrap()).await {
@@ -69,13 +71,13 @@ async fn handle_export(app: &mut App, export_path: &Path) -> Result<(), std::io:
     Ok(())
 }
 
-fn show_confirmation_popup(app: &mut App, message: String) {
+pub fn show_confirmation_popup(app: &mut App, message: String) {
     app.import_export_message = Some(message);
     app.state = AppState::ShowConfirmationPopup;
     log::debug!("State changed to ShowConfirmationPopup");
 }
 
-fn show_error_popup(app: &mut App, message: String) {
+pub fn show_error_popup(app: &mut App, message: String) {
     app.import_export_message = Some(message.clone());
     app.error_message = Some(message);
     app.state = AppState::ShowErrorPopup;
@@ -103,7 +105,7 @@ pub async fn handle_import_file_explorer_input(
     Ok(())
 }
 
-async fn handle_import_enter_key(app: &mut App) -> Result<(), std::io::Error> {
+pub async fn handle_import_enter_key(app: &mut App) -> Result<(), std::io::Error> {
     if let Some(selected_path) = app
         .import_file_explorer
         .files()
@@ -123,7 +125,7 @@ async fn handle_import_enter_key(app: &mut App) -> Result<(), std::io::Error> {
     Ok(())
 }
 
-fn navigate_to_parent_directory(app: &mut App) {
+pub fn navigate_to_parent_directory(app: &mut App) {
     if let Some(parent_path) = app.import_file_explorer.cwd().parent() {
         app.import_file_explorer
             .set_cwd(parent_path.to_path_buf())
@@ -131,7 +133,7 @@ fn navigate_to_parent_directory(app: &mut App) {
     }
 }
 
-async fn handle_file_selection_key(app: &mut App) -> Result<(), std::io::Error> {
+pub async fn handle_file_selection_key(app: &mut App) -> Result<(), std::io::Error> {
     if let Some(selected_path) = app
         .import_file_explorer
         .files()
@@ -167,7 +169,7 @@ pub async fn handle_export_file_explorer_input(
     Ok(())
 }
 
-async fn handle_export_enter_key(app: &mut App) -> Result<(), std::io::Error> {
+pub async fn handle_export_enter_key(app: &mut App) -> Result<(), std::io::Error> {
     if let Some(selected_file) = app
         .export_file_explorer
         .files()
@@ -200,7 +202,7 @@ pub async fn handle_export_input_prompt(app: &mut App, key: KeyCode) -> Result<(
     Ok(())
 }
 
-async fn handle_export_enter_key_press(app: &mut App) -> Result<(), std::io::Error> {
+pub async fn handle_export_enter_key_press(app: &mut App) -> Result<(), std::io::Error> {
     if let Some(selected_file_path) = &app.selected_file_path {
         let export_path = selected_file_path.join(&app.input_buffer);
         log::debug!("Export path: {:?}", export_path);

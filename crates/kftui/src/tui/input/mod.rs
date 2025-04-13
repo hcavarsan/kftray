@@ -1,4 +1,4 @@
-mod file_explorer;
+pub mod file_explorer;
 pub mod navigation;
 mod popup;
 
@@ -311,7 +311,7 @@ pub async fn handle_input(app: &mut App, _config_states: &mut [ConfigState]) -> 
     Ok(false)
 }
 
-async fn handle_normal_input(app: &mut App, key: KeyCode) -> io::Result<()> {
+pub async fn handle_normal_input(app: &mut App, key: KeyCode) -> io::Result<()> {
     if handle_common_hotkeys(app, key).await? {
         return Ok(());
     }
@@ -418,11 +418,13 @@ pub fn select_first_row(app: &mut App) {
         ActiveTable::Stopped => {
             if !app.stopped_configs.is_empty() {
                 app.table_state_stopped.select(Some(0));
+                app.selected_row_stopped = 0;
             }
         }
         ActiveTable::Running => {
             if !app.running_configs.is_empty() {
                 app.table_state_running.select(Some(0));
+                app.selected_row_running = 0;
             }
         }
     }
@@ -431,17 +433,25 @@ pub fn select_first_row(app: &mut App) {
 pub fn clear_selection(app: &mut App) {
     match app.active_table {
         ActiveTable::Stopped => {
+            app.selected_rows_stopped.clear();
             app.selected_rows_running.clear();
+            app.table_state_stopped.select(None);
+            app.selected_row_stopped = 0;
             app.table_state_running.select(None);
+            app.selected_row_running = 0;
         }
         ActiveTable::Running => {
+            app.selected_rows_running.clear();
             app.selected_rows_stopped.clear();
+            app.table_state_running.select(None);
+            app.selected_row_running = 0;
             app.table_state_stopped.select(None);
+            app.selected_row_stopped = 0;
         }
     }
 }
 
-async fn handle_menu_input(app: &mut App, key: KeyCode) -> io::Result<()> {
+pub async fn handle_menu_input(app: &mut App, key: KeyCode) -> io::Result<()> {
     if handle_common_hotkeys(app, key).await? {
         return Ok(());
     }
@@ -477,7 +487,7 @@ async fn handle_menu_input(app: &mut App, key: KeyCode) -> io::Result<()> {
     Ok(())
 }
 
-async fn handle_stopped_table_input(app: &mut App, key: KeyCode) -> io::Result<()> {
+pub async fn handle_stopped_table_input(app: &mut App, key: KeyCode) -> io::Result<()> {
     if handle_common_hotkeys(app, key).await? {
         return Ok(());
     }
@@ -520,7 +530,7 @@ async fn handle_stopped_table_input(app: &mut App, key: KeyCode) -> io::Result<(
     Ok(())
 }
 
-async fn handle_running_table_input(app: &mut App, key: KeyCode) -> io::Result<()> {
+pub async fn handle_running_table_input(app: &mut App, key: KeyCode) -> io::Result<()> {
     if handle_common_hotkeys(app, key).await? {
         return Ok(());
     }
@@ -563,7 +573,7 @@ async fn handle_running_table_input(app: &mut App, key: KeyCode) -> io::Result<(
     Ok(())
 }
 
-async fn handle_details_input(app: &mut App, key: KeyCode) -> io::Result<()> {
+pub async fn handle_details_input(app: &mut App, key: KeyCode) -> io::Result<()> {
     if handle_common_hotkeys(app, key).await? {
         return Ok(());
     }
@@ -574,20 +584,31 @@ async fn handle_details_input(app: &mut App, key: KeyCode) -> io::Result<()> {
             app.active_component = ActiveComponent::StoppedTable;
             app.active_table = ActiveTable::Stopped;
             clear_selection(app);
-            select_first_row(app);
+            if !app.stopped_configs.is_empty() {
+                app.table_state_stopped.select(Some(0));
+                app.selected_row_stopped = 0;
+            }
         }
         KeyCode::PageUp => {
-            scroll_page_up(app);
+            if app.details_scroll_offset >= app.visible_rows {
+                app.details_scroll_offset -= app.visible_rows;
+            } else {
+                app.details_scroll_offset = 0;
+            }
         }
         KeyCode::PageDown => {
-            scroll_page_down(app);
+            if app.details_scroll_offset + app.visible_rows < app.details_scroll_max_offset {
+                app.details_scroll_offset += app.visible_rows;
+            } else {
+                app.details_scroll_offset = app.details_scroll_max_offset;
+            }
         }
         _ => {}
     }
     Ok(())
 }
 
-async fn handle_logs_input(app: &mut App, key: KeyCode) -> io::Result<()> {
+pub async fn handle_logs_input(app: &mut App, key: KeyCode) -> io::Result<()> {
     match key {
         KeyCode::Left => app.active_component = ActiveComponent::Details,
         KeyCode::Up => {
@@ -611,7 +632,7 @@ async fn handle_logs_input(app: &mut App, key: KeyCode) -> io::Result<()> {
     Ok(())
 }
 
-async fn handle_common_hotkeys(app: &mut App, key: KeyCode) -> io::Result<bool> {
+pub async fn handle_common_hotkeys(app: &mut App, key: KeyCode) -> io::Result<bool> {
     match key {
         KeyCode::Char('q') => {
             app.state = AppState::ShowAbout;
@@ -634,25 +655,31 @@ async fn handle_common_hotkeys(app: &mut App, key: KeyCode) -> io::Result<bool> 
 }
 
 pub fn toggle_row_selection(app: &mut App) {
-    let (selected_row, selected_rows) = match app.active_table {
-        ActiveTable::Stopped => (
-            app.table_state_stopped.selected().unwrap_or(0),
-            &mut app.selected_rows_stopped,
-        ),
-        ActiveTable::Running => (
-            app.table_state_running.selected().unwrap_or(0),
-            &mut app.selected_rows_running,
-        ),
-    };
-
-    if selected_rows.contains(&selected_row) {
-        selected_rows.remove(&selected_row);
-    } else {
-        selected_rows.insert(selected_row);
+    match app.active_table {
+        ActiveTable::Running => {
+            if let Some(selected) = app.table_state_running.selected() {
+                if app.selected_rows_running.contains(&selected) {
+                    app.selected_rows_running.retain(|&x| x != selected);
+                } else {
+                    app.selected_rows_running.insert(selected);
+                }
+                app.selected_row_running = selected;
+            }
+        }
+        ActiveTable::Stopped => {
+            if let Some(selected) = app.table_state_stopped.selected() {
+                if app.selected_rows_stopped.contains(&selected) {
+                    app.selected_rows_stopped.retain(|&x| x != selected);
+                } else {
+                    app.selected_rows_stopped.insert(selected);
+                }
+                app.selected_row_stopped = selected;
+            }
+        }
     }
 }
 
-async fn handle_port_forwarding(app: &mut App) -> io::Result<()> {
+pub async fn handle_port_forwarding(app: &mut App) -> io::Result<()> {
     let (selected_rows, configs, selected_row) = match app.active_table {
         ActiveTable::Stopped => (
             &mut app.selected_rows_stopped,
@@ -701,7 +728,7 @@ async fn handle_port_forwarding(app: &mut App) -> io::Result<()> {
     Ok(())
 }
 
-fn show_delete_confirmation(app: &mut App) {
+pub fn show_delete_confirmation(app: &mut App) {
     if !app.selected_rows_stopped.is_empty() {
         app.state = AppState::ShowDeleteConfirmation;
         app.delete_confirmation_message =
@@ -709,7 +736,7 @@ fn show_delete_confirmation(app: &mut App) {
     }
 }
 
-async fn handle_delete_confirmation_input(app: &mut App, key: KeyCode) -> io::Result<()> {
+pub async fn handle_delete_confirmation_input(app: &mut App, key: KeyCode) -> io::Result<()> {
     match key {
         KeyCode::Left | KeyCode::Right => {
             app.selected_delete_button = match app.selected_delete_button {
@@ -748,12 +775,12 @@ async fn handle_delete_confirmation_input(app: &mut App, key: KeyCode) -> io::Re
     Ok(())
 }
 
-fn open_import_file_explorer(app: &mut App) {
+pub fn open_import_file_explorer(app: &mut App) {
     app.state = AppState::ImportFileExplorerOpen;
     app.selected_file_path = std::env::current_dir().ok();
 }
 
-fn open_export_file_explorer(app: &mut App) {
+pub fn open_export_file_explorer(app: &mut App) {
     app.state = AppState::ExportFileExplorerOpen;
     app.selected_file_path = std::env::current_dir().ok();
 }
