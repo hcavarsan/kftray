@@ -289,3 +289,255 @@ pub async fn get_services_with_annotations(
 
     retrieve_service_configs(&context_name, kubeconfig_path).await
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::BTreeMap;
+
+    use k8s_openapi::api::core::v1::{
+        Container,
+        ContainerPort,
+        Namespace as K8sNamespace,
+        NamespaceSpec,
+        Pod as K8sPod,
+        PodSpec,
+        Service as K8sService,
+        ServicePort,
+        ServiceSpec,
+    };
+    use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
+
+    use super::*;
+
+    struct MockKubeClient {
+        namespaces: Vec<K8sNamespace>,
+        pods: BTreeMap<String, Vec<K8sPod>>,
+        services: BTreeMap<String, Vec<K8sService>>,
+        contexts: Vec<String>,
+    }
+
+    impl MockKubeClient {
+        fn new() -> Self {
+            Self {
+                namespaces: Vec::new(),
+                pods: BTreeMap::new(),
+                services: BTreeMap::new(),
+                contexts: vec!["context-1".to_string(), "context-2".to_string()],
+            }
+        }
+
+        fn add_namespace(&mut self, name: &str) {
+            self.namespaces.push(K8sNamespace {
+                metadata: ObjectMeta {
+                    name: Some(name.to_string()),
+                    ..Default::default()
+                },
+                spec: Some(NamespaceSpec { finalizers: None }),
+                status: None,
+            });
+        }
+
+        fn add_pod(
+            &mut self, namespace: &str, name: &str, labels: BTreeMap<String, String>,
+            container_ports: Vec<(String, i32)>,
+        ) {
+            let namespace_pods = self.pods.entry(namespace.to_string()).or_default();
+
+            let containers = vec![Container {
+                name: "container-1".to_string(),
+                image: Some("test-image".to_string()),
+                ports: Some(
+                    container_ports
+                        .into_iter()
+                        .map(|(name, port)| ContainerPort {
+                            name: Some(name),
+                            container_port: port,
+                            host_ip: None,
+                            host_port: None,
+                            protocol: None,
+                        })
+                        .collect(),
+                ),
+                ..Default::default()
+            }];
+
+            namespace_pods.push(K8sPod {
+                metadata: ObjectMeta {
+                    name: Some(name.to_string()),
+                    namespace: Some(namespace.to_string()),
+                    labels: Some(labels),
+                    ..Default::default()
+                },
+                spec: Some(PodSpec {
+                    containers,
+                    ..Default::default()
+                }),
+                status: None,
+            });
+        }
+
+        fn add_service(
+            &mut self, namespace: &str, name: &str, selector: BTreeMap<String, String>,
+            ports: Vec<(String, i32, Option<IntOrString>)>,
+        ) {
+            let namespace_services = self.services.entry(namespace.to_string()).or_default();
+
+            namespace_services.push(K8sService {
+                metadata: ObjectMeta {
+                    name: Some(name.to_string()),
+                    namespace: Some(namespace.to_string()),
+                    ..Default::default()
+                },
+                spec: Some(ServiceSpec {
+                    selector: Some(selector),
+                    ports: Some(
+                        ports
+                            .into_iter()
+                            .map(|(name, port, target_port)| ServicePort {
+                                name: Some(name),
+                                port,
+                                target_port,
+                                node_port: None,
+                                protocol: None,
+                                app_protocol: None,
+                            })
+                            .collect(),
+                    ),
+                    ..Default::default()
+                }),
+                status: None,
+            });
+        }
+
+        fn get_context_infos(&self) -> Vec<KubeContextInfo> {
+            self.contexts
+                .iter()
+                .map(|ctx_name| KubeContextInfo {
+                    name: ctx_name.clone(),
+                })
+                .collect()
+        }
+    }
+
+    fn setup_test_env() -> MockKubeClient {
+        let mut mock_client = MockKubeClient::new();
+
+        mock_client.add_namespace("default");
+        mock_client.add_namespace("kube-system");
+        mock_client.add_namespace("test-ns");
+
+        let mut app_labels = BTreeMap::new();
+        app_labels.insert("app".to_string(), "test-app".to_string());
+
+        let container_ports = vec![("http".to_string(), 8080), ("metrics".to_string(), 9090)];
+
+        mock_client.add_pod(
+            "test-ns",
+            "test-pod-1",
+            app_labels.clone(),
+            container_ports.clone(),
+        );
+
+        mock_client.add_service(
+            "test-ns",
+            "test-service",
+            app_labels.clone(),
+            vec![
+                (
+                    "http".to_string(),
+                    80,
+                    Some(IntOrString::String("http".to_string())),
+                ),
+                ("metrics".to_string(), 9090, Some(IntOrString::Int(9090))),
+            ],
+        );
+
+        mock_client
+    }
+
+    #[test]
+    fn test_list_kube_contexts() {
+        let mock_client = setup_test_env();
+        let contexts = mock_client.get_context_infos();
+
+        assert_eq!(contexts.len(), 2);
+        assert_eq!(contexts[0].name, "context-1");
+        assert_eq!(contexts[1].name, "context-2");
+    }
+
+    #[test]
+    fn test_list_namespaces() {
+        let mock_client = setup_test_env();
+
+        let namespaces = mock_client
+            .namespaces
+            .iter()
+            .map(|ns| KubeNamespaceInfo {
+                name: ns.metadata.name.clone().unwrap(),
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(namespaces.len(), 3);
+        assert_eq!(namespaces[0].name, "default");
+        assert_eq!(namespaces[1].name, "kube-system");
+        assert_eq!(namespaces[2].name, "test-ns");
+    }
+
+    #[test]
+    fn test_list_services() {
+        let mock_client = setup_test_env();
+
+        let services = mock_client
+            .services
+            .get("test-ns")
+            .unwrap()
+            .iter()
+            .map(|svc| KubeServiceInfo {
+                name: svc.metadata.name.clone().unwrap(),
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(services.len(), 1);
+        assert_eq!(services[0].name, "test-service");
+    }
+
+    #[test]
+    fn test_list_pods() {
+        let mock_client = setup_test_env();
+
+        let pods = mock_client.pods.get("test-ns").unwrap();
+        let pod_labels = pods[0].metadata.labels.as_ref().unwrap();
+        let label_strings: HashSet<String> = pod_labels
+            .iter()
+            .map(|(k, v)| format!("{}={}", k, v))
+            .collect();
+
+        assert_eq!(label_strings.len(), 1);
+        assert!(label_strings.contains("app=test-app"));
+    }
+
+    #[test]
+    fn test_list_ports() {
+        let mock_client = setup_test_env();
+
+        let service = &mock_client.services.get("test-ns").unwrap()[0];
+
+        let ports = service.spec.as_ref().unwrap().ports.as_ref().unwrap();
+        let port_infos: Vec<KubeServicePortInfo> = ports
+            .iter()
+            .filter_map(|port| {
+                port.target_port.as_ref().map(|target| KubeServicePortInfo {
+                    name: port.name.clone(),
+                    port: Some(target.clone()),
+                })
+            })
+            .collect();
+
+        assert_eq!(port_infos.len(), 2);
+
+        let port_names: Vec<String> = port_infos.iter().filter_map(|p| p.name.clone()).collect();
+
+        assert!(port_names.contains(&"http".to_string()));
+        assert!(port_names.contains(&"metrics".to_string()));
+    }
+}

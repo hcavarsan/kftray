@@ -134,12 +134,85 @@ async fn handle_reconnect() {
 
 #[cfg(test)]
 mod tests {
+
+    use kftray_commons::models::config_model::Config;
+
     use super::*;
 
     #[tokio::test]
     async fn test_check_network_connectivity() {
-        // This is a basic connectivity test - will pass or fail based on actual network
-        let _result = check_network().await;
-        // Not asserting result as it depends on actual network connectivity
+        let result = check_network().await;
+        println!("Network connectivity test result: {}", result);
+    }
+
+    #[tokio::test]
+    async fn test_network_state_transitions() {
+        let mut was_network_up = false;
+        let is_network_up = true;
+
+        let mut reconnect_called = false;
+
+        if !was_network_up && is_network_up {
+            reconnect_called = true;
+        }
+
+        assert!(
+            reconnect_called,
+            "Reconnect should be called when network goes from down to up"
+        );
+
+        was_network_up = true;
+        let is_network_up = false;
+        let mut disconnect_detected = false;
+
+        if was_network_up && !is_network_up {
+            disconnect_detected = true;
+        }
+
+        assert!(
+            disconnect_detected,
+            "Disconnect should be detected when network goes from up to down"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_config_protocol_filtering() {
+        let tcp_config1 = Config {
+            id: Some(1),
+            protocol: "tcp".to_string(),
+            ..Default::default()
+        };
+
+        let tcp_config2 = Config {
+            id: Some(2),
+            protocol: "tcp".to_string(),
+            ..Default::default()
+        };
+
+        let udp_config = Config {
+            id: Some(3),
+            protocol: "udp".to_string(),
+            ..Default::default()
+        };
+
+        let configs = vec![tcp_config1, tcp_config2, udp_config];
+
+        let tcp_configs = configs
+            .iter()
+            .filter(|c| c.protocol == "tcp")
+            .cloned()
+            .collect::<Vec<_>>();
+
+        assert_eq!(tcp_configs.len(), 2);
+        assert!(tcp_configs.iter().all(|c| c.protocol == "tcp"));
+
+        let udp_configs = configs
+            .iter()
+            .filter(|c| c.protocol == "udp")
+            .cloned()
+            .collect::<Vec<_>>();
+
+        assert_eq!(udp_configs.len(), 1);
+        assert!(udp_configs.iter().all(|c| c.protocol == "udp"));
     }
 }

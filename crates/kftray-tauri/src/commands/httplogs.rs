@@ -508,3 +508,211 @@ fn try_linux_fallbacks(file_path: &str) -> Result<(), String> {
         .or_else(|_| open_with_editor(file_path, "nano"))
         .or_else(|_| open_with_editor(file_path, "vim"))
 }
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+    use std::io::Write;
+    use std::sync::{
+        Arc,
+        Mutex,
+    };
+
+    use tempfile::TempDir;
+
+    use super::*;
+
+    struct MockHttpLogState {
+        logs_enabled: Arc<Mutex<HashMap<i64, bool>>>,
+    }
+
+    impl MockHttpLogState {
+        fn new() -> Self {
+            Self {
+                logs_enabled: Arc::new(Mutex::new(HashMap::new())),
+            }
+        }
+
+        async fn set_http_logs(&self, config_id: i64, enable: bool) -> Result<(), String> {
+            let mut map = self.logs_enabled.lock().unwrap();
+            map.insert(config_id, enable);
+            Ok(())
+        }
+
+        async fn get_http_logs(&self, config_id: i64) -> Result<bool, String> {
+            let map = self.logs_enabled.lock().unwrap();
+            Ok(*map.get(&config_id).unwrap_or(&false))
+        }
+    }
+
+    fn create_test_log_folder() -> TempDir {
+        let temp_dir = tempfile::tempdir().unwrap();
+
+        for i in 1..5 {
+            let file_path = temp_dir.path().join(format!("test_log_{}.log", i));
+            let mut file = std::fs::File::create(&file_path).unwrap();
+            writeln!(file, "Test log content {}", i).unwrap();
+        }
+
+        temp_dir
+    }
+
+    #[test]
+    fn test_http_logs_state() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        rt.block_on(async {
+            let state = MockHttpLogState::new();
+            let config_id = 123;
+
+            let initial_state = state.get_http_logs(config_id).await.unwrap();
+            assert!(!initial_state, "Initial HTTP logs state should be false");
+
+            state.set_http_logs(config_id, true).await.unwrap();
+            let enabled_state = state.get_http_logs(config_id).await.unwrap();
+            assert!(
+                enabled_state,
+                "HTTP logs should be enabled after set_http_logs(true)"
+            );
+
+            state.set_http_logs(config_id, false).await.unwrap();
+            let disabled_state = state.get_http_logs(config_id).await.unwrap();
+            assert!(
+                !disabled_state,
+                "HTTP logs should be disabled after set_http_logs(false)"
+            );
+        });
+    }
+
+    #[test]
+    fn test_calculate_folder_size() {
+        let temp_dir = create_test_log_folder();
+
+        let size = calculate_folder_size(temp_dir.path()).unwrap();
+
+        assert!(size > 0, "Folder size should be greater than 0");
+
+        let mut expected_size = 0;
+        for entry in std::fs::read_dir(temp_dir.path()).unwrap() {
+            let entry = entry.unwrap();
+            if entry.path().is_file() {
+                expected_size += std::fs::metadata(entry.path()).unwrap().len();
+            }
+        }
+
+        assert_eq!(
+            size, expected_size,
+            "Calculated size should match expected size"
+        );
+    }
+
+    #[test]
+    fn test_calculate_folder_size_nonexistent() {
+        let path = std::path::Path::new("/this/path/does/not/exist");
+
+        let result = calculate_folder_size(path);
+
+        assert!(
+            result.is_err(),
+            "Should return error for non-existent directory"
+        );
+    }
+
+    #[test]
+    fn test_calculate_folder_size_not_dir() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let file_path = temp_dir.path().join("test_file.txt");
+        std::fs::write(&file_path, "test content").unwrap();
+
+        let result = calculate_folder_size(&file_path);
+
+        assert!(
+            result.is_err(),
+            "Should return error when path is not a directory"
+        );
+        assert!(
+            result.unwrap_err().contains("not a directory"),
+            "Error message should indicate path is not a directory"
+        );
+    }
+
+    #[test]
+    fn test_delete_files_in_folder() {
+        let temp_dir = create_test_log_folder();
+
+        let file_count_before = std::fs::read_dir(temp_dir.path()).unwrap().count();
+        assert!(
+            file_count_before > 0,
+            "Should have test files before deletion"
+        );
+
+        let result = delete_files_in_folder(temp_dir.path());
+
+        assert!(result.is_ok(), "Should successfully delete files");
+
+        let file_count_after = std::fs::read_dir(temp_dir.path()).unwrap().count();
+        assert_eq!(file_count_after, 0, "All files should be deleted");
+    }
+
+    #[test]
+    fn test_delete_files_in_nonexistent_folder() {
+        let path = std::path::Path::new("/this/path/does/not/exist");
+
+        let result = delete_files_in_folder(path);
+
+        assert!(
+            result.is_err(),
+            "Should return error for non-existent directory"
+        );
+    }
+
+    #[test]
+    fn test_detect_default_editor() {
+        let editor = detect_default_editor();
+
+        assert!(!editor.is_empty(), "Should detect a default editor");
+
+        if cfg!(target_os = "macos") {
+            assert!(
+                editor == "code" || editor == "open",
+                "Default editor on macOS should be 'code' or 'open'"
+            );
+        }
+
+        if cfg!(target_os = "windows") && !is_editor_available("code") {
+            assert_eq!(
+                editor, "notepad",
+                "Default fallback editor on Windows should be 'notepad'"
+            );
+        }
+    }
+
+    #[test]
+    fn test_is_editor_available() {
+        if cfg!(target_os = "macos") {
+            assert!(
+                is_editor_available("open"),
+                "The 'open' command should be available on macOS"
+            );
+        } else if cfg!(target_os = "windows") {
+            assert!(
+                is_editor_available("notepad"),
+                "Notepad should be available on Windows"
+            );
+        } else {
+            let linux_editors = ["xdg-open", "gedit", "nano", "vim"];
+            let any_available = linux_editors
+                .iter()
+                .any(|editor| is_editor_available(editor));
+            assert!(
+                any_available,
+                "At least one common editor should be available on Linux"
+            );
+        }
+
+        assert!(
+            !is_editor_available("this_editor_does_not_exist_12345"),
+            "Non-existent editor should not be available"
+        );
+    }
+}

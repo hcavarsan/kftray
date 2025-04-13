@@ -386,6 +386,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_check_and_manage_ports_get_states_error() {
+        let mut mock = MockPortOperations::new();
+        mock.expect_get_configs_state()
+            .times(1)
+            .returning(|| Err("Failed to get config states".to_string()));
+
+        let result = check_and_manage_ports(Arc::new(mock)).await;
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err(), "Failed to get config states");
+    }
+
+    #[tokio::test]
+    async fn test_check_and_manage_ports_get_config_error() {
+        let mut mock = MockPortOperations::new();
+        let config_states = vec![create_config_state(1, true)];
+
+        mock.expect_get_configs_state()
+            .times(1)
+            .returning(move || Ok(config_states.clone()));
+
+        mock.expect_get_config()
+            .with(eq(1))
+            .times(1)
+            .returning(|id| Err(format!("Failed to get config {}", id)));
+
+        let result = check_and_manage_ports(Arc::new(mock)).await;
+
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
     async fn test_check_and_manage_port_existing_process() {
         let mut mock = MockPortOperations::new();
         let config = create_test_config(1, 8080, "tcp", None);
@@ -415,6 +446,60 @@ mod tests {
             .with(eq(8080))
             .times(1)
             .returning(|_| Some((1234, "kftray".to_string())));
+
+        let result = check_and_manage_port(Arc::new(mock), config).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_check_and_manage_port_kftui_process() {
+        let mut mock = MockPortOperations::new();
+        let config = create_test_config(1, 8080, "tcp", None);
+
+        mock.expect_find_process_by_port()
+            .with(eq(8080))
+            .times(1)
+            .returning(|_| Some((1234, "kftui".to_string())));
+
+        let result = check_and_manage_port(Arc::new(mock), config).await;
+        assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn test_check_and_manage_port_update_state_error() {
+        let mut mock = MockPortOperations::new();
+        let config = create_test_config(1, 8080, "tcp", None);
+
+        mock.expect_find_process_by_port()
+            .with(eq(8080))
+            .times(1)
+            .returning(|_| Some((1234, "nginx".to_string())));
+
+        mock.expect_update_config_state()
+            .times(1)
+            .returning(|_| Err("Failed to update state".to_string()));
+
+        let result = check_and_manage_port(Arc::new(mock), config).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_check_and_manage_port_zero_port() {
+        let mut mock = MockPortOperations::new();
+        let config = create_test_config(1, 0, "tcp", None);
+
+        mock.expect_find_process_by_port()
+            .with(eq(0))
+            .times(1)
+            .returning(|_| None);
+
+        mock.expect_start_port_forward()
+            .times(1)
+            .returning(|_, _, _| Ok(vec!["Port forwarding started".to_string()]));
+
+        mock.expect_update_config_state()
+            .times(1)
+            .returning(|_| Ok(()));
 
         let result = check_and_manage_port(Arc::new(mock), config).await;
         assert!(result.is_ok());
@@ -478,5 +563,56 @@ mod tests {
 
         let result = start_port_forwarding(Arc::new(mock), config).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_start_port_forwarding_update_state_error() {
+        let mut mock = MockPortOperations::new();
+        let config = create_test_config(1, 8080, "tcp", None);
+
+        mock.expect_start_port_forward()
+            .times(1)
+            .returning(|_, _, _| Ok(vec!["Port forwarding started".to_string()]));
+
+        mock.expect_update_config_state()
+            .times(1)
+            .returning(|_| Err("Failed to update state".to_string()));
+
+        let result = start_port_forwarding(Arc::new(mock), config).await;
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_fetch_configs_in_parallel() {
+        let mut mock = MockPortOperations::new();
+        let config_states = vec![create_config_state(1, true), create_config_state(2, true)];
+
+        let config1 = create_test_config(1, 8080, "tcp", None);
+        let config2 = create_test_config(2, 9090, "tcp", None);
+
+        mock.expect_get_config()
+            .with(eq(1))
+            .times(1)
+            .returning(move |_| Ok(config1.clone()));
+
+        mock.expect_get_config()
+            .with(eq(2))
+            .times(1)
+            .returning(move |_| Ok(config2.clone()));
+
+        let results = fetch_configs_in_parallel(Arc::new(mock), config_states).await;
+
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|(_, result)| result.is_ok()));
+
+        let config_ids: Vec<i64> = results.iter().map(|(id, _)| *id).collect();
+        assert!(config_ids.contains(&1));
+        assert!(config_ids.contains(&2));
+    }
+
+    #[tokio::test]
+    async fn test_find_process_by_port_internal() {
+        let result = find_process_by_port_internal(0).await;
+        assert!(result.is_none());
     }
 }

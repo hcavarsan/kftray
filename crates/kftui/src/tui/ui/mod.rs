@@ -1,11 +1,11 @@
 use ratatui::prelude::Color;
 
-mod draw;
+pub mod draw;
 mod header;
 mod logo;
-mod popup;
-mod render;
-mod table;
+pub mod popup;
+pub mod render;
+pub mod table;
 pub use draw::*;
 pub use logo::*;
 pub use popup::*;

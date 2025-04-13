@@ -54,7 +54,7 @@ fn create_common_popup_style(title: &str, title_color: Color) -> Block<'_> {
         .style(Style::default().bg(BASE).fg(MAUVE))
 }
 
-fn create_bottom_right_shadow_layers(
+pub fn create_bottom_right_shadow_layers(
     area: Rect, shadow_layers: &[(Color, u16)],
 ) -> Vec<(Rect, Style)> {
     shadow_layers
@@ -67,7 +67,7 @@ fn create_bottom_right_shadow_layers(
         .collect()
 }
 
-fn render_shadow_layers(f: &mut Frame, shadow_layers: Vec<(Rect, Style)>) {
+pub fn render_shadow_layers(f: &mut Frame, shadow_layers: Vec<(Rect, Style)>) {
     for (shadow_area, style) in shadow_layers {
         let shadow_block = Block::default().style(style);
         f.render_widget(shadow_block, shadow_area);
@@ -265,7 +265,7 @@ pub fn render_error_popup(f: &mut Frame, error_message: &str, area: Rect, top_pa
     f.render_widget(close_button, button_area);
 }
 
-fn wrap_text(text: &str, max_width: usize) -> Text {
+pub fn wrap_text(text: &str, max_width: usize) -> Text {
     let mut wrapped_lines = Vec::new();
     for line in text.lines() {
         let mut current_line = String::new();
@@ -330,7 +330,7 @@ pub fn render_delete_confirmation_popup(
     f.render_widget(close_button, close_button_area);
 }
 
-fn create_button(label: &str, is_selected: bool) -> Paragraph<'_> {
+pub fn create_button(label: &str, is_selected: bool) -> Paragraph<'_> {
     let style = if is_selected {
         Style::default().fg(LAVENDER).add_modifier(Modifier::BOLD)
     } else {

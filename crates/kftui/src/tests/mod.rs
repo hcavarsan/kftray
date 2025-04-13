@@ -1,0 +1,12 @@
+mod test_app;
+mod test_draw;
+mod test_file_explorer;
+mod test_input;
+mod test_navigation;
+mod test_popup;
+mod test_popup_functions;
+mod test_snapshots;
+mod test_ui;
+mod test_ui_popup;
+mod test_utils_config;
+mod test_utils_file;

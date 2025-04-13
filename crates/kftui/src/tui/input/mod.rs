@@ -1,5 +1,5 @@
 mod file_explorer;
-mod navigation;
+pub mod navigation;
 mod popup;
 
 use std::collections::HashSet;
@@ -32,13 +32,13 @@ use crate::core::port_forward::stop_all_port_forward_and_exit;
 use crate::tui::input::navigation::handle_auto_add_configs;
 use crate::tui::input::navigation::handle_context_selection;
 use crate::tui::input::navigation::handle_port_forward;
-#[derive(PartialEq, Clone, Copy)]
+#[derive(PartialEq, Clone, Copy, Debug)]
 pub enum DeleteButton {
     Confirm,
     Close,
 }
 
-#[derive(PartialEq, Clone, Copy)]
+#[derive(PartialEq, Clone, Copy, Debug)]
 pub enum ActiveComponent {
     Menu,
     StoppedTable,
@@ -47,13 +47,13 @@ pub enum ActiveComponent {
     Logs,
 }
 
-#[derive(PartialEq, Clone, Copy)]
+#[derive(PartialEq, Clone, Copy, Debug)]
 pub enum ActiveTable {
     Stopped,
     Running,
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Debug)]
 pub enum AppState {
     Normal,
     ShowErrorPopup,
@@ -96,6 +96,12 @@ pub struct App {
     pub selected_context_index: usize,
     pub context_list_state: ListState,
     pub logger_state: TuiWidgetState,
+}
+
+impl Default for App {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl App {
@@ -230,7 +236,7 @@ impl App {
     }
 }
 
-fn toggle_select_all(app: &mut App) {
+pub fn toggle_select_all(app: &mut App) {
     let (selected_rows, configs) = match app.active_table {
         ActiveTable::Stopped => (&mut app.selected_rows_stopped, &app.stopped_configs),
         ActiveTable::Running => (&mut app.selected_rows_running, &app.running_configs),
@@ -341,7 +347,7 @@ async fn handle_normal_input(app: &mut App, key: KeyCode) -> io::Result<()> {
     Ok(())
 }
 
-fn scroll_page_up(app: &mut App) {
+pub fn scroll_page_up(app: &mut App) {
     match app.active_component {
         ActiveComponent::StoppedTable => {
             let rows_to_scroll = app.visible_rows;
@@ -374,7 +380,7 @@ fn scroll_page_up(app: &mut App) {
     }
 }
 
-fn scroll_page_down(app: &mut App) {
+pub fn scroll_page_down(app: &mut App) {
     match app.active_component {
         ActiveComponent::StoppedTable => {
             let rows_to_scroll = app.visible_rows;
@@ -407,7 +413,7 @@ fn scroll_page_down(app: &mut App) {
     }
 }
 
-fn select_first_row(app: &mut App) {
+pub fn select_first_row(app: &mut App) {
     match app.active_table {
         ActiveTable::Stopped => {
             if !app.stopped_configs.is_empty() {
@@ -422,7 +428,7 @@ fn select_first_row(app: &mut App) {
     }
 }
 
-fn clear_selection(app: &mut App) {
+pub fn clear_selection(app: &mut App) {
     match app.active_table {
         ActiveTable::Stopped => {
             app.selected_rows_running.clear();
@@ -627,7 +633,7 @@ async fn handle_common_hotkeys(app: &mut App, key: KeyCode) -> io::Result<bool> 
     }
 }
 
-fn toggle_row_selection(app: &mut App) {
+pub fn toggle_row_selection(app: &mut App) {
     let (selected_row, selected_rows) = match app.active_table {
         ActiveTable::Stopped => (
             app.table_state_stopped.selected().unwrap_or(0),

@@ -57,7 +57,7 @@ pub async fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn run_app<B: ratatui::backend::Backend>(
+pub async fn run_app<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>, app: &mut App,
 ) -> io::Result<()> {
     let mut interval = time::interval(Duration::from_millis(100));
