@@ -482,7 +482,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
             bg='#161616'
             borderBottom='1px solid rgba(255, 255, 255, 0.05)'
           >
-            <Flex justify='space-between' align='center'>
+            <Flex grow='1' justify='space-between' align='center'>
               <Text fontSize='sm' fontWeight='medium' color='gray.100'>
                 {isEdit ? 'Edit Configuration' : 'Add Configuration'}
               </Text>
