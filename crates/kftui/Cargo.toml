@@ -65,7 +65,7 @@ built = "0.7.5"
 
 [dev-dependencies]
 insta = "1.42.2"
-mockall = "0.12.1"
+mockall = "0.13.0"
 
 [build-dependencies]
 built = "0.7"
