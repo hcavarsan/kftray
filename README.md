@@ -33,6 +33,11 @@ Both apps were made to fix common problems with Kubernetes port forwarding. The 
 
 They automatically reconnect to running pods if one fails, also it allow setting up multiple port forwards with one click, and support both TCP and UDP protocols. kftray also has extra features like HTTP logs tracing and GitHub sync to make workflows smoother.
 
+## Overview
+
+For more information about kftray features and components, visit our blog post at [kftray.app/blog/posts/13-kftray-manage-all-k8s-port-forward](https://kftray.app/blog/posts/13-kftray-manage-all-k8s-port-forward). The post provides an overview of functionalities including auto-reconnection, multiple port forward management, TCP/UDP support, HTTP logs tracing and GitHub sync.
+
+
 <br>
 
 <br>
