@@ -45,8 +45,8 @@ importers:
         specifier: ^4.17.21
         version: 4.17.21
       lucide-react:
-        specifier: ^0.488.0
-        version: 0.488.0(react@19.1.0)
+        specifier: ^0.510.0
+        version: 0.510.0(react@19.1.0)
       next-themes:
         specifier: ^0.4.5
         version: 0.4.6(react-dom@19.1.0(react@19.1.0))(react@19.1.0)
@@ -1918,8 +1918,8 @@ packages:
   lru-cache@10.4.3:
     resolution: {integrity: sha512-JNAzZcXrCt42VGLuYz0zfAzDfAvJWW6AfYlDBQyDV5DClI2m5sAmK+OIO7s59XfsRsWHp02jAJrRadPRGTt6SQ==}
 
-  lucide-react@0.488.0:
-    resolution: {integrity: sha512-ronlL0MyKut4CEzBY/ai2ZpKPxyWO4jUqdAkm2GNK5Zn3Rj+swDz+3lvyAUXN0PNqPKIX6XM9Xadwz/skLs/pQ==}
+  lucide-react@0.510.0:
+    resolution: {integrity: sha512-p8SQRAMVh7NhsAIETokSqDrc5CHnDLbV29mMnzaXx+Vc/hnqQzwI2r0FMWCcoTXnbw2KEjy48xwpGdEL+ck06Q==}
     peerDependencies:
       react: ^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0
 
@@ -4789,7 +4789,7 @@ snapshots:
 
   lru-cache@10.4.3: {}
 
-  lucide-react@0.488.0(react@19.1.0):
+  lucide-react@0.510.0(react@19.1.0):
     dependencies:
       react: 19.1.0
 

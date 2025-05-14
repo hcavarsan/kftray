@@ -61,11 +61,11 @@ crossterm = { version = "0.28.1", optional = false }
 tui-logger = "0.14"
 ratatui-explorer = "0.1.2"
 once_cell = "1.20"
-built = "0.7.5"
+built = "0.8.0"
 
 [dev-dependencies]
 insta = "1.42.2"
 mockall = "0.13.0"
 
 [build-dependencies]
-built = "0.7"
+built = "0.8"
