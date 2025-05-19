@@ -145,7 +145,6 @@ impl NetworkConfigManager {
     }
 
     async fn is_address_configured(&self, address: &str) -> Result<bool, HelperError> {
-
         #[cfg(target_os = "macos")]
         {
             println!("Checking if address is configured on macOS: {}", address);
@@ -370,7 +369,6 @@ impl NetworkConfigManager {
                                 "Warning: Address still exists after removal attempt: {}",
                                 address
                             );
-
                         }
                     }
                     Err(e) => {
