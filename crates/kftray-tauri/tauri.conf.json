@@ -20,11 +20,17 @@
         "all": true,
         "execute": true,
         "open": true,
+        "sidecar": true,
         "scope": [
           {
             "args": true,
             "cmd": "aws",
             "name": "aws-cli"
+          },
+          {
+            "args": true,
+            "name": "kftray-helper",
+            "sidecar": true
           }
         ]
       }
@@ -35,7 +41,7 @@
       "deb": {
         "depends": []
       },
-      "externalBin": [],
+      "externalBin": ["bin/kftray-helper"],
       "icon": [
         "icons/32x32.png",
         "icons/128x128.png",

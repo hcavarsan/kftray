@@ -19,7 +19,6 @@ mod logging;
 mod network_monitor;
 mod tray;
 mod window;
-
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 
@@ -182,6 +181,8 @@ fn main() {
             commands::github::delete_key,
             commands::window_state::toggle_pin_state,
             commands::config_state::get_config_states,
+            commands::helper::install_helper,
+            commands::helper::remove_helper,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");

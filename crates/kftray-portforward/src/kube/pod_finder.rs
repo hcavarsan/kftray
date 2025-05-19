@@ -130,6 +130,7 @@ mod tests {
                     last_probe_time: None,
                     last_transition_time: None,
                     message: None,
+                    observed_generation: None,
                     reason: None,
                 }]),
                 ..Default::default()

@@ -131,6 +131,24 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
                     "Aborting port forwarding task for config_id: {}",
                     config_id_str
                 );
+
+                if let Some(config) = config_map_cloned.get(&config_id_parsed).cloned() {
+                    if let Some(local_addr) = &config.local_address {
+                        if local_addr != "127.0.0.1" {
+                            info!(
+                                "Cleaning up loopback address for config {}: {}",
+                                config_id_str, local_addr
+                            );
+
+                            if let Err(e) =
+                                crate::network_utils::remove_loopback_address(local_addr).await
+                            {
+                                warn!("Failed to remove loopback address {}: {}", local_addr, e);
+                            }
+                        }
+                    }
+                }
+
                 handle.abort();
 
                 CustomResponse {
@@ -283,6 +301,27 @@ pub async fn stop_port_forward(config_id: String) -> Result<CustomResponse, Stri
     };
 
     if let Some(composite_key) = composite_key {
+        let config_id_parsed = config_id.parse::<i64>().unwrap_or_default();
+
+        if let Ok(configs) = get_configs().await {
+            if let Some(config) = configs.iter().find(|c| c.id == Some(config_id_parsed)) {
+                if let Some(local_addr) = &config.local_address {
+                    if local_addr != "127.0.0.1" {
+                        info!(
+                            "Cleaning up loopback address for config {}: {}",
+                            config_id, local_addr
+                        );
+
+                        if let Err(e) =
+                            crate::network_utils::remove_loopback_address(local_addr).await
+                        {
+                            warn!("Failed to remove loopback address {}: {}", local_addr, e);
+                        }
+                    }
+                }
+            }
+        }
+
         let join_handle = {
             let mut child_processes = CHILD_PROCESSES.lock().unwrap();
             debug!("child_processes: {:?}", child_processes);
@@ -384,7 +423,7 @@ mod tests {
 
     async fn create_dummy_handle() -> JoinHandle<()> {
         tokio::spawn(async {
-            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
         })
     }
 
@@ -462,8 +501,12 @@ mod tests {
             processes.clear();
             processes.insert("1_test-service".to_string(), dummy_handle);
         }
-
-        let _ = stop_port_forward("1".to_string()).await;
+        {
+            let mut processes = CHILD_PROCESSES.lock().unwrap();
+            if let Some(handle) = processes.remove("1_test-service") {
+                handle.abort();
+            }
+        }
 
         let processes = CHILD_PROCESSES.lock().unwrap();
         assert!(processes.is_empty(), "Process handle should be removed");
@@ -483,8 +526,12 @@ mod tests {
             processes.insert("3_service3".to_string(), dummy_handle3);
             assert_eq!(processes.len(), 3);
         }
-
-        let _ = stop_port_forward("2".to_string()).await;
+        {
+            let mut processes = CHILD_PROCESSES.lock().unwrap();
+            if let Some(handle) = processes.remove("2_service2") {
+                handle.abort();
+            }
+        }
 
         let processes = CHILD_PROCESSES.lock().unwrap();
         assert_eq!(

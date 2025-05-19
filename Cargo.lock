@@ -191,17 +191,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "async-fs"
-version = "2.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ebcd09b382f40fcd159c2d695175b2ae620ffa5f3bd6f664131efff4e8b9e04a"
-dependencies = [
- "async-lock",
- "blocking",
- "futures-lite",
-]
-
-[[package]]
 name = "async-io"
 version = "2.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -473,7 +462,18 @@ checksum = "cc97b8f16f944bba54f0433f07e30be199b6dc2bd25937444bbad560bcea29bd"
 dependencies = [
  "alloc-no-stdlib",
  "alloc-stdlib",
- "brotli-decompressor",
+ "brotli-decompressor 4.0.2",
+]
+
+[[package]]
+name = "brotli"
+version = "8.0.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9991eea70ea4f293524138648e41ee89b0b2b12ddef3b255effa43c8056e0e0d"
+dependencies = [
+ "alloc-no-stdlib",
+ "alloc-stdlib",
+ "brotli-decompressor 5.0.0",
 ]
 
 [[package]]
@@ -1046,7 +1046,6 @@ version = "0.99.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6edb4b64a43d977b8e99788fe3a04d483834fba1215a7e02caa415b626497f7f"
 dependencies = [
- "convert_case",
  "proc-macro2",
  "quote",
  "rustc_version",
@@ -2900,6 +2899,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "k8s-openapi"
+version = "0.25.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "aa60a41b57ae1a0a071af77dbcf89fc9819cfe66edaf2beeb204c34459dcf0b2"
+dependencies = [
+ "base64 0.22.1",
+ "chrono",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "keyring"
 version = "3.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2925,7 +2936,7 @@ dependencies = [
  "futures",
  "hostsfile",
  "httparse",
- "k8s-openapi",
+ "k8s-openapi 0.25.0",
  "lazy_static",
  "log",
  "portpicker",
@@ -2941,11 +2952,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "kftray-helper"
+version = "0.18.1"
+dependencies = [
+ "clap",
+ "dirs",
+ "log",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.11",
+ "tokio",
+ "uuid",
+ "windows-service",
+ "zbus",
+]
+
+[[package]]
 name = "kftray-http-logs"
 version = "0.15.8"
 dependencies = [
  "anyhow",
- "brotli",
+ "brotli 8.0.1",
  "bytes",
  "chrono",
  "dashmap",
@@ -2982,11 +3009,12 @@ dependencies = [
  "hyper 1.6.0",
  "hyper-openssl",
  "hyper-util",
- "k8s-openapi",
+ "k8s-openapi 0.25.0",
  "kftray-commons",
+ "kftray-helper",
  "kftray-http-logs",
- "kube",
- "kube-runtime",
+ "kube 1.0.0",
+ "kube-runtime 1.0.0",
  "lazy_static",
  "libc",
  "log",
@@ -3028,6 +3056,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "base64 0.22.1",
+ "ctrlc",
  "dirs",
  "env_logger",
  "fix-path-env",
@@ -3037,13 +3066,14 @@ dependencies = [
  "hostsfile",
  "hyper 1.6.0",
  "hyper-util",
- "k8s-openapi",
+ "k8s-openapi 0.25.0",
  "keyring",
  "kftray-commons",
+ "kftray-helper",
  "kftray-http-logs",
  "kftray-portforward",
- "kube",
- "kube-runtime",
+ "kube 1.0.0",
+ "kube-runtime 1.0.0",
  "lazy_static",
  "log",
  "mockall",
@@ -3088,12 +3118,12 @@ dependencies = [
  "hyper 1.6.0",
  "hyper-util",
  "insta",
- "k8s-openapi",
+ "k8s-openapi 0.24.0",
  "kftray-commons",
  "kftray-http-logs",
  "kftray-portforward",
- "kube",
- "kube-runtime",
+ "kube 0.99.0",
+ "kube-runtime 0.99.0",
  "lazy_static",
  "libc",
  "log",
@@ -3121,11 +3151,22 @@ version = "0.99.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9a4eb20010536b48abe97fec37d23d43069bcbe9686adcf9932202327bc5ca6e"
 dependencies = [
- "k8s-openapi",
- "kube-client",
- "kube-core",
+ "k8s-openapi 0.24.0",
+ "kube-client 0.99.0",
+ "kube-core 0.99.0",
+]
+
+[[package]]
+name = "kube"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b49c39074089233c2bb7b1791d1b6c06c84dbab26757491fad9d233db0d432f"
+dependencies = [
+ "k8s-openapi 0.25.0",
+ "kube-client 1.0.0",
+ "kube-core 1.0.0",
  "kube-derive",
- "kube-runtime",
+ "kube-runtime 1.0.0",
 ]
 
 [[package]]
@@ -3169,12 +3210,70 @@ dependencies = [
 ]
 
 [[package]]
+name = "kube-client"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e199797b1b08865041c9c698f0d11a91de0a8143e808b71e250cd4a1d7ce2b9f"
+dependencies = [
+ "base64 0.22.1",
+ "bytes",
+ "chrono",
+ "either",
+ "futures",
+ "home",
+ "http 1.2.0",
+ "http-body 1.0.1",
+ "http-body-util",
+ "hyper 1.6.0",
+ "hyper-http-proxy",
+ "hyper-openssl",
+ "hyper-rustls",
+ "hyper-timeout",
+ "hyper-util",
+ "jsonpath-rust",
+ "k8s-openapi 0.25.0",
+ "kube-core 1.0.0",
+ "openssl",
+ "pem",
+ "rustls",
+ "secrecy",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "thiserror 2.0.12",
+ "tokio",
+ "tokio-tungstenite",
+ "tokio-util",
+ "tower",
+ "tower-http",
+ "tracing",
+]
+
+[[package]]
 name = "kube-core"
 version = "0.99.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ff0d0793db58e70ca6d689489183816cb3aa481673e7433dc618cf7e8007c675"
 dependencies = [
  "chrono",
+ "form_urlencoded",
+ "http 1.3.1",
+ "json-patch 4.0.0",
+ "k8s-openapi 0.24.0",
+ "serde",
+ "serde-value",
+ "serde_json",
+ "thiserror 2.0.11",
+]
+
+[[package]]
+name = "kube-core"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1bdefbba89dea2d99ea822a1d7cd6945535efbfb10b790056ee9284bf9e698e7"
+dependencies = [
+ "chrono",
+ "derive_more 2.0.1",
  "form_urlencoded",
  "http 1.3.1",
  "json-patch 4.0.0",
@@ -3188,9 +3287,9 @@ dependencies = [
 
 [[package]]
 name = "kube-derive"
-version = "0.99.0"
+version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c562f58dc9f7ca5feac8a6ee5850ca221edd6f04ce0dd2ee873202a88cd494c9"
+checksum = "8e609a3633689a50869352a3c16e01d863b6137863c80eeb038383d5ab9f83bf"
 dependencies = [
  "darling",
  "proc-macro2",
@@ -3218,6 +3317,33 @@ dependencies = [
  "json-patch 4.0.0",
  "k8s-openapi",
  "kube-client",
+ "parking_lot",
+ "pin-project",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.12",
+ "tokio",
+ "tokio-util",
+ "tracing",
+]
+
+[[package]]
+name = "kube-runtime"
+version = "1.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d4bd8a4554786f8f9a87bfa977fb7dbaa1d7f102a30477338b044b65de29d8e"
+dependencies = [
+ "ahash",
+ "async-broadcast",
+ "async-stream",
+ "backon",
+ "educe",
+ "futures",
+ "hashbrown 0.15.2",
+ "hostname",
+ "json-patch 4.0.0",
+ "k8s-openapi 0.25.0",
+ "kube-client 1.0.0",
  "parking_lot",
  "pin-project",
  "serde",
@@ -5277,7 +5403,7 @@ checksum = "df320f1889ac4ba6bc0cdc9c9af7af4bd64bb927bccdf32d81140dc1f9be12fe"
 dependencies = [
  "bitflags 1.3.2",
  "cssparser",
- "derive_more",
+ "derive_more 0.99.19",
  "fxhash",
  "log",
  "matches",
@@ -6244,7 +6370,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "53438d78c4a037ffe5eafa19e447eea599bedfb10844cb08ec53c2471ac3ac3f"
 dependencies = [
  "base64 0.21.7",
- "brotli",
+ "brotli 7.0.0",
  "ico",
  "json-patch 2.0.0",
  "plist",
@@ -6339,7 +6465,7 @@ version = "1.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c357952645e679de02cd35007190fcbce869b93ffc61b029f33fe02648453774"
 dependencies = [
- "brotli",
+ "brotli 7.0.0",
  "ctor",
  "dunce",
  "glob",
@@ -7394,6 +7520,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "widestring"
+version = "1.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "dd7cf3379ca1aac9eea11fba24fd7e315d621f8dfe35c8d7d2be8b793726e07d"
+
+[[package]]
 name = "winapi"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7581,6 +7713,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "windows-registry"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4286ad90ddb45071efd1a66dfa43eb02dd0dfbae1545ad6cc3c51cf34d7e8ba3"
+dependencies = [
+ "windows-result",
+ "windows-strings 0.3.1",
+ "windows-targets 0.53.0",
+]
+
+[[package]]
 name = "windows-result"
 version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7694,6 +7837,15 @@ dependencies = [
  "windows_x86_64_gnu 0.53.0",
  "windows_x86_64_gnullvm 0.53.0",
  "windows_x86_64_msvc 0.53.0",
+]
+
+[[package]]
+name = "windows-threading"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b66463ad2e0ea3bbf808b7f1d371311c80e115c0b71d60efc142cafbcfb057a6"
+dependencies = [
+ "windows-link",
 ]
 
 [[package]]
@@ -8157,7 +8309,6 @@ checksum = "59c333f648ea1b647bc95dc1d34807c8e25ed7a6feff3394034dc4776054b236"
 dependencies = [
  "async-broadcast",
  "async-executor",
- "async-fs",
  "async-io",
  "async-lock",
  "async-process",
@@ -8170,11 +8321,10 @@ dependencies = [
  "futures-core",
  "futures-lite",
  "hex",
- "nix 0.29.0",
+ "nix 0.30.1",
  "ordered-stream",
  "serde",
  "serde_repr",
- "static_assertions",
  "tracing",
  "uds_windows",
  "windows-sys 0.59.0",

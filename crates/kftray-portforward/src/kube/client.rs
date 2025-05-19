@@ -74,7 +74,6 @@ type ServiceInfo = (String, HashMap<String, String>, HashMap<String, i32>);
 pub async fn create_client_with_specific_context(
     kubeconfig: Option<String>, context_name: Option<&str>,
 ) -> Result<(Option<Client>, Option<Kubeconfig>, Vec<String>)> {
-    // Remove PYTHONHOME and PYTHONPATH environment variables
     env::remove_var("PYTHONHOME");
     env::remove_var("PYTHONPATH");
 
