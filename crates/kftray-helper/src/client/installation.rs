@@ -10,9 +10,10 @@ pub fn install_helper(helper_path: &PathBuf) -> Result<(), HelperError> {
         let output = Command::new(helper_path).args(["install"]).output();
 
         if let Err(_e) = output {
+            let escaped_path = helper_path.to_string_lossy().replace("\"", "\\\"");
             let script = format!(
                 r#"do shell script "{} install" with administrator privileges"#,
-                helper_path.to_string_lossy()
+                escaped_path
             );
 
             let output = Command::new("osascript")

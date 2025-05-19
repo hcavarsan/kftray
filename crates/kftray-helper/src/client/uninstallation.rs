@@ -10,9 +10,11 @@ pub fn uninstall_helper(helper_path: &PathBuf) -> Result<(), HelperError> {
         let output = Command::new(helper_path).args(["uninstall"]).output();
 
         if let Err(_e) = output {
+            // Escape single quotes in the path
+            let escaped_path = helper_path.to_string_lossy().replace("'", "'\\''");
             let script = format!(
-                r#"do shell script "{} uninstall" with administrator privileges"#,
-                helper_path.to_string_lossy()
+                r#"do shell script "'{0}' uninstall" with administrator privileges"#,
+                escaped_path
             );
 
             let output = Command::new("osascript")

@@ -30,30 +30,6 @@ impl NetworkConfigManager {
 
         println!("Address validation successful for: {}", address);
 
-        println!("Directly adding loopback address: {}", address);
-
-        println!("DIRECT EXECUTION: Running ifconfig lo0 alias {}", address);
-
-        let output = std::process::Command::new("/sbin/ifconfig")
-            .args(["lo0", "alias", address])
-            .output();
-
-        match output {
-            Ok(output) => {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                println!(
-                    "Direct ifconfig result: success={}, stdout={}, stderr={}",
-                    output.status.success(),
-                    stdout,
-                    stderr
-                );
-            }
-            Err(e) => {
-                println!("Direct ifconfig error: {}", e);
-            }
-        }
-
         #[cfg(target_os = "macos")]
         {
             println!("Using macOS-specific implementation");
@@ -328,17 +304,15 @@ impl NetworkConfigManager {
                     if output.status.success() {
                         println!("Successfully removed loopback address: {}", address_owned);
                         Ok(())
+                    } else if stderr.contains("not found") || stderr.contains("No such process") {
+                        println!("Address already removed, considering operation successful");
+                        Ok(())
                     } else {
-                        if stderr.contains("not found") || stderr.contains("No such process") {
-                            println!("Address already removed, considering operation successful");
-                            Ok(())
-                        } else {
-                            println!("Failed to remove loopback address, error: {}", stderr);
-                            Err(HelperError::NetworkConfig(format!(
-                                "Failed to remove loopback address: {}",
-                                stderr
-                            )))
-                        }
+                        println!("Failed to remove loopback address, error: {}", stderr);
+                        Err(HelperError::NetworkConfig(format!(
+                            "Failed to remove loopback address: {}",
+                            stderr
+                        )))
                     }
                 }
                 Err(e) => {

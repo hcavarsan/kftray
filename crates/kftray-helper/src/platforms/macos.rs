@@ -95,7 +95,9 @@ launchctl list {} | grep -v 'Could not find service' || echo 'Service not found 
 for i in 1 2 3 4 5; do
   if [ -e '{}' ]; then
     echo 'Socket file exists, setting permissions'
-    chmod 666 '{}'
+    # Restrict to the kftray group (or the invoking user) – change as appropriate
+    chown root:wheel '{}'
+    chmod 660 '{}'
     ls -la '{}'
     break
   else
@@ -111,6 +113,7 @@ done
         service_name,
         service_name,
         service_name,
+        socket_path.display(),
         socket_path.display(),
         socket_path.display(),
         socket_path.display()
