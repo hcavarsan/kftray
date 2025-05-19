@@ -15,7 +15,9 @@ use tracing::{
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 pub fn execute_command(cmd: &str, args: &[&str]) -> anyhow::Result<()> {
-    let status = Command::new(cmd).args(args).status()
+    let status = Command::new(cmd)
+        .args(args)
+        .status()
         .map_err(|e| anyhow!("failed to spawn `{}`: {}", cmd, e))?;
     if status.success() {
         Ok(())
