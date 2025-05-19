@@ -1,18 +1,25 @@
+#[cfg(unix)]
+use std::os::unix::net::{
+    UnixListener,
+    UnixStream,
+};
 use std::{
     fs,
     io::{
         Read,
         Write,
     },
-    os::unix::net::{
-        UnixListener,
-        UnixStream,
-    },
     path::PathBuf,
     sync::Arc,
     time::Duration,
 };
 
+#[cfg(windows)]
+use tokio::net::windows::named_pipe::{
+    NamedPipeServer,
+    PipeMode,
+    ServerOptions,
+};
 use tokio::{
     sync::mpsc,
     task,
@@ -397,11 +404,272 @@ async fn handle_connection(
 
 #[cfg(target_os = "windows")]
 async fn start_named_pipe_server(
-    pipe_path: PathBuf, pool_manager: AddressPoolManager, network_manager: NetworkConfigManager,
+    _pipe_path: PathBuf, _pool_manager: AddressPoolManager, _network_manager: NetworkConfigManager,
 ) -> Result<(), HelperError> {
-    Err(HelperError::Communication(
-        "Windows named pipe implementation not yet available".into(),
-    ))
+    println!(
+        "Starting Windows named pipe server on: {}",
+        _pipe_path.display()
+    );
+
+    let pipe_name = _pipe_path.to_string_lossy();
+
+    let pool_manager = Arc::new(_pool_manager);
+    let network_manager = Arc::new(_network_manager);
+
+    let (_shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
+
+    let pipe_name_clone = pipe_name.to_string();
+    let listener_task = task::spawn(async move {
+        println!("Listening on Windows named pipe: {}", pipe_name_clone);
+
+        loop {
+            let pipe = match ServerOptions::new()
+                .pipe_mode(PipeMode::Byte)
+                .create(&pipe_name_clone)
+            {
+                Ok(pipe) => pipe,
+                Err(e) => {
+                    eprintln!("Failed to create named pipe: {}", e);
+                    tokio::time::sleep(Duration::from_millis(1000)).await;
+                    continue;
+                }
+            };
+
+            println!("Named pipe created, waiting for connection");
+
+            match pipe.connect().await {
+                Ok(()) => {
+                    println!("Client connected to named pipe");
+                    let pool_manager_clone = Arc::clone(&pool_manager);
+                    let network_manager_clone = Arc::clone(&network_manager);
+
+                    task::spawn(async move {
+                        if let Err(e) = handle_windows_connection(
+                            pipe,
+                            pool_manager_clone,
+                            network_manager_clone,
+                        )
+                        .await
+                        {
+                            eprintln!("Error handling Windows pipe connection: {}", e);
+                        }
+                    });
+                }
+                Err(e) => {
+                    eprintln!("Failed to connect client to named pipe: {}", e);
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                    continue;
+                }
+            }
+
+            if shutdown_rx.try_recv().is_ok() {
+                println!("Shutting down Windows named pipe server");
+                break;
+            }
+
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        Ok::<(), HelperError>(())
+    });
+
+    match listener_task.await {
+        Ok(result) => result,
+        Err(e) => Err(HelperError::Communication(format!(
+            "Listener task panicked: {}",
+            e
+        ))),
+    }
+}
+
+#[cfg(target_os = "windows")]
+async fn handle_windows_connection(
+    mut pipe: NamedPipeServer, pool_manager: Arc<AddressPoolManager>,
+    network_manager: Arc<NetworkConfigManager>,
+) -> Result<(), HelperError> {
+    use tokio::io::{
+        AsyncReadExt,
+        AsyncWriteExt,
+    };
+    println!("New connection received on Windows named pipe");
+
+    let mut buffer = Vec::new();
+    let mut tmp_buf = [0u8; 4096];
+
+    let mut total_read = 0;
+    let timeout = Duration::from_secs(30);
+    let start_time = std::time::Instant::now();
+
+    loop {
+        if start_time.elapsed() > timeout {
+            println!(
+                "Read operation timed out after {} seconds",
+                timeout.as_secs()
+            );
+            break;
+        }
+
+        match tokio::time::timeout(Duration::from_secs(5), pipe.read(&mut tmp_buf)).await {
+            Ok(read_result) => match read_result {
+                Ok(0) => {
+                    println!("Client closed connection (0 bytes read)");
+                    break;
+                }
+                Ok(n) => {
+                    println!("Read {} bytes from client", n);
+                    buffer.extend_from_slice(&tmp_buf[..n]);
+                    total_read += n;
+
+                    if n < tmp_buf.len() {
+                        println!("Read less than buffer size, assuming message is complete");
+                        break;
+                    }
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    println!("Pipe would block, waiting briefly");
+                    tokio::time::sleep(Duration::from_millis(50)).await;
+                    continue;
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {
+                    println!("Pipe read interrupted, continuing");
+                    continue;
+                }
+                Err(e) => {
+                    println!("Error reading from client: {}", e);
+                    if total_read > 0 {
+                        println!(
+                            "Have partial data ({} bytes), continuing with processing",
+                            total_read
+                        );
+                        break;
+                    }
+                    return Err(HelperError::Communication(format!(
+                        "Failed to read from pipe: {}",
+                        e
+                    )));
+                }
+            },
+            Err(_) => {
+                println!("Read operation timed out");
+                if total_read > 0 {
+                    println!(
+                        "Have partial data ({} bytes), continuing with processing",
+                        total_read
+                    );
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        }
+    }
+
+    if buffer.is_empty() {
+        println!("Empty request received, will wait for more data");
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
+        match tokio::time::timeout(Duration::from_secs(5), pipe.read(&mut tmp_buf)).await {
+            Ok(result) => match result {
+                Ok(0) => {
+                    println!("Client still sent 0 bytes, closing connection");
+                    return Ok(());
+                }
+                Ok(n) => {
+                    println!("Read {} bytes from client after wait", n);
+                    buffer.extend_from_slice(&tmp_buf[..n]);
+                }
+                Err(e) => {
+                    println!("Error reading more data: {}", e);
+                    return Ok(());
+                }
+            },
+            Err(_) => {
+                println!("Additional read timed out, closing connection");
+                return Ok(());
+            }
+        }
+
+        if buffer.is_empty() {
+            println!("Request is still empty after retry, cannot process");
+            return Ok(());
+        }
+    }
+
+    let request = match serde_json::from_slice::<HelperRequest>(&buffer) {
+        Ok(req) => {
+            println!("Request parsed successfully");
+            req
+        }
+        Err(e) => {
+            println!("Failed to parse request: {}", e);
+            return Err(HelperError::Communication(format!(
+                "Failed to parse request: {}",
+                e
+            )));
+        }
+    };
+
+    println!("Processing request...");
+    let response = process_request(request, pool_manager, network_manager).await?;
+    println!("Request processed successfully");
+
+    let response_bytes = match serde_json::to_vec(&response) {
+        Ok(bytes) => {
+            println!(
+                "Response serialized ({} bytes), result={:?}",
+                bytes.len(),
+                response.result
+            );
+            bytes
+        }
+        Err(e) => {
+            println!("Failed to serialize response: {}", e);
+            return Err(HelperError::Communication(format!(
+                "Failed to serialize response: {}",
+                e
+            )));
+        }
+    };
+
+    println!(
+        "Writing response directly to client pipe ({} bytes)",
+        response_bytes.len()
+    );
+
+    match pipe.write_all(&response_bytes).await {
+        Ok(_) => println!("Response written successfully"),
+        Err(e) => {
+            println!("Failed to write response: {}", e);
+            if e.kind() == std::io::ErrorKind::BrokenPipe {
+                println!("Client disconnected (broken pipe), ignoring error");
+                return Ok(());
+            }
+            return Err(HelperError::Communication(format!(
+                "Failed to write response: {}",
+                e
+            )));
+        }
+    }
+
+    println!("Flushing pipe output");
+    match pipe.flush().await {
+        Ok(_) => println!("Response flushed successfully"),
+        Err(e) => {
+            println!("Failed to flush response: {}", e);
+            if e.kind() == std::io::ErrorKind::BrokenPipe {
+                println!("Client disconnected (broken pipe), ignoring error");
+                return Ok(());
+            }
+            return Err(HelperError::Communication(format!(
+                "Failed to flush response: {}",
+                e
+            )));
+        }
+    }
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    println!("Connection handled successfully");
+    Ok(())
 }
 
 async fn process_request(

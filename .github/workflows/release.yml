@@ -83,7 +83,8 @@ jobs:
           slug: hcavarsan/kftray
 
   create-release-draft:
-    needs: [ validate-version, rust-coverage ]
+    needs:
+    - validate-version
     permissions:
       contents: write
     runs-on: ubuntu-24.04

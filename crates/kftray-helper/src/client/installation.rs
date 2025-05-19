@@ -81,7 +81,7 @@ pub fn install_helper(helper_path: &Path) -> Result<(), HelperError> {
 
     #[cfg(target_os = "windows")]
     {
-        let args = format!("\"{}\" install", helper_path.to_string_lossy());
+        let _args = format!("\"{}\" install", helper_path.to_string_lossy());
 
         let output = Command::new("powershell")
             .args([

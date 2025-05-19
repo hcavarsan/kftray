@@ -1,4 +1,6 @@
+use std::ffi::OsString;
 use std::path::PathBuf;
+use std::time::Duration;
 
 #[cfg(target_os = "windows")]
 use windows_service::{
@@ -31,10 +33,7 @@ use crate::{
 pub fn install_service(service_name: &str) -> Result<(), HelperError> {
     #[cfg(target_os = "windows")]
     {
-        use std::{
-            ffi::OsString,
-            process::Command,
-        };
+        use std::process::Command;
 
         use windows_service::{
             service::{
@@ -81,7 +80,7 @@ pub fn install_service(service_name: &str) -> Result<(), HelperError> {
                 HelperError::PlatformService(format!("Failed to create service: {:?}", e))
             })?;
 
-        service.start(&[]).map_err(|e| {
+        service.start::<OsString>(&[]).map_err(|e| {
             HelperError::PlatformService(format!("Failed to start service: {:?}", e))
         })?;
 
@@ -97,8 +96,6 @@ pub fn install_service(service_name: &str) -> Result<(), HelperError> {
 pub fn uninstall_service(service_name: &str) -> Result<(), HelperError> {
     #[cfg(target_os = "windows")]
     {
-        use std::ffi::OsString;
-
         use windows_service::{
             service::{
                 ServiceAccess,
@@ -184,7 +181,7 @@ fn kftray_service_main(_arguments: Vec<OsString>) {
         controls_accepted: ServiceControlAccept::STOP,
         exit_code: ServiceExitCode::Win32(0),
         checkpoint: 0,
-        wait_hint: 0,
+        wait_hint: Duration::from_secs(0),
         process_id: None,
     };
 
