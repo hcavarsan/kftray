@@ -13,6 +13,17 @@ use tracing::{
     warn,
 };
 
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+pub fn execute_command(cmd: &str, args: &[&str]) -> anyhow::Result<()> {
+    let status = Command::new(cmd).args(args).status()
+        .map_err(|e| anyhow!("failed to spawn `{}`: {}", cmd, e))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(anyhow!("`{}` exited with {}", cmd, status))
+    }
+}
+
 pub fn is_loopback_address(addr: &str) -> bool {
     if let Ok(ip) = IpAddr::from_str(addr) {
         return ip.is_loopback();
