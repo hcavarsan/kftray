@@ -97,7 +97,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Run Clippy
-        run: cargo clippy --workspace --all-targets --allow-dirty --allow-staged --all-features --fix -- -D warnings
+        run: cargo build --bin kftray-helper --release && cargo clippy --workspace --all-targets --allow-dirty --allow-staged --all-features --fix -- -D warnings
 
 
   rust-coverage:
@@ -146,7 +146,7 @@ jobs:
         run: cargo install cargo-insta
 
       - name: Run tests
-        run: INSTA_UPDATE=1 cargo llvm-cov nextest --profile ci --config-file .cargo/nextest.toml --locked --workspace --all-features --lib --bins --examples --tests --lcov --output-path lcov.info
+        run: cargo build --bin kftray-helper --release && INSTA_UPDATE=1 cargo llvm-cov nextest --profile ci --config-file .cargo/nextest.toml --locked --workspace --all-features --lib --bins --examples --tests --lcov --output-path lcov.info
 
       - name: Upload coverage
         uses: codecov/codecov-action@v5

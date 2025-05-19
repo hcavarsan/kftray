@@ -1,10 +1,10 @@
-use std::path::PathBuf;
+use std::path::Path;
 use std::process::Command;
 use std::time::Duration;
 
 use crate::error::HelperError;
 
-pub fn uninstall_helper(helper_path: &PathBuf) -> Result<(), HelperError> {
+pub fn uninstall_helper(helper_path: &Path) -> Result<(), HelperError> {
     #[cfg(target_os = "macos")]
     {
         let output = Command::new(helper_path).args(["uninstall"]).output();
