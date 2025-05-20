@@ -12,6 +12,8 @@ use std::time::{
 
 use log::debug;
 #[cfg(windows)]
+use tokio::io::AsyncWriteExt;
+#[cfg(windows)]
 use tokio::net::windows::named_pipe::ClientOptions;
 
 use crate::error::HelperError;
