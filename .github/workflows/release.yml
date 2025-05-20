@@ -248,6 +248,7 @@ jobs:
           cargo build --bin kftray-helper --release --target x86_64-apple-darwin
           cargo build --bin kftray-helper --release --target aarch64-apple-darwin
           lipo -create -output ./target/release/kftray-helper-aarch64-apple-darwin ./target/x86_64-apple-darwin/release/kftray-helper ./target/aarch64-apple-darwin/release/kftray-helper
+          lipo -create -output ./target/release/kftray-helper-x86_64-apple-darwin ./target/x86_64-apple-darwin/release/kftray-helper ./target/aarch64-apple-darwin/release/kftray-helper
         shell: bash
 
       - name: Build kftray-tauri Desktop App
