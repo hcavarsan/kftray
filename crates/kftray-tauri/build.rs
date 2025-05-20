@@ -4,29 +4,9 @@ use std::path::{
     Path,
     PathBuf,
 };
-use std::process::Command;
 
 fn main() {
-    let output = match Command::new("rustc").args(["-Vv"]).output() {
-        Ok(output) => output,
-        Err(e) => {
-            println!("cargo:warning=Failed to run rustc: {}", e);
-            return;
-        }
-    };
-
-    let output_str = String::from_utf8_lossy(&output.stdout);
-    let target_triple = match output_str
-        .lines()
-        .find(|line| line.starts_with("host:"))
-        .and_then(|line| line.split_whitespace().nth(1))
-    {
-        Some(triple) => triple,
-        None => {
-            println!("cargo:warning=Failed to determine target triple from rustc output");
-            return;
-        }
-    };
+    let target_triple = std::env::var("TARGET").unwrap();
 
     println!("cargo:warning=Building for target: {}", target_triple);
 
