@@ -3014,6 +3014,7 @@ dependencies = [
  "thiserror 2.0.12",
  "tokio",
  "uuid",
+ "winapi",
  "windows-service",
  "zbus",
 ]

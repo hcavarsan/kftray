@@ -180,6 +180,7 @@ pub fn validate_peer_credentials(
     Ok(())
 }
 
+#[cfg(unix)]
 fn get_authorized_user_uid() -> u32 {
     if let Ok(sudo_uid) = std::env::var("SUDO_UID") {
         if let Ok(uid) = sudo_uid.parse::<u32>() {
@@ -226,7 +227,215 @@ fn get_authorized_user_uid() -> u32 {
     current_uid
 }
 
-#[cfg(not(unix))]
-pub fn validate_peer_credentials(_stream: &()) -> Result<(), HelperError> {
+#[cfg(windows)]
+use std::ffi::OsString;
+#[cfg(windows)]
+use std::os::windows::ffi::OsStringExt;
+
+#[cfg(windows)]
+fn get_current_user_sid() -> Result<String, HelperError> {
+    use std::ptr;
+
+    use winapi::um::handleapi::CloseHandle;
+    use winapi::um::processthreadsapi::{
+        GetCurrentProcess,
+        OpenProcessToken,
+    };
+    use winapi::um::sddl::ConvertSidToStringSidW;
+    use winapi::um::securitybaseapi::GetTokenInformation;
+    use winapi::um::winbase::LocalFree;
+    use winapi::um::winnt::{
+        TokenUser,
+        PSID,
+        TOKEN_QUERY,
+        TOKEN_USER,
+    };
+
+    unsafe {
+        let mut token = ptr::null_mut();
+        let process = GetCurrentProcess();
+
+        if OpenProcessToken(process, TOKEN_QUERY, &mut token) == 0 {
+            return Err(HelperError::Authentication(
+                "Failed to open process token".to_string(),
+            ));
+        }
+
+        let mut token_user_size = 0u32;
+        GetTokenInformation(token, TokenUser, ptr::null_mut(), 0, &mut token_user_size);
+
+        let mut token_user_buffer = vec![0u8; token_user_size as usize];
+        if GetTokenInformation(
+            token,
+            TokenUser,
+            token_user_buffer.as_mut_ptr() as *mut _,
+            token_user_size,
+            &mut token_user_size,
+        ) == 0
+        {
+            CloseHandle(token);
+            return Err(HelperError::Authentication(
+                "Failed to get token information".to_string(),
+            ));
+        }
+
+        let token_user = &*(token_user_buffer.as_ptr() as *const TOKEN_USER);
+        let mut sid_string = ptr::null_mut();
+
+        if ConvertSidToStringSidW(token_user.User.Sid, &mut sid_string) == 0 {
+            CloseHandle(token);
+            return Err(HelperError::Authentication(
+                "Failed to convert SID to string".to_string(),
+            ));
+        }
+
+        let sid_slice = std::slice::from_raw_parts(
+            sid_string,
+            (0..).take_while(|&i| *sid_string.offset(i) != 0).count() + 1,
+        );
+        let sid_os_string = OsString::from_wide(&sid_slice[..sid_slice.len() - 1]);
+        let sid_string_result = sid_os_string.to_string_lossy().to_string();
+
+        LocalFree(sid_string as *mut _);
+        CloseHandle(token);
+
+        Ok(sid_string_result)
+    }
+}
+
+#[cfg(windows)]
+fn get_pipe_client_pid(pipe_handle: std::os::windows::io::RawHandle) -> Result<u32, HelperError> {
+    use winapi::um::namedpipeapi::GetNamedPipeClientProcessId;
+
+    unsafe {
+        let mut client_pid = 0u32;
+        if GetNamedPipeClientProcessId(pipe_handle as *mut _, &mut client_pid) == 0 {
+            return Err(HelperError::Authentication(
+                "Failed to get client process ID".to_string(),
+            ));
+        }
+        Ok(client_pid)
+    }
+}
+
+#[cfg(windows)]
+fn get_process_user_sid(pid: u32) -> Result<String, HelperError> {
+    use std::ptr;
+
+    use winapi::um::handleapi::CloseHandle;
+    use winapi::um::processthreadsapi::OpenProcess;
+    use winapi::um::processthreadsapi::OpenProcessToken;
+    use winapi::um::sddl::ConvertSidToStringSidW;
+    use winapi::um::securitybaseapi::GetTokenInformation;
+    use winapi::um::winbase::LocalFree;
+    use winapi::um::winnt::{
+        TokenUser,
+        PROCESS_QUERY_INFORMATION,
+        TOKEN_QUERY,
+        TOKEN_USER,
+    };
+
+    unsafe {
+        let process = OpenProcess(PROCESS_QUERY_INFORMATION, 0, pid);
+        if process.is_null() {
+            return Err(HelperError::Authentication(format!(
+                "Failed to open process {}",
+                pid
+            )));
+        }
+
+        let mut token = ptr::null_mut();
+        if OpenProcessToken(process, TOKEN_QUERY, &mut token) == 0 {
+            CloseHandle(process);
+            return Err(HelperError::Authentication(
+                "Failed to open process token".to_string(),
+            ));
+        }
+
+        let mut token_user_size = 0u32;
+        GetTokenInformation(token, TokenUser, ptr::null_mut(), 0, &mut token_user_size);
+
+        let mut token_user_buffer = vec![0u8; token_user_size as usize];
+        if GetTokenInformation(
+            token,
+            TokenUser,
+            token_user_buffer.as_mut_ptr() as *mut _,
+            token_user_size,
+            &mut token_user_size,
+        ) == 0
+        {
+            CloseHandle(token);
+            CloseHandle(process);
+            return Err(HelperError::Authentication(
+                "Failed to get token information".to_string(),
+            ));
+        }
+
+        let token_user = &*(token_user_buffer.as_ptr() as *const TOKEN_USER);
+        let mut sid_string = ptr::null_mut();
+
+        if ConvertSidToStringSidW(token_user.User.Sid, &mut sid_string) == 0 {
+            CloseHandle(token);
+            CloseHandle(process);
+            return Err(HelperError::Authentication(
+                "Failed to convert SID to string".to_string(),
+            ));
+        }
+
+        let sid_slice = std::slice::from_raw_parts(
+            sid_string,
+            (0..).take_while(|&i| *sid_string.offset(i) != 0).count() + 1,
+        );
+        let sid_os_string = OsString::from_wide(&sid_slice[..sid_slice.len() - 1]);
+        let sid_string_result = sid_os_string.to_string_lossy().to_string();
+
+        LocalFree(sid_string as *mut _);
+        CloseHandle(token);
+        CloseHandle(process);
+
+        Ok(sid_string_result)
+    }
+}
+
+#[cfg(windows)]
+fn get_authorized_user_sid() -> Result<String, HelperError> {
+    let current_sid = get_current_user_sid()?;
+    log::debug!("Using current user SID as authorized: {}", current_sid);
+    Ok(current_sid)
+}
+
+#[cfg(windows)]
+pub fn validate_peer_credentials(
+    pipe_handle: std::os::windows::io::RawHandle,
+) -> Result<(), HelperError> {
+    let client_pid = get_pipe_client_pid(pipe_handle)?;
+    log::debug!("Client process ID: {}", client_pid);
+
+    let client_sid = get_process_user_sid(client_pid)?;
+    log::debug!("Client user SID: {}", client_sid);
+
+    let authorized_sid = get_authorized_user_sid()?;
+    log::debug!("Authorized user SID: {}", authorized_sid);
+
+    if client_sid == authorized_sid {
+        log::debug!("Peer credentials validated: SID matches");
+        Ok(())
+    } else {
+        Err(HelperError::Authentication(format!(
+            "Peer SID {} does not match authorized SID {}",
+            client_sid, authorized_sid
+        )))
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+fn get_authorized_user_uid() -> u32 {
+    println!("Unsupported platform: No UID-based authorization, using default");
+    0
+}
+
+#[cfg(not(any(unix, windows)))]
+pub fn validate_peer_credentials<T>(_stream: &T) -> Result<(), HelperError> {
+    println!("Unsupported platform: Peer credential validation skipped");
     Ok(())
 }

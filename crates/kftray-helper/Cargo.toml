@@ -20,3 +20,6 @@ zbus = "5.7"
 windows-service = "0.8"
 kftray-commons = { path = "../kftray-commons" }
 libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+winapi = { version = "0.3", features = ["processthreadsapi", "securitybaseapi", "winnt", "sddl", "winbase", "handleapi", "namedpipeapi"] }
