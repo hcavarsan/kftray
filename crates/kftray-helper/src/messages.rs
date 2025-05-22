@@ -12,6 +12,16 @@ pub struct HelperRequest {
 
     #[serde(default)]
     pub return_address: String,
+
+    #[serde(default = "default_timestamp")]
+    pub timestamp: u64,
+}
+
+fn default_timestamp() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -65,6 +75,7 @@ impl HelperRequest {
             app_id,
             command,
             return_address: String::new(),
+            timestamp: default_timestamp(),
         }
     }
 }

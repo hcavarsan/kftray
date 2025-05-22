@@ -1,4 +1,5 @@
 mod address_pool;
+mod auth;
 pub mod client;
 mod communication;
 pub mod error;

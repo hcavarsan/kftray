@@ -28,6 +28,10 @@ use tokio::{
 
 use crate::{
     address_pool::AddressPoolManager,
+    auth::{
+        validate_peer_credentials,
+        validate_request,
+    },
     error::HelperError,
     messages::{
         AddressCommand,
@@ -462,6 +466,15 @@ async fn handle_connection(
 ) -> Result<(), HelperError> {
     println!("New connection received");
 
+    #[cfg(any(target_os = "linux", target_os = "macos"))]
+    {
+        if let Err(e) = validate_peer_credentials(&stream) {
+            println!("Peer credential validation failed: {}", e);
+            return Err(e);
+        }
+        println!("Peer credentials validated successfully");
+    }
+
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .map_err(|e| HelperError::Communication(format!("Failed to set socket timeout: {}", e)))?;
@@ -535,6 +548,13 @@ async fn handle_connection(
     let request = match serde_json::from_slice::<HelperRequest>(&buffer) {
         Ok(req) => {
             println!("Request parsed successfully");
+
+            if let Err(e) = validate_request(&req) {
+                println!("Request validation failed: {}", e);
+                return Err(e);
+            }
+            println!("Request validation passed");
+
             req
         }
         Err(e) => {
@@ -617,6 +637,15 @@ async fn handle_connection(
 }
 
 #[cfg(target_os = "windows")]
+fn create_secure_pipe(pipe_name: &str) -> Result<NamedPipeServer, std::io::Error> {
+    ServerOptions::new()
+        .pipe_mode(PipeMode::Byte)
+        .access_inbound(true)
+        .access_outbound(true)
+        .create(pipe_name)
+}
+
+#[cfg(target_os = "windows")]
 async fn start_named_pipe_server(
     _pipe_path: PathBuf, _pool_manager: AddressPoolManager, _network_manager: NetworkConfigManager,
 ) -> Result<(), HelperError> {
@@ -637,10 +666,7 @@ async fn start_named_pipe_server(
         println!("Listening on Windows named pipe: {}", pipe_name_clone);
 
         loop {
-            let pipe = match ServerOptions::new()
-                .pipe_mode(PipeMode::Byte)
-                .create(&pipe_name_clone)
-            {
+            let pipe = match create_secure_pipe(&pipe_name_clone) {
                 Ok(pipe) => pipe,
                 Err(e) => {
                     eprintln!("Failed to create named pipe: {}", e);
@@ -811,6 +837,13 @@ async fn handle_windows_connection(
     let request = match serde_json::from_slice::<HelperRequest>(&buffer) {
         Ok(req) => {
             println!("Request parsed successfully");
+
+            if let Err(e) = validate_request(&req) {
+                println!("Request validation failed: {}", e);
+                return Err(e);
+            }
+            println!("Request validation passed");
+
             req
         }
         Err(e) => {
