@@ -14,6 +14,7 @@ use std::{
     time::Duration,
 };
 
+use kftray_commons::utils::config_dir;
 #[cfg(windows)]
 use tokio::net::windows::named_pipe::{
     NamedPipeServer,
@@ -39,45 +40,138 @@ use crate::{
     network::NetworkConfigManager,
 };
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
-const DEFAULT_SOCKET_PATH_STR: &str = "/tmp/kftray-helper.sock";
+#[cfg(target_os = "linux")]
+pub const SOCKET_FILENAME: &str = "kftray-helper.sock";
+
+#[cfg(target_os = "macos")]
+pub const SOCKET_FILENAME: &str = "com.hcavarsan.kftray.helper.sock";
 
 #[cfg(target_os = "windows")]
-const DEFAULT_NAMED_PIPE: &str = r"\\.\pipe\kftray-helper";
+pub const DEFAULT_NAMED_PIPE: &str = r"\\.\pipe\kftray-helper";
+
+#[cfg(unix)]
+fn is_running_as_root() -> bool {
+    unsafe { libc::geteuid() == 0 }
+}
+
+#[cfg(target_os = "macos")]
+fn get_user_config_dir() -> Option<PathBuf> {
+    if let Ok(socket_path) = std::env::var("SOCKET_PATH") {
+        if !socket_path.is_empty() {
+            println!(
+                "Using explicit SOCKET_PATH from environment: {}",
+                socket_path
+            );
+            return Some(PathBuf::from(socket_path).parent()?.to_path_buf());
+        }
+    }
+
+    if let Ok(config_dir) = std::env::var("KFTRAY_CONFIG") {
+        if !config_dir.is_empty() {
+            println!("Using KFTRAY_CONFIG from environment: {}", config_dir);
+            return Some(PathBuf::from(config_dir));
+        }
+    }
+
+    if let Ok(config_dir) = std::env::var("CONFIG_DIR") {
+        if !config_dir.is_empty() {
+            println!("Using CONFIG_DIR from environment: {}", config_dir);
+            return Some(PathBuf::from(config_dir));
+        }
+    }
+
+    if let Ok(home) = std::env::var("HOME") {
+        if !home.is_empty() {
+            if let Ok(user) = std::env::var("USER") {
+                if user != "root" {
+                    println!("Using home directory for user '{}': {}", user, home);
+                    let mut path = PathBuf::from(home);
+                    path.push(".kftray");
+                    return Some(path);
+                }
+            }
+
+            if home.starts_with("/Users/") || home.starts_with("/home/") {
+                let mut path = PathBuf::from(home);
+                path.push(".kftray");
+                println!("Using user's home directory: {}", path.display());
+                return Some(path);
+            }
+
+            if let Ok(sudo_user) = std::env::var("SUDO_USER") {
+                if !sudo_user.is_empty() && sudo_user != "root" {
+                    println!("Using SUDO_USER's home directory for: {}", sudo_user);
+                    let user_home = if cfg!(target_os = "macos") {
+                        format!("/Users/{}", sudo_user)
+                    } else {
+                        format!("/home/{}", sudo_user)
+                    };
+                    let mut path = PathBuf::from(user_home);
+                    path.push(".kftray");
+                    return Some(path);
+                }
+            }
+        }
+    }
+
+    None
+}
 
 pub fn get_default_socket_path() -> Result<PathBuf, HelperError> {
     #[cfg(target_os = "macos")]
     {
-        let socket_path = PathBuf::from(DEFAULT_SOCKET_PATH_STR);
+        println!("Getting socket path from user config directory");
+
+        let socket_path = if let Some(mut user_dir) = get_user_config_dir() {
+            user_dir.push(SOCKET_FILENAME);
+            user_dir
+        } else {
+            match config_dir::get_config_dir() {
+                Ok(mut path) => {
+                    path.push(SOCKET_FILENAME);
+                    path
+                }
+                Err(_) => {
+                    println!("WARNING: Could not get config directory, falling back to /tmp");
+                    PathBuf::from(format!("/tmp/{}", SOCKET_FILENAME))
+                }
+            }
+        };
 
         if let Some(parent) = socket_path.parent() {
             if !parent.exists() {
-                println!(
-                    "Warning: Socket parent directory doesn't exist: {:?}",
-                    parent
-                );
-                return Err(HelperError::Communication(format!(
-                    "Socket parent directory doesn't exist: {:?}",
-                    parent
-                )));
-            }
+                println!("Creating socket parent directory: {:?}", parent);
+                if let Err(e) = std::fs::create_dir_all(parent) {
+                    println!("Failed to create socket directory: {}", e);
+                    return Err(HelperError::Communication(format!(
+                        "Failed to create socket directory: {:?}, error: {}",
+                        parent, e
+                    )));
+                }
 
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                match parent.metadata() {
-                    Ok(meta) => {
-                        let perms = meta.permissions().mode();
-                        if perms & 0o777 != 0o777 {
-                            println!("Warning: Socket parent directory has restrictive permissions: {:o}", perms);
+                #[cfg(unix)]
+                if is_running_as_root() {
+                    if let (Ok(user_id), Ok(group_id)) =
+                        (std::env::var("SUDO_UID"), std::env::var("SUDO_GID"))
+                    {
+                        println!("Fixing directory ownership for socket directory");
+                        if let Err(e) = std::process::Command::new("chown")
+                            .arg(format!("{}:{}", user_id, group_id))
+                            .arg(parent.as_os_str())
+                            .status()
+                        {
+                            println!("Failed to fix directory ownership: {}", e);
                         }
                     }
-                    Err(e) => {
-                        println!(
-                            "Warning: Couldn't check socket parent directory permissions: {}",
-                            e
-                        );
-                    }
+                }
+            }
+
+            match parent.metadata() {
+                Ok(_) => {
+                    println!("Socket parent directory exists at: {}", parent.display());
+                }
+                Err(e) => {
+                    println!("Warning: Couldn't check socket parent directory: {}", e);
                 }
             }
         }
@@ -88,7 +182,114 @@ pub fn get_default_socket_path() -> Result<PathBuf, HelperError> {
 
     #[cfg(target_os = "linux")]
     {
-        Ok(PathBuf::from(DEFAULT_SOCKET_PATH_STR))
+        let socket_path = if let Ok(path) = std::env::var("SOCKET_PATH") {
+            if !path.is_empty() {
+                println!("Using explicit SOCKET_PATH from environment: {}", path);
+                PathBuf::from(path)
+            } else {
+                find_linux_socket_path()
+            }
+        } else if let Ok(config_dir) = std::env::var("KFTRAY_CONFIG") {
+            if !config_dir.is_empty() {
+                println!("Using KFTRAY_CONFIG from environment: {}", config_dir);
+                let mut path = PathBuf::from(config_dir);
+                path.push(SOCKET_FILENAME);
+                path
+            } else {
+                find_linux_socket_path()
+            }
+        } else if let Ok(config_dir) = std::env::var("CONFIG_DIR") {
+            if !config_dir.is_empty() {
+                println!("Using CONFIG_DIR from environment: {}", config_dir);
+                let mut path = PathBuf::from(config_dir);
+                path.push(SOCKET_FILENAME);
+                path
+            } else {
+                find_linux_socket_path()
+            }
+        } else {
+            find_linux_socket_path()
+        };
+
+        fn find_linux_socket_path() -> PathBuf {
+            if let Ok(user) = std::env::var("USER") {
+                if user != "root" {
+                    if let Ok(home) = std::env::var("HOME") {
+                        if !home.is_empty()
+                            && (home.starts_with("/home/") || home.starts_with("/Users/"))
+                        {
+                            println!("Using home directory for user '{}': {}", user, home);
+                            let mut path = PathBuf::from(home);
+                            path.push(".kftray");
+                            path.push(SOCKET_FILENAME);
+                            return path;
+                        }
+                    }
+                }
+            }
+
+            if is_running_as_root() {
+                if let Ok(sudo_user) = std::env::var("SUDO_USER") {
+                    if !sudo_user.is_empty() && sudo_user != "root" {
+                        println!("Using SUDO_USER's home directory for: {}", sudo_user);
+                        let user_home = format!("/home/{}", sudo_user);
+                        let mut path = PathBuf::from(user_home);
+                        path.push(".kftray");
+                        path.push(SOCKET_FILENAME);
+                        return path;
+                    }
+                }
+            }
+
+            if let Ok(home) = std::env::var("HOME") {
+                if !home.is_empty() && (home.starts_with("/home/") || home.starts_with("/Users/")) {
+                    println!("Using home directory: {}", home);
+                    let mut path = PathBuf::from(home);
+                    path.push(".kftray");
+                    path.push(SOCKET_FILENAME);
+                    return path;
+                }
+            }
+
+            match config_dir::get_config_dir() {
+                Ok(mut path) => {
+                    path.push(SOCKET_FILENAME);
+                    path
+                }
+                Err(_) => PathBuf::from(format!("/tmp/{}", SOCKET_FILENAME)),
+            }
+        }
+
+        if let Some(parent) = socket_path.parent() {
+            if !parent.exists() {
+                println!("Creating socket parent directory: {:?}", parent);
+                if let Err(e) = std::fs::create_dir_all(parent) {
+                    println!("Failed to create socket directory: {}", e);
+                    return Err(HelperError::Communication(format!(
+                        "Failed to create socket directory: {:?}, error: {}",
+                        parent, e
+                    )));
+                }
+
+                if is_running_as_root() {
+                    if let (Ok(user_id), Ok(group_id)) =
+                        (std::env::var("SUDO_UID"), std::env::var("SUDO_GID"))
+                    {
+                        println!("Fixing directory ownership for socket directory");
+                        if let Err(e) = std::process::Command::new("chown")
+                            .arg(format!("{}:{}", user_id, group_id))
+                            .arg(parent.as_os_str())
+                            .status()
+                        {
+                            println!("Failed to fix directory ownership: {}", e);
+                        }
+                    }
+                }
+            }
+        }
+
+        println!("Using socket path: {}", socket_path.display());
+        Ok(socket_path)
     }
 
     #[cfg(target_os = "windows")]
@@ -144,16 +345,13 @@ async fn start_unix_socket_server(
 
         #[cfg(unix)]
         {
-            use std::os::unix::fs::PermissionsExt;
-            println!("Attempting to set socket directory permissions");
-
-            if let Err(e) = fs::set_permissions(parent, fs::Permissions::from_mode(0o777)) {
-                println!(
-                    "Warning: Couldn't set directory permissions (continuing anyway): {}",
-                    e
-                );
-            } else {
-                println!("Successfully set socket directory permissions");
+            if is_running_as_root() {
+                println!("Running as root, proceeding with socket creation");
+            } else if !parent.exists() {
+                println!("Creating socket directory: {}", parent.display());
+                if let Err(e) = fs::create_dir_all(parent) {
+                    println!("Warning: Couldn't create socket directory: {}", e);
+                }
             }
         }
     }
@@ -164,15 +362,31 @@ async fn start_unix_socket_server(
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        println!("Attempting to set socket permissions");
-
-        if let Err(e) = fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o777)) {
-            println!(
-                "Warning: Couldn't set socket permissions (continuing anyway): {}",
-                e
-            );
+        if let Err(e) = fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o666)) {
+            println!("Warning: Failed to set socket permissions: {}", e);
         } else {
-            println!("Successfully set socket permissions");
+            println!("Set socket permissions to 666 (rw-rw-rw-)");
+        }
+
+        if is_running_as_root() {
+            if let (Ok(user_id), Ok(group_id)) =
+                (std::env::var("SUDO_UID"), std::env::var("SUDO_GID"))
+            {
+                println!("Fixing socket ownership for user access");
+                if let Err(e) = std::process::Command::new("chown")
+                    .arg(format!("{}:{}", user_id, group_id))
+                    .arg(&socket_path)
+                    .status()
+                {
+                    println!("Warning: Failed to fix socket ownership: {}", e);
+                } else {
+                    println!("Set socket ownership to {}:{}", user_id, group_id);
+                }
+            }
+        }
+
+        if socket_path.exists() {
+            println!("Socket file exists at: {}", socket_path.display());
         }
     }
 

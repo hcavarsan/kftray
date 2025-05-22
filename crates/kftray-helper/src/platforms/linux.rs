@@ -5,6 +5,8 @@ use std::{
     process::Command,
 };
 
+use kftray_commons::utils::config_dir;
+
 use crate::{
     address_pool::AddressPoolManager,
     communication::{
@@ -24,6 +26,14 @@ Type=simple
 ExecStart={{HELPER_PATH}} service
 Restart=on-failure
 RestartSec=5
+StandardOutput=file:{{LOG_DIR}}/kftray-helper.log
+StandardError=file:{{LOG_DIR}}/kftray-helper.err
+# Environment variables for consistent socket path location
+Environment="CONFIG_DIR={{LOG_DIR}}"
+Environment="KFTRAY_CONFIG={{LOG_DIR}}"
+Environment="SOCKET_PATH={{LOG_DIR}}/{{SOCKET_FILENAME}}"
+Environment="USER={{CURRENT_USER}}"
+Environment="HOME={{HOME_DIR}}"
 
 [Install]
 WantedBy=default.target
@@ -53,7 +63,29 @@ pub fn install_service(service_name: &str) -> Result<(), HelperError> {
     })?;
     let helper_path_str = helper_path.to_string_lossy();
 
-    let service_content = SYSTEMD_SERVICE_TEMPLATE.replace("{{HELPER_PATH}}", &helper_path_str);
+    let config_dir_path = match config_dir::get_config_dir() {
+        Ok(path) => path,
+        Err(_) => PathBuf::from("/tmp"),
+    };
+
+    if !config_dir_path.exists() {
+        println!("Creating config directory: {}", config_dir_path.display());
+        fs::create_dir_all(&config_dir_path).map_err(|e| {
+            HelperError::PlatformService(format!("Failed to create config directory: {}", e))
+        })?;
+    }
+
+    let current_user = std::env::var("USER").unwrap_or_else(|_| "nobody".to_string());
+    let home_dir = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+
+    let socket_filename = crate::communication::SOCKET_FILENAME;
+
+    let service_content = SYSTEMD_SERVICE_TEMPLATE
+        .replace("{{HELPER_PATH}}", &helper_path_str)
+        .replace("{{LOG_DIR}}", &config_dir_path.to_string_lossy())
+        .replace("{{SOCKET_FILENAME}}", socket_filename)
+        .replace("{{CURRENT_USER}}", &current_user)
+        .replace("{{HOME_DIR}}", &home_dir);
 
     let policy_content = POLKIT_POLICY_TEMPLATE.replace("{{HELPER_PATH}}", &helper_path_str);
 

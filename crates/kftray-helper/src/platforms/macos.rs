@@ -5,8 +5,13 @@ use std::{
     process::Command,
 };
 
+use kftray_commons::utils::config_dir;
+
 use crate::{
-    communication::get_default_socket_path,
+    communication::{
+        get_default_socket_path,
+        SOCKET_FILENAME,
+    },
     error::HelperError,
 };
 
@@ -16,6 +21,11 @@ const LAUNCHD_PLIST_TEMPLATE: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <dict>
     <key>Label</key>
     <string>{{SERVICE_NAME}}</string>
+    <key>MachServices</key>
+    <dict>
+        <key>{{SERVICE_NAME}}</key>
+        <true/>
+    </dict>
     <key>ProgramArguments</key>
     <array>
         <string>{{HELPER_PATH}}</string>
@@ -26,18 +36,23 @@ const LAUNCHD_PLIST_TEMPLATE: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>/tmp/{{SERVICE_NAME}}.log</string>
+    <string>{{CONFIG_DIR}}/{{SERVICE_NAME}}.log</string>
     <key>StandardErrorPath</key>
-    <string>/tmp/{{SERVICE_NAME}}.err</string>
-    <!-- Run as root -->
-    <key>UserName</key>
-    <string>root</string>
-    <key>GroupName</key>
-    <string>wheel</string>
-    <!-- Socket permissions -->
-    <key>Umask</key>
-    <integer>0</integer>
-    <!-- Give all necessary permissions -->
+    <string>{{CONFIG_DIR}}/{{SERVICE_NAME}}.err</string>
+    <!-- Environment variables - CRITICAL for socket path location -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>CONFIG_DIR</key>
+        <string>{{CONFIG_DIR}}</string>
+        <key>HOME</key>
+        <string>{{HOME_DIR}}</string>
+        <key>KFTRAY_CONFIG</key>
+        <string>{{CONFIG_DIR}}</string>
+        <key>SOCKET_PATH</key>
+        <string>{{CONFIG_DIR}}/{{SOCKET_FILENAME}}</string>
+        <key>USER</key>
+        <string>{{CURRENT_USER}}</string>
+    </dict>
     <key>ProcessType</key>
     <string>Interactive</string>
     <key>AbandonProcessGroup</key>
@@ -45,10 +60,12 @@ const LAUNCHD_PLIST_TEMPLATE: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 </dict>
 </plist>"#;
 
-pub fn install_service(service_name: &str) -> Result<(), HelperError> {
+pub fn install_service(_: &str) -> Result<(), HelperError> {
     let helper_path = std::env::current_exe().map_err(|e| {
         HelperError::PlatformService(format!("Failed to get current executable path: {}", e))
     })?;
+
+    let full_service_name = "com.hcavarsan.kftray.helper";
 
     if !helper_path.exists() {
         return Err(HelperError::PlatformService(format!(
@@ -57,13 +74,38 @@ pub fn install_service(service_name: &str) -> Result<(), HelperError> {
         )));
     }
 
-    println!("Installing privileged helper service: {}", service_name);
+    println!(
+        "Installing privileged helper service: {}",
+        full_service_name
+    );
 
+    let config_dir_path = match config_dir::get_config_dir() {
+        Ok(path) => path,
+        Err(_) => PathBuf::from("/tmp"),
+    };
+
+    if !config_dir_path.exists() {
+        println!("Creating config directory: {}", config_dir_path.display());
+        fs::create_dir_all(&config_dir_path).map_err(|e| {
+            HelperError::PlatformService(format!("Failed to create config directory: {}", e))
+        })?;
+    }
+
+    let current_user = std::env::var("USER").unwrap_or_else(|_| "nobody".to_string());
+    let current_group = current_user.clone();
+    let home_dir = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
+
+    let helper_install_path = "/Library/PrivilegedHelperTools/com.hcavarsan.kftray.helper";
     let plist_content = LAUNCHD_PLIST_TEMPLATE
-        .replace("{{SERVICE_NAME}}", service_name)
-        .replace("{{HELPER_PATH}}", "/usr/local/bin/kftray-helper");
+        .replace("{{SERVICE_NAME}}", full_service_name)
+        .replace("{{HELPER_PATH}}", helper_install_path)
+        .replace("{{CONFIG_DIR}}", &config_dir_path.to_string_lossy())
+        .replace("{{CURRENT_USER}}", &current_user)
+        .replace("{{CURRENT_GROUP}}", &current_group)
+        .replace("{{HOME_DIR}}", &home_dir)
+        .replace("{{SOCKET_FILENAME}}", SOCKET_FILENAME);
 
-    let tmp_plist_path = format!("/tmp/{}.plist", service_name);
+    let tmp_plist_path = format!("/tmp/{}.plist", full_service_name);
     let mut tmp_file = fs::File::create(&tmp_plist_path).map_err(|e| {
         HelperError::PlatformService(format!("Failed to create temp plist file: {}", e))
     })?;
@@ -73,50 +115,27 @@ pub fn install_service(service_name: &str) -> Result<(), HelperError> {
 
     let socket_path = get_default_socket_path()?;
 
+    let config_log_dir = config_dir_path.clone();
     let install_script = format!(
         r#"do shell script "
-# Copy helper binary and set permissions
-cp '{}' /usr/local/bin/kftray-helper
-chmod +x /usr/local/bin/kftray-helper
-
-# Install and load launchd daemon
-mv '{}' '/Library/LaunchDaemons/{}.plist'
-chown root:wheel '/Library/LaunchDaemons/{}.plist'
-launchctl unload '/Library/LaunchDaemons/{}.plist' 2>/dev/null || true
-launchctl load -w '/Library/LaunchDaemons/{}.plist'
-
-# Wait for daemon to start
-sleep 2
-
-# Check if service is running
-launchctl list {} | grep -v 'Could not find service' || echo 'Service not found yet, may be starting'
-
-# Wait for socket to be created
-for i in 1 2 3 4 5; do
-  if [ -e '{}' ]; then
-    echo 'Socket file exists, setting permissions'
-    # Restrict to the kftray group (or the invoking user) – change as appropriate
-    chown root:wheel '{}'
-    chmod 660 '{}'
-    ls -la '{}'
-    break
-  else
-    echo 'Waiting for socket file to be created...'
-    sleep 1
-  fi
-done
+mkdir -p '{0}' &&
+mkdir -p /Library/PrivilegedHelperTools &&
+cp '{1}' '{2}' &&
+chown root:wheel '{2}' &&
+chmod 544 '{2}' &&
+cp '{3}' '/Library/LaunchDaemons/{4}.plist' &&
+chown root:wheel '/Library/LaunchDaemons/{4}.plist' &&
+chmod 644 '/Library/LaunchDaemons/{4}.plist' &&
+launchctl unload '/Library/LaunchDaemons/{4}.plist' 2>/dev/null || true &&
+launchctl load -w '/Library/LaunchDaemons/{4}.plist' &&
+sleep 2 &&
+(launchctl list '{4}' | grep -v 'Could not find service' || echo 'Service not found yet, may be starting')
 " with administrator privileges"#,
+        config_log_dir.display(),
         helper_path.display(),
+        helper_install_path,
         tmp_plist_path,
-        service_name,
-        service_name,
-        service_name,
-        service_name,
-        service_name,
-        socket_path.display(),
-        socket_path.display(),
-        socket_path.display(),
-        socket_path.display()
+        full_service_name
     );
 
     println!("Requesting administrator privileges (one-time prompt)");
@@ -155,27 +174,48 @@ done
     Ok(())
 }
 
-pub fn uninstall_service(service_name: &str) -> Result<(), HelperError> {
+pub fn uninstall_service(_: &str) -> Result<(), HelperError> {
+    let full_service_name = "com.hcavarsan.kftray.helper";
+
     let daemon_plist_path =
-        PathBuf::from("/Library/LaunchDaemons").join(format!("{}.plist", service_name));
+        PathBuf::from("/Library/LaunchDaemons").join(format!("{}.plist", full_service_name));
 
     println!(
         "Uninstalling system daemon from: {}",
         daemon_plist_path.display()
     );
 
-    let socket_path = get_default_socket_path()?;
+    let config_dir_path = match config_dir::get_config_dir() {
+        Ok(path) => path,
+        Err(_) => PathBuf::from("/tmp"),
+    };
+
+    let user_socket_path = match config_dir::get_config_dir() {
+        Ok(mut path) => {
+            path.push(SOCKET_FILENAME);
+            path
+        }
+        Err(_) => PathBuf::from(format!("/tmp/{}", SOCKET_FILENAME)),
+    };
+
+    let tmp_socket_path = PathBuf::from(format!("/tmp/{}", SOCKET_FILENAME));
 
     let cmd_script = format!(
         r#"do shell script "
-launchctl unload -w {} 2>/dev/null || true
-rm {} 2>/dev/null || true
-rm /usr/local/bin/kftray-helper 2>/dev/null || true
-rm {} 2>/dev/null || true
+launchctl unload -w '{0}' 2>/dev/null || true &&
+rm '{0}' 2>/dev/null || true &&
+rm '/Library/PrivilegedHelperTools/com.hcavarsan.kftray.helper' 2>/dev/null || true &&
+rm /usr/local/bin/kftray-helper 2>/dev/null || true &&
+rm '{1}' 2>/dev/null || true &&
+rm '{2}' 2>/dev/null || true &&
+rm '{3}/{4}.log' 2>/dev/null || true &&
+rm '{3}/{4}.err' 2>/dev/null || true
 " with administrator privileges"#,
         daemon_plist_path.display(),
-        daemon_plist_path.display(),
-        socket_path.display()
+        user_socket_path.display(),
+        tmp_socket_path.display(),
+        config_dir_path.display(),
+        full_service_name
     );
 
     println!("Requesting administrator privileges to uninstall helper");
@@ -184,6 +224,11 @@ rm {} 2>/dev/null || true
     match osa_output {
         Ok(output) if output.status.success() => {
             println!("Successfully uninstalled helper service");
+
+            let out = String::from_utf8_lossy(&output.stdout);
+            for line in out.lines() {
+                println!("  {}", line);
+            }
         }
         Ok(output) => {
             let error = String::from_utf8_lossy(&output.stderr);
@@ -191,18 +236,50 @@ rm {} 2>/dev/null || true
                 "Warning: Some parts of uninstallation might have failed: {}",
                 error
             );
+
+            println!("Attempting to clean up some files directly");
+            self_cleanup_files(full_service_name, &user_socket_path, &tmp_socket_path);
         }
         Err(e) => {
             println!("Warning: Failed to run uninstallation script: {}", e);
+
+            println!("Attempting to clean up some files directly");
+            self_cleanup_files(full_service_name, &user_socket_path, &tmp_socket_path);
         }
     }
 
-    if socket_path.exists() {
-        println!("Socket file still exists, trying direct removal");
-        let _ = fs::remove_file(&socket_path);
+    Ok(())
+}
+
+fn self_cleanup_files(_: &str, user_socket: &PathBuf, tmp_socket: &PathBuf) {
+    let full_service_name = "com.hcavarsan.kftray.helper";
+
+    for socket in &[user_socket, tmp_socket] {
+        if socket.exists() {
+            println!("Removing socket file at: {}", socket.display());
+            if let Err(e) = fs::remove_file(socket) {
+                println!("  Failed to remove socket: {}", e);
+            } else {
+                println!("  Successfully removed socket");
+            }
+        }
     }
 
-    Ok(())
+    if let Ok(config_dir) = config_dir::get_config_dir() {
+        let log_file = config_dir.join(format!("{}.log", full_service_name));
+        let err_file = config_dir.join(format!("{}.err", full_service_name));
+
+        for file in &[log_file, err_file] {
+            if file.exists() {
+                println!("Removing log file at: {}", file.display());
+                if let Err(e) = fs::remove_file(file) {
+                    println!("  Failed to remove log file: {}", e);
+                } else {
+                    println!("  Successfully removed log file");
+                }
+            }
+        }
+    }
 }
 
 pub fn run_service() -> Result<(), HelperError> {

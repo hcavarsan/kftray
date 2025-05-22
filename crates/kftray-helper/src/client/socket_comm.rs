@@ -31,23 +31,7 @@ pub fn is_socket_available(socket_path: &Path) -> bool {
             return false;
         }
 
-        match UnixStream::connect(socket_path) {
-            Ok(_) => {
-                debug!("Successfully connected to helper socket");
-                true
-            }
-            Err(e) => {
-                debug!("Socket exists but connection failed: {}", e);
-
-                if let Err(rm_err) = std::fs::remove_file(socket_path) {
-                    debug!("Failed to remove stale socket: {}", rm_err);
-                } else {
-                    debug!("Removed stale socket file");
-                }
-
-                false
-            }
-        }
+        try_connect_socket(socket_path)
     }
 
     #[cfg(windows)]
@@ -67,10 +51,83 @@ pub fn is_socket_available(socket_path: &Path) -> bool {
     }
 }
 
+#[cfg(unix)]
+fn try_connect_socket(socket_path: &Path) -> bool {
+    debug!("Socket exists at: {}", socket_path.display());
+
+    match UnixStream::connect(socket_path) {
+        Ok(_) => {
+            debug!(
+                "Successfully connected to helper socket at {:?}",
+                socket_path
+            );
+            true
+        }
+        Err(e) => {
+            debug!(
+                "Socket exists at {:?} but connection failed: {}",
+                socket_path, e
+            );
+
+            if e.kind() == std::io::ErrorKind::PermissionDenied
+                || e.kind() == std::io::ErrorKind::ConnectionRefused
+            {
+                debug!("Detected stale or inaccessible socket");
+
+                if let Some(parent) = socket_path.parent() {
+                    if is_directory_writable(parent) {
+                        debug!("Removing stale socket from writable directory");
+                        if let Err(rm_err) = std::fs::remove_file(socket_path) {
+                            debug!("Failed to remove stale socket: {}", rm_err);
+                        } else {
+                            debug!("Removed stale socket file");
+                        }
+                    } else {
+                        debug!("Cannot remove stale socket - parent directory not writable");
+                    }
+                }
+            }
+
+            false
+        }
+    }
+}
+
+#[cfg(unix)]
+fn is_directory_writable(path: &Path) -> bool {
+    let test_file_path = path.join(".kftray_write_test");
+    let write_result = std::fs::File::create(&test_file_path);
+
+    if test_file_path.exists() {
+        let _ = std::fs::remove_file(&test_file_path);
+    }
+
+    write_result.is_ok()
+}
+
+#[cfg(windows)]
+
+fn try_connect_pipe(socket_path: &Path) -> bool {
+    let pipe_name = socket_path.to_string_lossy();
+    debug!("Checking if Windows pipe is available: {}", pipe_name);
+    match ClientOptions::new().open(pipe_name.as_ref()) {
+        Ok(_) => {
+            debug!("Successfully connected to Windows pipe");
+            true
+        }
+        Err(e) => {
+            debug!("Failed to connect to Windows pipe: {}", e);
+            false
+        }
+    }
+}
+
 pub fn send_request(
     socket_path: &Path, app_id: &str, command: RequestCommand,
 ) -> Result<HelperResponse, HelperError> {
     let request = HelperRequest::new(app_id.to_string(), command);
+
+    debug!("Using socket path: {}", socket_path.display());
 
     let request_bytes = serde_json::to_vec(&request)
         .map_err(|e| HelperError::Communication(format!("Failed to serialize request: {}", e)))?;

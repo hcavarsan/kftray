@@ -18,3 +18,5 @@ uuid = { version = "1.4", features = ["v4", "serde"] }
 dirs = "6.0"
 zbus = "5.7"
 windows-service = "0.8"
+kftray-commons = { path = "../kftray-commons" }
+libc = "0.2"

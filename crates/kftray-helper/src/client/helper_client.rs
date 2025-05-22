@@ -34,24 +34,44 @@ impl HelperClient {
 
     pub fn ensure_helper_installed(&self) -> Result<(), HelperError> {
         if self.is_helper_available() {
+            println!("Helper already available at {}", self.socket_path.display());
             return Ok(());
         }
 
         let helper_path = binary_finder::find_helper_binary()?;
+        println!("Found helper binary at {}", helper_path.display());
 
         installation::install_helper(&helper_path)?;
+        println!("Helper installation completed, waiting for socket to become available");
 
-        for _ in 0..5 {
+        let mut retry_count = 0;
+        let max_retries = 10;
+        while retry_count < max_retries {
             if self.is_helper_available() {
+                println!("Helper is now available at {}", self.socket_path.display());
                 return Ok(());
             }
-            std::thread::sleep(Duration::from_millis(500));
+
+            let wait_time = 500 * (retry_count + 1);
+            println!(
+                "Helper not available yet, waiting {}ms (attempt {}/{})",
+                wait_time,
+                retry_count + 1,
+                max_retries
+            );
+            std::thread::sleep(Duration::from_millis(wait_time));
+            retry_count += 1;
         }
 
         if !self.is_helper_available() {
-            return Err(HelperError::PlatformService(
-                "Helper was installed but is not available".into(),
-            ));
+            println!(
+                "Helper installation failed - socket not available at {}",
+                self.socket_path.display()
+            );
+            return Err(HelperError::PlatformService(format!(
+                "Helper was installed but socket is not available at {}",
+                self.socket_path.display()
+            )));
         }
 
         Ok(())
@@ -59,28 +79,52 @@ impl HelperClient {
 
     pub fn ensure_helper_uninstalled(&self) -> Result<(), HelperError> {
         if !self.is_helper_available() {
+            println!("Helper is not running, nothing to uninstall");
             return Ok(());
         }
 
+        println!("Attempting to stop the helper service...");
         let _ = self.stop_service();
 
         let helper_path = binary_finder::find_helper_binary()?;
+        println!("Found helper binary at {}", helper_path.display());
 
+        println!("Uninstalling helper...");
         uninstallation::uninstall_helper(&helper_path)?;
 
-        for _ in 0..5 {
+        println!("Waiting for helper to be fully uninstalled...");
+        let mut retry_count = 0;
+        let max_retries = 10;
+
+        while retry_count < max_retries {
             if !self.is_helper_available() {
+                println!("Confirmed helper is no longer available");
                 return Ok(());
             }
-            std::thread::sleep(Duration::from_millis(500));
+
+            let wait_time = 500 * (retry_count + 1);
+            println!(
+                "Helper still available, waiting {}ms (attempt {}/{})",
+                wait_time,
+                retry_count + 1,
+                max_retries
+            );
+            std::thread::sleep(Duration::from_millis(wait_time));
+            retry_count += 1;
         }
 
         if self.is_helper_available() {
-            return Err(HelperError::PlatformService(
-                "Helper was uninstalled but is still available".into(),
-            ));
+            println!(
+                "WARNING: Helper service is still responding after uninstall at {}",
+                self.socket_path.display()
+            );
+            return Err(HelperError::PlatformService(format!(
+                "Helper was uninstalled but is still available at {}",
+                self.socket_path.display()
+            )));
         }
 
+        println!("Helper service successfully uninstalled");
         Ok(())
     }
 

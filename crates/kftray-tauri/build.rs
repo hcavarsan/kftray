@@ -61,15 +61,9 @@ fn main() {
                     target_path.display()
                 );
 
-                // Ensure the binary is executable on Unix-like systems
                 #[cfg(not(target_os = "windows"))]
                 {
-                    use std::os::unix::fs::PermissionsExt;
-                    if let Err(e) =
-                        fs::set_permissions(&target_path, fs::Permissions::from_mode(0o755))
-                    {
-                        println!("cargo:warning=Failed to set executable permissions: {}", e);
-                    }
+                    println!("cargo:warning=Using default file permissions for binary");
                 }
             }
             Err(e) => {

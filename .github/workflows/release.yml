@@ -252,7 +252,7 @@ jobs:
           lipo -create -output ./crates/kftray-tauri/bin/kftray-helper-universal-apple-darwin ./target/release/kftray-helper-x86_64-apple-darwin ./target/release/kftray-helper-aarch64-apple-darwin
         shell: bash
 
-      - name: Sign and notarize the release build
+      - name: Sign and notarize the helper binary
         if: matrix.os == 'macos-latest'
         uses: toitlang/action-macos-sign-notarize@v1.2.1
         with:
@@ -262,7 +262,7 @@ jobs:
           password: ${{ secrets.APPLE_PASSWORD }}
           apple-team-id: 6M376JWU73
           app-path: crates/kftray-tauri/bin/kftray-helper-universal-apple-darwin
-          entitlements-path: crates/kftray-tauri/entitlements.plist
+          entitlements-path: crates/kftray-helper/macos-helper-entitlements.plist
 
       - name: Build kftray-tauri Desktop App
         uses: tauri-apps/tauri-action@v0

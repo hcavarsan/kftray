@@ -3006,6 +3006,8 @@ version = "0.18.1"
 dependencies = [
  "clap",
  "dirs",
+ "kftray-commons",
+ "libc",
  "log",
  "serde",
  "serde_json",
