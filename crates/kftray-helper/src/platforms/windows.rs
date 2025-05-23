@@ -20,21 +20,11 @@ use windows_service::{
     service_dispatcher,
 };
 
-use crate::{
-    address_pool::AddressPoolManager,
-    communication::{
-        get_default_socket_path,
-        start_communication_server,
-    },
-    error::HelperError,
-    network::NetworkConfigManager,
-};
+use crate::error::HelperError;
 
 pub fn install_service(service_name: &str) -> Result<(), HelperError> {
     #[cfg(target_os = "windows")]
     {
-        use std::process::Command;
-
         use windows_service::{
             service::{
                 ServiceAccess,

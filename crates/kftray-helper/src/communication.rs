@@ -142,7 +142,7 @@ pub fn get_default_socket_path() -> Result<PathBuf, HelperError> {
         if let Some(parent) = socket_path.parent() {
             if !parent.exists() {
                 println!("Creating socket parent directory: {parent:?}");
-                if let Err(e) = std::fs::create_dir_all(parent) {
+                if let Err(e) = fs::create_dir_all(parent) {
                     println!("Failed to create socket directory: {e}");
                     return Err(HelperError::Communication(format!(
                         "Failed to create socket directory: {parent:?}, error: {e}"
@@ -263,7 +263,7 @@ pub fn get_default_socket_path() -> Result<PathBuf, HelperError> {
         if let Some(parent) = socket_path.parent() {
             if !parent.exists() {
                 println!("Creating socket parent directory: {:?}", parent);
-                if let Err(e) = std::fs::create_dir_all(parent) {
+                if let Err(e) = fs::create_dir_all(parent) {
                     println!("Failed to create socket directory: {}", e);
                     return Err(HelperError::Communication(format!(
                         "Failed to create socket directory: {:?}, error: {}",

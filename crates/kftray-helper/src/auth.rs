@@ -217,8 +217,8 @@ fn get_current_user_sid() -> Result<String, HelperError> {
     use windows::{
         core::PWSTR,
         Win32::Foundation::CloseHandle,
+        Win32::Security::Authorization::ConvertSidToStringSidW,
         Win32::Security::{
-            ConvertSidToStringSidW,
             GetTokenInformation,
             TokenUser,
             TOKEN_QUERY,
@@ -295,8 +295,8 @@ fn get_process_user_sid(process_id: u32) -> Result<String, HelperError> {
             CloseHandle,
             HANDLE,
         },
+        Win32::Security::Authorization::ConvertSidToStringSidW,
         Win32::Security::{
-            ConvertSidToStringSidW,
             GetTokenInformation,
             TokenUser,
             TOKEN_QUERY,
@@ -410,15 +410,22 @@ fn is_running_as_admin() -> Result<bool, HelperError> {
         CreateWellKnownSid(
             WinBuiltinAdministratorsSid,
             None,
-            Some(admin_sid_buffer.as_mut_ptr() as *mut _),
+            Some(windows::Win32::Security::PSID(
+                admin_sid_buffer.as_mut_ptr() as *mut _,
+            )),
             &mut admin_sid_size,
         )
         .map_err(|e| HelperError::Authentication(format!("Failed to create admin SID: {}", e)))?;
 
         let mut is_member = BOOL(0);
-        CheckTokenMembership(None, admin_sid_buffer.as_ptr() as *const _, &mut is_member).map_err(
-            |e| HelperError::Authentication(format!("Failed to check admin membership: {}", e)),
-        )?;
+        CheckTokenMembership(
+            None,
+            windows::Win32::Security::PSID(admin_sid_buffer.as_ptr() as *const _),
+            &mut is_member,
+        )
+        .map_err(|e| {
+            HelperError::Authentication(format!("Failed to check admin membership: {}", e))
+        })?;
 
         Ok(is_member.as_bool())
     }
@@ -458,8 +465,8 @@ fn get_file_owner_sid<P: AsRef<std::path::Path>>(path: P) -> Result<String, Help
     use windows::{
         core::PWSTR,
         Win32::Foundation::LocalFree,
+        Win32::Security::Authorization::ConvertSidToStringSidW,
         Win32::Security::{
-            ConvertSidToStringSidW,
             GetFileSecurityW,
             GetSecurityDescriptorOwner,
             OWNER_SECURITY_INFORMATION,
@@ -473,7 +480,7 @@ fn get_file_owner_sid<P: AsRef<std::path::Path>>(path: P) -> Result<String, Help
         let mut size_needed = 0u32;
         let _ = GetFileSecurityW(
             windows::core::PCWSTR(path_wide.as_ptr()),
-            OWNER_SECURITY_INFORMATION,
+            OWNER_SECURITY_INFORMATION.0,
             None,
             0,
             &mut size_needed,
@@ -482,19 +489,22 @@ fn get_file_owner_sid<P: AsRef<std::path::Path>>(path: P) -> Result<String, Help
         let mut security_descriptor = vec![0u8; size_needed as usize];
         GetFileSecurityW(
             windows::core::PCWSTR(path_wide.as_ptr()),
-            OWNER_SECURITY_INFORMATION,
-            Some(security_descriptor.as_mut_ptr() as *mut _),
+            OWNER_SECURITY_INFORMATION.0,
+            Some(windows::Win32::Security::PSECURITY_DESCRIPTOR(
+                security_descriptor.as_mut_ptr() as *mut _,
+            )),
             size_needed,
             &mut size_needed,
         )
-        .map_err(|e| HelperError::Authentication(format!("Failed to get file security: {}", e)))?;
+        .ok()
+        .ok_or_else(|| HelperError::Authentication("Failed to get file security".to_string()))?;
 
         let mut owner_sid = std::ptr::null_mut();
         let mut owner_defaulted = windows::Win32::Foundation::BOOL(0);
 
         GetSecurityDescriptorOwner(
-            security_descriptor.as_ptr() as *const _,
-            &mut owner_sid,
+            windows::Win32::Security::PSECURITY_DESCRIPTOR(security_descriptor.as_ptr() as *const _),
+            owner_sid,
             &mut owner_defaulted,
         )
         .map_err(|e| {
@@ -505,15 +515,18 @@ fn get_file_owner_sid<P: AsRef<std::path::Path>>(path: P) -> Result<String, Help
         })?;
 
         let mut sid_string = PWSTR::null();
-        ConvertSidToStringSidW(owner_sid, &mut sid_string).map_err(|e| {
-            HelperError::Authentication(format!("Failed to convert owner SID to string: {}", e))
-        })?;
+        ConvertSidToStringSidW(windows::Win32::Security::PSID(owner_sid), &mut sid_string)
+            .map_err(|e| {
+                HelperError::Authentication(format!("Failed to convert owner SID to string: {}", e))
+            })?;
 
         let result = sid_string.to_string().map_err(|e| {
             HelperError::Authentication(format!("Failed to convert SID to UTF-8: {}", e))
         })?;
 
-        LocalFree(sid_string.0 as *const _);
+        LocalFree(Some(windows::Win32::Foundation::HLOCAL(
+            sid_string.0 as *mut _,
+        )));
         Ok(result)
     }
 }
