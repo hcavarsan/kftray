@@ -13,7 +13,7 @@ async fn clear_existing_configs_with_pool(pool: &SqlitePool) -> Result<(), sqlx:
 pub async fn clear_existing_configs() -> Result<(), sqlx::Error> {
     let pool = get_db_pool()
         .await
-        .map_err(|e| sqlx::Error::Configuration(format!("DB Pool error: {}", e).into()))?;
+        .map_err(|e| sqlx::Error::Configuration(format!("DB Pool error: {e}").into()))?;
     clear_existing_configs_with_pool(&pool).await
 }
 
@@ -44,8 +44,7 @@ pub fn build_github_api_url(repo_url: &str, config_path: &str) -> Result<String,
     let repo = url_parts[1];
 
     Ok(format!(
-        "{}/{}/{}/contents/{}",
-        base_api_url, owner, repo, config_path
+        "{base_api_url}/{owner}/{repo}/contents/{config_path}"
     ))
 }
 

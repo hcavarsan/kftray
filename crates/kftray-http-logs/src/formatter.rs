@@ -34,7 +34,7 @@ impl MessageFormatter {
         let (method, path, version, headers) = RequestParser::parse(buffer)?;
 
         if let (Some(method), Some(path), Some(version)) = (method, path, version) {
-            log_entry.push_str(&format!("{} {} HTTP/1.{}\n", method, path, version));
+            log_entry.push_str(&format!("{method} {path} HTTP/1.{version}\n"));
 
             Self::append_headers(&headers, &mut log_entry);
 
@@ -431,8 +431,7 @@ impl MessageFormatter {
         body: &[u8], headers: &[Header<'_>], log_entry: &mut String, error: anyhow::Error,
     ) -> Result<Vec<u8>> {
         log_entry.push_str(&format!(
-            "<!-- Debug: Failed to process content: {} -->",
-            error
+            "<!-- Debug: Failed to process content: {error} -->"
         ));
 
         if let Some(content_type) = Self::extract_content_type(headers) {
@@ -885,14 +884,14 @@ mod formatter_tests {
         let headers = b"Header1: Value1\r\nHeader2: Value2\r\n\r\nBody";
 
         let pos = MessageFormatter::find_headers_end(headers);
-        println!("CRLF CRLF position: {:?}", pos);
+        println!("CRLF CRLF position: {pos:?}");
 
         assert_eq!(pos, Some(36));
 
         let headers = b"Header1: Value1\nHeader2: Value2\n\nBody";
 
         let pos = MessageFormatter::find_headers_end(headers);
-        println!("LF LF position: {:?}", pos);
+        println!("LF LF position: {pos:?}");
 
         assert_eq!(pos, Some(33));
 
@@ -1014,7 +1013,7 @@ mod formatter_tests {
             assert!(formatted.contains("test"), "Should contain JSON key");
             assert!(formatted.contains("true"), "Should contain JSON value");
 
-            println!("Formatted request: {}", formatted);
+            println!("Formatted request: {formatted}");
         } else {
             panic!("Expected Request LogMessage");
         }

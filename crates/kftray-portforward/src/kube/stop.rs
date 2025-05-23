@@ -60,8 +60,8 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
             .map(|s| s.config_id)
             .collect::<Vec<i64>>(),
         Err(e) => {
-            let error_message = format!("Failed to retrieve config states: {}", e);
-            error!("{}", error_message);
+            let error_message = format!("Failed to retrieve config states: {e}");
+            error!("{error_message}");
             return Err(error_message);
         }
     };
@@ -69,8 +69,8 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
     let configs = match get_configs().await {
         Ok(configs) => configs,
         Err(e) => {
-            let error_message = format!("Failed to retrieve configs: {}", e);
-            error!("{}", error_message);
+            let error_message = format!("Failed to retrieve configs: {e}");
+            error!("{error_message}");
             return Err(error_message);
         }
     };
@@ -92,8 +92,7 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
             async move {
                 if ids.len() != 2 {
                     error!(
-                        "Invalid composite key format encountered: {}",
-                        composite_key
+                        "Invalid composite key format encountered: {composite_key}"
                     );
                     return CustomResponse {
                         id: None,
@@ -118,32 +117,29 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
                     if config.domain_enabled.unwrap_or_default() {
                         if let Err(e) = remove_host_entry(config_id_str) {
                             error!(
-                                "Failed to remove host entry for ID {}: {}",
-                                config_id_str, e
+                                "Failed to remove host entry for ID {config_id_str}: {e}"
                             );
                         }
                     }
                 } else {
-                    warn!("Config with id '{}' not found.", config_id_str);
+                    warn!("Config with id '{config_id_str}' not found.");
                 }
 
                 info!(
-                    "Aborting port forwarding task for config_id: {}",
-                    config_id_str
+                    "Aborting port forwarding task for config_id: {config_id_str}"
                 );
 
                 if let Some(config) = config_map_cloned.get(&config_id_parsed).cloned() {
                     if let Some(local_addr) = &config.local_address {
                         if local_addr != "127.0.0.1" {
                             info!(
-                                "Cleaning up loopback address for config {}: {}",
-                                config_id_str, local_addr
+                                "Cleaning up loopback address for config {config_id_str}: {local_addr}"
                             );
 
                             if let Err(e) =
                                 crate::network_utils::remove_loopback_address(local_addr).await
                             {
-                                warn!("Failed to remove loopback address {}: {}", local_addr, e);
+                                warn!("Failed to remove loopback address {local_addr}: {e}");
                             }
                         }
                     }
@@ -195,11 +191,11 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
                     Ok((Some(client), _, _)) => {
                         let pods: Api<Pod> = Api::all(client.clone());
                         let lp =
-                            ListParams::default().labels(&format!("config_id={}", config_id_str));
+                            ListParams::default().labels(&format!("config_id={config_id_str}"));
 
                         if let Ok(pod_list) = pods.list(&lp).await {
                             let username = whoami::username();
-                            let pod_prefix = format!("kftray-forward-{}", username);
+                            let pod_prefix = format!("kftray-forward-{username}");
                             let delete_tasks: FuturesUnordered<_> = pod_list
                                 .items
                                 .into_iter()
@@ -221,12 +217,10 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
                                                 match pods_in_namespace.delete(&pod_name, &dp).await
                                                 {
                                                     Ok(_) => info!(
-                                                        "Successfully deleted pod: {}",
-                                                        pod_name
+                                                        "Successfully deleted pod: {pod_name}"
                                                     ),
                                                     Err(e) => error!(
-                                                        "Failed to delete pod {}: {}",
-                                                        pod_name, e
+                                                        "Failed to delete pod {pod_name}: {e}"
                                                     ),
                                                 }
                                             });
@@ -238,13 +232,13 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
 
                             delete_tasks.collect::<Vec<_>>().await;
                         } else {
-                            error!("Error listing pods for config_id {}", config_id_str);
+                            error!("Error listing pods for config_id {config_id_str}");
                         }
                     }
                     Ok((None, _, _)) => {
-                        error!("Client not created for kubeconfig: {:?}", kubeconfig)
+                        error!("Client not created for kubeconfig: {kubeconfig:?}")
                     }
-                    Err(e) => error!("Failed to create Kubernetes client: {}", e),
+                    Err(e) => error!("Failed to create Kubernetes client: {e}"),
                 }
             }
         })
@@ -263,12 +257,9 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
                     is_running: false,
                 };
                 if let Err(e) = update_config_state(&config_state).await {
-                    error!("Failed to update config state: {}", e);
+                    error!("Failed to update config state: {e}");
                 } else {
-                    info!(
-                        "Successfully updated config state for config_id: {}",
-                        config_id_parsed
-                    );
+                    info!("Successfully updated config state for config_id: {config_id_parsed}");
                 }
             }
         })
@@ -277,7 +268,7 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
     update_config_tasks.collect::<Vec<_>>().await;
 
     if let Err(e) = remove_all_host_entries() {
-        error!("Failed to clean up all host entries: {}", e);
+        error!("Failed to clean up all host entries: {e}");
     }
 
     info!(
@@ -296,7 +287,7 @@ pub async fn stop_port_forward(config_id: String) -> Result<CustomResponse, Stri
         let child_processes = CHILD_PROCESSES.lock().unwrap();
         child_processes
             .keys()
-            .find(|key| key.starts_with(&format!("{}_", config_id)))
+            .find(|key| key.starts_with(&format!("{config_id}_")))
             .map(|key| key.to_string())
     };
 
@@ -307,15 +298,12 @@ pub async fn stop_port_forward(config_id: String) -> Result<CustomResponse, Stri
             if let Some(config) = configs.iter().find(|c| c.id == Some(config_id_parsed)) {
                 if let Some(local_addr) = &config.local_address {
                     if local_addr != "127.0.0.1" {
-                        info!(
-                            "Cleaning up loopback address for config {}: {}",
-                            config_id, local_addr
-                        );
+                        info!("Cleaning up loopback address for config {config_id}: {local_addr}");
 
                         if let Err(e) =
                             crate::network_utils::remove_loopback_address(local_addr).await
                         {
-                            warn!("Failed to remove loopback address {}: {}", local_addr, e);
+                            warn!("Failed to remove loopback address {local_addr}: {e}");
                         }
                     }
                 }
@@ -324,12 +312,12 @@ pub async fn stop_port_forward(config_id: String) -> Result<CustomResponse, Stri
 
         let join_handle = {
             let mut child_processes = CHILD_PROCESSES.lock().unwrap();
-            debug!("child_processes: {:?}", child_processes);
+            debug!("child_processes: {child_processes:?}");
             child_processes.remove(&composite_key)
         };
 
         if let Some(join_handle) = join_handle {
-            debug!("Join handle: {:?}", join_handle);
+            debug!("Join handle: {join_handle:?}");
             join_handle.abort();
         }
 
@@ -341,10 +329,7 @@ pub async fn stop_port_forward(config_id: String) -> Result<CustomResponse, Stri
                 if let Some(config) = configs.iter().find(|c| c.id == Some(config_id_parsed)) {
                     if config.domain_enabled.unwrap_or_default() {
                         if let Err(e) = remove_host_entry(config_id_str) {
-                            error!(
-                                "Failed to remove host entry for ID {}: {}",
-                                config_id_str, e
-                            );
+                            error!("Failed to remove host entry for ID {config_id_str}: {e}");
 
                             let config_state = ConfigState {
                                 id: None,
@@ -352,13 +337,13 @@ pub async fn stop_port_forward(config_id: String) -> Result<CustomResponse, Stri
                                 is_running: false,
                             };
                             if let Err(e) = update_config_state(&config_state).await {
-                                error!("Failed to update config state: {}", e);
+                                error!("Failed to update config state: {e}");
                             }
                             return Err(e.to_string());
                         }
                     }
                 } else {
-                    warn!("Config with id '{}' not found.", config_id_str);
+                    warn!("Config with id '{config_id_str}' not found.");
                 }
 
                 let config_state = ConfigState {
@@ -367,7 +352,7 @@ pub async fn stop_port_forward(config_id: String) -> Result<CustomResponse, Stri
                     is_running: false,
                 };
                 if let Err(e) = update_config_state(&config_state).await {
-                    error!("Failed to update config state: {}", e);
+                    error!("Failed to update config state: {e}");
                 }
 
                 Ok(CustomResponse {
@@ -391,9 +376,9 @@ pub async fn stop_port_forward(config_id: String) -> Result<CustomResponse, Stri
                     is_running: false,
                 };
                 if let Err(e) = update_config_state(&config_state).await {
-                    error!("Failed to update config state: {}", e);
+                    error!("Failed to update config state: {e}");
                 }
-                Err(format!("Failed to retrieve configs: {}", e))
+                Err(format!("Failed to retrieve configs: {e}"))
             }
         }
     } else {
@@ -404,11 +389,10 @@ pub async fn stop_port_forward(config_id: String) -> Result<CustomResponse, Stri
             is_running: false,
         };
         if let Err(e) = update_config_state(&config_state).await {
-            error!("Failed to update config state: {}", e);
+            error!("Failed to update config state: {e}");
         }
         Err(format!(
-            "No port forwarding process found for config_id '{}'",
-            config_id
+            "No port forwarding process found for config_id '{config_id}'"
         ))
     }
 }
@@ -487,7 +471,7 @@ mod tests {
                 );
             }
             Err(e) => {
-                panic!("Expected Ok result but got error: {}", e);
+                panic!("Expected Ok result but got error: {e}");
             }
         }
     }
@@ -549,7 +533,7 @@ mod tests {
         let config_id = 123;
         let service_id = "my-service";
 
-        let composite_key = format!("{}_{}", config_id, service_id);
+        let composite_key = format!("{config_id}_{service_id}");
         assert_eq!(composite_key, "123_my-service");
 
         let (config_id_str, service_name) = composite_key.split_once('_').unwrap();

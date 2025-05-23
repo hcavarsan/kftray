@@ -62,7 +62,7 @@ const LAUNCHD_PLIST_TEMPLATE: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 
 pub fn install_service(_: &str) -> Result<(), HelperError> {
     let helper_path = std::env::current_exe().map_err(|e| {
-        HelperError::PlatformService(format!("Failed to get current executable path: {}", e))
+        HelperError::PlatformService(format!("Failed to get current executable path: {e}"))
     })?;
 
     let full_service_name = "com.hcavarsan.kftray.helper";
@@ -74,10 +74,7 @@ pub fn install_service(_: &str) -> Result<(), HelperError> {
         )));
     }
 
-    println!(
-        "Installing privileged helper service: {}",
-        full_service_name
-    );
+    println!("Installing privileged helper service: {full_service_name}");
 
     let config_dir_path = match config_dir::get_config_dir() {
         Ok(path) => path,
@@ -87,7 +84,7 @@ pub fn install_service(_: &str) -> Result<(), HelperError> {
     if !config_dir_path.exists() {
         println!("Creating config directory: {}", config_dir_path.display());
         fs::create_dir_all(&config_dir_path).map_err(|e| {
-            HelperError::PlatformService(format!("Failed to create config directory: {}", e))
+            HelperError::PlatformService(format!("Failed to create config directory: {e}"))
         })?;
     }
 
@@ -105,12 +102,12 @@ pub fn install_service(_: &str) -> Result<(), HelperError> {
         .replace("{{HOME_DIR}}", &home_dir)
         .replace("{{SOCKET_FILENAME}}", SOCKET_FILENAME);
 
-    let tmp_plist_path = format!("/tmp/{}.plist", full_service_name);
+    let tmp_plist_path = format!("/tmp/{full_service_name}.plist");
     let mut tmp_file = fs::File::create(&tmp_plist_path).map_err(|e| {
-        HelperError::PlatformService(format!("Failed to create temp plist file: {}", e))
+        HelperError::PlatformService(format!("Failed to create temp plist file: {e}"))
     })?;
     tmp_file.write_all(plist_content.as_bytes()).map_err(|e| {
-        HelperError::PlatformService(format!("Failed to write temp plist file: {}", e))
+        HelperError::PlatformService(format!("Failed to write temp plist file: {e}"))
     })?;
 
     let socket_path = get_default_socket_path()?;
@@ -143,7 +140,7 @@ sleep 2 &&
         .args(["-e", &install_script])
         .output()
         .map_err(|e| {
-            HelperError::PlatformService(format!("Failed to run installation script: {}", e))
+            HelperError::PlatformService(format!("Failed to run installation script: {e}"))
         })?;
 
     if osa_output.status.success() {
@@ -151,13 +148,12 @@ sleep 2 &&
 
         let output = String::from_utf8_lossy(&osa_output.stdout);
         for line in output.lines() {
-            println!("  {}", line);
+            println!("  {line}");
         }
     } else {
         let error = String::from_utf8_lossy(&osa_output.stderr);
         return Err(HelperError::PlatformService(format!(
-            "Failed to install helper service: {}",
-            error
+            "Failed to install helper service: {error}"
         )));
     }
 
@@ -178,7 +174,7 @@ pub fn uninstall_service(_: &str) -> Result<(), HelperError> {
     let full_service_name = "com.hcavarsan.kftray.helper";
 
     let daemon_plist_path =
-        PathBuf::from("/Library/LaunchDaemons").join(format!("{}.plist", full_service_name));
+        PathBuf::from("/Library/LaunchDaemons").join(format!("{full_service_name}.plist"));
 
     println!(
         "Uninstalling system daemon from: {}",
@@ -195,10 +191,10 @@ pub fn uninstall_service(_: &str) -> Result<(), HelperError> {
             path.push(SOCKET_FILENAME);
             path
         }
-        Err(_) => PathBuf::from(format!("/tmp/{}", SOCKET_FILENAME)),
+        Err(_) => PathBuf::from(format!("/tmp/{SOCKET_FILENAME}")),
     };
 
-    let tmp_socket_path = PathBuf::from(format!("/tmp/{}", SOCKET_FILENAME));
+    let tmp_socket_path = PathBuf::from(format!("/tmp/{SOCKET_FILENAME}"));
 
     let cmd_script = format!(
         r#"do shell script "
@@ -227,21 +223,18 @@ rm '{3}/{4}.err' 2>/dev/null || true
 
             let out = String::from_utf8_lossy(&output.stdout);
             for line in out.lines() {
-                println!("  {}", line);
+                println!("  {line}");
             }
         }
         Ok(output) => {
             let error = String::from_utf8_lossy(&output.stderr);
-            println!(
-                "Warning: Some parts of uninstallation might have failed: {}",
-                error
-            );
+            println!("Warning: Some parts of uninstallation might have failed: {error}");
 
             println!("Attempting to clean up some files directly");
             self_cleanup_files(full_service_name, &user_socket_path, &tmp_socket_path);
         }
         Err(e) => {
-            println!("Warning: Failed to run uninstallation script: {}", e);
+            println!("Warning: Failed to run uninstallation script: {e}");
 
             println!("Attempting to clean up some files directly");
             self_cleanup_files(full_service_name, &user_socket_path, &tmp_socket_path);
@@ -258,7 +251,7 @@ fn self_cleanup_files(_: &str, user_socket: &PathBuf, tmp_socket: &PathBuf) {
         if socket.exists() {
             println!("Removing socket file at: {}", socket.display());
             if let Err(e) = fs::remove_file(socket) {
-                println!("  Failed to remove socket: {}", e);
+                println!("  Failed to remove socket: {e}");
             } else {
                 println!("  Successfully removed socket");
             }
@@ -266,14 +259,14 @@ fn self_cleanup_files(_: &str, user_socket: &PathBuf, tmp_socket: &PathBuf) {
     }
 
     if let Ok(config_dir) = config_dir::get_config_dir() {
-        let log_file = config_dir.join(format!("{}.log", full_service_name));
-        let err_file = config_dir.join(format!("{}.err", full_service_name));
+        let log_file = config_dir.join(format!("{full_service_name}.log"));
+        let err_file = config_dir.join(format!("{full_service_name}.err"));
 
         for file in &[log_file, err_file] {
             if file.exists() {
                 println!("Removing log file at: {}", file.display());
                 if let Err(e) = fs::remove_file(file) {
-                    println!("  Failed to remove log file: {}", e);
+                    println!("  Failed to remove log file: {e}");
                 } else {
                     println!("  Successfully removed log file");
                 }
@@ -316,10 +309,9 @@ pub fn run_service() -> Result<(), HelperError> {
                 })
             }
             Err(e) => {
-                eprintln!("Failed to build tokio runtime: {}", e);
+                eprintln!("Failed to build tokio runtime: {e}");
                 Err(HelperError::PlatformService(format!(
-                    "Failed to build tokio runtime: {}",
-                    e
+                    "Failed to build tokio runtime: {e}"
                 )))
             }
         }

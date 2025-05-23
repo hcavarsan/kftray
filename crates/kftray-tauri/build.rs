@@ -8,7 +8,7 @@ use std::path::{
 fn main() {
     let target_triple = std::env::var("TARGET").unwrap();
 
-    println!("cargo:warning=Building for target: {}", target_triple);
+    println!("cargo:warning=Building for target: {target_triple}");
 
     let manifest_dir = env::var("CARGO_MANIFEST_DIR").unwrap();
     let bin_dir = Path::new(&manifest_dir).join("bin");
@@ -22,7 +22,7 @@ fn main() {
     } else {
         ""
     };
-    let target_filename = format!("kftray-helper-{}{}", target_triple, extension);
+    let target_filename = format!("kftray-helper-{target_triple}{extension}");
     let target_path = bin_dir.join(&target_filename);
 
     println!("cargo:rerun-if-changed={}", target_path.display());
@@ -42,7 +42,7 @@ fn main() {
     let helper_bin = workspace_root
         .join("target")
         .join("release")
-        .join(format!("kftray-helper{}", extension));
+        .join(format!("kftray-helper{extension}"));
 
     println!(
         "cargo:warning=Looking for helper binary at: {}",
@@ -67,7 +67,7 @@ fn main() {
                 }
             }
             Err(e) => {
-                println!("cargo:warning=Failed to copy helper binary: {}", e);
+                println!("cargo:warning=Failed to copy helper binary: {e}");
             }
         }
     } else {

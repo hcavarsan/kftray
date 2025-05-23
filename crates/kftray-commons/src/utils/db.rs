@@ -46,13 +46,13 @@ pub async fn get_db_pool() -> Result<Arc<SqlitePool>, String> {
     DB_POOL
         .get_or_try_init(|| async {
             let db_dir = get_db_file_path().map_err(|e| {
-                error!("Failed to get DB file path: {}", e);
+                error!("Failed to get DB file path: {e}");
                 e.to_string()
             })?;
             let db_dir_str = db_dir.to_str().ok_or("Invalid DB path")?;
-            info!("Database file path: {}", db_dir_str);
+            info!("Database file path: {db_dir_str}");
             let pool = SqlitePool::connect(db_dir_str).await.map_err(|e| {
-                error!("Failed to connect to DB: {}", e);
+                error!("Failed to connect to DB: {e}");
                 e.to_string()
             })?;
             Ok(Arc::new(pool))
@@ -64,7 +64,7 @@ pub async fn get_db_pool() -> Result<Arc<SqlitePool>, String> {
 pub async fn create_db_table(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     info!("Creating database tables and triggers.");
     let mut conn = pool.acquire().await.map_err(|e| {
-        error!("Failed to acquire connection: {}", e);
+        error!("Failed to acquire connection: {e}");
         e
     })?;
 
@@ -72,7 +72,7 @@ pub async fn create_db_table(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         .execute(&mut *conn)
         .await
         .map_err(|e| {
-            error!("Failed to set PRAGMA foreign_keys: {}", e);
+            error!("Failed to set PRAGMA foreign_keys: {e}");
             e
         })?;
 
@@ -85,7 +85,7 @@ pub async fn create_db_table(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     .execute(&mut *conn)
     .await
     .map_err(|e| {
-        error!("Failed to create configs table: {}", e);
+        error!("Failed to create configs table: {e}");
         e
     })?;
 
@@ -100,7 +100,7 @@ pub async fn create_db_table(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     .execute(&mut *conn)
     .await
     .map_err(|e| {
-        error!("Failed to create config_state table: {}", e);
+        error!("Failed to create config_state table: {e}");
         e
     })?;
 
@@ -115,7 +115,7 @@ pub async fn create_db_table(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     .execute(&mut *conn)
     .await
     .map_err(|e| {
-        error!("Failed to create after_insert_config trigger: {}", e);
+        error!("Failed to create after_insert_config trigger: {e}");
         e
     })?;
 
@@ -130,7 +130,7 @@ pub async fn create_db_table(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     .execute(&mut *conn)
     .await
     .map_err(|e| {
-        error!("Failed to create after_delete_config trigger: {}", e);
+        error!("Failed to create after_delete_config trigger: {e}");
         e
     })?;
 
@@ -153,7 +153,7 @@ fn pod_manifest_file_exists() -> bool {
         }
         Err(e) => {
             if cfg!(test) {
-                println!("pod_manifest_file_exists failed to get path: {}", e);
+                println!("pod_manifest_file_exists failed to get path: {e}");
             }
             false
         }
@@ -163,12 +163,9 @@ fn pod_manifest_file_exists() -> bool {
 fn create_server_config_manifest() -> Result<(), std::io::Error> {
     let manifest_path = get_pod_manifest_path().map_err(std::io::Error::other)?;
 
-    let manifest_dir = manifest_path.parent().ok_or_else(|| {
-        std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "Failed to get manifest directory",
-        )
-    })?;
+    let manifest_dir = manifest_path
+        .parent()
+        .ok_or_else(|| std::io::Error::other("Failed to get manifest directory"))?;
 
     if !manifest_dir.exists() {
         fs::create_dir_all(manifest_dir)?;
@@ -229,7 +226,7 @@ fn db_file_exists() -> bool {
         }
         Err(e) => {
             if cfg!(test) {
-                println!("db_file_exists failed to get path: {}", e);
+                println!("db_file_exists failed to get path: {e}");
             }
             false
         }
@@ -353,7 +350,7 @@ mod tests {
 
         let config_path = test_dir.to_str().unwrap();
         env::set_var("KFTRAY_CONFIG", config_path);
-        println!("Set KFTRAY_CONFIG to: {}", config_path);
+        println!("Set KFTRAY_CONFIG to: {config_path}");
 
         assert!(env::var("HOME").is_err(), "HOME should not be set");
         assert!(
@@ -391,7 +388,7 @@ mod tests {
         );
 
         let func_result = pod_manifest_file_exists();
-        println!("pod_manifest_file_exists() returned: {}", func_result);
+        println!("pod_manifest_file_exists() returned: {func_result}");
         assert!(func_result, "pod_manifest_file_exists() should return true");
 
         let content = fs::read_to_string(&expected_manifest_path).unwrap();

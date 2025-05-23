@@ -27,7 +27,7 @@ pub fn is_socket_available(socket_path: &Path) -> bool {
     #[cfg(unix)]
     {
         if !socket_path.exists() {
-            debug!("Helper socket doesn't exist at: {:?}", socket_path);
+            debug!("Helper socket doesn't exist at: {socket_path:?}");
             return false;
         }
 
@@ -57,17 +57,11 @@ fn try_connect_socket(socket_path: &Path) -> bool {
 
     match UnixStream::connect(socket_path) {
         Ok(_) => {
-            debug!(
-                "Successfully connected to helper socket at {:?}",
-                socket_path
-            );
+            debug!("Successfully connected to helper socket at {socket_path:?}");
             true
         }
         Err(e) => {
-            debug!(
-                "Socket exists at {:?} but connection failed: {}",
-                socket_path, e
-            );
+            debug!("Socket exists at {socket_path:?} but connection failed: {e}");
 
             if e.kind() == std::io::ErrorKind::PermissionDenied
                 || e.kind() == std::io::ErrorKind::ConnectionRefused
@@ -78,7 +72,7 @@ fn try_connect_socket(socket_path: &Path) -> bool {
                     if is_directory_writable(parent) {
                         debug!("Removing stale socket from writable directory");
                         if let Err(rm_err) = std::fs::remove_file(socket_path) {
-                            debug!("Failed to remove stale socket: {}", rm_err);
+                            debug!("Failed to remove stale socket: {rm_err}");
                         } else {
                             debug!("Removed stale socket file");
                         }
@@ -130,25 +124,25 @@ pub fn send_request(
     debug!("Using socket path: {}", socket_path.display());
 
     let request_bytes = serde_json::to_vec(&request)
-        .map_err(|e| HelperError::Communication(format!("Failed to serialize request: {}", e)))?;
+        .map_err(|e| HelperError::Communication(format!("Failed to serialize request: {e}")))?;
 
     #[cfg(unix)]
     {
         debug!("Connecting to Unix socket at {}", socket_path.display());
         let mut stream = UnixStream::connect(socket_path).map_err(|e| {
-            HelperError::Communication(format!("Failed to connect to Unix socket: {}", e))
+            HelperError::Communication(format!("Failed to connect to Unix socket: {e}"))
         })?;
 
         if let Err(e) = stream.set_nonblocking(false) {
-            debug!("Failed to set blocking mode: {}", e);
+            debug!("Failed to set blocking mode: {e}");
         }
 
         if let Err(e) = stream.set_read_timeout(Some(Duration::from_secs(5))) {
-            debug!("Failed to set read timeout: {}", e);
+            debug!("Failed to set read timeout: {e}");
         }
 
         if let Err(e) = stream.set_write_timeout(Some(Duration::from_secs(5))) {
-            debug!("Failed to set write timeout: {}", e);
+            debug!("Failed to set write timeout: {e}");
         }
 
         debug!("Sending request ({} bytes)", request_bytes.len());
@@ -156,8 +150,7 @@ pub fn send_request(
             Ok(_) => debug!("Request sent successfully"),
             Err(e) => {
                 return Err(HelperError::Communication(format!(
-                    "Failed to write request: {}",
-                    e
+                    "Failed to write request: {e}"
                 )))
             }
         }
@@ -166,8 +159,7 @@ pub fn send_request(
             Ok(_) => debug!("Socket flushed successfully"),
             Err(e) => {
                 return Err(HelperError::Communication(format!(
-                    "Failed to flush socket: {}",
-                    e
+                    "Failed to flush socket: {e}"
                 )))
             }
         }
@@ -258,7 +250,7 @@ fn read_unix_response(mut stream: UnixStream) -> Result<HelperResponse, HelperEr
                 }
             }
             Ok(n) => {
-                debug!("Read {} bytes from response", n);
+                debug!("Read {n} bytes from response");
                 buffer.extend_from_slice(&tmp_buf[..n]);
 
                 if n < tmp_buf.len() {
@@ -294,7 +286,7 @@ fn read_unix_response(mut stream: UnixStream) -> Result<HelperResponse, HelperEr
                 continue;
             }
             Err(e) => {
-                debug!("Error reading from socket: {}", e);
+                debug!("Error reading from socket: {e}");
 
                 if !buffer.is_empty() {
                     debug!(
@@ -305,8 +297,7 @@ fn read_unix_response(mut stream: UnixStream) -> Result<HelperResponse, HelperEr
                 }
 
                 return Err(HelperError::Communication(format!(
-                    "Failed to read response: {}",
-                    e
+                    "Failed to read response: {e}"
                 )));
             }
         }
@@ -325,14 +316,13 @@ fn read_unix_response(mut stream: UnixStream) -> Result<HelperResponse, HelperEr
             Ok(response)
         }
         Err(e) => {
-            debug!("Failed to parse response JSON: {}", e);
+            debug!("Failed to parse response JSON: {e}");
             debug!(
                 "Response content (first 100 bytes): {:?}",
                 String::from_utf8_lossy(&buffer[..std::cmp::min(buffer.len(), 100)])
             );
             Err(HelperError::Communication(format!(
-                "Failed to parse response: {}",
-                e
+                "Failed to parse response: {e}"
             )))
         }
     }

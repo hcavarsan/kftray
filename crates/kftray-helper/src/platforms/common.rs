@@ -16,7 +16,7 @@ pub(crate) async fn initialize_components(
             mgr
         }
         Err(e) => {
-            eprintln!("Error initializing address pool manager: {}", e);
+            eprintln!("Error initializing address pool manager: {e}");
             return Err(e);
         }
     };
@@ -27,7 +27,7 @@ pub(crate) async fn initialize_components(
             mgr
         }
         Err(e) => {
-            eprintln!("Error initializing network manager: {}", e);
+            eprintln!("Error initializing network manager: {e}");
             return Err(e);
         }
     };
@@ -44,7 +44,7 @@ pub(crate) async fn initialize_components(
             path
         }
         Err(e) => {
-            eprintln!("Error getting socket path: {}", e);
+            eprintln!("Error getting socket path: {e}");
             return Err(e);
         }
     };
@@ -53,10 +53,9 @@ pub(crate) async fn initialize_components(
         if !parent.exists() {
             println!("Creating socket directory: {}", parent.display());
             if let Err(e) = std::fs::create_dir_all(parent) {
-                eprintln!("Error creating socket directory: {}", e);
+                eprintln!("Error creating socket directory: {e}");
                 return Err(HelperError::PlatformService(format!(
-                    "Failed to create socket directory: {}",
-                    e
+                    "Failed to create socket directory: {e}"
                 )));
             }
         }
@@ -86,7 +85,7 @@ pub(crate) async fn run_communication_server(
             Ok(())
         }
         Err(e) => {
-            eprintln!("Error in communication server: {}", e);
+            eprintln!("Error in communication server: {e}");
             Err(e)
         }
     }

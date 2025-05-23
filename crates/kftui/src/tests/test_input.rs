@@ -34,19 +34,19 @@ mod tests {
         (1..=count)
             .map(|i| Config {
                 id: Some(i as i64),
-                service: Some(format!("service-{}", i)),
+                service: Some(format!("service-{i}")),
                 namespace: "default".to_string(),
                 local_port: Some(8080 + (i as u16)),
                 remote_port: Some(80),
-                context: format!("test-context-{}", i),
+                context: format!("test-context-{i}"),
                 workload_type: Some("service".to_string()),
                 protocol: "tcp".to_string(),
-                remote_address: Some(format!("remote-{}", i)),
+                remote_address: Some(format!("remote-{i}")),
                 local_address: Some("127.0.0.1".to_string()),
-                alias: Some(format!("alias-{}", i)),
+                alias: Some(format!("alias-{i}")),
                 domain_enabled: Some(false),
                 kubeconfig: None,
-                target: Some(format!("target-{}", i)),
+                target: Some(format!("target-{i}")),
             })
             .collect()
     }

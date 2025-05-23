@@ -62,24 +62,21 @@ fn is_running_as_root() -> bool {
 fn get_user_config_dir() -> Option<PathBuf> {
     if let Ok(socket_path) = std::env::var("SOCKET_PATH") {
         if !socket_path.is_empty() {
-            println!(
-                "Using explicit SOCKET_PATH from environment: {}",
-                socket_path
-            );
+            println!("Using explicit SOCKET_PATH from environment: {socket_path}");
             return Some(PathBuf::from(socket_path).parent()?.to_path_buf());
         }
     }
 
     if let Ok(config_dir) = std::env::var("KFTRAY_CONFIG") {
         if !config_dir.is_empty() {
-            println!("Using KFTRAY_CONFIG from environment: {}", config_dir);
+            println!("Using KFTRAY_CONFIG from environment: {config_dir}");
             return Some(PathBuf::from(config_dir));
         }
     }
 
     if let Ok(config_dir) = std::env::var("CONFIG_DIR") {
         if !config_dir.is_empty() {
-            println!("Using CONFIG_DIR from environment: {}", config_dir);
+            println!("Using CONFIG_DIR from environment: {config_dir}");
             return Some(PathBuf::from(config_dir));
         }
     }
@@ -88,7 +85,7 @@ fn get_user_config_dir() -> Option<PathBuf> {
         if !home.is_empty() {
             if let Ok(user) = std::env::var("USER") {
                 if user != "root" {
-                    println!("Using home directory for user '{}': {}", user, home);
+                    println!("Using home directory for user '{user}': {home}");
                     let mut path = PathBuf::from(home);
                     path.push(".kftray");
                     return Some(path);
@@ -104,11 +101,11 @@ fn get_user_config_dir() -> Option<PathBuf> {
 
             if let Ok(sudo_user) = std::env::var("SUDO_USER") {
                 if !sudo_user.is_empty() && sudo_user != "root" {
-                    println!("Using SUDO_USER's home directory for: {}", sudo_user);
+                    println!("Using SUDO_USER's home directory for: {sudo_user}");
                     let user_home = if cfg!(target_os = "macos") {
-                        format!("/Users/{}", sudo_user)
+                        format!("/Users/{sudo_user}")
                     } else {
-                        format!("/home/{}", sudo_user)
+                        format!("/home/{sudo_user}")
                     };
                     let mut path = PathBuf::from(user_home);
                     path.push(".kftray");
@@ -137,19 +134,18 @@ pub fn get_default_socket_path() -> Result<PathBuf, HelperError> {
                 }
                 Err(_) => {
                     println!("WARNING: Could not get config directory, falling back to /tmp");
-                    PathBuf::from(format!("/tmp/{}", SOCKET_FILENAME))
+                    PathBuf::from(format!("/tmp/{SOCKET_FILENAME}"))
                 }
             }
         };
 
         if let Some(parent) = socket_path.parent() {
             if !parent.exists() {
-                println!("Creating socket parent directory: {:?}", parent);
+                println!("Creating socket parent directory: {parent:?}");
                 if let Err(e) = std::fs::create_dir_all(parent) {
-                    println!("Failed to create socket directory: {}", e);
+                    println!("Failed to create socket directory: {e}");
                     return Err(HelperError::Communication(format!(
-                        "Failed to create socket directory: {:?}, error: {}",
-                        parent, e
+                        "Failed to create socket directory: {parent:?}, error: {e}"
                     )));
                 }
 
@@ -160,11 +156,11 @@ pub fn get_default_socket_path() -> Result<PathBuf, HelperError> {
                     {
                         println!("Fixing directory ownership for socket directory");
                         if let Err(e) = std::process::Command::new("chown")
-                            .arg(format!("{}:{}", user_id, group_id))
+                            .arg(format!("{user_id}:{group_id}"))
                             .arg(parent.as_os_str())
                             .status()
                         {
-                            println!("Failed to fix directory ownership: {}", e);
+                            println!("Failed to fix directory ownership: {e}");
                         }
                     }
                 }
@@ -175,7 +171,7 @@ pub fn get_default_socket_path() -> Result<PathBuf, HelperError> {
                     println!("Socket parent directory exists at: {}", parent.display());
                 }
                 Err(e) => {
-                    println!("Warning: Couldn't check socket parent directory: {}", e);
+                    println!("Warning: Couldn't check socket parent directory: {e}");
                 }
             }
         }
@@ -335,7 +331,7 @@ async fn start_unix_socket_server(
     if socket_path.exists() {
         println!("Removing existing socket file");
         fs::remove_file(&socket_path).map_err(|e| {
-            HelperError::Communication(format!("Failed to remove existing socket: {}", e))
+            HelperError::Communication(format!("Failed to remove existing socket: {e}"))
         })?;
     }
 
@@ -343,7 +339,7 @@ async fn start_unix_socket_server(
         if !parent.exists() {
             println!("Creating socket directory: {}", parent.display());
             fs::create_dir_all(parent).map_err(|e| {
-                HelperError::Communication(format!("Failed to create socket directory: {}", e))
+                HelperError::Communication(format!("Failed to create socket directory: {e}"))
             })?;
         }
 
@@ -354,20 +350,20 @@ async fn start_unix_socket_server(
             } else if !parent.exists() {
                 println!("Creating socket directory: {}", parent.display());
                 if let Err(e) = fs::create_dir_all(parent) {
-                    println!("Warning: Couldn't create socket directory: {}", e);
+                    println!("Warning: Couldn't create socket directory: {e}");
                 }
             }
         }
     }
 
     let listener = UnixListener::bind(&socket_path)
-        .map_err(|e| HelperError::Communication(format!("Failed to bind Unix socket: {}", e)))?;
+        .map_err(|e| HelperError::Communication(format!("Failed to bind Unix socket: {e}")))?;
 
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         if let Err(e) = fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o666)) {
-            println!("Warning: Failed to set socket permissions: {}", e);
+            println!("Warning: Failed to set socket permissions: {e}");
         } else {
             println!("Set socket permissions to 666 (rw-rw-rw-)");
         }
@@ -378,13 +374,13 @@ async fn start_unix_socket_server(
             {
                 println!("Fixing socket ownership for user access");
                 if let Err(e) = std::process::Command::new("chown")
-                    .arg(format!("{}:{}", user_id, group_id))
+                    .arg(format!("{user_id}:{group_id}"))
                     .arg(&socket_path)
                     .status()
                 {
-                    println!("Warning: Failed to fix socket ownership: {}", e);
+                    println!("Warning: Failed to fix socket ownership: {e}");
                 } else {
-                    println!("Set socket ownership to {}:{}", user_id, group_id);
+                    println!("Set socket ownership to {user_id}:{group_id}");
                 }
             }
         }
@@ -406,10 +402,10 @@ async fn start_unix_socket_server(
 
     let socket_path_clone = socket_path.clone();
     let listener_task = task::spawn(async move {
-        println!("Listening on Unix socket: {:?}", socket_path_clone);
+        println!("Listening on Unix socket: {socket_path_clone:?}");
 
         listener.set_nonblocking(true).map_err(|e| {
-            HelperError::Communication(format!("Failed to set non-blocking mode: {}", e))
+            HelperError::Communication(format!("Failed to set non-blocking mode: {e}"))
         })?;
 
         loop {
@@ -422,7 +418,7 @@ async fn start_unix_socket_server(
                         if let Err(e) =
                             handle_connection(stream, pool_manager, network_manager).await
                         {
-                            eprintln!("Error handling connection: {}", e);
+                            eprintln!("Error handling connection: {e}");
                         }
                     });
                 }
@@ -431,8 +427,7 @@ async fn start_unix_socket_server(
                 }
                 Err(e) => {
                     return Err(HelperError::Communication(format!(
-                        "Error accepting connection: {}",
-                        e
+                        "Error accepting connection: {e}"
                     )));
                 }
             }
@@ -453,8 +448,7 @@ async fn start_unix_socket_server(
     match listener_task.await {
         Ok(result) => result,
         Err(e) => Err(HelperError::Communication(format!(
-            "Listener task panicked: {}",
-            e
+            "Listener task panicked: {e}"
         ))),
     }
 }
@@ -469,7 +463,7 @@ async fn handle_connection(
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         if let Err(e) = validate_peer_credentials(&stream) {
-            println!("Peer credential validation failed: {}", e);
+            println!("Peer credential validation failed: {e}");
             return Err(e);
         }
         println!("Peer credentials validated successfully");
@@ -477,7 +471,7 @@ async fn handle_connection(
 
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
-        .map_err(|e| HelperError::Communication(format!("Failed to set socket timeout: {}", e)))?;
+        .map_err(|e| HelperError::Communication(format!("Failed to set socket timeout: {e}")))?;
 
     let mut buffer = Vec::new();
     let mut tmp_buf = [0u8; 4096];
@@ -489,7 +483,7 @@ async fn handle_connection(
                 break;
             }
             Ok(n) => {
-                println!("Read {} bytes from client", n);
+                println!("Read {n} bytes from client");
                 buffer.extend_from_slice(&tmp_buf[..n]);
 
                 if n < tmp_buf.len() {
@@ -511,10 +505,9 @@ async fn handle_connection(
                 break;
             }
             Err(e) => {
-                println!("Error reading from client: {}", e);
+                println!("Error reading from client: {e}");
                 return Err(HelperError::Communication(format!(
-                    "Failed to read from socket: {}",
-                    e
+                    "Failed to read from socket: {e}"
                 )));
             }
         }
@@ -530,11 +523,11 @@ async fn handle_connection(
                 return Ok(());
             }
             Ok(n) => {
-                println!("Read {} bytes from client after wait", n);
+                println!("Read {n} bytes from client after wait");
                 buffer.extend_from_slice(&tmp_buf[..n]);
             }
             Err(e) => {
-                println!("Error reading more data: {}", e);
+                println!("Error reading more data: {e}");
                 return Ok(());
             }
         }
@@ -550,7 +543,7 @@ async fn handle_connection(
             println!("Request parsed successfully");
 
             if let Err(e) = validate_request(&req) {
-                println!("Request validation failed: {}", e);
+                println!("Request validation failed: {e}");
                 return Err(e);
             }
             println!("Request validation passed");
@@ -558,10 +551,9 @@ async fn handle_connection(
             req
         }
         Err(e) => {
-            println!("Failed to parse request: {}", e);
+            println!("Failed to parse request: {e}");
             return Err(HelperError::Communication(format!(
-                "Failed to parse request: {}",
-                e
+                "Failed to parse request: {e}"
             )));
         }
     };
@@ -580,10 +572,9 @@ async fn handle_connection(
             bytes
         }
         Err(e) => {
-            println!("Failed to serialize response: {}", e);
+            println!("Failed to serialize response: {e}");
             return Err(HelperError::Communication(format!(
-                "Failed to serialize response: {}",
-                e
+                "Failed to serialize response: {e}"
             )));
         }
     };
@@ -591,8 +582,8 @@ async fn handle_connection(
     stream
         .set_write_timeout(Some(Duration::from_secs(5)))
         .map_err(|e| {
-            println!("Failed to set write timeout: {}", e);
-            HelperError::Communication(format!("Failed to set socket write timeout: {}", e))
+            println!("Failed to set write timeout: {e}");
+            HelperError::Communication(format!("Failed to set socket write timeout: {e}"))
         })?;
 
     println!(
@@ -602,14 +593,13 @@ async fn handle_connection(
     match stream.write_all(&response_bytes) {
         Ok(_) => println!("Response written successfully"),
         Err(e) => {
-            println!("Failed to write response: {}", e);
+            println!("Failed to write response: {e}");
             if e.kind() == std::io::ErrorKind::BrokenPipe {
                 println!("Client disconnected (broken pipe), ignoring error");
                 return Ok(());
             }
             return Err(HelperError::Communication(format!(
-                "Failed to write response: {}",
-                e
+                "Failed to write response: {e}"
             )));
         }
     }
@@ -618,14 +608,13 @@ async fn handle_connection(
     match stream.flush() {
         Ok(_) => println!("Response flushed successfully"),
         Err(e) => {
-            println!("Failed to flush response: {}", e);
+            println!("Failed to flush response: {e}");
             if e.kind() == std::io::ErrorKind::BrokenPipe {
                 println!("Client disconnected (broken pipe), ignoring error");
                 return Ok(());
             }
             return Err(HelperError::Communication(format!(
-                "Failed to flush response: {}",
-                e
+                "Failed to flush response: {e}"
             )));
         }
     }
@@ -930,29 +919,29 @@ async fn process_request(
     match request.command {
         RequestCommand::Network(cmd) => match cmd {
             NetworkCommand::Add { address } => {
-                println!("Processing Add request for address: {}", address);
+                println!("Processing Add request for address: {address}");
                 match network_manager.add_loopback_address(&address).await {
                     Ok(_) => {
-                        println!("Add request successful for address: {}", address);
+                        println!("Add request successful for address: {address}");
                         Ok(HelperResponse::success(request_id))
                     }
                     Err(e) => {
-                        println!("Add request failed for address {}: {}", address, e);
-                        Ok(HelperResponse::error(request_id, format!("Error: {}", e)))
+                        println!("Add request failed for address {address}: {e}");
+                        Ok(HelperResponse::error(request_id, format!("Error: {e}")))
                     }
                 }
             }
             NetworkCommand::Remove { address } => {
-                println!("Processing Remove request for address: {}", address);
+                println!("Processing Remove request for address: {address}");
 
                 let result = match network_manager.remove_loopback_address(&address).await {
                     Ok(_) => {
-                        println!("Remove request successful for address: {}", address);
-                        println!("Successfully removed loopback address: {}", address);
+                        println!("Remove request successful for address: {address}");
+                        println!("Successfully removed loopback address: {address}");
                         HelperResponse::success(request_id.clone())
                     }
                     Err(e) => {
-                        println!("Remove request failed for address {}: {}", address, e);
+                        println!("Remove request failed for address {address}: {e}");
 
                         if e.to_string().contains("not found")
                             || e.to_string().contains("No such process")
@@ -961,7 +950,7 @@ async fn process_request(
                             HelperResponse::success(request_id.clone())
                         } else {
                             println!("Returning error response for failed removal");
-                            HelperResponse::error(request_id.clone(), format!("Error: {}", e))
+                            HelperResponse::error(request_id.clone(), format!("Error: {e}"))
                         }
                     }
                 };
@@ -977,10 +966,10 @@ async fn process_request(
                         Ok(result)
                     }
                     Err(e) => {
-                        println!("Failed to serialize response: {}", e);
+                        println!("Failed to serialize response: {e}");
                         Ok(HelperResponse::error(
                             request_id.clone(),
-                            format!("Error serializing response: {}", e),
+                            format!("Error serializing response: {e}"),
                         ))
                     }
                 }
@@ -996,7 +985,7 @@ async fn process_request(
                         Ok(HelperResponse::list_success(request_id, addresses))
                     }
                     Err(e) => {
-                        println!("List request failed: {}", e);
+                        println!("List request failed: {e}");
                         Ok(HelperResponse::list_success(request_id, vec![]))
                     }
                 }
@@ -1004,20 +993,16 @@ async fn process_request(
         },
         RequestCommand::Address(cmd) => match cmd {
             AddressCommand::Allocate { service_name } => {
-                println!("Processing Allocate request for service: {}", service_name);
+                println!("Processing Allocate request for service: {service_name}");
                 match pool_manager.allocate_address(&service_name).await {
                     Ok(address) => {
                         println!(
-                            "Allocate request successful for service {}: {}",
-                            service_name, address
+                            "Allocate request successful for service {service_name}: {address}"
                         );
                         Ok(HelperResponse::string_success(request_id, address))
                     }
                     Err(e) => {
-                        println!(
-                            "Allocate request failed for service {}: {}",
-                            service_name, e
-                        );
+                        println!("Allocate request failed for service {service_name}: {e}");
 
                         Ok(HelperResponse::string_success(
                             request_id,
@@ -1027,14 +1012,14 @@ async fn process_request(
                 }
             }
             AddressCommand::Release { address } => {
-                println!("Processing Release request for address: {}", address);
+                println!("Processing Release request for address: {address}");
                 match pool_manager.release_address(&address).await {
                     Ok(_) => {
-                        println!("Release request successful for address: {}", address);
+                        println!("Release request successful for address: {address}");
                         Ok(HelperResponse::success(request_id))
                     }
                     Err(e) => {
-                        println!("Release request failed for address {}: {}", address, e);
+                        println!("Release request failed for address {address}: {e}");
 
                         Ok(HelperResponse::success(request_id))
                     }
@@ -1051,7 +1036,7 @@ async fn process_request(
                         Ok(HelperResponse::allocations_success(request_id, allocations))
                     }
                     Err(e) => {
-                        println!("List request failed: {}", e);
+                        println!("List request failed: {e}");
 
                         Ok(HelperResponse::allocations_success(request_id, vec![]))
                     }

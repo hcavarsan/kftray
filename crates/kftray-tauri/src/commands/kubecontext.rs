@@ -35,7 +35,7 @@ pub async fn list_kube_contexts(
 
     let (_, kubeconfig, contexts) = create_client_with_specific_context(kubeconfig, None)
         .await
-        .map_err(|err| format!("Failed to create client: {}", err))?;
+        .map_err(|err| format!("Failed to create client: {err}"))?;
 
     if let Some(kubeconfig) = kubeconfig {
         let contexts: Vec<KubeContextInfo> = kubeconfig
@@ -67,15 +67,10 @@ pub async fn list_pods(
 
     let (client, _, _) = create_client_with_specific_context(kubeconfig, Some(context_name))
         .await
-        .map_err(|err| {
-            format!(
-                "Failed to create client for context '{}': {}",
-                context_name, err
-            )
-        })?;
+        .map_err(|err| format!("Failed to create client for context '{context_name}': {err}"))?;
 
     let client =
-        client.ok_or_else(|| format!("Client not created for context '{}'", context_name))?;
+        client.ok_or_else(|| format!("Client not created for context '{context_name}'"))?;
     let api: Api<Pod> = Api::namespaced(client, namespace);
 
     let pod_list = api
@@ -86,11 +81,7 @@ pub async fn list_pods(
     let unique_labels: HashSet<String> = pod_list
         .iter()
         .filter_map(|pod| pod.meta().labels.as_ref())
-        .flat_map(|labels| {
-            labels
-                .iter()
-                .map(|(key, value)| format!("{}={}", key, value))
-        })
+        .flat_map(|labels| labels.iter().map(|(key, value)| format!("{key}={value}")))
         .collect();
 
     let label_infos = unique_labels
@@ -109,23 +100,18 @@ pub async fn list_namespaces(
 ) -> Result<Vec<KubeNamespaceInfo>, String> {
     let (client, _, _) = create_client_with_specific_context(kubeconfig, Some(context_name))
         .await
-        .map_err(|err| {
-            format!(
-                "Failed to create client for context '{}': {}",
-                context_name, err
-            )
-        })?;
+        .map_err(|err| format!("Failed to create client for context '{context_name}': {err}"))?;
 
     let client =
-        client.ok_or_else(|| format!("Client not created for context '{}'", context_name))?;
+        client.ok_or_else(|| format!("Client not created for context '{context_name}'"))?;
     let api: Api<Namespace> = Api::all(client);
 
     let ns_list = api
         .list(&ListParams::default())
         .await
         .map_err(|e| {
-            let error_message = format!("Failed to list namespaces: {}", e);
-            log::error!("{}", error_message);
+            let error_message = format!("Failed to list namespaces: {e}");
+            log::error!("{error_message}");
             error_message
         })?
         .iter()
@@ -147,15 +133,10 @@ pub async fn list_services(
 
     let (client, _, _) = create_client_with_specific_context(kubeconfig, Some(context_name))
         .await
-        .map_err(|err| {
-            format!(
-                "Failed to create client for context '{}': {}",
-                context_name, err
-            )
-        })?;
+        .map_err(|err| format!("Failed to create client for context '{context_name}': {err}"))?;
 
     let client =
-        client.ok_or_else(|| format!("Client not created for context '{}'", context_name))?;
+        client.ok_or_else(|| format!("Client not created for context '{context_name}'"))?;
     let api: Api<Service> = Api::namespaced(client, namespace);
 
     let svc_list = api
@@ -177,15 +158,10 @@ pub async fn list_ports(
 ) -> Result<Vec<KubeServicePortInfo>, String> {
     let (client, _, _) = create_client_with_specific_context(kubeconfig, Some(context_name))
         .await
-        .map_err(|err| {
-            format!(
-                "Failed to create client for context '{}': {}",
-                context_name, err
-            )
-        })?;
+        .map_err(|err| format!("Failed to create client for context '{context_name}': {err}"))?;
 
     let client =
-        client.ok_or_else(|| format!("Client not created for context '{}'", context_name))?;
+        client.ok_or_else(|| format!("Client not created for context '{context_name}'"))?;
     let api_svc: Api<Service> = Api::namespaced(client.clone(), namespace);
     let api_pod: Api<Pod> = Api::namespaced(client, namespace);
 
@@ -200,7 +176,7 @@ pub async fn list_ports(
                             let selector_string =
                                 spec.selector.as_ref().map_or_else(String::new, |s| {
                                     s.iter()
-                                        .map(|(key, value)| format!("{}={}", key, value))
+                                        .map(|(key, value)| format!("{key}={value}"))
                                         .collect::<Vec<_>>()
                                         .join(", ")
                                 });
@@ -208,7 +184,7 @@ pub async fn list_ports(
                             let pods = api_pod
                                 .list(&ListParams::default().labels(&selector_string))
                                 .await
-                                .map_err(|e| format!("Failed to list pods: {}", e))?;
+                                .map_err(|e| format!("Failed to list pods: {e}"))?;
 
                             'port_search: for pod in pods {
                                 if let Some(spec) = &pod.spec {
@@ -241,8 +217,7 @@ pub async fn list_ports(
 
             if service_port_infos.is_empty() {
                 Err(format!(
-                    "No ports found for service '{}' in namespace '{}'",
-                    service_name, namespace
+                    "No ports found for service '{service_name}' in namespace '{namespace}'"
                 ))
             } else {
                 Ok(service_port_infos)
@@ -252,7 +227,7 @@ pub async fn list_ports(
             let pods = api_pod
                 .list(&ListParams::default().labels(service_name))
                 .await
-                .map_err(|e| format!("Failed to list pods: {}", e))?;
+                .map_err(|e| format!("Failed to list pods: {e}"))?;
 
             let pod_port_infos: Vec<KubeServicePortInfo> = pods
                 .iter()
@@ -268,8 +243,7 @@ pub async fn list_ports(
 
             if pod_port_infos.is_empty() {
                 Err(format!(
-                    "No ports found for label '{}' in namespace '{}'",
-                    service_name, namespace
+                    "No ports found for label '{service_name}' in namespace '{namespace}'"
                 ))
             } else {
                 Ok(pod_port_infos)
@@ -283,8 +257,7 @@ pub async fn get_services_with_annotations(
     context_name: String, kubeconfig_path: Option<String>,
 ) -> Result<Vec<Config>, String> {
     info!(
-        "get_services_with_annotations called with context: '{}' and kubeconfig: {:?}",
-        context_name, kubeconfig_path
+        "get_services_with_annotations called with context: '{context_name}' and kubeconfig: {kubeconfig_path:?}"
     );
 
     retrieve_service_configs(&context_name, kubeconfig_path).await
@@ -507,10 +480,8 @@ mod tests {
 
         let pods = mock_client.pods.get("test-ns").unwrap();
         let pod_labels = pods[0].metadata.labels.as_ref().unwrap();
-        let label_strings: HashSet<String> = pod_labels
-            .iter()
-            .map(|(k, v)| format!("{}={}", k, v))
-            .collect();
+        let label_strings: HashSet<String> =
+            pod_labels.iter().map(|(k, v)| format!("{k}={v}")).collect();
 
         assert_eq!(label_strings.len(), 1);
         assert!(label_strings.contains("app=test-app"));

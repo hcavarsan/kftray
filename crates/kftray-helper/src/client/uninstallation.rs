@@ -13,8 +13,7 @@ pub fn uninstall_helper(helper_path: &Path) -> Result<(), HelperError> {
             // Escape single quotes in the path
             let escaped_path = helper_path.to_string_lossy().replace("'", "'\\''");
             let script = format!(
-                r#"do shell script "'{0}' uninstall" with administrator privileges"#,
-                escaped_path
+                r#"do shell script "'{escaped_path}' uninstall" with administrator privileges"#
             );
 
             let output = Command::new("osascript")
@@ -22,24 +21,21 @@ pub fn uninstall_helper(helper_path: &Path) -> Result<(), HelperError> {
                 .output()
                 .map_err(|e| {
                     HelperError::PlatformService(format!(
-                        "Failed to uninstall helper with admin privileges: {}",
-                        e
+                        "Failed to uninstall helper with admin privileges: {e}"
                     ))
                 })?;
 
             if !output.status.success() {
                 let error = String::from_utf8_lossy(&output.stderr);
                 return Err(HelperError::PlatformService(format!(
-                    "Failed to uninstall helper with admin privileges: {}",
-                    error
+                    "Failed to uninstall helper with admin privileges: {error}"
                 )));
             }
         } else if let Ok(output) = output {
             if !output.status.success() {
                 let error = String::from_utf8_lossy(&output.stderr);
                 return Err(HelperError::PlatformService(format!(
-                    "Failed to uninstall helper: {}",
-                    error
+                    "Failed to uninstall helper: {error}"
                 )));
             }
         }

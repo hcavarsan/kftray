@@ -74,7 +74,7 @@ async fn handle_reconnect() {
                             configs_to_restart.push(config);
                         }
                         Err(e) => {
-                            error!("Failed to get config {}: {}", config_id, e);
+                            error!("Failed to get config {config_id}: {e}");
                         }
                     }
                 }
@@ -97,7 +97,7 @@ async fn handle_reconnect() {
                     .await
                     {
                         Ok(_) => info!("Successfully restarted TCP port forwards"),
-                        Err(e) => error!("Failed to restart TCP port forwards: {}", e),
+                        Err(e) => error!("Failed to restart TCP port forwards: {e}"),
                     }
                 }
 
@@ -117,7 +117,7 @@ async fn handle_reconnect() {
                     .await
                     {
                         Ok(_) => info!("Successfully restarted UDP port forwards"),
-                        Err(e) => error!("Failed to restart UDP port forwards: {}", e),
+                        Err(e) => error!("Failed to restart UDP port forwards: {e}"),
                     }
                 }
             } else {
@@ -125,7 +125,7 @@ async fn handle_reconnect() {
             }
         }
         Err(e) => {
-            error!("Failed to get config states: {}", e);
+            error!("Failed to get config states: {e}");
         }
     }
 
@@ -142,7 +142,7 @@ mod tests {
     #[tokio::test]
     async fn test_check_network_connectivity() {
         let result = check_network().await;
-        println!("Network connectivity test result: {}", result);
+        println!("Network connectivity test result: {result}");
     }
 
     #[tokio::test]

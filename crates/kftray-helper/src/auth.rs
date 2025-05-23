@@ -21,8 +21,7 @@ fn validate_app_id(app_id: &str) -> Result<(), HelperError> {
         Ok(())
     } else {
         Err(HelperError::Authentication(format!(
-            "Invalid app_id: {}",
-            app_id
+            "Invalid app_id: {app_id}"
         )))
     }
 }
@@ -33,16 +32,11 @@ fn validate_timestamp(timestamp: u64) -> Result<(), HelperError> {
         .map_err(|_| HelperError::Authentication("Failed to get current time".to_string()))?
         .as_secs();
 
-    let time_diff = if current_time > timestamp {
-        current_time - timestamp
-    } else {
-        timestamp - current_time
-    };
+    let time_diff = current_time.abs_diff(timestamp);
 
     if time_diff > MAX_TIMESTAMP_SKEW_SECONDS {
         Err(HelperError::Authentication(format!(
-            "Request timestamp too far from current time: {} seconds",
-            time_diff
+            "Request timestamp too far from current time: {time_diff} seconds"
         )))
     } else {
         Ok(())
@@ -184,7 +178,7 @@ pub fn validate_peer_credentials(
 fn get_authorized_user_uid() -> u32 {
     if let Ok(sudo_uid) = std::env::var("SUDO_UID") {
         if let Ok(uid) = sudo_uid.parse::<u32>() {
-            println!("Found authorized UID from SUDO_UID: {}", uid);
+            println!("Found authorized UID from SUDO_UID: {uid}");
             return uid;
         }
     }
@@ -194,10 +188,7 @@ fn get_authorized_user_uid() -> u32 {
             use std::os::unix::fs::MetadataExt;
             let owner_uid = metadata.uid();
             if owner_uid != 0 {
-                println!(
-                    "Found authorized UID from socket file ownership: {}",
-                    owner_uid
-                );
+                println!("Found authorized UID from socket file ownership: {owner_uid}");
                 return owner_uid;
             }
         }
@@ -209,10 +200,7 @@ fn get_authorized_user_uid() -> u32 {
                 use std::os::unix::fs::MetadataExt;
                 let owner_uid = metadata.uid();
                 if owner_uid != 0 {
-                    println!(
-                        "Found authorized UID from socket directory ownership: {}",
-                        owner_uid
-                    );
+                    println!("Found authorized UID from socket directory ownership: {owner_uid}");
                     return owner_uid;
                 }
             }
@@ -220,10 +208,7 @@ fn get_authorized_user_uid() -> u32 {
     }
 
     let current_uid = unsafe { libc::getuid() };
-    println!(
-        "No specific authorized UID found, falling back to current UID: {}",
-        current_uid
-    );
+    println!("No specific authorized UID found, falling back to current UID: {current_uid}");
     current_uid
 }
 

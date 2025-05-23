@@ -14,7 +14,7 @@ pub fn find_helper_binary() -> Result<PathBuf, HelperError> {
     };
 
     let current_exe = std::env::current_exe().map_err(|e| {
-        HelperError::PlatformService(format!("Failed to get current executable path: {}", e))
+        HelperError::PlatformService(format!("Failed to get current executable path: {e}"))
     })?;
 
     let exe_dir = current_exe.parent().ok_or_else(|| {
@@ -105,7 +105,7 @@ pub fn find_helper_binary() -> Result<PathBuf, HelperError> {
     }
 
     let current_dir = std::env::current_dir().map_err(|e| {
-        HelperError::PlatformService(format!("Failed to get current directory: {}", e))
+        HelperError::PlatformService(format!("Failed to get current directory: {e}"))
     })?;
 
     let workspace_root = find_workspace_root(&current_dir)?;

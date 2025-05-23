@@ -303,8 +303,7 @@ mod tests {
         assert_eq!(
             configs.len(),
             1,
-            "Expected exactly one config from KFTRAY_CONFIG, got: {:?}",
-            configs
+            "Expected exactly one config from KFTRAY_CONFIG, got: {configs:?}"
         );
 
         assert_eq!(configs[0].origin, "KFTRAY_CONFIG");
@@ -413,10 +412,10 @@ mod tests {
         let active = configs[0].clone();
 
         let message = format_alert_message(configs, Some(active));
-        println!("Message content: {}", message);
+        println!("Message content: {message}");
 
         assert!(message.contains("Multiple configuration directories have been detected"));
-        assert!(message.contains(&format!("KFTRAY_CONFIG: {}", kftray_path)));
+        assert!(message.contains(&format!("KFTRAY_CONFIG: {kftray_path}")));
         assert!(message.contains(&format!("XDG_CONFIG_HOME: {}", xdg_path.display())));
         assert!(message.contains(&format!("HOME: {}", home_path.display())));
 
@@ -443,7 +442,7 @@ mod tests {
         ];
 
         let message = format_alert_message(configs, None);
-        println!("Message content: {}", message);
+        println!("Message content: {message}");
 
         assert!(message.contains("Multiple configuration directories have been detected"));
         assert!(message.contains("No active configuration detected"));
@@ -519,7 +518,7 @@ mod tests {
         ];
 
         let message = format_alert_message(configs, None);
-        println!("Message content: {}", message);
+        println!("Message content: {message}");
 
         assert!(message.contains("Multiple configuration directories have been detected"));
         assert!(message.contains("Origin1: /fake/path1"));

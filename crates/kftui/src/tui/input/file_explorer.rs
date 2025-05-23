@@ -35,7 +35,7 @@ pub async fn handle_file_selection(
 }
 
 pub fn handle_file_error(app: &mut App, error: std::io::Error) {
-    let error_message = format!("Failed to read file content: {}", error);
+    let error_message = format!("Failed to read file content: {error}");
     app.file_content = None;
     app.import_export_message = Some(error_message.clone());
     app.error_message = Some(error_message);
@@ -46,7 +46,7 @@ pub async fn handle_import(app: &mut App, selected_path: &Path) -> Result<(), st
     if selected_path.is_file() {
         match import_configs_from_file(selected_path.to_str().unwrap()).await {
             Ok(_) => show_confirmation_popup(app, "Import successful".to_string()),
-            Err(e) => show_error_popup(app, format!("Import failed: {}", e)),
+            Err(e) => show_error_popup(app, format!("Import failed: {e}")),
         }
     } else {
         show_error_popup(app, "Selected file is not a JSON file".to_string());
@@ -55,17 +55,17 @@ pub async fn handle_import(app: &mut App, selected_path: &Path) -> Result<(), st
 }
 
 pub async fn handle_export(app: &mut App, export_path: &Path) -> Result<(), std::io::Error> {
-    log::debug!("Starting export of configs to file: {:?}", export_path);
+    log::debug!("Starting export of configs to file: {export_path:?}");
 
     match export_configs_to_file(export_path.to_str().unwrap()).await {
         Ok(_) => {
             log::debug!("Export successful");
 
-            show_confirmation_popup(app, format!("Export successful: {:?}", export_path));
+            show_confirmation_popup(app, format!("Export successful: {export_path:?}"));
         }
         Err(e) => {
-            log::error!("Export failed: {}", e);
-            show_error_popup(app, format!("Export failed: {:?}", e));
+            log::error!("Export failed: {e}");
+            show_error_popup(app, format!("Export failed: {e:?}"));
         }
     }
     Ok(())
@@ -163,7 +163,7 @@ pub async fn handle_export_file_explorer_input(
         _ => match key {
             KeyCode::Esc => close_export_file_explorer(app),
             KeyCode::Backspace => navigate_to_parent_directory(app),
-            _ => log::debug!("Unhandled key: {:?}", key),
+            _ => log::debug!("Unhandled key: {key:?}"),
         },
     }
     Ok(())
@@ -176,10 +176,10 @@ pub async fn handle_export_enter_key(app: &mut App) -> Result<(), std::io::Error
         .get(app.export_file_explorer.selected_idx())
     {
         let selected_path = selected_file.path().clone();
-        log::debug!("Selected path: {:?}", selected_path);
+        log::debug!("Selected path: {selected_path:?}");
 
         if selected_file.is_dir() {
-            log::debug!("Changed working directory to: {:?}", selected_path);
+            log::debug!("Changed working directory to: {selected_path:?}");
             app.selected_file_path = Some(selected_path.clone());
             app.state = AppState::ShowInputPrompt;
         }
@@ -190,14 +190,14 @@ pub async fn handle_export_enter_key(app: &mut App) -> Result<(), std::io::Error
 }
 
 pub async fn handle_export_input_prompt(app: &mut App, key: KeyCode) -> Result<(), std::io::Error> {
-    log::debug!("Handling input prompt key: {:?}", key);
+    log::debug!("Handling input prompt key: {key:?}");
 
     match key {
         KeyCode::Enter => handle_export_enter_key_press(app).await?,
         KeyCode::Char(c) => update_input_buffer(app, c),
         KeyCode::Backspace => remove_last_char_from_input_buffer(app),
         KeyCode::Esc => cancel_input_prompt(app),
-        _ => log::debug!("Unhandled key in input prompt: {:?}", key),
+        _ => log::debug!("Unhandled key in input prompt: {key:?}"),
     }
     Ok(())
 }
@@ -205,7 +205,7 @@ pub async fn handle_export_input_prompt(app: &mut App, key: KeyCode) -> Result<(
 pub async fn handle_export_enter_key_press(app: &mut App) -> Result<(), std::io::Error> {
     if let Some(selected_file_path) = &app.selected_file_path {
         let export_path = selected_file_path.join(&app.input_buffer);
-        log::debug!("Export path: {:?}", export_path);
+        log::debug!("Export path: {export_path:?}");
         handle_export(app, &export_path).await?;
         app.input_buffer.clear();
     } else {

@@ -59,10 +59,9 @@ impl TcpProxy {
                 Ok(stream)
             }
             Ok(Err(e)) => {
-                error!("Failed to connect to target: {}", e);
+                error!("Failed to connect to target: {e}");
                 Err(ProxyError::Connection(format!(
-                    "Failed to connect to target: {}",
-                    e
+                    "Failed to connect to target: {e}"
                 )))
             }
             Err(_) => Err(ProxyError::Connection("Connection timeout".into())),
@@ -85,8 +84,7 @@ impl TcpProxy {
         match copy_bidirectional(&mut inbound, &mut outbound).await {
             Ok((from_client, from_server)) => {
                 info!(
-                    "Connection closed. Bytes from client: {}, from server: {}",
-                    from_client, from_server
+                    "Connection closed. Bytes from client: {from_client}, from server: {from_server}"
                 );
                 Ok(())
             }
@@ -95,7 +93,7 @@ impl TcpProxy {
                 Ok(())
             }
             Err(e) => {
-                error!("Connection error: {}", e);
+                error!("Connection error: {e}");
                 Err(ProxyError::Io(e))
             }
         }
@@ -136,17 +134,17 @@ impl ProxyHandler for TcpProxy {
                 accept_result = listener.accept() => {
                     match accept_result {
                         Ok((stream, addr)) => {
-                            info!("Accepted connection from {}", addr);
+                            info!("Accepted connection from {addr}");
                             let config = config.clone();
                             let proxy = self.clone();
 
                             tokio::spawn(async move {
                                 if let Err(e) = proxy.handle_tcp_connection(stream, &config).await {
-                                    error!("Connection error for {}: {}", addr, e);
+                                    error!("Connection error for {addr}: {e}");
                                 }
                             });
                         }
-                        Err(e) => error!("Failed to accept connection: {}", e),
+                        Err(e) => error!("Failed to accept connection: {e}"),
                     }
                 }
                 _ = shutdown.notified() => {
@@ -299,13 +297,11 @@ mod tests {
             assert_eq!(
                 n,
                 test_data.len(),
-                "Client {} received wrong data length",
-                client_id
+                "Client {client_id} received wrong data length"
             );
             assert_eq!(
                 &response, test_data,
-                "Client {} received incorrect data",
-                client_id
+                "Client {client_id} received incorrect data"
             );
         }
 

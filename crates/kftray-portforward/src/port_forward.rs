@@ -143,14 +143,14 @@ impl PortForward {
                     let conn = client_conn.lock().await;
                     conn.set_nodelay(true).map_err(|e| {
                         error!(error = %e, "Failed to set nodelay");
-                        std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+                        std::io::Error::other(e.to_string())
                     })?;
                     drop(conn);
 
                     info!("Finding target pod");
                     let target = pf.finder().find(&pf.target).await.map_err(|e| {
                         error!(error = %e, "Failed to find target pod");
-                        std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+                        std::io::Error::other(e.to_string())
                     })?;
                     info!(pod_name = %target.pod_name, pod_port = %target.port_number, "Found target pod");
 
@@ -162,15 +162,14 @@ impl PortForward {
                         .await
                         .map_err(|e| {
                             error!(error = %e, "Portforward API call failed");
-                            std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+                            std::io::Error::other(e.to_string())
                         })?;
                     info!("Portforward API call successful");
 
                     info!("Taking stream from port_forwarder");
                     let upstream_conn = port_forwarder.take_stream(pod_port).ok_or_else(|| {
                         error!("Failed to take stream for port {}", pod_port);
-                        std::io::Error::new(
-                            std::io::ErrorKind::Other,
+                        std::io::Error::other(
                             "port not found in forwarder".to_string(),
                         )
                     })?;
@@ -606,7 +605,7 @@ mod tests {
         assert_ne!(bound_port, 0, "Listener did not bind to a dynamic port");
 
         info!("Simulating client connection");
-        let connect_addr = format!("127.0.0.1:{}", bound_port);
+        let connect_addr = format!("127.0.0.1:{bound_port}");
         let connect_task = tokio::spawn(async move {
             match TcpStream::connect(&connect_addr).await {
                 Ok(stream) => {

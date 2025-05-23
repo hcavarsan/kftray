@@ -214,8 +214,7 @@ pub async fn remove_loopback_address(addr: &str) -> Result<()> {
 
         debug!("Trying to remove loopback address alias with osascript");
         let script = format!(
-            r#"do shell script "ifconfig lo0 -alias {}" with administrator privileges"#,
-            addr
+            r#"do shell script "ifconfig lo0 -alias {addr}" with administrator privileges"#
         );
 
         let result = Command::new("osascript").args(["-e", &script]).output();
@@ -265,7 +264,7 @@ pub async fn remove_loopback_address(addr: &str) -> Result<()> {
 }
 
 async fn is_address_accessible(addr: &str) -> bool {
-    let socket_addr = format!("{}:0", addr);
+    let socket_addr = format!("{addr}:0");
     tokio::net::TcpListener::bind(socket_addr).await.is_ok()
 }
 
@@ -283,10 +282,8 @@ fn configure_loopback_macos(addr: &str) -> Result<()> {
     }
 
     debug!("Trying to add loopback address alias with osascript");
-    let script = format!(
-        r#"do shell script "ifconfig lo0 alias {}" with administrator privileges"#,
-        addr
-    );
+    let script =
+        format!(r#"do shell script "ifconfig lo0 alias {addr}" with administrator privileges"#);
 
     let result = Command::new("osascript").args(["-e", &script]).output();
 

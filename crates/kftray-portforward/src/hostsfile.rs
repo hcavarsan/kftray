@@ -35,7 +35,7 @@ static NEEDS_UPDATE: LazyLock<Mutex<bool>> = LazyLock::new(|| Mutex::new(false))
 static WRITER_RUNNING: LazyLock<Mutex<bool>> = LazyLock::new(|| Mutex::new(false));
 
 pub fn add_host_entry(id: String, entry: HostEntry) -> std::io::Result<()> {
-    debug!("Adding host entry for ID {}: {:?}", id, entry);
+    debug!("Adding host entry for ID {id}: {entry:?}");
 
     {
         match HOST_ENTRIES.write() {
@@ -43,18 +43,15 @@ pub fn add_host_entry(id: String, entry: HostEntry) -> std::io::Result<()> {
                 entries.insert(id, entry);
             }
             Err(e) => {
-                error!("Failed to acquire host entries write lock: {}", e);
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    e.to_string(),
-                ));
+                error!("Failed to acquire host entries write lock: {e}");
+                return Err(std::io::Error::other(e.to_string()));
             }
         }
     }
 
     {
         let mut needs_update = NEEDS_UPDATE.lock().unwrap_or_else(|e| {
-            error!("Failed to acquire needs_update lock: {}", e);
+            error!("Failed to acquire needs_update lock: {e}");
             e.into_inner()
         });
         *needs_update = true;
@@ -66,7 +63,7 @@ pub fn add_host_entry(id: String, entry: HostEntry) -> std::io::Result<()> {
 }
 
 pub fn remove_host_entry(id: &str) -> std::io::Result<()> {
-    debug!("Removing host entry for ID {}", id);
+    debug!("Removing host entry for ID {id}");
 
     {
         match HOST_ENTRIES.write() {
@@ -74,18 +71,15 @@ pub fn remove_host_entry(id: &str) -> std::io::Result<()> {
                 entries.remove(id);
             }
             Err(e) => {
-                error!("Failed to acquire host entries write lock: {}", e);
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    e.to_string(),
-                ));
+                error!("Failed to acquire host entries write lock: {e}");
+                return Err(std::io::Error::other(e.to_string()));
             }
         }
     }
 
     {
         let mut needs_update = NEEDS_UPDATE.lock().unwrap_or_else(|e| {
-            error!("Failed to acquire needs_update lock: {}", e);
+            error!("Failed to acquire needs_update lock: {e}");
             e.into_inner()
         });
         *needs_update = true;
@@ -105,11 +99,8 @@ pub fn remove_all_host_entries() -> std::io::Result<()> {
                 entries.clear();
             }
             Err(e) => {
-                error!("Failed to acquire host entries write lock: {}", e);
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::Other,
-                    e.to_string(),
-                ));
+                error!("Failed to acquire host entries write lock: {e}");
+                return Err(std::io::Error::other(e.to_string()));
             }
         }
     }
@@ -119,7 +110,7 @@ pub fn remove_all_host_entries() -> std::io::Result<()> {
 
 fn ensure_writer_running() {
     let mut writer_running = WRITER_RUNNING.lock().unwrap_or_else(|e| {
-        error!("Failed to acquire writer_running lock: {}", e);
+        error!("Failed to acquire writer_running lock: {e}");
         e.into_inner()
     });
 
@@ -138,7 +129,7 @@ fn batch_writer_loop() {
 
         let needs_update = {
             let mut update_flag = NEEDS_UPDATE.lock().unwrap_or_else(|e| {
-                error!("Failed to acquire needs_update lock in writer loop: {}", e);
+                error!("Failed to acquire needs_update lock in writer loop: {e}");
                 e.into_inner()
             });
 
@@ -152,12 +143,12 @@ fn batch_writer_loop() {
 
         if needs_update {
             if let Err(e) = update_hosts_file() {
-                error!("Failed to write hosts file in background writer: {}", e);
+                error!("Failed to write hosts file in background writer: {e}");
             }
         } else {
             let pending = {
                 NEEDS_UPDATE.lock().unwrap_or_else(|e| {
-                    error!("Failed to check for pending updates: {}", e);
+                    error!("Failed to check for pending updates: {e}");
                     e.into_inner()
                 })
             };
@@ -169,7 +160,7 @@ fn batch_writer_loop() {
     }
 
     let mut writer_running = WRITER_RUNNING.lock().unwrap_or_else(|e| {
-        error!("Failed to acquire writer_running lock when exiting: {}", e);
+        error!("Failed to acquire writer_running lock when exiting: {e}");
         e.into_inner()
     });
     *writer_running = false;
@@ -179,18 +170,15 @@ fn update_hosts_file() -> std::io::Result<()> {
     let entries_snapshot = match HOST_ENTRIES.read() {
         Ok(entries) => entries.clone(),
         Err(e) => {
-            error!("Failed to acquire host entries read lock: {}", e);
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                e.to_string(),
-            ));
+            error!("Failed to acquire host entries read lock: {e}");
+            return Err(std::io::Error::other(e.to_string()));
         }
     };
 
     let mut hosts_builder = HostsBuilder::new(KFTRAY_HOSTS_TAG);
 
     for (id, entry) in &entries_snapshot {
-        debug!("Adding entry for ID {} to hosts file: {:?}", id, entry);
+        debug!("Adding entry for ID {id} to hosts file: {entry:?}");
         hosts_builder.add_hostname(entry.ip, &entry.hostname);
     }
 
@@ -203,8 +191,8 @@ fn update_hosts_file() -> std::io::Result<()> {
             Ok(())
         }
         Err(e) => {
-            error!("Failed to write to hosts file: {}", e);
-            Err(std::io::Error::new(std::io::ErrorKind::Other, e))
+            error!("Failed to write to hosts file: {e}");
+            Err(std::io::Error::other(e))
         }
     }
 }

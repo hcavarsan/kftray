@@ -57,7 +57,7 @@ impl AddressPoolManager {
 
         let config_dir = dirs.join(".kftray");
         fs::create_dir_all(&config_dir).map_err(|e| {
-            HelperError::AddressPool(format!("Could not create config directory: {}", e))
+            HelperError::AddressPool(format!("Could not create config directory: {e}"))
         })?;
 
         Ok(config_dir.join("address_pool.json"))
@@ -69,11 +69,11 @@ impl AddressPoolManager {
         }
 
         let content = fs::read_to_string(path).map_err(|e| {
-            HelperError::AddressPool(format!("Could not read address pool storage: {}", e))
+            HelperError::AddressPool(format!("Could not read address pool storage: {e}"))
         })?;
 
         let storage: AddressPoolStorage = serde_json::from_str(&content).map_err(|e| {
-            HelperError::AddressPool(format!("Could not parse address pool storage: {}", e))
+            HelperError::AddressPool(format!("Could not parse address pool storage: {e}"))
         })?;
 
         Ok(storage.allocations)
@@ -84,11 +84,11 @@ impl AddressPoolManager {
         let storage = AddressPoolStorage { allocations };
 
         let content = serde_json::to_string_pretty(&storage).map_err(|e| {
-            HelperError::AddressPool(format!("Could not serialize address pool storage: {}", e))
+            HelperError::AddressPool(format!("Could not serialize address pool storage: {e}"))
         })?;
 
         fs::write(&self.storage_path, content).map_err(|e| {
-            HelperError::AddressPool(format!("Could not write address pool storage: {}", e))
+            HelperError::AddressPool(format!("Could not write address pool storage: {e}"))
         })?;
 
         Ok(())
@@ -137,8 +137,7 @@ impl AddressPoolManager {
 
         if allocations.remove(address).is_none() {
             return Err(HelperError::AddressPool(format!(
-                "Address {} is not allocated",
-                address
+                "Address {address} is not allocated"
             )));
         }
 
@@ -179,7 +178,7 @@ impl AddressPoolManager {
     ) -> Result<String, HelperError> {
         let mut octet = 2;
         while octet < 255 {
-            let address = format!("127.0.0.{}", octet);
+            let address = format!("127.0.0.{octet}");
             if !allocations.contains_key(&address) {
                 return Ok(address);
             }

@@ -40,7 +40,7 @@ pub async fn retrieve_service_configs(
             let annotation = annotation.to_string();
 
             async move {
-                info!("Processing namespace: {}", namespace);
+                info!("Processing namespace: {namespace}");
                 let services =
                     get_services_with_annotation(client.clone(), &namespace, &annotation)
                         .await
@@ -49,10 +49,7 @@ pub async fn retrieve_service_configs(
                 let mut namespace_configs = Vec::new();
 
                 for (service_name, annotations, ports) in services {
-                    debug!(
-                        "Processing service: {} in namespace: {}",
-                        service_name, namespace
-                    );
+                    debug!("Processing service: {service_name} in namespace: {namespace}");
                     if let Some(configs_str) = annotations.get(&annotation) {
                         namespace_configs.extend(parse_configs(
                             configs_str,
@@ -86,7 +83,7 @@ pub async fn retrieve_service_configs(
                         acc
                     }
                     (Ok(_), Err(e)) => {
-                        error!("Error processing namespace: {}", e);
+                        error!("Error processing namespace: {e}");
                         acc
                     }
                     (Err(_), _) => acc,
@@ -105,7 +102,7 @@ fn parse_configs(
         .filter_map(|config_str| {
             let parts: Vec<&str> = config_str.trim().split('-').collect();
             if parts.len() != 3 {
-                debug!("Invalid config format: {}", config_str);
+                debug!("Invalid config format: {config_str}");
                 return None;
             }
 

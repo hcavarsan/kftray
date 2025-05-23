@@ -40,7 +40,7 @@ impl TargetPodFinder<'_> {
                 if let Some(selector) = service.spec.and_then(|spec| spec.selector) {
                     let label_selector_str = selector
                         .iter()
-                        .map(|(key, value)| format!("{}={}", key, value))
+                        .map(|(key, value)| format!("{key}={value}"))
                         .collect::<Vec<_>>()
                         .join(",");
 
@@ -56,7 +56,7 @@ impl TargetPodFinder<'_> {
                 }
             }
             Err(kube::Error::Api(kube::error::ErrorResponse { code: 404, .. })) => {
-                let label_selector_str = format!("app={}", name);
+                let label_selector_str = format!("app={name}");
 
                 debug!(
                     "Using service name as label selector: {}",

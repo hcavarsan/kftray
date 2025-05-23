@@ -12,8 +12,7 @@ pub fn install_helper(helper_path: &Path) -> Result<(), HelperError> {
         if let Err(_e) = output {
             let escaped_path = helper_path.to_string_lossy().replace("\"", "\\\"");
             let script = format!(
-                r#"do shell script "{} install" with administrator privileges"#,
-                escaped_path
+                r#"do shell script "{escaped_path} install" with administrator privileges"#
             );
 
             let output = Command::new("osascript")
@@ -21,24 +20,21 @@ pub fn install_helper(helper_path: &Path) -> Result<(), HelperError> {
                 .output()
                 .map_err(|e| {
                     HelperError::PlatformService(format!(
-                        "Failed to install helper with admin privileges: {}",
-                        e
+                        "Failed to install helper with admin privileges: {e}"
                     ))
                 })?;
 
             if !output.status.success() {
                 let error = String::from_utf8_lossy(&output.stderr);
                 return Err(HelperError::PlatformService(format!(
-                    "Failed to install helper with admin privileges: {}",
-                    error
+                    "Failed to install helper with admin privileges: {error}"
                 )));
             }
         } else if let Ok(output) = output {
             if !output.status.success() {
                 let error = String::from_utf8_lossy(&output.stderr);
                 return Err(HelperError::PlatformService(format!(
-                    "Failed to install helper: {}",
-                    error
+                    "Failed to install helper: {error}"
                 )));
             }
         }

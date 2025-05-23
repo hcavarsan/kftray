@@ -34,7 +34,7 @@ pub(crate) async fn delete_config_with_pool(id: i64, pool: &SqlitePool) -> Resul
         .bind(id)
         .execute(&mut *conn)
         .await
-        .map_err(|e| DbError::QueryFailed(format!("Failed to delete config: {}", e)))?;
+        .map_err(|e| DbError::QueryFailed(format!("Failed to delete config: {e}")))?;
     Ok(())
 }
 
@@ -55,7 +55,7 @@ pub(crate) async fn delete_configs_with_pool(
             .execute(&mut *transaction)
             .await
             .map_err(|e| {
-                DbError::QueryFailed(format!("Failed to delete config with id {}: {}", id, e))
+                DbError::QueryFailed(format!("Failed to delete config with id {id}: {e}"))
             })?;
     }
     transaction.commit().await?;
@@ -74,7 +74,7 @@ pub(crate) async fn delete_all_configs_with_pool(pool: &SqlitePool) -> Result<()
     sqlx::query("DELETE FROM configs")
         .execute(&mut *conn)
         .await
-        .map_err(|e| DbError::QueryFailed(format!("Failed to delete all configs: {}", e)))?;
+        .map_err(|e| DbError::QueryFailed(format!("Failed to delete all configs: {e}")))?;
     Ok(())
 }
 
@@ -159,12 +159,9 @@ pub(crate) async fn clean_all_custom_hosts_entries_with_pool(
             config.id.unwrap_or_default()
         );
         let hosts_builder = HostsBuilder::new(&hostfile_comment);
-        hosts_builder.write().map_err(|e| {
-            format!(
-                "Failed to write to the hostfile for {}: {}",
-                hostfile_comment, e
-            )
-        })?;
+        hosts_builder
+            .write()
+            .map_err(|e| format!("Failed to write to the hostfile for {hostfile_comment}: {e}"))?;
     }
     Ok(())
 }
@@ -189,12 +186,12 @@ pub(crate) async fn get_config_with_pool(id: i64, pool: &SqlitePool) -> Result<C
         Some(row) => {
             let id: i64 = row.try_get("id").map_err(|e| e.to_string())?;
             let data: String = row.try_get("data").map_err(|e| e.to_string())?;
-            let mut config: Config = serde_json::from_str(&data)
-                .map_err(|e| format!("Failed to parse config: {}", e))?;
+            let mut config: Config =
+                serde_json::from_str(&data).map_err(|e| format!("Failed to parse config: {e}"))?;
             config.id = Some(id);
             Ok(config)
         }
-        None => Err(format!("No config found with id: {}", id)),
+        None => Err(format!("No config found with id: {id}")),
     }
 }
 
@@ -257,12 +254,9 @@ pub(crate) async fn import_configs_with_pool(
     let configs: Vec<Config> = match serde_json::from_str(&json) {
         Ok(configs) => configs,
         Err(e) => {
-            info!(
-                "Failed to parse JSON as Vec<Config>: {}. Trying as single Config.",
-                e
-            );
+            info!("Failed to parse JSON as Vec<Config>: {e}. Trying as single Config.");
             let config = serde_json::from_str::<Config>(&json)
-                .map_err(|e| format!("Failed to parse config: {}", e))?;
+                .map_err(|e| format!("Failed to parse config: {e}"))?;
             vec![config]
         }
     };
@@ -270,11 +264,11 @@ pub(crate) async fn import_configs_with_pool(
     for config in configs {
         insert_config_with_pool(config, pool)
             .await
-            .map_err(|e| format!("Failed to insert config: {}", e))?;
+            .map_err(|e| format!("Failed to insert config: {e}"))?;
     }
 
     if let Err(e) = migrate_configs(Some(pool)).await {
-        return Err(format!("Error migrating configs: {}", e));
+        return Err(format!("Error migrating configs: {e}"));
     }
 
     Ok(())
@@ -753,7 +747,7 @@ mod tests {
             .unwrap();
 
         let exported_json = export_configs_with_pool(&pool).await.unwrap();
-        println!("Exported JSON: {}", exported_json);
+        println!("Exported JSON: {exported_json}");
 
         let exported_configs: Vec<BTreeMap<String, Value>> =
             serde_json::from_str(&exported_json).expect("Failed to parse exported JSON");

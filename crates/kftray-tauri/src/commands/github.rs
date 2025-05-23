@@ -51,8 +51,8 @@ impl From<TauriError> for CustomError {
 impl From<CustomError> for InvokeError {
     fn from(error: CustomError) -> Self {
         match error {
-            CustomError::Keyring(err) => InvokeError::from(format!("Keyring error: {:?}", err)),
-            CustomError::Tauri(err) => InvokeError::from(format!("Tauri error: {:?}", err)),
+            CustomError::Keyring(err) => InvokeError::from(format!("Keyring error: {err:?}")),
+            CustomError::Tauri(err) => InvokeError::from(format!("Tauri error: {err:?}")),
         }
     }
 }
@@ -117,7 +117,7 @@ mod credentials {
     }
 
     pub fn get_git_credentials(url: &str, username: &str) -> Result<Cred, git2::Error> {
-        info!("Getting credentials for URL: {}", url);
+        info!("Getting credentials for URL: {url}");
 
         if url.starts_with("git@") || url.starts_with("ssh://") {
             if let Ok(cred) = try_ssh_authentication(username) {
@@ -139,7 +139,7 @@ mod credentials {
                 Ok(cred)
             }
             Err(e) => {
-                info!("SSH agent authentication failed: {}", e);
+                info!("SSH agent authentication failed: {e}");
                 Err(e)
             }
         }
@@ -149,7 +149,7 @@ mod credentials {
         let config = git2::Config::open_default()?;
 
         let key_path_str = config.get_string("core.sshCommand").map_err(|e| {
-            info!("No core.sshCommand in git config: {}", e);
+            info!("No core.sshCommand in git config: {e}");
             e
         })?;
 
@@ -184,7 +184,7 @@ mod credentials {
                 Ok(cred)
             }
             Err(e) => {
-                info!("Failed to use SSH key from git config: {}", e);
+                info!("Failed to use SSH key from git config: {e}");
                 Err(e)
             }
         }
@@ -212,7 +212,7 @@ mod credentials {
                 Ok(cred)
             }
             Err(e) => {
-                info!("Failed to use SSH key from environment variable: {}", e);
+                info!("Failed to use SSH key from environment variable: {e}");
                 Err(e)
             }
         }
@@ -245,10 +245,7 @@ mod credentials {
                 if key_path.exists() {
                     info!("Trying standard SSH key: {}", key_path.display());
                     if let Ok(cred) = Cred::ssh_key(username, None, &key_path, None) {
-                        info!(
-                            "Successfully authenticated with standard SSH key: {}",
-                            key_name
-                        );
+                        info!("Successfully authenticated with standard SSH key: {key_name}");
                         return Ok(cred);
                     }
                 }
@@ -300,8 +297,7 @@ mod credentials {
             Err(e) => {
                 info!("Failed to read SSH directory {}: {}", dir.display(), e);
                 return Err(git2::Error::from_str(&format!(
-                    "Failed to read directory: {}",
-                    e
+                    "Failed to read directory: {e}"
                 )));
             }
         };
@@ -340,8 +336,7 @@ mod credentials {
             Err(e) => {
                 info!("Failed to read directory {}: {}", dir.display(), e);
                 return Err(git2::Error::from_str(&format!(
-                    "Failed to read directory: {}",
-                    e
+                    "Failed to read directory: {e}"
                 )));
             }
         };
@@ -426,7 +421,7 @@ mod credentials {
                     Ok(cred)
                 }
                 Err(e) => {
-                    info!("Credential helper failed: {}", e);
+                    info!("Credential helper failed: {e}");
                     Err(e)
                 }
             }
@@ -439,7 +434,7 @@ mod credentials {
         let credentials = try_credentials_from_file();
 
         for (username, password) in credentials {
-            info!("Trying stored credentials for username: {}", username);
+            info!("Trying stored credentials for username: {username}");
             if let Ok(cred) = Cred::userpass_plaintext(&username, &password) {
                 info!("Successfully authenticated with stored credentials");
                 return Ok(cred);
@@ -453,12 +448,12 @@ mod credentials {
 fn clone_and_read_config(
     repo_url: &str, config_path: &str, use_system_credentials: bool, github_token: Option<String>,
 ) -> Result<String, String> {
-    let temp_dir = TempDir::new().map_err(|e| format!("Failed to create temp dir: {}", e))?;
+    let temp_dir = TempDir::new().map_err(|e| format!("Failed to create temp dir: {e}"))?;
 
     let callbacks = setup_git_callbacks(use_system_credentials, github_token);
     let mut builder = setup_repo_builder(callbacks);
 
-    info!("Attempting to clone repository: {}", repo_url);
+    info!("Attempting to clone repository: {repo_url}");
     clone_repository(&mut builder, repo_url, temp_dir.path())?;
 
     read_config_file(temp_dir.path(), config_path)
@@ -530,14 +525,10 @@ fn clone_repository(
     match builder.clone(repo_url, path) {
         Ok(repo) => Ok(repo),
         Err(e) => {
-            warn!(
-                "Repository clone failed: {}, trying fallback with system git command",
-                e
-            );
+            warn!("Repository clone failed: {e}, trying fallback with system git command");
 
             try_clone_with_system_git(repo_url, path).map_err(|err| format!(
-                    "Failed to clone repository. Please check your credentials and repository URL. Error: {}",
-                    err
+                    "Failed to clone repository. Please check your credentials and repository URL. Error: {err}"
                 ))
         }
     }
@@ -556,15 +547,15 @@ fn try_clone_with_system_git(repo_url: &str, path: &Path) -> Result<Repository, 
         .arg(repo_url)
         .arg(path)
         .output()
-        .map_err(|e| format!("Failed to execute git command: {}", e))?;
+        .map_err(|e| format!("Failed to execute git command: {e}"))?;
 
     if output.status.success() {
         info!("Successfully cloned repository using system git");
-        Repository::open(path).map_err(|e| format!("Failed to open repository: {}", e))
+        Repository::open(path).map_err(|e| format!("Failed to open repository: {e}"))
     } else {
         let error_msg = String::from_utf8_lossy(&output.stderr);
-        error!("System git clone failed: {}", error_msg);
-        Err(format!("System git clone failed: {}", error_msg))
+        error!("System git clone failed: {error_msg}");
+        Err(format!("System git clone failed: {error_msg}"))
     }
 }
 
@@ -583,7 +574,7 @@ fn read_config_file(temp_dir: &Path, config_path: &str) -> Result<String, String
 
 async fn process_config_content(config_content: &str, flush: bool) -> Result<(), String> {
     let configs: Vec<Config> = serde_json::from_str(config_content)
-        .map_err(|e| format!("Failed to parse config JSON: {}", e))?;
+        .map_err(|e| format!("Failed to parse config JSON: {e}"))?;
 
     if flush {
         info!("Clearing existing configurations");
@@ -598,7 +589,7 @@ async fn import_configurations(configs: &[Config]) -> Result<(), String> {
     info!("Importing {} new configurations", configs.len());
     for config in configs {
         let config_json = serde_json::to_string(config)
-            .map_err(|e| format!("Failed to serialize config: {}", e))?;
+            .map_err(|e| format!("Failed to serialize config: {e}"))?;
         import_configs(config_json).await?;
     }
     Ok(())
@@ -611,8 +602,8 @@ async fn migrate_configurations() -> Result<(), String> {
             Ok(())
         }
         Err(e) => {
-            error!("Error migrating configs: {}. Please check if the configurations are valid and compatible with the current system/version.", e);
-            Err(format!("Config migration failed: {}", e))
+            error!("Error migrating configs: {e}. Please check if the configurations are valid and compatible with the current system/version.");
+            Err(format!("Config migration failed: {e}"))
         }
     }
 }
@@ -766,15 +757,13 @@ mod tests {
         let result = process_config_content(config_content, false).await;
         assert!(
             result.is_ok(),
-            "Failed to process valid config content without flush: {:?}",
-            result
+            "Failed to process valid config content without flush: {result:?}"
         );
 
         let result = process_config_content(config_content, true).await;
         assert!(
             result.is_ok(),
-            "Failed to process valid config content with flush: {:?}",
-            result
+            "Failed to process valid config content with flush: {result:?}"
         );
     }
 
@@ -832,11 +821,10 @@ mod tests {
 
         let custom_error = CustomError::Keyring(KeyringError::NoEntry);
         let invoke_error = InvokeError::from(custom_error);
-        let error_str = format!("{:?}", invoke_error);
+        let error_str = format!("{invoke_error:?}");
         assert!(
             error_str.contains("Keyring error") && error_str.contains("NoEntry"),
-            "InvokeError should contain both the error type and variant: {}",
-            error_str
+            "InvokeError should contain both the error type and variant: {error_str}"
         );
     }
 
@@ -874,8 +862,7 @@ mod tests {
         let err = result.unwrap_err();
         assert!(
             err.contains("Failed to clone repository") || err.contains("failed to resolve address"),
-            "Error should indicate clone or network failure: {}",
-            err
+            "Error should indicate clone or network failure: {err}"
         );
     }
 

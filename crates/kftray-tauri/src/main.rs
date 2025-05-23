@@ -82,15 +82,15 @@ fn main() {
                 if let Err(e) =
                     kftray_commons::utils::config::clean_all_custom_hosts_entries().await
                 {
-                    error!("Failed to clean custom hosts entries: {}", e);
+                    error!("Failed to clean custom hosts entries: {e}");
                 }
 
                 if let Err(e) = kftray_commons::utils::db::init().await {
-                    error!("Failed to initialize database: {}", e);
+                    error!("Failed to initialize database: {e}");
                 }
 
                 if let Err(e) = kftray_commons::utils::migration::migrate_configs(None).await {
-                    error!("Database migration failed during setup: {}", e);
+                    error!("Database migration failed during setup: {e}");
                 }
             });
 
@@ -104,7 +104,7 @@ fn main() {
             tauri::async_runtime::spawn(async move {
                 info!("Starting port management checks");
                 if let Err(e) = init_check::check_and_manage_ports(port_ops_clone).await {
-                    error!("Error in port management: {}", e);
+                    error!("Error in port management: {e}");
                 }
             });
 
@@ -137,7 +137,7 @@ fn main() {
                 .register("CmdOrCtrl+Shift+F1", move || {
                     toggle_window_visibility(&window);
                 })
-                .unwrap_or_else(|err| error!("{:?}", err));
+                .unwrap_or_else(|err| error!("{err:?}"));
 
             Ok(())
         })

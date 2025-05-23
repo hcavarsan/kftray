@@ -21,7 +21,7 @@ impl UdpForwarder {
         local_address: String, local_port: u16,
         upstream_conn: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
     ) -> anyhow::Result<(u16, tokio::task::JoinHandle<()>)> {
-        let local_udp_addr = format!("{}:{}", local_address, local_port);
+        let local_udp_addr = format!("{local_address}:{local_port}");
 
         let local_udp_socket = Arc::new(
             TokioUdpSocket::bind(&local_udp_addr)
@@ -185,7 +185,7 @@ mod tests {
 
         let client_socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         client_socket
-            .connect(format!("127.0.0.1:{}", port))
+            .connect(format!("127.0.0.1:{port}"))
             .await
             .unwrap();
 

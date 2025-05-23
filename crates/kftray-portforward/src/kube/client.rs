@@ -87,15 +87,13 @@ pub async fn create_client_with_specific_context(
                     return Ok((Some(client), Some(merged_kubeconfig), all_contexts));
                 } else {
                     errors.push(format!(
-                        "Failed to create HTTPS connector for context: {}",
-                        context_name
+                        "Failed to create HTTPS connector for context: {context_name}"
                     ));
                 }
             }
             Err(e) => {
                 errors.push(format!(
-                    "Failed to create configuration for context: {}: {}",
-                    context_name, e
+                    "Failed to create configuration for context: {context_name}: {e}"
                 ));
             }
         }
@@ -117,7 +115,7 @@ fn get_kubeconfig_paths_from_option(kubeconfig: Option<String>) -> Result<Vec<Pa
             get_kubeconfig_paths()
         }
         Some(path) => {
-            info!("Using provided kubeconfig paths: {}", path);
+            info!("Using provided kubeconfig paths: {path}");
             Ok(path.split(':').map(PathBuf::from).collect())
         }
         None => {
@@ -133,20 +131,20 @@ fn merge_kubeconfigs(paths: &[PathBuf]) -> Result<(Kubeconfig, Vec<String>, Vec<
     let mut merged_kubeconfig = Kubeconfig::default();
 
     for path in paths {
-        info!("Attempting to read kubeconfig from path: {:?}", path);
+        info!("Attempting to read kubeconfig from path: {path:?}");
         match Kubeconfig::read_from(path)
-            .context(format!("Failed to read kubeconfig from {:?}", path))
+            .context(format!("Failed to read kubeconfig from {path:?}"))
         {
             Ok(kubeconfig) => {
-                info!("Successfully read kubeconfig from {:?}", path);
+                info!("Successfully read kubeconfig from {path:?}");
                 let contexts = list_contexts(&kubeconfig);
                 all_contexts.extend(contexts.clone());
-                info!("Available contexts in {:?}: {:?}", path, contexts);
+                info!("Available contexts in {path:?}: {contexts:?}");
                 merged_kubeconfig = merged_kubeconfig.merge(kubeconfig)?;
             }
             Err(e) => {
-                let error_msg = format!("Failed to read kubeconfig from {:?}: {}", path, e);
-                error!("{}", error_msg);
+                let error_msg = format!("Failed to read kubeconfig from {path:?}: {e}");
+                error!("{error_msg}");
                 errors.push(error_msg);
             }
         }
@@ -156,7 +154,7 @@ fn merge_kubeconfigs(paths: &[PathBuf]) -> Result<(Kubeconfig, Vec<String>, Vec<
 }
 
 async fn create_config_with_context(kubeconfig: &Kubeconfig, context_name: &str) -> Result<Config> {
-    info!("Creating configuration for context: {}", context_name);
+    info!("Creating configuration for context: {context_name}");
     let mut kubeconfig = kubeconfig.clone();
 
     for auth_info in &mut kubeconfig.auth_infos {
@@ -268,19 +266,19 @@ fn create_strategies<'a>(
 }
 
 async fn try_create_client(description: &str, strategy: StrategyFuture<'_>) -> Result<Client, ()> {
-    info!("Attempting to create client with {}", description);
+    info!("Attempting to create client with {description}");
     match strategy.await {
         Ok(client) => {
             if test_client(&client).await.is_ok() {
-                info!("Successfully created client with {}", description);
+                info!("Successfully created client with {description}");
                 Ok(client)
             } else {
-                warn!("{} failed to connect.", description);
+                warn!("{description} failed to connect.");
                 Err(())
             }
         }
         Err(e) => {
-            warn!("Failed to create {}: {}", description, e);
+            warn!("Failed to create {description}: {e}");
             Err(())
         }
     }
@@ -300,7 +298,7 @@ async fn create_openssl_https_connector(
             None
         }
         Err(e) => {
-            warn!("Failed to get auth layer: {}", e);
+            warn!("Failed to get auth layer: {e}");
             return Err(Box::new(e));
         }
     };
@@ -330,7 +328,7 @@ async fn create_rustls_https_connector(
             None
         }
         Err(e) => {
-            warn!("Failed to get auth layer: {}", e);
+            warn!("Failed to get auth layer: {e}");
             return Err(Box::new(e));
         }
     };
@@ -372,15 +370,12 @@ async fn create_insecure_http_client(
 async fn test_client(client: &Client) -> Result<(), Box<dyn Error + Send + Sync>> {
     match client.apiserver_version().await {
         Ok(version) => {
-            info!("Kubernetes API server version: {:?}", version);
+            info!("Kubernetes API server version: {version:?}");
             Ok(())
         }
         Err(e) => {
-            let err_msg = format!("Failed to get API server version: {}", e);
-            Err(
-                Box::new(std::io::Error::new(std::io::ErrorKind::Other, err_msg))
-                    as Box<dyn Error + Send + Sync>,
-            )
+            let err_msg = format!("Failed to get API server version: {e}");
+            Err(Box::new(std::io::Error::other(err_msg)) as Box<dyn Error + Send + Sync>)
         }
     }
 }
@@ -412,7 +407,7 @@ pub async fn list_kube_contexts(
 
     let (_, kubeconfig, contexts) = create_client_with_specific_context(kubeconfig, None)
         .await
-        .map_err(|err| format!("Failed to create client: {}", err))?;
+        .map_err(|err| format!("Failed to create client: {err}"))?;
 
     if let Some(kubeconfig) = kubeconfig {
         Ok(kubeconfig
