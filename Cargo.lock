@@ -3015,6 +3015,7 @@ dependencies = [
  "tokio",
  "uuid",
  "windows 0.61.1",
+ "windows-core",
  "windows-service",
  "zbus",
 ]
