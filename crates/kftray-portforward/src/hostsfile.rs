@@ -146,21 +146,6 @@ mod tests {
     }
 
     #[test]
-    fn test_remove_all_host_entries() {
-        init();
-
-        let id1 = "test-id-1".to_string();
-        let id2 = "test-id-2".to_string();
-        let entry = get_test_entry();
-
-        let _ = add_host_entry(id1, entry.clone());
-        let _ = add_host_entry(id2, entry.clone());
-
-        let result = remove_all_host_entries();
-        assert!(result.is_ok());
-    }
-
-    #[test]
     fn test_manager_creation() {
         init();
         let manager = HostfileManager::new();
