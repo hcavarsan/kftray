@@ -130,6 +130,9 @@ jobs:
         run: rustup target add ${{ matrix.rust_target }}
         shell: bash
 
+      - name: build kftray-helper
+        run: cargo build --bin kftray-helper --release
+
       - name: Run Clippy
         run: cargo clippy --workspace --all-targets --allow-dirty --allow-staged --all-features --fix -- -D warnings
 
