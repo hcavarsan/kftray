@@ -132,4 +132,37 @@ impl HelperClient {
         self.ensure_helper_installed()?;
         socket_comm::send_request(&self.socket_path, &self.app_id, command)
     }
+
+    pub fn allocate_local_address(&self, service_name: String) -> Result<String, HelperError> {
+        let command = RequestCommand::Address(super::super::messages::AddressCommand::Allocate {
+            service_name,
+        });
+        let response = self.send_request(command)?;
+
+        match response.result {
+            super::super::messages::RequestResult::StringSuccess(address) => Ok(address),
+            super::super::messages::RequestResult::Error(error) => {
+                Err(HelperError::Communication(error))
+            }
+            _ => Err(HelperError::Communication(
+                "Unexpected response format".to_string(),
+            )),
+        }
+    }
+
+    pub fn release_local_address(&self, address: String) -> Result<(), HelperError> {
+        let command =
+            RequestCommand::Address(super::super::messages::AddressCommand::Release { address });
+        let response = self.send_request(command)?;
+
+        match response.result {
+            super::super::messages::RequestResult::Success => Ok(()),
+            super::super::messages::RequestResult::Error(error) => {
+                Err(HelperError::Communication(error))
+            }
+            _ => Err(HelperError::Communication(
+                "Unexpected response format".to_string(),
+            )),
+        }
+    }
 }

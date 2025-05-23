@@ -183,6 +183,8 @@ fn main() {
             commands::config_state::get_config_states,
             commands::helper::install_helper,
             commands::helper::remove_helper,
+            commands::helper::allocate_local_address_cmd,
+            commands::helper::release_local_address_cmd,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");

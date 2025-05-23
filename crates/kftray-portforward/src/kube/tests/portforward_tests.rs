@@ -164,6 +164,7 @@ fn setup_test_config() -> Config {
         workload_type: Some("service".to_string()),
         target: None,
         local_address: None,
+        auto_loopback_address: false,
         domain_enabled: None,
         remote_address: None,
     }

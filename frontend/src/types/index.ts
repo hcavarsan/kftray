@@ -4,6 +4,7 @@ export interface Config {
   namespace: string
   local_port: number
   local_address: string
+  auto_loopback_address: boolean
   domain_enabled: boolean
   remote_port?: number
   context: string

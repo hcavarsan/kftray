@@ -302,6 +302,22 @@ mod tests {
         assert_eq!(merged2, json!({ "a": 1 }));
     }
 
+    #[test]
+    fn test_merge_json_values_auto_loopback_address_default() {
+        let default_config_json = serde_json::to_value(Config::default()).unwrap();
+        let old_config_without_auto_loopback = json!({
+            "service": "old-service",
+            "namespace": "old-namespace"
+        });
+
+        let merged = merge_json_values(default_config_json, old_config_without_auto_loopback);
+
+        assert_eq!(merged["service"], "old-service");
+        assert_eq!(merged["namespace"], "old-namespace");
+
+        assert_eq!(merged["auto_loopback_address"], false);
+    }
+
     #[tokio::test]
     async fn test_create_triggers() {
         let pool = SqlitePool::connect("sqlite::memory:")

@@ -37,3 +37,4 @@ lcov*
 llvm-cov*
 **/*.snap
 **/snapshots/*
+TASKS.md
