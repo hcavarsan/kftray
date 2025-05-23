@@ -31,8 +31,8 @@ pub async fn start_port_forwarding(app: &mut App, config: Config) {
             if let Err(e) =
                 deploy_and_forward_pod(vec![config.clone()], Arc::new(HttpLogState::new())).await
             {
-                error!("Failed to start proxy forward: {:?}", e);
-                app.error_message = Some(format!("Failed to start proxy forward: {:?}", e));
+                error!("Failed to start proxy forward: {e:?}");
+                app.error_message = Some(format!("Failed to start proxy forward: {e:?}"));
                 app.state = AppState::ShowErrorPopup;
             }
         }
@@ -41,8 +41,8 @@ pub async fn start_port_forwarding(app: &mut App, config: Config) {
                 let log_state = Arc::new(HttpLogState::new());
                 let result = start_port_forward(vec![config.clone()], "tcp", log_state).await;
                 if let Err(e) = result {
-                    error!("Failed to start TCP port forward: {:?}", e);
-                    app.error_message = Some(format!("Failed to start TCP port forward: {:?}", e));
+                    error!("Failed to start TCP port forward: {e:?}");
+                    app.error_message = Some(format!("Failed to start TCP port forward: {e:?}"));
                     app.state = AppState::ShowErrorPopup;
                 }
             }
@@ -51,8 +51,8 @@ pub async fn start_port_forwarding(app: &mut App, config: Config) {
                     deploy_and_forward_pod(vec![config.clone()], Arc::new(HttpLogState::new()))
                         .await;
                 if let Err(e) = result {
-                    error!("Failed to start UDP port forward: {:?}", e);
-                    app.error_message = Some(format!("Failed to start UDP port forward: {:?}", e));
+                    error!("Failed to start UDP port forward: {e:?}");
+                    app.error_message = Some(format!("Failed to start UDP port forward: {e:?}"));
                     app.state = AppState::ShowErrorPopup;
                 }
             }
@@ -72,15 +72,15 @@ pub async fn stop_port_forwarding(app: &mut App, config: Config) {
             )
             .await
             {
-                error!("Failed to stop proxy forward: {:?}", e);
-                app.error_message = Some(format!("Failed to stop proxy forward: {:?}", e));
+                error!("Failed to stop proxy forward: {e:?}");
+                app.error_message = Some(format!("Failed to stop proxy forward: {e:?}"));
                 app.state = AppState::ShowErrorPopup;
             }
         }
         Some("service") | Some("pod") => {
             if let Err(e) = stop_port_forward(config.id.unwrap_or_default().to_string()).await {
-                error!("Failed to stop port forward: {:?}", e);
-                app.error_message = Some(format!("Failed to stop port forward: {:?}", e));
+                error!("Failed to stop port forward: {e:?}");
+                app.error_message = Some(format!("Failed to stop port forward: {e:?}"));
                 app.state = AppState::ShowErrorPopup;
             }
         }
@@ -99,8 +99,8 @@ pub async fn stop_all_port_forward_and_exit(app: &mut App) {
             }
         }
         Err(e) => {
-            error!("Failed to stop all port forwards: {:?}", e);
-            app.error_message = Some(format!("Failed to stop all port forwards: {:?}", e));
+            error!("Failed to stop all port forwards: {e:?}");
+            app.error_message = Some(format!("Failed to stop all port forwards: {e:?}"));
             app.state = AppState::ShowErrorPopup;
         }
     }

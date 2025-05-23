@@ -27,6 +27,9 @@ target*/*
 target*
 frontend/dist/*
 !frontend/dist/.gitkeep
+crates/kftray-tauri/bin/*
+!crates/kftray-tauri/bin/.gitkeep
+bin/*
 package-lock.json
 build_rs*
 lcov.info

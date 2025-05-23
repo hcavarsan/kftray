@@ -83,6 +83,20 @@ impl PortForward {
         self.local_address.clone()
     }
 
+    #[instrument(skip(self), fields(config_id = self.config_id))]
+    pub async fn cleanup_resources(&self) -> anyhow::Result<()> {
+        if let Some(addr) = &self.local_address {
+            if addr != "127.0.0.1" {
+                info!("Cleaning up loopback address: {}", addr);
+                if let Err(e) = crate::network_utils::remove_loopback_address(addr).await {
+                    error!("Failed to remove loopback address {}: {}", addr, e);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     #[instrument(skip(self, http_log_state), fields(config_id = self.config_id))]
     pub async fn port_forward_tcp(
         self, http_log_state: Arc<HttpLogState>,
@@ -129,14 +143,14 @@ impl PortForward {
                     let conn = client_conn.lock().await;
                     conn.set_nodelay(true).map_err(|e| {
                         error!(error = %e, "Failed to set nodelay");
-                        std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+                        std::io::Error::other(e.to_string())
                     })?;
                     drop(conn);
 
                     info!("Finding target pod");
                     let target = pf.finder().find(&pf.target).await.map_err(|e| {
                         error!(error = %e, "Failed to find target pod");
-                        std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+                        std::io::Error::other(e.to_string())
                     })?;
                     info!(pod_name = %target.pod_name, pod_port = %target.port_number, "Found target pod");
 
@@ -148,15 +162,14 @@ impl PortForward {
                         .await
                         .map_err(|e| {
                             error!(error = %e, "Portforward API call failed");
-                            std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+                            std::io::Error::other(e.to_string())
                         })?;
                     info!("Portforward API call successful");
 
                     info!("Taking stream from port_forwarder");
                     let upstream_conn = port_forwarder.take_stream(pod_port).ok_or_else(|| {
                         error!("Failed to take stream for port {}", pod_port);
-                        std::io::Error::new(
-                            std::io::ErrorKind::Other,
+                        std::io::Error::other(
                             "port not found in forwarder".to_string(),
                         )
                     })?;
@@ -283,6 +296,7 @@ mod tests {
                     last_probe_time: None,
                     last_transition_time: None,
                     message: None,
+                    observed_generation: None,
                     reason: None,
                 }]),
                 ..Default::default()
@@ -591,7 +605,7 @@ mod tests {
         assert_ne!(bound_port, 0, "Listener did not bind to a dynamic port");
 
         info!("Simulating client connection");
-        let connect_addr = format!("127.0.0.1:{}", bound_port);
+        let connect_addr = format!("127.0.0.1:{bound_port}");
         let connect_task = tokio::spawn(async move {
             match TcpStream::connect(&connect_addr).await {
                 Ok(stream) => {

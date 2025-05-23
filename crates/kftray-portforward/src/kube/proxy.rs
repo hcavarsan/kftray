@@ -48,7 +48,7 @@ pub async fn deploy_and_forward_pod(
         let (client, _, _) = create_client_with_specific_context(kubeconfig_clone, context_name)
             .await
             .map_err(|e| {
-                error!("Failed to create Kubernetes client: {}", e);
+                error!("Failed to create Kubernetes client: {e}");
                 e.to_string()
             })?;
 
@@ -68,15 +68,13 @@ pub async fn deploy_and_forward_pod(
         let username = whoami::username().to_lowercase();
         let clean_username: String = username.chars().filter(|c| c.is_alphanumeric()).collect();
 
-        info!("Cleaned username: {}", clean_username);
+        info!("Cleaned username: {clean_username}");
 
         let protocol = config.protocol.to_string().to_lowercase();
 
-        let hashed_name = format!(
-            "kftray-forward-{}-{}-{}-{}",
-            clean_username, protocol, timestamp, random_string
-        )
-        .to_lowercase();
+        let hashed_name =
+            format!("kftray-forward-{clean_username}-{protocol}-{timestamp}-{random_string}")
+                .to_lowercase();
 
         let config_id_str = config
             .id
@@ -160,7 +158,7 @@ pub async fn deploy_and_forward_pod(
                     }
                     Err(e) => {
                         let _ = pods.delete(&hashed_name, &DeleteParams::default()).await;
-                        return Err(format!("Failed to start port forwarding {}", e));
+                        return Err(format!("Failed to start port forwarding {e}"));
                     }
                 }
             }
@@ -174,15 +172,12 @@ pub async fn deploy_and_forward_pod(
 pub async fn stop_proxy_forward(
     config_id: i64, namespace: &str, service_name: String,
 ) -> Result<CustomResponse, String> {
-    info!(
-        "Attempting to stop proxy forward for service: {}",
-        service_name
-    );
+    info!("Attempting to stop proxy forward for service: {service_name}");
 
     let config = kftray_commons::config::get_config(config_id)
         .await
         .map_err(|e| {
-            error!("Failed to get config: {}", e);
+            error!("Failed to get config: {e}");
             e.to_string()
         })?;
 
@@ -194,7 +189,7 @@ pub async fn stop_proxy_forward(
     let (client, _, _) = create_client_with_specific_context(Some(kubeconfig), Some(context_name))
         .await
         .map_err(|e| {
-            error!("Failed to create Kubernetes client: {}", e);
+            error!("Failed to create Kubernetes client: {e}");
             e.to_string()
         })?;
 
@@ -202,22 +197,22 @@ pub async fn stop_proxy_forward(
 
     let pods: Api<Pod> = Api::namespaced(client, namespace);
 
-    let lp = ListParams::default().labels(&format!("config_id={}", config_id));
+    let lp = ListParams::default().labels(&format!("config_id={config_id}"));
 
     let pod_list = pods.list(&lp).await.map_err(|e| {
-        error!("Error listing pods: {}", e);
+        error!("Error listing pods: {e}");
         e.to_string()
     })?;
 
     let username = whoami::username();
-    let pod_prefix = format!("kftray-forward-{}", username);
+    let pod_prefix = format!("kftray-forward-{username}");
 
-    debug!("Looking for pods with prefix: {}", pod_prefix);
+    debug!("Looking for pods with prefix: {pod_prefix}");
 
     for pod in pod_list.items {
         if let Some(pod_name) = pod.metadata.name {
             if pod_name.starts_with(&pod_prefix) {
-                info!("Found pod to stop: {}", pod_name);
+                info!("Found pod to stop: {pod_name}");
 
                 let delete_options = DeleteParams {
                     grace_period_seconds: Some(0),
@@ -226,33 +221,30 @@ pub async fn stop_proxy_forward(
                 };
 
                 match pods.delete(&pod_name, &delete_options).await {
-                    Ok(_) => info!("Successfully deleted pod: {}", pod_name),
+                    Ok(_) => info!("Successfully deleted pod: {pod_name}"),
                     Err(e) => {
-                        error!("Failed to delete pod: {} with error: {}", pod_name, e);
+                        error!("Failed to delete pod: {pod_name} with error: {e}");
                         return Err(e.to_string());
                     }
                 }
 
                 break;
             } else {
-                info!("Pod {} does not match prefix, skipping", pod_name);
+                info!("Pod {pod_name} does not match prefix, skipping");
             }
         }
     }
 
-    info!("Stopping port forward for service: {}", service_name);
+    info!("Stopping port forward for service: {service_name}");
 
     let stop_result = super::stop::stop_port_forward(config_id.to_string())
         .await
         .map_err(|e| {
-            error!(
-                "Failed to stop port forwarding for service '{}': {}",
-                service_name, e
-            );
+            error!("Failed to stop port forwarding for service '{service_name}': {e}");
             e
         })?;
 
-    info!("Proxy forward stopped for service: {}", service_name);
+    info!("Proxy forward stopped for service: {service_name}");
 
     Ok(stop_result)
 }
@@ -261,7 +253,7 @@ fn render_json_template(template: &str, values: &HashMap<&str, String>) -> Strin
     let mut rendered_template = template.to_string();
 
     for (key, value) in values.iter() {
-        rendered_template = rendered_template.replace(&format!("{{{}}}", key), value);
+        rendered_template = rendered_template.replace(&format!("{{{key}}}"), value);
     }
 
     rendered_template

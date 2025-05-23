@@ -78,12 +78,11 @@ impl UdpProxy {
             match tcp_stream.read_exact(&mut size_buf).await {
                 Ok(_) => {
                     let size = u32::from_be_bytes(size_buf);
-                    debug!("Read size: {}", size);
+                    debug!("Read size: {size}");
 
                     if size as usize > MAX_UDP_PAYLOAD_SIZE {
                         let err = ProxyError::InvalidData(format!(
-                            "UDP packet size {} exceeds maximum allowed {}",
-                            size, MAX_UDP_PAYLOAD_SIZE
+                            "UDP packet size {size} exceeds maximum allowed {MAX_UDP_PAYLOAD_SIZE}"
                         ));
                         tcp_stream.write_all(&0u32.to_be_bytes()).await?;
                         tcp_stream.flush().await?;
@@ -93,9 +92,9 @@ impl UdpProxy {
                     let mut buffer = vec![0u8; size as usize];
                     match tcp_stream.read_exact(&mut buffer).await {
                         Ok(_) => {
-                            debug!("Received {} bytes from TCP", size);
+                            debug!("Received {size} bytes from TCP");
                             udp_socket.send(&buffer).await?;
-                            debug!("Sent {} bytes to UDP", size);
+                            debug!("Sent {size} bytes to UDP");
 
                             self.handle_udp_response(&udp_socket, &mut tcp_stream)
                                 .await?;
@@ -105,7 +104,7 @@ impl UdpProxy {
                             break;
                         }
                         Err(e) => {
-                            error!("Error reading TCP payload: {}", e);
+                            error!("Error reading TCP payload: {e}");
                             return Err(ProxyError::Io(e));
                         }
                     }
@@ -115,7 +114,7 @@ impl UdpProxy {
                     break;
                 }
                 Err(e) => {
-                    error!("TCP read error: {}", e);
+                    error!("TCP read error: {e}");
                     return Err(ProxyError::Io(e));
                 }
             }
@@ -131,7 +130,7 @@ impl UdpProxy {
 
         match tokio::time::timeout(UDP_TIMEOUT, udp_socket.recv(&mut response)).await {
             Ok(Ok(n)) => {
-                debug!("Received {} bytes from UDP", n);
+                debug!("Received {n} bytes from UDP");
                 tcp_stream.write_all(&(n as u32).to_be_bytes()).await?;
                 tcp_stream.write_all(&response[..n]).await?;
                 tcp_stream.flush().await?;
@@ -139,7 +138,7 @@ impl UdpProxy {
                 Ok(())
             }
             Ok(Err(e)) => {
-                error!("UDP receive error: {}", e);
+                error!("UDP receive error: {e}");
                 Err(ProxyError::Io(e))
             }
             Err(_) => {
@@ -163,17 +162,17 @@ impl ProxyHandler for UdpProxy {
                 accept_result = listener.accept() => {
                     match accept_result {
                         Ok((stream, addr)) => {
-                            info!("Accepted connection from {}", addr);
+                            info!("Accepted connection from {addr}");
                             let config = config.clone();
                             let proxy = self.clone();
 
                             tokio::spawn(async move {
                                 if let Err(e) = proxy.handle_udp_connection(stream, &config).await {
-                                    error!("Error handling client: {}", e);
+                                    error!("Error handling client: {e}");
                                 }
                             });
                         }
-                        Err(e) => error!("Failed to accept connection: {}", e),
+                        Err(e) => error!("Failed to accept connection: {e}"),
                     }
                 }
                 _ = shutdown.notified() => {
@@ -326,7 +325,7 @@ mod tests {
                     .unwrap();
 
             // Assert
-            assert_eq!(response, test_data, "Packet {} was not echoed correctly", i);
+            assert_eq!(response, test_data, "Packet {i} was not echoed correctly");
         }
 
         // Cleanup

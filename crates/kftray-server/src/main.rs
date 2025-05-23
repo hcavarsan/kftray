@@ -38,7 +38,7 @@ fn load_config() -> Result<ProxyConfig, ProxyError> {
 
     let resolved_host = if target_host.contains("://") {
         let url = Url::parse(&target_host)
-            .map_err(|e| ProxyError::Configuration(format!("Invalid URL: {}", e)))?;
+            .map_err(|e| ProxyError::Configuration(format!("Invalid URL: {e}")))?;
 
         url.host_str()
             .ok_or_else(|| ProxyError::Configuration("No host found in URL".into()))?
@@ -49,7 +49,7 @@ fn load_config() -> Result<ProxyConfig, ProxyError> {
             ip.to_string()
         } else {
             // If not an IP, try as URL
-            let test_url = format!("http://{}", target_host);
+            let test_url = format!("http://{target_host}");
             if let Ok(url) = Url::parse(&test_url) {
                 if let Some(host) = url.host_str() {
                     host.to_string()
@@ -63,9 +63,9 @@ fn load_config() -> Result<ProxyConfig, ProxyError> {
     };
 
     // Try to resolve the host to validate it
-    let _socket_addr = format!("{}:0", resolved_host)
+    let _socket_addr = format!("{resolved_host}:0")
         .to_socket_addrs()
-        .map_err(|e| ProxyError::Configuration(format!("Failed to resolve hostname: {}", e)))?
+        .map_err(|e| ProxyError::Configuration(format!("Failed to resolve hostname: {e}")))?
         .next()
         .ok_or_else(|| ProxyError::Configuration("No IP addresses found for hostname".into()))?;
 
@@ -82,23 +82,22 @@ fn load_config() -> Result<ProxyConfig, ProxyError> {
     let proxy_type_str = env::var("PROXY_TYPE")
         .map_err(|_| ProxyError::Configuration("PROXY_TYPE not set".into()))?;
 
-    println!("Raw PROXY_TYPE value: '{}'", proxy_type_str);
+    println!("Raw PROXY_TYPE value: '{proxy_type_str}'");
     let proxy_type_lower = proxy_type_str.to_lowercase();
-    println!("Lowercased PROXY_TYPE value: '{}'", proxy_type_lower);
+    println!("Lowercased PROXY_TYPE value: '{proxy_type_lower}'");
 
     let proxy_type = match proxy_type_lower.as_str() {
         "tcp" => ProxyType::Tcp,
         "udp" => ProxyType::Udp,
         invalid_type => {
-            println!("Invalid proxy type encountered: '{}'", invalid_type);
+            println!("Invalid proxy type encountered: '{invalid_type}'");
             return Err(ProxyError::Configuration(format!(
-                "Invalid proxy type: {}",
-                invalid_type
+                "Invalid proxy type: {invalid_type}"
             )));
         }
     };
 
-    println!("Selected proxy type: {:?}", proxy_type);
+    println!("Selected proxy type: {proxy_type:?}");
 
     let config = ProxyConfig::builder()
         .target_host(resolved_host)
@@ -125,22 +124,31 @@ async fn main() -> Result<(), ProxyError> {
 
     let server_handle = tokio::spawn(async move { server_clone.run().await });
 
-    tokio::select! {
-        _ = signal::ctrl_c() => {
-            info!("Received Ctrl+C signal");
-        }
-        _ = async {
-            if let Ok(mut sigterm) = signal::unix::signal(signal::unix::SignalKind::terminate()) {
-                let _ = sigterm.recv().await;
-                info!("Received SIGTERM signal");
+    #[cfg(unix)]
+    {
+        tokio::select! {
+            _ = signal::ctrl_c() => {
+                info!("Received Ctrl+C signal");
             }
-        } => {}
+            _ = async {
+                if let Ok(mut sigterm) = signal::unix::signal(signal::unix::SignalKind::terminate()) {
+                    let _ = sigterm.recv().await;
+                    info!("Received SIGTERM signal");
+                }
+            } => {}
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        signal::ctrl_c().await.ok();
+        info!("Received Ctrl+C signal");
     }
 
     server.shutdown();
 
     if let Err(e) = tokio::time::timeout(tokio::time::Duration::from_secs(5), server_handle).await {
-        error!("Server shutdown timed out: {}", e);
+        error!("Server shutdown timed out: {e}");
     }
 
     info!("Server shutdown complete");

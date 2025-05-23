@@ -32,18 +32,18 @@ pub fn save_window_position(window: &Window) {
             Ok(path) => {
                 if let Some(parent_dir) = path.parent() {
                     if let Err(e) = fs::create_dir_all(parent_dir) {
-                        info!("Failed to create config directory: {}", e);
+                        info!("Failed to create config directory: {e}");
                         return;
                     }
                 }
 
                 if fs::write(&path, position_json).is_ok() {
-                    info!("Window position saved: {:?}", position_data);
+                    info!("Window position saved: {position_data:?}");
                 } else {
                     info!("Failed to save window position.");
                 }
             }
-            Err(err) => info!("Failed to get window state path: {}", err),
+            Err(err) => info!("Failed to get window state path: {err}"),
         }
     } else {
         info!("Failed to get window position.");
@@ -56,10 +56,7 @@ pub fn load_window_position() -> Option<WindowPosition> {
             match fs::read_to_string(&home_path) {
                 Ok(position_json) => match serde_json::from_str(&position_json) {
                     Ok(position) => {
-                        info!(
-                            "Window position loaded from home directory: {:?}",
-                            home_path
-                        );
+                        info!("Window position loaded from home directory: {home_path:?}");
                         Some(position)
                     }
                     Err(e) => {
@@ -83,12 +80,9 @@ pub fn load_window_position() -> Option<WindowPosition> {
 }
 
 fn handle_corrupted_file(path: &Path, error: impl std::fmt::Display) {
-    warn!("Failed to parse window position JSON: {}", error);
+    warn!("Failed to parse window position JSON: {error}");
     if let Err(delete_err) = fs::remove_file(path) {
-        warn!(
-            "Failed to delete corrupted window position file: {}",
-            delete_err
-        );
+        warn!("Failed to delete corrupted window position file: {delete_err}");
     }
 }
 
@@ -159,7 +153,7 @@ pub fn reset_to_default_position(window: &Window) {
     #[cfg(not(target_os = "linux"))]
     {
         if let Err(e) = window.move_window(Position::TrayCenter) {
-            warn!("Failed to move window to tray center: {}", e);
+            warn!("Failed to move window to tray center: {e}");
         }
     }
 
@@ -179,7 +173,7 @@ fn remove_position_file() {
     if let Ok(path) = get_window_state_path() {
         if path.exists() {
             if let Err(e) = fs::remove_file(&path) {
-                warn!("Failed to delete window position file: {}", e);
+                warn!("Failed to delete window position file: {e}");
             } else {
                 info!("Window position file deleted successfully.");
             }
@@ -193,7 +187,7 @@ fn remove_position_file() {
 
 pub fn set_window_position(window: &Window, position: Position) {
     if let Err(e) = window.move_window(position) {
-        warn!("Failed to move window: {}", e);
+        warn!("Failed to move window: {e}");
     }
 }
 

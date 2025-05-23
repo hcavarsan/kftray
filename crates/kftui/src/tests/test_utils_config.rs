@@ -57,8 +57,7 @@ mod tests {
         assert!(
             error_message.contains("Failed to write to file")
                 || error_message.contains("Failed to export configs"),
-            "Error should be related to writing or exporting: {}",
-            error_message
+            "Error should be related to writing or exporting: {error_message}"
         );
     }
 }

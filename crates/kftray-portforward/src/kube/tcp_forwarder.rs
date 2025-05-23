@@ -143,7 +143,6 @@ impl TcpForwarder {
             }
         };
 
-        // Only proceed with logging if both enabled and logger is available
         let should_log = logging_enabled && logger.is_some();
         if should_log {
             debug!("HTTP logging is enabled for this connection");
@@ -171,7 +170,6 @@ impl TcpForwarder {
                     debug!("Read {} bytes from client", n);
                     request_buffer.extend_from_slice(&buffer[..n]);
 
-                    // Only log if HTTP logging is enabled and we have a logger
                     if should_log {
                         if let Some(logger) = &logger {
                             let mut req_id_guard = request_id.lock().await;
@@ -381,7 +379,6 @@ impl TcpForwarder {
 
                                 debug!("Response successfully logged for ID: {}", response_id);
 
-
                                 let can_clear_buffer = if is_chunked {
                                     found_end_marker
                                 } else {
@@ -488,7 +485,6 @@ mod tests {
             cancel_clone.notify_one();
         });
 
-        // Simulate client sending a request
         let client_task = tokio::spawn(async move {
             client_to_upstream
                 .write_all(test_request)

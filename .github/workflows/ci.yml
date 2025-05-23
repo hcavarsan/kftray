@@ -32,8 +32,8 @@ jobs:
         with:
           version: 9
           run_install: |
-           - recursive: true
-             args: [--frozen-lockfile]
+            - recursive: true
+              args: [--frozen-lockfile]
 
       - name: Install Node.js
         uses: actions/setup-node@v4
@@ -71,12 +71,25 @@ jobs:
 
   rust-lint:
     name: Clippy
-    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            os_name: linux
+            rust_target: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            os_name: macos
+            rust_target: aarch64-apple-darwin
+          - os: windows-latest
+            os_name: windows
+            rust_target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Install dependencies (Linux)
+        if: matrix.os_name == 'linux'
         run: |
           echo "deb http://gb.archive.ubuntu.com/ubuntu jammy main" | sudo tee /etc/apt/sources.list.d/ubuntu-jammy-main.list
           sudo apt-get update
@@ -96,9 +109,32 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install OpenSSL on Windows
+        if: matrix.os == 'windows-latest'
+        run: choco install openssl
+
+      - name: Set up Perl on Windows
+        if: matrix.os == 'windows-latest'
+        uses: shogo82148/actions-setup-perl@v1
+        with:
+          perl-version: "5.32"
+          distribution: "strawberry"
+
+      - name: Set Perl environment variables
+        if: matrix.os == 'windows-latest'
+        run: |
+          echo "PERL=$((where.exe perl)[0])" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          echo "OPENSSL_SRC_PERL=$((where.exe perl)[0])" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Configure Rust targets
+        run: rustup target add ${{ matrix.rust_target }}
+        shell: bash
+
+      - name: build kftray-helper
+        run: cargo build --bin kftray-helper --release
+
       - name: Run Clippy
         run: cargo clippy --workspace --all-targets --allow-dirty --allow-staged --all-features --fix -- -D warnings
-
 
   rust-coverage:
     name: Code Coverage
@@ -146,7 +182,7 @@ jobs:
         run: cargo install cargo-insta
 
       - name: Run tests
-        run: INSTA_UPDATE=1 cargo llvm-cov nextest --profile ci --config-file .cargo/nextest.toml --locked --workspace --all-features --lib --bins --examples --tests --lcov --output-path lcov.info
+        run: cargo build --bin kftray-helper --release && INSTA_UPDATE=1 cargo llvm-cov nextest --profile ci --config-file .cargo/nextest.toml --locked --workspace --all-features --lib --bins --examples --tests --lcov --output-path lcov.info
 
       - name: Upload coverage
         uses: codecov/codecov-action@v5
@@ -163,7 +199,6 @@ jobs:
           files: target/nextest/ci/junit.xml
           slug: hcavarsan/kftray
 
-
   frontend-bundle-analysis:
     name: Bundle Analysis
     runs-on: ubuntu-24.04
@@ -176,8 +211,8 @@ jobs:
         with:
           version: 9
           run_install: |
-           - recursive: true
-             args: [--frozen-lockfile]
+            - recursive: true
+              args: [--frozen-lockfile]
 
       - name: Install Node.js
         uses: actions/setup-node@v4
@@ -191,7 +226,14 @@ jobs:
         run: cd frontend && pnpm build
 
   build-and-push-docker:
-    needs: [eslint-format, rust-format, rust-lint, rust-coverage, frontend-bundle-analysis]
+    needs:
+      [
+        eslint-format,
+        rust-format,
+        rust-lint,
+        rust-coverage,
+        frontend-bundle-analysis,
+      ]
     if: ${{ contains(github.event.pull_request.title, '[docker]') }}
     permissions:
       contents: write

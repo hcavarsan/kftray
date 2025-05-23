@@ -399,7 +399,7 @@ impl HttpResponseHandler {
                     std::str::from_utf8(header.name.as_bytes()),
                     std::str::from_utf8(header.value),
                 ) {
-                    formatted.push_str(&format!("{}: {}\n", name, value));
+                    formatted.push_str(&format!("{name}: {value}\n"));
                 }
             }
             formatted.push('\n');
@@ -514,9 +514,9 @@ impl HttpResponseHandler {
                         Err(e) => {
                             error!("Failed to format response: {:?}", e);
                             let mut basic_response = String::from("HTTP/1.1 200 OK\n");
-                            basic_response.push_str(&format!("X-Formatting-Error: {}\n\n", e));
+                            basic_response.push_str(&format!("X-Formatting-Error: {e}\n\n"));
                             basic_response.push_str("# Failed to format response properly\n");
-                            basic_response.push_str(&format!("# Error: {}\n", e));
+                            basic_response.push_str(&format!("# Error: {e}\n"));
                             basic_response.push_str("# Raw content follows (first 1000 bytes):\n");
 
                             let preview_size = std::cmp::min(complete_response.len(), 1000);
@@ -877,7 +877,7 @@ mod tests {
 
         println!("Testing websocket detection with complete headers");
         let result = HttpResponseAnalyzer::is_websocket_upgrade(websocket_data);
-        println!("Result: {}", result);
+        println!("Result: {result}");
 
         assert!(result, "Should detect complete websocket upgrade response");
 
@@ -889,7 +889,7 @@ mod tests {
 
         let partial_upgrade = b"HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n";
         let partial_result = HttpResponseAnalyzer::is_websocket_upgrade(partial_upgrade);
-        println!("Partial result: {}", partial_result);
+        println!("Partial result: {partial_result}");
 
         assert!(
             !partial_result,
@@ -908,7 +908,7 @@ mod tests {
         assert!(result.is_ok(), "format_response_for_logging should succeed");
         let formatted = result.unwrap();
 
-        println!("Formatted response:\n{}", formatted);
+        println!("Formatted response:\n{formatted}");
         println!(
             "Original response: {:?}",
             std::str::from_utf8(response_data).unwrap()
@@ -951,7 +951,7 @@ mod tests {
         assert!(result.is_ok());
         let formatted = result.unwrap();
 
-        println!("Formatted response: {}", formatted);
+        println!("Formatted response: {formatted}");
 
         assert!(formatted.contains("HTTP/1.1 200 OK"));
 
@@ -969,7 +969,7 @@ mod tests {
         assert!(result.is_ok());
         let formatted = result.unwrap();
 
-        println!("Formatted empty body response: {}", formatted);
+        println!("Formatted empty body response: {formatted}");
 
         assert!(!formatted.is_empty());
 

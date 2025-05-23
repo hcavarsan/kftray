@@ -255,7 +255,7 @@ pub fn toggle_select_all(app: &mut App) {
 pub async fn handle_input(app: &mut App, _config_states: &mut [ConfigState]) -> io::Result<bool> {
     if event::poll(std::time::Duration::from_millis(100))? {
         if let Event::Key(key) = event::read()? {
-            log::debug!("Key pressed: {:?}", key);
+            log::debug!("Key pressed: {key:?}");
 
             if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
                 stop_all_port_forward_and_exit(app).await;
@@ -762,7 +762,7 @@ pub async fn handle_delete_confirmation_input(app: &mut App, key: KeyCode) -> io
                     }
                     Err(e) => {
                         app.delete_confirmation_message =
-                            Some(format!("Failed to delete configs: {}", e));
+                            Some(format!("Failed to delete configs: {e}"));
                     }
                 }
             }

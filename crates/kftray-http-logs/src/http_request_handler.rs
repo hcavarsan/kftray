@@ -166,7 +166,7 @@ mod tests {
         let config_id = 42;
         let handler = HttpRequestHandler::new(config_id);
 
-        let debug_str = format!("{:?}", handler);
+        let debug_str = format!("{handler:?}");
         assert!(debug_str.contains("42"));
     }
 

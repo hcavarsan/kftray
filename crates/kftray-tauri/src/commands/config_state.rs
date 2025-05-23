@@ -5,7 +5,7 @@ use kftray_commons::models::config_state_model::ConfigState;
 pub async fn get_config_states() -> Result<Vec<ConfigState>, String> {
     log::info!("get_configs state called");
     let configs = get_configs_state().await?;
-    log::info!("{:?}", configs);
+    log::info!("{configs:?}");
     Ok(configs)
 }
 

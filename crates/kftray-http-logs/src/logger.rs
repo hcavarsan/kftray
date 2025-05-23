@@ -551,7 +551,7 @@ mod tests {
         let old_time = Utc::now() - chrono::Duration::seconds(TRACE_EXPIRY_SECS + 10);
 
         for i in 0..5 {
-            let trace_id = format!("old-trace-{}", i);
+            let trace_id = format!("old-trace-{i}");
             trace_map.insert(
                 trace_id.clone(),
                 TraceInfo {
@@ -562,7 +562,7 @@ mod tests {
         }
 
         for i in 0..5 {
-            let trace_id = format!("recent-trace-{}", i);
+            let trace_id = format!("recent-trace-{i}");
             trace_map.insert(
                 trace_id.clone(),
                 TraceInfo {
@@ -583,8 +583,8 @@ mod tests {
         assert_eq!(trace_map.len(), 5);
 
         for i in 0..5 {
-            let old_id = format!("old-trace-{}", i);
-            let recent_id = format!("recent-trace-{}", i);
+            let old_id = format!("old-trace-{i}");
+            let recent_id = format!("recent-trace-{i}");
 
             assert!(!trace_map.contains_key(&old_id));
             assert!(trace_map.contains_key(&recent_id));
@@ -777,7 +777,7 @@ mod tests {
 
         let contents = tokio::fs::read_to_string(&file_path).await.unwrap();
 
-        println!("Log file contents: {}", contents);
+        println!("Log file contents: {contents}");
 
         assert!(contents.contains("GET /test") || contents.contains("/test"));
         assert!(contents.contains("200") || contents.contains("OK"));

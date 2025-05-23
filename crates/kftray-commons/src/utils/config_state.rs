@@ -29,14 +29,14 @@ pub(crate) async fn read_config_states_with_pool(
     pool: &SqlitePool,
 ) -> Result<Vec<ConfigState>, sqlx::Error> {
     let mut conn = pool.acquire().await.map_err(|e| {
-        error!("Failed to acquire database connection: {}", e);
+        error!("Failed to acquire database connection: {e}");
         e
     })?;
     let rows = sqlx::query("SELECT id, config_id, is_running FROM config_state")
         .fetch_all(&mut *conn)
         .await
         .map_err(|e| {
-            error!("Failed to fetch config states: {}", e);
+            error!("Failed to fetch config states: {e}");
             e
         })?;
 
@@ -45,11 +45,11 @@ pub(crate) async fn read_config_states_with_pool(
         .map(|row| {
             let id: Option<i64> = row.try_get("id").ok();
             let config_id: i64 = row.try_get("config_id").map_err(|e| {
-                error!("Failed to get config_id: {}", e);
+                error!("Failed to get config_id: {e}");
                 e
             })?;
             let is_running: bool = row.try_get("is_running").map_err(|e| {
-                error!("Failed to get is_running: {}", e);
+                error!("Failed to get is_running: {e}");
                 e
             })?;
             Ok(ConfigState {
@@ -73,7 +73,7 @@ pub async fn read_config_states() -> Result<Vec<ConfigState>, sqlx::Error> {
 pub async fn get_configs_state() -> Result<Vec<ConfigState>, String> {
     let pool = get_db_pool().await.map_err(|e| e.to_string())?;
     read_config_states_with_pool(&pool).await.map_err(|e| {
-        error!("Failed to get config states: {}", e);
+        error!("Failed to get config states: {e}");
         e.to_string()
     })
 }

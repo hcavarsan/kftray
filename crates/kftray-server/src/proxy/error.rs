@@ -21,10 +21,10 @@ pub enum ProxyError {
 impl fmt::Display for ProxyError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ProxyError::Io(err) => write!(f, "IO Error: {}", err),
-            ProxyError::Configuration(msg) => write!(f, "Configuration Error: {}", msg),
-            ProxyError::Connection(msg) => write!(f, "Connection Error: {}", msg),
-            ProxyError::InvalidData(msg) => write!(f, "Invalid Data Error: {}", msg),
+            ProxyError::Io(err) => write!(f, "IO Error: {err}"),
+            ProxyError::Configuration(msg) => write!(f, "Configuration Error: {msg}"),
+            ProxyError::Connection(msg) => write!(f, "Connection Error: {msg}"),
+            ProxyError::InvalidData(msg) => write!(f, "Invalid Data Error: {msg}"),
         }
     }
 }
@@ -52,7 +52,7 @@ impl From<String> for ProxyError {
 
 impl From<AddrParseError> for ProxyError {
     fn from(err: AddrParseError) -> Self {
-        ProxyError::Configuration(format!("Invalid address format: {}", err))
+        ProxyError::Configuration(format!("Invalid address format: {err}"))
     }
 }
 
@@ -64,7 +64,7 @@ mod tests {
 
     #[test]
     fn test_error_display() {
-        let io_err = ProxyError::Io(io::Error::new(io::ErrorKind::Other, "test io error"));
+        let io_err = ProxyError::Io(io::Error::other("test io error"));
         assert_eq!(io_err.to_string(), "IO Error: test io error");
 
         let config_err = ProxyError::Configuration("invalid config".to_string());
@@ -82,7 +82,7 @@ mod tests {
 
     #[test]
     fn test_error_source() {
-        let io_err = io::Error::new(io::ErrorKind::Other, "test error");
+        let io_err = io::Error::other("test error");
         let proxy_err = ProxyError::Io(io_err);
         assert!(proxy_err.source().is_some());
 
@@ -98,7 +98,7 @@ mod tests {
 
     #[test]
     fn test_from_io_error() {
-        let io_err = io::Error::new(io::ErrorKind::Other, "test error");
+        let io_err = io::Error::other("test error");
         let proxy_err: ProxyError = io_err.into();
         assert!(matches!(proxy_err, ProxyError::Io(_)));
     }
@@ -121,6 +121,6 @@ mod tests {
     #[test]
     fn test_error_debug() {
         let err = ProxyError::Configuration("test error".to_string());
-        assert!(format!("{:?}", err).contains("Configuration"));
+        assert!(format!("{err:?}").contains("Configuration"));
     }
 }

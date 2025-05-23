@@ -18,11 +18,11 @@ use crate::models::config_model::Config;
 async fn migrate_configs_with_pool(pool: &SqlitePool) -> Result<(), String> {
     info!("Starting configuration migration with provided pool.");
     let mut conn = pool.acquire().await.map_err(|e| {
-        error!("Failed to acquire connection: {}", e);
+        error!("Failed to acquire connection: {e}");
         e.to_string()
     })?;
     let mut transaction = conn.begin().await.map_err(|e| {
-        error!("Failed to begin transaction: {}", e);
+        error!("Failed to begin transaction: {e}");
         e.to_string()
     })?;
 
@@ -30,30 +30,30 @@ async fn migrate_configs_with_pool(pool: &SqlitePool) -> Result<(), String> {
         .fetch_all(&mut *transaction)
         .await
         .map_err(|e| {
-            error!("Failed to fetch configs: {}", e);
+            error!("Failed to fetch configs: {e}");
             e.to_string()
         })?;
 
     for row in rows {
         let id: i64 = row.try_get("id").map_err(|e| {
-            error!("Failed to get id: {}", e);
+            error!("Failed to get id: {e}");
             e.to_string()
         })?;
         let data: String = row.try_get("data").map_err(|e| {
-            error!("Failed to get data: {}", e);
+            error!("Failed to get data: {e}");
             e.to_string()
         })?;
         let config_json: JsonValue = serde_json::from_str(&data).map_err(|e| {
-            error!("Failed to parse JSON: {}", e);
+            error!("Failed to parse JSON: {e}");
             e.to_string()
         })?;
         let default_config_json = serde_json::to_value(Config::default()).map_err(|e| {
-            error!("Failed to serialize default config: {}", e);
+            error!("Failed to serialize default config: {e}");
             e.to_string()
         })?;
         let merged_config_json = merge_json_values(default_config_json, config_json);
         let updated_data = serde_json::to_string(&merged_config_json).map_err(|e| {
-            error!("Failed to serialize merged config: {}", e);
+            error!("Failed to serialize merged config: {e}");
             e.to_string()
         })?;
 
@@ -63,13 +63,13 @@ async fn migrate_configs_with_pool(pool: &SqlitePool) -> Result<(), String> {
             .execute(&mut *transaction)
             .await
             .map_err(|e| {
-                error!("Failed to update config: {}", e);
+                error!("Failed to update config: {e}");
                 e.to_string()
             })?;
     }
 
     drop_triggers(&mut transaction).await.map_err(|e| {
-        error!("Failed to drop triggers: {}", e);
+        error!("Failed to drop triggers: {e}");
         e.to_string()
     })?;
 
@@ -83,21 +83,21 @@ async fn migrate_configs_with_pool(pool: &SqlitePool) -> Result<(), String> {
     .execute(&mut *transaction)
     .await
     .map_err(|e| {
-        error!("Failed to insert into config_state: {}", e);
+        error!("Failed to insert into config_state: {e}");
         e.to_string()
     })?;
 
     transaction.commit().await.map_err(|e| {
-        error!("Failed to commit transaction: {}", e);
+        error!("Failed to commit transaction: {e}");
         e.to_string()
     })?;
 
     let mut conn_for_triggers = pool.acquire().await.map_err(|e| {
-        error!("Failed to acquire connection for creating triggers: {}", e);
+        error!("Failed to acquire connection for creating triggers: {e}");
         e.to_string()
     })?;
     create_triggers(&mut conn_for_triggers).await.map_err(|e| {
-        error!("Failed to create triggers: {}", e);
+        error!("Failed to create triggers: {e}");
         e.to_string()
     })?;
 
@@ -112,7 +112,7 @@ pub async fn migrate_configs(pool_opt: Option<&SqlitePool>) -> Result<(), String
         None => get_db_pool().await.map(|arc_pool| (*arc_pool).clone()),
     };
     let pool = pool_result.map_err(|e| {
-        error!("Failed to get DB pool for migration: {}", e);
+        error!("Failed to get DB pool for migration: {e}");
         e.to_string()
     })?;
 
@@ -125,7 +125,7 @@ async fn drop_triggers(transaction: &mut Transaction<'_, Sqlite>) -> Result<(), 
         .execute(&mut **transaction)
         .await
         .map_err(|e| {
-            error!("Failed to drop after_insert_config trigger: {}", e);
+            error!("Failed to drop after_insert_config trigger: {e}");
             e
         })?;
 
@@ -133,7 +133,7 @@ async fn drop_triggers(transaction: &mut Transaction<'_, Sqlite>) -> Result<(), 
         .execute(&mut **transaction)
         .await
         .map_err(|e| {
-            error!("Failed to drop after_delete_config trigger: {}", e);
+            error!("Failed to drop after_delete_config trigger: {e}");
             e
         })?;
 
@@ -154,7 +154,7 @@ async fn create_triggers(conn: &mut SqliteConnection) -> Result<(), sqlx::Error>
     .execute(&mut *conn)
     .await
     .map_err(|e| {
-        error!("Failed to create after_insert_config trigger: {}", e);
+        error!("Failed to create after_insert_config trigger: {e}");
         e
     })?;
 
@@ -169,7 +169,7 @@ async fn create_triggers(conn: &mut SqliteConnection) -> Result<(), sqlx::Error>
     .execute(&mut *conn)
     .await
     .map_err(|e| {
-        error!("Failed to create after_delete_config trigger: {}", e);
+        error!("Failed to create after_delete_config trigger: {e}");
         e
     })?;
 
@@ -216,8 +216,7 @@ mod tests {
 
     async fn check_trigger_exists(pool: &SqlitePool, trigger_name: &str) -> bool {
         let query = format!(
-            "SELECT name FROM sqlite_master WHERE type='trigger' AND name='{}'",
-            trigger_name
+            "SELECT name FROM sqlite_master WHERE type='trigger' AND name='{trigger_name}'"
         );
         sqlx::query(&query)
             .fetch_optional(pool)
