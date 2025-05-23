@@ -133,6 +133,7 @@ fn parse_configs(
                 workload_type: Some("service".to_string()),
                 target: None,
                 local_address: None,
+                auto_loopback_address: false,
                 remote_address: None,
                 domain_enabled: None,
             })
@@ -159,6 +160,7 @@ fn create_default_configs(
             workload_type: Some("service".to_string()),
             target: None,
             local_address: None,
+            auto_loopback_address: false,
             remote_address: None,
             domain_enabled: None,
         })

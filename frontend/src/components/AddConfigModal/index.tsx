@@ -67,7 +67,6 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
   })
 
   const [uiState, setUiState] = useState({
-    isChecked: false,
     isContextDropdownFocused: false,
     isFormValid: false,
     kubeConfig: 'default',
@@ -112,14 +111,12 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
         ...prev,
         domain_enabled: isCheckedBoolean,
       }))
-    } else if (name === 'local_address_enabled') {
-      setUiState(prev => ({
-        ...prev,
-        isChecked: isCheckedBoolean,
-      }))
+    } else if (name === 'auto_loopback_address') {
       setNewConfig(prev => ({
         ...prev,
-        local_address_enabled: isCheckedBoolean,
+        auto_loopback_address: isCheckedBoolean,
+        // Clear local_address when auto-selection is enabled, restore default when disabled
+        local_address: isCheckedBoolean ? '' : '127.0.0.1',
       }))
     }
   }
@@ -343,7 +340,6 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     }))
     setUiState(prev => ({
       ...prev,
-      isChecked: false,
       isContextDropdownFocused: false,
       isFormValid: false,
       kubeConfig: 'default',
@@ -468,13 +464,13 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
           onClick={e => e.stopPropagation()}
           maxWidth='600px'
           width='90vw'
-          maxHeight='100vh'
+          maxHeight='95vh'
           bg='#111111'
           borderRadius='lg'
           border='1px solid rgba(255, 255, 255, 0.08)'
           overflow='hidden'
           position='absolute'
-          mt={4}
+          mt={1}
         >
           {/* Compact Header */}
           <Dialog.Header
@@ -702,6 +698,50 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                         />
                       </Stack>
                     </Grid>
+
+                    <Grid templateColumns='repeat(2, 1fr)' gap={3}>
+                      <Stack gap={1.5}>
+                        <Text fontSize='xs' color='gray.400'>
+                          Local Address (Optional)
+                        </Text>
+                        <Input
+                          value={
+                            newConfig.auto_loopback_address
+                              ? ''
+                              : newConfig.local_address || '127.0.0.1'
+                          }
+                          name='local_address'
+                          onChange={handleInputChange}
+                          disabled={newConfig.auto_loopback_address}
+                          bg='#161616'
+                          border='1px solid rgba(255, 255, 255, 0.08)'
+                          _hover={{ borderColor: 'rgba(255, 255, 255, 0.15)' }}
+                          _focus={{
+                            borderColor: 'blue.400',
+                            boxShadow: 'none',
+                          }}
+                          height='28px'
+                          fontSize='13px'
+                          opacity={newConfig.auto_loopback_address ? 0.5 : 1}
+                          placeholder={
+                            newConfig.auto_loopback_address
+                              ? '127.0.0.x'
+                              : 'e.g., 127.0.0.1'
+                          }
+                        />
+                        <Checkbox
+                          size='xs'
+                          checked={newConfig.auto_loopback_address || false}
+                          onCheckedChange={e =>
+                            handleCheckboxChange('auto_loopback_address', e)
+                          }
+                        >
+                          <Text fontSize='xs' color='gray.400'>
+                            Auto select address
+                          </Text>
+                        </Checkbox>
+                      </Stack>
+                    </Grid>
                   </>
                 ) : (
                   <>
@@ -852,40 +892,52 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                           fontSize='13px'
                         />
                       </Stack>
+                      <Stack gap={1.5}>
+                        <Text fontSize='xs' color='gray.400'>
+                          Local Address (Optional)
+                        </Text>
+                        <Input
+                          value={
+                            newConfig.auto_loopback_address
+                              ? ''
+                              : newConfig.local_address || '127.0.0.1'
+                          }
+                          name='local_address'
+                          onChange={handleInputChange}
+                          disabled={newConfig.auto_loopback_address}
+                          bg='#161616'
+                          border='1px solid rgba(255, 255, 255, 0.08)'
+                          _hover={{ borderColor: 'rgba(255, 255, 255, 0.15)' }}
+                          _focus={{
+                            borderColor: 'blue.400',
+                            boxShadow: 'none',
+                          }}
+                          height='28px'
+                          fontSize='13px'
+                          opacity={newConfig.auto_loopback_address ? 0.5 : 1}
+                          placeholder={
+                            newConfig.auto_loopback_address
+                              ? '127.0.0.x'
+                              : 'e.g., 127.0.0.1'
+                          }
+                        />
+                        <Checkbox
+                          size='xs'
+                          checked={newConfig.auto_loopback_address || false}
+                          onCheckedChange={e =>
+                            handleCheckboxChange('auto_loopback_address', e)
+                          }
+                        >
+                          <Text fontSize='xs' color='gray.400'>
+                            Auto select address
+                          </Text>
+                        </Checkbox>
+                      </Stack>
                     </Grid>
                   </>
                 )}
 
-                <Grid templateColumns='repeat(2, 1fr)' gap={3}>
-                  <Stack gap={1.5}>
-                    <Checkbox
-                      size='xs'
-                      checked={uiState.isChecked}
-                      onCheckedChange={e =>
-                        handleCheckboxChange('local_address_enabled', e)
-                      }
-                    >
-                      <Text fontSize='xs' color='gray.400'>
-                        Local Address
-                      </Text>
-                    </Checkbox>
-                    <Input
-                      value={newConfig.local_address || '127.0.0.1'}
-                      name='local_address'
-                      onChange={handleInputChange}
-                      disabled={!uiState.isChecked}
-                      bg='#161616'
-                      border='1px solid rgba(255, 255, 255, 0.08)'
-                      _hover={{ borderColor: 'rgba(255, 255, 255, 0.15)' }}
-                      _focus={{ borderColor: 'blue.400', boxShadow: 'none' }}
-                      height='28px'
-                      fontSize='13px'
-                      opacity={uiState.isChecked ? 1 : 0.5}
-                    />
-                  </Stack>
-                </Grid>
-
-                <Separator mt={5} />
+                <Separator mt={1} />
 
                 <HStack justify='flex-end' gap={2}>
                   <Button

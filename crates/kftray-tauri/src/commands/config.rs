@@ -13,7 +13,18 @@ use kftray_commons::models::config_model::Config;
 use log::{
     error,
     info,
+    warn,
 };
+
+fn validate_config(config: &Config) -> Result<(), String> {
+    if config.auto_loopback_address && config.local_address.is_some() {
+        warn!(
+            "Config has auto_loopback_address enabled but local_address is also set. \
+             The auto-allocated address will override the manual local_address."
+        );
+    }
+    Ok(())
+}
 
 #[tauri::command]
 pub async fn delete_config_cmd(id: i64) -> Result<(), String> {
@@ -35,6 +46,7 @@ pub async fn delete_all_configs_cmd() -> Result<(), String> {
 
 #[tauri::command]
 pub async fn insert_config_cmd(config: Config) -> Result<(), String> {
+    validate_config(&config)?;
     insert_config(config).await
 }
 
@@ -53,6 +65,7 @@ pub async fn get_config_cmd(id: i64) -> Result<Config, String> {
 
 #[tauri::command]
 pub async fn update_config_cmd(config: Config) -> Result<(), String> {
+    validate_config(&config)?;
     update_config(config).await
 }
 
@@ -396,6 +409,36 @@ mod tests {
 
         let result = import_configs_cmd(invalid_json.to_string()).await;
         assert!(result.is_err(), "Import with invalid JSON should fail");
+    }
+
+    #[test]
+    fn test_validate_config_auto_loopback_only() {
+        let config = Config {
+            auto_loopback_address: true,
+            local_address: None,
+            ..Config::default()
+        };
+        assert!(validate_config(&config).is_ok());
+    }
+
+    #[test]
+    fn test_validate_config_manual_address_only() {
+        let config = Config {
+            auto_loopback_address: false,
+            local_address: Some("127.0.0.1".to_string()),
+            ..Config::default()
+        };
+        assert!(validate_config(&config).is_ok());
+    }
+
+    #[test]
+    fn test_validate_config_both_set_warning() {
+        let config = Config {
+            auto_loopback_address: true,
+            local_address: Some("127.0.0.1".to_string()),
+            ..Config::default()
+        };
+        assert!(validate_config(&config).is_ok());
     }
 
     #[tokio::test]

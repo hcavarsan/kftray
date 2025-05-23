@@ -38,6 +38,17 @@ use crate::port_forward::{
     CHILD_PROCESSES,
 };
 
+async fn try_release_address(address: &str) -> Result<(), String> {
+    use kftray_helper::HelperClient;
+
+    let app_id = "com.kftray.app".to_string();
+    let client = HelperClient::new(app_id).map_err(|e| e.to_string())?;
+
+    client
+        .release_local_address(address.to_string())
+        .map_err(|e| e.to_string())
+}
+
 pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
     info!("Attempting to stop all port forwards");
 
@@ -246,6 +257,36 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
 
     pod_deletion_tasks.collect::<Vec<_>>().await;
 
+    let address_cleanup_tasks: FuturesUnordered<_> = configs
+        .iter()
+        .filter(|config| running_configs_state.contains(&config.id.unwrap_or_default()))
+        .filter_map(|config| {
+            if let Some(local_addr) = &config.local_address {
+                if local_addr != "127.0.0.1" && config.auto_loopback_address {
+                    Some(async move {
+                        info!(
+                            "Releasing auto-allocated address for config {}: {}",
+                            config.id.unwrap_or_default(),
+                            local_addr
+                        );
+                        if let Err(e) = try_release_address(local_addr).await {
+                            warn!(
+                                "Failed to release auto-allocated address {}: {}",
+                                local_addr, e
+                            );
+                        }
+                    })
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        })
+        .collect();
+
+    address_cleanup_tasks.collect::<Vec<_>>().await;
+
     let update_config_tasks: FuturesUnordered<_> = configs
         .iter()
         .map(|config| {
@@ -300,7 +341,11 @@ pub async fn stop_port_forward(config_id: String) -> Result<CustomResponse, Stri
                     if local_addr != "127.0.0.1" {
                         info!("Cleaning up loopback address for config {config_id}: {local_addr}");
 
-                        if let Err(e) =
+                        if config.auto_loopback_address {
+                            if let Err(e) = try_release_address(local_addr).await {
+                                warn!("Failed to release auto-allocated address {local_addr} through helper service: {e}");
+                            }
+                        } else if let Err(e) =
                             crate::network_utils::remove_loopback_address(local_addr).await
                         {
                             warn!("Failed to remove loopback address {local_addr}: {e}");
@@ -425,6 +470,7 @@ mod tests {
             workload_type: Some("service".to_string()),
             target: None,
             local_address: Some("127.0.0.1".to_string()),
+            auto_loopback_address: false,
             remote_address: None,
             domain_enabled: Some(true),
         }
