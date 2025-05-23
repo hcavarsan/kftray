@@ -32,8 +32,8 @@ jobs:
         with:
           version: 9
           run_install: |
-           - recursive: true
-             args: [--frozen-lockfile]
+            - recursive: true
+              args: [--frozen-lockfile]
 
       - name: Install Node.js
         uses: actions/setup-node@v4
@@ -46,22 +46,12 @@ jobs:
 
   rust-format:
     name: rustfmt
-    strategy:
-      matrix:
-        include:
-          - os: ubuntu-24.04
-            os_name: linux
-          - os: macos-latest
-            os_name: macos
-          - os: windows-latest
-            os_name: windows
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install dependencies (Linux)
-        if: matrix.os_name == 'linux'
+      - name: Install dependencies
         run: |
           echo "deb http://gb.archive.ubuntu.com/ubuntu jammy main" | sudo tee /etc/apt/sources.list.d/ubuntu-jammy-main.list
           sudo apt-get update
@@ -144,19 +134,8 @@ jobs:
           fi
         shell: bash
 
-      - name: Build kftray-helper (macOS)
-        if: matrix.os_name == 'macos'
-        run: |
-          cargo build --bin kftray-helper --release --target x86_64-apple-darwin
-          cargo build --bin kftray-helper --release --target aarch64-apple-darwin
-
-      - name: Build kftray-helper (Linux/Windows)
-        if: matrix.os_name != 'macos'
-        run: cargo build --bin kftray-helper --release --target ${{ matrix.rust_target }}
-
       - name: Run Clippy
         run: cargo clippy --workspace --all-targets --allow-dirty --allow-staged --all-features --fix -- -D warnings
-
 
   rust-coverage:
     name: Code Coverage
@@ -221,7 +200,6 @@ jobs:
           files: target/nextest/ci/junit.xml
           slug: hcavarsan/kftray
 
-
   frontend-bundle-analysis:
     name: Bundle Analysis
     runs-on: ubuntu-24.04
@@ -234,8 +212,8 @@ jobs:
         with:
           version: 9
           run_install: |
-           - recursive: true
-             args: [--frozen-lockfile]
+            - recursive: true
+              args: [--frozen-lockfile]
 
       - name: Install Node.js
         uses: actions/setup-node@v4
@@ -249,7 +227,14 @@ jobs:
         run: cd frontend && pnpm build
 
   build-and-push-docker:
-    needs: [eslint-format, rust-format, rust-lint, rust-coverage, frontend-bundle-analysis]
+    needs:
+      [
+        eslint-format,
+        rust-format,
+        rust-lint,
+        rust-coverage,
+        frontend-bundle-analysis,
+      ]
     if: ${{ contains(github.event.pull_request.title, '[docker]') }}
     permissions:
       contents: write
