@@ -274,7 +274,6 @@ async fn save_allocated_address_to_db(config: &Config) -> Result<(), String> {
     }
 }
 
-
 pub async fn start_port_forward(
     mut configs: Vec<Config>, protocol: &str, http_log_state: Arc<HttpLogState>,
 ) -> Result<Vec<CustomResponse>, String> {
