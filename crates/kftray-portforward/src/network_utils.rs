@@ -33,6 +33,14 @@ pub fn is_loopback_address(addr: &str) -> bool {
     false
 }
 
+pub fn is_default_loopback_address(addr: &str) -> bool {
+    addr == "127.0.0.1"
+}
+
+pub fn is_custom_loopback_address(addr: &str) -> bool {
+    is_loopback_address(addr) && !is_default_loopback_address(addr)
+}
+
 pub async fn ensure_loopback_address(addr: &str) -> Result<()> {
     if !is_loopback_address(addr) {
         return Ok(());
@@ -115,22 +123,21 @@ async fn configure_loopback_with_helper(addr: &str) -> Result<()> {
 
     let app_id = "com.kftray.app".to_string();
 
-    let client = kftray_helper::HelperClient::new(app_id)?;
-    if !client.is_helper_available() {
+    let socket_path = kftray_helper::communication::get_default_socket_path()?;
+
+    if !kftray_helper::client::socket_comm::is_socket_available(&socket_path) {
         return Err(anyhow!("Helper service is not available"));
     }
 
     debug!("Helper service is available, proceeding with configuration");
 
-    debug!("Testing helper communication with ping");
-    if !client.ping()? {
-        return Err(anyhow!("Helper service is not responding properly to ping"));
-    }
+    let command = kftray_helper::messages::RequestCommand::Network(
+        kftray_helper::messages::NetworkCommand::Add {
+            address: addr.to_string(),
+        },
+    );
 
-    debug!("Ping successful, helper is responding");
-
-    debug!("Sending direct request to add loopback address: {}", addr);
-    match client.add_loopback_address(addr) {
+    match kftray_helper::client::socket_comm::send_request(&socket_path, &app_id, command) {
         Ok(_) => {
             debug!(
                 "Successfully configured loopback address with helper: {}",
@@ -153,25 +160,21 @@ async fn remove_loopback_with_helper(addr: &str) -> Result<()> {
 
     let app_id = "com.kftray.app".to_string();
 
-    let client = kftray_helper::HelperClient::new(app_id)?;
-    if !client.is_helper_available() {
+    let socket_path = kftray_helper::communication::get_default_socket_path()?;
+
+    if !kftray_helper::client::socket_comm::is_socket_available(&socket_path) {
         return Err(anyhow!("Helper service is not available"));
     }
 
     debug!("Helper service is available, proceeding with address removal");
 
-    debug!("Testing helper communication with ping");
-    if !client.ping()? {
-        return Err(anyhow!("Helper service is not responding properly to ping"));
-    }
-
-    debug!("Ping successful, helper is responding");
-
-    debug!(
-        "Sending direct request to remove loopback address: {}",
-        addr
+    let command = kftray_helper::messages::RequestCommand::Network(
+        kftray_helper::messages::NetworkCommand::Remove {
+            address: addr.to_string(),
+        },
     );
-    match client.remove_loopback_address(addr) {
+
+    match kftray_helper::client::socket_comm::send_request(&socket_path, &app_id, command) {
         Ok(_) => {
             debug!(
                 "Successfully removed loopback address with helper: {}",
@@ -212,6 +215,20 @@ pub async fn remove_loopback_address(addr: &str) -> Result<()> {
     {
         info!("Using macOS-specific method for loopback removal");
 
+        let check_output = Command::new("ifconfig")
+            .args(["lo0"])
+            .output()
+            .map_err(|e| anyhow!("Failed to check loopback interface: {}", e))?;
+
+        let output_str = String::from_utf8_lossy(&check_output.stdout);
+        if !output_str.contains(addr) {
+            debug!(
+                "Loopback address {} is not configured on lo0, no removal needed",
+                addr
+            );
+            return Ok(());
+        }
+
         debug!("Trying to remove loopback address alias with osascript");
         let script = format!(
             r#"do shell script "ifconfig lo0 -alias {addr}" with administrator privileges"#
@@ -228,8 +245,34 @@ pub async fn remove_loopback_address(addr: &str) -> Result<()> {
             }
             Ok(output) => {
                 let stderr = String::from_utf8_lossy(&output.stderr);
-                debug!("osascript command failed: {}", stderr);
-                Err(anyhow!("Failed to remove loopback address: {}", stderr))
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                debug!(
+                    "osascript command failed - stdout: {}, stderr: {}",
+                    stdout, stderr
+                );
+
+                if stderr.contains("Can't assign requested address")
+                    || stderr.contains("SIOCDIFADDR")
+                {
+                    warn!(
+                        "Loopback address {} might already be removed or not exist",
+                        addr
+                    );
+                    return Ok(());
+                }
+
+                if stderr.contains("User cancelled")
+                    || stderr.contains("user cancelled")
+                    || stderr.contains("cancelled")
+                    || stderr.contains("User canceled")
+                    || stderr.contains("canceled")
+                    || stderr.contains("(-128)")
+                    || output.status.code() == Some(1)
+                {
+                    Err(anyhow!("User cancelled loopback address removal"))
+                } else {
+                    Err(anyhow!("Failed to remove loopback address: {}", stderr))
+                }
             }
             Err(e) => {
                 debug!("Failed to execute osascript command: {}", e);
@@ -263,7 +306,7 @@ pub async fn remove_loopback_address(addr: &str) -> Result<()> {
     }
 }
 
-async fn is_address_accessible(addr: &str) -> bool {
+pub async fn is_address_accessible(addr: &str) -> bool {
     let socket_addr = format!("{addr}:0");
     tokio::net::TcpListener::bind(socket_addr).await.is_ok()
 }
@@ -294,8 +337,25 @@ fn configure_loopback_macos(addr: &str) -> Result<()> {
         }
         Ok(output) => {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            debug!("osascript command failed: {}", stderr);
-            Err(anyhow!("Failed to configure loopback address: {}", stderr))
+            debug!(
+                "osascript command failed with exit code {}: {}",
+                output.status.code().unwrap_or(-1),
+                stderr
+            );
+
+            if stderr.contains("User cancelled")
+                || stderr.contains("user cancelled")
+                || stderr.contains("cancelled")
+                || stderr.contains("User canceled")
+                || stderr.contains("canceled")
+                || stderr.contains("(-128)")
+                || output.status.code() == Some(1)
+            {
+                // Common exit code for user cancellation
+                Err(anyhow!("User cancelled loopback address configuration"))
+            } else {
+                Err(anyhow!("Failed to configure loopback address: {}", stderr))
+            }
         }
         Err(e) => Err(anyhow!("Failed to execute osascript: {}", e)),
     }
@@ -352,6 +412,27 @@ mod tests {
         assert!(!is_loopback_address("192.168.1.1"));
         assert!(!is_loopback_address("10.0.0.1"));
         assert!(!is_loopback_address("invalid-ip"));
+    }
+
+    #[test]
+    fn test_is_default_loopback_address() {
+        assert!(is_default_loopback_address("127.0.0.1"));
+        assert!(!is_default_loopback_address("127.0.0.2"));
+        assert!(!is_default_loopback_address("127.255.255.255"));
+        assert!(!is_default_loopback_address("192.168.1.1"));
+        assert!(!is_default_loopback_address("10.0.0.1"));
+        assert!(!is_default_loopback_address("invalid-ip"));
+    }
+
+    #[test]
+    fn test_is_custom_loopback_address() {
+        assert!(!is_custom_loopback_address("127.0.0.1")); // Default loopback
+        assert!(is_custom_loopback_address("127.0.0.2")); // Custom loopback
+        assert!(is_custom_loopback_address("127.0.0.5")); // Custom loopback
+        assert!(is_custom_loopback_address("127.255.255.255")); // Custom loopback
+        assert!(!is_custom_loopback_address("192.168.1.1")); // Not loopback
+        assert!(!is_custom_loopback_address("10.0.0.1")); // Not loopback
+        assert!(!is_custom_loopback_address("invalid-ip")); // Invalid IP
     }
 
     #[tokio::test]

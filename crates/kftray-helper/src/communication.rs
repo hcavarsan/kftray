@@ -33,10 +33,12 @@ use crate::{
         validate_request,
     },
     error::HelperError,
+    hostfile::HostfileManager,
     messages::{
         AddressCommand,
         HelperRequest,
         HelperResponse,
+        HostCommand,
         NetworkCommand,
         RequestCommand,
         ServiceCommand,
@@ -305,15 +307,16 @@ pub fn get_default_socket_path() -> Result<PathBuf, HelperError> {
 
 pub async fn start_communication_server(
     socket_path: PathBuf, pool_manager: AddressPoolManager, network_manager: NetworkConfigManager,
+    hostfile_manager: HostfileManager,
 ) -> Result<(), HelperError> {
     #[cfg(any(target_os = "macos", target_os = "linux"))]
     {
-        start_unix_socket_server(socket_path, pool_manager, network_manager).await
+        start_unix_socket_server(socket_path, pool_manager, network_manager, hostfile_manager).await
     }
 
     #[cfg(target_os = "windows")]
     {
-        start_named_pipe_server(socket_path, pool_manager, network_manager).await
+        start_named_pipe_server(socket_path, pool_manager, network_manager, hostfile_manager).await
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
@@ -325,6 +328,7 @@ pub async fn start_communication_server(
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 async fn start_unix_socket_server(
     socket_path: PathBuf, pool_manager: AddressPoolManager, network_manager: NetworkConfigManager,
+    hostfile_manager: HostfileManager,
 ) -> Result<(), HelperError> {
     println!("Starting Unix socket server on: {}", socket_path.display());
 
@@ -397,6 +401,7 @@ async fn start_unix_socket_server(
 
     let pool_manager = Arc::new(pool_manager);
     let network_manager = Arc::new(network_manager);
+    let hostfile_manager = Arc::new(hostfile_manager);
 
     let (_shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
 
@@ -413,10 +418,16 @@ async fn start_unix_socket_server(
                 Ok((stream, _addr)) => {
                     let pool_manager = Arc::clone(&pool_manager);
                     let network_manager = Arc::clone(&network_manager);
+                    let hostfile_manager = Arc::clone(&hostfile_manager);
 
                     task::spawn(async move {
-                        if let Err(e) =
-                            handle_connection(stream, pool_manager, network_manager).await
+                        if let Err(e) = handle_connection(
+                            stream,
+                            pool_manager,
+                            network_manager,
+                            hostfile_manager,
+                        )
+                        .await
                         {
                             eprintln!("Error handling connection: {e}");
                         }
@@ -456,7 +467,7 @@ async fn start_unix_socket_server(
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 async fn handle_connection(
     mut stream: UnixStream, pool_manager: Arc<AddressPoolManager>,
-    network_manager: Arc<NetworkConfigManager>,
+    network_manager: Arc<NetworkConfigManager>, hostfile_manager: Arc<HostfileManager>,
 ) -> Result<(), HelperError> {
     println!("New connection received");
 
@@ -559,7 +570,8 @@ async fn handle_connection(
     };
 
     println!("Processing request...");
-    let response = process_request(request, pool_manager, network_manager).await?;
+    let response =
+        process_request(request, pool_manager, network_manager, hostfile_manager).await?;
     println!("Request processed successfully");
 
     let response_bytes = match serde_json::to_vec(&response) {
@@ -637,6 +649,7 @@ fn create_secure_pipe(pipe_name: &str) -> Result<NamedPipeServer, std::io::Error
 #[cfg(target_os = "windows")]
 async fn start_named_pipe_server(
     _pipe_path: PathBuf, _pool_manager: AddressPoolManager, _network_manager: NetworkConfigManager,
+    _hostfile_manager: HostfileManager,
 ) -> Result<(), HelperError> {
     println!(
         "Starting Windows named pipe server on: {}",
@@ -647,6 +660,7 @@ async fn start_named_pipe_server(
 
     let pool_manager = Arc::new(_pool_manager);
     let network_manager = Arc::new(_network_manager);
+    let hostfile_manager = Arc::new(_hostfile_manager);
 
     let (_shutdown_tx, mut shutdown_rx) = mpsc::channel::<()>(1);
 
@@ -671,12 +685,14 @@ async fn start_named_pipe_server(
                     println!("Client connected to named pipe");
                     let pool_manager_clone = Arc::clone(&pool_manager);
                     let network_manager_clone = Arc::clone(&network_manager);
+                    let hostfile_manager_clone = Arc::clone(&hostfile_manager);
 
                     task::spawn(async move {
                         if let Err(e) = handle_windows_connection(
                             pipe,
                             pool_manager_clone,
                             network_manager_clone,
+                            hostfile_manager_clone,
                         )
                         .await
                         {
@@ -714,7 +730,7 @@ async fn start_named_pipe_server(
 #[cfg(target_os = "windows")]
 async fn handle_windows_connection(
     mut pipe: NamedPipeServer, pool_manager: Arc<AddressPoolManager>,
-    network_manager: Arc<NetworkConfigManager>,
+    network_manager: Arc<NetworkConfigManager>, hostfile_manager: Arc<HostfileManager>,
 ) -> Result<(), HelperError> {
     use tokio::io::{
         AsyncReadExt,
@@ -845,7 +861,8 @@ async fn handle_windows_connection(
     };
 
     println!("Processing request...");
-    let response = process_request(request, pool_manager, network_manager).await?;
+    let response =
+        process_request(request, pool_manager, network_manager, hostfile_manager).await?;
     println!("Request processed successfully");
 
     let response_bytes = match serde_json::to_vec(&response) {
@@ -910,7 +927,7 @@ async fn handle_windows_connection(
 
 async fn process_request(
     request: HelperRequest, pool_manager: Arc<AddressPoolManager>,
-    network_manager: Arc<NetworkConfigManager>,
+    network_manager: Arc<NetworkConfigManager>, hostfile_manager: Arc<HostfileManager>,
 ) -> Result<HelperResponse, HelperError> {
     let request_id = request.request_id.clone();
 
@@ -1094,6 +1111,63 @@ async fn process_request(
             ServiceCommand::Restart => {
                 println!("Processing Restart request");
                 Ok(HelperResponse::success(request_id))
+            }
+        },
+        RequestCommand::Host(cmd) => match cmd {
+            HostCommand::Add { id, entry } => {
+                println!("Processing Host Add request for ID: {id}");
+                match hostfile_manager.add_entry(id, entry) {
+                    Ok(_) => {
+                        println!("Host Add request successful");
+                        Ok(HelperResponse::success(request_id))
+                    }
+                    Err(e) => {
+                        println!("Host Add request failed: {e}");
+                        Ok(HelperResponse::error(request_id, format!("Error: {e}")))
+                    }
+                }
+            }
+            HostCommand::Remove { id } => {
+                println!("Processing Host Remove request for ID: {id}");
+                match hostfile_manager.remove_entry(&id) {
+                    Ok(_) => {
+                        println!("Host Remove request successful");
+                        Ok(HelperResponse::success(request_id))
+                    }
+                    Err(e) => {
+                        println!("Host Remove request failed: {e}");
+                        Ok(HelperResponse::error(request_id, format!("Error: {e}")))
+                    }
+                }
+            }
+            HostCommand::RemoveAll => {
+                println!("Processing Host RemoveAll request");
+                match hostfile_manager.remove_all_entries() {
+                    Ok(_) => {
+                        println!("Host RemoveAll request successful");
+                        Ok(HelperResponse::success(request_id))
+                    }
+                    Err(e) => {
+                        println!("Host RemoveAll request failed: {e}");
+                        Ok(HelperResponse::error(request_id, format!("Error: {e}")))
+                    }
+                }
+            }
+            HostCommand::List => {
+                println!("Processing Host List request");
+                match hostfile_manager.list_entries() {
+                    Ok(entries) => {
+                        println!(
+                            "Host List request successful, found {} entries",
+                            entries.len()
+                        );
+                        Ok(HelperResponse::host_entries_success(request_id, entries))
+                    }
+                    Err(e) => {
+                        println!("Host List request failed: {e}");
+                        Ok(HelperResponse::error(request_id, format!("Error: {e}")))
+                    }
+                }
             }
         },
         RequestCommand::Ping => {

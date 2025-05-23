@@ -1,3 +1,4 @@
+use kftray_commons::models::hostfile::HostEntry;
 use serde::{
     Deserialize,
     Serialize,
@@ -35,6 +36,7 @@ pub enum RequestCommand {
     Network(NetworkCommand),
     Address(AddressCommand),
     Service(ServiceCommand),
+    Host(HostCommand),
     Ping,
 }
 
@@ -59,12 +61,21 @@ pub enum ServiceCommand {
     Restart,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum HostCommand {
+    Add { id: String, entry: HostEntry },
+    Remove { id: String },
+    RemoveAll,
+    List,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub enum RequestResult {
     Success,
     StringSuccess(String),
     ListSuccess(Vec<String>),
     AllocationsSuccess(Vec<(String, String)>),
+    HostEntriesSuccess(Vec<(String, HostEntry)>),
     Error(String),
 }
 
@@ -106,6 +117,13 @@ impl HelperResponse {
         Self {
             request_id,
             result: RequestResult::AllocationsSuccess(result),
+        }
+    }
+
+    pub fn host_entries_success(request_id: String, result: Vec<(String, HostEntry)>) -> Self {
+        Self {
+            request_id,
+            result: RequestResult::HostEntriesSuccess(result),
         }
     }
 
