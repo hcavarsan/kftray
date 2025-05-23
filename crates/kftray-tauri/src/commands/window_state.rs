@@ -27,7 +27,7 @@ pub fn toggle_pin_state(app_state: tauri::State<AppState>, window: tauri::Window
     }
 
     if let Err(e) = window.set_always_on_top(new_pin_state) {
-        error!("Failed to toggle pin state: {:?}", e);
+        error!("Failed to toggle pin state: {e:?}");
     }
 
     let menu_title = if new_pin_state {
@@ -42,11 +42,11 @@ pub fn toggle_pin_state(app_state: tauri::State<AppState>, window: tauri::Window
         .get_item("pin")
         .set_title(menu_title)
     {
-        error!("Failed to update menu item text: {:?}", e);
+        error!("Failed to update menu item text: {e:?}");
     }
 
     if let Err(e) = window.emit("pin-state-changed", new_pin_state) {
-        error!("Failed to emit pin state event: {:?}", e);
+        error!("Failed to emit pin state event: {e:?}");
     }
 }
 

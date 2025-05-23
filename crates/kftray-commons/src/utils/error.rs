@@ -12,11 +12,11 @@ pub enum DbError {
 impl fmt::Display for DbError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            DbError::ConnectionFailed(msg) => write!(f, "Database connection failed: {}", msg),
-            DbError::QueryFailed(msg) => write!(f, "Database query failed: {}", msg),
-            DbError::DataDecodeFailed(msg) => write!(f, "Failed to decode data: {}", msg),
-            DbError::RecordNotFound(id) => write!(f, "No record found with id: {}", id),
-            DbError::Other(msg) => write!(f, "{}", msg),
+            DbError::ConnectionFailed(msg) => write!(f, "Database connection failed: {msg}"),
+            DbError::QueryFailed(msg) => write!(f, "Database query failed: {msg}"),
+            DbError::DataDecodeFailed(msg) => write!(f, "Failed to decode data: {msg}"),
+            DbError::RecordNotFound(id) => write!(f, "No record found with id: {id}"),
+            DbError::Other(msg) => write!(f, "{msg}"),
         }
     }
 }

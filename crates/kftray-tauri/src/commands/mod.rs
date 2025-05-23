@@ -1,6 +1,7 @@
 pub mod config;
 pub mod config_state;
 pub mod github;
+pub mod helper;
 pub mod httplogs;
 pub mod kubecontext;
 pub mod portforward;

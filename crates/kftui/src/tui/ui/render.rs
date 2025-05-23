@@ -43,12 +43,12 @@ pub fn render_legend(f: &mut Frame, area: Rect, active_component: ActiveComponen
     let logs_legend = "pageup/pagedown: scroll | ←/→: switch focus | c: clear output";
 
     let legend_message = match active_component {
-        ActiveComponent::Menu => format!("{} | {}", common_legend, menu_legend),
+        ActiveComponent::Menu => format!("{common_legend} | {menu_legend}"),
         ActiveComponent::StoppedTable | ActiveComponent::RunningTable => {
-            format!("{} | {}", common_legend, table_legend)
+            format!("{common_legend} | {table_legend}")
         }
-        ActiveComponent::Details => format!("{} | {}", common_legend, details_legend),
-        ActiveComponent::Logs => format!("{} | {}", common_legend, logs_legend),
+        ActiveComponent::Details => format!("{common_legend} | {details_legend}"),
+        ActiveComponent::Logs => format!("{common_legend} | {logs_legend}"),
     };
 
     let available_width = area.width as usize - 2;

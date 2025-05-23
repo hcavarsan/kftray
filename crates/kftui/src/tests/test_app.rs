@@ -17,19 +17,19 @@ mod tests {
     fn create_test_config(id: i64, is_running: bool) -> (Config, ConfigState) {
         let config = Config {
             id: Some(id),
-            service: Some(format!("service-{}", id)),
+            service: Some(format!("service-{id}")),
             namespace: "default".to_string(),
             local_port: Some(8080 + (id as u16)),
             remote_port: Some(80),
-            context: format!("test-context-{}", id),
+            context: format!("test-context-{id}"),
             workload_type: Some("service".to_string()),
             protocol: "tcp".to_string(),
-            remote_address: Some(format!("remote-{}", id)),
+            remote_address: Some(format!("remote-{id}")),
             local_address: Some("127.0.0.1".to_string()),
-            alias: Some(format!("alias-{}", id)),
+            alias: Some(format!("alias-{id}")),
             domain_enabled: Some(false),
             kubeconfig: None,
-            target: Some(format!("target-{}", id)),
+            target: Some(format!("target-{id}")),
         };
 
         let config_state = ConfigState {

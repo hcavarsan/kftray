@@ -13,20 +13,20 @@ pub fn setup_logging() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     if env::var("KFTRAY_DEBUG").is_ok() {
-        let log_path = get_app_log_path().map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
+        let log_path = get_app_log_path().map_err(io::Error::other)?;
 
-        let log_dir = log_path.parent().ok_or_else(|| {
-            io::Error::new(io::ErrorKind::Other, "Could not find the log directory")
-        })?;
+        let log_dir = log_path
+            .parent()
+            .ok_or_else(|| io::Error::other("Could not find the log directory"))?;
 
         std::fs::create_dir_all(log_dir)
-            .map_err(|_| io::Error::new(io::ErrorKind::Other, "Could not create log directory"))?;
+            .map_err(|_| io::Error::other("Could not create log directory"))?;
 
         let log_file = OpenOptions::new()
             .create(true)
             .append(true)
             .open(log_path)
-            .map_err(|_| io::Error::new(io::ErrorKind::Other, "Could not open log file"))?;
+            .map_err(|_| io::Error::other("Could not open log file"))?;
 
         env_logger::Builder::from_default_env()
             .filter_level(log_filter)
@@ -63,7 +63,7 @@ mod tests {
 
         for (input, expected) in test_cases {
             let result = input.parse().unwrap_or(log::LevelFilter::Info);
-            assert_eq!(result, expected, "Failed for input: {}", input);
+            assert_eq!(result, expected, "Failed for input: {input}");
         }
     }
 

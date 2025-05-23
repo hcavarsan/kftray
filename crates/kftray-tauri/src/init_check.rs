@@ -68,7 +68,7 @@ impl PortOperations for RealPortOperations {
     ) -> Result<Vec<String>, String> {
         start_port_forward(configs, protocol, http_log_state)
             .await
-            .map(|responses| responses.into_iter().map(|r| format!("{:?}", r)).collect())
+            .map(|responses| responses.into_iter().map(|r| format!("{r:?}")).collect())
     }
 
     async fn deploy_and_forward_pod(
@@ -76,7 +76,7 @@ impl PortOperations for RealPortOperations {
     ) -> Result<Vec<String>, String> {
         deploy_and_forward_pod(configs, http_log_state)
             .await
-            .map(|responses| responses.into_iter().map(|r| format!("{:?}", r)).collect())
+            .map(|responses| responses.into_iter().map(|r| format!("{r:?}")).collect())
     }
 }
 
@@ -92,7 +92,7 @@ async fn fetch_configs_in_parallel(
             let result = port_ops
                 .get_config(config_id)
                 .await
-                .map_err(|e| format!("Failed to retrieve config {}: {}", config_id, e));
+                .map_err(|e| format!("Failed to retrieve config {config_id}: {e}"));
             (config_id, result)
         });
         config_tasks.push(task);
@@ -105,7 +105,7 @@ async fn fetch_configs_in_parallel(
                 results.push((config_id, result));
             }
             Err(e) => {
-                error!("Task for fetching config failed: {}", e);
+                error!("Task for fetching config failed: {e}");
             }
         }
     }
@@ -120,7 +120,7 @@ pub async fn check_and_manage_ports(port_ops: Arc<dyn PortOperations>) -> Result
             .filter(|state| state.is_running)
             .collect::<Vec<_>>(),
         Err(e) => {
-            error!("Failed to retrieve config states: {:?}", e);
+            error!("Failed to retrieve config states: {e:?}");
             return Err(e);
         }
     };
@@ -143,13 +143,13 @@ pub async fn check_and_manage_ports(port_ops: Arc<dyn PortOperations>) -> Result
                 let port_ops = Arc::clone(&port_ops);
                 let task = tokio::spawn(async move {
                     if let Err(err) = check_and_manage_port(port_ops, config).await {
-                        error!("Error checking state for config {}: {}", config_id, err);
+                        error!("Error checking state for config {config_id}: {err}");
                     }
                 });
                 port_tasks.push(task);
             }
             Err(e) => {
-                fetch_errors.push(format!("Config ID {}: {}", config_id, e));
+                fetch_errors.push(format!("Config ID {config_id}: {e}"));
             }
         }
     }
@@ -157,7 +157,7 @@ pub async fn check_and_manage_ports(port_ops: Arc<dyn PortOperations>) -> Result
     for task in port_tasks {
         match task.await {
             Ok(_) => {}
-            Err(e) => error!("Port forward task failed: {}", e),
+            Err(e) => error!("Port forward task failed: {e}"),
         }
     }
 
@@ -188,17 +188,13 @@ async fn check_and_manage_port(
 async fn handle_existing_process(
     port_ops: Arc<dyn PortOperations>, config: Config, port: u16, pid: i32, process_name: String,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    debug!(
-        "Process '{}' (pid: {}) is using port {}.",
-        process_name, pid, port
-    );
+    debug!("Process '{process_name}' (pid: {pid}) is using port {port}.");
 
     if process_name.eq_ignore_ascii_case("kftray") || process_name.eq_ignore_ascii_case("kftui") {
-        debug!("Process '{}' is internal, skipping...", process_name);
+        debug!("Process '{process_name}' is internal, skipping...");
     } else {
         info!(
-            "External process '{}' found on port {}, updating state to 'not running'",
-            process_name, port
+            "External process '{process_name}' found on port {port}, updating state to 'not running'"
         );
         let config_state = ConfigState {
             id: None,
@@ -234,7 +230,7 @@ async fn start_port_forwarding(
     let config_alias = config
         .alias
         .clone()
-        .unwrap_or_else(|| format!("ID:{}", config_id));
+        .unwrap_or_else(|| format!("ID:{config_id}"));
 
     let result = match config.workload_type.as_deref() {
         Some("proxy") => {
@@ -260,11 +256,8 @@ async fn start_port_forwarding(
             Ok(())
         }
         Err(e) => {
-            let error_msg = format!(
-                "Failed to start port forwarding for '{}': {}",
-                config_alias, e
-            );
-            error!("{}", error_msg);
+            let error_msg = format!("Failed to start port forwarding for '{config_alias}': {e}");
+            error!("{error_msg}");
 
             let config_state = ConfigState {
                 id: None,
@@ -326,7 +319,7 @@ mod tests {
     ) -> Config {
         Config {
             id: Some(id),
-            alias: Some(format!("test-config-{}", id)),
+            alias: Some(format!("test-config-{id}")),
             local_port: Some(port),
             protocol: protocol.to_string(),
             workload_type: workload_type.map(String::from),
@@ -409,7 +402,7 @@ mod tests {
         mock.expect_get_config()
             .with(eq(1))
             .times(1)
-            .returning(|id| Err(format!("Failed to get config {}", id)));
+            .returning(|id| Err(format!("Failed to get config {id}")));
 
         let result = check_and_manage_ports(Arc::new(mock)).await;
 

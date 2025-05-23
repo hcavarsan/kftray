@@ -33,7 +33,7 @@ pub async fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
     init().await?;
 
     if let Err(e) = migrate_configs(None).await {
-        error!("Database migration failed: {}", e);
+        error!("Database migration failed: {e}");
     }
 
     enable_raw_mode()?;
@@ -51,7 +51,7 @@ pub async fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
     terminal.show_cursor()?;
 
     if let Err(err) = res {
-        error!("{:?}", err);
+        error!("{err:?}");
     }
 
     Ok(())
@@ -111,7 +111,7 @@ mod tests {
             rt.block_on(async {
                 match init().await {
                     Ok(_) => DB_INITIALIZED.store(true, Ordering::SeqCst),
-                    Err(e) => panic!("Failed to initialize DB for test: {:?}", e),
+                    Err(e) => panic!("Failed to initialize DB for test: {e:?}"),
                 }
             });
         }

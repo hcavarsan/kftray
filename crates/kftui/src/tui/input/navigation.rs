@@ -25,7 +25,7 @@ pub async fn handle_auto_add_configs(app: &mut App) {
     let contexts = match list_kube_contexts(None).await {
         Ok(context_infos) => context_infos.into_iter().map(|info| info.name).collect(),
         Err(e) => {
-            app.error_message = Some(format!("Failed to list contexts: {}", e));
+            app.error_message = Some(format!("Failed to list contexts: {e}"));
             app.state = AppState::ShowErrorPopup;
             return;
         }
@@ -41,7 +41,7 @@ pub async fn handle_context_selection(app: &mut App, context: &str) {
     let configs = match retrieve_service_configs(context, None).await {
         Ok(configs) => configs,
         Err(e) => {
-            app.error_message = Some(format!("Failed to retrieve service configs: {}", e));
+            app.error_message = Some(format!("Failed to retrieve service configs: {e}"));
             app.state = AppState::ShowErrorPopup;
             return;
         }
@@ -49,7 +49,7 @@ pub async fn handle_context_selection(app: &mut App, context: &str) {
 
     for config in configs {
         if let Err(e) = insert_config(config).await {
-            app.error_message = Some(format!("Failed to insert config: {}", e));
+            app.error_message = Some(format!("Failed to insert config: {e}"));
             app.state = AppState::ShowErrorPopup;
             return;
         }

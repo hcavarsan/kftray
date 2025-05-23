@@ -761,7 +761,7 @@ impl BodyParser {
                     let preview_size = std::cmp::min(body.len(), 64);
                     let bytes: Vec<String> = body[..preview_size]
                         .iter()
-                        .map(|b| format!("{:02x}", b))
+                        .map(|b| format!("{b:02x}"))
                         .collect();
                     format!("\n# Preview: {} ", bytes.join(" "))
                 } else {
@@ -805,7 +805,7 @@ impl BodyParser {
                             }
                             Err(e) => {
                                 debug!("Error pretty-printing JSON: {:?}", e);
-                                format!("# <JSON content - error formatting>\n{}", trimmed)
+                                format!("# <JSON content - error formatting>\n{trimmed}")
                             }
                         }
                     }
@@ -850,10 +850,10 @@ impl BodyParser {
                                 debug!("Formatted JSON stream: {} lines", line_count);
                                 formatted
                             } else {
-                                format!("# <JSON content - invalid JSON>\n{}", trimmed)
+                                format!("# <JSON content - invalid JSON>\n{trimmed}")
                             }
                         } else {
-                            format!("# <JSON content - invalid JSON>\n{}", trimmed)
+                            format!("# <JSON content - invalid JSON>\n{trimmed}")
                         }
                     }
                 }
@@ -947,7 +947,7 @@ impl BodyParser {
                 let text_str = Self::bytes_to_utf8_string(body);
 
                 let type_info = if let Some(ct) = content_type {
-                    format!(" of type {}", ct)
+                    format!(" of type {ct}")
                 } else {
                     "".to_string()
                 };
@@ -1441,8 +1441,7 @@ mod tests {
             .unwrap();
         assert!(
             formatted.contains("binary"),
-            "Expected binary format message, got: {}",
-            formatted
+            "Expected binary format message, got: {formatted}"
         );
 
         let jpeg_binary_data = &[0xFF, 0xD8, 0xFF, 0xE0];
@@ -1455,8 +1454,7 @@ mod tests {
             .unwrap();
         assert!(
             formatted.contains("image"),
-            "Expected image format message, got: {}",
-            formatted
+            "Expected image format message, got: {formatted}"
         );
 
         let css_body = b"body { color: red; }";

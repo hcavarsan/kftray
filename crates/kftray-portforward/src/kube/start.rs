@@ -82,7 +82,7 @@ pub async fn start_port_forward(
                             .await
                     }
                     _ => {
-                        error!("Unsupported protocol: {}", protocol);
+                        error!("Unsupported protocol: {protocol}");
                         Err(anyhow::anyhow!("Unsupported protocol: {}", protocol))
                     }
                 };
@@ -101,8 +101,8 @@ pub async fn start_port_forward(
                             &config.service
                         );
 
-                        debug!("Port forwarding details: {:?}", port_forward);
-                        debug!("Actual local port: {:?}", actual_local_port);
+                        debug!("Port forwarding details: {port_forward:?}");
+                        debug!("Actual local port: {actual_local_port:?}");
 
                         let handle_key = format!(
                             "{}_{}",
@@ -130,8 +130,7 @@ pub async fn start_port_forward(
 
                                             if let Err(e) = add_host_entry(entry_id, host_entry) {
                                                 let error_message = format!(
-                                                    "Failed to write to the hostfile for {}: {}",
-                                                    service_name, e
+                                                    "Failed to write to the hostfile for {service_name}: {e}"
                                                 );
                                                 error!("{}", &error_message);
                                                 errors.push(error_message);
@@ -148,8 +147,7 @@ pub async fn start_port_forward(
                                         }
                                         Err(_) => {
                                             let warning_message = format!(
-                                                "Invalid IP address format: {}",
-                                                local_address
+                                                "Invalid IP address format: {local_address}"
                                             );
                                             warn!("{}", &warning_message);
                                             errors.push(warning_message);
@@ -165,7 +163,7 @@ pub async fn start_port_forward(
                             is_running: true,
                         };
                         if let Err(e) = update_config_state(&config_state).await {
-                            error!("Failed to update config state: {}", e);
+                            error!("Failed to update config state: {e}");
                         }
 
                         responses.push(CustomResponse {
@@ -285,7 +283,7 @@ mod tests {
     async fn test_protocol_validation(protocol: &str) -> Result<(), String> {
         match protocol {
             "tcp" | "udp" => Ok(()),
-            _ => Err(format!("Unsupported protocol: {}", protocol)),
+            _ => Err(format!("Unsupported protocol: {protocol}")),
         }
     }
 

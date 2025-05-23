@@ -260,15 +260,12 @@ mod tests {
 
     #[test]
     fn test_port_conversions() {
-        // Test i32 conversion
         let port1: Port = 8080.into();
         assert_eq!(port1, Port::Number(8080));
 
-        // Test str conversion
         let port2: Port = "http".into();
         assert_eq!(port2, Port::Name("http".to_string()));
 
-        // Test IntOrString conversion
         let port3: Port = IntOrString::Int(9090).into();
         assert_eq!(port3, Port::Number(9090));
 
@@ -278,7 +275,6 @@ mod tests {
 
     #[test]
     fn test_target_pod_new() {
-        // Valid port
         let result = TargetPod::new("test-pod".to_string(), 8080);
         assert!(result.is_ok());
         let pod = result.unwrap();

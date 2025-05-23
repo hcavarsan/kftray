@@ -78,7 +78,7 @@ mod tests {
                 "Error message should be present in error state"
             );
             if let Some(error_msg) = &app.error_message {
-                println!("Error message: {}", error_msg);
+                println!("Error message: {error_msg}");
             }
         } else {
             assert_eq!(

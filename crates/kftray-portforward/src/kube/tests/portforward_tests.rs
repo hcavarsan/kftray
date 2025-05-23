@@ -224,12 +224,12 @@ async fn test_port_forward_tcp_success() -> Result<()> {
                     processes.insert(key.clone(), handle);
                 }
 
-                println!("Port forwarding successfully established on port {}", port);
+                println!("Port forwarding successfully established on port {port}");
 
                 Ok(port)
             }
             Err(e) => {
-                eprintln!("Port forwarding failed: {}", e);
+                eprintln!("Port forwarding failed: {e}");
                 Err(e)
             }
         }
@@ -245,7 +245,7 @@ async fn test_port_forward_tcp_success() -> Result<()> {
 
     let connect_result = timeout(
         Duration::from_secs(2),
-        TcpStream::connect(format!("127.0.0.1:{}", bound_port)),
+        TcpStream::connect(format!("127.0.0.1:{bound_port}")),
     )
     .await;
 
@@ -317,15 +317,12 @@ async fn test_port_forward_udp_success() -> Result<()> {
                     processes.insert(key.clone(), handle);
                 }
 
-                println!(
-                    "UDP Port forwarding successfully established on port {}",
-                    port
-                );
+                println!("UDP Port forwarding successfully established on port {port}");
 
                 Ok(port)
             }
             Err(e) => {
-                eprintln!("UDP Port forwarding failed: {}", e);
+                eprintln!("UDP Port forwarding failed: {e}");
                 Err(e)
             }
         }
@@ -339,10 +336,7 @@ async fn test_port_forward_udp_success() -> Result<()> {
                 bound_port > 0,
                 "UDP Port forwarding did not bind to a dynamic port"
             );
-            println!(
-                "UDP Port forwarding unexpectedly succeeded (port {})",
-                bound_port
-            );
+            println!("UDP Port forwarding unexpectedly succeeded (port {bound_port})");
 
             {
                 let mut processes = CHILD_PROCESSES.lock().unwrap();
@@ -445,13 +439,13 @@ async fn test_start_port_forward_mock_components() -> Result<()> {
 
     match port_forward_result {
         Ok((port, handle)) => {
-            println!("Successfully started TCP port forwarding on port {}", port);
+            println!("Successfully started TCP port forwarding on port {port}");
             assert!(port > 0, "Port should be assigned a dynamic port");
             success_counter.fetch_add(1, Ordering::SeqCst);
 
             let connect_result = timeout(
                 Duration::from_secs(1),
-                TcpStream::connect(format!("127.0.0.1:{}", port)),
+                TcpStream::connect(format!("127.0.0.1:{port}")),
             )
             .await;
 
@@ -480,8 +474,8 @@ async fn test_start_port_forward_mock_components() -> Result<()> {
             success_counter.fetch_add(1, Ordering::SeqCst);
         }
         Err(e) => {
-            println!("Failed to start port forwarding: {}", e);
-            panic!("Port forwarding should have succeeded but failed: {}", e);
+            println!("Failed to start port forwarding: {e}");
+            panic!("Port forwarding should have succeeded but failed: {e}");
         }
     }
 
@@ -490,8 +484,7 @@ async fn test_start_port_forward_mock_components() -> Result<()> {
     let final_count = success_counter.load(Ordering::SeqCst);
     assert!(
         final_count >= 1,
-        "Expected at least 1 successful test step, got {}",
-        final_count
+        "Expected at least 1 successful test step, got {final_count}"
     );
 
     Ok(())
@@ -554,7 +547,7 @@ async fn test_start_port_forward_mock_components_udp() -> Result<()> {
 
     match port_forward.port_forward_udp().await {
         Ok((port, handle)) => {
-            println!("Successfully started UDP port forwarding on port {}", port);
+            println!("Successfully started UDP port forwarding on port {port}");
             assert!(port > 0, "Port should be assigned a dynamic port");
 
             handle.abort();
@@ -562,15 +555,14 @@ async fn test_start_port_forward_mock_components_udp() -> Result<()> {
             success_counter.fetch_add(1, Ordering::SeqCst);
         }
         Err(e) => {
-            println!("Expected: UDP port forwarding failed: {}", e);
+            println!("Expected: UDP port forwarding failed: {e}");
 
             mock_task.abort();
 
             let final_count = success_counter.load(Ordering::SeqCst);
             assert!(
                 final_count >= 1,
-                "Expected at least 1 successful API call, got {}",
-                final_count
+                "Expected at least 1 successful API call, got {final_count}"
             );
 
             return Ok(());

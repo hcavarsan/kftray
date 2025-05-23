@@ -71,7 +71,7 @@ fn delete_files_in_folder(path: &Path) -> Result<(), String> {
 
     let entries = match fs::read_dir(path) {
         Ok(entries) => entries,
-        Err(e) => return Err(format!("Failed to read directory: {}", e)),
+        Err(e) => return Err(format!("Failed to read directory: {e}")),
     };
     for entry_result in entries {
         match entry_result {
@@ -85,7 +85,7 @@ fn delete_files_in_folder(path: &Path) -> Result<(), String> {
                         Err(e) => {
                             let error_msg =
                                 format!("Failed to delete file {}: {}", file_path.display(), e);
-                            error!("{}", error_msg);
+                            error!("{error_msg}");
                             errors.push(error_msg);
                             error_count += 1;
                         }
@@ -93,8 +93,8 @@ fn delete_files_in_folder(path: &Path) -> Result<(), String> {
                 }
             }
             Err(e) => {
-                let error_msg = format!("Failed to read directory entry: {}", e);
-                error!("{}", error_msg);
+                let error_msg = format!("Failed to read directory entry: {e}");
+                error!("{error_msg}");
                 errors.push(error_msg);
                 error_count += 1;
             }
@@ -102,10 +102,7 @@ fn delete_files_in_folder(path: &Path) -> Result<(), String> {
     }
 
     // Report summary
-    info!(
-        "Deleted {} files, encountered {} errors",
-        success_count, error_count
-    );
+    info!("Deleted {success_count} files, encountered {error_count} errors");
 
     if error_count > 0 {
         if success_count > 0 {
@@ -147,20 +144,20 @@ fn calculate_folder_size_with_depth(path: &Path, depth: usize) -> Result<u64, St
     // Try to get the canonical path to handle symlinks properly
     let canonical_path = path
         .canonicalize()
-        .map_err(|e| format!("Failed to canonicalize path: {}", e))?;
+        .map_err(|e| format!("Failed to canonicalize path: {e}"))?;
 
     // Check if we've already visited this path (symlink loop detection)
     if !visited_paths.insert(canonical_path.clone()) {
         return Err(format!("Symlink loop detected at: {}", path.display()));
     }
 
-    for entry in fs::read_dir(path).map_err(|e| format!("Failed to read directory: {}", e))? {
-        let entry = entry.map_err(|e| format!("Failed to read directory entry: {}", e))?;
+    for entry in fs::read_dir(path).map_err(|e| format!("Failed to read directory: {e}"))? {
+        let entry = entry.map_err(|e| format!("Failed to read directory entry: {e}"))?;
         let path = entry.path();
 
         if path.is_file() {
             size += fs::metadata(&path)
-                .map_err(|e| format!("Failed to get file metadata: {}", e))?
+                .map_err(|e| format!("Failed to get file metadata: {e}"))?
                 .len();
         } else if path.is_dir() {
             size += calculate_folder_size_with_depth(&path, depth + 1)?;
@@ -184,11 +181,11 @@ pub async fn open_log_file(log_file_name: String) -> Result<(), String> {
     // Canonicalize paths to resolve any .. or symlinks
     let canonical_log_folder = log_folder_path
         .canonicalize()
-        .map_err(|e| format!("Failed to canonicalize log folder path: {}", e))?;
+        .map_err(|e| format!("Failed to canonicalize log folder path: {e}"))?;
 
     let canonical_file_path = log_file_path
         .canonicalize()
-        .map_err(|e| format!("Failed to canonicalize log file path: {}", e))?;
+        .map_err(|e| format!("Failed to canonicalize log file path: {e}"))?;
 
     // Verify the file is actually within the log directory
     if !canonical_file_path.starts_with(&canonical_log_folder) {
@@ -204,45 +201,39 @@ pub async fn open_log_file(log_file_name: String) -> Result<(), String> {
 
     // Try with EDITOR environment variable first
     if let Ok(editor) = env::var("EDITOR") {
-        info!("Trying to open with EDITOR: {}", editor);
+        info!("Trying to open with EDITOR: {editor}");
         if open_with_editor(file_path_str, &editor).is_ok() {
             return Ok(());
         }
-        error!("Failed to open with EDITOR: {}", editor);
+        error!("Failed to open with EDITOR: {editor}");
     }
 
     // Try with VISUAL environment variable (common on Unix systems)
     if let Ok(visual) = env::var("VISUAL") {
-        info!("Trying to open with VISUAL: {}", visual);
+        info!("Trying to open with VISUAL: {visual}");
         if open_with_editor(file_path_str, &visual).is_ok() {
             return Ok(());
         }
-        error!("Failed to open with VISUAL: {}", visual);
+        error!("Failed to open with VISUAL: {visual}");
     }
 
     // Then try with default editor detection
     let default_editor = detect_default_editor();
-    info!(
-        "Trying to open with detected default editor: {}",
-        default_editor
-    );
+    info!("Trying to open with detected default editor: {default_editor}");
 
     match open_with_editor(file_path_str, &default_editor) {
         Ok(_) => Ok(()),
         Err(err) => {
-            error!(
-                "Error opening with editor '{}': {}. Trying default method...",
-                default_editor, err
-            );
+            error!("Error opening with editor '{default_editor}': {err}. Trying default method...");
 
             // Try with the open crate's default method
             match that_in_background(&canonical_file_path).join() {
                 Ok(Ok(_)) => Ok(()),
                 Ok(Err(err)) => {
-                    error!("Error opening log file with default method: {}. Trying fallback methods...", err);
+                    error!("Error opening log file with default method: {err}. Trying fallback methods...");
                     try_fallback_editors(file_path_str)
                 }
-                Err(err) => Err(format!("Failed to join thread: {:?}", err)),
+                Err(err) => Err(format!("Failed to join thread: {err:?}")),
             }
         }
     }
@@ -332,7 +323,7 @@ fn open_with_editor(file_path: &str, editor: &str) -> Result<(), String> {
                             if status.success() {
                                 return Ok(());
                             } else {
-                                return Err(format!("Editor exited with status: {}", status));
+                                return Err(format!("Editor exited with status: {status}"));
                             }
                         }
                         Ok(None) => {
@@ -345,13 +336,11 @@ fn open_with_editor(file_path: &str, editor: &str) -> Result<(), String> {
                             // Small sleep to prevent CPU spinning
                             thread::sleep(Duration::from_millis(100));
                         }
-                        Err(err) => {
-                            return Err(format!("Failed to wait on editor process: {}", err))
-                        }
+                        Err(err) => return Err(format!("Failed to wait on editor process: {err}")),
                     }
                 }
             }
-            Err(err) => Err(format!("Failed to start editor: {}", err)),
+            Err(err) => Err(format!("Failed to start editor: {err}")),
         };
     }
 
@@ -385,21 +374,15 @@ fn open_with_editor(file_path: &str, editor: &str) -> Result<(), String> {
                 // We got a result from the thread
                 return match result {
                     Ok(Ok(_)) => Ok(()),
-                    Ok(Err(err)) => Err(format!("Failed to open with {}: {}", editor_clone, err)),
-                    Err(_) => Err(format!(
-                        "Thread panicked while opening with {}",
-                        editor_clone
-                    )),
+                    Ok(Err(err)) => Err(format!("Failed to open with {editor_clone}: {err}")),
+                    Err(_) => Err(format!("Thread panicked while opening with {editor_clone}")),
                 };
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => {
                 // No result yet, check timeout
                 if start.elapsed() > timeout {
                     // Timeout occurred, assume success
-                    info!(
-                        "Editor {} is still running after timeout, assuming success",
-                        editor_clone
-                    );
+                    info!("Editor {editor_clone} is still running after timeout, assuming success");
                     return Ok(());
                 }
                 // Sleep a bit to avoid spinning
@@ -408,8 +391,7 @@ fn open_with_editor(file_path: &str, editor: &str) -> Result<(), String> {
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                 // Channel disconnected, assume failure
                 return Err(format!(
-                    "Channel disconnected while waiting for {}",
-                    editor_clone
+                    "Channel disconnected while waiting for {editor_clone}"
                 ));
             }
         }
@@ -420,12 +402,12 @@ fn run_command(cmd: &str, args: &[&str]) -> Result<(), String> {
     let status = std::process::Command::new(cmd)
         .args(args)
         .status()
-        .map_err(|e| format!("Failed to execute {} command: {}", cmd, e))?;
+        .map_err(|e| format!("Failed to execute {cmd} command: {e}"))?;
 
     if status.success() {
         Ok(())
     } else {
-        Err(format!("{} command failed with status: {}", cmd, status))
+        Err(format!("{cmd} command failed with status: {status}"))
     }
 }
 
@@ -440,7 +422,7 @@ fn try_fallback_editors(file_path: &str) -> Result<(), String> {
             continue;
         }
 
-        info!("Trying fallback editor: {}", editor);
+        info!("Trying fallback editor: {editor}");
         if open_with_editor(file_path, editor).is_ok() {
             return Ok(());
         }
@@ -487,10 +469,9 @@ fn try_macos_fallbacks(file_path: &str) -> Result<(), String> {
             match run_command("open", &[file_path]) {
                 Ok(_) => Ok(()),
                 Err(e) => {
-                    error!("All macOS fallback methods failed. Last error: {}", e);
+                    error!("All macOS fallback methods failed. Last error: {e}");
                     Err(format!(
-                        "Failed to open file with any available method: {}",
-                        e
+                        "Failed to open file with any available method: {e}"
                     ))
                 }
             }
@@ -575,9 +556,9 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
 
         for i in 1..5 {
-            let file_path = temp_dir.path().join(format!("test_log_{}.log", i));
+            let file_path = temp_dir.path().join(format!("test_log_{i}.log"));
             let mut file = std::fs::File::create(&file_path).unwrap();
-            writeln!(file, "Test log content {}", i).unwrap();
+            writeln!(file, "Test log content {i}").unwrap();
         }
 
         temp_dir
@@ -804,8 +785,7 @@ mod tests {
                     e.contains("outside the log directory") || e.contains("Invalid log file path");
                 assert!(
                     contains_outside,
-                    "Error '{}' should indicate file is outside log directory",
-                    e
+                    "Error '{e}' should indicate file is outside log directory"
                 );
             }
         }

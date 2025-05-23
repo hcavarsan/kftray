@@ -33,7 +33,7 @@ pub async fn check_and_emit_changes(app_handle: AppHandle) {
         let current_config_states = match get_configs_state().await {
             Ok(states) => states,
             Err(e) => {
-                error!("Failed to get config states: {}", e);
+                error!("Failed to get config states: {e}");
                 continue;
             }
         };
@@ -41,7 +41,7 @@ pub async fn check_and_emit_changes(app_handle: AppHandle) {
         let current_configs = match get_configs().await {
             Ok(configs) => configs,
             Err(e) => {
-                error!("Failed to get configs: {}", e);
+                error!("Failed to get configs: {e}");
                 continue;
             }
         };
@@ -55,7 +55,7 @@ pub async fn check_and_emit_changes(app_handle: AppHandle) {
             app_handle
                 .emit_all("config_state_changed", &Vec::<Config>::new())
                 .unwrap_or_else(|e| {
-                    error!("Failed to emit configs changed event: {}", e);
+                    error!("Failed to emit configs changed event: {e}");
                 });
 
             log::info!("Configs changed event emitted");
@@ -134,7 +134,7 @@ pub async fn stop_proxy_forward_cmd(
 ) -> Result<CustomResponse, String> {
     let config_id = config_id
         .parse::<i64>()
-        .map_err(|e| format!("Failed to parse config_id: {}", e))?;
+        .map_err(|e| format!("Failed to parse config_id: {e}"))?;
 
     stop_proxy_forward(config_id, namespace, service_name).await
 }
@@ -147,7 +147,7 @@ pub async fn handle_exit_app(app_handle: tauri::AppHandle) {
         let config_states = match get_configs_state().await {
             Ok(config_states) => config_states,
             Err(err) => {
-                error!("Failed to get config states: {:?}", err);
+                error!("Failed to get config states: {err:?}");
                 app_handle.exit(0);
                 return;
             }
@@ -170,11 +170,11 @@ pub async fn handle_exit_app(app_handle: tauri::AppHandle) {
                         info!("Attempting to stop all port forwards...");
                         match stop_all_port_forward().await {
                             Ok(responses) => {
-                                info!("Successfully stopped all port forwards: {:?}", responses);
+                                info!("Successfully stopped all port forwards: {responses:?}");
                                 app_handle.exit(0);
                             }
                             Err(err) => {
-                                error!("Failed to stop port forwards: {:?}", err);
+                                error!("Failed to stop port forwards: {err:?}");
                                 app_handle.exit(0);
                             }
                         };
