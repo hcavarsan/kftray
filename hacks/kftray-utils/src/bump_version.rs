@@ -147,7 +147,16 @@ fn bump_version(bump_type: &str) -> io::Result<()> {
         update_cargo_toml_version,
     )?;
 
-    println!("kftray-commons Cargo.toml updated");
+	println!("kftray-commons Cargo.toml updated");
+
+	update_file_content(
+        "../../crates/kftray-helper/Cargo.toml",
+        new_version,
+        update_cargo_toml_version,
+    )?;
+
+    println!("kftray-helper Cargo.toml updated");
+
 
     update_file_content(
         "../../docs/kftray/INSTALL.md",
