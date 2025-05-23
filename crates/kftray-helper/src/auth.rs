@@ -396,7 +396,7 @@ fn get_authorized_user_sid() -> Result<String, HelperError> {
 
 #[cfg(windows)]
 fn is_running_as_admin() -> Result<bool, HelperError> {
-    use windows::Win32::Foundation::BOOL;
+    use windows::Win32::Foundation::PropertyType::Boolean;
     use windows::Win32::Security::{
         CheckTokenMembership,
         CreateWellKnownSid,
@@ -417,17 +417,17 @@ fn is_running_as_admin() -> Result<bool, HelperError> {
         )
         .map_err(|e| HelperError::Authentication(format!("Failed to create admin SID: {}", e)))?;
 
-        let mut is_member = BOOL(0);
+        let mut is_member = Boolean(0);
         CheckTokenMembership(
             None,
-            windows::Win32::Security::PSID(admin_sid_buffer.as_ptr() as *const _),
+            windows::Win32::Security::PSID(admin_sid_buffer.as_ptr() as *mut _),
             &mut is_member,
         )
         .map_err(|e| {
             HelperError::Authentication(format!("Failed to check admin membership: {}", e))
         })?;
 
-        Ok(is_member.as_bool())
+        Ok(is_member.0)
     }
 }
 
@@ -441,7 +441,7 @@ fn is_admin_sid(sid: &str) -> Result<bool, HelperError> {
 
 #[cfg(windows)]
 fn get_default_named_pipe_path() -> Result<String, HelperError> {
-    use windows::Win32::System::Environment::GetTempPathW;
+    use windows::Win32::Storage::FileSystem::GetTempPathW;
 
     unsafe {
         let mut buffer = vec![0u16; 260];
@@ -496,14 +496,13 @@ fn get_file_owner_sid<P: AsRef<std::path::Path>>(path: P) -> Result<String, Help
             size_needed,
             &mut size_needed,
         )
-        .ok()
-        .ok_or_else(|| HelperError::Authentication("Failed to get file security".to_string()))?;
+        .map_err(|e| HelperError::Authentication(format!("Failed to get file security: {}", e)))?;
 
         let mut owner_sid = std::ptr::null_mut();
-        let mut owner_defaulted = windows::Win32::Foundation::BOOL(0);
+        let mut owner_defaulted = windows::Win32::Foundation::PropertyType::Boolean(0);
 
         GetSecurityDescriptorOwner(
-            windows::Win32::Security::PSECURITY_DESCRIPTOR(security_descriptor.as_ptr() as *const _),
+            windows::Win32::Security::PSECURITY_DESCRIPTOR(security_descriptor.as_ptr() as *mut _),
             owner_sid,
             &mut owner_defaulted,
         )
@@ -515,10 +514,13 @@ fn get_file_owner_sid<P: AsRef<std::path::Path>>(path: P) -> Result<String, Help
         })?;
 
         let mut sid_string = PWSTR::null();
-        ConvertSidToStringSidW(windows::Win32::Security::PSID(owner_sid), &mut sid_string)
-            .map_err(|e| {
-                HelperError::Authentication(format!("Failed to convert owner SID to string: {}", e))
-            })?;
+        ConvertSidToStringSidW(
+            windows::Win32::Security::PSID(owner_sid as *mut _),
+            &mut sid_string,
+        )
+        .map_err(|e| {
+            HelperError::Authentication(format!("Failed to convert owner SID to string: {}", e))
+        })?;
 
         let result = sid_string.to_string().map_err(|e| {
             HelperError::Authentication(format!("Failed to convert SID to UTF-8: {}", e))
