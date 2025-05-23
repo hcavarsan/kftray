@@ -420,17 +420,17 @@ fn is_running_as_admin() -> Result<bool, HelperError> {
         )
         .map_err(|e| HelperError::Authentication(format!("Failed to create admin SID: {}", e)))?;
 
-        let mut is_member = VARIANT_FALSE;
+        let mut is_member = windows_core::BOOL(0);
         CheckTokenMembership(
             None,
             windows::Win32::Security::PSID(admin_sid_buffer.as_ptr() as *mut _),
-            &mut is_member,
+            &mut is_member as *mut _,
         )
         .map_err(|e| {
             HelperError::Authentication(format!("Failed to check admin membership: {}", e))
         })?;
 
-        Ok(is_member.0)
+        Ok(is_member.as_bool())
     }
 }
 
@@ -506,7 +506,7 @@ fn get_file_owner_sid<P: AsRef<std::path::Path>>(path: P) -> Result<String, Help
         }
 
         let mut owner_sid = std::ptr::null_mut();
-        let mut owner_defaulted = VARIANT_FALSE;
+        let mut owner_defaulted = windows_core::BOOL::from(false);
 
         GetSecurityDescriptorOwner(
             windows::Win32::Security::PSECURITY_DESCRIPTOR(security_descriptor.as_ptr() as *mut _),
