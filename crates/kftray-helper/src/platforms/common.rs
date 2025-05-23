@@ -79,7 +79,16 @@ pub(crate) async fn run_communication_server(
         tokio_handle.runtime_flavor()
     );
 
-    match start_communication_server(socket_path.clone(), pool_manager, network_manager).await {
+    let hostfile_manager = crate::hostfile::HostfileManager::new();
+
+    match start_communication_server(
+        socket_path.clone(),
+        pool_manager,
+        network_manager,
+        hostfile_manager,
+    )
+    .await
+    {
         Ok(_) => {
             println!("Communication server exited successfully");
             Ok(())

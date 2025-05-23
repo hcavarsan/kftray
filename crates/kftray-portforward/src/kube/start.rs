@@ -4,6 +4,7 @@ use kftray_commons::{
     models::{
         config_model::Config,
         config_state_model::ConfigState,
+        hostfile::HostEntry,
         response::CustomResponse,
     },
     utils::config_state::update_config_state,
@@ -15,12 +16,11 @@ use log::{
     info,
     warn,
 };
+use once_cell::sync::Lazy;
+use tokio::sync::Mutex as TokioMutex;
 
 use crate::{
-    hostsfile::{
-        add_host_entry,
-        HostEntry,
-    },
+    hostsfile::add_host_entry,
     kube::models::{
         Port,
         PortForward,
@@ -30,12 +30,33 @@ use crate::{
     port_forward::CHILD_PROCESSES,
 };
 
-async fn allocate_local_address_for_config(config: &mut Config) -> String {
+static FALLBACK_ALLOCATION_MUTEX: Lazy<TokioMutex<()>> = Lazy::new(|| TokioMutex::new(()));
+
+async fn allocate_local_address_for_config(config: &mut Config) -> Result<String, String> {
     if !config.auto_loopback_address {
-        return config
+        let address = config
             .local_address
             .clone()
             .unwrap_or_else(|| "127.0.0.1".to_string());
+
+        if crate::network_utils::is_custom_loopback_address(&address) {
+            info!("Configuring custom loopback address: {}", address);
+            if let Err(config_err) = crate::network_utils::ensure_loopback_address(&address).await {
+                let error_msg = config_err.to_string();
+                if error_msg.contains("cancelled") || error_msg.contains("canceled") {
+                    return Err(format!(
+                        "Custom loopback address configuration cancelled: {}",
+                        error_msg
+                    ));
+                }
+                warn!(
+                    "Failed to configure custom loopback address {}: {}",
+                    address, config_err
+                );
+            }
+        }
+
+        return Ok(address);
     }
 
     let service_name = config
@@ -51,33 +72,188 @@ async fn allocate_local_address_for_config(config: &mut Config) -> String {
             );
             config.local_address = Some(allocated_address.clone());
 
+            info!(
+                "Setting config.local_address to {} for config_id {}",
+                allocated_address,
+                config.id.unwrap_or_default()
+            );
             if let Err(e) = save_allocated_address_to_db(config).await {
-                warn!("Failed to save allocated address to database: {}", e);
+                error!(
+                    "Failed to save allocated address {} to database for config {}: {}",
+                    allocated_address,
+                    config.id.unwrap_or_default(),
+                    e
+                );
+            } else {
+                info!(
+                    "Successfully updated database with allocated address {} for config {}",
+                    allocated_address,
+                    config.id.unwrap_or_default()
+                );
             }
 
-            allocated_address
+            Ok(allocated_address)
         }
         Err(e) => {
             warn!(
-                "Failed to auto-allocate address for service {}: {}. Using default 127.0.0.1",
+                "Failed to auto-allocate address for service {} via helper: {}. Trying fallback allocation",
                 service_name, e
             );
-            let default_address = "127.0.0.1".to_string();
-            config.local_address = Some(default_address.clone());
-            default_address
+
+            match try_fallback_allocate_and_save(&service_name, config).await {
+                Ok(allocated_address) => {
+                    info!(
+                        "Fallback-allocated address {} for service {}",
+                        allocated_address, service_name
+                    );
+                    Ok(allocated_address)
+                }
+                Err(fallback_err) => {
+                    if fallback_err.contains("cancelled") || fallback_err.contains("canceled") {
+                        error!("Address allocation cancelled by user: {}", fallback_err);
+                        return Err(fallback_err);
+                    }
+
+                    warn!(
+                        "Fallback allocation also failed for service {}: {}. Using default 127.0.0.1",
+                        service_name, fallback_err
+                    );
+                    let default_address = "127.0.0.1".to_string();
+                    config.local_address = Some(default_address.clone());
+                    Ok(default_address)
+                }
+            }
         }
     }
 }
 
 async fn try_allocate_address(service_name: &str) -> Result<String, String> {
-    use kftray_helper::HelperClient;
-
     let app_id = "com.kftray.app".to_string();
-    let client = HelperClient::new(app_id).map_err(|e| e.to_string())?;
 
-    client
-        .allocate_local_address(service_name.to_string())
-        .map_err(|e| e.to_string())
+    let socket_path =
+        kftray_helper::communication::get_default_socket_path().map_err(|e| e.to_string())?;
+
+    if !kftray_helper::client::socket_comm::is_socket_available(&socket_path) {
+        return Err("Helper service is not available".to_string());
+    }
+
+    let command = kftray_helper::messages::RequestCommand::Address(
+        kftray_helper::messages::AddressCommand::Allocate {
+            service_name: service_name.to_string(),
+        },
+    );
+
+    match kftray_helper::client::socket_comm::send_request(&socket_path, &app_id, command) {
+        Ok(response) => match response.result {
+            kftray_helper::messages::RequestResult::StringSuccess(address) => Ok(address),
+            kftray_helper::messages::RequestResult::Error(error) => Err(error),
+            _ => Err("Unexpected response format".to_string()),
+        },
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+async fn try_fallback_allocate_and_save(
+    service_name: &str, config: &mut Config,
+) -> Result<String, String> {
+    let _lock = FALLBACK_ALLOCATION_MUTEX.lock().await;
+
+    debug!(
+        "Acquired fallback allocation lock for service: {}",
+        service_name
+    );
+
+    let allocated_addresses = get_allocated_loopback_addresses().await;
+
+    for octet in 2..255 {
+        let address = format!("127.0.0.{}", octet);
+
+        if allocated_addresses.contains(&address) {
+            debug!(
+                "Address {} already allocated to another config, skipping",
+                address
+            );
+            continue;
+        }
+
+        if crate::network_utils::is_address_accessible(&address).await {
+            debug!("Address {} is already in use on system, skipping", address);
+            continue;
+        }
+
+        match crate::network_utils::ensure_loopback_address(&address).await {
+            Ok(_) => {
+                debug!(
+                    "Successfully allocated and configured fallback address: {} for service: {}",
+                    address, service_name
+                );
+
+                config.local_address = Some(address.clone());
+                info!(
+                    "Setting config.local_address to {} (fallback) for config_id {}",
+                    address,
+                    config.id.unwrap_or_default()
+                );
+
+                if let Err(e) = save_allocated_address_to_db(config).await {
+                    error!("Failed to save fallback allocated address {} to database for config {}: {}", address, config.id.unwrap_or_default(), e);
+                } else {
+                    info!("Successfully updated database with fallback allocated address {} for config {}", address, config.id.unwrap_or_default());
+                }
+
+                return Ok(address);
+            }
+            Err(e) => {
+                let error_msg = e.to_string();
+                debug!(
+                    "Failed to configure fallback address {}: {}",
+                    address, error_msg
+                );
+
+                if error_msg.contains("User cancelled")
+                    || error_msg.contains("user cancelled")
+                    || error_msg.contains("cancelled")
+                    || error_msg.contains("User canceled")
+                    || error_msg.contains("canceled")
+                {
+                    return Err(format!(
+                        "Address allocation cancelled by user: {}",
+                        error_msg
+                    ));
+                }
+
+                continue;
+            }
+        }
+    }
+
+    Err("No available addresses found in fallback allocation".to_string())
+}
+
+async fn get_allocated_loopback_addresses() -> std::collections::HashSet<String> {
+    use std::collections::HashSet;
+
+    let mut allocated = HashSet::new();
+
+    if let Ok(configs) = kftray_commons::config::get_configs().await {
+        for config in configs {
+            if let Some(addr) = &config.local_address {
+                if crate::network_utils::is_custom_loopback_address(addr)
+                    && config.auto_loopback_address
+                {
+                    allocated.insert(addr.clone());
+                    debug!(
+                        "Found allocated address {} for config {}",
+                        addr,
+                        config.id.unwrap_or_default()
+                    );
+                }
+            }
+        }
+    }
+
+    debug!("Currently allocated loopback addresses: {:?}", allocated);
+    allocated
 }
 
 async fn save_allocated_address_to_db(config: &Config) -> Result<(), String> {
@@ -97,6 +273,7 @@ async fn save_allocated_address_to_db(config: &Config) -> Result<(), String> {
         }
     }
 }
+
 
 pub async fn start_port_forward(
     mut configs: Vec<Config>, protocol: &str, http_log_state: Arc<HttpLogState>,
@@ -126,7 +303,45 @@ pub async fn start_port_forward(
             info!("Attempting to forward to service: {:?}", &config.service);
         }
 
-        let final_local_address = allocate_local_address_for_config(config).await;
+        let final_local_address = match allocate_local_address_for_config(config).await {
+            Ok(address) => address,
+            Err(e) => {
+                error!("Failed to allocate local address: {}", e);
+                return Err(format!("Address allocation failed: {}", e));
+            }
+        };
+
+        if config.domain_enabled.unwrap_or_default() {
+            if let Some(service_name) = &config.service {
+                match final_local_address.parse::<std::net::IpAddr>() {
+                    Ok(ip_addr) => {
+                        let entry_id = format!("{}", config.id.unwrap_or_default());
+                        let host_entry = HostEntry {
+                            ip: ip_addr,
+                            hostname: config.alias.clone().unwrap_or_default(),
+                        };
+
+                        if let Err(e) = add_host_entry(entry_id, host_entry) {
+                            let error_message = format!(
+                                "Failed to write to the hostfile for {service_name}: {e}. Domain alias feature requires hostfile access."
+                            );
+                            error!("{}", &error_message);
+                            errors.push(error_message);
+                            continue;
+                        }
+                    }
+                    Err(_) => {
+                        let error_message = format!(
+                            "Invalid IP address format for domain alias: {final_local_address}"
+                        );
+                        error!("{}", &error_message);
+                        errors.push(error_message);
+                        continue;
+                    }
+                }
+            }
+        }
+
         let local_address_clone = Some(final_local_address);
 
         let port_forward_result: Result<PortForward, anyhow::Error> = PortForward::new(
@@ -183,48 +398,6 @@ pub async fn start_port_forward(
                             .unwrap()
                             .insert(handle_key.clone(), handle);
                         child_handles.push(handle_key.clone());
-
-                        if config.domain_enabled.unwrap_or_default() {
-                            if let Some(service_name) = &config.service {
-                                if let Some(local_address) = &config.local_address {
-                                    match local_address.parse::<std::net::IpAddr>() {
-                                        Ok(ip_addr) => {
-                                            let entry_id =
-                                                format!("{}", config.id.unwrap_or_default());
-
-                                            let host_entry = HostEntry {
-                                                ip: ip_addr,
-                                                hostname: config.alias.clone().unwrap_or_default(),
-                                            };
-
-                                            if let Err(e) = add_host_entry(entry_id, host_entry) {
-                                                let error_message = format!(
-                                                    "Failed to write to the hostfile for {service_name}: {e}"
-                                                );
-                                                error!("{}", &error_message);
-                                                errors.push(error_message);
-
-                                                if let Some(handle) = CHILD_PROCESSES
-                                                    .lock()
-                                                    .unwrap()
-                                                    .remove(&handle_key)
-                                                {
-                                                    handle.abort();
-                                                }
-                                                continue;
-                                            }
-                                        }
-                                        Err(_) => {
-                                            let warning_message = format!(
-                                                "Invalid IP address format: {local_address}"
-                                            );
-                                            warn!("{}", &warning_message);
-                                            errors.push(warning_message);
-                                        }
-                                    }
-                                }
-                            }
-                        }
 
                         let config_state = ConfigState {
                             id: None,
@@ -459,7 +632,9 @@ mod tests {
         config.auto_loopback_address = false;
         config.local_address = Some("192.168.1.1".to_string());
 
-        let result = allocate_local_address_for_config(&mut config).await;
+        let result = allocate_local_address_for_config(&mut config)
+            .await
+            .unwrap();
         assert_eq!(result, "192.168.1.1");
         assert_eq!(config.local_address, Some("192.168.1.1".to_string()));
     }

@@ -46,6 +46,8 @@ hyper-openssl = "0.10.2"
 secrecy = "0.10.3"
 libc = "0.2"
 env_logger = "0.11"
+thiserror = "2.0"
+once_cell = "1.21.3"
 
 [features]
 default = []
