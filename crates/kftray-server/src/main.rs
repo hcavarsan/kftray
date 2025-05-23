@@ -124,16 +124,25 @@ async fn main() -> Result<(), ProxyError> {
 
     let server_handle = tokio::spawn(async move { server_clone.run().await });
 
-    tokio::select! {
-        _ = signal::ctrl_c() => {
-            info!("Received Ctrl+C signal");
-        }
-        _ = async {
-            if let Ok(mut sigterm) = signal::unix::signal(signal::unix::SignalKind::terminate()) {
-                let _ = sigterm.recv().await;
-                info!("Received SIGTERM signal");
+    #[cfg(unix)]
+    {
+        tokio::select! {
+            _ = signal::ctrl_c() => {
+                info!("Received Ctrl+C signal");
             }
-        } => {}
+            _ = async {
+                if let Ok(mut sigterm) = signal::unix::signal(signal::unix::SignalKind::terminate()) {
+                    let _ = sigterm.recv().await;
+                    info!("Received SIGTERM signal");
+                }
+            } => {}
+        }
+    }
+
+    #[cfg(not(unix))]
+    {
+        signal::ctrl_c().await.ok();
+        info!("Received Ctrl+C signal");
     }
 
     server.shutdown();
