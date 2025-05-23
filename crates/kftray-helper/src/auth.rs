@@ -396,7 +396,7 @@ fn get_authorized_user_sid() -> Result<String, HelperError> {
 
 #[cfg(windows)]
 fn is_running_as_admin() -> Result<bool, HelperError> {
-    use windows::Win32::Foundation::PropertyType::Boolean;
+    use windows::Foundation::PropertyType::Boolean;
     use windows::Win32::Security::{
         CheckTokenMembership,
         CreateWellKnownSid,
@@ -445,7 +445,7 @@ fn get_default_named_pipe_path() -> Result<String, HelperError> {
 
     unsafe {
         let mut buffer = vec![0u16; 260];
-        let length = GetTempPathW(&mut buffer);
+        let length = GetTempPathW(Some(&mut buffer));
         if length == 0 {
             return Err(HelperError::Authentication(
                 "Failed to get temp path".to_string(),
@@ -487,7 +487,7 @@ fn get_file_owner_sid<P: AsRef<std::path::Path>>(path: P) -> Result<String, Help
         );
 
         let mut security_descriptor = vec![0u8; size_needed as usize];
-        GetFileSecurityW(
+        let result = GetFileSecurityW(
             windows::core::PCWSTR(path_wide.as_ptr()),
             OWNER_SECURITY_INFORMATION.0,
             Some(windows::Win32::Security::PSECURITY_DESCRIPTOR(
@@ -495,11 +495,15 @@ fn get_file_owner_sid<P: AsRef<std::path::Path>>(path: P) -> Result<String, Help
             )),
             size_needed,
             &mut size_needed,
-        )
-        .map_err(|e| HelperError::Authentication(format!("Failed to get file security: {}", e)))?;
+        );
+        if result.as_bool() == false {
+            return Err(HelperError::Authentication(
+                "Failed to get file security".to_string(),
+            ));
+        }
 
         let mut owner_sid = std::ptr::null_mut();
-        let mut owner_defaulted = windows::Win32::Foundation::PropertyType::Boolean(0);
+        let mut owner_defaulted = windows::Foundation::PropertyType::Boolean(0);
 
         GetSecurityDescriptorOwner(
             windows::Win32::Security::PSECURITY_DESCRIPTOR(security_descriptor.as_ptr() as *mut _),
