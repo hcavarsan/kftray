@@ -86,7 +86,7 @@ impl PortForward {
     #[instrument(skip(self), fields(config_id = self.config_id))]
     pub async fn cleanup_resources(&self) -> anyhow::Result<()> {
         if let Some(addr) = &self.local_address {
-            if addr != "127.0.0.1" {
+            if crate::network_utils::is_custom_loopback_address(addr) {
                 info!("Cleaning up loopback address: {}", addr);
                 if let Err(e) = crate::network_utils::remove_loopback_address(addr).await {
                     error!("Failed to remove loopback address {}: {}", addr, e);

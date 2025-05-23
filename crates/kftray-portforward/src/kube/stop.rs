@@ -20,13 +20,13 @@ use kube::api::{
     DeleteParams,
     ListParams,
 };
-use log::{
+use tokio::task::JoinHandle;
+use tracing::{
     debug,
     error,
     info,
     warn,
 };
-use tokio::task::JoinHandle;
 
 use crate::create_client_with_specific_context;
 use crate::hostsfile::{
@@ -39,14 +39,69 @@ use crate::port_forward::{
 };
 
 async fn try_release_address(address: &str) -> Result<(), String> {
-    use kftray_helper::HelperClient;
-
     let app_id = "com.kftray.app".to_string();
-    let client = HelperClient::new(app_id).map_err(|e| e.to_string())?;
 
-    client
-        .release_local_address(address.to_string())
-        .map_err(|e| e.to_string())
+    let socket_path =
+        kftray_helper::communication::get_default_socket_path().map_err(|e| e.to_string())?;
+
+    if !kftray_helper::client::socket_comm::is_socket_available(&socket_path) {
+        return Err("Helper service is not available".to_string());
+    }
+
+    let command = kftray_helper::messages::RequestCommand::Address(
+        kftray_helper::messages::AddressCommand::Release {
+            address: address.to_string(),
+        },
+    );
+
+    match kftray_helper::client::socket_comm::send_request(&socket_path, &app_id, command) {
+        Ok(response) => match response.result {
+            kftray_helper::messages::RequestResult::Success => Ok(()),
+            kftray_helper::messages::RequestResult::Error(error) => Err(error),
+            _ => Err("Unexpected response format".to_string()),
+        },
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+async fn try_fallback_release_address(address: &str) {
+    match crate::network_utils::remove_loopback_address(address).await {
+        Ok(_) => {
+            debug!(
+                "Successfully removed loopback address via fallback: {}",
+                address
+            );
+        }
+        Err(e) => {
+            let error_msg = e.to_string();
+            if error_msg.contains("cancelled") || error_msg.contains("canceled") {
+                warn!(
+                    "User cancelled loopback address removal for {}, but continuing stop process",
+                    address
+                );
+            } else {
+                warn!(
+                    "Failed to remove loopback address {} via fallback: {}",
+                    address, error_msg
+                );
+            }
+        }
+    }
+}
+
+async fn release_address_with_fallback(address: &str) {
+    match try_release_address(address).await {
+        Ok(_) => {
+            info!("Successfully released address via helper: {}", address);
+        }
+        Err(e) => {
+            warn!(
+                "Failed to release address {} via helper: {}. Trying fallback",
+                address, e
+            );
+            try_fallback_release_address(address).await;
+        }
+    }
 }
 
 pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
@@ -141,17 +196,15 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
                 );
 
                 if let Some(config) = config_map_cloned.get(&config_id_parsed).cloned() {
+                    info!("stop_all: Found config {} with local_address: {:?} and auto_loopback_address: {}",
+                          config_id_str, config.local_address, config.auto_loopback_address);
                     if let Some(local_addr) = &config.local_address {
-                        if local_addr != "127.0.0.1" {
+                        if crate::network_utils::is_custom_loopback_address(local_addr) {
                             info!(
                                 "Cleaning up loopback address for config {config_id_str}: {local_addr}"
                             );
 
-                            if let Err(e) =
-                                crate::network_utils::remove_loopback_address(local_addr).await
-                            {
-                                warn!("Failed to remove loopback address {local_addr}: {e}");
-                            }
+                            release_address_with_fallback(local_addr).await;
                         }
                     }
                 }
@@ -262,19 +315,15 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
         .filter(|config| running_configs_state.contains(&config.id.unwrap_or_default()))
         .filter_map(|config| {
             if let Some(local_addr) = &config.local_address {
-                if local_addr != "127.0.0.1" && config.auto_loopback_address {
+                if crate::network_utils::is_custom_loopback_address(local_addr) {
                     Some(async move {
                         info!(
-                            "Releasing auto-allocated address for config {}: {}",
+                            "Releasing loopback address for config {}: {} (auto_allocated: {})",
                             config.id.unwrap_or_default(),
-                            local_addr
+                            local_addr,
+                            config.auto_loopback_address
                         );
-                        if let Err(e) = try_release_address(local_addr).await {
-                            warn!(
-                                "Failed to release auto-allocated address {}: {}",
-                                local_addr, e
-                            );
-                        }
+                        release_address_with_fallback(local_addr).await;
                     })
                 } else {
                     None
@@ -337,19 +386,13 @@ pub async fn stop_port_forward(config_id: String) -> Result<CustomResponse, Stri
 
         if let Ok(configs) = get_configs().await {
             if let Some(config) = configs.iter().find(|c| c.id == Some(config_id_parsed)) {
+                info!("Found config {} during stop with local_address: {:?} and auto_loopback_address: {}",
+                      config_id, config.local_address, config.auto_loopback_address);
                 if let Some(local_addr) = &config.local_address {
-                    if local_addr != "127.0.0.1" {
-                        info!("Cleaning up loopback address for config {config_id}: {local_addr}");
+                    if crate::network_utils::is_custom_loopback_address(local_addr) {
+                        info!("Cleaning up loopback address for config {config_id}: {local_addr} (auto_allocated: {})", config.auto_loopback_address);
 
-                        if config.auto_loopback_address {
-                            if let Err(e) = try_release_address(local_addr).await {
-                                warn!("Failed to release auto-allocated address {local_addr} through helper service: {e}");
-                            }
-                        } else if let Err(e) =
-                            crate::network_utils::remove_loopback_address(local_addr).await
-                        {
-                            warn!("Failed to remove loopback address {local_addr}: {e}");
-                        }
+                        release_address_with_fallback(local_addr).await;
                     }
                 }
             }
