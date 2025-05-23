@@ -217,6 +217,7 @@ fn get_current_user_sid() -> Result<String, HelperError> {
     use windows::{
         core::PWSTR,
         Win32::Foundation::CloseHandle,
+        Win32::Security::Authorization::ConvertSidToStringSidW,
         Win32::Security::{
             GetTokenInformation,
             TokenUser,
@@ -228,7 +229,6 @@ fn get_current_user_sid() -> Result<String, HelperError> {
             OpenProcessToken,
         },
     };
-    use windows_sys::Win32::Security::Authorization::ConvertSidToStringSidW;
 
     unsafe {
         let process = GetCurrentProcess();
@@ -295,6 +295,7 @@ fn get_process_user_sid(process_id: u32) -> Result<String, HelperError> {
             CloseHandle,
             HANDLE,
         },
+        Win32::Security::Authorization::ConvertSidToStringSidW,
         Win32::Security::{
             GetTokenInformation,
             TokenUser,
@@ -307,7 +308,6 @@ fn get_process_user_sid(process_id: u32) -> Result<String, HelperError> {
             PROCESS_QUERY_INFORMATION,
         },
     };
-    use windows_sys::Win32::Security::Authorization::ConvertSidToStringSidW;
 
     unsafe {
         let process = OpenProcess(PROCESS_QUERY_INFORMATION, false, process_id).map_err(|e| {
@@ -468,13 +468,13 @@ fn get_file_owner_sid<P: AsRef<std::path::Path>>(path: P) -> Result<String, Help
     use windows::{
         core::PWSTR,
         Win32::Foundation::LocalFree,
+        Win32::Security::Authorization::ConvertSidToStringSidW,
         Win32::Security::{
             GetFileSecurityW,
             GetSecurityDescriptorOwner,
             OWNER_SECURITY_INFORMATION,
         },
     };
-    use windows_sys::Win32::Security::Authorization::ConvertSidToStringSidW;
 
     let path_str = path.as_ref().to_string_lossy();
     let path_wide: Vec<u16> = path_str.encode_utf16().chain(std::iter::once(0)).collect();
