@@ -228,190 +228,319 @@ fn get_authorized_user_uid() -> u32 {
 }
 
 #[cfg(windows)]
-use std::ffi::OsString;
-#[cfg(windows)]
-use std::os::windows::ffi::OsStringExt;
-
-#[cfg(windows)]
 fn get_current_user_sid() -> Result<String, HelperError> {
-    use std::ptr;
-
-    use winapi::um::handleapi::CloseHandle;
-    use winapi::um::processthreadsapi::{
-        GetCurrentProcess,
-        OpenProcessToken,
-    };
-    use winapi::um::sddl::ConvertSidToStringSidW;
-    use winapi::um::securitybaseapi::GetTokenInformation;
-    use winapi::um::winbase::LocalFree;
-    use winapi::um::winnt::{
-        TokenUser,
-        PSID,
-        TOKEN_QUERY,
-        TOKEN_USER,
+    use windows::{
+        core::PWSTR,
+        Win32::Foundation::CloseHandle,
+        Win32::Security::{
+            ConvertSidToStringSidW,
+            GetTokenInformation,
+            TokenUser,
+            TOKEN_QUERY,
+            TOKEN_USER,
+        },
+        Win32::System::Threading::{
+            GetCurrentProcess,
+            OpenProcessToken,
+        },
     };
 
     unsafe {
-        let mut token = ptr::null_mut();
         let process = GetCurrentProcess();
+        let mut token = windows::Win32::Foundation::HANDLE::default();
 
-        if OpenProcessToken(process, TOKEN_QUERY, &mut token) == 0 {
-            return Err(HelperError::Authentication(
-                "Failed to open process token".to_string(),
-            ));
-        }
+        OpenProcessToken(process, TOKEN_QUERY, &mut token).map_err(|e| {
+            HelperError::Authentication(format!("Failed to open process token: {}", e))
+        })?;
 
         let mut token_user_size = 0u32;
-        GetTokenInformation(token, TokenUser, ptr::null_mut(), 0, &mut token_user_size);
+        let _ = GetTokenInformation(token, TokenUser, None, 0, &mut token_user_size);
 
         let mut token_user_buffer = vec![0u8; token_user_size as usize];
-        if GetTokenInformation(
+        GetTokenInformation(
             token,
             TokenUser,
-            token_user_buffer.as_mut_ptr() as *mut _,
+            Some(token_user_buffer.as_mut_ptr() as *mut _),
             token_user_size,
             &mut token_user_size,
-        ) == 0
-        {
-            CloseHandle(token);
-            return Err(HelperError::Authentication(
-                "Failed to get token information".to_string(),
-            ));
-        }
+        )
+        .map_err(|e| {
+            let _ = CloseHandle(token);
+            HelperError::Authentication(format!("Failed to get token information: {}", e))
+        })?;
 
         let token_user = &*(token_user_buffer.as_ptr() as *const TOKEN_USER);
-        let mut sid_string = ptr::null_mut();
+        let mut sid_string = PWSTR::null();
 
-        if ConvertSidToStringSidW(token_user.User.Sid, &mut sid_string) == 0 {
-            CloseHandle(token);
-            return Err(HelperError::Authentication(
-                "Failed to convert SID to string".to_string(),
-            ));
-        }
+        ConvertSidToStringSidW(token_user.User.Sid, &mut sid_string).map_err(|e| {
+            let _ = CloseHandle(token);
+            HelperError::Authentication(format!("Failed to convert SID to string: {}", e))
+        })?;
 
-        let sid_slice = std::slice::from_raw_parts(
-            sid_string,
-            (0..).take_while(|&i| *sid_string.offset(i) != 0).count() + 1,
-        );
-        let sid_os_string = OsString::from_wide(&sid_slice[..sid_slice.len() - 1]);
-        let sid_string_result = sid_os_string.to_string_lossy().to_string();
+        let sid_str = sid_string.to_string().map_err(|e| {
+            let _ = CloseHandle(token);
+            HelperError::Authentication(format!("Failed to convert SID to UTF-8: {}", e))
+        })?;
 
-        LocalFree(sid_string as *mut _);
-        CloseHandle(token);
-
-        Ok(sid_string_result)
+        let _ = CloseHandle(token);
+        Ok(sid_str)
     }
 }
 
 #[cfg(windows)]
-fn get_pipe_client_pid(pipe_handle: std::os::windows::io::RawHandle) -> Result<u32, HelperError> {
-    use winapi::um::namedpipeapi::GetNamedPipeClientProcessId;
+fn get_pipe_client_process_id(
+    pipe_handle: windows::Win32::Foundation::HANDLE,
+) -> Result<u32, HelperError> {
+    use windows::Win32::System::Pipes::GetNamedPipeClientProcessId;
 
     unsafe {
-        let mut client_pid = 0u32;
-        if GetNamedPipeClientProcessId(pipe_handle as *mut _, &mut client_pid) == 0 {
-            return Err(HelperError::Authentication(
-                "Failed to get client process ID".to_string(),
-            ));
-        }
-        Ok(client_pid)
+        let mut client_process_id = 0u32;
+        GetNamedPipeClientProcessId(pipe_handle, &mut client_process_id).map_err(|e| {
+            HelperError::Authentication(format!("Failed to get client process ID: {}", e))
+        })?;
+        Ok(client_process_id)
     }
 }
 
 #[cfg(windows)]
-fn get_process_user_sid(pid: u32) -> Result<String, HelperError> {
-    use std::ptr;
-
-    use winapi::um::handleapi::CloseHandle;
-    use winapi::um::processthreadsapi::OpenProcess;
-    use winapi::um::processthreadsapi::OpenProcessToken;
-    use winapi::um::sddl::ConvertSidToStringSidW;
-    use winapi::um::securitybaseapi::GetTokenInformation;
-    use winapi::um::winbase::LocalFree;
-    use winapi::um::winnt::{
-        TokenUser,
-        PROCESS_QUERY_INFORMATION,
-        TOKEN_QUERY,
-        TOKEN_USER,
+fn get_process_user_sid(process_id: u32) -> Result<String, HelperError> {
+    use windows::{
+        core::PWSTR,
+        Win32::Foundation::{
+            CloseHandle,
+            HANDLE,
+        },
+        Win32::Security::{
+            ConvertSidToStringSidW,
+            GetTokenInformation,
+            TokenUser,
+            TOKEN_QUERY,
+            TOKEN_USER,
+        },
+        Win32::System::Threading::{
+            OpenProcess,
+            OpenProcessToken,
+            PROCESS_QUERY_INFORMATION,
+        },
     };
 
     unsafe {
-        let process = OpenProcess(PROCESS_QUERY_INFORMATION, 0, pid);
-        if process.is_null() {
-            return Err(HelperError::Authentication(format!(
-                "Failed to open process {}",
-                pid
-            )));
-        }
+        let process = OpenProcess(PROCESS_QUERY_INFORMATION, false, process_id).map_err(|e| {
+            HelperError::Authentication(format!("Failed to open process {}: {}", process_id, e))
+        })?;
 
-        let mut token = ptr::null_mut();
-        if OpenProcessToken(process, TOKEN_QUERY, &mut token) == 0 {
-            CloseHandle(process);
-            return Err(HelperError::Authentication(
-                "Failed to open process token".to_string(),
-            ));
-        }
+        let mut token = HANDLE::default();
+        OpenProcessToken(process, TOKEN_QUERY, &mut token).map_err(|e| {
+            let _ = CloseHandle(process);
+            HelperError::Authentication(format!("Failed to open process token: {}", e))
+        })?;
 
         let mut token_user_size = 0u32;
-        GetTokenInformation(token, TokenUser, ptr::null_mut(), 0, &mut token_user_size);
+        let _ = GetTokenInformation(token, TokenUser, None, 0, &mut token_user_size);
 
         let mut token_user_buffer = vec![0u8; token_user_size as usize];
-        if GetTokenInformation(
+        GetTokenInformation(
             token,
             TokenUser,
-            token_user_buffer.as_mut_ptr() as *mut _,
+            Some(token_user_buffer.as_mut_ptr() as *mut _),
             token_user_size,
             &mut token_user_size,
-        ) == 0
-        {
-            CloseHandle(token);
-            CloseHandle(process);
-            return Err(HelperError::Authentication(
-                "Failed to get token information".to_string(),
-            ));
-        }
+        )
+        .map_err(|e| {
+            let _ = CloseHandle(token);
+            let _ = CloseHandle(process);
+            HelperError::Authentication(format!("Failed to get token information: {}", e))
+        })?;
 
         let token_user = &*(token_user_buffer.as_ptr() as *const TOKEN_USER);
-        let mut sid_string = ptr::null_mut();
+        let mut sid_string = PWSTR::null();
 
-        if ConvertSidToStringSidW(token_user.User.Sid, &mut sid_string) == 0 {
-            CloseHandle(token);
-            CloseHandle(process);
-            return Err(HelperError::Authentication(
-                "Failed to convert SID to string".to_string(),
-            ));
-        }
+        ConvertSidToStringSidW(token_user.User.Sid, &mut sid_string).map_err(|e| {
+            let _ = CloseHandle(token);
+            let _ = CloseHandle(process);
+            HelperError::Authentication(format!("Failed to convert SID to string: {}", e))
+        })?;
 
-        let sid_slice = std::slice::from_raw_parts(
-            sid_string,
-            (0..).take_while(|&i| *sid_string.offset(i) != 0).count() + 1,
-        );
-        let sid_os_string = OsString::from_wide(&sid_slice[..sid_slice.len() - 1]);
-        let sid_string_result = sid_os_string.to_string_lossy().to_string();
+        let sid_str = sid_string.to_string().map_err(|e| {
+            let _ = CloseHandle(token);
+            let _ = CloseHandle(process);
+            HelperError::Authentication(format!("Failed to convert SID to UTF-8: {}", e))
+        })?;
 
-        LocalFree(sid_string as *mut _);
-        CloseHandle(token);
-        CloseHandle(process);
-
-        Ok(sid_string_result)
+        let _ = CloseHandle(token);
+        let _ = CloseHandle(process);
+        Ok(sid_str)
     }
 }
 
 #[cfg(windows)]
 fn get_authorized_user_sid() -> Result<String, HelperError> {
     let current_sid = get_current_user_sid()?;
+
+    if current_sid.starts_with("S-1-5-18") || is_running_as_admin()? {
+        if let Ok(pipe_path) = get_default_named_pipe_path() {
+            if let Ok(owner_sid) = get_file_owner_sid(&pipe_path) {
+                if !owner_sid.starts_with("S-1-5-18") && !is_admin_sid(&owner_sid)? {
+                    log::debug!(
+                        "Found authorized SID from pipe file ownership: {}",
+                        owner_sid
+                    );
+                    return Ok(owner_sid);
+                }
+            }
+        }
+
+        if let Ok(pipe_path) = get_default_named_pipe_path() {
+            if let Some(parent_dir) = std::path::Path::new(&pipe_path).parent() {
+                if let Ok(owner_sid) = get_file_owner_sid(parent_dir) {
+                    if !owner_sid.starts_with("S-1-5-18") && !is_admin_sid(&owner_sid)? {
+                        log::debug!(
+                            "Found authorized SID from pipe directory ownership: {}",
+                            owner_sid
+                        );
+                        return Ok(owner_sid);
+                    }
+                }
+            }
+        }
+    }
+
     log::debug!("Using current user SID as authorized: {}", current_sid);
     Ok(current_sid)
 }
 
 #[cfg(windows)]
-pub fn validate_peer_credentials(
-    pipe_handle: std::os::windows::io::RawHandle,
-) -> Result<(), HelperError> {
-    let client_pid = get_pipe_client_pid(pipe_handle)?;
-    log::debug!("Client process ID: {}", client_pid);
+fn is_running_as_admin() -> Result<bool, HelperError> {
+    use windows::Win32::Foundation::BOOL;
+    use windows::Win32::Security::{
+        CheckTokenMembership,
+        CreateWellKnownSid,
+        WinBuiltinAdministratorsSid,
+    };
 
-    let client_sid = get_process_user_sid(client_pid)?;
+    unsafe {
+        let mut admin_sid_buffer = vec![0u8; 256];
+        let mut admin_sid_size = admin_sid_buffer.len() as u32;
+
+        CreateWellKnownSid(
+            WinBuiltinAdministratorsSid,
+            None,
+            Some(admin_sid_buffer.as_mut_ptr() as *mut _),
+            &mut admin_sid_size,
+        )
+        .map_err(|e| HelperError::Authentication(format!("Failed to create admin SID: {}", e)))?;
+
+        let mut is_member = BOOL(0);
+        CheckTokenMembership(None, admin_sid_buffer.as_ptr() as *const _, &mut is_member).map_err(
+            |e| HelperError::Authentication(format!("Failed to check admin membership: {}", e)),
+        )?;
+
+        Ok(is_member.as_bool())
+    }
+}
+
+#[cfg(windows)]
+fn is_admin_sid(sid: &str) -> Result<bool, HelperError> {
+    Ok(sid.starts_with("S-1-5-32-544")
+        || sid.starts_with("S-1-5-18")
+        || sid.starts_with("S-1-5-19")
+        || sid.starts_with("S-1-5-20"))
+}
+
+#[cfg(windows)]
+fn get_default_named_pipe_path() -> Result<String, HelperError> {
+    use windows::Win32::System::Environment::GetTempPathW;
+
+    unsafe {
+        let mut buffer = vec![0u16; 260];
+        let length = GetTempPathW(&mut buffer);
+        if length == 0 {
+            return Err(HelperError::Authentication(
+                "Failed to get temp path".to_string(),
+            ));
+        }
+
+        buffer.truncate(length as usize);
+        let temp_path = String::from_utf16(&buffer)
+            .map_err(|_| HelperError::Authentication("Invalid temp path".to_string()))?;
+
+        Ok(format!("{}kftray-helper-pipe", temp_path))
+    }
+}
+
+#[cfg(windows)]
+fn get_file_owner_sid<P: AsRef<std::path::Path>>(path: P) -> Result<String, HelperError> {
+    use windows::{
+        core::PWSTR,
+        Win32::Foundation::LocalFree,
+        Win32::Security::{
+            ConvertSidToStringSidW,
+            GetFileSecurityW,
+            GetSecurityDescriptorOwner,
+            OWNER_SECURITY_INFORMATION,
+        },
+    };
+
+    let path_str = path.as_ref().to_string_lossy();
+    let path_wide: Vec<u16> = path_str.encode_utf16().chain(std::iter::once(0)).collect();
+
+    unsafe {
+        let mut size_needed = 0u32;
+        let _ = GetFileSecurityW(
+            windows::core::PCWSTR(path_wide.as_ptr()),
+            OWNER_SECURITY_INFORMATION,
+            None,
+            0,
+            &mut size_needed,
+        );
+
+        let mut security_descriptor = vec![0u8; size_needed as usize];
+        GetFileSecurityW(
+            windows::core::PCWSTR(path_wide.as_ptr()),
+            OWNER_SECURITY_INFORMATION,
+            Some(security_descriptor.as_mut_ptr() as *mut _),
+            size_needed,
+            &mut size_needed,
+        )
+        .map_err(|e| HelperError::Authentication(format!("Failed to get file security: {}", e)))?;
+
+        let mut owner_sid = std::ptr::null_mut();
+        let mut owner_defaulted = windows::Win32::Foundation::BOOL(0);
+
+        GetSecurityDescriptorOwner(
+            security_descriptor.as_ptr() as *const _,
+            &mut owner_sid,
+            &mut owner_defaulted,
+        )
+        .map_err(|e| {
+            HelperError::Authentication(format!(
+                "Failed to get owner from security descriptor: {}",
+                e
+            ))
+        })?;
+
+        let mut sid_string = PWSTR::null();
+        ConvertSidToStringSidW(owner_sid, &mut sid_string).map_err(|e| {
+            HelperError::Authentication(format!("Failed to convert owner SID to string: {}", e))
+        })?;
+
+        let result = sid_string.to_string().map_err(|e| {
+            HelperError::Authentication(format!("Failed to convert SID to UTF-8: {}", e))
+        })?;
+
+        LocalFree(sid_string.0 as *const _);
+        Ok(result)
+    }
+}
+
+#[cfg(windows)]
+pub fn validate_peer_credentials(
+    pipe_handle: windows::Win32::Foundation::HANDLE,
+) -> Result<(), HelperError> {
+    let client_process_id = get_pipe_client_process_id(pipe_handle)?;
+    log::debug!("Client process ID: {}", client_process_id);
+
+    let client_sid = get_process_user_sid(client_process_id)?;
     log::debug!("Client user SID: {}", client_sid);
 
     let authorized_sid = get_authorized_user_sid()?;

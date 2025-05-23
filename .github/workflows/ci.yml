@@ -46,12 +46,22 @@ jobs:
 
   rust-format:
     name: rustfmt
-    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            os_name: linux
+          - os: macos-latest
+            os_name: macos
+          - os: windows-latest
+            os_name: windows
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Install dependencies (Linux)
+        if: matrix.os_name == 'linux'
         run: |
           echo "deb http://gb.archive.ubuntu.com/ubuntu jammy main" | sudo tee /etc/apt/sources.list.d/ubuntu-jammy-main.list
           sudo apt-get update
@@ -71,12 +81,25 @@ jobs:
 
   rust-lint:
     name: Clippy
-    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            os_name: linux
+            rust_target: x86_64-unknown-linux-gnu
+          - os: macos-latest
+            os_name: macos
+            rust_target: universal-apple-darwin
+          - os: windows-latest
+            os_name: windows
+            rust_target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install dependencies
+      - name: Install dependencies (Linux)
+        if: matrix.os_name == 'linux'
         run: |
           echo "deb http://gb.archive.ubuntu.com/ubuntu jammy main" | sudo tee /etc/apt/sources.list.d/ubuntu-jammy-main.list
           sudo apt-get update
@@ -96,8 +119,43 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
+      - name: Install OpenSSL on Windows
+        if: matrix.os == 'windows-latest'
+        run: choco install openssl
+
+      - name: Set up Perl on Windows
+        if: matrix.os == 'windows-latest'
+        uses: shogo82148/actions-setup-perl@v1
+        with:
+          perl-version: "5.32"
+          distribution: "strawberry"
+
+      - name: Set Perl environment variables
+        if: matrix.os == 'windows-latest'
+        run: |
+          echo "PERL=$((where.exe perl)[0])" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          echo "OPENSSL_SRC_PERL=$((where.exe perl)[0])" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Configure Rust targets
+        run: |
+          if [ "${{ matrix.os }}" == "macos-latest" ]; then
+            rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          else
+            rustup target add ${{ matrix.rust_target }}
+          fi
+        shell: bash
+
+      - name: Build kftray-helper (macOS)
+        if: matrix.os_name == 'macos'
+        run: |
+          cargo build --bin kftray-helper --release --target x86_64-apple-darwin
+          cargo build --bin kftray-helper --release --target aarch64-apple-darwin
+
+      - name: Build kftray-helper (Linux/Windows)
+        if: matrix.os_name != 'macos'
+        run: cargo build --bin kftray-helper --release --target ${{ matrix.rust_target }}
+
       - name: Run Clippy
-        run: cargo build --bin kftray-helper --release && cargo clippy --workspace --all-targets --allow-dirty --allow-staged --all-features --fix -- -D warnings
+        run: cargo clippy --workspace --all-targets --allow-dirty --allow-staged --all-features --fix -- -D warnings
 
 
   rust-coverage:
