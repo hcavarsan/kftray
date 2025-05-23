@@ -396,7 +396,10 @@ fn get_authorized_user_sid() -> Result<String, HelperError> {
 
 #[cfg(windows)]
 fn is_running_as_admin() -> Result<bool, HelperError> {
-    use windows::Foundation::PropertyType::Boolean;
+    use windows::Win32::Foundation::{
+        VARIANT_BOOL,
+        VARIANT_FALSE,
+    };
     use windows::Win32::Security::{
         CheckTokenMembership,
         CreateWellKnownSid,
@@ -417,7 +420,7 @@ fn is_running_as_admin() -> Result<bool, HelperError> {
         )
         .map_err(|e| HelperError::Authentication(format!("Failed to create admin SID: {}", e)))?;
 
-        let mut is_member = Boolean(0);
+        let mut is_member = VARIANT_FALSE;
         CheckTokenMembership(
             None,
             windows::Win32::Security::PSID(admin_sid_buffer.as_ptr() as *mut _),
@@ -503,7 +506,7 @@ fn get_file_owner_sid<P: AsRef<std::path::Path>>(path: P) -> Result<String, Help
         }
 
         let mut owner_sid = std::ptr::null_mut();
-        let mut owner_defaulted = windows::Foundation::PropertyType::Boolean(0);
+        let mut owner_defaulted = VARIANT_FALSE;
 
         GetSecurityDescriptorOwner(
             windows::Win32::Security::PSECURITY_DESCRIPTOR(security_descriptor.as_ptr() as *mut _),
