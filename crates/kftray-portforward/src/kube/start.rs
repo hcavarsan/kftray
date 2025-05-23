@@ -30,14 +30,82 @@ use crate::{
     port_forward::CHILD_PROCESSES,
 };
 
+async fn allocate_local_address_for_config(config: &mut Config) -> String {
+    if !config.auto_loopback_address {
+        return config
+            .local_address
+            .clone()
+            .unwrap_or_else(|| "127.0.0.1".to_string());
+    }
+
+    let service_name = config
+        .service
+        .clone()
+        .unwrap_or_else(|| format!("service-{}", config.id.unwrap_or_default()));
+
+    match try_allocate_address(&service_name).await {
+        Ok(allocated_address) => {
+            info!(
+                "Auto-allocated address {} for service {}",
+                allocated_address, service_name
+            );
+            config.local_address = Some(allocated_address.clone());
+
+            if let Err(e) = save_allocated_address_to_db(config).await {
+                warn!("Failed to save allocated address to database: {}", e);
+            }
+
+            allocated_address
+        }
+        Err(e) => {
+            warn!(
+                "Failed to auto-allocate address for service {}: {}. Using default 127.0.0.1",
+                service_name, e
+            );
+            let default_address = "127.0.0.1".to_string();
+            config.local_address = Some(default_address.clone());
+            default_address
+        }
+    }
+}
+
+async fn try_allocate_address(service_name: &str) -> Result<String, String> {
+    use kftray_helper::HelperClient;
+
+    let app_id = "com.kftray.app".to_string();
+    let client = HelperClient::new(app_id).map_err(|e| e.to_string())?;
+
+    client
+        .allocate_local_address(service_name.to_string())
+        .map_err(|e| e.to_string())
+}
+
+async fn save_allocated_address_to_db(config: &Config) -> Result<(), String> {
+    use kftray_commons::utils::config::update_config;
+
+    match update_config(config.clone()).await {
+        Ok(_) => {
+            info!(
+                "Successfully saved allocated address to database for config {}",
+                config.id.unwrap_or_default()
+            );
+            Ok(())
+        }
+        Err(e) => {
+            error!("Failed to update config in database: {}", e);
+            Err(e)
+        }
+    }
+}
+
 pub async fn start_port_forward(
-    configs: Vec<Config>, protocol: &str, http_log_state: Arc<HttpLogState>,
+    mut configs: Vec<Config>, protocol: &str, http_log_state: Arc<HttpLogState>,
 ) -> Result<Vec<CustomResponse>, String> {
     let mut responses = Vec::new();
     let mut errors = Vec::new();
     let mut child_handles = Vec::new();
 
-    for config in configs.iter() {
+    for config in configs.iter_mut() {
         let selector = match config.workload_type.as_deref() {
             Some("pod") => TargetSelector::PodLabel(config.target.clone().unwrap_or_default()),
             _ => TargetSelector::ServiceName(config.service.clone().unwrap_or_default()),
@@ -58,7 +126,8 @@ pub async fn start_port_forward(
             info!("Attempting to forward to service: {:?}", &config.service);
         }
 
-        let local_address_clone = config.local_address.clone();
+        let final_local_address = allocate_local_address_for_config(config).await;
+        let local_address_clone = Some(final_local_address);
 
         let port_forward_result: Result<PortForward, anyhow::Error> = PortForward::new(
             target,
@@ -256,6 +325,7 @@ mod tests {
             local_address: None,
             remote_address: None,
             domain_enabled: None,
+            auto_loopback_address: false,
         }
     }
 
@@ -381,5 +451,32 @@ mod tests {
         assert_eq!(host_entry.ip.to_string(), "127.0.0.1");
         assert_eq!(host_entry.hostname, "test-alias");
         assert_eq!(entry_id, "1");
+    }
+
+    #[tokio::test]
+    async fn test_allocate_local_address_for_config_disabled() {
+        let mut config = setup_test_config();
+        config.auto_loopback_address = false;
+        config.local_address = Some("192.168.1.1".to_string());
+
+        let result = allocate_local_address_for_config(&mut config).await;
+        assert_eq!(result, "192.168.1.1");
+        assert_eq!(config.local_address, Some("192.168.1.1".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_allocate_local_address_for_config_enabled() {
+        let mut config = setup_test_config();
+        config.auto_loopback_address = true;
+        config.local_address = None;
+
+        let result = allocate_local_address_for_config(&mut config).await;
+
+        // Should return an auto-allocated address in the 127.0.0.x range
+        assert!(result.starts_with("127.0.0."));
+        assert!(result != "127.0.0.1"); // Should not be the default loopback
+
+        // Config should be updated with the allocated address
+        assert_eq!(config.local_address, Some(result.clone()));
     }
 }

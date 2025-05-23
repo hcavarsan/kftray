@@ -26,6 +26,7 @@ mod tests {
             protocol: "tcp".to_string(),
             remote_address: Some(format!("remote-{id}")),
             local_address: Some("127.0.0.1".to_string()),
+            auto_loopback_address: false,
             alias: Some(format!("alias-{id}")),
             domain_enabled: Some(false),
             kubeconfig: None,

@@ -28,6 +28,8 @@ pub struct Config {
     pub remote_address: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub local_address: Option<String>,
+    #[serde(default)]
+    pub auto_loopback_address: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub alias: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -51,6 +53,7 @@ impl Default for Config {
             protocol: "protocol".to_string(),
             remote_address: Some("default-remote-address".to_string()),
             local_address: Some("127.0.0.1".to_string()),
+            auto_loopback_address: false,
             domain_enabled: Some(false),
             alias: Some("default-alias".to_string()),
             kubeconfig: Some("default".to_string()),
@@ -80,6 +83,7 @@ mod tests {
             Some("default-remote-address".to_string())
         );
         assert_eq!(config.local_address, Some("127.0.0.1".to_string()));
+        assert!(!config.auto_loopback_address);
         assert_eq!(config.domain_enabled, Some(false));
         assert_eq!(config.alias, Some("default-alias".to_string()));
         assert_eq!(config.kubeconfig, Some("default".to_string()));

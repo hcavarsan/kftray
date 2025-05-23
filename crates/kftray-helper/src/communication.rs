@@ -997,12 +997,34 @@ async fn process_request(
                 match pool_manager.allocate_address(&service_name).await {
                     Ok(address) => {
                         println!(
-                            "Allocate request successful for service {service_name}: {address}"
+                            "Address pool allocation successful for service {service_name}: {address}"
                         );
-                        Ok(HelperResponse::string_success(request_id, address))
+
+                        match network_manager.add_loopback_address(&address).await {
+                            Ok(_) => {
+                                println!(
+                                    "Network interface addition successful for address: {address}"
+                                );
+                                Ok(HelperResponse::string_success(request_id, address))
+                            }
+                            Err(e) => {
+                                println!(
+                                    "Network interface addition failed for address {address}: {e}"
+                                );
+                                if let Err(release_err) =
+                                    pool_manager.release_address(&address).await
+                                {
+                                    println!("Failed to release address from pool after network error: {release_err}");
+                                }
+                                Ok(HelperResponse::string_success(
+                                    request_id,
+                                    "127.0.0.1".to_string(),
+                                ))
+                            }
+                        }
                     }
                     Err(e) => {
-                        println!("Allocate request failed for service {service_name}: {e}");
+                        println!("Address pool allocation failed for service {service_name}: {e}");
 
                         Ok(HelperResponse::string_success(
                             request_id,
@@ -1013,15 +1035,31 @@ async fn process_request(
             }
             AddressCommand::Release { address } => {
                 println!("Processing Release request for address: {address}");
-                match pool_manager.release_address(&address).await {
+
+                let pool_result = pool_manager.release_address(&address).await;
+                match pool_result {
+                    Ok(_) => println!("Address pool release successful for address: {address}"),
+                    Err(e) => println!("Address pool release failed for address {address}: {e}"),
+                }
+
+                let network_result = network_manager.remove_loopback_address(&address).await;
+                match network_result {
                     Ok(_) => {
-                        println!("Release request successful for address: {address}");
+                        println!("Network interface removal successful for address: {address}");
                         Ok(HelperResponse::success(request_id))
                     }
                     Err(e) => {
-                        println!("Release request failed for address {address}: {e}");
+                        println!("Network interface removal failed for address {address}: {e}");
 
-                        Ok(HelperResponse::success(request_id))
+                        if e.to_string().contains("not found")
+                            || e.to_string().contains("No such process")
+                        {
+                            println!("Address already removed from interface, considering operation successful");
+                            Ok(HelperResponse::success(request_id))
+                        } else {
+                            println!("Returning error response for failed network removal");
+                            Ok(HelperResponse::error(request_id, format!("Error: {e}")))
+                        }
                     }
                 }
             }
