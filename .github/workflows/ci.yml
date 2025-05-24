@@ -71,8 +71,9 @@ jobs:
 
   rust-lint:
     name: Clippy
+    permissions:
+      contents: read
     strategy:
-      matrix:
         include:
           - os: ubuntu-24.04
             os_name: linux
