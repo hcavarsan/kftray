@@ -203,7 +203,7 @@ jobs:
 
 
       - name: Cache pnpm modules
-        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684
+        uses: actions/cache@640a1c2554105b57832a23eea0b4672fc7a790d5
         with:
           path: |
             $(pnpm store path --silent)
@@ -381,7 +381,7 @@ jobs:
           cache: "pnpm"
 
       - name: Cache pnpm modules
-        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684
+        uses: actions/cache@640a1c2554105b57832a23eea0b4672fc7a790d5
         with:
           path: |
             $(pnpm store path --silent)
