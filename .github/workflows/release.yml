@@ -573,7 +573,7 @@ jobs:
             }
 
       - name: Publish release
-        uses: eregon/publish-release@01df127f5e9a3c26935118e22e738d95b59d10ce
+        uses: eregon/publish-release@70a6784870e7313347f6aa7fa7783786f2c1692f
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
