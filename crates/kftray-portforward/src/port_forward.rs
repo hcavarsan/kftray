@@ -214,7 +214,7 @@ impl PortForward {
         ))
     }
 
-    pub fn finder(&self) -> TargetPodFinder {
+    pub fn finder(&self) -> TargetPodFinder<'_> {
         TargetPodFinder {
             pod_api: &self.pod_api,
             svc_api: &self.svc_api,

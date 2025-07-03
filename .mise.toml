@@ -1,3 +1,3 @@
 [tools]
 node = "22"
-rust = "1.87.0"
+rust = "1.88"

@@ -37,7 +37,7 @@ impl HostfileHelperClient {
     }
 
     pub fn add_host_entry(&self, id: String, entry: HostEntry) -> Result<(), HostfileHelperError> {
-        debug!("Adding host entry via helper for ID {}: {:?}", id, entry);
+        debug!("Adding host entry via helper for ID {id}: {entry:?}");
 
         if !self.is_available() {
             return Err(HostfileHelperError::Communication(
@@ -59,11 +59,11 @@ impl HostfileHelperClient {
         ) {
             Ok(response) => match response.result {
                 kftray_helper::messages::RequestResult::Success => {
-                    debug!("Successfully added host entry for ID: {}", id);
+                    debug!("Successfully added host entry for ID: {id}");
                     Ok(())
                 }
                 kftray_helper::messages::RequestResult::Error(err) => {
-                    error!("Helper returned error for add_host_entry: {}", err);
+                    error!("Helper returned error for add_host_entry: {err}");
                     Err(HostfileHelperError::Communication(err))
                 }
                 _ => {
@@ -74,14 +74,14 @@ impl HostfileHelperClient {
                 }
             },
             Err(e) => {
-                error!("Failed to send add_host_entry request to helper: {}", e);
+                error!("Failed to send add_host_entry request to helper: {e}");
                 Err(HostfileHelperError::Helper(e))
             }
         }
     }
 
     pub fn remove_host_entry(&self, id: &str) -> Result<(), HostfileHelperError> {
-        debug!("Removing host entry via helper for ID: {}", id);
+        debug!("Removing host entry via helper for ID: {id}");
 
         if !self.is_available() {
             return Err(HostfileHelperError::Communication(
@@ -100,11 +100,11 @@ impl HostfileHelperClient {
         ) {
             Ok(response) => match response.result {
                 kftray_helper::messages::RequestResult::Success => {
-                    debug!("Successfully removed host entry for ID: {}", id);
+                    debug!("Successfully removed host entry for ID: {id}");
                     Ok(())
                 }
                 kftray_helper::messages::RequestResult::Error(err) => {
-                    error!("Helper returned error for remove_host_entry: {}", err);
+                    error!("Helper returned error for remove_host_entry: {err}");
                     Err(HostfileHelperError::Communication(err))
                 }
                 _ => {
@@ -115,7 +115,7 @@ impl HostfileHelperClient {
                 }
             },
             Err(e) => {
-                error!("Failed to send remove_host_entry request to helper: {}", e);
+                error!("Failed to send remove_host_entry request to helper: {e}");
                 Err(HostfileHelperError::Helper(e))
             }
         }
@@ -145,7 +145,7 @@ impl HostfileHelperClient {
                     Ok(())
                 }
                 kftray_helper::messages::RequestResult::Error(err) => {
-                    error!("Helper returned error for remove_all_host_entries: {}", err);
+                    error!("Helper returned error for remove_all_host_entries: {err}");
                     Err(HostfileHelperError::Communication(err))
                 }
                 _ => {
@@ -156,10 +156,7 @@ impl HostfileHelperClient {
                 }
             },
             Err(e) => {
-                error!(
-                    "Failed to send remove_all_host_entries request to helper: {}",
-                    e
-                );
+                error!("Failed to send remove_all_host_entries request to helper: {e}");
                 Err(HostfileHelperError::Helper(e))
             }
         }
@@ -190,7 +187,7 @@ impl HostfileHelperClient {
                     Ok(entries)
                 }
                 kftray_helper::messages::RequestResult::Error(err) => {
-                    error!("Helper returned error for list_host_entries: {}", err);
+                    error!("Helper returned error for list_host_entries: {err}");
                     Err(HostfileHelperError::Communication(err))
                 }
                 _ => {
@@ -201,7 +198,7 @@ impl HostfileHelperClient {
                 }
             },
             Err(e) => {
-                error!("Failed to send list_host_entries request to helper: {}", e);
+                error!("Failed to send list_host_entries request to helper: {e}");
                 Err(HostfileHelperError::Helper(e))
             }
         }
@@ -217,7 +214,7 @@ impl HostfileHelperClient {
 impl Default for HostfileHelperClient {
     fn default() -> Self {
         Self::new().unwrap_or_else(|e| {
-            panic!("Failed to create default HostfileHelperClient: {:?}", e);
+            panic!("Failed to create default HostfileHelperClient: {e:?}");
         })
     }
 }
@@ -232,7 +229,7 @@ mod tests {
 
         match result {
             Ok(_) => println!("Helper client created successfully"),
-            Err(e) => println!("Helper client creation failed (expected in tests): {}", e),
+            Err(e) => println!("Helper client creation failed (expected in tests): {e}"),
         }
     }
 
