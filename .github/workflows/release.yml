@@ -196,14 +196,14 @@ jobs:
 
 
       - name: Install Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        uses: actions/setup-node@08f58d1471bff7f3a07d167b4ad7df25d5fcfcb6
         with:
           node-version: "22"
           cache: "pnpm"
 
 
       - name: Cache pnpm modules
-        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684
+        uses: actions/cache@640a1c2554105b57832a23eea0b4672fc7a790d5
         with:
           path: |
             $(pnpm store path --silent)
@@ -375,13 +375,13 @@ jobs:
              args: [--frozen-lockfile]
 
       - name: Install Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        uses: actions/setup-node@08f58d1471bff7f3a07d167b4ad7df25d5fcfcb6
         with:
           node-version: "22"
           cache: "pnpm"
 
       - name: Cache pnpm modules
-        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684
+        uses: actions/cache@640a1c2554105b57832a23eea0b4672fc7a790d5
         with:
           path: |
             $(pnpm store path --silent)
@@ -573,7 +573,7 @@ jobs:
             }
 
       - name: Publish release
-        uses: eregon/publish-release@01df127f5e9a3c26935118e22e738d95b59d10ce
+        uses: eregon/publish-release@70a6784870e7313347f6aa7fa7783786f2c1692f
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
