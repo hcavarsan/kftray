@@ -39,7 +39,7 @@ jobs:
               args: [--frozen-lockfile]
 
       - name: Install Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        uses: actions/setup-node@08f58d1471bff7f3a07d167b4ad7df25d5fcfcb6
         with:
           node-version: "22"
           cache: "pnpm"
@@ -61,7 +61,7 @@ jobs:
           sudo apt-get install -y libgtk-3-dev
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@4305c38b25d97ef35a8ad1f985ccf2d2242004f2
+        uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b
         with:
           toolchain: nightly
 
@@ -112,7 +112,7 @@ jobs:
             gir1.2-webkit2-4.0=2.36.0-2ubuntu1;
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@4305c38b25d97ef35a8ad1f985ccf2d2242004f2
+        uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b
         with:
           toolchain: nightly
 
@@ -171,7 +171,7 @@ jobs:
             gir1.2-webkit2-4.0=2.36.0-2ubuntu1;
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@4305c38b25d97ef35a8ad1f985ccf2d2242004f2
+        uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b
 
       - name: Install Rust nightly
         run: rustup toolchain install nightly
@@ -227,7 +227,7 @@ jobs:
               args: [--frozen-lockfile]
 
       - name: Install Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        uses: actions/setup-node@08f58d1471bff7f3a07d167b4ad7df25d5fcfcb6
         with:
           node-version: "22"
           cache: "pnpm"
