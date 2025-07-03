@@ -69,7 +69,7 @@ pub type RequestParseResult<'a> = (
 pub struct RequestParser;
 
 impl RequestParser {
-    pub fn parse(buffer: &[u8]) -> Result<RequestParseResult> {
+    pub fn parse(buffer: &[u8]) -> Result<RequestParseResult<'_>> {
         let mut headers = [EMPTY_HEADER; MAX_HEADERS];
         let mut req = HttpRequest::new(&mut headers);
 

@@ -38,3 +38,4 @@ llvm-cov*
 **/*.snap
 **/snapshots/*
 TASKS.md
+.claude/*
