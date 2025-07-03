@@ -52,7 +52,7 @@ jobs:
             gir1.2-webkit2-4.0=2.36.0-2ubuntu1;
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@4305c38b25d97ef35a8ad1f985ccf2d2242004f2
+        uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b
 
       - name: Install Rust nightly
         run: rustup toolchain install nightly
@@ -181,7 +181,7 @@ jobs:
         uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@4305c38b25d97ef35a8ad1f985ccf2d2242004f2
+        uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b
 
       - name: Cache Rust
         uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6
@@ -203,7 +203,7 @@ jobs:
 
 
       - name: Cache pnpm modules
-        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684
+        uses: actions/cache@640a1c2554105b57832a23eea0b4672fc7a790d5
         with:
           path: |
             $(pnpm store path --silent)
@@ -358,7 +358,7 @@ jobs:
         uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@4305c38b25d97ef35a8ad1f985ccf2d2242004f2
+        uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b
         with:
           toolchain: nightly
 
@@ -381,7 +381,7 @@ jobs:
           cache: "pnpm"
 
       - name: Cache pnpm modules
-        uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684
+        uses: actions/cache@640a1c2554105b57832a23eea0b4672fc7a790d5
         with:
           path: |
             $(pnpm store path --silent)
@@ -492,7 +492,7 @@ jobs:
         uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@29109295f81e9208d7d86ff1c6c12d2833863392
+        uses: docker/setup-qemu-action@05340d1c670183e7caabdb33ae9f1c80fae3b0c2
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435
