@@ -186,7 +186,7 @@ jobs:
         uses: taiki-e/install-action@a761292ced99fc08cbae630a81f800d2d49b8bf4
 
       - name: Install rust-cache
-        uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6
+        uses: swatinem/rust-cache@7e1e2d0a10862b34e5df481373b2b0f295d1a2ef
 
       - name: Install cargo-insta
         run: cargo install cargo-insta
