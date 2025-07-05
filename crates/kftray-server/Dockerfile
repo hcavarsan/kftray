@@ -1,4 +1,4 @@
-FROM rust:1.87.0-alpine3.20 AS builder
+FROM rust:1.88.0-alpine3.20 AS builder
 
 RUN apk add --no-cache musl-dev
 
@@ -11,7 +11,7 @@ COPY . .
 RUN cargo build --release
 RUN cargo install --path .
 
-FROM alpine:3.21
+FROM alpine:3.22
 
 COPY --from=builder /usr/local/cargo/bin/kftray-server /kftray-server
 
