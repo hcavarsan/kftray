@@ -61,10 +61,10 @@ jobs:
         run: rustup component add llvm-tools
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@21821ab872cd9e85050ce71226e602c2fadf2274
+        uses: taiki-e/install-action@560959c1f30e2b5e398857874e682eb9f5543a9e
 
       - name: Install nextest
-        uses: taiki-e/install-action@a761292ced99fc08cbae630a81f800d2d49b8bf4
+        uses: taiki-e/install-action@560959c1f30e2b5e398857874e682eb9f5543a9e
 
       - name: Install rust-cache
         uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6
