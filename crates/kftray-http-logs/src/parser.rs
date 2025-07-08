@@ -213,17 +213,20 @@ impl RequestParser {
                     debug!("Chunk parsing error: {:?} at position {}", e, pos);
 
                     if pos < body.len() && body.len() - pos > 4 {
-                        if incomplete_chunk
-                            && last_incomplete_data.is_some()
-                            && last_chunk_size.is_some()
-                        {
-                            let remaining = &body[pos..];
-                            let last_size = last_chunk_size.unwrap();
-                            let last_data_len = last_incomplete_data.unwrap().len();
+                        if incomplete_chunk {
+                            if let (Some(last_incomplete_data), Some(last_chunk_size)) =
+                                (last_incomplete_data, last_chunk_size)
+                            {
+                                let remaining = &body[pos..];
+                                let last_size = last_chunk_size;
+                                let last_data_len = last_incomplete_data.len();
 
-                            if last_data_len + remaining.len() >= last_size {
-                                debug!("Adding remaining data to complete partial chunk");
-                                result.extend_from_slice(remaining);
+                                if last_data_len + remaining.len() >= last_size {
+                                    debug!("Adding remaining data to complete partial chunk");
+                                    result.extend_from_slice(remaining);
+                                }
+                            } else {
+                                result.extend_from_slice(&body[pos..]);
                             }
                         } else {
                             result.extend_from_slice(&body[pos..]);
