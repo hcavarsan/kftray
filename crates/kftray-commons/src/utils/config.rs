@@ -149,6 +149,12 @@ pub async fn read_configs() -> Result<Vec<Config>, String> {
 pub(crate) async fn clean_all_custom_hosts_entries_with_pool(
     pool: &SqlitePool,
 ) -> Result<(), String> {
+    clean_all_custom_hosts_entries_with_pool_and_path(pool, None).await
+}
+
+async fn clean_all_custom_hosts_entries_with_pool_and_path(
+    pool: &SqlitePool, custom_hosts_path: Option<&std::path::Path>,
+) -> Result<(), String> {
     let configs = read_configs_with_pool(pool)
         .await
         .map_err(|e| e.to_string())?;
@@ -159,8 +165,11 @@ pub(crate) async fn clean_all_custom_hosts_entries_with_pool(
             config.id.unwrap_or_default()
         );
         let hosts_builder = HostsBuilder::new(&hostfile_comment);
-        hosts_builder
-            .write()
+        let result = match custom_hosts_path {
+            Some(path) => hosts_builder.write_to(path),
+            None => hosts_builder.write(),
+        };
+        result
             .map_err(|e| format!("Failed to write to the hostfile for {hostfile_comment}: {e}"))?;
     }
     Ok(())
@@ -364,7 +373,6 @@ fn prepare_config(mut config: Config) -> Config {
 
 #[cfg(test)]
 mod tests {
-    use std::env;
 
     use lazy_static::lazy_static;
     use serde_json::json;
@@ -873,17 +881,21 @@ mod tests {
         insert_config_with_pool(config1, &pool).await.unwrap();
         insert_config_with_pool(config2, &pool).await.unwrap();
 
-        // Skip host file modification in CI environments due to permissions
-        if env::var("CI").is_err() {
-            let result = clean_all_custom_hosts_entries_with_pool(&pool).await;
-            assert!(
-                result.is_ok(),
-                "clean_all_custom_hosts_entries failed: {:?}",
-                result.err()
-            );
-        } else {
-            println!("Skipping host file modification check in CI environment.");
-        }
+        let temp_file = tempfile::NamedTempFile::new().unwrap();
+        let temp_path = temp_file.path();
+
+        std::fs::write(temp_path, "# Test hosts file\n127.0.0.1 localhost\n").unwrap();
+
+        let result =
+            clean_all_custom_hosts_entries_with_pool_and_path(&pool, Some(temp_path)).await;
+        assert!(
+            result.is_ok(),
+            "clean_all_custom_hosts_entries failed: {:?}",
+            result.err()
+        );
+
+        let content = std::fs::read_to_string(temp_path).unwrap();
+        assert!(content.contains("localhost"));
     }
 
     #[tokio::test]

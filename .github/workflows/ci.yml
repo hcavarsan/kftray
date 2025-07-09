@@ -170,20 +170,23 @@ jobs:
             gir1.2-javascriptcoregtk-4.0=2.36.0-2ubuntu1 \
             gir1.2-webkit2-4.0=2.36.0-2ubuntu1;
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b
-
       - name: Install Rust nightly
-        run: rustup toolchain install nightly
+        uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b
+        with:
+          toolchain: nightly
 
       - name: Install llvm-tools
         run: rustup component add llvm-tools
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@21821ab872cd9e85050ce71226e602c2fadf2274
+        uses: taiki-e/install-action@2383334cf567d78771fc7d89b6b3802ef1412cf6
+        with:
+          tool: cargo-llvm-cov
 
       - name: Install nextest
-        uses: taiki-e/install-action@a761292ced99fc08cbae630a81f800d2d49b8bf4
+        uses: taiki-e/install-action@2383334cf567d78771fc7d89b6b3802ef1412cf6
+        with:
+          tool: cargo-nextest
 
       - name: Install rust-cache
         uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6

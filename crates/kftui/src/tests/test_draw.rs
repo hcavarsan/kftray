@@ -87,7 +87,7 @@ mod tests {
         app.state = AppState::ShowHelp;
         terminal
             .draw(|frame| {
-                draw_ui(frame, &mut app, &[config_state.clone()]);
+                draw_ui(frame, &mut app, std::slice::from_ref(&config_state));
             })
             .unwrap();
 
@@ -97,35 +97,35 @@ mod tests {
         app.state = AppState::ShowAbout;
         terminal
             .draw(|frame| {
-                draw_ui(frame, &mut app, &[config_state.clone()]);
+                draw_ui(frame, &mut app, std::slice::from_ref(&config_state));
             })
             .unwrap();
 
         app.state = AppState::ImportFileExplorerOpen;
         terminal
             .draw(|frame| {
-                draw_ui(frame, &mut app, &[config_state.clone()]);
+                draw_ui(frame, &mut app, std::slice::from_ref(&config_state));
             })
             .unwrap();
 
         app.state = AppState::ExportFileExplorerOpen;
         terminal
             .draw(|frame| {
-                draw_ui(frame, &mut app, &[config_state.clone()]);
+                draw_ui(frame, &mut app, std::slice::from_ref(&config_state));
             })
             .unwrap();
 
         app.state = AppState::ShowInputPrompt;
         terminal
             .draw(|frame| {
-                draw_ui(frame, &mut app, &[config_state.clone()]);
+                draw_ui(frame, &mut app, std::slice::from_ref(&config_state));
             })
             .unwrap();
 
         app.state = AppState::ShowConfirmationPopup;
         terminal
             .draw(|frame| {
-                draw_ui(frame, &mut app, &[config_state.clone()]);
+                draw_ui(frame, &mut app, std::slice::from_ref(&config_state));
             })
             .unwrap();
 
@@ -133,14 +133,14 @@ mod tests {
         app.error_message = Some("Test error message".to_string());
         terminal
             .draw(|frame| {
-                draw_ui(frame, &mut app, &[config_state.clone()]);
+                draw_ui(frame, &mut app, std::slice::from_ref(&config_state));
             })
             .unwrap();
 
         app.state = AppState::ShowDeleteConfirmation;
         terminal
             .draw(|frame| {
-                draw_ui(frame, &mut app, &[config_state.clone()]);
+                draw_ui(frame, &mut app, std::slice::from_ref(&config_state));
             })
             .unwrap();
 
@@ -162,14 +162,14 @@ mod tests {
         app.active_component = ActiveComponent::Menu;
         terminal
             .draw(|frame| {
-                draw_ui(frame, &mut app, &[config_state.clone()]);
+                draw_ui(frame, &mut app, std::slice::from_ref(&config_state));
             })
             .unwrap();
 
         app.active_component = ActiveComponent::StoppedTable;
         terminal
             .draw(|frame| {
-                draw_ui(frame, &mut app, &[config_state.clone()]);
+                draw_ui(frame, &mut app, std::slice::from_ref(&config_state));
             })
             .unwrap();
 
@@ -178,14 +178,14 @@ mod tests {
         app.running_configs.push(create_test_config());
         terminal
             .draw(|frame| {
-                draw_ui(frame, &mut app, &[config_state.clone()]);
+                draw_ui(frame, &mut app, std::slice::from_ref(&config_state));
             })
             .unwrap();
 
         app.active_component = ActiveComponent::Details;
         terminal
             .draw(|frame| {
-                draw_ui(frame, &mut app, &[config_state.clone()]);
+                draw_ui(frame, &mut app, std::slice::from_ref(&config_state));
             })
             .unwrap();
 

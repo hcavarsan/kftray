@@ -488,12 +488,11 @@ fn setup_git_callbacks(
 
             let is_https_url = url.starts_with("https://");
 
-            if is_https_url
-                && token.is_some()
-                && allowed_types.contains(git2::CredentialType::USER_PASS_PLAINTEXT)
-            {
-                info!("Using token authentication for HTTPS");
-                return Cred::userpass_plaintext("git", token.as_ref().unwrap());
+            if is_https_url && allowed_types.contains(git2::CredentialType::USER_PASS_PLAINTEXT) {
+                if let Some(token) = &token {
+                    info!("Using token authentication for HTTPS");
+                    return Cred::userpass_plaintext("git", token);
+                }
             }
 
             if use_system_credentials {

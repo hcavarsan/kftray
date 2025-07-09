@@ -30,11 +30,11 @@ impl HostfileManager {
             if helper.is_available() {
                 match helper.add_host_entry(id.clone(), entry.clone()) {
                     Ok(_) => {
-                        debug!("Successfully added host entry via helper for ID: {}", id);
+                        debug!("Successfully added host entry via helper for ID: {id}");
                         return Ok(());
                     }
                     Err(e) => {
-                        warn!("Helper hostfile add failed: {}, falling back to direct", e);
+                        warn!("Helper hostfile add failed: {e}, falling back to direct");
                     }
                 }
             }
@@ -48,14 +48,11 @@ impl HostfileManager {
             if helper.is_available() {
                 match helper.remove_host_entry(id) {
                     Ok(_) => {
-                        debug!("Successfully removed host entry via helper for ID: {}", id);
+                        debug!("Successfully removed host entry via helper for ID: {id}");
                         return Ok(());
                     }
                     Err(e) => {
-                        warn!(
-                            "Helper hostfile remove failed: {}, falling back to direct",
-                            e
-                        );
+                        warn!("Helper hostfile remove failed: {e}, falling back to direct");
                     }
                 }
             }
@@ -74,10 +71,7 @@ impl HostfileManager {
                         return Ok(());
                     }
                     Err(e) => {
-                        warn!(
-                            "Helper hostfile remove_all failed: {}, falling back to direct",
-                            e
-                        );
+                        warn!("Helper hostfile remove_all failed: {e}, falling back to direct");
                     }
                 }
             }
