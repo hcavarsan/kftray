@@ -40,19 +40,15 @@ async fn allocate_local_address_for_config(config: &mut Config) -> Result<String
             .unwrap_or_else(|| "127.0.0.1".to_string());
 
         if crate::network_utils::is_custom_loopback_address(&address) {
-            info!("Configuring custom loopback address: {}", address);
+            info!("Configuring custom loopback address: {address}");
             if let Err(config_err) = crate::network_utils::ensure_loopback_address(&address).await {
                 let error_msg = config_err.to_string();
                 if error_msg.contains("cancelled") || error_msg.contains("canceled") {
                     return Err(format!(
-                        "Custom loopback address configuration cancelled: {}",
-                        error_msg
+                        "Custom loopback address configuration cancelled: {error_msg}"
                     ));
                 }
-                warn!(
-                    "Failed to configure custom loopback address {}: {}",
-                    address, config_err
-                );
+                warn!("Failed to configure custom loopback address {address}: {config_err}");
             }
         }
 
@@ -66,10 +62,7 @@ async fn allocate_local_address_for_config(config: &mut Config) -> Result<String
 
     match try_allocate_address(&service_name).await {
         Ok(allocated_address) => {
-            info!(
-                "Auto-allocated address {} for service {}",
-                allocated_address, service_name
-            );
+            info!("Auto-allocated address {allocated_address} for service {service_name}");
             config.local_address = Some(allocated_address.clone());
 
             info!(
@@ -95,29 +88,22 @@ async fn allocate_local_address_for_config(config: &mut Config) -> Result<String
             Ok(allocated_address)
         }
         Err(e) => {
-            warn!(
-                "Failed to auto-allocate address for service {} via helper: {}. Trying fallback allocation",
-                service_name, e
-            );
+            warn!("Failed to auto-allocate address for service {service_name} via helper: {e}. Trying fallback allocation");
 
             match try_fallback_allocate_and_save(&service_name, config).await {
                 Ok(allocated_address) => {
                     info!(
-                        "Fallback-allocated address {} for service {}",
-                        allocated_address, service_name
+                        "Fallback-allocated address {allocated_address} for service {service_name}"
                     );
                     Ok(allocated_address)
                 }
                 Err(fallback_err) => {
                     if fallback_err.contains("cancelled") || fallback_err.contains("canceled") {
-                        error!("Address allocation cancelled by user: {}", fallback_err);
+                        error!("Address allocation cancelled by user: {fallback_err}");
                         return Err(fallback_err);
                     }
 
-                    warn!(
-                        "Fallback allocation also failed for service {}: {}. Using default 127.0.0.1",
-                        service_name, fallback_err
-                    );
+                    warn!("Fallback allocation also failed for service {service_name}: {fallback_err}. Using default 127.0.0.1");
                     let default_address = "127.0.0.1".to_string();
                     config.local_address = Some(default_address.clone());
                     Ok(default_address)
@@ -158,35 +144,26 @@ async fn try_fallback_allocate_and_save(
 ) -> Result<String, String> {
     let _lock = FALLBACK_ALLOCATION_MUTEX.lock().await;
 
-    debug!(
-        "Acquired fallback allocation lock for service: {}",
-        service_name
-    );
+    debug!("Acquired fallback allocation lock for service: {service_name}");
 
     let allocated_addresses = get_allocated_loopback_addresses().await;
 
     for octet in 2..255 {
-        let address = format!("127.0.0.{}", octet);
+        let address = format!("127.0.0.{octet}");
 
         if allocated_addresses.contains(&address) {
-            debug!(
-                "Address {} already allocated to another config, skipping",
-                address
-            );
+            debug!("Address {address} already allocated to another config, skipping");
             continue;
         }
 
         if crate::network_utils::is_address_accessible(&address).await {
-            debug!("Address {} is already in use on system, skipping", address);
+            debug!("Address {address} is already in use on system, skipping");
             continue;
         }
 
         match crate::network_utils::ensure_loopback_address(&address).await {
             Ok(_) => {
-                debug!(
-                    "Successfully allocated and configured fallback address: {} for service: {}",
-                    address, service_name
-                );
+                debug!("Successfully allocated and configured fallback address: {address} for service: {service_name}");
 
                 config.local_address = Some(address.clone());
                 info!(
@@ -205,10 +182,7 @@ async fn try_fallback_allocate_and_save(
             }
             Err(e) => {
                 let error_msg = e.to_string();
-                debug!(
-                    "Failed to configure fallback address {}: {}",
-                    address, error_msg
-                );
+                debug!("Failed to configure fallback address {address}: {error_msg}");
 
                 if error_msg.contains("User cancelled")
                     || error_msg.contains("user cancelled")
@@ -216,10 +190,7 @@ async fn try_fallback_allocate_and_save(
                     || error_msg.contains("User canceled")
                     || error_msg.contains("canceled")
                 {
-                    return Err(format!(
-                        "Address allocation cancelled by user: {}",
-                        error_msg
-                    ));
+                    return Err(format!("Address allocation cancelled by user: {error_msg}"));
                 }
 
                 continue;
@@ -252,7 +223,7 @@ async fn get_allocated_loopback_addresses() -> std::collections::HashSet<String>
         }
     }
 
-    debug!("Currently allocated loopback addresses: {:?}", allocated);
+    debug!("Currently allocated loopback addresses: {allocated:?}");
     allocated
 }
 
@@ -268,7 +239,7 @@ async fn save_allocated_address_to_db(config: &Config) -> Result<(), String> {
             Ok(())
         }
         Err(e) => {
-            error!("Failed to update config in database: {}", e);
+            error!("Failed to update config in database: {e}");
             Err(e)
         }
     }
@@ -305,8 +276,8 @@ pub async fn start_port_forward(
         let final_local_address = match allocate_local_address_for_config(config).await {
             Ok(address) => address,
             Err(e) => {
-                error!("Failed to allocate local address: {}", e);
-                return Err(format!("Address allocation failed: {}", e));
+                error!("Failed to allocate local address: {e}");
+                return Err(format!("Address allocation failed: {e}"));
             }
         };
 

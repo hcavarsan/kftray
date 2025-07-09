@@ -265,7 +265,7 @@ pub fn render_error_popup(f: &mut Frame, error_message: &str, area: Rect, top_pa
     f.render_widget(close_button, button_area);
 }
 
-pub fn wrap_text(text: &str, max_width: usize) -> Text {
+pub fn wrap_text(text: &str, max_width: usize) -> Text<'_> {
     let mut wrapped_lines = Vec::new();
     for line in text.lines() {
         let mut current_line = String::new();
