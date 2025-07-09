@@ -186,7 +186,7 @@ jobs:
       - name: Install nextest
         uses: taiki-e/install-action@a761292ced99fc08cbae630a81f800d2d49b8bf4
         with:
-          tool: nextest
+          tool: cargo-nextest
 
       - name: Install rust-cache
         uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6
