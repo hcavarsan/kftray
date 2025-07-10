@@ -65,7 +65,7 @@ kftray-commons = { path = "../kftray-commons" }
 kftray-http-logs = { path = "../kftray-http-logs" }
 kftray-helper = { path = "../kftray-helper" }
 netstat2 = { git = "https://github.com/hcavarsan/netstat2-rs" }
-sysinfo = "0.35.1"
+sysinfo = "0.36.0"
 
 secrecy = "0.10.3"
 git2 = { version = "0.20.0", features = ["ssh"] }
