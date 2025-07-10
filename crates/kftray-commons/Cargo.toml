@@ -26,4 +26,3 @@ sqlx = { workspace = true }
 tauri = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true }
-
