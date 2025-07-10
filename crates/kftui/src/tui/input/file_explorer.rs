@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crossterm::event::{
+use ratatui::crossterm::event::{
     Event,
     KeyCode,
     KeyEvent,

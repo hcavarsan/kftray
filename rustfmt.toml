@@ -1,38 +1,26 @@
 # Maximum line length is set to 100 characters
 max_width = 100
-
 # Imports will be formatted vertically
 imports_layout = "Vertical"
-
 # Imports will be grouped in the order: standard library, external crates, current crate
 group_imports = "StdExternalCrate"
-
 # Trailing commas will be added in multiline constructs
 trailing_comma = "Vertical"
-
 # Indentation style is set to "Block"
 indent_style = "Block"
-
 # Opening braces for control flow statements (if/else/for/while/etc.) will be placed on the same line where possible
 brace_style = "SameLineWhere"
-
 # Modules will be reordered alphabetically
 reorder_modules = true
-
 # Imports within modules will be reordered alphabetically
 reorder_imports = true
-
 # Hard tabs will not be used for indentation
 hard_tabs = false
-
 # The number of spaces per indentation level is set to 4
 tab_spaces = 4
-
 # Comments will be wrapped at the max_width length
 wrap_comments = true
-
 # Function parameters will be formatted in a compressed style
 fn_params_layout = "Compressed"
-
 # Match arms will be wrapped in blocks
 match_arm_blocks = true

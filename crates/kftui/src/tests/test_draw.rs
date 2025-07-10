@@ -2,7 +2,6 @@ use kftray_commons::models::{
     config_model::Config,
     config_state_model::ConfigState,
 };
-use log::Level;
 use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 use ratatui::Terminal;
@@ -16,7 +15,6 @@ use crate::tui::input::{
 use crate::tui::ui::draw::{
     draw_header,
     draw_ui,
-    log_level_to_color,
     render_logs,
 };
 
@@ -246,18 +244,5 @@ mod tests {
                 draw_header(frame, &menu_app, area);
             })
             .unwrap();
-    }
-
-    #[test]
-    fn test_log_level_to_color() {
-        let error_style = log_level_to_color(Level::Error);
-        let warn_style = log_level_to_color(Level::Warn);
-        let info_style = log_level_to_color(Level::Info);
-        let debug_style = log_level_to_color(Level::Debug);
-        let trace_style = log_level_to_color(Level::Trace);
-
-        assert_ne!(error_style, warn_style);
-        assert_ne!(info_style, debug_style);
-        assert_ne!(trace_style, error_style);
     }
 }

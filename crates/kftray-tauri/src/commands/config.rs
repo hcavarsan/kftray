@@ -380,7 +380,10 @@ mod tests {
         let test_config_json = serde_json::json!([{
             "service": "import-test-service",
             "namespace": "import-test-namespace",
-            "local_port": 5000
+            "local_port": 5000,
+            "workload_type": "service",
+            "protocol": "tcp",
+            "context": "test-context"
         }])
         .to_string();
 
