@@ -746,11 +746,13 @@ mod tests {
 
         let config_content = r#"[{
             "name": "test_config",
-            "description": "test description",
             "local_port": 8080,
             "remote_port": 80,
             "namespace": "default",
-            "service": "test-service"
+            "service": "test-service",
+            "workload_type": "service",
+            "protocol": "tcp",
+            "context": "test-context"
         }]"#;
 
         let result = process_config_content(config_content, false).await;
