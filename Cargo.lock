@@ -1015,16 +1015,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ctrlc"
-version = "3.4.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "46f93780a459b7d656ef7f071fe699c4d3d2cb201c4b24d085b6ddc505276e73"
-dependencies = [
- "nix 0.30.1",
- "windows-sys 0.59.0",
-]
-
-[[package]]
 name = "darling"
 version = "0.20.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2991,26 +2981,18 @@ name = "kftray-commons"
 version = "0.19.0"
 dependencies = [
  "anyhow",
- "bytes",
- "dashmap",
  "dirs",
- "flate2",
  "futures",
  "hostsfile",
- "httparse",
- "k8s-openapi",
  "lazy_static",
  "log",
  "portpicker",
- "rand 0.9.1",
  "serde",
  "serde_json",
  "sqlx",
  "tauri",
  "tempfile",
  "tokio",
- "tracing",
- "uuid",
 ]
 
 [[package]]
@@ -3033,7 +3015,6 @@ dependencies = [
  "windows-core",
  "windows-service",
  "windows-sys 0.60.2",
- "zbus",
 ]
 
 [[package]]
@@ -3048,7 +3029,6 @@ dependencies = [
  "dirs",
  "flate2",
  "httparse",
- "kftray-commons",
  "lazy_static",
  "mockall",
  "serde",
@@ -3126,17 +3106,9 @@ version = "0.19.0"
 dependencies = [
  "anyhow",
  "async-trait",
- "base64 0.22.1",
- "ctrlc",
- "dirs",
  "env_logger",
  "fix-path-env",
- "futures",
  "git2",
- "h2 0.4.11",
- "hostsfile",
- "hyper 1.6.0",
- "hyper-util",
  "k8s-openapi",
  "keyring",
  "kftray-commons",
@@ -3144,19 +3116,14 @@ dependencies = [
  "kftray-http-logs",
  "kftray-portforward",
  "kube",
- "kube-runtime",
  "lazy_static",
  "log",
  "mockall",
  "netstat2",
  "once_cell",
  "open 5.3.2",
- "openssl",
- "openssl-sys",
- "rand 0.9.1",
  "reqwest 0.12.22",
  "rstest",
- "secrecy",
  "serde",
  "serde_json",
  "sqlx",
@@ -3166,54 +3133,27 @@ dependencies = [
  "tauri-plugin-positioner",
  "tempfile",
  "tokio",
- "tokio-stream",
- "tower",
- "tracing",
  "tracing-subscriber",
  "url",
- "whoami",
 ]
 
 [[package]]
 name = "kftui"
 version = "0.19.0"
 dependencies = [
- "anyhow",
- "base64 0.22.1",
  "built",
  "crossterm",
- "dirs",
- "futures",
- "h2 0.4.11",
- "hostsfile",
- "hyper 1.6.0",
- "hyper-util",
  "insta",
- "k8s-openapi",
  "kftray-commons",
  "kftray-http-logs",
  "kftray-portforward",
- "kube",
- "kube-runtime",
- "lazy_static",
- "libc",
  "log",
  "mockall",
- "once_cell",
- "rand 0.9.1",
  "ratatui",
  "ratatui-explorer",
- "serde",
- "serde_json",
- "sqlx",
- "tauri",
  "tempfile",
  "tokio",
- "tokio-stream",
- "tower",
- "tracing",
  "tui-logger",
- "whoami",
 ]
 
 [[package]]

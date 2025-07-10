@@ -16,7 +16,6 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 uuid = { workspace = true }
 dirs = { workspace = true }
-zbus = { workspace = true }
 windows-service = { workspace = true }
 libc = { workspace = true }
 hostsfile = { workspace = true }

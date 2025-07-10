@@ -34,7 +34,6 @@ whoami = "1.6"
 portpicker = "0.1"
 brotli = "8.0"
 secrecy = "0.10"
-ctrlc = "3.4"
 insta = "1.43"
 built = "0.8"
 
@@ -43,7 +42,6 @@ hyper = { version = "1.6", features = ["client", "http1", "http2"] }
 hyper-util = { version = "0.1", features = ["client-legacy", "http1", "tokio"] }
 hostsfile = { git = "https://github.com/tonarino/innernet", branch = "main" }
 reqwest = "0.12"
-h2 = "0.4"
 hyper-openssl = "0.10"
 tokio-stream = { version = "0.1", features = ["net"] }
 fix-path-env = { git = "https://github.com/tauri-apps/fix-path-env-rs" }
@@ -94,7 +92,6 @@ windows-core = "0.61"
 windows-sys = "0.60"
 
 # System integration
-zbus = "5.8"
 sysinfo = "0.36.0"
 git2 = { version = "0.20", features = ["ssh"] }
 open = "5.3"
