@@ -257,6 +257,47 @@ pub async fn export_configs() -> Result<String, String> {
     export_configs_with_pool(&pool).await
 }
 
+fn validate_imported_config(config: &Config) -> Result<(), String> {
+    if config.context.is_empty() {
+        return Err("Context is required and cannot be empty".to_string());
+    }
+
+    if config.namespace.is_empty() {
+        return Err("Namespace is required and cannot be empty".to_string());
+    }
+
+    match config.workload_type.as_deref() {
+        Some("service") => {
+            if config.service.is_none() || config.service.as_ref().unwrap().is_empty() {
+                return Err("Service name is required for service workload type".to_string());
+            }
+        }
+        Some("pod") => {
+            if config.target.is_none() || config.target.as_ref().unwrap().is_empty() {
+                return Err(
+                    "Target (pod label selector) is required for pod workload type".to_string(),
+                );
+            }
+        }
+        Some("proxy") => {
+            if config.remote_address.is_none() || config.remote_address.as_ref().unwrap().is_empty()
+            {
+                return Err("Remote address is required for proxy workload type".to_string());
+            }
+        }
+        Some(workload_type) => {
+            return Err(format!(
+                "Invalid workload type: {workload_type}. Must be 'service', 'pod', or 'proxy'"
+            ));
+        }
+        None => {
+            return Err("Workload type is required".to_string());
+        }
+    }
+
+    Ok(())
+}
+
 pub(crate) async fn import_configs_with_pool(
     json: String, pool: &SqlitePool,
 ) -> Result<(), String> {
@@ -271,6 +312,7 @@ pub(crate) async fn import_configs_with_pool(
     };
 
     for config in configs {
+        validate_imported_config(&config).map_err(|e| format!("Invalid config: {e}"))?;
         insert_config_with_pool(config, pool)
             .await
             .map_err(|e| format!("Failed to insert config: {e}"))?;
@@ -807,7 +849,10 @@ mod tests {
         let config_json = json!({
             "service": "imported-service",
             "namespace": "import-ns",
-            "local_port": 5000
+            "local_port": 5000,
+            "workload_type": "service",
+            "protocol": "tcp",
+            "context": "test-context"
         })
         .to_string();
 
@@ -829,11 +874,17 @@ mod tests {
         let configs_json = json!([
             {
                 "service": "imported-service1",
+                "workload_type": "service",
+                "protocol": "tcp",
+                "context": "test-context",
                 "namespace": "import-ns1",
                 "local_port": 5001
             },
             {
                 "service": "imported-service2",
+                "workload_type": "service",
+                "protocol": "tcp",
+                "context": "test-context",
                 "namespace": "import-ns2",
                 "local_port": 5002
             }
@@ -1110,7 +1161,10 @@ mod tests {
         let config_json = json!({
             "service": "import-public-test",
             "namespace": "import-namespace",
-            "local_port": 5000
+            "local_port": 5000,
+            "workload_type": "service",
+            "protocol": "tcp",
+            "context": "test-context"
         })
         .to_string();
 

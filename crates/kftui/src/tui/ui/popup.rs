@@ -1,27 +1,18 @@
 use std::borrow::Cow;
 
-use ratatui::prelude::Modifier;
-use ratatui::prelude::{
-    Alignment,
-    Color,
-    Line,
-};
+use ratatui::prelude::*;
 use ratatui::text::{
+    Line,
     Span,
     Text,
 };
-use ratatui::widgets::List;
-use ratatui::widgets::ListItem;
-use ratatui::{
-    layout::Rect,
-    style::Style,
-    widgets::{
-        Block,
-        Borders,
-        Clear,
-        Paragraph,
-    },
-    Frame,
+use ratatui::widgets::{
+    Block,
+    Borders,
+    Clear,
+    List,
+    ListItem,
+    Paragraph,
 };
 
 use crate::core::built_info;
@@ -40,6 +31,7 @@ use crate::tui::ui::{
     MAUVE,
     PINK,
     RED,
+    SUBTEXT0,
     TEAL,
     TEXT,
     YELLOW,
@@ -228,62 +220,96 @@ pub fn render_about_popup(f: &mut Frame, area: Rect) {
 }
 
 pub fn render_error_popup(f: &mut Frame, error_message: &str, area: Rect, top_padding: usize) {
-    let max_text_width = area.width.saturating_sub(4) as usize;
-    let wrapped_text = wrap_text(error_message, max_text_width);
+    let (width_percent, height_percent) = if area.width < 80 {
+        (95, 80)
+    } else if area.width < 120 {
+        (90, 70)
+    } else {
+        (80, 60)
+    };
 
-    let mut padded_text = Text::default();
+    let popup_area = centered_rect(width_percent, height_percent, area);
+    let content_width = popup_area.width.saturating_sub(4) as usize; // Account for borders
+
+    let mut lines = Vec::new();
+
     for _ in 0..top_padding {
-        padded_text.lines.push(Line::from(""));
+        lines.push("".into());
     }
-    padded_text.lines.extend(wrapped_text.lines.clone());
 
-    let text_height = (wrapped_text.lines.len() + top_padding) as u16 + 2;
+    lines.push("".into());
 
-    let popup_area = Rect::new(
-        area.x + (area.width / 4),
-        area.y + (area.height / 4),
-        area.width / 2,
-        text_height + 4,
+    let parts: Vec<&str> = error_message.split(": ").collect();
+
+    if parts.len() > 1 {
+        for (i, part) in parts.iter().enumerate() {
+            if part.starts_with("Failed to") {
+                continue;
+            }
+
+            if i == 0 {
+                let wrapped_lines = wrap_text_simple(part, content_width.saturating_sub(4));
+                for line in wrapped_lines {
+                    lines.push(Line::from(vec![format!("  {line}").red().bold()]));
+                }
+            } else {
+                let wrapped_lines = wrap_text_simple(part, content_width.saturating_sub(6));
+                for line in wrapped_lines {
+                    lines.push(Line::from(vec![format!("    {line}").fg(TEXT)]));
+                }
+            }
+        }
+    } else {
+        let wrapped_lines = wrap_text_simple(error_message, content_width.saturating_sub(4));
+        for line in wrapped_lines {
+            lines.push(Line::from(vec![format!("  {line}").fg(TEXT)]));
+        }
+    }
+
+    lines.push("".into());
+    lines.push(Line::from(vec!["  Press <Enter> to close"
+        .fg(SUBTEXT0)
+        .italic()]));
+
+    let formatted_text = Text::from(lines).centered();
+    render_popup(
+        f,
+        popup_area,
+        "Error",
+        RED,
+        formatted_text,
+        Alignment::Center,
     );
-
-    render_popup(f, popup_area, "Error", RED, padded_text, Alignment::Center);
-
-    let button_area = Rect::new(
-        popup_area.x + (popup_area.width / 2) - 5,
-        popup_area.y + text_height,
-        10,
-        3,
-    );
-
-    let close_button = create_close_button();
-
-    let shadow_layers = [(MANTLE, 1)];
-
-    let button_shadow_layers = create_bottom_right_shadow_layers(button_area, &shadow_layers);
-    render_shadow_layers(f, button_shadow_layers);
-
-    f.render_widget(close_button, button_area);
 }
 
-pub fn wrap_text(text: &str, max_width: usize) -> Text<'_> {
-    let mut wrapped_lines = Vec::new();
-    for line in text.lines() {
-        let mut current_line = String::new();
-        for word in line.split_whitespace() {
-            if current_line.len() + word.len() + 1 > max_width {
-                wrapped_lines.push(Line::from(current_line));
-                current_line = String::new();
-            }
-            if !current_line.is_empty() {
-                current_line.push(' ');
-            }
-            current_line.push_str(word);
+fn wrap_text_simple(text: &str, max_width: usize) -> Vec<String> {
+    if max_width < 10 {
+        return vec![text.to_string()];
+    }
+
+    let mut lines = Vec::new();
+    let mut current_line = String::new();
+
+    for word in text.split_whitespace() {
+        if current_line.len() + word.len() + 1 > max_width && !current_line.is_empty() {
+            lines.push(current_line);
+            current_line = String::new();
         }
         if !current_line.is_empty() {
-            wrapped_lines.push(Line::from(current_line));
+            current_line.push(' ');
         }
+        current_line.push_str(word);
     }
-    Text::from(wrapped_lines)
+
+    if !current_line.is_empty() {
+        lines.push(current_line);
+    }
+
+    if lines.is_empty() {
+        lines.push(text.to_string());
+    }
+
+    lines
 }
 
 fn create_close_button() -> Paragraph<'static> {
