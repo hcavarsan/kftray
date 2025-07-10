@@ -1,21 +1,19 @@
 [package]
 name = "kftray-server"
 version = "0.19.0"
-description = "KFtray Server is a Rust application that relays UDP/TCP traffic to an upstream server"
 authors = ["Henrique Cavarsan <hencavarsan@gmail.com>"]
-license = "MIT"
+edition = "2021"
+description = "KFtray Server is a Rust application that relays UDP/TCP traffic to an upstream server"
 homepage = "https://kftray.app"
 repository = "https://github.com/hcavarsan/kftray"
-edition = "2021"
+license = "MIT"
 
 [dependencies]
-tokio = { workspace = true }
-log = { workspace = true }
-env_logger = { workspace = true }
-url = { workspace = true }
 async-trait = { workspace = true }
+env_logger = { workspace = true }
+log = { workspace = true }
+tokio = { workspace = true }
+url = { workspace = true }
 
 [dev-dependencies]
-mockall = { workspace = true }
-tokio-test = { workspace = true }
 lazy_static = { workspace = true }

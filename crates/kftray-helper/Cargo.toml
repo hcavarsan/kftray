@@ -1,29 +1,29 @@
 [package]
 name = "kftray-helper"
 version = "0.19.0"
+authors = ["KFTray Contributors"]
 edition = "2021"
 description = "Privileged helper binary for KFTray"
-authors = ["KFTray Contributors"]
 license = "MIT"
 
 [dependencies]
-kftray-commons = { path = "../kftray-commons" }
 clap = { workspace = true }
+dirs = { workspace = true }
+hostsfile = { workspace = true }
+kftray-commons = { path = "../kftray-commons" }
+libc = { workspace = true }
 log = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 uuid = { workspace = true }
-dirs = { workspace = true }
 windows-service = { workspace = true }
-libc = { workspace = true }
-hostsfile = { workspace = true }
+
+[dev-dependencies]
+env_logger = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true }
 windows-core = { workspace = true }
-windows-sys = { workspace = true }
 
-[dev-dependencies]
-env_logger = { workspace = true }

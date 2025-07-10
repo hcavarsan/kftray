@@ -3,13 +3,7 @@ name = "kftray-utils"
 version = "0.0.1"
 edition = "2021"
 
-[ dependencies ]
-regex = "1"
-serde_json = "1"
-image = "0.25"
-ico = "0.4"
-thiserror = "2"
-
+[workspace]
 
 [[bin]]
 name = "bump_version"
@@ -19,4 +13,10 @@ path = "src/bump_version.rs"
 name = "generate_icons"
 path = "src/generate_icons.rs"
 
-[workspace]
+[dependencies]
+ico = "0.4"
+image = "0.25"
+regex = "1"
+serde_json = "1"
+thiserror = "2"
+

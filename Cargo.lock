@@ -1660,12 +1660,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f90f7dce0722e95104fcb095585910c0977252f286e354b5e3bd38902cd99988"
 
 [[package]]
-name = "futures-timer"
-version = "3.0.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f288b0a4f20f9a56b5d1da57e2227c661b7b16168e2f72365f57b63326e29b24"
-
-[[package]]
 name = "futures-util"
 version = "0.3.31"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3014,7 +3008,6 @@ dependencies = [
  "windows 0.61.3",
  "windows-core",
  "windows-service",
- "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -3031,7 +3024,6 @@ dependencies = [
  "httparse",
  "lazy_static",
  "mockall",
- "serde",
  "serde_json",
  "tempfile",
  "tokio",
@@ -3094,9 +3086,7 @@ dependencies = [
  "env_logger",
  "lazy_static",
  "log",
- "mockall",
  "tokio",
- "tokio-test",
  "url",
 ]
 
@@ -3120,10 +3110,8 @@ dependencies = [
  "log",
  "mockall",
  "netstat2",
- "once_cell",
  "open 5.3.2",
  "reqwest 0.12.22",
- "rstest",
  "serde",
  "serde_json",
  "sqlx",
@@ -3133,7 +3121,6 @@ dependencies = [
  "tauri-plugin-positioner",
  "tempfile",
  "tokio",
- "tracing-subscriber",
  "url",
 ]
 
@@ -3148,7 +3135,6 @@ dependencies = [
  "kftray-http-logs",
  "kftray-portforward",
  "log",
- "mockall",
  "ratatui",
  "ratatui-explorer",
  "tempfile",
@@ -4921,12 +4907,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2b15c43186be67a4fd63bee50d0303afffcef381492ebe2c5d87f324e1b8815c"
 
 [[package]]
-name = "relative-path"
-version = "1.9.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba39f3699c378cd8970968dcbff9c43159ea4cfbd88d43c00b22f2ef10a435d2"
-
-[[package]]
 name = "reqwest"
 version = "0.11.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5064,36 +5044,6 @@ dependencies = [
  "spki",
  "subtle",
  "zeroize",
-]
-
-[[package]]
-name = "rstest"
-version = "0.25.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6fc39292f8613e913f7df8fa892b8944ceb47c247b78e1b1ae2f09e019be789d"
-dependencies = [
- "futures-timer",
- "futures-util",
- "rstest_macros",
- "rustc_version",
-]
-
-[[package]]
-name = "rstest_macros"
-version = "0.25.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1f168d99749d307be9de54d23fd226628d99768225ef08f6ffb52e0182a27746"
-dependencies = [
- "cfg-if",
- "glob",
- "proc-macro-crate 3.3.0",
- "proc-macro2",
- "quote",
- "regex",
- "relative-path",
- "rustc_version",
- "syn 2.0.104",
- "unicode-ident",
 ]
 
 [[package]]

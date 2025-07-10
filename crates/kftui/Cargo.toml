@@ -1,32 +1,34 @@
 [package]
 name = "kftui"
 version = "0.19.0"
-description = "KFtray TUI is a Rust application that manage multiple kubectl port forward configurations"
 authors = [
-    "Henrique Cavarsan <hencavarsan@gmail.com>",
+  "Henrique Cavarsan <hencavarsan@gmail.com>",
 ]
-license = "MIT"
+edition = "2021"
+description = "KFtray TUI is a Rust application that manage multiple kubectl port forward configurations"
 homepage = "https://kftray.app"
 repository = "https://github.com/hcavarsan/kftray"
-edition = "2021"
+license = "MIT"
 build = "build.rs"
 
+[package.metadata.cargo-machete]
+ignored = ["built"]
+
 [dependencies]
-kftray-commons = { path = "../kftray-commons" }
-kftray-portforward = { path = "../kftray-portforward" }
-kftray-http-logs = { path = "../kftray-http-logs" }
-tokio = { workspace = true }
-log = { workspace = true }
-tempfile = { workspace = true }
-ratatui = { workspace = true }
-crossterm = { workspace = true }
-tui-logger = { workspace = true }
-ratatui-explorer = { workspace = true }
 built = { workspace = true }
+crossterm = { workspace = true }
+kftray-commons = { path = "../kftray-commons" }
+kftray-http-logs = { path = "../kftray-http-logs" }
+kftray-portforward = { path = "../kftray-portforward" }
+log = { workspace = true }
+ratatui = { workspace = true }
+ratatui-explorer = { workspace = true }
+tempfile = { workspace = true }
+tokio = { workspace = true }
+tui-logger = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }
-mockall = { workspace = true }
 
 [build-dependencies]
 built = { workspace = true }

@@ -1,17 +1,20 @@
 [package]
 name = "kftray-http-logs"
 version = "0.15.8"
+authors = ["Henrique Cavarsan <hencavarsan@gmail.com>"]
+edition = "2021"
 description = "HTTP logging library for KFtray"
-authors = [
-    "Henrique Cavarsan <hencavarsan@gmail.com>",
-]
-license = "MIT"
 homepage = "https://kftray.app"
 repository = "https://github.com/hcavarsan/kftray"
-edition = "2021"
+license = "MIT"
+
+[lib]
+name = "kftray_http_logs"
+path = "src/lib.rs"
 
 [dependencies]
 anyhow = { workspace = true }
+brotli = { workspace = true }
 bytes = { workspace = true }
 chrono = { workspace = true }
 dashmap = { workspace = true }
@@ -19,17 +22,12 @@ dirs = { workspace = true }
 flate2 = { workspace = true }
 httparse = { workspace = true }
 lazy_static = { workspace = true }
-serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
-brotli = { workspace = true }
 
 [dev-dependencies]
-tempfile = { workspace = true }
 mockall = { workspace = true }
+tempfile = { workspace = true }
 
-[lib]
-name = "kftray_http_logs"
-path = "src/lib.rs"

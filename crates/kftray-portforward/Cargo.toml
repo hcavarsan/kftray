@@ -1,66 +1,76 @@
 [package]
 name = "kftray-portforward"
 version = "0.19.0"
+authors = ["Henrique Cavarsan <hencavarsan@gmail.com>"]
+edition = "2021"
 description = "KFtray library with port forwarding logic"
-authors = [
-    "Henrique Cavarsan <hencavarsan@gmail.com>",
-]
-license = "MIT"
 homepage = "https://kftray.app"
 repository = "https://github.com/hcavarsan/kftray"
-edition = "2021"
-
-[dependencies]
-kftray-commons = { path = "../kftray-commons" }
-kftray-helper = { path = "../kftray-helper" }
-kftray-http-logs = { path = "../kftray-http-logs" }
-anyhow = { workspace = true }
-async-trait = { workspace = true }
-bytes = { workspace = true }
-dashmap = { workspace = true }
-flate2 = { workspace = true }
-futures = { workspace = true }
-httparse = { workspace = true }
-k8s-openapi = { workspace = true }
-kube = { workspace = true }
-kube-runtime = { workspace = true }
-lazy_static = { workspace = true }
-log = { workspace = true }
-rand = { workspace = true }
-serde = { workspace = true }
-serde_json = { workspace = true }
-tokio = { workspace = true }
-tokio-stream = { workspace = true }
-tracing = { workspace = true }
-uuid = { workspace = true }
-whoami = { workspace = true }
-hostsfile = { workspace = true }
-tower = { workspace = true }
-hyper-util = { workspace = true }
-dirs = { workspace = true }
-openssl = { workspace = true }
-openssl-sys = { workspace = true }
-hyper = { workspace = true }
-base64 = { workspace = true }
-hyper-openssl = { workspace = true }
-secrecy = { workspace = true }
-libc = { workspace = true }
-env_logger = { workspace = true }
-thiserror = { workspace = true }
-once_cell = { workspace = true }
-
-[features]
-default = []
-
-[dev-dependencies]
-tower-test = { workspace = true }
-http = { workspace = true }
-tracing-subscriber = { workspace = true }
-tempfile = { workspace = true }
+license = "MIT"
 
 [package.metadata.cargo-machete]
-ignored = ["base64", "hyper"]
+ignored = [
+  "base64",
+  "hyper",
+  "async-trait",
+  "bytes",
+  "dashmap",
+  "dirs",
+  "flate2",
+  "httparse",
+  "openssl-sys",
+  "uuid",
+]
 
 [lib]
 name = "kftray_portforward"
 path = "src/lib.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+base64 = { workspace = true }
+bytes = { workspace = true }
+dashmap = { workspace = true }
+dirs = { workspace = true }
+env_logger = { workspace = true }
+flate2 = { workspace = true }
+futures = { workspace = true }
+hostsfile = { workspace = true }
+httparse = { workspace = true }
+hyper = { workspace = true }
+hyper-openssl = { workspace = true }
+hyper-util = { workspace = true }
+k8s-openapi = { workspace = true }
+kftray-commons = { path = "../kftray-commons" }
+kftray-helper = { path = "../kftray-helper" }
+kftray-http-logs = { path = "../kftray-http-logs" }
+kube = { workspace = true }
+kube-runtime = { workspace = true }
+lazy_static = { workspace = true }
+libc = { workspace = true }
+log = { workspace = true }
+once_cell = { workspace = true }
+openssl = { workspace = true }
+openssl-sys = { workspace = true }
+rand = { workspace = true }
+secrecy = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+tower = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+whoami = { workspace = true }
+
+[dev-dependencies]
+http = { workspace = true }
+tempfile = { workspace = true }
+tower-test = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[features]
+default = []
+
