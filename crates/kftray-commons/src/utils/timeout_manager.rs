@@ -66,6 +66,7 @@ mod tests {
         Ordering,
     };
 
+    use sqlx::SqlitePool;
     use tokio::time::{
         sleep,
         Duration,
@@ -74,7 +75,6 @@ mod tests {
     use super::*;
     use crate::utils::db::create_db_table;
     use crate::utils::settings::set_disconnect_timeout;
-    use sqlx::SqlitePool;
 
     async fn setup_test_db() -> SqlitePool {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
