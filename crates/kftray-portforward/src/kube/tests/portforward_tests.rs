@@ -153,7 +153,7 @@ fn create_mock_service(name: &str, namespace: &str) -> Service {
 fn setup_test_config() -> Config {
     Config {
         id: Some(1),
-        context: "test-context".to_string(),
+        context: Some("test-context".to_string()),
         kubeconfig: None,
         namespace: "test-namespace".to_string(),
         service: Some("test-service".to_string()),
@@ -429,7 +429,7 @@ async fn test_start_port_forward_mock_components() -> Result<()> {
         local_address: test_config.local_address.clone(),
         pod_api: Api::namespaced(client.clone(), &test_config.namespace.clone()),
         svc_api: Api::namespaced(client.clone(), &test_config.namespace.clone()),
-        context_name: Some(test_config.context.clone()),
+        context_name: test_config.context.clone(),
         config_id: test_config.id.unwrap_or_default(),
         workload_type: test_config.workload_type.clone().unwrap_or_default(),
         connection: Arc::new(tokio::sync::Mutex::new(None)),
@@ -540,7 +540,7 @@ async fn test_start_port_forward_mock_components_udp() -> Result<()> {
         local_address: test_config.local_address.clone(),
         pod_api: Api::namespaced(client.clone(), &test_config.namespace.clone()),
         svc_api: Api::namespaced(client.clone(), &test_config.namespace.clone()),
-        context_name: Some(test_config.context.clone()),
+        context_name: test_config.context.clone(),
         config_id: test_config.id.unwrap_or_default(),
         workload_type: test_config.workload_type.clone().unwrap_or_default(),
         connection: Arc::new(tokio::sync::Mutex::new(None)),

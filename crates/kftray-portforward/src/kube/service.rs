@@ -122,7 +122,7 @@ fn parse_configs(
 
             Some(Config {
                 id: None,
-                context: context.to_string(),
+                context: Some(context.to_string()),
                 kubeconfig: kubeconfig.clone(),
                 namespace: namespace.to_string(),
                 service: Some(service_name.to_string()),
@@ -149,7 +149,7 @@ fn create_default_configs(
         .iter()
         .map(|(_port_name, &port)| Config {
             id: None,
-            context: context.to_string(),
+            context: Some(context.to_string()),
             kubeconfig: kubeconfig.clone(),
             namespace: namespace.to_string(),
             service: Some(service_name.to_string()),
@@ -191,7 +191,7 @@ mod tests {
         assert_eq!(configs.len(), 3);
 
         let web_config = &configs[0];
-        assert_eq!(web_config.context, "test-context");
+        assert_eq!(web_config.context, Some("test-context".to_string()));
         assert_eq!(web_config.namespace, "test-namespace");
         assert_eq!(web_config.service, Some("test-service".to_string()));
         assert_eq!(web_config.alias, Some("web".to_string()));
@@ -270,7 +270,7 @@ mod tests {
             .iter()
             .find(|c| c.remote_port == Some(8080))
             .unwrap();
-        assert_eq!(http_config.context, "test-context");
+        assert_eq!(http_config.context, Some("test-context".to_string()));
         assert_eq!(http_config.namespace, "test-namespace");
         assert_eq!(http_config.service, Some("test-service".to_string()));
         assert_eq!(http_config.alias, Some("test-service".to_string()));

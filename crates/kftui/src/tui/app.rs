@@ -148,7 +148,7 @@ mod tests {
                 namespace: "ns1".to_string(),
                 local_port: Some(8080),
                 remote_port: Some(80),
-                context: "ctx1".to_string(),
+                context: Some("ctx1".to_string()),
                 protocol: "tcp".to_string(),
                 ..Default::default()
             },
@@ -158,7 +158,7 @@ mod tests {
                 namespace: "ns2".to_string(),
                 local_port: Some(9090),
                 remote_port: Some(90),
-                context: "ctx2".to_string(),
+                context: Some("ctx2".to_string()),
                 protocol: "tcp".to_string(),
                 ..Default::default()
             },

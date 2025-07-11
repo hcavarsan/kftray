@@ -321,7 +321,7 @@ pub async fn start_port_forward(
             target,
             config.local_port,
             local_address_clone,
-            context_name,
+            context_name.clone().flatten(),
             kubeconfig.flatten(),
             config.id.unwrap_or_default(),
             config.workload_type.clone().unwrap_or_default(),
@@ -405,7 +405,7 @@ pub async fn start_port_forward(
                             namespace: namespace.clone(),
                             local_port: actual_local_port,
                             remote_port: config.remote_port.unwrap_or_default(),
-                            context: config.context.clone(),
+                            context: config.context.clone().unwrap_or_default(),
                             protocol: config.protocol.clone(),
                             stdout: format!(
                                 "{} forwarding from 127.0.0.1:{} -> {:?}:{}",
@@ -476,7 +476,7 @@ mod tests {
     fn setup_test_config() -> Config {
         Config {
             id: Some(1),
-            context: "test-context".to_string(),
+            context: Some("test-context".to_string()),
             kubeconfig: None,
             namespace: "test-namespace".to_string(),
             service: Some("test-service".to_string()),
