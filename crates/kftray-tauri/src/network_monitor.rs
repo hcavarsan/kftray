@@ -11,6 +11,7 @@ use log::{
     info,
     warn,
 };
+use tokio::sync::Mutex;
 use tokio::time::{
     sleep,
     timeout,
@@ -24,10 +25,55 @@ const SLEEP_DOWN: Duration = Duration::from_millis(100);
 
 const NETWORK_ENDPOINTS: &[&str] = &["8.8.8.8:53", "1.1.1.1:53", "8.8.4.4:53"];
 
+static TASK_STATE: tokio::sync::OnceCell<Arc<Mutex<TaskState>>> =
+    tokio::sync::OnceCell::const_new();
+
+#[derive(Default)]
+struct TaskState {
+    reconnect_in_progress: bool,
+    health_check_in_progress: bool,
+    last_reconnect: Option<Instant>,
+    last_health_check: Option<Instant>,
+}
+
+impl TaskState {
+    fn should_reconnect(&self) -> bool {
+        !self.reconnect_in_progress
+            && self
+                .last_reconnect
+                .is_none_or(|last| last.elapsed() > Duration::from_secs(1))
+    }
+
+    fn should_health_check(&self) -> bool {
+        !self.health_check_in_progress
+            && self
+                .last_health_check
+                .is_none_or(|last| last.elapsed() > Duration::from_secs(2))
+    }
+
+    fn start_reconnect(&mut self) {
+        self.reconnect_in_progress = true;
+        self.last_reconnect = Some(Instant::now());
+    }
+
+    fn finish_reconnect(&mut self) {
+        self.reconnect_in_progress = false;
+    }
+
+    fn start_health_check(&mut self) {
+        self.health_check_in_progress = true;
+        self.last_health_check = Some(Instant::now());
+    }
+
+    fn finish_health_check(&mut self) {
+        self.health_check_in_progress = false;
+    }
+}
+
 pub async fn start_network_monitor() {
     info!("Starting network monitor");
 
-    tokio::spawn(background_monitor());
+    let _background_handle = tokio::spawn(background_monitor());
 
     let mut network_up = check_network().await;
     let mut failure_count = 0;
@@ -238,9 +284,6 @@ async fn validate_port_forwards_fast(configs: &[Config]) -> Vec<Config> {
 async fn handle_reconnect() {
     info!("Handling network reconnection");
 
-    CANCEL_NOTIFIER.notify_waiters();
-    sleep(SLEEP_UP).await;
-
     let active_configs = match get_active_configs().await {
         Ok(configs) => configs,
         Err(e) => {
@@ -250,8 +293,12 @@ async fn handle_reconnect() {
     };
 
     if active_configs.is_empty() {
+        info!("No active configs to restart");
         return;
     }
+
+    CANCEL_NOTIFIER.notify_waiters();
+    sleep(SLEEP_UP).await;
 
     info!("Restarting {} port forwards", active_configs.len());
 
@@ -391,7 +438,9 @@ async fn background_monitor() {
         let current_network_info = get_network_info().await;
         if current_network_info != last_network_info {
             info!("Network interface change detected");
-            tokio::spawn(handle_reconnect());
+            if should_start_reconnect().await {
+                tokio::spawn(handle_reconnect_with_state());
+            }
             last_network_info = current_network_info;
         }
 
@@ -400,13 +449,17 @@ async fn background_monitor() {
             info!("Network state change detected: {last_network_state} -> {current_network_state}");
             if current_network_state {
                 info!("Network recovered");
-                tokio::spawn(handle_reconnect());
+                if should_start_reconnect().await {
+                    tokio::spawn(handle_reconnect_with_state());
+                }
             }
             last_network_state = current_network_state;
         }
 
         if last_check.elapsed() > HEALTH_INTERVAL {
-            tokio::spawn(check_health());
+            if should_start_health_check().await {
+                tokio::spawn(check_health_with_state());
+            }
             last_check = Instant::now();
         }
     }
@@ -460,11 +513,7 @@ async fn restart_failed_configs(configs: Vec<Config>) {
             .collect();
 
         if !protocol_configs.is_empty() {
-            tokio::spawn(restart_batch(
-                protocol_configs,
-                protocol,
-                http_log_state.clone(),
-            ));
+            restart_batch(protocol_configs, protocol, http_log_state.clone()).await;
         }
     }
 }
@@ -574,5 +623,54 @@ mod tests {
 
         let failed_configs = validate_port_forwards(&[config]).await;
         assert_eq!(failed_configs.len(), 1);
+    }
+}
+
+async fn get_task_state() -> Arc<Mutex<TaskState>> {
+    TASK_STATE
+        .get_or_init(|| async { Arc::new(Mutex::new(TaskState::default())) })
+        .await
+        .clone()
+}
+
+async fn should_start_reconnect() -> bool {
+    let state = get_task_state().await;
+    let guard = state.lock().await;
+    guard.should_reconnect()
+}
+
+async fn should_start_health_check() -> bool {
+    let state = get_task_state().await;
+    let guard = state.lock().await;
+    guard.should_health_check()
+}
+
+async fn handle_reconnect_with_state() {
+    let state = get_task_state().await;
+    {
+        let mut guard = state.lock().await;
+        guard.start_reconnect();
+    }
+
+    handle_reconnect().await;
+
+    {
+        let mut guard = state.lock().await;
+        guard.finish_reconnect();
+    }
+}
+
+async fn check_health_with_state() {
+    let state = get_task_state().await;
+    {
+        let mut guard = state.lock().await;
+        guard.start_health_check();
+    }
+
+    check_health().await;
+
+    {
+        let mut guard = state.lock().await;
+        guard.finish_health_check();
     }
 }
