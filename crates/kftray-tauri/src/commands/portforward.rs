@@ -206,7 +206,7 @@ mod tests {
                 namespace: "test-namespace".to_string(),
                 local_port: Some(8080),
                 remote_port: Some(80),
-                context: "test-context".to_string(),
+                context: Some("test-context".to_string()),
                 protocol: "tcp".to_string(),
                 ..Default::default()
             },
@@ -216,7 +216,7 @@ mod tests {
                 namespace: "test-namespace".to_string(),
                 local_port: Some(9090),
                 remote_port: Some(9000),
-                context: "test-context".to_string(),
+                context: Some("test-context".to_string()),
                 protocol: "udp".to_string(),
                 ..Default::default()
             },

@@ -43,7 +43,7 @@ pub async fn deploy_and_forward_pod(
     let mut responses: Vec<CustomResponse> = Vec::new();
 
     for mut config in configs.into_iter() {
-        let context_name = Some(config.context.as_str());
+        let context_name = config.context.as_deref();
         let kubeconfig_clone = config.kubeconfig.clone();
         let (client, _, _) = create_client_with_specific_context(kubeconfig_clone, context_name)
             .await
@@ -184,9 +184,9 @@ pub async fn stop_proxy_forward(
     let kubeconfig = config
         .kubeconfig
         .ok_or_else(|| "Kubeconfig not found".to_string())?;
-    let context_name = &config.context;
+    let context_name = config.context.as_deref();
 
-    let (client, _, _) = create_client_with_specific_context(Some(kubeconfig), Some(context_name))
+    let (client, _, _) = create_client_with_specific_context(Some(kubeconfig), context_name)
         .await
         .map_err(|e| {
             error!("Failed to create Kubernetes client: {e}");
@@ -378,7 +378,7 @@ mod tests {
     async fn test_deploy_and_forward_pod_invalid_kubeconfig() {
         let config = Config {
             id: Some(1),
-            context: "invalid-context".to_string(),
+            context: Some("invalid-context".to_string()),
             kubeconfig: Some("invalid-kubeconfig".to_string()),
             namespace: "default".to_string(),
             service: Some("test-service".to_string()),

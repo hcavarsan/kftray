@@ -47,7 +47,7 @@ fn create_test_config() -> Config {
         namespace: "default".to_string(),
         local_port: Some(8080),
         remote_port: Some(80),
-        context: "test-context".to_string(),
+        context: Some("test-context".to_string()),
         workload_type: Some("service".to_string()),
         protocol: "tcp".to_string(),
         remote_address: Some("remote-address".to_string()),

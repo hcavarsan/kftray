@@ -82,7 +82,7 @@ pub fn draw_configs_table(
                         .local_port
                         .map_or_else(|| "".to_string(), |port| port.to_string()),
                 ),
-                Cell::from(config.context.clone()),
+                Cell::from(config.context.clone().unwrap_or_default()),
             ])
             .style(row_style)
         })
@@ -169,7 +169,7 @@ pub fn render_details(
     let details = vec![
         Line::from(vec![
             Span::styled("Context: ", Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw(&config.context),
+            Span::raw(config.context.as_deref().unwrap_or_default()),
         ]),
         Line::from(vec![
             Span::styled("Alias: ", Style::default().add_modifier(Modifier::BOLD)),
@@ -218,10 +218,6 @@ pub fn render_details(
                     .remote_port
                     .map_or_else(|| "".to_string(), |port| port.to_string()),
             ),
-        ]),
-        Line::from(vec![
-            Span::styled("Context: ", Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw(&config.context),
         ]),
         Line::from(vec![
             Span::styled(

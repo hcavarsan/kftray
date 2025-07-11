@@ -258,10 +258,6 @@ pub async fn export_configs() -> Result<String, String> {
 }
 
 fn validate_imported_config(config: &Config) -> Result<(), String> {
-    if config.context.is_empty() {
-        return Err("Context is required and cannot be empty".to_string());
-    }
-
     if config.namespace.is_empty() {
         return Err("Namespace is required and cannot be empty".to_string());
     }

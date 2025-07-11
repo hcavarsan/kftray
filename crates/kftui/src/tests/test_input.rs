@@ -38,7 +38,7 @@ mod tests {
                 namespace: "default".to_string(),
                 local_port: Some(8080 + (i as u16)),
                 remote_port: Some(80),
-                context: format!("test-context-{i}"),
+                context: Some(format!("test-context-{i}")),
                 workload_type: Some("service".to_string()),
                 protocol: "tcp".to_string(),
                 remote_address: Some(format!("remote-{i}")),

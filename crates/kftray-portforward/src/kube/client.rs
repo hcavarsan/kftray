@@ -171,10 +171,16 @@ async fn create_config_with_context(kubeconfig: &Kubeconfig, context_name: &str)
         }
     }
 
+    let context_to_use = if context_name == "current-context" {
+        kubeconfig.current_context.clone()
+    } else {
+        Some(context_name.to_owned())
+    };
+
     Config::from_custom_kubeconfig(
         kubeconfig,
         &KubeConfigOptions {
-            context: Some(context_name.to_owned()),
+            context: context_to_use,
             ..Default::default()
         },
     )

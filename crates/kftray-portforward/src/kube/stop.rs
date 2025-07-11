@@ -259,7 +259,7 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
             async move {
                 match create_client_with_specific_context(
                     Some(kubeconfig.clone()),
-                    Some(&config.context),
+                    config.context.as_deref(),
                 )
                 .await
                 {
@@ -516,7 +516,7 @@ mod tests {
     fn create_test_config() -> Config {
         Config {
             id: Some(1),
-            context: "test-context".to_string(),
+            context: Some("test-context".to_string()),
             kubeconfig: Some("test-kubeconfig".to_string()),
             namespace: "test-namespace".to_string(),
             service: Some("test-service".to_string()),
