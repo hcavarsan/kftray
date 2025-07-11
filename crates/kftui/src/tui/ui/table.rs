@@ -220,10 +220,6 @@ pub fn render_details(
             ),
         ]),
         Line::from(vec![
-            Span::styled("Context: ", Style::default().add_modifier(Modifier::BOLD)),
-            Span::raw(config.context.as_deref().unwrap_or_default()),
-        ]),
-        Line::from(vec![
             Span::styled(
                 "Workload Type: ",
                 Style::default().add_modifier(Modifier::BOLD),
