@@ -32,7 +32,7 @@ use crate::tui::ui::{
 };
 
 pub fn render_legend(f: &mut Frame, area: Rect, active_component: ActiveComponent) {
-    let common_legend = "ctrlc: quit | h: help";
+    let common_legend = "ctrlc: quit | h: help | s: settings";
 
     let menu_legend = "←/→: navigate | enter: open | tab: switch to configs tab";
 

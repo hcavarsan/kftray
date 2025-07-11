@@ -13,7 +13,10 @@ use kftray_commons::{
         config_state_model::ConfigState,
         response::CustomResponse,
     },
-    utils::config_state::update_config_state,
+    utils::{
+        config_state::update_config_state,
+        timeout_manager::cancel_timeout_for_forward,
+    },
 };
 use kube::api::{
     Api,
@@ -118,6 +121,14 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
         }
         processes.drain().collect()
     };
+
+    for composite_key in handle_map.keys() {
+        if let Some((config_id_str, _)) = composite_key.split_once('_') {
+            if let Ok(config_id) = config_id_str.parse::<i64>() {
+                cancel_timeout_for_forward(config_id).await;
+            }
+        }
+    }
 
     let running_configs_state = match get_configs_state().await {
         Ok(states) => states
@@ -408,6 +419,9 @@ pub async fn stop_port_forward(config_id: String) -> Result<CustomResponse, Stri
             debug!("Join handle: {join_handle:?}");
             join_handle.abort();
         }
+
+        let config_id_parsed = config_id.parse::<i64>().unwrap_or_default();
+        cancel_timeout_for_forward(config_id_parsed).await;
 
         let (config_id_str, service_name) = composite_key.split_once('_').unwrap_or(("", ""));
         let config_id_parsed = config_id_str.parse::<i64>().unwrap_or_default();

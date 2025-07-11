@@ -35,6 +35,7 @@ use crate::tui::input::{
 use crate::tui::ui::render_context_selection_popup;
 use crate::tui::ui::render_delete_confirmation_popup;
 use crate::tui::ui::render_details;
+use crate::tui::ui::render_settings_popup;
 use crate::tui::ui::MAUVE;
 use crate::tui::ui::{
     centered_rect,
@@ -184,6 +185,11 @@ pub fn draw_ui(f: &mut Frame, app: &mut App, config_states: &[ConfigState]) {
             render_background_overlay(f, size);
             render_context_selection_popup(f, app, context_selection_area);
         }
+        AppState::ShowSettings => {
+            let settings_area = centered_rect(60, 40, size);
+            render_background_overlay(f, size);
+            render_settings_popup(f, app, settings_area);
+        }
         _ => {}
     }
 }
@@ -232,7 +238,15 @@ pub fn render_logs(f: &mut Frame, app: &mut App, area: Rect, has_focus: bool) {
     f.render_widget(logs_widget, area);
 }
 pub fn draw_header(f: &mut Frame, app: &App, area: Rect) {
-    let menu_titles = ["Help", "Auto Import", "Import", "Export", "About", "Quit"];
+    let menu_titles = [
+        "Help",
+        "Auto Import",
+        "Import",
+        "Export",
+        "Settings",
+        "About",
+        "Quit",
+    ];
     let menu: Vec<Line> = menu_titles
         .iter()
         .enumerate()

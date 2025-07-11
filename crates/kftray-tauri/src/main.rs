@@ -185,6 +185,10 @@ fn main() {
             commands::helper::remove_helper,
             commands::helper::allocate_local_address_cmd,
             commands::helper::release_local_address_cmd,
+            commands::settings::get_settings,
+            commands::settings::update_disconnect_timeout,
+            commands::settings::get_setting_value,
+            commands::settings::set_setting_value,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");
