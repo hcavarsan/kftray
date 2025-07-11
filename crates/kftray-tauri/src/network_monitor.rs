@@ -9,6 +9,7 @@ use kftray_portforward::port_forward::CANCEL_NOTIFIER;
 use log::{
     error,
     info,
+    warn,
 };
 use tokio::time::{
     sleep,
@@ -147,7 +148,20 @@ async fn is_port_listening(address: &str, port: u16) -> bool {
         Ok(addr) => addr,
         Err(_) => return false,
     };
-    TcpListener::bind(addr).is_err()
+
+    match TcpListener::bind(addr) {
+        Ok(listener) => {
+            drop(listener);
+            false
+        }
+        Err(err) => match err.kind() {
+            std::io::ErrorKind::AddrInUse => true,
+            other => {
+                warn!("port-check bind failed: {other}");
+                false
+            }
+        },
+    }
 }
 
 async fn validate_port_forwards(configs: &[Config]) -> Vec<Config> {
