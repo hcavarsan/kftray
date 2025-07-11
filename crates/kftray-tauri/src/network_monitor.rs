@@ -54,9 +54,11 @@ pub async fn start_network_monitor() {
         }
 
         if network_up && failure_count > 0 && last_fast.elapsed() > SLEEP_UP {
-            tokio::spawn(check_health_fast());
+            let failed_configs = check_health_fast().await;
             last_fast = Instant::now();
-            failure_count = failure_count.saturating_sub(1);
+            if failed_configs.is_empty() {
+                failure_count = failure_count.saturating_sub(1);
+            }
         }
 
         network_up = is_up;
@@ -340,14 +342,14 @@ async fn check_health() {
     }
 }
 
-async fn check_health_fast() {
+async fn check_health_fast() -> Vec<Config> {
     let active_configs = match get_active_configs().await {
         Ok(configs) => configs,
-        Err(_) => return,
+        Err(_) => return Vec::new(),
     };
 
     if active_configs.is_empty() {
-        return;
+        return Vec::new();
     }
 
     let failed_configs = validate_port_forwards_fast(&active_configs).await;
@@ -357,8 +359,10 @@ async fn check_health_fast() {
             "Fast check found {} failed port forwards",
             failed_configs.len()
         );
-        restart_failed_configs(failed_configs).await;
+        restart_failed_configs(failed_configs.clone()).await;
     }
+
+    failed_configs
 }
 
 async fn background_monitor() {
@@ -398,8 +402,7 @@ async fn get_network_info() -> String {
     let mut fingerprint = Vec::new();
 
     for endpoint in NETWORK_ENDPOINTS {
-        if let Ok(socket) =
-            std::net::TcpStream::connect_timeout(&endpoint.parse().unwrap(), SLEEP_DOWN)
+        if let Ok(Ok(socket)) = timeout(SLEEP_DOWN, tokio::net::TcpStream::connect(endpoint)).await
         {
             if let Ok(local_addr) = socket.local_addr() {
                 fingerprint.push(local_addr.ip().to_string());
@@ -410,7 +413,10 @@ async fn get_network_info() -> String {
 
     let mut route_count = 0;
     for test_ip in NETWORK_ENDPOINTS {
-        if std::net::TcpStream::connect_timeout(&test_ip.parse().unwrap(), SLEEP_DOWN).is_ok() {
+        if timeout(SLEEP_DOWN, tokio::net::TcpStream::connect(test_ip))
+            .await
+            .is_ok()
+        {
             route_count += 1;
         }
     }
