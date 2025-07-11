@@ -65,6 +65,7 @@ pub enum AppState {
     ShowAbout,
     ShowDeleteConfirmation,
     ShowContextSelection,
+    ShowSettings,
 }
 
 pub struct App {
@@ -96,6 +97,8 @@ pub struct App {
     pub selected_context_index: usize,
     pub context_list_state: ListState,
     pub logger_state: TuiWidgetState,
+    pub settings_timeout_input: String,
+    pub settings_editing: bool,
 }
 
 impl Default for App {
@@ -140,6 +143,8 @@ impl App {
             selected_context_index: 0,
             context_list_state: ListState::default(),
             logger_state,
+            settings_timeout_input: String::new(),
+            settings_editing: false,
         };
 
         if let Ok((_, height)) = size() {
@@ -297,6 +302,10 @@ pub async fn handle_input(app: &mut App, _config_states: &mut [ConfigState]) -> 
                 AppState::ShowContextSelection => {
                     log::debug!("Handling ShowContextSelection state");
                     handle_context_selection_input(app, key.code).await?;
+                }
+                AppState::ShowSettings => {
+                    log::debug!("Handling ShowSettings state");
+                    handle_settings_input(app, key.code).await?;
                 }
                 AppState::Normal => {
                     log::debug!("Handling Normal state");
@@ -463,7 +472,7 @@ pub async fn handle_menu_input(app: &mut App, key: KeyCode) -> io::Result<()> {
             }
         }
         KeyCode::Right => {
-            if app.selected_menu_item < 5 {
+            if app.selected_menu_item < 6 {
                 app.selected_menu_item += 1
             }
         }
@@ -478,8 +487,16 @@ pub async fn handle_menu_input(app: &mut App, key: KeyCode) -> io::Result<()> {
             1 => handle_auto_add_configs(app).await,
             2 => open_import_file_explorer(app),
             3 => open_export_file_explorer(app),
-            4 => app.state = AppState::ShowAbout,
-            5 => stop_all_port_forward_and_exit(app).await,
+            4 => {
+                app.state = AppState::ShowSettings;
+                if let Ok(timeout) = kftray_commons::utils::settings::get_disconnect_timeout().await
+                {
+                    app.settings_timeout_input = timeout.unwrap_or(0).to_string();
+                }
+                app.settings_editing = false;
+            }
+            5 => app.state = AppState::ShowAbout,
+            6 => stop_all_port_forward_and_exit(app).await,
             _ => {}
         },
         _ => {}
@@ -650,6 +667,14 @@ pub async fn handle_common_hotkeys(app: &mut App, key: KeyCode) -> io::Result<bo
             app.state = AppState::ShowHelp;
             Ok(true)
         }
+        KeyCode::Char('s') => {
+            app.state = AppState::ShowSettings;
+            if let Ok(timeout) = kftray_commons::utils::settings::get_disconnect_timeout().await {
+                app.settings_timeout_input = timeout.unwrap_or(0).to_string();
+            }
+            app.settings_editing = false;
+            Ok(true)
+        }
         _ => Ok(false),
     }
 }
@@ -802,6 +827,49 @@ pub async fn handle_context_selection_input(app: &mut App, key: KeyCode) -> io::
             app.context_list_state
                 .select(Some(app.selected_context_index));
         }
+    }
+    Ok(())
+}
+
+pub async fn handle_settings_input(app: &mut App, key: KeyCode) -> io::Result<()> {
+    match key {
+        KeyCode::Esc => {
+            app.state = AppState::Normal;
+            app.settings_editing = false;
+        }
+        KeyCode::Enter => {
+            if app.settings_editing {
+                if let Ok(timeout_value) = app.settings_timeout_input.parse::<u32>() {
+                    if (kftray_commons::utils::settings::set_disconnect_timeout(timeout_value)
+                        .await)
+                        .is_err()
+                    {
+                        app.error_message = Some("Failed to save timeout setting".to_string());
+                        app.state = AppState::ShowErrorPopup;
+                    } else {
+                        app.state = AppState::Normal;
+                        app.settings_editing = false;
+                    }
+                } else {
+                    app.error_message =
+                        Some("Invalid timeout value. Please enter a number.".to_string());
+                    app.state = AppState::ShowErrorPopup;
+                }
+            } else {
+                app.settings_editing = true;
+            }
+        }
+        KeyCode::Char(c) => {
+            if app.settings_editing && c.is_ascii_digit() {
+                app.settings_timeout_input.push(c);
+            }
+        }
+        KeyCode::Backspace => {
+            if app.settings_editing {
+                app.settings_timeout_input.pop();
+            }
+        }
+        _ => {}
     }
     Ok(())
 }

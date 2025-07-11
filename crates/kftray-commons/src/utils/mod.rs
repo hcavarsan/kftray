@@ -5,4 +5,6 @@ pub mod db;
 pub mod error;
 pub mod github;
 pub mod migration;
+pub mod settings;
+pub mod timeout_manager;
 pub mod validate_configs;

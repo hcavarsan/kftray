@@ -7,7 +7,10 @@ use kftray_commons::{
         hostfile::HostEntry,
         response::CustomResponse,
     },
-    utils::config_state::update_config_state,
+    utils::{
+        config_state::update_config_state,
+        timeout_manager::start_timeout_for_forward,
+    },
 };
 use kftray_http_logs::HttpLogState;
 use log::{
@@ -376,6 +379,24 @@ pub async fn start_port_forward(
                         };
                         if let Err(e) = update_config_state(&config_state).await {
                             error!("Failed to update config state: {e}");
+                        }
+
+                        let config_id = config.id.unwrap();
+                        let timeout_callback = Arc::new(move |id: i64| {
+                            tokio::spawn(async move {
+                                if let Err(e) =
+                                    crate::kube::stop::stop_port_forward(id.to_string()).await
+                                {
+                                    error!("Failed to stop port forward {id} on timeout: {e}");
+                                } else {
+                                    info!("Port forward {id} stopped due to timeout");
+                                }
+                            });
+                        });
+
+                        if let Err(e) = start_timeout_for_forward(config_id, timeout_callback).await
+                        {
+                            error!("Failed to start timeout for config {config_id}: {e}");
                         }
 
                         responses.push(CustomResponse {

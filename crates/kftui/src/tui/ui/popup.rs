@@ -399,3 +399,68 @@ pub fn render_context_selection_popup(f: &mut Frame, app: &mut App, area: Rect) 
 
     f.render_widget(explanation_paragraph, explanation_area);
 }
+
+pub fn render_settings_popup(f: &mut Frame, app: &App, area: Rect) {
+    let popup_block = create_common_popup_style("Settings", MAUVE);
+    f.render_widget(Clear, area);
+    f.render_widget(popup_block, area);
+
+    let inner_area = area.inner(ratatui::layout::Margin {
+        horizontal: 2,
+        vertical: 2,
+    });
+
+    let timeout_display =
+        if app.settings_timeout_input == "0" || app.settings_timeout_input.is_empty() {
+            "Auto-disconnect disabled"
+        } else {
+            "minutes"
+        };
+
+    let content = vec![
+        Line::from(vec![Span::styled(
+            "Global Port Forward Timeout",
+            Style::default().fg(YELLOW).add_modifier(Modifier::BOLD),
+        )]),
+        Line::from(""),
+        Line::from(vec![Span::styled(
+            "Automatically disconnect port forwards after the specified time.",
+            Style::default().fg(TEXT),
+        )]),
+        Line::from(vec![Span::styled(
+            "Set to 0 to disable auto-disconnect.",
+            Style::default().fg(TEXT),
+        )]),
+        Line::from(""),
+        Line::from(vec![
+            Span::styled("Timeout (minutes): ", Style::default().fg(LAVENDER)),
+            if app.settings_editing {
+                Span::styled(
+                    format!("{}_", app.settings_timeout_input),
+                    Style::default().fg(TEAL).add_modifier(Modifier::UNDERLINED),
+                )
+            } else {
+                Span::styled(
+                    &app.settings_timeout_input,
+                    Style::default().fg(TEAL).add_modifier(Modifier::BOLD),
+                )
+            },
+            Span::styled(format!(" {timeout_display}"), Style::default().fg(TEXT)),
+        ]),
+        Line::from(""),
+        Line::from(vec![if app.settings_editing {
+            Span::styled(
+                "Enter: Save | Backspace: Delete | Esc: Cancel",
+                Style::default().fg(PINK),
+            )
+        } else {
+            Span::styled("Enter: Edit | Esc: Close", Style::default().fg(PINK))
+        }]),
+    ];
+
+    let paragraph = Paragraph::new(content)
+        .style(Style::default().fg(TEXT))
+        .alignment(Alignment::Left);
+
+    f.render_widget(paragraph, inner_area);
+}

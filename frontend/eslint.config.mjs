@@ -89,6 +89,7 @@ export default [{
         curly: "error",
         quotes: ["error", "single"],
         "no-magic-numbers": "off",
+		"max-len": "off",
 
         "padding-line-between-statements": ["error", {
             blankLine: "always",
@@ -104,9 +105,6 @@ export default [{
         "array-callback-return": "error",
         "max-statements": ["error", 50],
 
-        "max-len": ["error", {
-            code: 120,
-        }],
 
         "max-lines-per-function": ["error", 1000],
         "max-params": ["error", 15],

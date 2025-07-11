@@ -134,6 +134,20 @@ pub async fn create_db_table(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         e
     })?;
 
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        )",
+    )
+    .execute(&mut *conn)
+    .await
+    .map_err(|e| {
+        error!("Failed to create settings table: {e}");
+        e
+    })?;
+
     info!("Database tables and triggers created successfully.");
     Ok(())
 }

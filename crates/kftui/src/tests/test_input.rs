@@ -372,6 +372,12 @@ mod tests {
         app.active_component = ActiveComponent::Menu;
         app.selected_menu_item = 4;
         handle_menu_input(&mut app, KeyCode::Enter).await.unwrap();
+        assert_eq!(app.state, AppState::ShowSettings);
+
+        app.state = AppState::Normal;
+        app.active_component = ActiveComponent::Menu;
+        app.selected_menu_item = 5;
+        handle_menu_input(&mut app, KeyCode::Enter).await.unwrap();
         assert_eq!(app.state, AppState::ShowAbout);
     }
 
