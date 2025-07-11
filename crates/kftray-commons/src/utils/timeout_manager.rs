@@ -72,9 +72,22 @@ mod tests {
     };
 
     use super::*;
+    use crate::utils::db::create_db_table;
+    use crate::utils::settings::set_disconnect_timeout;
+    use sqlx::SqlitePool;
+
+    async fn setup_test_db() -> SqlitePool {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        create_db_table(&pool).await.unwrap();
+        pool
+    }
 
     #[tokio::test]
     async fn test_timeout_functions() {
+        // Setup test database and set a timeout value
+        let _pool = setup_test_db().await;
+        set_disconnect_timeout(1).await.unwrap(); // Set 1 minute timeout
+
         let callback_called = Arc::new(AtomicBool::new(false));
         let callback_called_clone = callback_called.clone();
 
@@ -85,7 +98,16 @@ mod tests {
         let result = start_timeout_for_forward(1, callback).await;
         assert!(result.is_ok());
 
+        // Verify timeout was started
+        assert_eq!(get_active_timeout_count().await, 1);
+        assert_eq!(get_timeout_info_for_forward(1).await, Some(1));
+
+        // Cancel timeout
         cancel_timeout_for_forward(1).await;
+
+        // Verify timeout was cancelled
+        assert_eq!(get_active_timeout_count().await, 0);
+        assert_eq!(get_timeout_info_for_forward(1).await, None);
 
         sleep(Duration::from_millis(10)).await;
 
