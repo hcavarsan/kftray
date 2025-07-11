@@ -194,16 +194,6 @@ pub fn draw_ui(f: &mut Frame, app: &mut App, config_states: &[ConfigState]) {
     }
 }
 
-pub fn log_level_to_color(level: log::Level) -> Style {
-    match level {
-        log::Level::Error => Style::default().fg(Color::Red),
-        log::Level::Warn => Style::default().fg(Color::Yellow),
-        log::Level::Info => Style::default().fg(Color::Green),
-        log::Level::Debug => Style::default().fg(Color::Cyan),
-        log::Level::Trace => Style::default().fg(Color::Blue),
-    }
-}
-
 pub fn render_logs(f: &mut Frame, app: &mut App, area: Rect, has_focus: bool) {
     let focus_color = if has_focus { YELLOW } else { TEXT };
     let border_modifier = if has_focus {
@@ -212,11 +202,19 @@ pub fn render_logs(f: &mut Frame, app: &mut App, area: Rect, has_focus: bool) {
         Modifier::empty()
     };
 
+    // Create title with simplified navigation hints and streaming indicator
+    let streaming_indicator = "●";
+    let title = if has_focus {
+        format!("Logs {streaming_indicator} [PgUp/PgDn:navigate]")
+    } else {
+        format!("Logs {streaming_indicator}")
+    };
+
     let logs_widget = TuiLoggerWidget::default()
         .block(
             Block::default()
                 .borders(Borders::ALL)
-                .title(Span::styled("Logs", Style::default().fg(MAUVE)))
+                .title(Span::styled(&title, Style::default().fg(MAUVE)))
                 .border_style(
                     Style::default()
                         .fg(focus_color)
@@ -226,11 +224,16 @@ pub fn render_logs(f: &mut Frame, app: &mut App, area: Rect, has_focus: bool) {
         .style(Style::default().fg(TEXT).bg(BASE))
         .state(&app.logger_state)
         .output_separator('|')
-        .output_timestamp(Some(" %H:%M ".to_string()))
-        .output_level(Some(TuiLoggerLevelOutput::Long))
-        .style(Style::default().fg(Color::White))
-        .style_error(log_level_to_color(log::Level::Error))
-        .style_warn(log_level_to_color(log::Level::Warn));
+        .output_timestamp(Some("%H:%M:%S".to_string()))
+        .output_level(Some(TuiLoggerLevelOutput::Abbreviated))
+        .output_target(true)
+        .output_file(false)
+        .output_line(false)
+        .style_error(Style::default().fg(Color::Red))
+        .style_warn(Style::default().fg(Color::Yellow))
+        .style_info(Style::default().fg(Color::Cyan))
+        .style_debug(Style::default().fg(Color::Green))
+        .style_trace(Style::default().fg(Color::Magenta));
 
     f.render_widget(logs_widget, area);
 }

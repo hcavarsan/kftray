@@ -339,12 +339,17 @@ pub async fn handle_normal_input(app: &mut App, key: KeyCode) -> io::Result<()> 
                 _ => app.active_table,
             };
         }
-        KeyCode::PageUp => {
-            scroll_page_up(app);
-        }
-        KeyCode::PageDown => {
-            scroll_page_down(app);
-        }
+        KeyCode::PageUp | KeyCode::PageDown => match app.active_component {
+            ActiveComponent::Logs => handle_logs_input(app, key).await?,
+            ActiveComponent::Details => handle_details_input(app, key).await?,
+            _ => {
+                if key == KeyCode::PageUp {
+                    scroll_page_up(app);
+                } else {
+                    scroll_page_down(app);
+                }
+            }
+        },
         _ => match app.active_component {
             ActiveComponent::Menu => handle_menu_input(app, key).await?,
             ActiveComponent::StoppedTable => handle_stopped_table_input(app, key).await?,
@@ -634,16 +639,8 @@ pub async fn handle_logs_input(app: &mut App, key: KeyCode) -> io::Result<()> {
             clear_selection(app);
             select_first_row(app);
         }
-        // Pass key events to the logger state
         KeyCode::PageUp => app.logger_state.transition(TuiWidgetEvent::PrevPageKey),
         KeyCode::PageDown => app.logger_state.transition(TuiWidgetEvent::NextPageKey),
-        KeyCode::Down => app.logger_state.transition(TuiWidgetEvent::DownKey),
-        KeyCode::Char('+') => app.logger_state.transition(TuiWidgetEvent::PlusKey),
-        KeyCode::Char('-') => app.logger_state.transition(TuiWidgetEvent::MinusKey),
-        KeyCode::Char(' ') => app.logger_state.transition(TuiWidgetEvent::SpaceKey),
-        KeyCode::Esc => app.logger_state.transition(TuiWidgetEvent::EscapeKey),
-        KeyCode::Char('h') => app.logger_state.transition(TuiWidgetEvent::HideKey),
-        KeyCode::Char('f') => app.logger_state.transition(TuiWidgetEvent::FocusKey),
         _ => {}
     }
     Ok(())
