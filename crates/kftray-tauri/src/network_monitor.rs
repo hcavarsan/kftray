@@ -27,7 +27,7 @@ const NETWORK_ENDPOINTS: &[&str] = &["8.8.8.8:53", "1.1.1.1:53", "8.8.4.4:53"];
 pub async fn start_network_monitor() {
     info!("Starting network monitor");
 
-    tokio::spawn(background_monitor());
+    let _background_handle = tokio::spawn(background_monitor());
 
     let mut network_up = check_network().await;
     let mut failure_count = 0;
