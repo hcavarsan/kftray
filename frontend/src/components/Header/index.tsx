@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { GripVertical, Search } from 'lucide-react'
+import { GripVertical, Search, Settings } from 'lucide-react'
 import { MdClose } from 'react-icons/md'
 import { TiPin, TiPinOutline } from 'react-icons/ti'
 
@@ -10,6 +10,7 @@ import { invoke } from '@tauri-apps/api/tauri'
 import { appWindow } from '@tauri-apps/api/window'
 
 import logo from '@/assets/logo.webp'
+import SettingsModal from '@/components/SettingsModal'
 import { Button } from '@/components/ui/button'
 import { Tooltip } from '@/components/ui/tooltip'
 import { HeaderProps } from '@/types'
@@ -18,6 +19,7 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
   const [version, setVersion] = useState('')
   const [tooltipOpen, setTooltipOpen] = useState(false)
   const [isPinned, setIsPinned] = useState(false)
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const dragHandleRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
@@ -172,7 +174,28 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
       </Box>
 
       {/* Right Section - Window Controls */}
-      <Box display='flex' alignItems='center' gap={1}>
+      <Box display='flex' alignItems='center' gap={1} ml={4}>
+        <Tooltip content='Settings'>
+          <Button
+            variant='ghost'
+            size='sm'
+            onClick={() => setIsSettingsOpen(true)}
+            height='28px'
+            width='28px'
+            minWidth='28px'
+            p={0}
+            _hover={{ bg: 'whiteAlpha.100' }}
+            _active={{ bg: 'whiteAlpha.200' }}
+          >
+            <Box
+              as={Settings}
+              width='16px'
+              height='16px'
+              color='whiteAlpha.700'
+            />
+          </Button>
+        </Tooltip>
+
         <Tooltip content={isPinned ? 'Unpin Window' : 'Pin Window'}>
           <Button
             variant='ghost'
@@ -215,6 +238,12 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
           </Button>
         </Tooltip>
       </Box>
+
+      {/* Settings Modal */}
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+      />
     </Box>
   )
 }
