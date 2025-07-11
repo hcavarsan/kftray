@@ -66,26 +66,36 @@ mod tests {
         Ordering,
     };
 
+    use lazy_static::lazy_static;
     use sqlx::SqlitePool;
+    use tokio::sync::Mutex;
     use tokio::time::{
         sleep,
         Duration,
     };
 
     use super::*;
-    use crate::utils::db::create_db_table;
+    use crate::utils::db::{
+        create_db_table,
+        DB_POOL,
+    };
     use crate::utils::settings::set_disconnect_timeout;
 
-    async fn setup_test_db() -> SqlitePool {
+    lazy_static! {
+        static ref TEST_MUTEX: Mutex<()> = Mutex::new(());
+    }
+
+    async fn setup_test_db() {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
         create_db_table(&pool).await.unwrap();
-        pool
+        let arc_pool = Arc::new(pool);
+        let _ = DB_POOL.set(arc_pool);
     }
 
     #[tokio::test]
     async fn test_timeout_functions() {
-        // Setup test database and set a timeout value
-        let _pool = setup_test_db().await;
+        let _guard = TEST_MUTEX.lock().await;
+        setup_test_db().await;
         set_disconnect_timeout(1).await.unwrap(); // Set 1 minute timeout
 
         let callback_called = Arc::new(AtomicBool::new(false));
