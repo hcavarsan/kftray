@@ -179,12 +179,12 @@ jobs:
         run: rustup component add llvm-tools
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@2383334cf567d78771fc7d89b6b3802ef1412cf6
+        uses: taiki-e/install-action@2f113aaa4bf0565902630251d5a4e22260057cf1
         with:
           tool: cargo-llvm-cov
 
       - name: Install nextest
-        uses: taiki-e/install-action@2383334cf567d78771fc7d89b6b3802ef1412cf6
+        uses: taiki-e/install-action@2f113aaa4bf0565902630251d5a4e22260057cf1
         with:
           tool: cargo-nextest
 
