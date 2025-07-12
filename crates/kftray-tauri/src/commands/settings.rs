@@ -98,7 +98,7 @@ pub async fn update_network_monitor(enabled: bool) -> Result<(), String> {
 
     // Control network monitor at runtime
     if enabled {
-        if let Err(e) = kftray_network_monitor::start().await {
+        if let Err(e) = kftray_network_monitor::restart().await {
             error!("Failed to start network monitor: {e}");
             return Err(format!("Failed to start network monitor: {e}"));
         }
