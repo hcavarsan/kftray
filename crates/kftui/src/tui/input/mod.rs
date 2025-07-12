@@ -901,7 +901,7 @@ pub async fn handle_settings_input(app: &mut App, key: KeyCode) -> io::Result<()
                     } else {
                         // Control network monitor at runtime
                         if app.settings_network_monitor {
-                            if let Err(e) = kftray_network_monitor::start().await {
+                            if let Err(e) = kftray_network_monitor::restart().await {
                                 app.error_message =
                                     Some(format!("Failed to start network monitor: {e}"));
                                 app.state = AppState::ShowErrorPopup;
