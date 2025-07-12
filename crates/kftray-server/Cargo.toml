@@ -9,11 +9,11 @@ repository = "https://github.com/hcavarsan/kftray"
 license = "MIT"
 
 [dependencies]
-async-trait = { workspace = true }
-env_logger = { workspace = true }
-log = { workspace = true }
-tokio = { workspace = true }
-url = { workspace = true }
+async-trait = "0.1.88"
+env_logger = "0.11.8"
+log = "0.4.27"
+tokio = "1.46.1"
+url = "2.5.4"
 
 [dev-dependencies]
-lazy_static = { workspace = true }
+lazy_static = "1.5.0"
