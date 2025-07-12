@@ -44,6 +44,15 @@ pub async fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
 
     let mut app = App::new();
 
+    // Start network monitor if enabled
+    if let Ok(enabled) = kftray_commons::utils::settings::get_network_monitor().await {
+        if enabled {
+            if let Err(e) = kftray_network_monitor::start().await {
+                error!("Failed to start network monitor: {e}");
+            }
+        }
+    }
+
     let res = run_app(&mut terminal, &mut app).await;
 
     disable_raw_mode()?;

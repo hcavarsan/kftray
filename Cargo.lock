@@ -3032,6 +3032,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "kftray-network-monitor"
+version = "0.19.0"
+dependencies = [
+ "kftray-commons",
+ "kftray-http-logs",
+ "kftray-portforward",
+ "log",
+ "tokio",
+]
+
+[[package]]
 name = "kftray-portforward"
 version = "0.19.0"
 dependencies = [
@@ -3104,6 +3115,7 @@ dependencies = [
  "kftray-commons",
  "kftray-helper",
  "kftray-http-logs",
+ "kftray-network-monitor",
  "kftray-portforward",
  "kube",
  "lazy_static",
@@ -3133,6 +3145,7 @@ dependencies = [
  "insta",
  "kftray-commons",
  "kftray-http-logs",
+ "kftray-network-monitor",
  "kftray-portforward",
  "log",
  "ratatui",

@@ -16,7 +16,6 @@ use log::{
 mod commands;
 mod init_check;
 mod logging;
-mod network_monitor;
 mod tray;
 mod window;
 use std::sync::atomic::AtomicBool;
@@ -33,7 +32,6 @@ use tokio::runtime::Runtime;
 
 use crate::commands::portforward::check_and_emit_changes;
 use crate::init_check::RealPortOperations;
-use crate::network_monitor::start_network_monitor;
 use crate::tray::{
     create_tray_menu,
     handle_run_event,
@@ -114,7 +112,13 @@ fn main() {
             });
 
             tauri::async_runtime::spawn(async move {
-                start_network_monitor().await;
+                if let Ok(enabled) = kftray_commons::utils::settings::get_network_monitor().await {
+                    if enabled {
+                        if let Err(e) = kftray_network_monitor::start().await {
+                            error!("Failed to start network monitor: {e}");
+                        }
+                    }
+                }
             });
 
             #[cfg(target_os = "macos")]
@@ -187,6 +191,7 @@ fn main() {
             commands::helper::release_local_address_cmd,
             commands::settings::get_settings,
             commands::settings::update_disconnect_timeout,
+            commands::settings::update_network_monitor,
             commands::settings::get_setting_value,
             commands::settings::set_setting_value,
         ])

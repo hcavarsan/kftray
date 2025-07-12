@@ -26,6 +26,7 @@ keyring = { workspace = true }
 kftray-commons = { path = "../kftray-commons" }
 kftray-helper = { path = "../kftray-helper" }
 kftray-http-logs = { path = "../kftray-http-logs" }
+kftray-network-monitor = { path = "../kftray-network-monitor" }
 kftray-portforward = { path = "../kftray-portforward" }
 kube = { workspace = true }
 lazy_static = { workspace = true }

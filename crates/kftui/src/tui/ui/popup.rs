@@ -427,66 +427,146 @@ pub fn render_context_selection_popup(f: &mut Frame, app: &mut App, area: Rect) 
 }
 
 pub fn render_settings_popup(f: &mut Frame, app: &App, area: Rect) {
-    let popup_block = create_common_popup_style("Settings", MAUVE);
-    f.render_widget(Clear, area);
-    f.render_widget(popup_block, area);
+    // Use responsive sizing like error popup
+    let (width_percent, height_percent) = if area.width < 80 {
+        (95, 85)
+    } else if area.width < 120 {
+        (85, 75)
+    } else {
+        (70, 65)
+    };
 
-    let inner_area = area.inner(ratatui::layout::Margin {
-        horizontal: 2,
-        vertical: 2,
-    });
+    let popup_area = centered_rect(width_percent, height_percent, area);
+    let content_width = popup_area.width.saturating_sub(4) as usize; // Account for borders
 
+    let mut lines = Vec::new();
+
+    // Add some top padding
+    lines.push("".into());
+
+    // Timeout Setting Section
+    let timeout_indicator = if app.settings_selected_option == 0 {
+        "▶ "
+    } else {
+        "  "
+    };
+    let timeout_style = if app.settings_selected_option == 0 {
+        Style::default().fg(YELLOW).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(LAVENDER)
+    };
+
+    lines.push(Line::from(vec![
+        Span::raw(timeout_indicator),
+        Span::styled("Global Port Forward Timeout", timeout_style),
+    ]));
+
+    // Wrap timeout description text
+    let timeout_desc =
+        "Automatically disconnect port forwards after the specified time. Set to 0 to disable.";
+    let timeout_wrapped = wrap_text_simple(timeout_desc, content_width.saturating_sub(6));
+    for line in timeout_wrapped {
+        lines.push(Line::from(vec![Span::raw(format!("    {line}")).fg(TEXT)]));
+    }
+
+    // Timeout value display
     let timeout_display =
         if app.settings_timeout_input == "0" || app.settings_timeout_input.is_empty() {
-            "Auto-disconnect disabled"
+            "disabled"
         } else {
             "minutes"
         };
 
-    let content = vec![
-        Line::from(vec![Span::styled(
-            "Global Port Forward Timeout",
-            Style::default().fg(YELLOW).add_modifier(Modifier::BOLD),
-        )]),
-        Line::from(""),
-        Line::from(vec![Span::styled(
-            "Automatically disconnect port forwards after the specified time.",
-            Style::default().fg(TEXT),
-        )]),
-        Line::from(vec![Span::styled(
-            "Set to 0 to disable auto-disconnect.",
-            Style::default().fg(TEXT),
-        )]),
-        Line::from(""),
+    let timeout_value_line = if app.settings_editing && app.settings_selected_option == 0 {
         Line::from(vec![
-            Span::styled("Timeout (minutes): ", Style::default().fg(LAVENDER)),
-            if app.settings_editing {
-                Span::styled(
-                    format!("{}_", app.settings_timeout_input),
-                    Style::default().fg(TEAL).add_modifier(Modifier::UNDERLINED),
-                )
-            } else {
-                Span::styled(
-                    &app.settings_timeout_input,
-                    Style::default().fg(TEAL).add_modifier(Modifier::BOLD),
-                )
-            },
-            Span::styled(format!(" {timeout_display}"), Style::default().fg(TEXT)),
-        ]),
-        Line::from(""),
-        Line::from(vec![if app.settings_editing {
+            Span::raw("    Value: "),
             Span::styled(
-                "Enter: Save | Backspace: Delete | Esc: Cancel",
-                Style::default().fg(PINK),
-            )
-        } else {
-            Span::styled("Enter: Edit | Esc: Close", Style::default().fg(PINK))
-        }]),
-    ];
+                format!("{}_", app.settings_timeout_input),
+                Style::default().fg(TEAL).add_modifier(Modifier::UNDERLINED),
+            ),
+            Span::styled(format!(" {timeout_display}"), Style::default().fg(TEXT)),
+        ])
+    } else {
+        Line::from(vec![
+            Span::raw("    Value: "),
+            Span::styled(
+                &app.settings_timeout_input,
+                Style::default().fg(TEAL).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(format!(" {timeout_display}"), Style::default().fg(TEXT)),
+        ])
+    };
+    lines.push(timeout_value_line);
+    lines.push("".into());
 
-    let paragraph = Paragraph::new(content)
-        .style(Style::default().fg(TEXT))
-        .alignment(Alignment::Left);
+    // Network Monitor Section
+    let monitor_indicator = if app.settings_selected_option == 1 {
+        "▶ "
+    } else {
+        "  "
+    };
+    let monitor_style = if app.settings_selected_option == 1 {
+        Style::default().fg(YELLOW).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(LAVENDER)
+    };
 
-    f.render_widget(paragraph, inner_area);
+    lines.push(Line::from(vec![
+        Span::raw(monitor_indicator),
+        Span::styled("Network Monitor", monitor_style),
+    ]));
+
+    // Wrap network monitor description text
+    let monitor_desc = "Monitor network connectivity and automatically reconnect port forwards when network is restored.";
+    let monitor_wrapped = wrap_text_simple(monitor_desc, content_width.saturating_sub(6));
+    for line in monitor_wrapped {
+        lines.push(Line::from(vec![Span::raw(format!("    {line}")).fg(TEXT)]));
+    }
+
+    // Network monitor status
+    lines.push(Line::from(vec![
+        Span::raw("    Status: "),
+        Span::styled(
+            if app.settings_network_monitor {
+                "Enabled"
+            } else {
+                "Disabled"
+            },
+            Style::default()
+                .fg(if app.settings_network_monitor {
+                    TEAL
+                } else {
+                    RED
+                })
+                .add_modifier(Modifier::BOLD),
+        ),
+    ]));
+
+    lines.push("".into());
+
+    // Navigation instructions - wrap if needed
+    let nav_text = if app.settings_editing && app.settings_selected_option == 0 {
+        "↑/↓: Navigate | Enter: Save | Backspace: Delete | Esc: Close"
+    } else if app.settings_selected_option == 0 {
+        "↑/↓: Navigate | Enter: Edit | Esc: Close"
+    } else {
+        "↑/↓: Navigate | Enter: Toggle | Esc: Close"
+    };
+
+    let nav_wrapped = wrap_text_simple(nav_text, content_width.saturating_sub(4));
+    for line in nav_wrapped {
+        lines.push(Line::from(vec![Span::raw(format!("  {line}"))
+            .fg(PINK)
+            .italic()]));
+    }
+
+    let formatted_text = Text::from(lines);
+    render_popup(
+        f,
+        popup_area,
+        "Settings",
+        MAUVE,
+        formatted_text,
+        Alignment::Left,
+    );
 }
