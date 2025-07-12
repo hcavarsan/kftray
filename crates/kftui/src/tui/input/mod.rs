@@ -99,6 +99,8 @@ pub struct App {
     pub logger_state: TuiWidgetState,
     pub settings_timeout_input: String,
     pub settings_editing: bool,
+    pub settings_network_monitor: bool,
+    pub settings_selected_option: usize,
 }
 
 impl Default for App {
@@ -145,6 +147,8 @@ impl App {
             logger_state,
             settings_timeout_input: String::new(),
             settings_editing: false,
+            settings_network_monitor: true,
+            settings_selected_option: 0,
         };
 
         if let Ok((_, height)) = size() {
@@ -498,7 +502,13 @@ pub async fn handle_menu_input(app: &mut App, key: KeyCode) -> io::Result<()> {
                 {
                     app.settings_timeout_input = timeout.unwrap_or(0).to_string();
                 }
+                if let Ok(network_monitor) =
+                    kftray_commons::utils::settings::get_network_monitor().await
+                {
+                    app.settings_network_monitor = network_monitor;
+                }
                 app.settings_editing = false;
+                app.settings_selected_option = 0;
             }
             5 => app.state = AppState::ShowAbout,
             6 => stop_all_port_forward_and_exit(app).await,
@@ -669,7 +679,13 @@ pub async fn handle_common_hotkeys(app: &mut App, key: KeyCode) -> io::Result<bo
             if let Ok(timeout) = kftray_commons::utils::settings::get_disconnect_timeout().await {
                 app.settings_timeout_input = timeout.unwrap_or(0).to_string();
             }
+            if let Ok(network_monitor) =
+                kftray_commons::utils::settings::get_network_monitor().await
+            {
+                app.settings_network_monitor = network_monitor;
+            }
             app.settings_editing = false;
+            app.settings_selected_option = 0;
             Ok(true)
         }
         _ => Ok(false),
@@ -834,35 +850,79 @@ pub async fn handle_settings_input(app: &mut App, key: KeyCode) -> io::Result<()
             app.state = AppState::Normal;
             app.settings_editing = false;
         }
+        KeyCode::Up => {
+            if app.settings_selected_option > 0 {
+                app.settings_selected_option -= 1;
+            }
+        }
+        KeyCode::Down => {
+            if app.settings_selected_option < 1 {
+                app.settings_selected_option += 1;
+            }
+        }
         KeyCode::Enter => {
-            if app.settings_editing {
-                if let Ok(timeout_value) = app.settings_timeout_input.parse::<u32>() {
-                    if (kftray_commons::utils::settings::set_disconnect_timeout(timeout_value)
-                        .await)
-                        .is_err()
+            match app.settings_selected_option {
+                0 => {
+                    // Handle timeout setting
+                    if app.settings_editing {
+                        if let Ok(timeout_value) = app.settings_timeout_input.parse::<u32>() {
+                            if (kftray_commons::utils::settings::set_disconnect_timeout(
+                                timeout_value,
+                            )
+                            .await)
+                                .is_err()
+                            {
+                                app.error_message =
+                                    Some("Failed to save timeout setting".to_string());
+                                app.state = AppState::ShowErrorPopup;
+                            } else {
+                                app.settings_editing = false;
+                            }
+                        } else {
+                            app.error_message =
+                                Some("Invalid timeout value. Please enter a number.".to_string());
+                            app.state = AppState::ShowErrorPopup;
+                        }
+                    } else {
+                        app.settings_editing = true;
+                    }
+                }
+                1 => {
+                    // Handle network monitor toggle
+                    app.settings_network_monitor = !app.settings_network_monitor;
+                    if let Err(e) = kftray_commons::utils::settings::set_network_monitor(
+                        app.settings_network_monitor,
+                    )
+                    .await
                     {
-                        app.error_message = Some("Failed to save timeout setting".to_string());
+                        app.error_message =
+                            Some(format!("Failed to save network monitor setting: {e}"));
                         app.state = AppState::ShowErrorPopup;
                     } else {
-                        app.state = AppState::Normal;
-                        app.settings_editing = false;
+                        // Control network monitor at runtime
+                        if app.settings_network_monitor {
+                            if let Err(e) = kftray_network_monitor::start().await {
+                                app.error_message =
+                                    Some(format!("Failed to start network monitor: {e}"));
+                                app.state = AppState::ShowErrorPopup;
+                            }
+                        } else if let Err(e) = kftray_network_monitor::stop().await {
+                            app.error_message =
+                                Some(format!("Failed to stop network monitor: {e}"));
+                            app.state = AppState::ShowErrorPopup;
+                        }
                     }
-                } else {
-                    app.error_message =
-                        Some("Invalid timeout value. Please enter a number.".to_string());
-                    app.state = AppState::ShowErrorPopup;
                 }
-            } else {
-                app.settings_editing = true;
+                _ => {}
             }
         }
         KeyCode::Char(c) => {
-            if app.settings_editing && c.is_ascii_digit() {
+            if app.settings_editing && app.settings_selected_option == 0 && c.is_ascii_digit() {
                 app.settings_timeout_input.push(c);
             }
         }
         KeyCode::Backspace => {
-            if app.settings_editing {
+            if app.settings_editing && app.settings_selected_option == 0 {
                 app.settings_timeout_input.pop();
             }
         }

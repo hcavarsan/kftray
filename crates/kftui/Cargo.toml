@@ -19,6 +19,7 @@ built = { workspace = true }
 crossterm = { workspace = true }
 kftray-commons = { path = "../kftray-commons" }
 kftray-http-logs = { path = "../kftray-http-logs" }
+kftray-network-monitor = { path = "../kftray-network-monitor" }
 kftray-portforward = { path = "../kftray-portforward" }
 log = { workspace = true }
 ratatui = { workspace = true }

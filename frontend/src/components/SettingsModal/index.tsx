@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react'
 import { Settings } from 'lucide-react'
 
-import { Box, Dialog, Flex, HStack, Input, Stack, Text } from '@chakra-ui/react'
+import { Box, Dialog, Flex, Input, Stack, Text } from '@chakra-ui/react'
 import { invoke } from '@tauri-apps/api/tauri'
 
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { DialogCloseTrigger, DialogContent } from '@/components/ui/dialog'
 import { toaster } from '@/components/ui/toaster'
 
@@ -15,6 +16,9 @@ interface SettingsModalProps {
 
 const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
   const [disconnectTimeout, setDisconnectTimeout] = useState<string>('0')
+  const [networkMonitor, setNetworkMonitor] = useState<boolean>(true)
+  const [networkMonitorStatus, setNetworkMonitorStatus] =
+    useState<boolean>(false)
   const [isLoading, setIsLoading] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
 
@@ -30,6 +34,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
       const settings = await invoke<Record<string, string>>('get_settings')
 
       setDisconnectTimeout(settings.disconnect_timeout_minutes || '0')
+      setNetworkMonitor(settings.network_monitor === 'true')
+      setNetworkMonitorStatus(settings.network_monitor_status === 'true')
     } catch (error) {
       console.error('Error loading settings:', error)
       toaster.error({
@@ -58,13 +64,14 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
       }
 
       await invoke('update_disconnect_timeout', { minutes: timeoutValue })
+      await invoke('update_network_monitor', { enabled: networkMonitor })
+
+      // Reload settings to get updated status
+      await loadSettings()
 
       toaster.success({
         title: 'Settings Saved',
-        description:
-          timeoutValue === 0
-            ? 'Auto-disconnect disabled'
-            : `Auto-disconnect set to ${timeoutValue} minute${timeoutValue === 1 ? '' : 's'}`,
+        description: 'All settings have been saved successfully',
         duration: 3000,
       })
 
@@ -102,7 +109,11 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
         p={0}
         boxShadow='0 20px 25px -5px rgba(0, 0, 0, 0.3), 0 10px 10px -5px rgba(0, 0, 0, 0.1)'
       >
-        <DialogCloseTrigger />
+        <DialogCloseTrigger
+          style={{
+            marginTop: '-4px',
+          }}
+        />
 
         {/* Header */}
         <Box
@@ -115,12 +126,12 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
           <Flex align='center' gap={3}>
             <Box
               as={Settings}
-              width='18px'
-              height='18px'
+              width='14px'
+              height='14px'
               color='blue.400'
               ml={2}
             />
-            <Text fontSize='md' fontWeight='600' color='white'>
+            <Text fontSize='sm' fontWeight='600' color='white'>
               Settings
             </Text>
           </Flex>
@@ -131,10 +142,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
           <Stack gap={3}>
             {/* Port Forwarding Section */}
             <Box>
-              <Text fontSize='sm' fontWeight='600' color='white' mb={2}>
-                Port Forwarding
-              </Text>
-
               {/* Auto-disconnect Timeout Setting */}
               <Box
                 bg='#161616'
@@ -142,47 +149,93 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
                 borderRadius='md'
                 border='1px solid rgba(255, 255, 255, 0.08)'
               >
-                <Flex justify='space-between' align='center' gap={4}>
-                  <Box flex={1}>
-                    <Text fontSize='sm' fontWeight='500' color='white' mb={0.5}>
+                <Flex justify='space-between' align='flex-start' gap={4}>
+                  <Box flex={1} maxWidth='60%'>
+                    <Text fontSize='sm' fontWeight='500' color='white' mb={1}>
                       Auto-disconnect Timeout
                     </Text>
-                    <Text fontSize='xs' color='whiteAlpha.700' lineHeight='1.3'>
+                    <Text fontSize='xs' color='whiteAlpha.600' lineHeight='1.4'>
                       Automatically disconnect port forwards after the specified
-                      time. Set to 0 to disable.
+                      time (min). Set to 0 to disable.
                     </Text>
                   </Box>
 
-                  <Box minWidth='120px'>
-                    <HStack gap={2}>
-                      <Input
-                        value={disconnectTimeout}
-                        onChange={handleTimeoutChange}
-                        placeholder='0'
-                        size='sm'
-                        width='80px'
-                        bg='#111111'
-                        border='1px solid rgba(255, 255, 255, 0.08)'
-                        _hover={{
-                          borderColor: 'rgba(255, 255, 255, 0.15)',
-                        }}
-                        _focus={{
-                          borderColor: 'blue.400',
-                          boxShadow: 'none',
-                        }}
-                        color='white'
-                        _placeholder={{ color: 'whiteAlpha.500' }}
-                        disabled={isLoading}
-                        textAlign='center'
-                      />
-                      <Text
-                        fontSize='xs'
-                        color='whiteAlpha.700'
-                        minWidth='fit-content'
-                      >
-                        minutes
+                  <Box
+                    minWidth='120px'
+                    display='flex'
+                    alignItems='flex-start'
+                    justifyContent='flex-end'
+                    pt={1}
+                  >
+                    <Input
+                      value={disconnectTimeout}
+                      onChange={handleTimeoutChange}
+                      placeholder='0'
+                      size='xs'
+                      width='45px'
+                      height='24px'
+                      bg='#111111'
+                      border='1px solid rgba(255, 255, 255, 0.08)'
+                      _hover={{
+                        borderColor: 'rgba(255, 255, 255, 0.15)',
+                      }}
+                      _focus={{
+                        borderColor: 'blue.400',
+                        boxShadow: 'none',
+                      }}
+                      color='white'
+                      _placeholder={{ color: 'whiteAlpha.500' }}
+                      disabled={isLoading}
+                      textAlign='center'
+                      fontSize='xs'
+                    />
+                  </Box>
+                </Flex>
+              </Box>
+
+              {/* Network Monitor Setting */}
+              <Box
+                bg='#161616'
+                p={2.5}
+                borderRadius='md'
+                border='1px solid rgba(255, 255, 255, 0.08)'
+                mt={2}
+              >
+                <Flex justify='space-between' align='flex-start' gap={4}>
+                  <Box flex={1} maxWidth='60%'>
+                    <Flex align='center' gap={2} mb={1}>
+                      <Text fontSize='sm' fontWeight='500' color='white'>
+                        Network Monitor
                       </Text>
-                    </HStack>
+                      <Box
+                        width='6px'
+                        height='6px'
+                        borderRadius='full'
+                        bg={networkMonitorStatus ? 'green.400' : 'gray.500'}
+                        title={networkMonitorStatus ? 'Running' : 'Stopped'}
+                      />
+                    </Flex>
+                    <Text fontSize='xs' color='whiteAlpha.600' lineHeight='1.4'>
+                      Monitor network connectivity and automatically reconnect
+                      port forwards when network is restored.
+                    </Text>
+                  </Box>
+
+                  <Box
+                    minWidth='120px'
+                    display='flex'
+                    alignItems='flex-start'
+                    justifyContent='flex-end'
+                    pt={1}
+                  >
+                    <Checkbox
+                      checked={networkMonitor}
+                      onCheckedChange={e =>
+                        setNetworkMonitor(e.checked === true)
+                      }
+                      disabled={isLoading}
+                      mr={3}
+                    />
                   </Box>
                 </Flex>
               </Box>
@@ -215,16 +268,18 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
           <Flex justify='flex-end' gap={2}>
             <Button
               variant='ghost'
-              size='sm'
+              size='xs'
               onClick={onClose}
               disabled={isSaving}
               _hover={{ bg: 'whiteAlpha.100' }}
               color='whiteAlpha.700'
+              height='28px'
+              fontSize='xs'
             >
               Cancel
             </Button>
             <Button
-              size='sm'
+              size='xs'
               onClick={saveSettings}
               loading={isSaving}
               loadingText='Saving...'
@@ -233,6 +288,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
               color='white'
               _hover={{ bg: 'blue.600' }}
               _active={{ bg: 'blue.700' }}
+              height='28px'
+              fontSize='xs'
             >
               Save Settings
             </Button>
