@@ -1,6 +1,6 @@
 [package]
 name = "kftray-network-monitor"
-version = "0.19.0"
+version = "0.20.0"
 authors = ["Henrique Cavarsan <hencavarsan@gmail.com>"]
 edition = "2021"
 description = "Network monitoring and management for KFtray"
