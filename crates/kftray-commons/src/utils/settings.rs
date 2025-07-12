@@ -77,6 +77,21 @@ impl SettingsManager {
             .await
     }
 
+    pub async fn get_network_monitor(&self) -> bool {
+        if let Some(value) = self.get_setting("network_monitor").await {
+            value.parse::<bool>().unwrap_or(true)
+        } else {
+            true // Default to true
+        }
+    }
+
+    pub async fn set_network_monitor(
+        &self, enabled: bool,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.set_setting("network_monitor", &enabled.to_string())
+            .await
+    }
+
     pub async fn get_all_settings(&self) -> HashMap<String, String> {
         let cache = self.cache.read().await;
         cache.clone()
@@ -157,6 +172,20 @@ pub async fn set_disconnect_timeout(
     minutes: u32,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     set_setting("disconnect_timeout_minutes", &minutes.to_string()).await
+}
+
+pub async fn get_network_monitor() -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+    if let Some(value) = get_setting("network_monitor").await? {
+        Ok(value.parse::<bool>().unwrap_or(true))
+    } else {
+        Ok(true) // Default to true
+    }
+}
+
+pub async fn set_network_monitor(
+    enabled: bool,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    set_setting("network_monitor", &enabled.to_string()).await
 }
 
 #[cfg(test)]
