@@ -1,3 +1,4 @@
 [tools]
 node = "24"
+pnpm = "latest"
 rust = "1.88"
