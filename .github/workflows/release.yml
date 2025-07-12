@@ -70,7 +70,7 @@ jobs:
           tool: cargo-nextest
 
       - name: Install rust-cache
-        uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6
+        uses: swatinem/rust-cache@7e1e2d0a10862b34e5df481373b2b0f295d1a2ef
 
       - name: Run tests
         run: cargo build --bin kftray-helper --release && INSTA_UPDATE=1 cargo llvm-cov nextest --profile ci --config-file .cargo/nextest.toml --locked --workspace --all-features --lib --bins --examples --tests --lcov --output-path lcov.info
@@ -189,7 +189,7 @@ jobs:
           toolchain: nightly
 
       - name: Cache Rust
-        uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6
+        uses: swatinem/rust-cache@7e1e2d0a10862b34e5df481373b2b0f295d1a2ef
 
       - name: Install pnpm
         uses: pnpm/action-setup@77504a59bc222656ff0605f120aea22f630873cb
@@ -368,7 +368,7 @@ jobs:
           toolchain: nightly
 
       - name: Cache Rust
-        uses: swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6
+        uses: swatinem/rust-cache@7e1e2d0a10862b34e5df481373b2b0f295d1a2ef
 
 
       - name: Install pnpm
