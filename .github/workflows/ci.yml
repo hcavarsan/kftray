@@ -122,7 +122,7 @@ jobs:
 
       - name: Set up Perl on Windows
         if: matrix.os == 'windows-latest'
-        uses: shogo82148/actions-setup-perl@22423f01bde48fb88785c007e3166fbbbd8e892a
+        uses: shogo82148/actions-setup-perl@4645e742c0650b805715c980a66017c63ef86cdd
         with:
           perl-version: "5.32"
           distribution: "strawberry"
