@@ -1,6 +1,8 @@
 #![allow(clippy::needless_return)]
 mod cli;
+mod cli;
 mod core;
+mod stdin;
 mod tui;
 mod utils;
 
@@ -62,6 +64,11 @@ async fn import_configs_from_source(cli: &Cli, mode: DatabaseMode) -> Result<(),
             .map_err(|e| format!("Failed to read config file: {e}"))?;
 
         import_configs_with_mode(json_content, mode).await
+    } else if let Some(json_content) = cli.get_json() {
+        import_configs_with_mode(json_content.to_string(), mode).await
+    } else if cli.stdin {
+        let stdin_content = stdin::read_stdin_content()?;
+        import_configs_with_mode(stdin_content, mode).await
     } else {
         Err("No config source specified".to_string())
     }
@@ -93,6 +100,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         init().await?;
         if let Err(e) = migrate_configs(None).await {
             error!("Database migration failed: {e}");
+            return Err(e.into());
         }
     }
 
@@ -126,6 +134,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
 
                 while let Some(()) = tasks.next().await {}
+            }
+        }
+    }
+
+    if cli.stdin {
+        #[cfg(target_os = "macos")]
+        {
+            if let Err(e) = stdin::redirect_stdin_to_tty() {
+                error!("Failed to redirect stdin to tty: {e}");
+                return Err(e);
             }
         }
     }

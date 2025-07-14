@@ -18,6 +18,7 @@ use kftray_commons::models::{
     config_state_model::ConfigState,
 };
 use kftray_commons::utils::db_mode::DatabaseMode;
+use kftray_commons::utils::db_mode::DatabaseMode;
 use log::LevelFilter;
 pub use popup::*;
 use ratatui::widgets::ListState;
@@ -561,6 +562,7 @@ pub async fn handle_stopped_table_input(
         }
         KeyCode::Char(' ') => toggle_row_selection(app),
         KeyCode::Char('f') => handle_port_forwarding(app, mode).await?,
+        KeyCode::Char('f') => handle_port_forwarding(app, mode).await?,
         KeyCode::Char('d') => show_delete_confirmation(app),
         KeyCode::Char('a') => toggle_select_all(app),
         _ => {}
@@ -605,6 +607,7 @@ pub async fn handle_running_table_input(
             }
         }
         KeyCode::Char(' ') => toggle_row_selection(app),
+        KeyCode::Char('f') => handle_port_forwarding(app, mode).await?,
         KeyCode::Char('f') => handle_port_forwarding(app, mode).await?,
         KeyCode::Char('d') => show_delete_confirmation(app),
         KeyCode::Char('a') => toggle_select_all(app),
@@ -666,6 +669,9 @@ pub async fn handle_logs_input(app: &mut App, key: KeyCode) -> io::Result<()> {
     Ok(())
 }
 
+pub async fn handle_common_hotkeys(
+    app: &mut App, key: KeyCode, mode: DatabaseMode,
+) -> io::Result<bool> {
 pub async fn handle_common_hotkeys(
     app: &mut App, key: KeyCode, mode: DatabaseMode,
 ) -> io::Result<bool> {
@@ -732,6 +738,7 @@ pub fn toggle_row_selection(app: &mut App) {
 }
 
 pub async fn handle_port_forwarding(app: &mut App, mode: DatabaseMode) -> io::Result<()> {
+pub async fn handle_port_forwarding(app: &mut App, mode: DatabaseMode) -> io::Result<()> {
     let (selected_rows, configs, selected_row) = match app.active_table {
         ActiveTable::Stopped => (
             &mut app.selected_rows_stopped,
@@ -791,6 +798,9 @@ pub fn show_delete_confirmation(app: &mut App) {
 pub async fn handle_delete_confirmation_input(
     app: &mut App, key: KeyCode, mode: DatabaseMode,
 ) -> io::Result<()> {
+pub async fn handle_delete_confirmation_input(
+    app: &mut App, key: KeyCode, mode: DatabaseMode,
+) -> io::Result<()> {
     match key {
         KeyCode::Left | KeyCode::Right => {
             app.selected_delete_button = match app.selected_delete_button {
@@ -847,6 +857,9 @@ pub fn open_export_file_explorer(app: &mut App) {
 pub async fn handle_context_selection_input(
     app: &mut App, key: KeyCode, mode: DatabaseMode,
 ) -> io::Result<()> {
+pub async fn handle_context_selection_input(
+    app: &mut App, key: KeyCode, mode: DatabaseMode,
+) -> io::Result<()> {
     if let KeyCode::Enter = key {
         if let Some(selected_context) = app.contexts.get(app.selected_context_index).cloned() {
             handle_context_selection(app, &selected_context, mode).await;
@@ -867,6 +880,9 @@ pub async fn handle_context_selection_input(
     Ok(())
 }
 
+pub async fn handle_settings_input(
+    app: &mut App, key: KeyCode, mode: DatabaseMode,
+) -> io::Result<()> {
 pub async fn handle_settings_input(
     app: &mut App, key: KeyCode, mode: DatabaseMode,
 ) -> io::Result<()> {
@@ -892,6 +908,7 @@ pub async fn handle_settings_input(
                     if app.settings_editing {
                         if let Ok(timeout_value) = app.settings_timeout_input.parse::<u32>() {
                             if (kftray_commons::utils::settings::set_disconnect_timeout_with_mode(
+                            if (kftray_commons::utils::settings::set_disconnect_timeout_with_mode(
                                 timeout_value,
                                 mode,
                             )
@@ -916,6 +933,7 @@ pub async fn handle_settings_input(
                 1 => {
                     // Handle network monitor toggle
                     app.settings_network_monitor = !app.settings_network_monitor;
+                    if let Err(e) = kftray_commons::utils::settings::set_network_monitor_with_mode(
                     if let Err(e) = kftray_commons::utils::settings::set_network_monitor_with_mode(
                         app.settings_network_monitor,
                         mode,

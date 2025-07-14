@@ -33,11 +33,26 @@ pub struct Cli {
 
     #[arg(long, help = "Clear existing configurations before importing")]
     pub flush: bool,
+
+    #[arg(
+        short = 'j',
+        long,
+        help = "Inline JSON configuration string",
+        value_name = "JSON"
+    )]
+    pub json: Option<String>,
+
+    #[arg(long, help = "Read JSON configuration from stdin")]
+    pub stdin: bool,
 }
 
 impl Cli {
     pub fn should_use_memory_mode(&self) -> bool {
-        (self.configs_path.is_some() || self.github_url.is_some()) && !self.save
+        (self.configs_path.is_some()
+            || self.github_url.is_some()
+            || self.json.is_some()
+            || self.stdin)
+            && !self.save
     }
 
     pub fn is_github_import(&self) -> bool {
@@ -45,7 +60,10 @@ impl Cli {
     }
 
     pub fn has_config_source(&self) -> bool {
-        self.configs_path.is_some() || self.github_url.is_some()
+        self.configs_path.is_some()
+            || self.github_url.is_some()
+            || self.json.is_some()
+            || self.stdin
     }
 
     pub fn get_config_path(&self) -> Option<&str> {
@@ -56,6 +74,10 @@ impl Cli {
         self.github_url.as_deref()
     }
 
+    pub fn get_json(&self) -> Option<&str> {
+        self.json.as_deref()
+    }
+
     pub fn get_configs_path_with_default(&self) -> String {
         self.configs_path
             .clone()
@@ -64,11 +86,38 @@ impl Cli {
 
     pub fn validate(&self) -> Result<(), String> {
         if self.save && !self.has_config_source() {
-            return Err("--save requires either --configs-path or --github-url".to_string());
+            return Err(
+                "--save requires either --configs-path, --github-url, --json, or --stdin"
+                    .to_string(),
+            );
         }
 
-        if self.github_url.is_some() && self.configs_path.is_none() {
-            return Err("--github-url requires --configs-path to specify the config file path within the repository".to_string());
+        let mut source_count = 0;
+
+        if self.configs_path.is_some() && self.github_url.is_none() {
+            source_count += 1;
+        }
+
+        if self.github_url.is_some() {
+            source_count += 1;
+            if self.configs_path.is_none() {
+                return Err("--github-url requires --configs-path to specify the config file path within the repository".to_string());
+            }
+        }
+
+        if self.json.is_some() {
+            source_count += 1;
+        }
+
+        if self.stdin {
+            source_count += 1;
+        }
+
+        if source_count > 1 {
+            return Err(
+                "Only one config source can be specified: --configs-path, --github-url (with --configs-path), --json, or --stdin"
+                    .to_string(),
+            );
         }
 
         Ok(())

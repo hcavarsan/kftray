@@ -23,6 +23,7 @@ kftray-commons = { path = "../kftray-commons" }
 kftray-http-logs = { path = "../kftray-http-logs" }
 kftray-network-monitor = { path = "../kftray-network-monitor" }
 kftray-portforward = { path = "../kftray-portforward" }
+libc = { workspace = true }
 log = { workspace = true }
 ratatui = { workspace = true }
 ratatui-explorer = { workspace = true }
