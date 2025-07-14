@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use crossterm::event::KeyCode;
+use kftray_commons::utils::db_mode::DatabaseMode;
 
 use crate::tui::input::file_explorer::{
     show_confirmation_popup,
@@ -38,7 +39,7 @@ mod tests {
     async fn test_handle_import_file_explorer_escape() {
         let mut app = setup_file_explorer_app();
 
-        handle_import_file_explorer_input(&mut app, KeyCode::Esc)
+        handle_import_file_explorer_input(&mut app, KeyCode::Esc, DatabaseMode::File)
             .await
             .unwrap();
 
@@ -50,7 +51,7 @@ mod tests {
         let mut app = setup_file_explorer_app();
         app.state = AppState::ExportFileExplorerOpen;
 
-        handle_export_file_explorer_input(&mut app, KeyCode::Esc)
+        handle_export_file_explorer_input(&mut app, KeyCode::Esc, DatabaseMode::File)
             .await
             .unwrap();
 
@@ -62,7 +63,7 @@ mod tests {
         let mut app = setup_file_explorer_app();
         app.state = AppState::ExportFileExplorerOpen;
 
-        handle_export_file_explorer_input(&mut app, KeyCode::Enter)
+        handle_export_file_explorer_input(&mut app, KeyCode::Enter, DatabaseMode::File)
             .await
             .unwrap();
 
@@ -75,7 +76,7 @@ mod tests {
         app.state = AppState::ShowInputPrompt;
         app.input_buffer = "test.json".to_string();
 
-        handle_export_input_prompt(&mut app, KeyCode::Enter)
+        handle_export_input_prompt(&mut app, KeyCode::Enter, DatabaseMode::File)
             .await
             .unwrap();
 
@@ -87,7 +88,7 @@ mod tests {
         let mut app = setup_file_explorer_app();
         app.state = AppState::ShowInputPrompt;
 
-        handle_export_input_prompt(&mut app, KeyCode::Esc)
+        handle_export_input_prompt(&mut app, KeyCode::Esc, DatabaseMode::File)
             .await
             .unwrap();
 
@@ -97,14 +98,14 @@ mod tests {
         app.state = AppState::ShowInputPrompt;
         app.input_buffer = "test".to_string();
 
-        handle_export_input_prompt(&mut app, KeyCode::Char('a'))
+        handle_export_input_prompt(&mut app, KeyCode::Char('a'), DatabaseMode::File)
             .await
             .unwrap();
 
         assert_eq!(app.input_buffer, "testa");
         assert_eq!(app.state, AppState::ShowInputPrompt);
 
-        handle_export_input_prompt(&mut app, KeyCode::Backspace)
+        handle_export_input_prompt(&mut app, KeyCode::Backspace, DatabaseMode::File)
             .await
             .unwrap();
 
@@ -165,7 +166,7 @@ mod tests {
     async fn test_handle_import_enter_key() {
         let mut app = setup_file_explorer_app();
 
-        let result = handle_import_enter_key(&mut app).await;
+        let result = handle_import_enter_key(&mut app, DatabaseMode::File).await;
         assert!(result.is_ok());
     }
 
@@ -197,7 +198,7 @@ mod tests {
         let mut app = setup_file_explorer_app();
         app.state = AppState::ExportFileExplorerOpen;
 
-        handle_export_file_explorer_input(&mut app, KeyCode::Backspace)
+        handle_export_file_explorer_input(&mut app, KeyCode::Backspace, DatabaseMode::File)
             .await
             .unwrap();
     }
@@ -207,7 +208,7 @@ mod tests {
         let mut app = setup_file_explorer_app();
         app.state = AppState::ExportFileExplorerOpen;
 
-        handle_export_file_explorer_input(&mut app, KeyCode::Char(' '))
+        handle_export_file_explorer_input(&mut app, KeyCode::Char(' '), DatabaseMode::File)
             .await
             .unwrap();
     }
@@ -216,7 +217,7 @@ mod tests {
     async fn test_handle_import_file_explorer_backspace() {
         let mut app = setup_file_explorer_app();
 
-        handle_import_file_explorer_input(&mut app, KeyCode::Backspace)
+        handle_import_file_explorer_input(&mut app, KeyCode::Backspace, DatabaseMode::File)
             .await
             .unwrap();
     }
@@ -225,7 +226,7 @@ mod tests {
     async fn test_handle_import_file_explorer_other_key() {
         let mut app = setup_file_explorer_app();
 
-        handle_import_file_explorer_input(&mut app, KeyCode::Down)
+        handle_import_file_explorer_input(&mut app, KeyCode::Down, DatabaseMode::File)
             .await
             .unwrap();
     }

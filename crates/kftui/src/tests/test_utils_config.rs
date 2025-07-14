@@ -1,5 +1,6 @@
 use std::fs;
 
+use kftray_commons::utils::db_mode::DatabaseMode;
 use tempfile::TempDir;
 
 use crate::utils::config::{
@@ -13,7 +14,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_import_configs_from_file_error() {
-        let result = import_configs_from_file("/non/existent/file.json").await;
+        let result = import_configs_from_file("/non/existent/file.json", DatabaseMode::File).await;
 
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Failed to read file"));
@@ -25,7 +26,7 @@ mod tests {
         let file_path = temp_dir.path().join("test_export.json");
         let file_path_str = file_path.to_str().unwrap();
 
-        let result = export_configs_to_file(file_path_str).await;
+        let result = export_configs_to_file(file_path_str, DatabaseMode::File).await;
 
         if result.is_ok() {
             let metadata = fs::metadata(&file_path);
@@ -46,7 +47,7 @@ mod tests {
     async fn test_export_configs_to_file_error() {
         let file_path = "/non/existent/directory/test_export.json";
 
-        let result = export_configs_to_file(file_path).await;
+        let result = export_configs_to_file(file_path, DatabaseMode::File).await;
 
         assert!(
             result.is_err(),

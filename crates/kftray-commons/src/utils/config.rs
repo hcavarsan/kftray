@@ -26,6 +26,10 @@ use crate::db::{
 };
 use crate::migration::migrate_configs;
 use crate::models::config_model::Config;
+use crate::utils::db_mode::{
+    DatabaseManager,
+    DatabaseMode,
+};
 use crate::utils::error::DbError;
 
 pub(crate) async fn delete_config_with_pool(id: i64, pool: &SqlitePool) -> Result<(), DbError> {
@@ -100,6 +104,53 @@ pub(crate) async fn insert_config_with_pool(
         .await
         .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+pub(crate) async fn insert_config_with_pool_and_mode(
+    config: Config, pool: &SqlitePool, mode: DatabaseMode,
+) -> Result<(), String> {
+    let config = prepare_config(config);
+    let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
+
+    create_db_table(pool).await.map_err(|e| e.to_string())?;
+
+    let data = json!(config).to_string();
+
+    match mode {
+        DatabaseMode::Memory => {
+            let next_id = get_next_memory_id(pool).await?;
+            sqlx::query("INSERT INTO configs (id, data) VALUES (?1, ?2)")
+                .bind(next_id)
+                .bind(data)
+                .execute(&mut *conn)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+        DatabaseMode::File => {
+            sqlx::query("INSERT INTO configs (data) VALUES (?1)")
+                .bind(data)
+                .execute(&mut *conn)
+                .await
+                .map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(())
+}
+
+async fn get_next_memory_id(pool: &SqlitePool) -> Result<i64, String> {
+    let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
+
+    const MEMORY_ID_START: i64 = 100000;
+
+    let row = sqlx::query("SELECT COALESCE(MAX(id), ?) as max_id FROM configs WHERE id >= ?")
+        .bind(MEMORY_ID_START - 1)
+        .bind(MEMORY_ID_START)
+        .fetch_one(&mut *conn)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let max_id: i64 = row.try_get("max_id").map_err(|e| e.to_string())?;
+    Ok(max_id + 1)
 }
 
 pub async fn insert_config(config: Config) -> Result<(), String> {
@@ -321,9 +372,96 @@ pub(crate) async fn import_configs_with_pool(
     Ok(())
 }
 
+pub(crate) async fn import_configs_with_pool_and_mode(
+    json: String, pool: &SqlitePool, mode: DatabaseMode,
+) -> Result<(), String> {
+    let configs: Vec<Config> = match serde_json::from_str(&json) {
+        Ok(configs) => configs,
+        Err(e) => {
+            info!("Failed to parse JSON as Vec<Config>: {e}. Trying as single Config.");
+            let config = serde_json::from_str::<Config>(&json)
+                .map_err(|e| format!("Failed to parse config: {e}"))?;
+            vec![config]
+        }
+    };
+
+    for config in configs {
+        validate_imported_config(&config).map_err(|e| format!("Invalid config: {e}"))?;
+        insert_config_with_pool_and_mode(config, pool, mode.clone())
+            .await
+            .map_err(|e| format!("Failed to insert config: {e}"))?;
+    }
+
+    if let Err(e) = migrate_configs(Some(pool)).await {
+        return Err(format!("Error migrating configs: {e}"));
+    }
+
+    Ok(())
+}
+
 pub async fn import_configs(json: String) -> Result<(), String> {
     let pool = get_db_pool().await.map_err(|e| e.to_string())?;
     import_configs_with_pool(json, &pool).await
+}
+
+pub async fn delete_config_with_mode(id: i64, mode: DatabaseMode) -> Result<(), String> {
+    let context = DatabaseManager::get_context(mode).await?;
+    delete_config_with_pool(id, &context.pool)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+pub async fn delete_configs_with_mode(ids: Vec<i64>, mode: DatabaseMode) -> Result<(), String> {
+    let context = DatabaseManager::get_context(mode).await?;
+    delete_configs_with_pool(ids, &context.pool)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+pub async fn delete_all_configs_with_mode(mode: DatabaseMode) -> Result<(), String> {
+    let context = DatabaseManager::get_context(mode).await?;
+    delete_all_configs_with_pool(&context.pool)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+pub async fn insert_config_with_mode(config: Config, mode: DatabaseMode) -> Result<(), String> {
+    let context = DatabaseManager::get_context(mode.clone()).await?;
+    insert_config_with_pool_and_mode(config, &context.pool, mode).await
+}
+
+pub async fn read_configs_with_mode(mode: DatabaseMode) -> Result<Vec<Config>, String> {
+    let context = DatabaseManager::get_context(mode).await?;
+    read_configs_with_pool(&context.pool).await
+}
+
+pub async fn get_config_with_mode(id: i64, mode: DatabaseMode) -> Result<Config, String> {
+    let context = DatabaseManager::get_context(mode).await?;
+    get_config_with_pool(id, &context.pool).await
+}
+
+pub async fn update_config_with_mode(config: Config, mode: DatabaseMode) -> Result<(), String> {
+    let context = DatabaseManager::get_context(mode).await?;
+    update_config_with_pool(config, &context.pool).await
+}
+
+pub async fn export_configs_with_mode(mode: DatabaseMode) -> Result<String, String> {
+    let context = DatabaseManager::get_context(mode).await?;
+    export_configs_with_pool(&context.pool).await
+}
+
+pub async fn import_configs_with_mode(json: String, mode: DatabaseMode) -> Result<(), String> {
+    let context = DatabaseManager::get_context(mode.clone()).await?;
+    import_configs_with_pool_and_mode(json, &context.pool, mode).await
+}
+
+pub async fn get_configs_with_mode(mode: DatabaseMode) -> Result<Vec<Config>, String> {
+    read_configs_with_mode(mode).await
+}
+
+pub async fn clean_all_custom_hosts_entries_with_mode(mode: DatabaseMode) -> Result<(), String> {
+    let context = DatabaseManager::get_context(mode).await?;
+    clean_all_custom_hosts_entries_with_pool(&context.pool).await
 }
 
 fn is_value_default(value: &serde_json::Value, default_config: &serde_json::Value) -> bool {
@@ -1200,5 +1338,69 @@ mod tests {
         let result = read_configs_with_pool(&pool).await;
 
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_config_with_mode_memory() {
+        let config = Config {
+            service: Some("memory-test".to_string()),
+            ..Config::default()
+        };
+
+        insert_config_with_mode(config.clone(), DatabaseMode::Memory)
+            .await
+            .unwrap();
+
+        let configs = read_configs_with_mode(DatabaseMode::Memory).await.unwrap();
+        assert_eq!(configs.len(), 1);
+        assert_eq!(configs[0].service, Some("memory-test".to_string()));
+
+        let config_id = configs[0].id.unwrap();
+        let retrieved_config = get_config_with_mode(config_id, DatabaseMode::Memory)
+            .await
+            .unwrap();
+        assert_eq!(retrieved_config.service, Some("memory-test".to_string()));
+
+        delete_config_with_mode(config_id, DatabaseMode::Memory)
+            .await
+            .unwrap();
+
+        let configs_after_delete = read_configs_with_mode(DatabaseMode::Memory).await.unwrap();
+        assert_eq!(configs_after_delete.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_config_operations_with_mode_memory() {
+        let config1 = Config {
+            service: Some("memory-test-1".to_string()),
+            ..Config::default()
+        };
+        let config2 = Config {
+            service: Some("memory-test-2".to_string()),
+            ..Config::default()
+        };
+
+        insert_config_with_mode(config1, DatabaseMode::Memory)
+            .await
+            .unwrap();
+        insert_config_with_mode(config2, DatabaseMode::Memory)
+            .await
+            .unwrap();
+
+        let configs = read_configs_with_mode(DatabaseMode::Memory).await.unwrap();
+        assert_eq!(configs.len(), 2);
+
+        let exported_json = export_configs_with_mode(DatabaseMode::Memory)
+            .await
+            .unwrap();
+        assert!(exported_json.contains("memory-test-1"));
+        assert!(exported_json.contains("memory-test-2"));
+
+        delete_all_configs_with_mode(DatabaseMode::Memory)
+            .await
+            .unwrap();
+
+        let configs_after_delete = read_configs_with_mode(DatabaseMode::Memory).await.unwrap();
+        assert_eq!(configs_after_delete.len(), 0);
     }
 }

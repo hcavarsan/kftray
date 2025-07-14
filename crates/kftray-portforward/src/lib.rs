@@ -24,4 +24,5 @@ pub use kube::{
     stop_all_port_forward,
     stop_port_forward,
     stop_proxy_forward,
+    stop_proxy_forward_with_mode,
 };

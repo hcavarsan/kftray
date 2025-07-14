@@ -6,6 +6,10 @@ use sqlx::{
 
 use crate::db::get_db_pool;
 use crate::models::config_state_model::ConfigState;
+use crate::utils::db_mode::{
+    DatabaseManager,
+    DatabaseMode,
+};
 
 pub(crate) async fn update_config_state_with_pool(
     config_state: &ConfigState, pool: &SqlitePool,
@@ -76,6 +80,32 @@ pub async fn get_configs_state() -> Result<Vec<ConfigState>, String> {
         error!("Failed to get config states: {e}");
         e.to_string()
     })
+}
+
+pub async fn update_config_state_with_mode(
+    config_state: &ConfigState, mode: DatabaseMode,
+) -> Result<(), String> {
+    let context = DatabaseManager::get_context(mode).await?;
+    update_config_state_with_pool(config_state, &context.pool).await
+}
+
+pub async fn read_config_states_with_mode(
+    mode: DatabaseMode,
+) -> Result<Vec<ConfigState>, sqlx::Error> {
+    let context = DatabaseManager::get_context(mode)
+        .await
+        .map_err(|e| sqlx::Error::Configuration(e.into()))?;
+    read_config_states_with_pool(&context.pool).await
+}
+
+pub async fn get_configs_state_with_mode(mode: DatabaseMode) -> Result<Vec<ConfigState>, String> {
+    let context = DatabaseManager::get_context(mode).await?;
+    read_config_states_with_pool(&context.pool)
+        .await
+        .map_err(|e| {
+            error!("Failed to get config states: {e}");
+            e.to_string()
+        })
 }
 
 #[cfg(test)]
@@ -437,5 +467,63 @@ mod tests {
         let states = read_config_states_with_pool(&pool).await.unwrap();
         assert_eq!(states.len(), 1);
         assert_eq!(states[0].config_id, 1);
+    }
+
+    #[tokio::test]
+    async fn test_config_state_with_mode_memory() {
+        let config_data = Config {
+            service: Some("memory-state-test".to_string()),
+            ..Config::default()
+        };
+
+        config::insert_config_with_mode(config_data, DatabaseMode::Memory)
+            .await
+            .unwrap();
+
+        let configs = config::read_configs_with_mode(DatabaseMode::Memory)
+            .await
+            .unwrap();
+        let config_id = configs[0].id.unwrap();
+
+        let states = read_config_states_with_mode(DatabaseMode::Memory)
+            .await
+            .unwrap();
+        assert_eq!(states.len(), 1);
+        assert_eq!(states[0].config_id, config_id);
+        assert!(!states[0].is_running);
+
+        let state_update = ConfigState {
+            id: None,
+            config_id,
+            is_running: true,
+        };
+
+        update_config_state_with_mode(&state_update, DatabaseMode::Memory)
+            .await
+            .unwrap();
+
+        let updated_states = read_config_states_with_mode(DatabaseMode::Memory)
+            .await
+            .unwrap();
+        assert_eq!(updated_states.len(), 1);
+        assert!(updated_states[0].is_running);
+    }
+
+    #[tokio::test]
+    async fn test_get_configs_state_with_mode_memory() {
+        let config_data = Config {
+            service: Some("get-state-memory-test".to_string()),
+            ..Config::default()
+        };
+
+        config::insert_config_with_mode(config_data, DatabaseMode::Memory)
+            .await
+            .unwrap();
+
+        let states = get_configs_state_with_mode(DatabaseMode::Memory)
+            .await
+            .unwrap();
+        assert_eq!(states.len(), 1);
+        assert!(!states[0].is_running);
     }
 }

@@ -169,6 +169,87 @@ pub async fn deploy_and_forward_pod(
     Ok(responses)
 }
 
+pub async fn stop_proxy_forward_with_mode(
+    config_id: i64, namespace: &str, service_name: String,
+    mode: kftray_commons::utils::db_mode::DatabaseMode,
+) -> Result<CustomResponse, String> {
+    info!("Attempting to stop proxy forward for service: {service_name}");
+
+    let config = kftray_commons::utils::config::get_config_with_mode(config_id, mode)
+        .await
+        .map_err(|e| {
+            error!("Failed to get config: {e}");
+            e.to_string()
+        })?;
+
+    let kubeconfig = config
+        .kubeconfig
+        .ok_or_else(|| "Kubeconfig not found".to_string())?;
+    let context_name = config.context.as_deref();
+
+    let (client, _, _) = create_client_with_specific_context(Some(kubeconfig), context_name)
+        .await
+        .map_err(|e| {
+            error!("Failed to create Kubernetes client: {e}");
+            e.to_string()
+        })?;
+
+    let client = client.ok_or_else(|| "Client not created".to_string())?;
+
+    let pods: Api<Pod> = Api::namespaced(client, namespace);
+
+    let lp = ListParams::default().labels(&format!("config_id={config_id}"));
+
+    let pod_list = pods.list(&lp).await.map_err(|e| {
+        error!("Error listing pods: {e}");
+        e.to_string()
+    })?;
+
+    let username = whoami::username();
+    let pod_prefix = format!("kftray-forward-{username}");
+
+    debug!("Looking for pods with prefix: {pod_prefix}");
+
+    for pod in pod_list.items {
+        if let Some(pod_name) = pod.metadata.name {
+            if pod_name.starts_with(&pod_prefix) {
+                info!("Found pod to stop: {pod_name}");
+
+                let delete_options = DeleteParams {
+                    grace_period_seconds: Some(0),
+                    propagation_policy: Some(kube::api::PropagationPolicy::Background),
+                    ..Default::default()
+                };
+
+                match pods.delete(&pod_name, &delete_options).await {
+                    Ok(_) => info!("Successfully deleted pod: {pod_name}"),
+                    Err(e) => {
+                        error!("Failed to delete pod: {pod_name} with error: {e}");
+                        return Err(e.to_string());
+                    }
+                }
+
+                break;
+            } else {
+                info!("Pod {pod_name} does not match prefix, skipping");
+            }
+        }
+    }
+
+    info!("Stopping port forward for service: {service_name}");
+
+    let stop_result = super::stop::stop_port_forward(config_id.to_string())
+        .await
+        .map_err(|e| {
+            error!("Failed to stop port forwarding for service '{service_name}': {e}");
+            e
+        })?;
+
+    info!("Proxy forward stopped for service: {service_name}");
+
+    Ok(stop_result)
+}
+
 pub async fn stop_proxy_forward(
     config_id: i64, namespace: &str, service_name: String,
 ) -> Result<CustomResponse, String> {

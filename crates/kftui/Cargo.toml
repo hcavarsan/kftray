@@ -16,6 +16,7 @@ ignored = ["built"]
 
 [dependencies]
 built = { workspace = true }
+clap = { workspace = true }
 crossterm = { workspace = true }
 kftray-commons = { path = "../kftray-commons" }
 kftray-http-logs = { path = "../kftray-http-logs" }
