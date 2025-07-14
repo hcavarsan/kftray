@@ -49,7 +49,7 @@ pub async fn handle_context_selection(app: &mut App, context: &str, mode: Databa
     };
 
     for config in configs {
-        if let Err(e) = insert_config_with_mode(config, mode.clone()).await {
+        if let Err(e) = insert_config_with_mode(config, mode).await {
             app.error_message = Some(format!("Failed to insert config: {e}"));
             app.state = AppState::ShowErrorPopup;
             return;

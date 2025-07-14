@@ -109,48 +109,49 @@ pub(crate) async fn insert_config_with_pool(
 pub(crate) async fn insert_config_with_pool_and_mode(
     config: Config, pool: &SqlitePool, mode: DatabaseMode,
 ) -> Result<(), String> {
-    let config = prepare_config(config);
-    let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
-
-    create_db_table(pool).await.map_err(|e| e.to_string())?;
-
-    let data = json!(config).to_string();
-
     match mode {
         DatabaseMode::Memory => {
+            let config = prepare_config(config);
+            let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
+            create_db_table(pool).await.map_err(|e| e.to_string())?;
+
             let next_id = get_next_memory_id(pool).await?;
+            let data = json!(config).to_string();
+
             sqlx::query("INSERT INTO configs (id, data) VALUES (?1, ?2)")
                 .bind(next_id)
                 .bind(data)
                 .execute(&mut *conn)
                 .await
                 .map_err(|e| e.to_string())?;
+            Ok(())
         }
-        DatabaseMode::File => {
-            sqlx::query("INSERT INTO configs (data) VALUES (?1)")
-                .bind(data)
-                .execute(&mut *conn)
-                .await
-                .map_err(|e| e.to_string())?;
-        }
+        DatabaseMode::File => insert_config_with_pool(config, pool).await,
     }
-    Ok(())
 }
+
+const MEMORY_ID_START: i64 = 100000;
 
 async fn get_next_memory_id(pool: &SqlitePool) -> Result<i64, String> {
     let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
 
-    const MEMORY_ID_START: i64 = 100000;
+    let memory_id_start = std::env::var("KFTRAY_MEMORY_ID_START")
+        .ok()
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or(MEMORY_ID_START);
 
     let row = sqlx::query("SELECT COALESCE(MAX(id), ?) as max_id FROM configs WHERE id >= ?")
-        .bind(MEMORY_ID_START - 1)
-        .bind(MEMORY_ID_START)
+        .bind(memory_id_start - 1)
+        .bind(memory_id_start)
         .fetch_one(&mut *conn)
         .await
         .map_err(|e| e.to_string())?;
 
     let max_id: i64 = row.try_get("max_id").map_err(|e| e.to_string())?;
-    Ok(max_id + 1)
+
+    max_id
+        .checked_add(1)
+        .ok_or_else(|| "ID overflow: maximum ID value reached".to_string())
 }
 
 pub async fn insert_config(config: Config) -> Result<(), String> {
@@ -348,15 +349,7 @@ fn validate_imported_config(config: &Config) -> Result<(), String> {
 pub(crate) async fn import_configs_with_pool(
     json: String, pool: &SqlitePool,
 ) -> Result<(), String> {
-    let configs: Vec<Config> = match serde_json::from_str(&json) {
-        Ok(configs) => configs,
-        Err(e) => {
-            info!("Failed to parse JSON as Vec<Config>: {e}. Trying as single Config.");
-            let config = serde_json::from_str::<Config>(&json)
-                .map_err(|e| format!("Failed to parse config: {e}"))?;
-            vec![config]
-        }
-    };
+    let configs = parse_config_json(&json)?;
 
     for config in configs {
         validate_imported_config(&config).map_err(|e| format!("Invalid config: {e}"))?;
@@ -372,22 +365,26 @@ pub(crate) async fn import_configs_with_pool(
     Ok(())
 }
 
+fn parse_config_json(json: &str) -> Result<Vec<Config>, String> {
+    match serde_json::from_str(json) {
+        Ok(configs) => Ok(configs),
+        Err(e) => {
+            info!("Failed to parse JSON as Vec<Config>: {e}. Trying as single Config.");
+            let config = serde_json::from_str::<Config>(json)
+                .map_err(|e| format!("Failed to parse config: {e}"))?;
+            Ok(vec![config])
+        }
+    }
+}
+
 pub(crate) async fn import_configs_with_pool_and_mode(
     json: String, pool: &SqlitePool, mode: DatabaseMode,
 ) -> Result<(), String> {
-    let configs: Vec<Config> = match serde_json::from_str(&json) {
-        Ok(configs) => configs,
-        Err(e) => {
-            info!("Failed to parse JSON as Vec<Config>: {e}. Trying as single Config.");
-            let config = serde_json::from_str::<Config>(&json)
-                .map_err(|e| format!("Failed to parse config: {e}"))?;
-            vec![config]
-        }
-    };
+    let configs = parse_config_json(&json)?;
 
     for config in configs {
         validate_imported_config(&config).map_err(|e| format!("Invalid config: {e}"))?;
-        insert_config_with_pool_and_mode(config, pool, mode.clone())
+        insert_config_with_pool_and_mode(config, pool, mode)
             .await
             .map_err(|e| format!("Failed to insert config: {e}"))?;
     }
@@ -426,7 +423,7 @@ pub async fn delete_all_configs_with_mode(mode: DatabaseMode) -> Result<(), Stri
 }
 
 pub async fn insert_config_with_mode(config: Config, mode: DatabaseMode) -> Result<(), String> {
-    let context = DatabaseManager::get_context(mode.clone()).await?;
+    let context = DatabaseManager::get_context(mode).await?;
     insert_config_with_pool_and_mode(config, &context.pool, mode).await
 }
 
@@ -451,7 +448,7 @@ pub async fn export_configs_with_mode(mode: DatabaseMode) -> Result<String, Stri
 }
 
 pub async fn import_configs_with_mode(json: String, mode: DatabaseMode) -> Result<(), String> {
-    let context = DatabaseManager::get_context(mode.clone()).await?;
+    let context = DatabaseManager::get_context(mode).await?;
     import_configs_with_pool_and_mode(json, &context.pool, mode).await
 }
 

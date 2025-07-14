@@ -16,7 +16,7 @@ use crate::db::{
     get_db_pool,
 };
 
-#[derive(Debug, Clone, PartialEq, Default)]
+#[derive(Debug, Clone, PartialEq, Default, Copy)]
 pub enum DatabaseMode {
     #[default]
     File,

@@ -177,14 +177,14 @@ impl GitHubRepository {
 
         if flush_existing && mode == DatabaseMode::File {
             info!("Clearing existing configurations");
-            clear_existing_configs_with_mode(mode.clone()).await?;
+            clear_existing_configs_with_mode(mode).await?;
         }
 
         info!("Importing {} new configurations", configs.len());
         for config in configs {
             let config_json = serde_json::to_string(&config)
                 .map_err(|e| format!("Failed to serialize config: {e}"))?;
-            import_configs_with_mode(config_json, mode.clone()).await?;
+            import_configs_with_mode(config_json, mode).await?;
         }
 
         match migrate_configs(None).await {

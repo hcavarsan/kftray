@@ -97,7 +97,7 @@ pub async fn stop_port_forwarding(app: &mut App, config: Config, mode: DatabaseM
                 config.id.unwrap_or_default(),
                 &config.namespace,
                 config.service.clone().unwrap_or_default(),
-                mode.clone(),
+                mode,
             )
             .await
             {
@@ -162,7 +162,7 @@ pub async fn stop_all_port_forward_and_exit(app: &mut App) {
 pub async fn start_port_forward(
     config_id: i64, mode: DatabaseMode,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let config = get_config_with_mode(config_id, mode.clone()).await?;
+    let config = get_config_with_mode(config_id, mode).await?;
 
     match config.workload_type.as_deref() {
         Some("proxy") => {
@@ -189,6 +189,7 @@ pub async fn start_port_forward(
 
     if let Err(e) = update_config_state_with_mode(&config_state, mode).await {
         error!("Failed to update config state: {e}");
+        // State update failures are non-fatal - port forwarding will continue
     }
 
     Ok(())

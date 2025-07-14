@@ -31,8 +31,7 @@ async fn import_configs_from_source(cli: &Cli, mode: DatabaseMode) -> Result<(),
             error!("Failed to stop all port forwards: {e:?}");
         }
 
-        if let Err(e) =
-            kftray_commons::utils::github::clear_existing_configs_with_mode(mode.clone()).await
+        if let Err(e) = kftray_commons::utils::github::clear_existing_configs_with_mode(mode).await
         {
             error!("Failed to clear existing configs: {e}");
             return Err(format!("Failed to clear existing configs: {e}"));
@@ -94,22 +93,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if cli.has_config_source() {
-        if let Err(e) = import_configs_from_source(&cli, mode.clone()).await {
+        if let Err(e) = import_configs_from_source(&cli, mode).await {
             error!("Failed to import configs: {e}");
             process::exit(1);
         }
     }
 
     if cli.auto_start {
-        let configs = read_configs_with_mode(mode.clone()).await.map_err(|e| {
+        let configs = read_configs_with_mode(mode).await.map_err(|e| {
             error!("Failed to read configs: {e}");
             e
         })?;
 
         for config in configs {
             if let Some(config_id) = config.id {
-                if let Err(e) =
-                    crate::core::port_forward::start_port_forward(config_id, mode.clone()).await
+                if let Err(e) = crate::core::port_forward::start_port_forward(config_id, mode).await
                 {
                     error!("Failed to start port forward for config {config_id}: {e}");
                 }

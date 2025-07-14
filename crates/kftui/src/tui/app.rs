@@ -38,8 +38,7 @@ pub async fn run_tui(mode: DatabaseMode) -> Result<(), Box<dyn std::error::Error
     let mut app = App::new();
 
     // Start network monitor if enabled
-    if let Ok(enabled) =
-        kftray_commons::utils::settings::get_network_monitor_with_mode(mode.clone()).await
+    if let Ok(enabled) = kftray_commons::utils::settings::get_network_monitor_with_mode(mode).await
     {
         if enabled {
             if let Err(e) = kftray_network_monitor::start().await {
@@ -48,7 +47,7 @@ pub async fn run_tui(mode: DatabaseMode) -> Result<(), Box<dyn std::error::Error
         }
     }
 
-    let res = run_app(&mut terminal, &mut app, mode.clone()).await;
+    let res = run_app(&mut terminal, &mut app, mode).await;
 
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
@@ -67,12 +66,8 @@ pub async fn run_app<B: ratatui::backend::Backend>(
     let mut interval = time::interval(Duration::from_millis(100));
 
     loop {
-        let configs = read_configs_with_mode(mode.clone())
-            .await
-            .unwrap_or_default();
-        let mut config_states = read_config_states_with_mode(mode.clone())
-            .await
-            .unwrap_or_default();
+        let configs = read_configs_with_mode(mode).await.unwrap_or_default();
+        let config_states = read_config_states_with_mode(mode).await.unwrap_or_default();
 
         app.update_configs(&configs, &config_states);
 
@@ -80,7 +75,7 @@ pub async fn run_app<B: ratatui::backend::Backend>(
             draw_ui(f, app, &config_states);
         })?;
 
-        if handle_input(app, &mut config_states, mode.clone()).await? {
+        if handle_input(app, mode).await? {
             break;
         }
 

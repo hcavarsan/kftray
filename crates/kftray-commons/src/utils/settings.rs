@@ -357,9 +357,10 @@ mod tests {
             .unwrap();
         assert_eq!(memory_value, Some("memory_value".to_string()));
 
-        let file_value = get_setting_with_mode("isolation_test", DatabaseMode::Memory)
+        let file_value = get_setting_with_mode("isolation_test", DatabaseMode::File)
             .await
             .unwrap();
-        assert_eq!(file_value, Some("memory_value".to_string()));
+        // File mode should not have the value set in Memory mode
+        assert!(file_value.is_none());
     }
 }
