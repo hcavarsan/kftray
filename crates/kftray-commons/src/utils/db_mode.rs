@@ -1,8 +1,4 @@
-use std::collections::HashMap;
-use std::sync::{
-    Arc,
-    Weak,
-};
+use std::sync::Arc;
 use std::sync::{
     LazyLock,
     Mutex,
@@ -29,8 +25,8 @@ pub struct DatabaseContext {
 
 pub struct DatabaseManager;
 
-static MEMORY_DB_POOLS: LazyLock<Mutex<HashMap<std::thread::ThreadId, Weak<SqlitePool>>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+static MEMORY_DB_POOL: LazyLock<Mutex<Option<Arc<SqlitePool>>>> =
+    LazyLock::new(|| Mutex::new(None));
 
 impl DatabaseManager {
     pub async fn get_context(mode: DatabaseMode) -> Result<DatabaseContext, String> {
@@ -40,35 +36,28 @@ impl DatabaseManager {
                 Ok(DatabaseContext { pool, mode })
             }
             DatabaseMode::Memory => {
-                let thread_id = std::thread::current().id();
-
                 {
-                    let mut pools = MEMORY_DB_POOLS.lock().unwrap();
-
-                    pools.retain(|_, weak_pool| weak_pool.strong_count() > 0);
-
-                    if let Some(weak_pool) = pools.get(&thread_id) {
-                        if let Some(pool) = weak_pool.upgrade() {
-                            return Ok(DatabaseContext { pool, mode });
-                        } else {
-                            pools.remove(&thread_id);
-                        }
+                    let pool_guard = MEMORY_DB_POOL.lock().unwrap();
+                    if let Some(pool) = pool_guard.as_ref() {
+                        return Ok(DatabaseContext {
+                            pool: pool.clone(),
+                            mode,
+                        });
                     }
                 }
 
-                let db_name = format!("test_db_{thread_id:?}");
-                let connection_string = format!("sqlite:file:{db_name}?mode=memory&cache=shared");
+                let connection_string = "sqlite::memory:";
 
                 let pool = Arc::new(
-                    SqlitePool::connect(&connection_string)
+                    SqlitePool::connect(connection_string)
                         .await
                         .map_err(|e| e.to_string())?,
                 );
                 create_db_table(&pool).await.map_err(|e| e.to_string())?;
 
                 {
-                    let mut pools = MEMORY_DB_POOLS.lock().unwrap();
-                    pools.insert(thread_id, Arc::downgrade(&pool));
+                    let mut pool_guard = MEMORY_DB_POOL.lock().unwrap();
+                    *pool_guard = Some(pool.clone());
                 }
 
                 Ok(DatabaseContext { pool, mode })
@@ -77,8 +66,8 @@ impl DatabaseManager {
     }
 
     pub fn cleanup_memory_pools() {
-        let mut pools = MEMORY_DB_POOLS.lock().unwrap();
-        pools.retain(|_, weak_pool| weak_pool.strong_count() > 0);
+        let mut pool_guard = MEMORY_DB_POOL.lock().unwrap();
+        *pool_guard = None;
     }
 }
 

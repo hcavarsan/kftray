@@ -20,5 +20,7 @@ pub use service::retrieve_service_configs;
 pub use start::start_port_forward;
 pub use stop::{
     stop_all_port_forward,
+    stop_all_port_forward_with_mode,
     stop_port_forward,
+    stop_port_forward_with_mode,
 };

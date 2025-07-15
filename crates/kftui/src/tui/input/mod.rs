@@ -268,7 +268,7 @@ pub async fn handle_input(app: &mut App, mode: DatabaseMode) -> io::Result<bool>
             log::debug!("Key pressed: {key:?}");
 
             if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
-                stop_all_port_forward_and_exit(app).await;
+                stop_all_port_forward_and_exit(app, mode).await;
             }
 
             match app.state {
@@ -515,7 +515,7 @@ pub async fn handle_menu_input(app: &mut App, key: KeyCode, mode: DatabaseMode) 
                 app.settings_selected_option = 0;
             }
             5 => app.state = AppState::ShowAbout,
-            6 => stop_all_port_forward_and_exit(app).await,
+            6 => stop_all_port_forward_and_exit(app, mode).await,
             _ => {}
         },
         _ => {}

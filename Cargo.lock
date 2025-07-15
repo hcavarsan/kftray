@@ -3144,6 +3144,7 @@ dependencies = [
  "built",
  "clap",
  "crossterm",
+ "futures",
  "insta",
  "kftray-commons",
  "kftray-http-logs",

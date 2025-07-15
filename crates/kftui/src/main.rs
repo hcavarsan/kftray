@@ -8,6 +8,10 @@ use std::fs;
 use std::process;
 
 use clap::Parser;
+use futures::stream::{
+    FuturesUnordered,
+    StreamExt,
+};
 use kftray_commons::utils::config::{
     import_configs_with_mode,
     read_configs_with_mode,
@@ -105,12 +109,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             e
         })?;
 
-        for config in configs {
-            if let Some(config_id) = config.id {
-                if let Err(e) = crate::core::port_forward::start_port_forward(config_id, mode).await
-                {
-                    error!("Failed to start port forward for config {config_id}: {e}");
+        if !configs.is_empty() {
+            let config_ids: Vec<i64> = configs.into_iter().filter_map(|config| config.id).collect();
+
+            if !config_ids.is_empty() {
+                let mut tasks = FuturesUnordered::new();
+
+                for config_id in config_ids {
+                    tasks.push(async move {
+                        if let Err(e) =
+                            crate::core::port_forward::start_port_forward(config_id, mode).await
+                        {
+                            error!("Failed to start port forward for config {config_id}: {e}");
+                        }
+                    });
                 }
+
+                while let Some(()) = tasks.next().await {}
             }
         }
     }

@@ -14,7 +14,9 @@ use kftray_commons::{
         response::CustomResponse,
     },
     utils::{
+        config::read_configs_with_mode,
         config_state::update_config_state,
+        db_mode::DatabaseMode,
         timeout_manager::cancel_timeout_for_forward,
     },
 };
@@ -108,7 +110,13 @@ async fn release_address_with_fallback(address: &str) {
 }
 
 pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
-    info!("Attempting to stop all port forwards");
+    stop_all_port_forward_with_mode(DatabaseMode::File).await
+}
+
+pub async fn stop_all_port_forward_with_mode(
+    mode: DatabaseMode,
+) -> Result<Vec<CustomResponse>, String> {
+    info!("Attempting to stop all port forwards in mode: {mode:?}");
 
     let mut responses = Vec::with_capacity(1024);
     CANCEL_NOTIFIER.notify_waiters();
@@ -143,13 +151,10 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
         }
     };
 
-    let configs = match get_configs().await {
-        Ok(configs) => configs,
-        Err(e) => {
-            let error_message = format!("Failed to retrieve configs: {e}");
-            error!("{error_message}");
-            return Err(error_message);
-        }
+    // Get configs using the appropriate database mode
+    let configs = match mode {
+        DatabaseMode::File => get_configs().await.unwrap_or_default(),
+        DatabaseMode::Memory => read_configs_with_mode(mode).await.unwrap_or_default(),
     };
 
     let config_map: HashMap<i64, &Config> = configs
@@ -381,6 +386,12 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
 }
 
 pub async fn stop_port_forward(config_id: String) -> Result<CustomResponse, String> {
+    stop_port_forward_with_mode(config_id, DatabaseMode::File).await
+}
+
+pub async fn stop_port_forward_with_mode(
+    config_id: String, mode: DatabaseMode,
+) -> Result<CustomResponse, String> {
     let cancellation_notifier = CANCEL_NOTIFIER.clone();
     cancellation_notifier.notify_waiters();
 
@@ -395,16 +406,20 @@ pub async fn stop_port_forward(config_id: String) -> Result<CustomResponse, Stri
     if let Some(composite_key) = composite_key {
         let config_id_parsed = config_id.parse::<i64>().unwrap_or_default();
 
-        if let Ok(configs) = get_configs().await {
-            if let Some(config) = configs.iter().find(|c| c.id == Some(config_id_parsed)) {
-                info!("Found config {} during stop with local_address: {:?} and auto_loopback_address: {}",
-                      config_id, config.local_address, config.auto_loopback_address);
-                if let Some(local_addr) = &config.local_address {
-                    if crate::network_utils::is_custom_loopback_address(local_addr) {
-                        info!("Cleaning up loopback address for config {config_id}: {local_addr} (auto_allocated: {})", config.auto_loopback_address);
+        // Get configs using the appropriate database mode
+        let configs = match mode {
+            DatabaseMode::File => get_configs().await.unwrap_or_default(),
+            DatabaseMode::Memory => read_configs_with_mode(mode).await.unwrap_or_default(),
+        };
 
-                        release_address_with_fallback(local_addr).await;
-                    }
+        // Handle loopback address cleanup
+        if let Some(config) = configs.iter().find(|c| c.id == Some(config_id_parsed)) {
+            info!("Found config {} during stop with local_address: {:?} and auto_loopback_address: {}",
+                  config_id, config.local_address, config.auto_loopback_address);
+            if let Some(local_addr) = &config.local_address {
+                if crate::network_utils::is_custom_loopback_address(local_addr) {
+                    info!("Cleaning up loopback address for config {config_id}: {local_addr} (auto_allocated: {})", config.auto_loopback_address);
+                    release_address_with_fallback(local_addr).await;
                 }
             }
         }
@@ -426,63 +441,48 @@ pub async fn stop_port_forward(config_id: String) -> Result<CustomResponse, Stri
         let (config_id_str, service_name) = composite_key.split_once('_').unwrap_or(("", ""));
         let config_id_parsed = config_id_str.parse::<i64>().unwrap_or_default();
 
-        match get_configs().await {
-            Ok(configs) => {
-                if let Some(config) = configs.iter().find(|c| c.id == Some(config_id_parsed)) {
-                    if config.domain_enabled.unwrap_or_default() {
-                        if let Err(e) = remove_host_entry(config_id_str) {
-                            error!("Failed to remove host entry for ID {config_id_str}: {e}");
+        // Handle host entry cleanup for domain-enabled configs
+        if let Some(config) = configs.iter().find(|c| c.id == Some(config_id_parsed)) {
+            if config.domain_enabled.unwrap_or_default() {
+                if let Err(e) = remove_host_entry(config_id_str) {
+                    error!("Failed to remove host entry for ID {config_id_str}: {e}");
 
-                            let config_state = ConfigState {
-                                id: None,
-                                config_id: config_id_parsed,
-                                is_running: false,
-                            };
-                            if let Err(e) = update_config_state(&config_state).await {
-                                error!("Failed to update config state: {e}");
-                            }
-                            return Err(e.to_string());
-                        }
+                    let config_state = ConfigState {
+                        id: None,
+                        config_id: config_id_parsed,
+                        is_running: false,
+                    };
+                    if let Err(e) = update_config_state(&config_state).await {
+                        error!("Failed to update config state: {e}");
                     }
-                } else {
-                    warn!("Config with id '{config_id_str}' not found.");
+                    return Err(e.to_string());
                 }
-
-                let config_state = ConfigState {
-                    id: None,
-                    config_id: config_id_parsed,
-                    is_running: false,
-                };
-                if let Err(e) = update_config_state(&config_state).await {
-                    error!("Failed to update config state: {e}");
-                }
-
-                Ok(CustomResponse {
-                    id: None,
-                    service: service_name.to_string(),
-                    namespace: String::new(),
-                    local_port: 0,
-                    remote_port: 0,
-                    context: String::new(),
-                    protocol: String::new(),
-                    stdout: String::from("Service port forwarding has been stopped"),
-                    stderr: String::new(),
-                    status: 0,
-                })
             }
-            Err(e) => {
-                let config_id_parsed = config_id.parse::<i64>().unwrap_or_default();
-                let config_state = ConfigState {
-                    id: None,
-                    config_id: config_id_parsed,
-                    is_running: false,
-                };
-                if let Err(e) = update_config_state(&config_state).await {
-                    error!("Failed to update config state: {e}");
-                }
-                Err(format!("Failed to retrieve configs: {e}"))
-            }
+        } else {
+            warn!("Config with id '{config_id_str}' not found.");
         }
+
+        let config_state = ConfigState {
+            id: None,
+            config_id: config_id_parsed,
+            is_running: false,
+        };
+        if let Err(e) = update_config_state(&config_state).await {
+            error!("Failed to update config state: {e}");
+        }
+
+        Ok(CustomResponse {
+            id: None,
+            service: service_name.to_string(),
+            namespace: String::new(),
+            local_port: 0,
+            remote_port: 0,
+            context: String::new(),
+            protocol: String::new(),
+            stdout: String::from("Service port forwarding has been stopped"),
+            stderr: String::new(),
+            status: 0,
+        })
     } else {
         let config_id_parsed = config_id.parse::<i64>().unwrap_or_default();
         let config_state = ConfigState {

@@ -238,7 +238,7 @@ pub async fn stop_proxy_forward_with_mode(
 
     info!("Stopping port forward for service: {service_name}");
 
-    let stop_result = super::stop::stop_port_forward(config_id.to_string())
+    let stop_result = super::stop::stop_port_forward_with_mode(config_id.to_string(), mode)
         .await
         .map_err(|e| {
             error!("Failed to stop port forwarding for service '{service_name}': {e}");
@@ -318,12 +318,15 @@ pub async fn stop_proxy_forward(
 
     info!("Stopping port forward for service: {service_name}");
 
-    let stop_result = super::stop::stop_port_forward(config_id.to_string())
-        .await
-        .map_err(|e| {
-            error!("Failed to stop port forwarding for service '{service_name}': {e}");
-            e
-        })?;
+    let stop_result = super::stop::stop_port_forward_with_mode(
+        config_id.to_string(),
+        kftray_commons::utils::db_mode::DatabaseMode::File,
+    )
+    .await
+    .map_err(|e| {
+        error!("Failed to stop port forwarding for service '{service_name}': {e}");
+        e
+    })?;
 
     info!("Proxy forward stopped for service: {service_name}");
 
