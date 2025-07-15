@@ -1,9 +1,8 @@
 use std::collections::HashMap;
-use std::sync::atomic::{
-    AtomicUsize,
-    Ordering,
+use std::sync::{
+    Arc,
+    Weak,
 };
-use std::sync::Arc;
 use std::sync::{
     LazyLock,
     Mutex,
@@ -30,8 +29,7 @@ pub struct DatabaseContext {
 
 pub struct DatabaseManager;
 
-static MEMORY_DB_COUNTER: AtomicUsize = AtomicUsize::new(0);
-static MEMORY_DB_POOLS: LazyLock<Mutex<HashMap<std::thread::ThreadId, Arc<SqlitePool>>>> =
+static MEMORY_DB_POOLS: LazyLock<Mutex<HashMap<std::thread::ThreadId, Weak<SqlitePool>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 impl DatabaseManager {
@@ -44,20 +42,21 @@ impl DatabaseManager {
             DatabaseMode::Memory => {
                 let thread_id = std::thread::current().id();
 
-                // Check if we already have a pool for this thread
                 {
-                    let pools = MEMORY_DB_POOLS.lock().unwrap();
-                    if let Some(pool) = pools.get(&thread_id) {
-                        return Ok(DatabaseContext {
-                            pool: pool.clone(),
-                            mode,
-                        });
+                    let mut pools = MEMORY_DB_POOLS.lock().unwrap();
+
+                    pools.retain(|_, weak_pool| weak_pool.strong_count() > 0);
+
+                    if let Some(weak_pool) = pools.get(&thread_id) {
+                        if let Some(pool) = weak_pool.upgrade() {
+                            return Ok(DatabaseContext { pool, mode });
+                        } else {
+                            pools.remove(&thread_id);
+                        }
                     }
                 }
 
-                // Create a new database for this thread
-                let counter = MEMORY_DB_COUNTER.fetch_add(1, Ordering::SeqCst);
-                let db_name = format!("test_db_{counter}");
+                let db_name = format!("test_db_{thread_id:?}");
                 let connection_string = format!("sqlite:file:{db_name}?mode=memory&cache=shared");
 
                 let pool = Arc::new(
@@ -67,15 +66,19 @@ impl DatabaseManager {
                 );
                 create_db_table(&pool).await.map_err(|e| e.to_string())?;
 
-                // Store the pool for this thread
                 {
                     let mut pools = MEMORY_DB_POOLS.lock().unwrap();
-                    pools.insert(thread_id, pool.clone());
+                    pools.insert(thread_id, Arc::downgrade(&pool));
                 }
 
                 Ok(DatabaseContext { pool, mode })
             }
         }
+    }
+
+    pub fn cleanup_memory_pools() {
+        let mut pools = MEMORY_DB_POOLS.lock().unwrap();
+        pools.retain(|_, weak_pool| weak_pool.strong_count() > 0);
     }
 }
 

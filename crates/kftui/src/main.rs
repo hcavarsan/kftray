@@ -27,14 +27,14 @@ use crate::tui::run_tui;
 
 async fn import_configs_from_source(cli: &Cli, mode: DatabaseMode) -> Result<(), String> {
     if cli.flush && mode == DatabaseMode::File {
-        if let Err(e) = stop_all_port_forward().await {
-            error!("Failed to stop all port forwards: {e:?}");
-        }
-
         if let Err(e) = kftray_commons::utils::github::clear_existing_configs_with_mode(mode).await
         {
             error!("Failed to clear existing configs: {e}");
             return Err(format!("Failed to clear existing configs: {e}"));
+        }
+
+        if let Err(e) = stop_all_port_forward().await {
+            error!("Failed to stop all port forwards: {e:?}");
         }
     }
 

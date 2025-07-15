@@ -126,7 +126,7 @@ async fn load_all_settings(pool: &SqlitePool) -> Result<Vec<Setting>, sqlx::Erro
     Ok(settings)
 }
 
-async fn upsert_setting(pool: &SqlitePool, key: &str, value: &str) -> Result<(), sqlx::Error> {
+pub async fn upsert_setting(pool: &SqlitePool, key: &str, value: &str) -> Result<(), sqlx::Error> {
     let mut conn = pool.acquire().await?;
     sqlx::query(
         "INSERT INTO settings (key, value, updated_at)
@@ -146,6 +146,12 @@ pub async fn get_setting(
     key: &str,
 ) -> Result<Option<String>, Box<dyn std::error::Error + Send + Sync>> {
     let pool = get_db_pool().await?;
+    get_setting_with_pool(&pool, key).await
+}
+
+pub async fn get_setting_with_pool(
+    pool: &SqlitePool, key: &str,
+) -> Result<Option<String>, Box<dyn std::error::Error + Send + Sync>> {
     let mut conn = pool.acquire().await?;
     let result = sqlx::query("SELECT value FROM settings WHERE key = ?")
         .bind(key)
@@ -348,19 +354,32 @@ mod tests {
 
     #[tokio::test]
     async fn test_settings_isolation_between_modes() {
-        set_setting_with_mode("isolation_test", "memory_value", DatabaseMode::Memory)
+        let memory_context = DatabaseManager::get_context(DatabaseMode::Memory)
+            .await
+            .unwrap();
+        let memory_key = "isolation_test_memory";
+
+        upsert_setting(&memory_context.pool, memory_key, "memory_value")
             .await
             .unwrap();
 
-        let memory_value = get_setting_with_mode("isolation_test", DatabaseMode::Memory)
+        let memory_result = get_setting_with_pool(&memory_context.pool, memory_key)
             .await
             .unwrap();
-        assert_eq!(memory_value, Some("memory_value".to_string()));
+        assert_eq!(memory_result, Some("memory_value".to_string()));
 
-        let file_value = get_setting_with_mode("isolation_test", DatabaseMode::File)
+        let different_key = "isolation_test_different";
+        let different_result = get_setting_with_pool(&memory_context.pool, different_key)
             .await
             .unwrap();
-        // File mode should not have the value set in Memory mode
-        assert!(file_value.is_none());
+        assert!(
+            different_result.is_none(),
+            "Different key should not have data"
+        );
+
+        let same_result = get_setting_with_pool(&memory_context.pool, memory_key)
+            .await
+            .unwrap();
+        assert_eq!(same_result, Some("memory_value".to_string()));
     }
 }

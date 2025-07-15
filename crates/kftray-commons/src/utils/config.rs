@@ -97,6 +97,27 @@ pub(crate) async fn insert_config_with_pool(
 
     create_db_table(pool).await.map_err(|e| e.to_string())?;
 
+    // Validate that file mode won't conflict with memory mode ID range
+    let memory_id_start = std::env::var("KFTRAY_MEMORY_ID_START")
+        .ok()
+        .and_then(|s| s.parse::<i64>().ok())
+        .unwrap_or(MEMORY_ID_START);
+
+    let next_id_row =
+        sqlx::query("SELECT COALESCE(MAX(id), 0) + 1 as next_id FROM configs WHERE id < ?")
+            .bind(memory_id_start)
+            .fetch_one(&mut *conn)
+            .await
+            .map_err(|e| e.to_string())?;
+
+    let next_id: i64 = next_id_row.try_get("next_id").map_err(|e| e.to_string())?;
+
+    if next_id >= memory_id_start {
+        return Err(format!(
+            "ID conflict detected: next file mode ID ({next_id}) would exceed memory mode start ({memory_id_start})"
+        ));
+    }
+
     let data = json!(config).to_string();
     sqlx::query("INSERT INTO configs (data) VALUES (?1)")
         .bind(data)
@@ -139,6 +160,22 @@ async fn get_next_memory_id(pool: &SqlitePool) -> Result<i64, String> {
         .ok()
         .and_then(|s| s.parse::<i64>().ok())
         .unwrap_or(MEMORY_ID_START);
+
+    // Validate that memory ID range doesn't conflict with existing file-based IDs
+    let file_max_row =
+        sqlx::query("SELECT COALESCE(MAX(id), 0) as max_id FROM configs WHERE id < ?")
+            .bind(memory_id_start)
+            .fetch_one(&mut *conn)
+            .await
+            .map_err(|e| e.to_string())?;
+
+    let file_max_id: i64 = file_max_row.try_get("max_id").map_err(|e| e.to_string())?;
+
+    if file_max_id >= memory_id_start {
+        return Err(format!(
+            "ID conflict detected: file mode max ID ({file_max_id}) exceeds memory mode start ({memory_id_start})"
+        ));
+    }
 
     let row = sqlx::query("SELECT COALESCE(MAX(id), ?) as max_id FROM configs WHERE id >= ?")
         .bind(memory_id_start - 1)
