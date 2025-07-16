@@ -27,6 +27,7 @@ use crate::tui::input::{
 mod tests {
     use crossterm::event::KeyCode;
     use kftray_commons::models::config_model::Config;
+    use kftray_commons::utils::db_mode::DatabaseMode;
 
     use super::*;
 
@@ -283,24 +284,24 @@ mod tests {
         app.state = AppState::ShowDeleteConfirmation;
         app.selected_delete_button = DeleteButton::Close;
 
-        handle_delete_confirmation_input(&mut app, KeyCode::Left)
+        handle_delete_confirmation_input(&mut app, KeyCode::Left, DatabaseMode::File)
             .await
             .unwrap();
         assert_eq!(app.selected_delete_button, DeleteButton::Confirm);
 
-        handle_delete_confirmation_input(&mut app, KeyCode::Right)
+        handle_delete_confirmation_input(&mut app, KeyCode::Right, DatabaseMode::File)
             .await
             .unwrap();
         assert_eq!(app.selected_delete_button, DeleteButton::Close);
 
-        handle_delete_confirmation_input(&mut app, KeyCode::Esc)
+        handle_delete_confirmation_input(&mut app, KeyCode::Esc, DatabaseMode::File)
             .await
             .unwrap();
         assert_eq!(app.state, AppState::Normal);
 
         app.state = AppState::ShowDeleteConfirmation;
         app.selected_delete_button = DeleteButton::Close;
-        handle_delete_confirmation_input(&mut app, KeyCode::Enter)
+        handle_delete_confirmation_input(&mut app, KeyCode::Enter, DatabaseMode::File)
             .await
             .unwrap();
         assert_eq!(app.state, AppState::Normal);
@@ -314,19 +315,19 @@ mod tests {
         app.selected_context_index = 0;
         app.context_list_state.select(Some(0));
 
-        handle_context_selection_input(&mut app, KeyCode::Down)
+        handle_context_selection_input(&mut app, KeyCode::Down, DatabaseMode::File)
             .await
             .unwrap();
         assert_eq!(app.selected_context_index, 1);
         assert_eq!(app.context_list_state.selected(), Some(1));
 
-        handle_context_selection_input(&mut app, KeyCode::Up)
+        handle_context_selection_input(&mut app, KeyCode::Up, DatabaseMode::File)
             .await
             .unwrap();
         assert_eq!(app.selected_context_index, 0);
         assert_eq!(app.context_list_state.selected(), Some(0));
 
-        handle_context_selection_input(&mut app, KeyCode::Enter)
+        handle_context_selection_input(&mut app, KeyCode::Enter, DatabaseMode::File)
             .await
             .unwrap();
     }
@@ -337,13 +338,19 @@ mod tests {
         app.state = AppState::Normal;
 
         app.active_component = ActiveComponent::Menu;
-        handle_normal_input(&mut app, KeyCode::Tab).await.unwrap();
+        handle_normal_input(&mut app, KeyCode::Tab, DatabaseMode::File)
+            .await
+            .unwrap();
         assert_eq!(app.active_component, ActiveComponent::StoppedTable);
 
-        handle_normal_input(&mut app, KeyCode::Tab).await.unwrap();
+        handle_normal_input(&mut app, KeyCode::Tab, DatabaseMode::File)
+            .await
+            .unwrap();
         assert_eq!(app.active_component, ActiveComponent::Details);
 
-        handle_normal_input(&mut app, KeyCode::Tab).await.unwrap();
+        handle_normal_input(&mut app, KeyCode::Tab, DatabaseMode::File)
+            .await
+            .unwrap();
         assert_eq!(app.active_component, ActiveComponent::Menu);
     }
 
@@ -354,30 +361,42 @@ mod tests {
         app.active_component = ActiveComponent::Menu;
         app.selected_menu_item = 2;
 
-        handle_menu_input(&mut app, KeyCode::Left).await.unwrap();
+        handle_menu_input(&mut app, KeyCode::Left, DatabaseMode::File)
+            .await
+            .unwrap();
         assert_eq!(app.selected_menu_item, 1);
 
-        handle_menu_input(&mut app, KeyCode::Right).await.unwrap();
+        handle_menu_input(&mut app, KeyCode::Right, DatabaseMode::File)
+            .await
+            .unwrap();
         assert_eq!(app.selected_menu_item, 2);
 
-        handle_menu_input(&mut app, KeyCode::Down).await.unwrap();
+        handle_menu_input(&mut app, KeyCode::Down, DatabaseMode::File)
+            .await
+            .unwrap();
         assert_eq!(app.active_component, ActiveComponent::StoppedTable);
 
         app.active_component = ActiveComponent::Menu;
         app.selected_menu_item = 0;
-        handle_menu_input(&mut app, KeyCode::Enter).await.unwrap();
+        handle_menu_input(&mut app, KeyCode::Enter, DatabaseMode::File)
+            .await
+            .unwrap();
         assert_eq!(app.state, AppState::ShowHelp);
 
         app.state = AppState::Normal;
         app.active_component = ActiveComponent::Menu;
         app.selected_menu_item = 4;
-        handle_menu_input(&mut app, KeyCode::Enter).await.unwrap();
+        handle_menu_input(&mut app, KeyCode::Enter, DatabaseMode::File)
+            .await
+            .unwrap();
         assert_eq!(app.state, AppState::ShowSettings);
 
         app.state = AppState::Normal;
         app.active_component = ActiveComponent::Menu;
         app.selected_menu_item = 5;
-        handle_menu_input(&mut app, KeyCode::Enter).await.unwrap();
+        handle_menu_input(&mut app, KeyCode::Enter, DatabaseMode::File)
+            .await
+            .unwrap();
         assert_eq!(app.state, AppState::ShowAbout);
     }
 
@@ -391,32 +410,32 @@ mod tests {
         app.selected_row_stopped = 1;
 
         app.selected_rows_stopped.clear();
-        handle_stopped_table_input(&mut app, KeyCode::Char('a'))
+        handle_stopped_table_input(&mut app, KeyCode::Char('a'), DatabaseMode::File)
             .await
             .unwrap();
         assert_eq!(app.selected_rows_stopped.len(), 3);
 
         app.selected_rows_stopped.clear();
-        handle_stopped_table_input(&mut app, KeyCode::Char(' '))
+        handle_stopped_table_input(&mut app, KeyCode::Char(' '), DatabaseMode::File)
             .await
             .unwrap();
         assert!(app.selected_rows_stopped.contains(&1));
 
-        handle_stopped_table_input(&mut app, KeyCode::Right)
+        handle_stopped_table_input(&mut app, KeyCode::Right, DatabaseMode::File)
             .await
             .unwrap();
         assert_eq!(app.active_component, ActiveComponent::RunningTable);
 
         app.active_component = ActiveComponent::StoppedTable;
         app.table_state_stopped.select(Some(0));
-        handle_stopped_table_input(&mut app, KeyCode::Up)
+        handle_stopped_table_input(&mut app, KeyCode::Up, DatabaseMode::File)
             .await
             .unwrap();
         assert_eq!(app.active_component, ActiveComponent::Menu);
 
         app.active_component = ActiveComponent::StoppedTable;
         app.selected_rows_stopped.insert(1);
-        handle_stopped_table_input(&mut app, KeyCode::Char('d'))
+        handle_stopped_table_input(&mut app, KeyCode::Char('d'), DatabaseMode::File)
             .await
             .unwrap();
         assert_eq!(app.state, AppState::ShowDeleteConfirmation);
@@ -432,19 +451,19 @@ mod tests {
         app.selected_row_running = 0;
 
         app.selected_rows_running.clear();
-        handle_running_table_input(&mut app, KeyCode::Char(' '))
+        handle_running_table_input(&mut app, KeyCode::Char(' '), DatabaseMode::File)
             .await
             .unwrap();
         assert!(app.selected_rows_running.contains(&0));
 
-        handle_running_table_input(&mut app, KeyCode::Left)
+        handle_running_table_input(&mut app, KeyCode::Left, DatabaseMode::File)
             .await
             .unwrap();
         assert_eq!(app.active_component, ActiveComponent::StoppedTable);
 
         app.active_component = ActiveComponent::RunningTable;
         app.table_state_running.select(Some(0));
-        handle_running_table_input(&mut app, KeyCode::Up)
+        handle_running_table_input(&mut app, KeyCode::Up, DatabaseMode::File)
             .await
             .unwrap();
         assert_eq!(app.active_component, ActiveComponent::Menu);
@@ -452,7 +471,7 @@ mod tests {
         app.active_component = ActiveComponent::RunningTable;
         app.table_state_running.select(Some(1));
         app.selected_row_running = 1;
-        handle_running_table_input(&mut app, KeyCode::Down)
+        handle_running_table_input(&mut app, KeyCode::Down, DatabaseMode::File)
             .await
             .unwrap();
         assert_eq!(app.active_component, ActiveComponent::Logs);
@@ -465,25 +484,27 @@ mod tests {
         app.active_component = ActiveComponent::Details;
         app.visible_rows = 2;
 
-        handle_details_input(&mut app, KeyCode::Right)
+        handle_details_input(&mut app, KeyCode::Right, DatabaseMode::File)
             .await
             .unwrap();
         assert_eq!(app.active_component, ActiveComponent::Logs);
 
         app.active_component = ActiveComponent::Details;
-        handle_details_input(&mut app, KeyCode::Up).await.unwrap();
+        handle_details_input(&mut app, KeyCode::Up, DatabaseMode::File)
+            .await
+            .unwrap();
         assert_eq!(app.active_component, ActiveComponent::StoppedTable);
 
         app.active_component = ActiveComponent::Details;
         app.details_scroll_offset = 5;
         app.details_scroll_max_offset = 10;
 
-        handle_details_input(&mut app, KeyCode::PageUp)
+        handle_details_input(&mut app, KeyCode::PageUp, DatabaseMode::File)
             .await
             .unwrap();
         assert_eq!(app.details_scroll_offset, 3);
 
-        handle_details_input(&mut app, KeyCode::PageDown)
+        handle_details_input(&mut app, KeyCode::PageDown, DatabaseMode::File)
             .await
             .unwrap();
         assert_eq!(app.details_scroll_offset, 5);

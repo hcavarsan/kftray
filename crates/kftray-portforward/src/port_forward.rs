@@ -141,10 +141,6 @@ impl PortForward {
                     }
 
                     let conn = client_conn.lock().await;
-                    conn.set_nodelay(true).map_err(|e| {
-                        error!(error = %e, "Failed to set nodelay");
-                        std::io::Error::other(e.to_string())
-                    })?;
                     drop(conn);
 
                     info!("Finding target pod");

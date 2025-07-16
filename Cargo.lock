@@ -2977,6 +2977,7 @@ dependencies = [
  "anyhow",
  "dirs",
  "futures",
+ "git2",
  "hostsfile",
  "lazy_static",
  "log",
@@ -3141,7 +3142,9 @@ name = "kftui"
 version = "0.20.1"
 dependencies = [
  "built",
+ "clap",
  "crossterm",
+ "futures",
  "insta",
  "kftray-commons",
  "kftray-http-logs",

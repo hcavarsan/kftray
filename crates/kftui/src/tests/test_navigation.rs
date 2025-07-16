@@ -1,4 +1,5 @@
 use kftray_commons::models::config_model::Config;
+use kftray_commons::utils::db_mode::DatabaseMode;
 
 use crate::tui::input::navigation::{
     handle_auto_add_configs,
@@ -43,7 +44,7 @@ mod tests {
         app.active_table = ActiveTable::Stopped;
         let config = create_test_config();
 
-        handle_port_forward(&mut app, config).await;
+        handle_port_forward(&mut app, config, DatabaseMode::File).await;
 
         assert_eq!(
             app.active_table,
@@ -58,7 +59,7 @@ mod tests {
         app.active_table = ActiveTable::Running;
         let config = create_test_config();
 
-        handle_port_forward(&mut app, config).await;
+        handle_port_forward(&mut app, config, DatabaseMode::File).await;
 
         assert_eq!(
             app.active_table,
@@ -106,7 +107,7 @@ mod tests {
         app.selected_context_index = 0;
         app.context_list_state = ListState::default();
         app.context_list_state.select(Some(0));
-        handle_context_selection(&mut app, "test-context").await;
+        handle_context_selection(&mut app, "test-context", DatabaseMode::File).await;
         if app.state == AppState::ShowErrorPopup {
             assert!(app.error_message.is_some());
         } else {
@@ -123,7 +124,7 @@ mod tests {
         let mut app = App::new();
         app.state = AppState::ShowContextSelection;
 
-        handle_context_selection(&mut app, "invalid-context").await;
+        handle_context_selection(&mut app, "invalid-context", DatabaseMode::File).await;
 
         assert_eq!(app.state, AppState::ShowErrorPopup);
         assert!(app.error_message.is_some());

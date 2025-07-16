@@ -1,7 +1,206 @@
+use std::path::Path;
+
+use log::{
+    error,
+    info,
+    warn,
+};
 use sqlx::SqlitePool;
 
 use crate::db::get_db_pool;
+use crate::models::config_model::Config;
+use crate::utils::config::import_configs_with_mode;
+use crate::utils::db_mode::DatabaseMode;
+use crate::utils::migration::migrate_configs;
 
+pub struct GitHubConfig {
+    pub repo_url: String,
+    pub config_path: String,
+    pub use_system_credentials: bool,
+    pub github_token: Option<String>,
+    pub flush_existing: bool,
+}
+
+pub type GitHubResult<T> = Result<T, String>;
+
+pub struct GitHubRepository;
+
+impl GitHubRepository {
+    pub async fn import_configs(config: GitHubConfig, mode: DatabaseMode) -> GitHubResult<()> {
+        let config_content = Self::clone_and_read_config(
+            &config.repo_url,
+            &config.config_path,
+            config.use_system_credentials,
+            config.github_token,
+        )?;
+
+        Self::process_config_content(&config_content, config.flush_existing, mode).await
+    }
+
+    fn clone_and_read_config(
+        repo_url: &str, config_path: &str, use_system_credentials: bool,
+        github_token: Option<String>,
+    ) -> GitHubResult<String> {
+        use git2::{
+            build::RepoBuilder,
+            CertificateCheckStatus,
+            Cred,
+            FetchOptions,
+            RemoteCallbacks,
+        };
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().map_err(|e| format!("Failed to create temp dir: {e}"))?;
+
+        let mut callbacks = RemoteCallbacks::new();
+
+        if use_system_credentials || github_token.is_some() {
+            let token = github_token.clone();
+            let attempts = std::sync::atomic::AtomicUsize::new(0);
+
+            callbacks.credentials(move |url, username_from_url, allowed_types| {
+                let current_attempt = attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if current_attempt >= 3 {
+                    return Err(git2::Error::from_str(
+                        "Authentication failed after 3 attempts",
+                    ));
+                }
+
+                info!(
+                    "Auth attempt {} - URL: {}, Username: {:?}",
+                    current_attempt + 1,
+                    url,
+                    username_from_url
+                );
+
+                let is_https_url = url.starts_with("https://");
+
+                if is_https_url && allowed_types.contains(git2::CredentialType::USER_PASS_PLAINTEXT)
+                {
+                    if let Some(token) = &token {
+                        info!("Using token authentication for HTTPS");
+                        return Cred::userpass_plaintext("git", token);
+                    }
+                }
+
+                if use_system_credentials {
+                    let username = username_from_url.unwrap_or("git");
+                    Self::get_system_credentials(url, username)
+                } else {
+                    Err(git2::Error::from_str("No authentication method configured"))
+                }
+            });
+        }
+
+        callbacks.certificate_check(|_cert, _hostname| Ok(CertificateCheckStatus::CertificateOk));
+
+        let mut fetch_opts = FetchOptions::new();
+        fetch_opts.remote_callbacks(callbacks);
+
+        let mut builder = RepoBuilder::new();
+        builder.fetch_options(fetch_opts);
+
+        info!("Attempting to clone repository: {repo_url}");
+
+        match builder.clone(repo_url, temp_dir.path()) {
+            Ok(_) => {
+                info!("Successfully cloned repository");
+                Self::read_config_file(temp_dir.path(), config_path)
+            }
+            Err(e) => {
+                warn!("Repository clone failed: {e}, trying fallback with system git command");
+                Self::try_clone_with_system_git(repo_url, temp_dir.path(), config_path)
+            }
+        }
+    }
+
+    fn get_system_credentials(url: &str, username: &str) -> Result<git2::Cred, git2::Error> {
+        use git2::Cred;
+
+        if url.starts_with("git@") || url.starts_with("ssh://") {
+            if let Ok(cred) = Cred::ssh_key_from_agent(username) {
+                info!("Successfully authenticated with SSH agent");
+                return Ok(cred);
+            }
+        }
+
+        if let Ok(config) = git2::Config::open_default() {
+            if let Ok(cred) = Cred::credential_helper(&config, url, Some(username)) {
+                info!("Successfully retrieved credentials from OS credential store");
+                return Ok(cred);
+            }
+        }
+
+        Err(git2::Error::from_str("No valid credentials found"))
+    }
+
+    fn try_clone_with_system_git(
+        repo_url: &str, path: &Path, config_path: &str,
+    ) -> GitHubResult<String> {
+        use std::process::Command;
+
+        let output = Command::new("git")
+            .arg("clone")
+            .arg("--depth=1")
+            .arg("--single-branch")
+            .arg("--no-tags")
+            .arg("--filter=blob:none")
+            .arg("--recurse-submodules=no")
+            .arg(repo_url)
+            .arg(path)
+            .output()
+            .map_err(|e| format!("Failed to execute git command: {e}"))?;
+
+        if output.status.success() {
+            info!("Successfully cloned repository using system git");
+            Self::read_config_file(path, config_path)
+        } else {
+            let error_msg = String::from_utf8_lossy(&output.stderr);
+            error!("System git clone failed: {error_msg}");
+            Err(format!("Failed to clone repository. Please check your credentials and repository URL. Error: {error_msg}"))
+        }
+    }
+
+    fn read_config_file(temp_dir: &Path, config_path: &str) -> GitHubResult<String> {
+        let config_path = Path::new(config_path);
+        let full_path = temp_dir.join(config_path);
+
+        std::fs::read_to_string(&full_path)
+            .map_err(|e| format!("Failed to read config file at {}: {e}", full_path.display()))
+    }
+
+    async fn process_config_content(
+        config_content: &str, flush_existing: bool, mode: DatabaseMode,
+    ) -> GitHubResult<()> {
+        let configs: Vec<Config> = serde_json::from_str(config_content)
+            .map_err(|e| format!("Failed to parse config JSON: {e}"))?;
+
+        if flush_existing && mode == DatabaseMode::File {
+            info!("Clearing existing configurations");
+            clear_existing_configs_with_mode(mode).await?;
+        }
+
+        info!("Importing {} new configurations", configs.len());
+        for config in configs {
+            let config_json = serde_json::to_string(&config)
+                .map_err(|e| format!("Failed to serialize config: {e}"))?;
+            import_configs_with_mode(config_json, mode).await?;
+        }
+
+        match migrate_configs(None).await {
+            Ok(_) => {
+                info!("Configuration import completed successfully");
+                Ok(())
+            }
+            Err(e) => {
+                error!("Error migrating configs: {e}");
+                Err(format!("Config migration failed: {e}"))
+            }
+        }
+    }
+}
+
+/// Clear existing configurations from database
 async fn clear_existing_configs_with_pool(pool: &SqlitePool) -> Result<(), sqlx::Error> {
     let mut conn = pool.acquire().await?;
     sqlx::query("DELETE FROM configs")
@@ -15,6 +214,15 @@ pub async fn clear_existing_configs() -> Result<(), sqlx::Error> {
         .await
         .map_err(|e| sqlx::Error::Configuration(format!("DB Pool error: {e}").into()))?;
     clear_existing_configs_with_pool(&pool).await
+}
+
+pub async fn clear_existing_configs_with_mode(mode: DatabaseMode) -> Result<(), String> {
+    use crate::utils::db_mode::DatabaseManager;
+
+    let context = DatabaseManager::get_context(mode).await?;
+    clear_existing_configs_with_pool(&context.pool)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 pub fn build_github_api_url(repo_url: &str, config_path: &str) -> Result<String, String> {

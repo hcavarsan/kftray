@@ -13,6 +13,10 @@ use sqlx::{
 use tokio::sync::RwLock;
 
 use crate::utils::db::get_db_pool;
+use crate::utils::db_mode::{
+    DatabaseManager,
+    DatabaseMode,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Setting {
@@ -122,7 +126,7 @@ async fn load_all_settings(pool: &SqlitePool) -> Result<Vec<Setting>, sqlx::Erro
     Ok(settings)
 }
 
-async fn upsert_setting(pool: &SqlitePool, key: &str, value: &str) -> Result<(), sqlx::Error> {
+pub async fn upsert_setting(pool: &SqlitePool, key: &str, value: &str) -> Result<(), sqlx::Error> {
     let mut conn = pool.acquire().await?;
     sqlx::query(
         "INSERT INTO settings (key, value, updated_at)
@@ -142,6 +146,12 @@ pub async fn get_setting(
     key: &str,
 ) -> Result<Option<String>, Box<dyn std::error::Error + Send + Sync>> {
     let pool = get_db_pool().await?;
+    get_setting_with_pool(&pool, key).await
+}
+
+pub async fn get_setting_with_pool(
+    pool: &SqlitePool, key: &str,
+) -> Result<Option<String>, Box<dyn std::error::Error + Send + Sync>> {
     let mut conn = pool.acquire().await?;
     let result = sqlx::query("SELECT value FROM settings WHERE key = ?")
         .bind(key)
@@ -186,6 +196,58 @@ pub async fn set_network_monitor(
     enabled: bool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     set_setting("network_monitor", &enabled.to_string()).await
+}
+
+pub async fn get_setting_with_mode(
+    key: &str, mode: DatabaseMode,
+) -> Result<Option<String>, Box<dyn std::error::Error + Send + Sync>> {
+    let context = DatabaseManager::get_context(mode).await?;
+    let mut conn = context.pool.acquire().await?;
+    let result = sqlx::query("SELECT value FROM settings WHERE key = ?")
+        .bind(key)
+        .fetch_optional(&mut *conn)
+        .await?;
+    Ok(result.map(|row| row.get("value")))
+}
+
+pub async fn set_setting_with_mode(
+    key: &str, value: &str, mode: DatabaseMode,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let context = DatabaseManager::get_context(mode).await?;
+    upsert_setting(&context.pool, key, value).await?;
+    Ok(())
+}
+
+pub async fn get_disconnect_timeout_with_mode(
+    mode: DatabaseMode,
+) -> Result<Option<u32>, Box<dyn std::error::Error + Send + Sync>> {
+    if let Some(value) = get_setting_with_mode("disconnect_timeout_minutes", mode).await? {
+        Ok(value.parse::<u32>().ok())
+    } else {
+        Ok(Some(0))
+    }
+}
+
+pub async fn set_disconnect_timeout_with_mode(
+    minutes: u32, mode: DatabaseMode,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    set_setting_with_mode("disconnect_timeout_minutes", &minutes.to_string(), mode).await
+}
+
+pub async fn get_network_monitor_with_mode(
+    mode: DatabaseMode,
+) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+    if let Some(value) = get_setting_with_mode("network_monitor", mode).await? {
+        Ok(value.parse::<bool>().unwrap_or(true))
+    } else {
+        Ok(true)
+    }
+}
+
+pub async fn set_network_monitor_with_mode(
+    enabled: bool, mode: DatabaseMode,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    set_setting_with_mode("network_monitor", &enabled.to_string(), mode).await
 }
 
 #[cfg(test)]
@@ -260,5 +322,64 @@ mod tests {
         assert_eq!(settings[0].value, "60");
 
         let _manager = SettingsManager::new();
+    }
+
+    #[tokio::test]
+    async fn test_settings_with_mode_memory() {
+        set_setting_with_mode("memory_test", "test_value", DatabaseMode::Memory)
+            .await
+            .unwrap();
+
+        let value = get_setting_with_mode("memory_test", DatabaseMode::Memory)
+            .await
+            .unwrap();
+        assert_eq!(value, Some("test_value".to_string()));
+
+        set_disconnect_timeout_with_mode(120, DatabaseMode::Memory)
+            .await
+            .unwrap();
+        let timeout = get_disconnect_timeout_with_mode(DatabaseMode::Memory)
+            .await
+            .unwrap();
+        assert_eq!(timeout, Some(120));
+
+        set_network_monitor_with_mode(false, DatabaseMode::Memory)
+            .await
+            .unwrap();
+        let monitor = get_network_monitor_with_mode(DatabaseMode::Memory)
+            .await
+            .unwrap();
+        assert!(!monitor);
+    }
+
+    #[tokio::test]
+    async fn test_settings_isolation_between_modes() {
+        let memory_context = DatabaseManager::get_context(DatabaseMode::Memory)
+            .await
+            .unwrap();
+        let memory_key = "isolation_test_memory";
+
+        upsert_setting(&memory_context.pool, memory_key, "memory_value")
+            .await
+            .unwrap();
+
+        let memory_result = get_setting_with_pool(&memory_context.pool, memory_key)
+            .await
+            .unwrap();
+        assert_eq!(memory_result, Some("memory_value".to_string()));
+
+        let different_key = "isolation_test_different";
+        let different_result = get_setting_with_pool(&memory_context.pool, different_key)
+            .await
+            .unwrap();
+        assert!(
+            different_result.is_none(),
+            "Different key should not have data"
+        );
+
+        let same_result = get_setting_with_pool(&memory_context.pool, memory_key)
+            .await
+            .unwrap();
+        assert_eq!(same_result, Some("memory_value".to_string()));
     }
 }
