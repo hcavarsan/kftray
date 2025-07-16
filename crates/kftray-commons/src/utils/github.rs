@@ -5,13 +5,6 @@ use log::{
     info,
     warn,
 };
-use std::path::Path;
-
-use log::{
-    error,
-    info,
-    warn,
-};
 use sqlx::SqlitePool;
 
 use crate::db::get_db_pool;

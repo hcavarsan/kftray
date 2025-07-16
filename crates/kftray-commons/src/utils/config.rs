@@ -30,10 +30,6 @@ use crate::utils::db_mode::{
     DatabaseManager,
     DatabaseMode,
 };
-use crate::utils::db_mode::{
-    DatabaseManager,
-    DatabaseMode,
-};
 use crate::utils::error::DbError;
 
 pub(crate) async fn delete_config_with_pool(id: i64, pool: &SqlitePool) -> Result<(), DbError> {
@@ -394,7 +390,7 @@ pub(crate) async fn import_configs_with_pool(
 
     for config in configs {
         validate_imported_config(&config).map_err(|e| format!("Invalid config: {e}"))?;
-        insert_config_with_pool_and_mode(config, pool, mode)
+        insert_config_with_pool(config, pool)
             .await
             .map_err(|e| format!("Failed to insert config: {e}"))?;
     }
@@ -1376,70 +1372,6 @@ mod tests {
         let result = read_configs_with_pool(&pool).await;
 
         assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_config_with_mode_memory() {
-        let config = Config {
-            service: Some("memory-test".to_string()),
-            ..Config::default()
-        };
-
-        insert_config_with_mode(config.clone(), DatabaseMode::Memory)
-            .await
-            .unwrap();
-
-        let configs = read_configs_with_mode(DatabaseMode::Memory).await.unwrap();
-        assert_eq!(configs.len(), 1);
-        assert_eq!(configs[0].service, Some("memory-test".to_string()));
-
-        let config_id = configs[0].id.unwrap();
-        let retrieved_config = get_config_with_mode(config_id, DatabaseMode::Memory)
-            .await
-            .unwrap();
-        assert_eq!(retrieved_config.service, Some("memory-test".to_string()));
-
-        delete_config_with_mode(config_id, DatabaseMode::Memory)
-            .await
-            .unwrap();
-
-        let configs_after_delete = read_configs_with_mode(DatabaseMode::Memory).await.unwrap();
-        assert_eq!(configs_after_delete.len(), 0);
-    }
-
-    #[tokio::test]
-    async fn test_config_operations_with_mode_memory() {
-        let config1 = Config {
-            service: Some("memory-test-1".to_string()),
-            ..Config::default()
-        };
-        let config2 = Config {
-            service: Some("memory-test-2".to_string()),
-            ..Config::default()
-        };
-
-        insert_config_with_mode(config1, DatabaseMode::Memory)
-            .await
-            .unwrap();
-        insert_config_with_mode(config2, DatabaseMode::Memory)
-            .await
-            .unwrap();
-
-        let configs = read_configs_with_mode(DatabaseMode::Memory).await.unwrap();
-        assert_eq!(configs.len(), 2);
-
-        let exported_json = export_configs_with_mode(DatabaseMode::Memory)
-            .await
-            .unwrap();
-        assert!(exported_json.contains("memory-test-1"));
-        assert!(exported_json.contains("memory-test-2"));
-
-        delete_all_configs_with_mode(DatabaseMode::Memory)
-            .await
-            .unwrap();
-
-        let configs_after_delete = read_configs_with_mode(DatabaseMode::Memory).await.unwrap();
-        assert_eq!(configs_after_delete.len(), 0);
     }
 
     #[tokio::test]

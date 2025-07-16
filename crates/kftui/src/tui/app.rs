@@ -12,9 +12,6 @@ use crossterm::{
 use kftray_commons::utils::config::read_configs_with_mode;
 use kftray_commons::utils::config_state::read_config_states_with_mode;
 use kftray_commons::utils::db_mode::DatabaseMode;
-use kftray_commons::utils::config::read_configs_with_mode;
-use kftray_commons::utils::config_state::read_config_states_with_mode;
-use kftray_commons::utils::db_mode::DatabaseMode;
 use log::error;
 use ratatui::{
     backend::CrosstermBackend,
@@ -31,7 +28,6 @@ use crate::tui::input::{
 };
 use crate::tui::ui::draw_ui;
 
-pub async fn run_tui(mode: DatabaseMode) -> Result<(), Box<dyn std::error::Error>> {
 pub async fn run_tui(mode: DatabaseMode) -> Result<(), Box<dyn std::error::Error>> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -66,7 +62,6 @@ pub async fn run_tui(mode: DatabaseMode) -> Result<(), Box<dyn std::error::Error
 
 pub async fn run_app<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>, app: &mut App, mode: DatabaseMode,
-    terminal: &mut Terminal<B>, app: &mut App, mode: DatabaseMode,
 ) -> io::Result<()> {
     let mut interval = time::interval(Duration::from_millis(100));
 
@@ -96,7 +91,6 @@ mod tests {
         Ordering,
     };
 
-    use kftray_commons::db::init;
     use kftray_commons::db::init;
     use kftray_commons::models::{
         config_model::Config,

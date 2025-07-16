@@ -1,8 +1,6 @@
 use kftray_commons::models::config_model::Config;
 use kftray_commons::utils::config::insert_config_with_mode;
 use kftray_commons::utils::db_mode::DatabaseMode;
-use kftray_commons::utils::config::insert_config_with_mode;
-use kftray_commons::utils::db_mode::DatabaseMode;
 use kftray_portforward::kube::client::list_kube_contexts;
 use kftray_portforward::kube::retrieve_service_configs;
 

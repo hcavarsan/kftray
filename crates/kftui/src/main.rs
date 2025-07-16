@@ -1,6 +1,5 @@
 #![allow(clippy::needless_return)]
 mod cli;
-mod cli;
 mod core;
 mod stdin;
 mod tui;
