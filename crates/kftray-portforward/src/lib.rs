@@ -22,6 +22,9 @@ pub use kube::{
     retrieve_service_configs,
     start_port_forward,
     stop_all_port_forward,
+    stop_all_port_forward_with_mode,
     stop_port_forward,
+    stop_port_forward_with_mode,
     stop_proxy_forward,
+    stop_proxy_forward_with_mode,
 };

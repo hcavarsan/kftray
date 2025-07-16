@@ -17,6 +17,7 @@ use kftray_commons::models::{
     config_model::Config,
     config_state_model::ConfigState,
 };
+use kftray_commons::utils::db_mode::DatabaseMode;
 use log::LevelFilter;
 pub use popup::*;
 use ratatui::widgets::ListState;
@@ -261,13 +262,13 @@ pub fn toggle_select_all(app: &mut App) {
     }
 }
 
-pub async fn handle_input(app: &mut App, _config_states: &mut [ConfigState]) -> io::Result<bool> {
+pub async fn handle_input(app: &mut App, mode: DatabaseMode) -> io::Result<bool> {
     if event::poll(std::time::Duration::from_millis(100))? {
         if let Event::Key(key) = event::read()? {
             log::debug!("Key pressed: {key:?}");
 
             if key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL) {
-                stop_all_port_forward_and_exit(app).await;
+                stop_all_port_forward_and_exit(app, mode).await;
             }
 
             match app.state {
@@ -281,15 +282,15 @@ pub async fn handle_input(app: &mut App, _config_states: &mut [ConfigState]) -> 
                 }
                 AppState::ImportFileExplorerOpen => {
                     log::debug!("Handling ImportFileExplorerOpen state");
-                    handle_import_file_explorer_input(app, key.code).await?;
+                    handle_import_file_explorer_input(app, key.code, mode).await?;
                 }
                 AppState::ExportFileExplorerOpen => {
                     log::debug!("Handling ExportFileExplorerOpen state");
-                    handle_export_file_explorer_input(app, key.code).await?;
+                    handle_export_file_explorer_input(app, key.code, mode).await?;
                 }
                 AppState::ShowInputPrompt => {
                     log::debug!("Handling ShowInputPrompt state");
-                    handle_export_input_prompt(app, key.code).await?;
+                    handle_export_input_prompt(app, key.code, mode).await?;
                 }
                 AppState::ShowHelp => {
                     log::debug!("Handling ShowHelp state");
@@ -301,19 +302,19 @@ pub async fn handle_input(app: &mut App, _config_states: &mut [ConfigState]) -> 
                 }
                 AppState::ShowDeleteConfirmation => {
                     log::debug!("Handling ShowDeleteConfirmation state");
-                    handle_delete_confirmation_input(app, key.code).await?;
+                    handle_delete_confirmation_input(app, key.code, mode).await?;
                 }
                 AppState::ShowContextSelection => {
                     log::debug!("Handling ShowContextSelection state");
-                    handle_context_selection_input(app, key.code).await?;
+                    handle_context_selection_input(app, key.code, mode).await?;
                 }
                 AppState::ShowSettings => {
                     log::debug!("Handling ShowSettings state");
-                    handle_settings_input(app, key.code).await?;
+                    handle_settings_input(app, key.code, mode).await?;
                 }
                 AppState::Normal => {
                     log::debug!("Handling Normal state");
-                    handle_normal_input(app, key.code).await?;
+                    handle_normal_input(app, key.code, mode).await?;
                 }
             }
         } else if let Event::Resize(_, height) = event::read()? {
@@ -324,8 +325,10 @@ pub async fn handle_input(app: &mut App, _config_states: &mut [ConfigState]) -> 
     Ok(false)
 }
 
-pub async fn handle_normal_input(app: &mut App, key: KeyCode) -> io::Result<()> {
-    if handle_common_hotkeys(app, key).await? {
+pub async fn handle_normal_input(
+    app: &mut App, key: KeyCode, mode: DatabaseMode,
+) -> io::Result<()> {
+    if handle_common_hotkeys(app, key, mode).await? {
         return Ok(());
     }
 
@@ -345,7 +348,7 @@ pub async fn handle_normal_input(app: &mut App, key: KeyCode) -> io::Result<()> 
         }
         KeyCode::PageUp | KeyCode::PageDown => match app.active_component {
             ActiveComponent::Logs => handle_logs_input(app, key).await?,
-            ActiveComponent::Details => handle_details_input(app, key).await?,
+            ActiveComponent::Details => handle_details_input(app, key, mode).await?,
             _ => {
                 if key == KeyCode::PageUp {
                     scroll_page_up(app);
@@ -355,10 +358,10 @@ pub async fn handle_normal_input(app: &mut App, key: KeyCode) -> io::Result<()> 
             }
         },
         _ => match app.active_component {
-            ActiveComponent::Menu => handle_menu_input(app, key).await?,
-            ActiveComponent::StoppedTable => handle_stopped_table_input(app, key).await?,
-            ActiveComponent::RunningTable => handle_running_table_input(app, key).await?,
-            ActiveComponent::Details => handle_details_input(app, key).await?,
+            ActiveComponent::Menu => handle_menu_input(app, key, mode).await?,
+            ActiveComponent::StoppedTable => handle_stopped_table_input(app, key, mode).await?,
+            ActiveComponent::RunningTable => handle_running_table_input(app, key, mode).await?,
+            ActiveComponent::Details => handle_details_input(app, key, mode).await?,
             ActiveComponent::Logs => handle_logs_input(app, key).await?,
         },
     }
@@ -469,8 +472,8 @@ pub fn clear_selection(app: &mut App) {
     }
 }
 
-pub async fn handle_menu_input(app: &mut App, key: KeyCode) -> io::Result<()> {
-    if handle_common_hotkeys(app, key).await? {
+pub async fn handle_menu_input(app: &mut App, key: KeyCode, mode: DatabaseMode) -> io::Result<()> {
+    if handle_common_hotkeys(app, key, mode).await? {
         return Ok(());
     }
 
@@ -498,12 +501,13 @@ pub async fn handle_menu_input(app: &mut App, key: KeyCode) -> io::Result<()> {
             3 => open_export_file_explorer(app),
             4 => {
                 app.state = AppState::ShowSettings;
-                if let Ok(timeout) = kftray_commons::utils::settings::get_disconnect_timeout().await
+                if let Ok(timeout) =
+                    kftray_commons::utils::settings::get_disconnect_timeout_with_mode(mode).await
                 {
                     app.settings_timeout_input = timeout.unwrap_or(0).to_string();
                 }
                 if let Ok(network_monitor) =
-                    kftray_commons::utils::settings::get_network_monitor().await
+                    kftray_commons::utils::settings::get_network_monitor_with_mode(mode).await
                 {
                     app.settings_network_monitor = network_monitor;
                 }
@@ -511,7 +515,7 @@ pub async fn handle_menu_input(app: &mut App, key: KeyCode) -> io::Result<()> {
                 app.settings_selected_option = 0;
             }
             5 => app.state = AppState::ShowAbout,
-            6 => stop_all_port_forward_and_exit(app).await,
+            6 => stop_all_port_forward_and_exit(app, mode).await,
             _ => {}
         },
         _ => {}
@@ -519,8 +523,10 @@ pub async fn handle_menu_input(app: &mut App, key: KeyCode) -> io::Result<()> {
     Ok(())
 }
 
-pub async fn handle_stopped_table_input(app: &mut App, key: KeyCode) -> io::Result<()> {
-    if handle_common_hotkeys(app, key).await? {
+pub async fn handle_stopped_table_input(
+    app: &mut App, key: KeyCode, mode: DatabaseMode,
+) -> io::Result<()> {
+    if handle_common_hotkeys(app, key, mode).await? {
         return Ok(());
     }
 
@@ -554,7 +560,7 @@ pub async fn handle_stopped_table_input(app: &mut App, key: KeyCode) -> io::Resu
             }
         }
         KeyCode::Char(' ') => toggle_row_selection(app),
-        KeyCode::Char('f') => handle_port_forwarding(app).await?,
+        KeyCode::Char('f') => handle_port_forwarding(app, mode).await?,
         KeyCode::Char('d') => show_delete_confirmation(app),
         KeyCode::Char('a') => toggle_select_all(app),
         _ => {}
@@ -562,8 +568,10 @@ pub async fn handle_stopped_table_input(app: &mut App, key: KeyCode) -> io::Resu
     Ok(())
 }
 
-pub async fn handle_running_table_input(app: &mut App, key: KeyCode) -> io::Result<()> {
-    if handle_common_hotkeys(app, key).await? {
+pub async fn handle_running_table_input(
+    app: &mut App, key: KeyCode, mode: DatabaseMode,
+) -> io::Result<()> {
+    if handle_common_hotkeys(app, key, mode).await? {
         return Ok(());
     }
 
@@ -597,7 +605,7 @@ pub async fn handle_running_table_input(app: &mut App, key: KeyCode) -> io::Resu
             }
         }
         KeyCode::Char(' ') => toggle_row_selection(app),
-        KeyCode::Char('f') => handle_port_forwarding(app).await?,
+        KeyCode::Char('f') => handle_port_forwarding(app, mode).await?,
         KeyCode::Char('d') => show_delete_confirmation(app),
         KeyCode::Char('a') => toggle_select_all(app),
         _ => {}
@@ -605,8 +613,10 @@ pub async fn handle_running_table_input(app: &mut App, key: KeyCode) -> io::Resu
     Ok(())
 }
 
-pub async fn handle_details_input(app: &mut App, key: KeyCode) -> io::Result<()> {
-    if handle_common_hotkeys(app, key).await? {
+pub async fn handle_details_input(
+    app: &mut App, key: KeyCode, mode: DatabaseMode,
+) -> io::Result<()> {
+    if handle_common_hotkeys(app, key, mode).await? {
         return Ok(());
     }
 
@@ -656,7 +666,9 @@ pub async fn handle_logs_input(app: &mut App, key: KeyCode) -> io::Result<()> {
     Ok(())
 }
 
-pub async fn handle_common_hotkeys(app: &mut App, key: KeyCode) -> io::Result<bool> {
+pub async fn handle_common_hotkeys(
+    app: &mut App, key: KeyCode, mode: DatabaseMode,
+) -> io::Result<bool> {
     match key {
         KeyCode::Char('q') => {
             app.state = AppState::ShowAbout;
@@ -676,11 +688,13 @@ pub async fn handle_common_hotkeys(app: &mut App, key: KeyCode) -> io::Result<bo
         }
         KeyCode::Char('s') => {
             app.state = AppState::ShowSettings;
-            if let Ok(timeout) = kftray_commons::utils::settings::get_disconnect_timeout().await {
+            if let Ok(timeout) =
+                kftray_commons::utils::settings::get_disconnect_timeout_with_mode(mode).await
+            {
                 app.settings_timeout_input = timeout.unwrap_or(0).to_string();
             }
             if let Ok(network_monitor) =
-                kftray_commons::utils::settings::get_network_monitor().await
+                kftray_commons::utils::settings::get_network_monitor_with_mode(mode).await
             {
                 app.settings_network_monitor = network_monitor;
             }
@@ -717,7 +731,7 @@ pub fn toggle_row_selection(app: &mut App) {
     }
 }
 
-pub async fn handle_port_forwarding(app: &mut App) -> io::Result<()> {
+pub async fn handle_port_forwarding(app: &mut App, mode: DatabaseMode) -> io::Result<()> {
     let (selected_rows, configs, selected_row) = match app.active_table {
         ActiveTable::Stopped => (
             &mut app.selected_rows_stopped,
@@ -745,7 +759,7 @@ pub async fn handle_port_forwarding(app: &mut App) -> io::Result<()> {
         .collect();
 
     for config in selected_configs.clone() {
-        handle_port_forward(app, config).await;
+        handle_port_forward(app, config, mode).await;
     }
 
     if app.active_table == ActiveTable::Stopped {
@@ -774,7 +788,9 @@ pub fn show_delete_confirmation(app: &mut App) {
     }
 }
 
-pub async fn handle_delete_confirmation_input(app: &mut App, key: KeyCode) -> io::Result<()> {
+pub async fn handle_delete_confirmation_input(
+    app: &mut App, key: KeyCode, mode: DatabaseMode,
+) -> io::Result<()> {
     match key {
         KeyCode::Left | KeyCode::Right => {
             app.selected_delete_button = match app.selected_delete_button {
@@ -790,7 +806,12 @@ pub async fn handle_delete_confirmation_input(app: &mut App, key: KeyCode) -> io
                     .filter_map(|&row| app.stopped_configs.get(row).and_then(|config| config.id))
                     .collect();
 
-                match kftray_commons::utils::config::delete_configs(ids_to_delete.clone()).await {
+                match kftray_commons::utils::config::delete_configs_with_mode(
+                    ids_to_delete.clone(),
+                    mode,
+                )
+                .await
+                {
                     Ok(_) => {
                         app.delete_confirmation_message =
                             Some("Configs deleted successfully.".to_string());
@@ -823,10 +844,12 @@ pub fn open_export_file_explorer(app: &mut App) {
     app.selected_file_path = std::env::current_dir().ok();
 }
 
-pub async fn handle_context_selection_input(app: &mut App, key: KeyCode) -> io::Result<()> {
+pub async fn handle_context_selection_input(
+    app: &mut App, key: KeyCode, mode: DatabaseMode,
+) -> io::Result<()> {
     if let KeyCode::Enter = key {
         if let Some(selected_context) = app.contexts.get(app.selected_context_index).cloned() {
-            handle_context_selection(app, &selected_context).await;
+            handle_context_selection(app, &selected_context, mode).await;
         }
     } else if let KeyCode::Up = key {
         if app.selected_context_index > 0 {
@@ -844,7 +867,9 @@ pub async fn handle_context_selection_input(app: &mut App, key: KeyCode) -> io::
     Ok(())
 }
 
-pub async fn handle_settings_input(app: &mut App, key: KeyCode) -> io::Result<()> {
+pub async fn handle_settings_input(
+    app: &mut App, key: KeyCode, mode: DatabaseMode,
+) -> io::Result<()> {
     match key {
         KeyCode::Esc => {
             app.state = AppState::Normal;
@@ -866,8 +891,9 @@ pub async fn handle_settings_input(app: &mut App, key: KeyCode) -> io::Result<()
                     // Handle timeout setting
                     if app.settings_editing {
                         if let Ok(timeout_value) = app.settings_timeout_input.parse::<u32>() {
-                            if (kftray_commons::utils::settings::set_disconnect_timeout(
+                            if (kftray_commons::utils::settings::set_disconnect_timeout_with_mode(
                                 timeout_value,
+                                mode,
                             )
                             .await)
                                 .is_err()
@@ -890,8 +916,9 @@ pub async fn handle_settings_input(app: &mut App, key: KeyCode) -> io::Result<()
                 1 => {
                     // Handle network monitor toggle
                     app.settings_network_monitor = !app.settings_network_monitor;
-                    if let Err(e) = kftray_commons::utils::settings::set_network_monitor(
+                    if let Err(e) = kftray_commons::utils::settings::set_network_monitor_with_mode(
                         app.settings_network_monitor,
+                        mode,
                     )
                     .await
                     {

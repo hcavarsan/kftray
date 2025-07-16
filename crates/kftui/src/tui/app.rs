@@ -9,10 +9,9 @@ use crossterm::{
         LeaveAlternateScreen,
     },
 };
-use kftray_commons::config::read_configs;
-use kftray_commons::utils::config_state::read_config_states;
-use kftray_commons::utils::db::init;
-use kftray_commons::utils::migration::migrate_configs;
+use kftray_commons::utils::config::read_configs_with_mode;
+use kftray_commons::utils::config_state::read_config_states_with_mode;
+use kftray_commons::utils::db_mode::DatabaseMode;
 use log::error;
 use ratatui::{
     backend::CrosstermBackend,
@@ -29,13 +28,7 @@ use crate::tui::input::{
 };
 use crate::tui::ui::draw_ui;
 
-pub async fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
-    init().await?;
-
-    if let Err(e) = migrate_configs(None).await {
-        error!("Database migration failed: {e}");
-    }
-
+pub async fn run_tui(mode: DatabaseMode) -> Result<(), Box<dyn std::error::Error>> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
@@ -45,7 +38,8 @@ pub async fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
     let mut app = App::new();
 
     // Start network monitor if enabled
-    if let Ok(enabled) = kftray_commons::utils::settings::get_network_monitor().await {
+    if let Ok(enabled) = kftray_commons::utils::settings::get_network_monitor_with_mode(mode).await
+    {
         if enabled {
             if let Err(e) = kftray_network_monitor::start().await {
                 error!("Failed to start network monitor: {e}");
@@ -53,7 +47,7 @@ pub async fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    let res = run_app(&mut terminal, &mut app).await;
+    let res = run_app(&mut terminal, &mut app, mode).await;
 
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
@@ -67,13 +61,13 @@ pub async fn run_tui() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 pub async fn run_app<B: ratatui::backend::Backend>(
-    terminal: &mut Terminal<B>, app: &mut App,
+    terminal: &mut Terminal<B>, app: &mut App, mode: DatabaseMode,
 ) -> io::Result<()> {
     let mut interval = time::interval(Duration::from_millis(100));
 
     loop {
-        let configs = read_configs().await.unwrap_or_default();
-        let mut config_states = read_config_states().await.unwrap_or_default();
+        let configs = read_configs_with_mode(mode).await.unwrap_or_default();
+        let config_states = read_config_states_with_mode(mode).await.unwrap_or_default();
 
         app.update_configs(&configs, &config_states);
 
@@ -81,7 +75,7 @@ pub async fn run_app<B: ratatui::backend::Backend>(
             draw_ui(f, app, &config_states);
         })?;
 
-        if handle_input(app, &mut config_states).await? {
+        if handle_input(app, mode).await? {
             break;
         }
 
@@ -97,6 +91,7 @@ mod tests {
         Ordering,
     };
 
+    use kftray_commons::db::init;
     use kftray_commons::models::{
         config_model::Config,
         config_state_model::ConfigState,
@@ -104,7 +99,6 @@ mod tests {
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
 
-    use super::*;
     use crate::tui::input::{
         ActiveComponent,
         ActiveTable,
