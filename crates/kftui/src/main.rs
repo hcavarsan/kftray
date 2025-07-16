@@ -103,37 +103,74 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
+    let mut imported_config_ids = Vec::new();
+
     if cli.has_config_source() {
+        let configs_before = if cli.auto_start && !cli.flush {
+            read_configs_with_mode(mode).await.map_err(|e| {
+                error!("Failed to read configs before import: {e}");
+                e
+            })?
+        } else {
+            Vec::new()
+        };
+
         if let Err(e) = import_configs_from_source(&cli, mode).await {
             error!("Failed to import configs: {e}");
             process::exit(1);
         }
+
+        if cli.auto_start {
+            let configs_after = read_configs_with_mode(mode).await.map_err(|e| {
+                error!("Failed to read configs after import: {e}");
+                e
+            })?;
+
+            imported_config_ids = if cli.flush {
+                configs_after
+                    .into_iter()
+                    .filter_map(|config| config.id)
+                    .collect()
+            } else {
+                let before_ids: std::collections::HashSet<i64> = configs_before
+                    .into_iter()
+                    .filter_map(|config| config.id)
+                    .collect();
+
+                configs_after
+                    .into_iter()
+                    .filter_map(|config| config.id)
+                    .filter(|id| !before_ids.contains(id))
+                    .collect()
+            };
+        }
     }
 
     if cli.auto_start {
-        let configs = read_configs_with_mode(mode).await.map_err(|e| {
-            error!("Failed to read configs: {e}");
-            e
-        })?;
+        let config_ids = if cli.has_config_source() {
+            imported_config_ids
+        } else {
+            let configs = read_configs_with_mode(mode).await.map_err(|e| {
+                error!("Failed to read configs: {e}");
+                e
+            })?;
+            configs.into_iter().filter_map(|config| config.id).collect()
+        };
 
-        if !configs.is_empty() {
-            let config_ids: Vec<i64> = configs.into_iter().filter_map(|config| config.id).collect();
+        if !config_ids.is_empty() {
+            let mut tasks = FuturesUnordered::new();
 
-            if !config_ids.is_empty() {
-                let mut tasks = FuturesUnordered::new();
-
-                for config_id in config_ids {
-                    tasks.push(async move {
-                        if let Err(e) =
-                            crate::core::port_forward::start_port_forward(config_id, mode).await
-                        {
-                            error!("Failed to start port forward for config {config_id}: {e}");
-                        }
-                    });
-                }
-
-                while let Some(()) = tasks.next().await {}
+            for config_id in config_ids {
+                tasks.push(async move {
+                    if let Err(e) =
+                        crate::core::port_forward::start_port_forward(config_id, mode).await
+                    {
+                        error!("Failed to start port forward for config {config_id}: {e}");
+                    }
+                });
             }
+
+            while let Some(()) = tasks.next().await {}
         }
     }
 
