@@ -179,6 +179,8 @@ pub fn draw_configs_tab(
         "Stopped Configs",
         has_focus && app.active_component == ActiveComponent::StoppedTable,
         &app.selected_rows_stopped,
+        &app.configs_being_processed,
+        &app.throbber_state,
     );
 
     draw_configs_table(
@@ -190,5 +192,7 @@ pub fn draw_configs_tab(
         "Running Configs",
         has_focus && app.active_component == ActiveComponent::RunningTable,
         &app.selected_rows_running,
+        &app.configs_being_processed,
+        &app.throbber_state,
     );
 }

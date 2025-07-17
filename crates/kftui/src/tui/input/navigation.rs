@@ -1,26 +1,12 @@
-use kftray_commons::models::config_model::Config;
 use kftray_commons::utils::config::insert_config_with_mode;
 use kftray_commons::utils::db_mode::DatabaseMode;
 use kftray_portforward::kube::client::list_kube_contexts;
 use kftray_portforward::kube::retrieve_service_configs;
 
-use crate::core::port_forward::{
-    start_port_forwarding,
-    stop_port_forwarding,
-};
-use crate::tui::input::ActiveTable;
 use crate::tui::input::{
     App,
     AppState,
 };
-
-pub async fn handle_port_forward(app: &mut App, config: Config, mode: DatabaseMode) {
-    if app.active_table == ActiveTable::Stopped {
-        start_port_forwarding(app, config, mode).await;
-    } else {
-        stop_port_forwarding(app, config, mode).await;
-    }
-}
 
 pub async fn handle_auto_add_configs(app: &mut App) {
     let contexts = match list_kube_contexts(None).await {

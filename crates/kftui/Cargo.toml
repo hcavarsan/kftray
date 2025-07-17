@@ -28,6 +28,7 @@ log = { workspace = true }
 ratatui = { workspace = true }
 ratatui-explorer = { workspace = true }
 tempfile = { workspace = true }
+throbber-widgets-tui = "0.8.0"
 tokio = { workspace = true }
 tui-logger = { workspace = true }
 

@@ -136,6 +136,8 @@ mod tests {
                     "Test Table",
                     true,
                     &selected_rows,
+                    &std::collections::HashMap::new(),
+                    &throbber_widgets_tui::ThrobberState::default(),
                 );
             })
             .unwrap();
