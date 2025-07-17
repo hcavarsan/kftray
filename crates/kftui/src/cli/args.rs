@@ -44,15 +44,14 @@ pub struct Cli {
 
     #[arg(long, help = "Read JSON configuration from stdin")]
     pub stdin: bool,
+
+    #[arg(long, help = "Run in non-interactive mode (don't show TUI)")]
+    pub non_interactive: bool,
 }
 
 impl Cli {
     pub fn should_use_memory_mode(&self) -> bool {
-        (self.configs_path.is_some()
-            || self.github_url.is_some()
-            || self.json.is_some()
-            || self.stdin)
-            && !self.save
+        self.has_config_source() && !self.save
     }
 
     pub fn is_github_import(&self) -> bool {
@@ -92,6 +91,26 @@ impl Cli {
             );
         }
 
+        if self.non_interactive {
+            if !self.auto_start && !self.save {
+                return Err(
+                    "--non-interactive requires either --auto-start or --save to perform an action"
+                        .to_string(),
+                );
+            }
+
+            if self.save && !self.auto_start && !self.has_config_source() {
+                return Err(
+                    "--non-interactive with --save requires a config source: --configs-path, --github-url, --json, or --stdin"
+                        .to_string(),
+                );
+            }
+        }
+
+        self.validate_single_config_source()
+    }
+
+    fn validate_single_config_source(&self) -> Result<(), String> {
         let mut source_count = 0;
 
         if self.configs_path.is_some() && self.github_url.is_none() {
