@@ -2972,7 +2972,7 @@ dependencies = [
 
 [[package]]
 name = "kftray-commons"
-version = "0.20.1"
+version = "0.20.2"
 dependencies = [
  "anyhow",
  "dirs",
@@ -2992,7 +2992,7 @@ dependencies = [
 
 [[package]]
 name = "kftray-helper"
-version = "0.20.1"
+version = "0.20.2"
 dependencies = [
  "clap",
  "dirs",
@@ -3034,7 +3034,7 @@ dependencies = [
 
 [[package]]
 name = "kftray-network-monitor"
-version = "0.20.1"
+version = "0.20.2"
 dependencies = [
  "kftray-commons",
  "kftray-http-logs",
@@ -3045,7 +3045,7 @@ dependencies = [
 
 [[package]]
 name = "kftray-portforward"
-version = "0.20.1"
+version = "0.20.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3092,7 +3092,7 @@ dependencies = [
 
 [[package]]
 name = "kftray-server"
-version = "0.20.1"
+version = "0.20.2"
 dependencies = [
  "async-trait",
  "env_logger",
@@ -3104,7 +3104,7 @@ dependencies = [
 
 [[package]]
 name = "kftray-tauri"
-version = "0.20.1"
+version = "0.20.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3139,7 +3139,7 @@ dependencies = [
 
 [[package]]
 name = "kftui"
-version = "0.20.1"
+version = "0.20.2"
 dependencies = [
  "built",
  "clap",
@@ -3155,6 +3155,7 @@ dependencies = [
  "ratatui",
  "ratatui-explorer",
  "tempfile",
+ "throbber-widgets-tui",
  "tokio",
  "tui-logger",
 ]
@@ -6491,6 +6492,16 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f60246a4944f24f6e018aa17cdeffb7818b76356965d03b07d6a9886e8962185"
 dependencies = [
  "cfg-if",
+]
+
+[[package]]
+name = "throbber-widgets-tui"
+version = "0.8.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d36b5738d666a2b4c91b7c24998a8588db724b3107258343ebf8824bf55b06d"
+dependencies = [
+ "rand 0.8.5",
+ "ratatui",
 ]
 
 [[package]]

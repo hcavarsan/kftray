@@ -4,6 +4,11 @@ mod popup;
 
 use std::collections::HashSet;
 use std::io;
+use std::sync::atomic::{
+    AtomicBool,
+    Ordering,
+};
+use std::sync::Arc;
 
 use crossterm::event::{
     self,
@@ -32,7 +37,6 @@ use tui_logger::TuiWidgetState;
 use crate::core::port_forward::stop_all_port_forward_and_exit;
 use crate::tui::input::navigation::handle_auto_add_configs;
 use crate::tui::input::navigation::handle_context_selection;
-use crate::tui::input::navigation::handle_port_forward;
 #[derive(PartialEq, Clone, Copy, Debug)]
 pub enum DeleteButton {
     Confirm,
@@ -102,6 +106,11 @@ pub struct App {
     pub settings_editing: bool,
     pub settings_network_monitor: bool,
     pub settings_selected_option: usize,
+    pub throbber_state: throbber_widgets_tui::ThrobberState,
+    pub configs_being_processed:
+        std::collections::HashMap<i64, (Arc<AtomicBool>, std::time::Instant)>,
+    pub error_receiver: Option<tokio::sync::mpsc::UnboundedReceiver<String>>,
+    pub error_sender: Option<tokio::sync::mpsc::UnboundedSender<String>>,
 }
 
 impl Default for App {
@@ -116,6 +125,7 @@ impl App {
         let import_file_explorer = FileExplorer::with_theme(theme.clone()).unwrap();
         let export_file_explorer = FileExplorer::with_theme(theme).unwrap();
         let logger_state = TuiWidgetState::new().set_default_display_level(LevelFilter::Warn);
+        let (error_sender, error_receiver) = tokio::sync::mpsc::unbounded_channel();
 
         let mut app = Self {
             details_scroll_offset: 0,
@@ -150,6 +160,10 @@ impl App {
             settings_editing: false,
             settings_network_monitor: true,
             settings_selected_option: 0,
+            throbber_state: throbber_widgets_tui::ThrobberState::default(),
+            configs_being_processed: std::collections::HashMap::new(),
+            error_receiver: Some(error_receiver),
+            error_sender: Some(error_sender),
         };
 
         if let Ok((_, height)) = size() {
@@ -187,6 +201,27 @@ impl App {
             })
             .cloned()
             .collect();
+
+        let now = std::time::Instant::now();
+        self.configs_being_processed
+            .retain(|&_config_id, (completion_flag, start_time)| {
+                if completion_flag.load(Ordering::Relaxed) {
+                    return false;
+                }
+
+                if now.duration_since(*start_time) > std::time::Duration::from_secs(30) {
+                    return false;
+                }
+
+                true
+            });
+
+        if let Some(ref mut receiver) = self.error_receiver {
+            if let Ok(error_msg) = receiver.try_recv() {
+                self.error_message = Some(error_msg);
+                self.state = AppState::ShowErrorPopup;
+            }
+        }
     }
 
     pub fn scroll_up(&mut self) {
@@ -758,8 +793,13 @@ pub async fn handle_port_forwarding(app: &mut App, mode: DatabaseMode) -> io::Re
         .filter_map(|&row| configs.get(row).cloned())
         .collect();
 
-    for config in selected_configs.clone() {
-        handle_port_forward(app, config, mode).await;
+    let start_time = std::time::Instant::now();
+    for config in &selected_configs {
+        if let Some(id) = config.id {
+            let completion_flag = Arc::new(AtomicBool::new(false));
+            app.configs_being_processed
+                .insert(id, (completion_flag.clone(), start_time));
+        }
     }
 
     if app.active_table == ActiveTable::Stopped {
@@ -770,6 +810,48 @@ pub async fn handle_port_forwarding(app: &mut App, mode: DatabaseMode) -> io::Re
         app.stopped_configs.extend(selected_configs.clone());
         app.running_configs
             .retain(|config| !selected_configs.contains(config));
+    }
+
+    let error_sender = app.error_sender.clone();
+    let active_table = app.active_table;
+    for config in selected_configs.clone() {
+        if let Some(id) = config.id {
+            let completion_flag = app
+                .configs_being_processed
+                .get(&id)
+                .map(|(flag, _)| flag.clone());
+            let sender = error_sender.clone();
+            if let Some(flag) = completion_flag {
+                tokio::spawn(async move {
+                    use crate::core::port_forward::{
+                        start_port_forwarding,
+                        stop_port_forwarding,
+                    };
+                    use crate::tui::input::{
+                        ActiveTable,
+                        App,
+                    };
+
+                    let mut temp_app = App::default();
+
+                    let is_starting = active_table == ActiveTable::Stopped;
+
+                    if is_starting {
+                        start_port_forwarding(&mut temp_app, config, mode).await;
+                    } else {
+                        stop_port_forwarding(&mut temp_app, config, mode).await;
+                    }
+
+                    if let Some(error_msg) = temp_app.error_message {
+                        if let Some(sender) = sender {
+                            let _ = sender.send(error_msg);
+                        }
+                    }
+
+                    flag.store(true, Ordering::Relaxed);
+                });
+            }
+        }
     }
 
     match app.active_table {

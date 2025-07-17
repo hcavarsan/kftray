@@ -75,6 +75,10 @@ pub async fn run_app<B: ratatui::backend::Backend>(
             draw_ui(f, app, &config_states);
         })?;
 
+        if !app.configs_being_processed.is_empty() {
+            app.throbber_state.calc_next();
+        }
+
         if handle_input(app, mode).await? {
             break;
         }

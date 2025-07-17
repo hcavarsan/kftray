@@ -4,7 +4,6 @@ use kftray_commons::utils::db_mode::DatabaseMode;
 use crate::tui::input::navigation::{
     handle_auto_add_configs,
     handle_context_selection,
-    handle_port_forward,
 };
 use crate::tui::input::{
     ActiveTable,
@@ -38,35 +37,8 @@ mod tests {
         }
     }
 
-    #[tokio::test]
-    async fn test_handle_port_forward_stopped() {
-        let mut app = App::new();
-        app.active_table = ActiveTable::Stopped;
-        let config = create_test_config();
-
-        handle_port_forward(&mut app, config, DatabaseMode::File).await;
-
-        assert_eq!(
-            app.active_table,
-            ActiveTable::Stopped,
-            "Active table should remain Stopped"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_handle_port_forward_running() {
-        let mut app = App::new();
-        app.active_table = ActiveTable::Running;
-        let config = create_test_config();
-
-        handle_port_forward(&mut app, config, DatabaseMode::File).await;
-
-        assert_eq!(
-            app.active_table,
-            ActiveTable::Running,
-            "Active table should remain Running"
-        );
-    }
+    // Note: handle_port_forward has been removed as it's now handled
+    // directly in the main input handler with proper error handling and throbber support
 
     #[tokio::test]
     async fn test_handle_auto_add_configs_error() {
