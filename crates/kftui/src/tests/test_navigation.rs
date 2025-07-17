@@ -38,7 +38,8 @@ mod tests {
     }
 
     // Note: handle_port_forward has been removed as it's now handled
-    // directly in the main input handler with proper error handling and throbber support
+    // directly in the main input handler with proper error handling and throbber
+    // support
 
     #[tokio::test]
     async fn test_handle_auto_add_configs_error() {
