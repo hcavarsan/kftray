@@ -3150,6 +3150,7 @@ dependencies = [
  "kftray-http-logs",
  "kftray-network-monitor",
  "kftray-portforward",
+ "libc",
  "log",
  "ratatui",
  "ratatui-explorer",
