@@ -182,17 +182,27 @@ impl PortForwardRunner {
     }
 
     async fn stop_all_port_forwards(configs: &[Config], mode: DatabaseMode) {
-        let mut stop_errors = Vec::new();
-        let mut stopped_count = 0;
+        let mut tasks = FuturesUnordered::new();
 
         for config in configs {
             if let Some(config_id) = config.id {
-                let stop_result = Self::stop_single_port_forward(config, config_id, mode).await;
+                let config_clone = config.clone();
+                tasks.push(async move {
+                    match Self::stop_single_port_forward(&config_clone, config_id, mode).await {
+                        Ok(()) => Ok(()),
+                        Err(e) => Err(format!("Config {config_id}: {e}")),
+                    }
+                });
+            }
+        }
 
-                match stop_result {
-                    Ok(()) => stopped_count += 1,
-                    Err(e) => stop_errors.push(format!("Config {config_id}: {e}")),
-                }
+        let mut stop_errors = Vec::new();
+        let mut stopped_count = 0;
+
+        while let Some(result) = tasks.next().await {
+            match result {
+                Ok(()) => stopped_count += 1,
+                Err(e) => stop_errors.push(e),
             }
         }
 
