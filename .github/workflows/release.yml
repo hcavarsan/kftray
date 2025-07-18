@@ -266,7 +266,7 @@ jobs:
 
       - name: Sign and notarize the helper binary
         if: matrix.os == 'macos-latest'
-        uses: toitlang/action-macos-sign-notarize@64b6d845b70ccd71bde584769280c612d48211db
+        uses: toitlang/action-macos-sign-notarize@7c091260bdc4a31387ba836ee50bf1ef8da6b7cb
         with:
           certificate: ${{ secrets.APPLE_CERTIFICATE }}
           certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -456,7 +456,7 @@ jobs:
 
       - name: Sign and notarize the release build
         if: matrix.os == 'macos-latest'
-        uses: toitlang/action-macos-sign-notarize@64b6d845b70ccd71bde584769280c612d48211db
+        uses: toitlang/action-macos-sign-notarize@7c091260bdc4a31387ba836ee50bf1ef8da6b7cb
         with:
           certificate: ${{ secrets.APPLE_CERTIFICATE }}
           certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
