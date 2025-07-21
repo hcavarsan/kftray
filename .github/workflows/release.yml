@@ -192,7 +192,7 @@ jobs:
         uses: swatinem/rust-cache@7e1e2d0a10862b34e5df481373b2b0f295d1a2ef
 
       - name: Install pnpm
-        uses: pnpm/action-setup@77504a59bc222656ff0605f120aea22f630873cb
+        uses: pnpm/action-setup@f2b2b233b538f500472c7274c7012f57857d8ce0
         with:
           version: 9
           run_install: |
@@ -372,7 +372,7 @@ jobs:
 
 
       - name: Install pnpm
-        uses: pnpm/action-setup@77504a59bc222656ff0605f120aea22f630873cb
+        uses: pnpm/action-setup@f2b2b233b538f500472c7274c7012f57857d8ce0
         with:
           version: 9
           run_install: |
