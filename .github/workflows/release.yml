@@ -219,7 +219,7 @@ jobs:
 
       - name: Set up Visual Studio shell
         if: matrix.os == 'windows-latest' && matrix.arch == 'arm64'
-        uses: TheMrMilchmann/setup-msvc-dev@fb19abb8a41b3cf0340f5d1be17d420309232be6
+        uses: TheMrMilchmann/setup-msvc-dev@e9bbafe1c0bf4916adbe5a55ac9bd9725586ccbb
         with:
           arch: amd64_arm64
 
