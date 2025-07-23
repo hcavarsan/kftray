@@ -277,7 +277,7 @@ jobs:
           entitlements-path: crates/kftray-helper/macos-helper-entitlements.plist
 
       - name: Build kftray-tauri Desktop App
-        uses: tauri-apps/tauri-action@42e9df6c59070d114bf90dcd3943a1b8f138b113
+        uses: tauri-apps/tauri-action@cf3eb9b18add8548a40584695215c80ab7274f31
         id: tauri_build
         continue-on-error: true
         env:
@@ -301,7 +301,7 @@ jobs:
 
       - name: Retry Build on Failure
         if: steps.tauri_build.outcome == 'failure'
-        uses: tauri-apps/tauri-action@42e9df6c59070d114bf90dcd3943a1b8f138b113
+        uses: tauri-apps/tauri-action@cf3eb9b18add8548a40584695215c80ab7274f31
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NODE_OPTIONS: --max-old-space-size=6000
