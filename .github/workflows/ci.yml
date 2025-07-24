@@ -28,7 +28,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
-        uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
+        uses: actions/checkout@8edcb1bdb4e267140fa742c62e395cd74f332709
 
       - name: Install pnpm
         uses: pnpm/action-setup@f2b2b233b538f500472c7274c7012f57857d8ce0
@@ -52,7 +52,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
-        uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
+        uses: actions/checkout@8edcb1bdb4e267140fa742c62e395cd74f332709
 
       - name: Install dependencies
         run: |
@@ -91,7 +91,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
+        uses: actions/checkout@8edcb1bdb4e267140fa742c62e395cd74f332709
 
       - name: Install dependencies (Linux)
         if: matrix.os_name == 'linux'
@@ -151,7 +151,7 @@ jobs:
       statuses: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
+        uses: actions/checkout@8edcb1bdb4e267140fa742c62e395cd74f332709
 
       - name: Install dependencies
         run: |
@@ -219,7 +219,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
+        uses: actions/checkout@8edcb1bdb4e267140fa742c62e395cd74f332709
 
       - name: Install pnpm
         uses: pnpm/action-setup@f2b2b233b538f500472c7274c7012f57857d8ce0
@@ -256,7 +256,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
-        uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
+        uses: actions/checkout@8edcb1bdb4e267140fa742c62e395cd74f332709
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@05340d1c670183e7caabdb33ae9f1c80fae3b0c2

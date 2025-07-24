@@ -32,7 +32,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
+        uses: actions/checkout@8edcb1bdb4e267140fa742c62e395cd74f332709
 
       - name: Install dependencies
         run: |
@@ -102,7 +102,7 @@ jobs:
       release_id: ${{ steps.create_release.outputs.id }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
+        uses: actions/checkout@8edcb1bdb4e267140fa742c62e395cd74f332709
         with:
           fetch-depth: 0
 
@@ -181,7 +181,7 @@ jobs:
     runs-on: ${{ matrix.runner || matrix.os }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
+        uses: actions/checkout@8edcb1bdb4e267140fa742c62e395cd74f332709
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b
@@ -360,7 +360,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
+        uses: actions/checkout@8edcb1bdb4e267140fa742c62e395cd74f332709
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b
@@ -494,7 +494,7 @@ jobs:
     if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
+        uses: actions/checkout@8edcb1bdb4e267140fa742c62e395cd74f332709
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@05340d1c670183e7caabdb33ae9f1c80fae3b0c2
@@ -532,7 +532,7 @@ jobs:
       !contains(github.ref, '-alpha')
     steps:
       - name: Checkout
-        uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
+        uses: actions/checkout@8edcb1bdb4e267140fa742c62e395cd74f332709
         with:
           fetch-depth: 0
 
@@ -595,7 +595,7 @@ jobs:
       !contains(github.ref, '-alpha')
     steps:
       - name: Checkout main repository
-        uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
+        uses: actions/checkout@8edcb1bdb4e267140fa742c62e395cd74f332709
 
       - name: Update Homebrew formulas
         env:
