@@ -39,7 +39,7 @@ jobs:
               args: [--frozen-lockfile]
 
       - name: Install Node.js
-        uses: actions/setup-node@7e24a656e1c7a0d6f3eaef8d8e84ae379a5b035b
+        uses: actions/setup-node@65beceff8e91358525397bdce9103d999507ab03
         with:
           node-version: "22"
           cache: "pnpm"
@@ -230,7 +230,7 @@ jobs:
               args: [--frozen-lockfile]
 
       - name: Install Node.js
-        uses: actions/setup-node@7e24a656e1c7a0d6f3eaef8d8e84ae379a5b035b
+        uses: actions/setup-node@65beceff8e91358525397bdce9103d999507ab03
         with:
           node-version: "22"
           cache: "pnpm"
