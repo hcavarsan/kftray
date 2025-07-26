@@ -21,19 +21,42 @@
 		"automerge": false
 	},
 	"dependencyDashboard": false,
-	"packageRules": [{
-		"matchPackagePatterns": [
-			"*"
-		],
-		"matchUpdateTypes": [
-			"minor",
-			"patch"
-		],
-		"groupName": "all non-major dependencies",
-		"groupSlug": "all-minor-patch"
-	},
-	{
-		"matchPackageNames": ["kube", "k8s-openapi", "kube-runtime", "eslint", "hyper", "tauri", "tauri-plugin-positioner", "tauri-build", "@tauri-apps/cli", "@tauri-apps/api", "ratatui", "tui-logger", "ratatui-explorer", "crossterm"],
-		"enabled": false
-	}]
+	"packageRules": [
+		{
+			"matchPackagePatterns": [
+				"*"
+			],
+			"matchUpdateTypes": [
+				"minor",
+				"patch"
+			],
+			"groupName": "all non-major dependencies",
+			"groupSlug": "all-minor-patch"
+		},
+		{
+			"matchManagers": ["github-actions"],
+			"matchUpdateTypes": ["digest", "patch", "minor", "major"],
+			"groupName": "GitHub Actions",
+			"groupSlug": "github-actions"
+		},
+		{
+			"matchPackageNames": [
+				"kube",
+				"k8s-openapi",
+				"kube-runtime",
+				"eslint",
+				"hyper",
+				"tauri",
+				"tauri-plugin-positioner",
+				"tauri-build",
+				"@tauri-apps/cli",
+				"@tauri-apps/api",
+				"ratatui",
+				"tui-logger",
+				"ratatui-explorer",
+				"crossterm"
+			],
+			"enabled": false
+		}
+	]
 }
