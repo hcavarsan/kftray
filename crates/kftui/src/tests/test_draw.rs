@@ -6,6 +6,7 @@ use ratatui::backend::TestBackend;
 use ratatui::layout::Rect;
 use ratatui::Terminal;
 
+use crate::tests::test_logger_state;
 use crate::tui::input::{
     ActiveComponent,
     ActiveTable,
@@ -51,11 +52,10 @@ mod tests {
     }
 
     fn create_test_app() -> App {
-        App {
-            file_content: Some("test content".to_string()),
-            stopped_configs: vec![create_test_config()],
-            ..Default::default()
-        }
+        let mut app = App::new(test_logger_state());
+        app.file_content = Some("test content".to_string());
+        app.stopped_configs = vec![create_test_config()];
+        app
     }
 
     #[test]

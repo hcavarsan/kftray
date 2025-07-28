@@ -19,6 +19,7 @@ use ratatui::{
         Block,
         BorderType,
         Borders,
+        Paragraph,
         Tabs,
     },
     Frame,
@@ -52,6 +53,10 @@ use crate::tui::ui::{
     TEXT,
     YELLOW,
 };
+
+const STREAMING_INDICATOR: &str = "●";
+const LOGS_TITLE_PREFIX: &str = "Logs";
+const NAVIGATION_HINT: &str = "[PgUp/PgDn:navigate]";
 
 pub fn draw_ui(f: &mut Frame, app: &mut App, config_states: &[ConfigState]) {
     let size = f.area();
@@ -202,40 +207,71 @@ pub fn render_logs(f: &mut Frame, app: &mut App, area: Rect, has_focus: bool) {
         Modifier::empty()
     };
 
-    // Create title with simplified navigation hints and streaming indicator
-    let streaming_indicator = "●";
     let title = if has_focus {
-        format!("Logs {streaming_indicator} [PgUp/PgDn:navigate]")
+        format!("{LOGS_TITLE_PREFIX} {STREAMING_INDICATOR} {NAVIGATION_HINT}")
     } else {
-        format!("Logs {streaming_indicator}")
+        format!("{LOGS_TITLE_PREFIX} {STREAMING_INDICATOR}")
     };
 
-    let logs_widget = TuiLoggerWidget::default()
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(Span::styled(&title, Style::default().fg(MAUVE)))
-                .border_style(
-                    Style::default()
-                        .fg(focus_color)
-                        .add_modifier(border_modifier),
-                ),
-        )
-        .style(Style::default().fg(TEXT).bg(BASE))
-        .state(&app.logger_state)
-        .output_separator('|')
-        .output_timestamp(Some("%H:%M:%S".to_string()))
-        .output_level(Some(TuiLoggerLevelOutput::Abbreviated))
-        .output_target(true)
-        .output_file(false)
-        .output_line(false)
-        .style_error(Style::default().fg(Color::Red))
-        .style_warn(Style::default().fg(Color::Yellow))
-        .style_info(Style::default().fg(Color::Cyan))
-        .style_debug(Style::default().fg(Color::Green))
-        .style_trace(Style::default().fg(Color::Magenta));
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .title(Span::styled(&title, Style::default().fg(MAUVE)))
+        .border_style(
+            Style::default()
+                .fg(focus_color)
+                .add_modifier(border_modifier),
+        );
 
-    f.render_widget(logs_widget, area);
+    let inner_area = block.inner(area);
+
+    if app.logger_state.is_file_output_enabled() {
+        if let Some(path) = app.logger_state.file_path() {
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Length(1), Constraint::Min(0)].as_ref())
+                .split(inner_area);
+
+            let file_info =
+                Paragraph::new(format!("→ File: {path}")).style(Style::default().fg(TEXT).bg(BASE));
+            f.render_widget(file_info, chunks[0]);
+
+            let logs_widget = TuiLoggerWidget::default()
+                .style(Style::default().fg(TEXT).bg(BASE))
+                .state(&app.tui_logger_state)
+                .output_separator('|')
+                .output_timestamp(Some("%H:%M:%S".to_string()))
+                .output_level(Some(TuiLoggerLevelOutput::Abbreviated))
+                .output_target(true)
+                .output_file(false)
+                .output_line(false)
+                .style_error(Style::default().fg(Color::Red))
+                .style_warn(Style::default().fg(Color::Yellow))
+                .style_info(Style::default().fg(Color::Cyan))
+                .style_debug(Style::default().fg(Color::Green))
+                .style_trace(Style::default().fg(Color::Magenta));
+
+            f.render_widget(block, area);
+            f.render_widget(logs_widget, chunks[1]);
+        }
+    } else {
+        let logs_widget = TuiLoggerWidget::default()
+            .block(block)
+            .style(Style::default().fg(TEXT).bg(BASE))
+            .state(&app.tui_logger_state)
+            .output_separator('|')
+            .output_timestamp(Some("%H:%M:%S".to_string()))
+            .output_level(Some(TuiLoggerLevelOutput::Abbreviated))
+            .output_target(true)
+            .output_file(false)
+            .output_line(false)
+            .style_error(Style::default().fg(Color::Red))
+            .style_warn(Style::default().fg(Color::Yellow))
+            .style_info(Style::default().fg(Color::Cyan))
+            .style_debug(Style::default().fg(Color::Green))
+            .style_trace(Style::default().fg(Color::Magenta));
+
+        f.render_widget(logs_widget, area);
+    }
 }
 pub fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     let menu_titles = [

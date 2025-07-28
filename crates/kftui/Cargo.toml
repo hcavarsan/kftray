@@ -18,6 +18,7 @@ ignored = ["built"]
 built = { workspace = true }
 clap = { workspace = true }
 crossterm = { workspace = true }
+env_logger = { workspace = true }
 futures = { workspace = true }
 kftray-commons = { path = "../kftray-commons" }
 kftray-http-logs = { path = "../kftray-http-logs" }

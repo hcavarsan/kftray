@@ -11,7 +11,7 @@ built = "0.8"
 bytes = "1.10"
 chrono = "0.4"
 clap = { version = "4", features = ["derive"] }
-crossterm = { version = "0.28", optional = false }
+crossterm = { version = "0.28.1", optional = false }
 dashmap = "6.1"
 dirs = "6.0"
 env_logger = "0.11"
@@ -40,6 +40,8 @@ kube = { version = "1.1", features = [
   "openssl-tls",
   "rustls-tls",
   "ws",
+  "http-proxy",
+  "oauth"
 ] }
 kube-runtime = "1.1"
 lazy_static = "1.5"
@@ -60,8 +62,8 @@ secrecy = "0.10"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sqlx = { version = "0.8", features = ["runtime-tokio-native-tls", "sqlite"] }
-sysinfo = "0.36.0"
-tauri = { version = "1.8", default-features = false, features = [
+sysinfo = "0.36.1"
+tauri = { version = "1.8.3", default-features = false, features = [
   "api-all",
   "devtools",
   "icon-png",
@@ -69,11 +71,11 @@ tauri = { version = "1.8", default-features = false, features = [
   "system-tray",
   "updater",
 ] }
-tauri-build = { version = "1.5", features = [] }
-tauri-plugin-positioner = { version = "1", features = ["system-tray"] }
+tauri-build = { version = "1.5.6", features = [] }
+tauri-plugin-positioner = { version = "1.0.5", features = ["system-tray"] }
 tempfile = "3.20"
 thiserror = "2.0"
-tokio = { version = "1.46", features = ["full", "macros", "rt-multi-thread"] }
+tokio = { version = "1.47", features = ["full", "macros", "rt-multi-thread"] }
 tokio-stream = { version = "0.1", features = ["net"] }
 tower = { version = "0.5", features = ["util"] }
 tower-test = "0.4"

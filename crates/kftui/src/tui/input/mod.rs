@@ -23,7 +23,6 @@ use kftray_commons::models::{
     config_state_model::ConfigState,
 };
 use kftray_commons::utils::db_mode::DatabaseMode;
-use log::LevelFilter;
 pub use popup::*;
 use ratatui::widgets::ListState;
 use ratatui::widgets::TableState;
@@ -35,6 +34,7 @@ use tui_logger::TuiWidgetEvent;
 use tui_logger::TuiWidgetState;
 
 use crate::core::port_forward::stop_all_port_forward_and_exit;
+use crate::logging::LoggerState;
 use crate::tui::input::navigation::handle_auto_add_configs;
 use crate::tui::input::navigation::handle_context_selection;
 #[derive(PartialEq, Clone, Copy, Debug)]
@@ -101,7 +101,8 @@ pub struct App {
     pub contexts: Vec<String>,
     pub selected_context_index: usize,
     pub context_list_state: ListState,
-    pub logger_state: TuiWidgetState,
+    pub tui_logger_state: TuiWidgetState,
+    pub logger_state: LoggerState,
     pub settings_timeout_input: String,
     pub settings_editing: bool,
     pub settings_network_monitor: bool,
@@ -115,16 +116,16 @@ pub struct App {
 
 impl Default for App {
     fn default() -> Self {
-        Self::new()
+        panic!("App::default() should not be used. Use App::new(LoggerState) instead.");
     }
 }
 
 impl App {
-    pub fn new() -> Self {
+    pub fn new(logger_state: LoggerState) -> Self {
         let theme = Theme::default().add_default_title();
         let import_file_explorer = FileExplorer::with_theme(theme.clone()).unwrap();
         let export_file_explorer = FileExplorer::with_theme(theme).unwrap();
-        let logger_state = TuiWidgetState::new().set_default_display_level(LevelFilter::Warn);
+        let tui_logger_state = TuiWidgetState::new();
         let (error_sender, error_receiver) = tokio::sync::mpsc::unbounded_channel();
 
         let mut app = Self {
@@ -155,6 +156,7 @@ impl App {
             contexts: Vec::new(),
             selected_context_index: 0,
             context_list_state: ListState::default(),
+            tui_logger_state,
             logger_state,
             settings_timeout_input: String::new(),
             settings_editing: false,
@@ -694,8 +696,8 @@ pub async fn handle_logs_input(app: &mut App, key: KeyCode) -> io::Result<()> {
             clear_selection(app);
             select_first_row(app);
         }
-        KeyCode::PageUp => app.logger_state.transition(TuiWidgetEvent::PrevPageKey),
-        KeyCode::PageDown => app.logger_state.transition(TuiWidgetEvent::NextPageKey),
+        KeyCode::PageUp => app.tui_logger_state.transition(TuiWidgetEvent::PrevPageKey),
+        KeyCode::PageDown => app.tui_logger_state.transition(TuiWidgetEvent::NextPageKey),
         _ => {}
     }
     Ok(())
@@ -814,6 +816,7 @@ pub async fn handle_port_forwarding(app: &mut App, mode: DatabaseMode) -> io::Re
 
     let error_sender = app.error_sender.clone();
     let active_table = app.active_table;
+    let logger_state_clone = app.logger_state.clone();
     for config in selected_configs.clone() {
         if let Some(id) = config.id {
             let completion_flag = app
@@ -821,6 +824,7 @@ pub async fn handle_port_forwarding(app: &mut App, mode: DatabaseMode) -> io::Re
                 .get(&id)
                 .map(|(flag, _)| flag.clone());
             let sender = error_sender.clone();
+            let logger_state_for_task = logger_state_clone.clone();
             if let Some(flag) = completion_flag {
                 tokio::spawn(async move {
                     use crate::core::port_forward::{
@@ -832,7 +836,7 @@ pub async fn handle_port_forwarding(app: &mut App, mode: DatabaseMode) -> io::Re
                         App,
                     };
 
-                    let mut temp_app = App::default();
+                    let mut temp_app = App::new(logger_state_for_task);
 
                     let is_starting = active_table == ActiveTable::Stopped;
 

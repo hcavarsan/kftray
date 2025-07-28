@@ -1,3 +1,8 @@
+use crossterm::event::KeyCode;
+use kftray_commons::models::config_model::Config;
+use kftray_commons::utils::db_mode::DatabaseMode;
+
+use crate::tests::test_logger_state;
 use crate::tui::input::{
     clear_selection,
     handle_about_input,
@@ -25,21 +30,17 @@ use crate::tui::input::{
 
 #[cfg(test)]
 mod tests {
-    use crossterm::event::KeyCode;
-    use kftray_commons::models::config_model::Config;
-    use kftray_commons::utils::db_mode::DatabaseMode;
-
     use super::*;
 
-    fn create_test_configs(count: usize) -> Vec<Config> {
-        (1..=count)
+    fn create_test_configs(num: usize) -> Vec<Config> {
+        (0..num)
             .map(|i| Config {
                 id: Some(i as i64),
                 service: Some(format!("service-{i}")),
-                namespace: "default".to_string(),
-                local_port: Some(8080 + (i as u16)),
+                namespace: format!("namespace-{i}"),
+                local_port: Some(8080 + i as u16),
                 remote_port: Some(80),
-                context: Some(format!("test-context-{i}")),
+                context: Some(format!("context-{i}")),
                 workload_type: Some("service".to_string()),
                 protocol: "tcp".to_string(),
                 remote_address: Some(format!("remote-{i}")),
@@ -54,7 +55,7 @@ mod tests {
     }
 
     fn setup_app() -> App {
-        let mut app = App::new();
+        let mut app = App::new(test_logger_state());
         app.stopped_configs = create_test_configs(3);
         app.running_configs = create_test_configs(2);
         app.table_state_stopped.select(Some(1));
@@ -139,7 +140,7 @@ mod tests {
 
     #[test]
     fn test_select_first_row_empty() {
-        let mut app = App::new();
+        let mut app = App::new(test_logger_state());
         app.active_table = ActiveTable::Stopped;
 
         select_first_row(&mut app);
@@ -216,8 +217,8 @@ mod tests {
     }
 
     #[test]
-    fn test_app_default() {
-        let app = App::default();
+    fn test_app_new() {
+        let app = App::new(test_logger_state());
         assert_eq!(app.state, AppState::Normal);
         assert_eq!(app.active_component, ActiveComponent::StoppedTable);
     }
