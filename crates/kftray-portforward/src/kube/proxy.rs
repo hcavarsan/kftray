@@ -35,7 +35,7 @@ use rand::distr::{
     SampleString,
 };
 
-use crate::create_client_with_specific_context;
+use crate::kube::client::create_client_with_specific_context;
 
 pub async fn deploy_and_forward_pod(
     configs: Vec<Config>, http_log_state: Arc<HttpLogState>,
@@ -80,7 +80,7 @@ pub async fn deploy_and_forward_pod(
             .id
             .map_or_else(|| "default".into(), |id| id.to_string());
 
-        if config.remote_address.as_ref().is_none_or(String::is_empty) {
+        if config.remote_address.as_ref().is_none_or(|s| s.is_empty()) {
             config.remote_address.clone_from(&config.service);
         }
 

@@ -1,5 +1,6 @@
 pub mod client;
 pub mod models;
+pub mod operations;
 pub mod pod_finder;
 mod proxy;
 mod service;

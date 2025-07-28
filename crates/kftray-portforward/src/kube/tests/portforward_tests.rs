@@ -574,3 +574,14 @@ async fn test_start_port_forward_mock_components_udp() -> Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::kube::operations::list_kube_contexts;
+
+    #[tokio::test]
+    async fn test_list_kube_contexts_empty() {
+        let result = list_kube_contexts(Some("invalid".to_string())).await;
+        assert!(result.is_err());
+    }
+}

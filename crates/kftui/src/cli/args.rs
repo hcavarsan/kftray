@@ -47,6 +47,15 @@ pub struct Cli {
 
     #[arg(long, help = "Run in non-interactive mode (don't show TUI)")]
     pub non_interactive: bool,
+
+    #[arg(long, help = "Set the global log level", value_name = "LEVEL")]
+    pub log_level: Option<String>,
+
+    #[arg(
+        long,
+        help = "Save logs to file instead of showing in TUI logger widget"
+    )]
+    pub logs_to_file: bool,
 }
 
 impl Cli {
@@ -111,32 +120,30 @@ impl Cli {
     }
 
     fn validate_single_config_source(&self) -> Result<(), String> {
-        let mut source_count = 0;
+        let sources = [
+            (
+                self.configs_path.is_some() && self.github_url.is_none(),
+                "--configs-path",
+            ),
+            (self.github_url.is_some(), "--github-url"),
+            (self.json.is_some(), "--json"),
+            (self.stdin, "--stdin"),
+        ];
 
-        if self.configs_path.is_some() && self.github_url.is_none() {
-            source_count += 1;
+        let active_sources: Vec<&str> = sources
+            .iter()
+            .filter_map(|(active, name)| if *active { Some(*name) } else { None })
+            .collect();
+
+        if self.github_url.is_some() && self.configs_path.is_none() {
+            return Err("--github-url requires --configs-path to specify the config file path within the repository".to_string());
         }
 
-        if self.github_url.is_some() {
-            source_count += 1;
-            if self.configs_path.is_none() {
-                return Err("--github-url requires --configs-path to specify the config file path within the repository".to_string());
-            }
-        }
-
-        if self.json.is_some() {
-            source_count += 1;
-        }
-
-        if self.stdin {
-            source_count += 1;
-        }
-
-        if source_count > 1 {
-            return Err(
-                "Only one config source can be specified: --configs-path, --github-url (with --configs-path), --json, or --stdin"
-                    .to_string(),
-            );
+        if active_sources.len() > 1 {
+            return Err(format!(
+                "Only one config source can be specified. Found: {}",
+                active_sources.join(", ")
+            ));
         }
 
         Ok(())

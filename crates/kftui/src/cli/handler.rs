@@ -9,18 +9,24 @@ use kftray_commons::utils::migration::migrate_configs;
 use crate::cli::args::Cli;
 use crate::cli::config::ConfigImporter;
 use crate::cli::runner::PortForwardRunner;
+use crate::logging::LoggerState;
 use crate::stdin;
 use crate::tui::run_tui;
 
 pub struct CliHandler {
     cli: Cli,
     mode: DatabaseMode,
+    logger_state: LoggerState,
 }
 
 impl CliHandler {
-    pub fn new(cli: Cli) -> Self {
+    pub fn new(cli: Cli, logger_state: LoggerState) -> Self {
         let mode = Self::determine_database_mode(&cli);
-        Self { cli, mode }
+        Self {
+            cli,
+            mode,
+            logger_state,
+        }
     }
 
     pub async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
@@ -166,7 +172,7 @@ impl CliHandler {
             PortForwardRunner::run_non_interactive_mode(&self.cli, self.mode, imported_config_ids)
                 .await
         } else {
-            run_tui(self.mode).await
+            run_tui(self.mode, self.logger_state.clone()).await
         }
     }
 }

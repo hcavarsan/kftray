@@ -127,9 +127,14 @@ fn main() {
             }
 
             let window = app.get_window("main").unwrap();
-
             #[cfg(debug_assertions)]
-            window.open_devtools();
+            {
+                window.open_devtools();
+                window.show().unwrap();
+                window.set_focus().unwrap();
+                window.set_always_on_top(true).unwrap();
+                is_pinned.store(true, Ordering::SeqCst);
+            }
 
             if is_pinned.load(Ordering::SeqCst) {
                 window.set_always_on_top(true).unwrap();

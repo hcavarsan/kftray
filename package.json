@@ -14,7 +14,7 @@
 		"format:front": "pnpm --filter @kftray/ui run format",
 		"generate-icons": "cargo run --bin generate_icons",
 		"lint": "pnpm --filter @kftray/ui run lint && pnpm run lint:back",
-		"lint:back": "cargo clippy --workspace --all-targets --all-features",
+		"lint:back": "cargo clippy --workspace --all-targets --all-features -- -D warnings",
 		"lint:front": "pnpm --filter @kftray/ui run lint",
 		"test:server": "bash hacks/test_proxy.sh",
 		"test:back": "INSTA_UPDATE=1 RUST_BACKTRACE=1 cargo llvm-cov nextest --profile ci --config-file .cargo/nextest.toml --locked --workspace --all-features --lib --bins --examples --tests",

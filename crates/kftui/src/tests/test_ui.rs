@@ -21,6 +21,7 @@ use ratatui::widgets::{
 };
 use ratatui::Terminal;
 
+use crate::tests::test_logger_state;
 use crate::tui::input::{
     ActiveComponent,
     App,
@@ -70,10 +71,9 @@ mod tests {
     }
 
     fn create_test_app() -> App {
-        App {
-            file_content: Some("test content".to_string()),
-            ..Default::default()
-        }
+        let mut app = App::new(test_logger_state());
+        app.file_content = Some("test content".to_string());
+        app
     }
 
     #[test]
