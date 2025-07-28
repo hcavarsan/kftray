@@ -22,20 +22,23 @@ use tokio::time::{
     Duration,
 };
 
+use crate::logging::LoggerState;
 use crate::tui::input::{
     handle_input,
     App,
 };
 use crate::tui::ui::draw_ui;
 
-pub async fn run_tui(mode: DatabaseMode) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn run_tui(
+    mode: DatabaseMode, logger_state: LoggerState,
+) -> Result<(), Box<dyn std::error::Error>> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
-    let mut app = App::new();
+    let mut app = App::new(logger_state);
 
     // Start network monitor if enabled
     if let Ok(enabled) = kftray_commons::utils::settings::get_network_monitor_with_mode(mode).await
@@ -71,6 +74,10 @@ pub async fn run_app<B: ratatui::backend::Backend>(
 
         app.update_configs(&configs, &config_states);
 
+        if !app.logger_state.is_file_output_enabled() {
+            tui_logger::move_events();
+        }
+
         terminal.draw(|f| {
             draw_ui(f, app, &config_states);
         })?;
@@ -103,12 +110,20 @@ mod tests {
     use ratatui::backend::TestBackend;
     use ratatui::Terminal;
 
+    use crate::logging::{
+        LogConfig,
+        LoggerState,
+    };
     use crate::tui::input::{
         ActiveComponent,
         ActiveTable,
         App,
     };
     use crate::tui::ui::draw_ui;
+
+    fn test_logger_state() -> LoggerState {
+        LoggerState::new(LogConfig::new(log::LevelFilter::Off))
+    }
 
     static DB_INITIALIZED: AtomicBool = AtomicBool::new(false);
 
@@ -129,7 +144,7 @@ mod tests {
         initialize_test_db();
         let backend = TestBackend::new(120, 30);
         let mut terminal = Terminal::new(backend).unwrap();
-        let mut app = App::new();
+        let mut app = App::new(test_logger_state());
         let config_states: Vec<ConfigState> = vec![];
 
         terminal
@@ -146,7 +161,7 @@ mod tests {
         initialize_test_db();
         let backend = TestBackend::new(120, 30);
         let mut terminal = Terminal::new(backend).unwrap();
-        let mut app = App::new();
+        let mut app = App::new(test_logger_state());
 
         let configs = vec![
             Config {

@@ -17,6 +17,7 @@ pub use kube::models::{
     KubeServicePortInfo,
     PodInfo,
 };
+pub use kube::operations::*;
 pub use kube::{
     deploy_and_forward_pod,
     retrieve_service_configs,

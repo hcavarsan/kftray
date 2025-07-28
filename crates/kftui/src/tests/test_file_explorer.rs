@@ -3,18 +3,14 @@ use std::path::PathBuf;
 use crossterm::event::KeyCode;
 use kftray_commons::utils::db_mode::DatabaseMode;
 
-use crate::tui::input::file_explorer::{
+use crate::tests::test_logger_state;
+use crate::tui::input::handle_import_file_explorer_input;
+use crate::tui::input::{
     show_confirmation_popup,
     show_error_popup,
-};
-use crate::tui::input::{
-    handle_export_file_explorer_input,
-    handle_export_input_prompt,
-    handle_import_file_explorer_input,
     App,
     AppState,
 };
-
 #[cfg(test)]
 mod tests {
     use std::io;
@@ -27,9 +23,11 @@ mod tests {
     use crate::tui::input::file_explorer::handle_file_selection_key;
     use crate::tui::input::file_explorer::handle_import_enter_key;
     use crate::tui::input::file_explorer::navigate_to_parent_directory;
+    use crate::tui::input::handle_export_file_explorer_input;
+    use crate::tui::input::handle_export_input_prompt;
 
     fn setup_file_explorer_app() -> App {
-        let mut app = App::new();
+        let mut app = App::new(test_logger_state());
         app.state = AppState::ImportFileExplorerOpen;
         app.selected_file_path = Some(PathBuf::from("/tmp"));
         app

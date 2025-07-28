@@ -1,5 +1,6 @@
 use ratatui::layout::Rect;
 
+use crate::tests::test_logger_state;
 use crate::tui::input::{
     App,
     DeleteButton,
@@ -23,10 +24,9 @@ mod tests {
     use super::*;
 
     fn create_test_app() -> App {
-        App {
-            contexts: vec!["context1".to_string(), "context2".to_string()],
-            ..Default::default()
-        }
+        let mut app = App::new(test_logger_state());
+        app.contexts = vec!["context1".to_string(), "context2".to_string()];
+        app
     }
 
     #[test]

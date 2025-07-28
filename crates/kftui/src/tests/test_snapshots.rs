@@ -10,6 +10,7 @@ use ratatui::backend::TestBackend;
 use ratatui::prelude::Widget;
 use ratatui::Terminal;
 
+use crate::tests::test_logger_state;
 use crate::tui::input::{
     ActiveComponent,
     ActiveTable,
@@ -69,7 +70,7 @@ fn create_test_config_state() -> ConfigState {
 }
 
 fn create_test_app() -> App {
-    let mut app = App::new();
+    let mut app = App::new(test_logger_state());
 
     // Add some test data
     app.file_content = Some("test file content".to_string());

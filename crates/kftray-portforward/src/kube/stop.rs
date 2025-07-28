@@ -33,11 +33,11 @@ use tracing::{
     warn,
 };
 
-use crate::create_client_with_specific_context;
 use crate::hostsfile::{
     remove_all_host_entries,
     remove_host_entry,
 };
+use crate::kube::client::create_client_with_specific_context;
 use crate::port_forward::{
     CANCEL_NOTIFIER,
     CHILD_PROCESSES,

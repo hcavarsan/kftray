@@ -11,9 +11,11 @@ use log::{
     info,
 };
 
-use crate::create_client_with_specific_context;
-use crate::get_services_with_annotation;
-use crate::list_all_namespaces;
+use crate::kube::client::create_client_with_specific_context;
+use crate::kube::operations::{
+    get_services_with_annotation,
+    list_all_namespaces,
+};
 pub async fn retrieve_service_configs(
     context: &str, kubeconfig: Option<String>,
 ) -> Result<Vec<Config>, String> {
