@@ -28,7 +28,25 @@ use super::error::{
 type StrategyFuture<'a> = Pin<Box<dyn Future<Output = KubeResult<Client>> + Send + 'a>>;
 type Strategy<'a> = (&'static str, StrategyFuture<'a>);
 
+async fn create_standard_client(config: &Config) -> KubeResult<Client> {
+    Client::try_from(config.clone()).map_err(|e| {
+        KubeClientError::connection_error_with_source("Failed to create standard kube client", e)
+    })
+}
+
 pub async fn create_client_with_config(config: &Config) -> Option<Client> {
+    if config.proxy_url.is_some() {
+        match create_standard_client(config).await {
+            Ok(client) => {
+                info!("Successfully connected using standard kube client with proxy");
+                return Some(client);
+            }
+            Err(e) => {
+                warn!("Standard client creation with proxy failed: {e}");
+            }
+        }
+    }
+
     let config_with_invalid_certs_true = config.clone_with_invalid_certs(true);
     let config_with_invalid_certs_false = config.clone_with_invalid_certs(false);
 
