@@ -86,7 +86,6 @@ impl TcpForwarder {
         let request_id = Arc::new(Mutex::new(None));
 
         let mut client_conn_guard = client_conn.lock().await;
-        client_conn_guard.set_nodelay(true)?;
         let (mut client_reader, mut client_writer) = tokio::io::split(&mut *client_conn_guard);
 
         let (mut upstream_reader, mut upstream_writer) = tokio::io::split(upstream_conn);
