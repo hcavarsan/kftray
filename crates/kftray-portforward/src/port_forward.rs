@@ -21,10 +21,12 @@ use tokio::{
 };
 use tokio_stream::wrappers::TcpListenerStream;
 use tracing::{
+    debug,
     error,
     info,
     instrument,
     trace,
+    warn,
 };
 
 use crate::kube::client::create_client_with_specific_context;
@@ -131,17 +133,24 @@ impl PortForward {
             let http_log_state = http_log_state.clone();
             TcpListenerStream::new(bind).try_for_each(move |client_conn: TcpStream| {
                 let pf = self.clone();
-                let client_conn = Arc::new(Mutex::new(client_conn));
                 let http_log_state = http_log_state.clone();
                 let cancel_notifier = cancel_notifier.clone();
                 async move {
                     info!("Handling new TCP connection");
+
+                    if let Err(e) = client_conn.set_nodelay(true) {
+                        if let Err(peer_err) = client_conn.peer_addr() {
+                            debug!("Client disconnected before handling: {:?}", peer_err);
+                            return Err(std::io::Error::other("Client disconnected"));
+                        }
+                        warn!("Failed to set TCP_NODELAY: {:?} - continuing without it", e);
+                    }
+
+                    let client_conn = Arc::new(Mutex::new(client_conn));
+
                     if let Ok(peer_addr) = client_conn.lock().await.peer_addr() {
                         trace!(%peer_addr, "new connection");
                     }
-
-                    let conn = client_conn.lock().await;
-                    drop(conn);
 
                     info!("Finding target pod");
                     let target = pf.finder().find(&pf.target).await.map_err(|e| {
@@ -152,6 +161,15 @@ impl PortForward {
 
                     let (pod_name, pod_port) = target.into_parts();
                     info!(%pod_name, %pod_port, "Initiating portforward API call");
+
+                    {
+                        let conn = client_conn.lock().await;
+                        if let Err(e) = conn.peer_addr() {
+                            debug!("Client disconnected before portforward API call: {:?}", e);
+                            return Err(std::io::Error::other("Client disconnected"));
+                        }
+                    }
+
                     let mut port_forwarder = pf
                         .pod_api
                         .portforward(&pod_name, &[pod_port])
