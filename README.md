@@ -83,8 +83,8 @@ For more information about kftray features and components, visit our blog post a
 | One-Click Multiple Port Forwards             | ✔️                   | ✔️                  |
 | Independent of Kubectl                       | ✔️                   | ✔️                  |
 | Multi-Protocol Support (TCP/UDP)             | ✔️                   | ✔️                  |
+| GitHub Import                                | ✔️                   | ✔️                  |
 | HTTP Logs Tracing                            | ✔️                   | ❌ (Coming Soon)    |
-| GitHub Sync                                  | ✔️                   | ❌ (Coming Soon)    |
 | Local JSON File Configuration                | ✔️                   | ✔️                  |
 | Auto Import with k8s Annotations             | ✔️                   | ✔️                  |
 
