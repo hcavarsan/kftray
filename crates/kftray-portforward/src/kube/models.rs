@@ -14,6 +14,8 @@ use serde::{
 use tokio::sync::Mutex;
 use tracing::debug;
 
+use super::target_cache::TargetCache;
+
 impl NameSpace {
     pub fn name_any(&self) -> String {
         self.0.clone().unwrap_or_else(|| "default".to_string())
@@ -131,7 +133,7 @@ pub struct PodInfo {
     pub labels_str: String,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 #[allow(dead_code)]
 pub struct PortForward {
     pub target: Target,
@@ -143,6 +145,7 @@ pub struct PortForward {
     pub config_id: i64,
     pub workload_type: String,
     pub connection: Arc<Mutex<Option<tokio::net::TcpStream>>>,
+    pub target_cache: Arc<TargetCache>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
