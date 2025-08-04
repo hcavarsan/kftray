@@ -29,6 +29,11 @@ pub enum KubeClientError {
         strategy: String,
         attempts: Vec<String>,
     },
+    ProxyError {
+        message: String,
+        proxy_url: String,
+        source: Option<Box<dyn Error + Send + Sync>>,
+    },
 }
 
 impl fmt::Display for KubeClientError {
@@ -63,6 +68,11 @@ impl fmt::Display for KubeClientError {
                     attempts.join(", ")
                 )
             }
+            KubeClientError::ProxyError {
+                message, proxy_url, ..
+            } => {
+                write!(f, "Proxy error for '{proxy_url}': {message}")
+            }
         }
     }
 }
@@ -72,7 +82,8 @@ impl Error for KubeClientError {
         match self {
             KubeClientError::ConfigError { source, .. }
             | KubeClientError::ConnectionError { source, .. }
-            | KubeClientError::AuthError { source, .. } => {
+            | KubeClientError::AuthError { source, .. }
+            | KubeClientError::ProxyError { source, .. } => {
                 source.as_ref().map(|e| &**e as &(dyn Error + 'static))
             }
             KubeClientError::IoError(err) => Some(err),
@@ -179,6 +190,25 @@ impl KubeClientError {
         Self::StrategyFailed {
             strategy: strategy.into(),
             attempts,
+        }
+    }
+
+    pub fn proxy_error(message: impl Into<String>, proxy_url: impl Into<String>) -> Self {
+        Self::ProxyError {
+            message: message.into(),
+            proxy_url: proxy_url.into(),
+            source: None,
+        }
+    }
+
+    pub fn proxy_error_with_source(
+        message: impl Into<String>, proxy_url: impl Into<String>,
+        source: impl Error + Send + Sync + 'static,
+    ) -> Self {
+        Self::ProxyError {
+            message: message.into(),
+            proxy_url: proxy_url.into(),
+            source: Some(Box::new(source)),
         }
     }
 }

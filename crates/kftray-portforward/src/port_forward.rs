@@ -35,8 +35,14 @@ use crate::kube::models::{
     Target,
 };
 use crate::kube::pod_finder::TargetPodFinder;
+use crate::kube::target_cache::{
+    CacheConfig,
+    TargetCache,
+    TargetCacheKey,
+};
 use crate::kube::tcp_forwarder::TcpForwarder;
 use crate::kube::udp_forwarder::UdpForwarder;
+use crate::port_forward_error::PortForwardError;
 
 lazy_static! {
     pub static ref CHILD_PROCESSES: Arc<StdMutex<HashMap<String, JoinHandle<()>>>> =
@@ -64,6 +70,9 @@ impl PortForward {
         })?;
         let namespace = target.namespace.name_any();
 
+        let cache_config = CacheConfig::default();
+        let target_cache = Arc::new(TargetCache::new(cache_config));
+
         Ok(Self {
             target,
             local_port: local_port.into(),
@@ -74,6 +83,7 @@ impl PortForward {
             config_id,
             workload_type,
             connection: Arc::new(Mutex::new(None)),
+            target_cache,
         })
     }
 
@@ -140,10 +150,12 @@ impl PortForward {
 
                     if let Err(e) = client_conn.set_nodelay(true) {
                         if let Err(peer_err) = client_conn.peer_addr() {
-                            debug!("Client disconnected before handling: {:?}", peer_err);
-                            return Err(std::io::Error::other("Client disconnected"));
+                            let error = PortForwardError::client_disconnected(None, "connection setup");
+                            debug!(error = %error, "Client disconnected before handling: {:?}", peer_err);
+                            return Ok(());
                         }
-                        warn!("Failed to set TCP_NODELAY: {:?} - continuing without it", e);
+                        let error = PortForwardError::recoverable_network_error(format!("Failed to set TCP_NODELAY: {e}"));
+                        warn!(error = %error, "Failed to set TCP_NODELAY - continuing without it");
                     }
 
                     let client_conn = Arc::new(Mutex::new(client_conn));
@@ -152,41 +164,141 @@ impl PortForward {
                         trace!(%peer_addr, "new connection");
                     }
 
-                    info!("Finding target pod");
-                    let target = pf.finder().find(&pf.target).await.map_err(|e| {
-                        error!(error = %e, "Failed to find target pod");
-                        std::io::Error::other(e.to_string())
-                    })?;
-                    info!(pod_name = %target.pod_name, pod_port = %target.port_number, "Found target pod");
+                    let cache_key = TargetCacheKey::from_target(&pf.target);
+
+                    let pod_api_clone = pf.pod_api.clone();
+                    let validator = |target_pod: crate::kube::models::TargetPod| async move {
+                        use tokio::time::{timeout, Duration};
+
+                        match timeout(Duration::from_secs(3), pod_api_clone.get(&target_pod.pod_name)).await {
+                            Ok(Ok(pod)) => {
+                                let is_ready = pod.status
+                                    .as_ref()
+                                    .and_then(|s| s.conditions.as_ref())
+                                    .map(|conditions| {
+                                        conditions.iter().any(|c| c.type_ == "Ready" && c.status == "True")
+                                    })
+                                    .unwrap_or(false);
+
+                                if is_ready {
+                                    debug!("Cached pod {} is still healthy", target_pod.pod_name);
+                                    true
+                                } else {
+                                    debug!("Cached pod {} is no longer ready", target_pod.pod_name);
+                                    false
+                                }
+                            }
+                            Ok(Err(e)) => {
+                                debug!("Failed to validate cached pod {}: {}", target_pod.pod_name, e);
+                                false
+                            }
+                            Err(_) => {
+                                debug!("Timeout validating cached pod {}", target_pod.pod_name);
+                                false
+                            }
+                        }
+                    };
+
+                    debug!("Checking cache for target: {:?}", cache_key);
+                    let target = if let Some(cached_target) = pf.target_cache.get_with_validation(&cache_key, validator).await {
+                        info!("Using validated cached target pod: {}", cached_target.pod_name);
+                        cached_target
+                    } else {
+                        info!("Finding target pod (cache miss or validation failed)");
+                        debug!("Starting pod finder with target: {:?}", pf.target);
+                        match pf.finder().find(&pf.target).await {
+                            Ok(found_target) => {
+                                debug!("Caching found target pod");
+                                pf.target_cache.put(cache_key.clone(), found_target.clone());
+                                info!(pod_name = %found_target.pod_name, pod_port = %found_target.port_number, "Found and cached new target pod");
+                                found_target
+                            }
+                            Err(e) => {
+                                let error = PortForwardError::pod_lookup_failed(
+                                    6,
+                                    e.to_string(),
+                                    format!("{:?}", pf.target.selector)
+                                );
+                                warn!(error = %error, "Pod lookup failed - will retry on next request");
+
+                                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+                                if error.is_recoverable() && !error.should_stop_server() {
+                                    info!("Pod lookup failed but is recoverable - closing this connection gracefully");
+                                    return Ok(());
+                                } else {
+                                    error!("Pod lookup failed with fatal error - stopping server");
+                                    return Err(std::io::Error::other(error.to_string()));
+                                }
+                            }
+                        }
+                    };
+                    debug!("Target resolved: {:?}", target);
 
                     let (pod_name, pod_port) = target.into_parts();
-                    info!(%pod_name, %pod_port, "Initiating portforward API call");
 
                     {
                         let conn = client_conn.lock().await;
                         if let Err(e) = conn.peer_addr() {
-                            debug!("Client disconnected before portforward API call: {:?}", e);
-                            return Err(std::io::Error::other("Client disconnected"));
+                            let error = PortForwardError::client_disconnected(None, "portforward API call");
+                            debug!(error = %error, "Client disconnected: {:?}", e);
+                            return Ok(());
                         }
                     }
 
-                    let mut port_forwarder = pf
-                        .pod_api
-                        .portforward(&pod_name, &[pod_port])
-                        .await
-                        .map_err(|e| {
-                            error!(error = %e, "Portforward API call failed");
-                            std::io::Error::other(e.to_string())
-                        })?;
-                    info!("Portforward API call successful");
+
+                    info!(%pod_name, %pod_port, "Creating WebSocket connection for new client");
+                    let mut port_forwarder = match pf.pod_api.portforward(&pod_name, &[pod_port]).await {
+                        Ok(process) => {
+                            info!("Portforward API call successful - WebSocket connection established");
+                            process
+                        }
+                        Err(e) => {
+                            let error = PortForwardError::stream_creation_failed(&pod_name, pod_port, e.to_string());
+                            error!(error = %error, "Portforward API call failed - will retry on next request");
+
+                            let cache_clone = Arc::clone(&pf.target_cache);
+                            let key_clone = cache_key.clone();
+                            tokio::spawn(async move {
+                                cache_clone.invalidate(&key_clone);
+                            });
+
+                            if error.is_recoverable() {
+                                info!("Stream creation failed but is recoverable - closing this connection gracefully");
+                                return Ok(());
+                            } else {
+                                error!("Stream creation failed with fatal error");
+                                return Err(std::io::Error::other(error.to_string()));
+                            }
+                        }
+                    };
 
                     info!("Taking stream from port_forwarder");
-                    let upstream_conn = port_forwarder.take_stream(pod_port).ok_or_else(|| {
-                        error!("Failed to take stream for port {}", pod_port);
-                        std::io::Error::other(
-                            "port not found in forwarder".to_string(),
-                        )
-                    })?;
+                    let upstream_conn = match port_forwarder.take_stream(pod_port) {
+                        Some(stream) => stream,
+                        None => {
+                            let error = PortForwardError::stream_creation_failed(
+                                &pod_name,
+                                pod_port,
+                                "Failed to take stream from port forwarder"
+                            );
+                            error!(error = %error, "Failed to take stream for port {} - will retry on next request", pod_port);
+
+                            let target_cache_clone = Arc::clone(&pf.target_cache);
+                            let key_clone = cache_key.clone();
+                            tokio::spawn(async move {
+                                target_cache_clone.invalidate(&key_clone);
+                            });
+
+                            if error.is_recoverable() {
+                                info!("Stream taking failed but is recoverable - closing this connection gracefully");
+                                return Ok(());
+                            } else {
+                                error!("Stream taking failed with fatal error");
+                                return Err(std::io::Error::other(error.to_string()));
+                            }
+                        }
+                    };
                     info!("Successfully took stream");
 
                     let mut forwarder = TcpForwarder::new(pf.config_id, pf.workload_type.clone());
@@ -407,6 +519,9 @@ mod tests {
         let (mock_service, _handle) = mock::pair::<Request<Body>, Response<Body>>();
         let client = Client::new(mock_service, "default");
 
+        let cache_config = CacheConfig::default();
+        let target_cache = Arc::new(TargetCache::new(cache_config));
+
         let pf_with_port = PortForward {
             target: target.clone(),
             local_port: Some(9090),
@@ -417,6 +532,7 @@ mod tests {
             config_id: 1,
             workload_type: "pod".to_string(),
             connection: Arc::new(Mutex::new(None)),
+            target_cache: target_cache.clone(),
         };
 
         assert_eq!(pf_with_port.local_port(), 9090);
@@ -432,6 +548,7 @@ mod tests {
             config_id: 2,
             workload_type: "pod".to_string(),
             connection: Arc::new(Mutex::new(None)),
+            target_cache: target_cache.clone(),
         };
 
         assert_eq!(pf_defaults.local_port(), 0);
@@ -451,6 +568,9 @@ mod tests {
         let (mock_service, _handle) = mock::pair::<Request<Body>, Response<Body>>();
         let client = Client::new(mock_service, "default");
 
+        let cache_config = CacheConfig::default();
+        let target_cache = Arc::new(TargetCache::new(cache_config));
+
         let pf = PortForward {
             target,
             local_port: Some(12345),
@@ -461,6 +581,7 @@ mod tests {
             config_id: 1,
             workload_type: "service".to_string(),
             connection: Arc::new(Mutex::new(None)),
+            target_cache,
         };
 
         assert_eq!(pf.context_name, context_name);
@@ -480,6 +601,9 @@ mod tests {
         let (mock_service, handle) = mock::pair::<Request<Body>, Response<Body>>();
         let client = Client::new(mock_service, "test-ns");
 
+        let cache_config = CacheConfig::default();
+        let target_cache = Arc::new(TargetCache::new(cache_config));
+
         let pf = PortForward {
             target,
             local_port: Some(0),
@@ -490,6 +614,7 @@ mod tests {
             config_id: 1,
             workload_type: "service".to_string(),
             connection: Arc::new(Mutex::new(None)),
+            target_cache,
         };
         (pf, client, handle)
     }
@@ -592,6 +717,9 @@ mod tests {
 
         let target_clone = pf_base.target.clone();
 
+        let cache_config = CacheConfig::default();
+        let target_cache = Arc::new(TargetCache::new(cache_config));
+
         let pf_test = PortForward {
             target: target_clone,
             local_port: Some(0),
@@ -602,6 +730,7 @@ mod tests {
             config_id: 1,
             workload_type: "service".to_string(),
             connection: Arc::new(Mutex::new(None)),
+            target_cache,
         };
 
         info!("Spawning mock server task");
