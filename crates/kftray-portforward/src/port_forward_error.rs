@@ -17,8 +17,13 @@ pub enum PortForwardError {
         port: u16,
         error: String,
     },
-    NetworkError { message: String, recoverable: bool },
-    ConfigurationError { message: String },
+    NetworkError {
+        message: String,
+        recoverable: bool,
+    },
+    ConfigurationError {
+        message: String,
+    },
     ResourceExhausted {
         resource_type: String,
         current_usage: Option<usize>,
