@@ -2971,7 +2971,7 @@ dependencies = [
 
 [[package]]
 name = "kftray-commons"
-version = "0.20.5"
+version = "0.20.6"
 dependencies = [
  "anyhow",
  "dirs",
@@ -2991,7 +2991,7 @@ dependencies = [
 
 [[package]]
 name = "kftray-helper"
-version = "0.20.5"
+version = "0.20.6"
 dependencies = [
  "clap",
  "dirs",
@@ -3033,7 +3033,7 @@ dependencies = [
 
 [[package]]
 name = "kftray-network-monitor"
-version = "0.20.5"
+version = "0.20.6"
 dependencies = [
  "futures",
  "kftray-commons",
@@ -3045,7 +3045,7 @@ dependencies = [
 
 [[package]]
 name = "kftray-portforward"
-version = "0.20.5"
+version = "0.20.6"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3092,7 +3092,7 @@ dependencies = [
 
 [[package]]
 name = "kftray-server"
-version = "0.20.5"
+version = "0.20.6"
 dependencies = [
  "async-trait",
  "env_logger",
@@ -3104,7 +3104,7 @@ dependencies = [
 
 [[package]]
 name = "kftray-tauri"
-version = "0.20.5"
+version = "0.20.6"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3139,7 +3139,7 @@ dependencies = [
 
 [[package]]
 name = "kftui"
-version = "0.20.5"
+version = "0.20.6"
 dependencies = [
  "built",
  "clap",
