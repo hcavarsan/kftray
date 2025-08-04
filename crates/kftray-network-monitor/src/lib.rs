@@ -1,9 +1,15 @@
+mod config_manager;
 mod controller;
+mod health;
 mod monitor;
+mod network;
 mod types;
 
 use controller::NetworkMonitorController;
-pub use types::NetworkMonitorError;
+pub use types::{
+    MonitorConfig,
+    NetworkMonitorError,
+};
 
 static CONTROLLER: tokio::sync::OnceCell<NetworkMonitorController> =
     tokio::sync::OnceCell::const_new();

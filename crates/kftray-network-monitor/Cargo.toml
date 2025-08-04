@@ -9,6 +9,7 @@ repository = "https://github.com/hcavarsan/kftray"
 license = "MIT"
 
 [dependencies]
+futures = { workspace = true }
 kftray-commons = { path = "../kftray-commons" }
 kftray-http-logs = { path = "../kftray-http-logs" }
 kftray-portforward = { path = "../kftray-portforward" }

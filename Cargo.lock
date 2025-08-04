@@ -3035,6 +3035,7 @@ dependencies = [
 name = "kftray-network-monitor"
 version = "0.20.5"
 dependencies = [
+ "futures",
  "kftray-commons",
  "kftray-http-logs",
  "kftray-portforward",
