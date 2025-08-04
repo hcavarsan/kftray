@@ -160,11 +160,13 @@ impl TargetCache {
 
             if is_valid {
                 if let Some(mut cached) = self.cache.get_mut(key) {
-                    cached.mark_validated();
-                    debug!(
-                        "Updated validation timestamp for pod: {}",
-                        target_pod.pod_name
-                    );
+                    if cached.target_pod.pod_name == target_pod.pod_name {
+                        cached.mark_validated();
+                        debug!(
+                            "Updated validation timestamp for pod: {}",
+                            target_pod.pod_name
+                        );
+                    }
                 }
                 return Some(target_pod);
             } else {
