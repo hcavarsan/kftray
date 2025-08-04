@@ -14,20 +14,26 @@ use crate::monitor::start_network_monitor;
 use crate::types::NetworkMonitorError;
 
 pub struct NetworkMonitorController {
-    task_handle: Arc<RwLock<Option<JoinHandle<()>>>>,
-    is_running: Arc<Mutex<bool>>,
+    state: Arc<ControllerState>,
+}
+
+struct ControllerState {
+    task_handle: RwLock<Option<JoinHandle<()>>>,
+    is_running: Mutex<bool>,
 }
 
 impl NetworkMonitorController {
     pub fn new() -> Self {
         Self {
-            task_handle: Arc::new(RwLock::new(None)),
-            is_running: Arc::new(Mutex::new(false)),
+            state: Arc::new(ControllerState {
+                task_handle: RwLock::new(None),
+                is_running: Mutex::new(false),
+            }),
         }
     }
 
     pub async fn start(&self) -> Result<(), NetworkMonitorError> {
-        let mut running = self.is_running.lock().await;
+        let mut running = self.state.is_running.lock().await;
         if *running {
             return Err(NetworkMonitorError::AlreadyRunning);
         }
@@ -36,31 +42,40 @@ impl NetworkMonitorController {
 
         let handle = tokio::spawn(start_network_monitor());
 
-        {
-            let mut task_handle = self.task_handle.write().await;
-            *task_handle = Some(handle);
+        match self.state.task_handle.try_write() {
+            Ok(mut task_handle) => {
+                *task_handle = Some(handle);
+                *running = true;
+                Ok(())
+            }
+            Err(_) => {
+                handle.abort();
+                Err(NetworkMonitorError::StartupFailed(
+                    "Failed to acquire task handle lock".to_string(),
+                ))
+            }
         }
-
-        *running = true;
-        Ok(())
     }
 
     pub async fn stop(&self) -> Result<(), NetworkMonitorError> {
-        let mut running = self.is_running.lock().await;
+        let mut running = self.state.is_running.lock().await;
         if !*running {
             return Err(NetworkMonitorError::NotRunning);
         }
 
         info!("Stopping network monitor");
 
-        {
-            let mut task_handle = self.task_handle.write().await;
-            if let Some(handle) = task_handle.take() {
-                handle.abort();
-                if let Err(e) = handle.await {
-                    if !e.is_cancelled() {
-                        return Err(NetworkMonitorError::ShutdownFailed(e.to_string()));
-                    }
+        let handle = {
+            let mut task_handle = self.state.task_handle.write().await;
+            task_handle.take()
+        };
+
+        if let Some(handle) = handle {
+            handle.abort();
+            if let Err(e) = handle.await {
+                if !e.is_cancelled() {
+                    *running = true; // Restore state on failure
+                    return Err(NetworkMonitorError::ShutdownFailed(e.to_string()));
                 }
             }
         }
@@ -79,6 +94,6 @@ impl NetworkMonitorController {
     }
 
     pub async fn is_running(&self) -> bool {
-        *self.is_running.lock().await
+        *self.state.is_running.lock().await
     }
 }
