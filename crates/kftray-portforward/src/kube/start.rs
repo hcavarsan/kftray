@@ -358,8 +358,11 @@ pub async fn start_port_forward(
                             &config.service
                         );
 
-                        debug!("Port forwarding details: {port_forward:?}");
-                        debug!("Actual local port: {actual_local_port:?}");
+                        debug!(
+                            "Port forwarding established for config_id: {}",
+                            port_forward.config_id
+                        );
+                        debug!("Actual local port: {actual_local_port}");
 
                         let handle_key = format!(
                             "{}_{}",

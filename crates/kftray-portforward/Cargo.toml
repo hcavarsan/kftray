@@ -41,7 +41,6 @@ httparse = { workspace = true }
 hyper = { workspace = true }
 hyper-openssl = { workspace = true }
 hyper-util = { workspace = true }
-hyper-proxy = { workspace = true }
 k8s-openapi = { workspace = true }
 kftray-commons = { path = "../kftray-commons" }
 kftray-helper = { path = "../kftray-helper" }
@@ -74,4 +73,6 @@ tower-test = { workspace = true }
 tracing-subscriber = { workspace = true }
 
 [features]
-default = []
+default = ["http-proxy", "socks5"]
+http-proxy = []
+socks5 = []

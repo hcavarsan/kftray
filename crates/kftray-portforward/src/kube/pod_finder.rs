@@ -1,9 +1,24 @@
+use std::future::Future;
+use std::pin::Pin;
+
 use anyhow::Result;
 use kube::api::{
     Api,
     ListParams,
 };
-use tracing::debug;
+use tokio::time::{
+    timeout,
+    Duration,
+};
+use tracing::{
+    debug,
+    warn,
+};
+
+const API_OPERATION_TIMEOUT: Duration = Duration::from_secs(5);
+const POD_LOOKUP_TIMEOUT: Duration = Duration::from_secs(10);
+const MAX_RETRY_ATTEMPTS: usize = 6;
+const INITIAL_RETRY_DELAY: Duration = Duration::from_millis(500);
 
 use crate::kube::models::{
     AnyReady,
@@ -19,24 +34,80 @@ pub struct TargetPodFinder<'a> {
 
 impl TargetPodFinder<'_> {
     pub(crate) async fn find(&self, target: &Target) -> Result<TargetPod> {
-        let ready_pod = AnyReady {};
+        self.find_with_timeout_and_retry(target, POD_LOOKUP_TIMEOUT, MAX_RETRY_ATTEMPTS)
+            .await
+    }
 
-        match &target.selector {
-            TargetSelector::ServiceName(name) => {
-                self.find_pod_by_service_name(name, &ready_pod, target)
-                    .await
+    pub(crate) async fn find_with_timeout_and_retry(
+        &self, target: &Target, timeout_duration: Duration, max_retries: usize,
+    ) -> Result<TargetPod> {
+        let ready_pod = AnyReady {};
+        let mut last_error = None;
+
+        for attempt in 0..max_retries {
+            if attempt > 0 {
+                warn!(
+                    "Retrying pod lookup (attempt {}/{})",
+                    attempt + 1,
+                    max_retries
+                );
+                let delay = INITIAL_RETRY_DELAY * (attempt as u32);
+                tokio::time::sleep(delay).await;
             }
-            TargetSelector::PodLabel(label) => {
-                self.find_pod_by_label(label, &ready_pod, target).await
+
+            let find_future: Pin<Box<dyn Future<Output = Result<TargetPod>> + Send + '_>> =
+                match &target.selector {
+                    TargetSelector::ServiceName(name) => {
+                        Box::pin(self.find_pod_by_service_name(name, &ready_pod, target))
+                    }
+                    TargetSelector::PodLabel(label) => {
+                        Box::pin(self.find_pod_by_label(label, &ready_pod, target))
+                    }
+                };
+
+            match timeout(timeout_duration, find_future).await {
+                Ok(Ok(target_pod)) => {
+                    if attempt > 0 {
+                        debug!("Pod lookup succeeded on retry attempt {}", attempt + 1);
+                    }
+                    return Ok(target_pod);
+                }
+                Ok(Err(e)) => {
+                    warn!("Pod lookup failed (attempt {}): {}", attempt + 1, e);
+                    last_error = Some(e);
+                }
+                Err(_) => {
+                    let timeout_error = anyhow::anyhow!(
+                        "Pod lookup timed out after {:?} (attempt {})",
+                        timeout_duration,
+                        attempt + 1
+                    );
+                    warn!("{}", timeout_error);
+                    last_error = Some(timeout_error);
+                }
             }
         }
+
+        let final_error = last_error.unwrap_or_else(|| {
+            anyhow::anyhow!(
+                "Pod lookup failed after {} attempts with no specific error",
+                max_retries
+            )
+        });
+
+        warn!(
+            "Pod lookup exhausted {} retries - will retry on next request: {}",
+            max_retries, final_error
+        );
+        Err(final_error)
     }
 
     async fn find_pod_by_service_name(
         &self, name: &str, ready_pod: &AnyReady, target: &Target,
     ) -> Result<TargetPod> {
-        match self.svc_api.get(name).await {
-            Ok(service) => {
+        debug!("Looking up service: {}", name);
+        match timeout(API_OPERATION_TIMEOUT, self.svc_api.get(name)).await {
+            Ok(Ok(service)) => {
                 if let Some(selector) = service.spec.and_then(|spec| spec.selector) {
                     let label_selector_str = selector
                         .iter()
@@ -44,10 +115,16 @@ impl TargetPodFinder<'_> {
                         .collect::<Vec<_>>()
                         .join(",");
 
-                    let pods = self
-                        .pod_api
-                        .list(&ListParams::default().labels(&label_selector_str))
-                        .await?;
+                    debug!("Looking up pods with selector: {}", label_selector_str);
+                    let pods = timeout(
+                        API_OPERATION_TIMEOUT,
+                        self.pod_api
+                            .list(&ListParams::default().labels(&label_selector_str)),
+                    )
+                    .await
+                    .map_err(|_| {
+                        anyhow::anyhow!("Timeout listing pods for service '{}'", name)
+                    })??;
 
                     let pod = ready_pod.select(&pods.items, &label_selector_str)?;
                     target.find(pod, None)
@@ -55,23 +132,29 @@ impl TargetPodFinder<'_> {
                     Err(anyhow::anyhow!("No selector found for service '{}'", name))
                 }
             }
-            Err(kube::Error::Api(kube::error::ErrorResponse { code: 404, .. })) => {
+            Ok(Err(kube::Error::Api(kube::error::ErrorResponse { code: 404, .. }))) => {
                 let label_selector_str = format!("app={name}");
 
                 debug!(
-                    "Using service name as label selector: {}",
+                    "Service not found, using service name as label selector: {}",
                     label_selector_str
                 );
 
-                let pods = self
-                    .pod_api
-                    .list(&ListParams::default().labels(&label_selector_str))
-                    .await?;
+                let pods = timeout(
+                    API_OPERATION_TIMEOUT,
+                    self.pod_api
+                        .list(&ListParams::default().labels(&label_selector_str)),
+                )
+                .await
+                .map_err(|_| {
+                    anyhow::anyhow!("Timeout listing pods for label '{}'", label_selector_str)
+                })??;
 
                 let pod = ready_pod.select(&pods.items, &label_selector_str)?;
                 target.find(pod, None)
             }
-            Err(e) => Err(anyhow::anyhow!("Error finding service '{}': {}", name, e)),
+            Ok(Err(e)) => Err(anyhow::anyhow!("Error finding service '{}': {}", name, e)),
+            Err(_) => Err(anyhow::anyhow!("Timeout getting service '{}'", name)),
         }
     }
 
@@ -79,10 +162,20 @@ impl TargetPodFinder<'_> {
         &self, label: &str, ready_pod: &AnyReady, target: &Target,
     ) -> Result<TargetPod> {
         let label_selector_str = label.to_string();
-        let pods = self
-            .pod_api
-            .list(&ListParams::default().labels(&label_selector_str))
-            .await?;
+        debug!(
+            "Looking up pods with label selector: {}",
+            label_selector_str
+        );
+
+        let pods = timeout(
+            API_OPERATION_TIMEOUT,
+            self.pod_api
+                .list(&ListParams::default().labels(&label_selector_str)),
+        )
+        .await
+        .map_err(|_| {
+            anyhow::anyhow!("Timeout listing pods for label '{}'", label_selector_str)
+        })??;
 
         let pod = ready_pod.select(&pods.items, &label_selector_str)?;
 

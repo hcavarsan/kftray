@@ -4,6 +4,7 @@ pub mod hostsfile;
 pub mod kube;
 pub mod network_utils;
 pub mod port_forward;
+pub mod port_forward_error;
 
 pub use kftray_http_logs::{
     HttpLogState,

@@ -6,6 +6,7 @@ mod proxy;
 mod service;
 mod start;
 mod stop;
+pub mod target_cache;
 pub mod tcp_forwarder;
 pub mod udp_forwarder;
 

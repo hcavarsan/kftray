@@ -2,6 +2,7 @@ pub mod builder;
 pub mod config;
 pub mod connection;
 pub mod error;
+pub mod proxy;
 pub mod utils;
 
 pub use builder::create_client_with_specific_context;
