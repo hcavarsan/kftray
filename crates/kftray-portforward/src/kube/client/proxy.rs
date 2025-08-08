@@ -63,8 +63,6 @@ pub async fn create_insecure_with_proxy(
 }
 
 async fn create_rustls_http_proxy(config: Config, proxy_url: &Uri) -> KubeResult<Client> {
-    validate_rustls_proxy_config(&config)?;
-
     let tunnel = create_http_tunnel(proxy_url);
     let connector = config
         .rustls_https_connector_with_connector(tunnel)
@@ -81,8 +79,6 @@ async fn create_rustls_http_proxy(config: Config, proxy_url: &Uri) -> KubeResult
 }
 
 async fn create_rustls_socks5_proxy(config: Config, proxy_url: &Uri) -> KubeResult<Client> {
-    validate_rustls_proxy_config(&config)?;
-
     let socks = create_socks5_proxy(proxy_url);
     let connector = config
         .rustls_https_connector_with_connector(socks)
@@ -146,15 +142,6 @@ async fn create_insecure_socks5_proxy(
     build_kube_client(config, hyper_client)
 }
 
-fn validate_rustls_proxy_config(config: &Config) -> KubeResult<()> {
-    if config.accept_invalid_certs {
-        return Err(KubeClientError::connection_error(
-            "Rustls with proxy and skip-tls-verify is not supported",
-        ));
-    }
-    Ok(())
-}
-
 fn create_http_tunnel(
     proxy_url: &Uri,
 ) -> hyper_util::client::legacy::connect::proxy::Tunnel<HttpConnector> {
@@ -186,17 +173,6 @@ fn create_socks5_proxy_with_connector(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_proxy_url_validation() {
-        let mut config = Config::new("https://example.com".parse().unwrap());
-        config.accept_invalid_certs = false;
-
-        assert!(validate_rustls_proxy_config(&config).is_ok());
-
-        config.accept_invalid_certs = true;
-        assert!(validate_rustls_proxy_config(&config).is_err());
-    }
 
     #[test]
     fn test_proxy_scheme_validation() {

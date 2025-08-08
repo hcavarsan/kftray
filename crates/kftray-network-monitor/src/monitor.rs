@@ -8,6 +8,7 @@ use std::time::{
 use futures::FutureExt;
 use kftray_portforward::port_forward::CANCEL_NOTIFIER;
 use log::{
+    debug,
     error,
     info,
 };
@@ -64,10 +65,24 @@ impl NetworkMonitor {
 
             let is_up = self.network_checker.check_connectivity().await;
 
+            {
+                let state = self.get_task_state().await;
+                let mut guard = state.lock().await;
+                guard.update_network_state(is_up);
+            }
+
             if !network_up && is_up {
-                info!("Network reconnected");
+                debug!("Network reconnected (main loop)");
                 failure_count = 0;
-                self.handle_reconnect().await;
+                if self.should_start_reconnect().await {
+                    debug!("Starting reconnection handler from main loop");
+                    let monitor = self.clone();
+                    tokio::spawn(async move {
+                        monitor.handle_reconnect_with_state().await;
+                    });
+                } else {
+                    debug!("Skipping reconnection - network not stable long enough or too soon after last reconnect");
+                }
                 last_health = Instant::now();
             } else if network_up && !is_up {
                 info!("Network disconnected");
@@ -75,19 +90,23 @@ impl NetworkMonitor {
             }
 
             if network_up && last_health.elapsed() > self.config.health_interval {
-                let monitor = self.clone();
-                tokio::spawn(async move {
-                    monitor.check_health().await;
-                });
+                if self.should_start_health_check().await {
+                    let monitor = self.clone();
+                    tokio::spawn(async move {
+                        monitor.check_health_with_state().await;
+                    });
+                }
                 last_health = Instant::now();
             }
 
             if network_up && failure_count > 0 && last_fast.elapsed() > self.config.sleep_up {
-                let failed_configs = self.check_health_fast().await;
-                last_fast = Instant::now();
-                if failed_configs.is_empty() {
-                    failure_count = failure_count.saturating_sub(1);
+                if self.should_start_health_check().await {
+                    let failed_configs = self.check_health_fast().await;
+                    if failed_configs.is_empty() {
+                        failure_count = failure_count.saturating_sub(1);
+                    }
                 }
+                last_fast = Instant::now();
             }
 
             network_up = is_up;
@@ -105,21 +124,22 @@ impl NetworkMonitor {
 
             let current_network_info = self.network_checker.get_network_fingerprint().await;
             if current_network_info != last_network_info {
-                info!("Network interface change detected");
-                if self.should_start_reconnect().await {
-                    let monitor = self.clone();
-                    tokio::spawn(async move {
-                        monitor.handle_reconnect_with_state().await;
-                    });
-                }
+                info!("Network interface change detected (background monitor) - monitoring state changes only");
                 last_network_info = current_network_info;
             }
 
             let current_network_state = self.network_checker.check_connectivity().await;
+
+            {
+                let state = self.get_task_state().await;
+                let mut guard = state.lock().await;
+                guard.update_network_state(current_network_state);
+            }
+
             if current_network_state != last_network_state {
                 info!("Network state change detected: {last_network_state} -> {current_network_state}");
                 if current_network_state {
-                    info!("Network recovered");
+                    debug!("Network recovered (background monitor)");
                     if self.should_start_reconnect().await {
                         let monitor = self.clone();
                         tokio::spawn(async move {
@@ -227,8 +247,6 @@ impl NetworkMonitor {
                 "Fast check found {} failed port forwards",
                 failed_configs.len()
             );
-            let http_log_state = Arc::new(kftray_http_logs::HttpLogState::new());
-            ConfigManager::restart_port_forwards(failed_configs.clone(), http_log_state).await;
         }
 
         failed_configs
@@ -243,22 +261,59 @@ impl NetworkMonitor {
 
     async fn should_start_reconnect(&self) -> bool {
         let state = self.get_task_state().await;
-        let guard = state.lock().await;
-        guard.should_reconnect()
+        let mut guard = state.lock().await;
+
+        if guard.reconnect_in_progress {
+            debug!("Cannot reconnect: already in progress");
+            return false;
+        }
+
+        if let Some(last) = guard.last_reconnect {
+            let elapsed = last.elapsed();
+            if elapsed < Duration::from_secs(10) {
+                debug!(
+                    "Cannot reconnect: only {:.1}s since last reconnect (need 10s)",
+                    elapsed.as_secs_f32()
+                );
+                return false;
+            }
+        }
+
+        if let Some(stable_since) = guard.network_stable_since {
+            let stable_duration = stable_since.elapsed();
+            if stable_duration < Duration::from_secs(3) {
+                debug!(
+                    "Cannot reconnect: network only stable for {:.1}s (need 3s)",
+                    stable_duration.as_secs_f32()
+                );
+                return false;
+            }
+            debug!(
+                "Network stable for {:.1}s, proceeding with reconnect",
+                stable_duration.as_secs_f32()
+            );
+        } else {
+            debug!("Cannot reconnect: network not stable");
+            return false;
+        }
+
+        guard.start_reconnect();
+        true
     }
 
     async fn should_start_health_check(&self) -> bool {
         let state = self.get_task_state().await;
-        let guard = state.lock().await;
-        guard.should_health_check()
+        let mut guard = state.lock().await;
+        if guard.should_health_check() {
+            guard.start_health_check();
+            true
+        } else {
+            false
+        }
     }
 
     async fn handle_reconnect_with_state(&self) {
         let state = self.get_task_state().await;
-        {
-            let mut guard = state.lock().await;
-            guard.start_reconnect();
-        }
 
         let result = AssertUnwindSafe(self.handle_reconnect())
             .catch_unwind()
@@ -276,10 +331,6 @@ impl NetworkMonitor {
 
     async fn check_health_with_state(&self) {
         let state = self.get_task_state().await;
-        {
-            let mut guard = state.lock().await;
-            guard.start_health_check();
-        }
 
         let result = AssertUnwindSafe(self.check_health()).catch_unwind().await;
 

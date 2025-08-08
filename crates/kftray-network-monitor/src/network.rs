@@ -1,3 +1,7 @@
+use futures::stream::{
+    FuturesUnordered,
+    StreamExt,
+};
 use log::warn;
 use tokio::time::timeout;
 
@@ -13,28 +17,27 @@ impl NetworkChecker {
     }
 
     pub async fn check_connectivity(&self) -> bool {
-        let checks: Vec<_> = self
+        let mut futs: FuturesUnordered<_> = self
             .config
             .network_endpoints
             .iter()
             .map(|&endpoint| {
-                let timeout_duration = self.config.network_timeout;
-                tokio::spawn(async move {
-                    timeout(timeout_duration, tokio::net::TcpStream::connect(endpoint))
-                        .await
-                        .is_ok()
-                })
+                let dur = self.config.network_timeout;
+                async move {
+                    matches!(
+                        timeout(dur, tokio::net::TcpStream::connect(endpoint)).await,
+                        Ok(Ok(_))
+                    )
+                }
             })
             .collect();
 
-        let mut success_count = 0;
-        for check in checks {
-            if matches!(timeout(self.config.sleep_up, check).await, Ok(Ok(true))) {
-                success_count += 1;
+        while let Some(ok) = futs.next().await {
+            if ok {
+                return true;
             }
         }
-
-        success_count >= 1
+        false
     }
 
     pub async fn get_network_fingerprint(&self) -> String {
@@ -71,13 +74,7 @@ impl NetworkChecker {
         fingerprint.push(route_count.to_string());
 
         if !found_local_addr && route_count == 0 {
-            format!(
-                "no_network_{}",
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap_or_default()
-                    .as_secs()
-            )
+            "no_network".to_string()
         } else {
             fingerprint.join("_")
         }
