@@ -90,6 +90,8 @@ fn main() {
                 if let Err(e) = kftray_commons::utils::migration::migrate_configs(None).await {
                     error!("Database migration failed during setup: {e}");
                 }
+
+                kftray_portforward::kube::client::clear_client_cache();
             });
 
             tauri::async_runtime::spawn(async move {

@@ -42,19 +42,10 @@ impl NetworkMonitorController {
 
         let handle = tokio::spawn(start_network_monitor());
 
-        match self.state.task_handle.try_write() {
-            Ok(mut task_handle) => {
-                *task_handle = Some(handle);
-                *running = true;
-                Ok(())
-            }
-            Err(_) => {
-                handle.abort();
-                Err(NetworkMonitorError::StartupFailed(
-                    "Failed to acquire task handle lock".to_string(),
-                ))
-            }
-        }
+        let mut task_handle = self.state.task_handle.write().await;
+        *task_handle = Some(handle);
+        *running = true;
+        Ok(())
     }
 
     pub async fn stop(&self) -> Result<(), NetworkMonitorError> {
@@ -72,12 +63,7 @@ impl NetworkMonitorController {
 
         if let Some(handle) = handle {
             handle.abort();
-            if let Err(e) = handle.await {
-                if !e.is_cancelled() {
-                    *running = true; // Restore state on failure
-                    return Err(NetworkMonitorError::ShutdownFailed(e.to_string()));
-                }
-            }
+            let _ = handle.await;
         }
 
         *running = false;

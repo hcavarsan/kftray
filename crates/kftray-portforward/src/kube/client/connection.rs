@@ -167,12 +167,19 @@ async fn create_rustls_client(config: Config) -> KubeResult<Client> {
 }
 
 async fn create_openssl_client(config: Config, skip_verify: bool) -> KubeResult<Client> {
+    if let Some(proxy_url) = config.proxy_url.clone() {
+        let ssl_builder = config.openssl_ssl_connector_builder().map_err(|e| {
+            KubeClientError::connection_error_with_source(
+                "Failed to create SSL connector with client certificates",
+                e,
+            )
+        })?;
+        let http_connector = create_http_connector();
+        return create_openssl_with_proxy(config, ssl_builder, http_connector, &proxy_url).await;
+    }
+
     let ssl_connector = create_ssl_connector(skip_verify)?;
     let http_connector = create_http_connector();
-
-    if let Some(proxy_url) = config.proxy_url.clone() {
-        return create_openssl_with_proxy(config, ssl_connector, http_connector, &proxy_url).await;
-    }
 
     let https_connector =
         HttpsConnector::with_connector(http_connector, ssl_connector).map_err(|e| {

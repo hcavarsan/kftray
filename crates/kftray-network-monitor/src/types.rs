@@ -63,16 +63,11 @@ pub struct TaskState {
     pub health_check_in_progress: bool,
     pub last_reconnect: Option<Instant>,
     pub last_health_check: Option<Instant>,
+    pub network_stable_since: Option<Instant>,
+    pub last_network_state: bool,
 }
 
 impl TaskState {
-    pub fn should_reconnect(&self) -> bool {
-        !self.reconnect_in_progress
-            && self
-                .last_reconnect
-                .is_none_or(|last| last.elapsed() > Duration::from_secs(1))
-    }
-
     pub fn should_health_check(&self) -> bool {
         !self.health_check_in_progress
             && self
@@ -80,9 +75,21 @@ impl TaskState {
                 .is_none_or(|last| last.elapsed() > Duration::from_secs(2))
     }
 
+    pub fn update_network_state(&mut self, is_up: bool) {
+        if is_up != self.last_network_state {
+            self.last_network_state = is_up;
+            if is_up {
+                self.network_stable_since = Some(Instant::now());
+            } else {
+                self.network_stable_since = None;
+            }
+        }
+    }
+
     pub fn start_reconnect(&mut self) {
         self.reconnect_in_progress = true;
         self.last_reconnect = Some(Instant::now());
+        self.network_stable_since = Some(Instant::now());
     }
 
     pub fn finish_reconnect(&mut self) {
