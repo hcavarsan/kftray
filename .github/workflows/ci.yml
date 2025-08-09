@@ -28,7 +28,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
-        uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
+        uses: actions/checkout@8edcb1bdb4e267140fa742c62e395cd74f332709
 
       - name: Install pnpm
         uses: pnpm/action-setup@f2b2b233b538f500472c7274c7012f57857d8ce0
@@ -39,7 +39,7 @@ jobs:
               args: [--frozen-lockfile]
 
       - name: Install Node.js
-        uses: actions/setup-node@7e24a656e1c7a0d6f3eaef8d8e84ae379a5b035b
+        uses: actions/setup-node@5e2628c959b9ade56971c0afcebbe5332d44b398
         with:
           node-version: "22"
           cache: "pnpm"
@@ -52,7 +52,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
-        uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
+        uses: actions/checkout@8edcb1bdb4e267140fa742c62e395cd74f332709
 
       - name: Install dependencies
         run: |
@@ -91,7 +91,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
+        uses: actions/checkout@8edcb1bdb4e267140fa742c62e395cd74f332709
 
       - name: Install dependencies (Linux)
         if: matrix.os_name == 'linux'
@@ -122,7 +122,7 @@ jobs:
 
       - name: Set up Perl on Windows
         if: matrix.os == 'windows-latest'
-        uses: shogo82148/actions-setup-perl@2fde72b7b7b24c986737ffc0eb0cbba8622c9d78
+        uses: shogo82148/actions-setup-perl@934ab4f9b139329210aa227256511043d84d3344
         with:
           perl-version: "5.32"
           distribution: "strawberry"
@@ -151,7 +151,7 @@ jobs:
       statuses: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
+        uses: actions/checkout@8edcb1bdb4e267140fa742c62e395cd74f332709
 
       - name: Install dependencies
         run: |
@@ -179,17 +179,17 @@ jobs:
         run: rustup component add llvm-tools
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@2383334cf567d78771fc7d89b6b3802ef1412cf6
+        uses: taiki-e/install-action@f37a1e4d34f3e1c6a571e294b0258f2805eab48d
         with:
           tool: cargo-llvm-cov
 
       - name: Install nextest
-        uses: taiki-e/install-action@2383334cf567d78771fc7d89b6b3802ef1412cf6
+        uses: taiki-e/install-action@f37a1e4d34f3e1c6a571e294b0258f2805eab48d
         with:
           tool: cargo-nextest
 
       - name: Install rust-cache
-        uses: swatinem/rust-cache@7e1e2d0a10862b34e5df481373b2b0f295d1a2ef
+        uses: swatinem/rust-cache@a8b36e3f740d2ae4fa6e44a424a7b296af51cbef
 
       - name: Install cargo-insta
         run: cargo install cargo-insta
@@ -219,7 +219,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
+        uses: actions/checkout@8edcb1bdb4e267140fa742c62e395cd74f332709
 
       - name: Install pnpm
         uses: pnpm/action-setup@f2b2b233b538f500472c7274c7012f57857d8ce0
@@ -230,7 +230,7 @@ jobs:
               args: [--frozen-lockfile]
 
       - name: Install Node.js
-        uses: actions/setup-node@7e24a656e1c7a0d6f3eaef8d8e84ae379a5b035b
+        uses: actions/setup-node@5e2628c959b9ade56971c0afcebbe5332d44b398
         with:
           node-version: "22"
           cache: "pnpm"
@@ -256,23 +256,23 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
-        uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
+        uses: actions/checkout@8edcb1bdb4e267140fa742c62e395cd74f332709
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@05340d1c670183e7caabdb33ae9f1c80fae3b0c2
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435
+        uses: docker/setup-buildx-action@2c8bcdab540207666c188bc0c1fe75d2d109dc81
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@3d100841f68d4548bf57e52eb27bd33ec5069f55
+        uses: docker/login-action@184bdaa0721073962dff0199f1fb9940f07167d1
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push Docker image
-        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83
+        uses: docker/build-push-action@55146d969b0dff1a5c12630229609757af5b1081
         with:
           platforms: linux/amd64,linux/arm64
           context: ./crates/kftray-server
