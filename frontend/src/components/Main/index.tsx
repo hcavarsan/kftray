@@ -379,15 +379,15 @@ const KFTray = () => {
     const results = await Promise.allSettled(portForwardingPromises)
 
     const errors = results
-    .map(result => (result.status === 'fulfilled' ? result.value : null))
-    .filter(
-      (result): result is { id: number; error: any } => result?.error != null,
-    )
+      .map(result => (result.status === 'fulfilled' ? result.value : null))
+      .filter(
+        (result): result is { id: number; error: any } => result?.error != null,
+      )
 
     if (errors.length > 0) {
       const errorMessage = errors
-      .map(e => `Config ID: ${e.id}, Error: ${e.error}`)
-      .join(', ')
+        .map(e => `Config ID: ${e.id}, Error: ${e.error}`)
+        .join(', ')
 
       toaster.error({
         title: 'Error Starting Port Forwarding',
@@ -400,25 +400,25 @@ const KFTray = () => {
   }
   const handlePortForwarding = async (config: Config) => {
     switch (config.workload_type) {
-    case 'service':
-    case 'pod':
-      if (config.protocol === 'tcp') {
-        await invoke<Response>('start_port_forward_tcp_cmd', {
-          configs: [config],
-        })
-      } else if (config.protocol === 'udp') {
+      case 'service':
+      case 'pod':
+        if (config.protocol === 'tcp') {
+          await invoke<Response>('start_port_forward_tcp_cmd', {
+            configs: [config],
+          })
+        } else if (config.protocol === 'udp') {
+          await invoke<Response>('deploy_and_forward_pod_cmd', {
+            configs: [config],
+          })
+        }
+        break
+      case 'proxy':
         await invoke<Response>('deploy_and_forward_pod_cmd', {
           configs: [config],
         })
-      }
-      break
-    case 'proxy':
-      await invoke<Response>('deploy_and_forward_pod_cmd', {
-        configs: [config],
-      })
-      break
-    default:
-      throw new Error(`Unsupported workload type: ${config.workload_type}`)
+        break
+      default:
+        throw new Error(`Unsupported workload type: ${config.workload_type}`)
     }
   }
 
@@ -472,9 +472,9 @@ const KFTray = () => {
         })
       } else {
         const errorMessages = responses
-        .filter(res => res.status !== initialStatus)
-        .map(res => `${res.status}: ${res.statusText}`)
-        .join(', ')
+          .filter(res => res.status !== initialStatus)
+          .map(res => `${res.status}: ${res.statusText}`)
+          .join(', ')
 
         toaster.error({
           title: 'Error',

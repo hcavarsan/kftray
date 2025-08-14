@@ -142,8 +142,8 @@ export const GitSyncProvider: React.FC<{ children: React.ReactNode }> = ({
         : null,
       nextSync: syncStatus.lastSyncTime
         ? new Date(
-          syncStatus.lastSyncTime + syncStatus.pollingInterval * 60000,
-        ).toLocaleTimeString()
+            syncStatus.lastSyncTime + syncStatus.pollingInterval * 60000,
+          ).toLocaleTimeString()
         : null,
       saveCredentials,
       deleteCredentials: async () => {

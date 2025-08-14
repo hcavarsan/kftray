@@ -43,6 +43,7 @@ export default defineConfig({
       enableBundleAnalysis: process.env.CODECOV_TOKEN !== undefined,
       bundleName: 'kftray',
       uploadToken: process.env.CODECOV_TOKEN,
+      gitService: 'github',
     })
   ],
 

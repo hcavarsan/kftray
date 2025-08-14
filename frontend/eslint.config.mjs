@@ -78,9 +78,7 @@ export default [{
     rules: {
         semi: ["error", "never"],
 
-        indent: [2, 2, {
-            MemberExpression: 0,
-        }],
+        indent: "off",
 
         complexity: ["error", {
             max: 20,

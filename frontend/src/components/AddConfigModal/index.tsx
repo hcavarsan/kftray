@@ -254,14 +254,14 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
       console.log(ports)
 
       return ports
-      .filter(p => p.port != null)
-      .map(p => ({
-        name: p.name ?? '',
-        port:
+        .filter(p => p.port != null)
+        .map(p => ({
+          name: p.name ?? '',
+          port:
             typeof p.port === 'string'
               ? parseInt(p.port, 10)
               : (p.port as number),
-      }))
+        }))
     },
     enabled:
       isModalOpen &&
@@ -310,9 +310,9 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
         selectedServiceOrTarget: getServiceOrTargetValue(newConfig),
         selectedPort: newConfig.remote_port
           ? {
-            label: newConfig.remote_port.toString(),
-            value: newConfig.remote_port,
-          }
+              label: newConfig.remote_port.toString(),
+              value: newConfig.remote_port,
+            }
           : null,
       }))
       setUiState(prev => ({
@@ -374,37 +374,37 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     const option = newValue as StringOption | null
 
     switch (actionMeta.name) {
-    case 'context':
-      setFormState(prev => ({
-        ...prev,
-        selectedContext: option,
-      }))
-      break
-    case 'namespace':
-      setFormState(prev => ({
-        ...prev,
-        selectedNamespace: option,
-      }))
-      break
-    case 'service':
-    case 'target':
-      setFormState(prev => ({
-        ...prev,
-        selectedServiceOrTarget: option,
-      }))
-      break
-    case 'workload_type':
-      setFormState(prev => ({
-        ...prev,
-        selectedWorkloadType: option,
-      }))
-      break
-    case 'protocol':
-      setFormState(prev => ({
-        ...prev,
-        selectedProtocol: option,
-      }))
-      break
+      case 'context':
+        setFormState(prev => ({
+          ...prev,
+          selectedContext: option,
+        }))
+        break
+      case 'namespace':
+        setFormState(prev => ({
+          ...prev,
+          selectedNamespace: option,
+        }))
+        break
+      case 'service':
+      case 'target':
+        setFormState(prev => ({
+          ...prev,
+          selectedServiceOrTarget: option,
+        }))
+        break
+      case 'workload_type':
+        setFormState(prev => ({
+          ...prev,
+          selectedWorkloadType: option,
+        }))
+        break
+      case 'protocol':
+        setFormState(prev => ({
+          ...prev,
+          selectedProtocol: option,
+        }))
+        break
     }
 
     handleInputChange({
@@ -763,13 +763,13 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                           options={
                             newConfig.workload_type === 'pod'
                               ? podsQuery.data?.map(pod => ({
-                                value: pod.labels_str,
-                                label: pod.labels_str,
-                              }))
+                                  value: pod.labels_str,
+                                  label: pod.labels_str,
+                                }))
                               : serviceQuery.data?.map(service => ({
-                                value: service.name,
-                                label: service.name,
-                              }))
+                                  value: service.name,
+                                  label: service.name,
+                                }))
                           }
                           isLoading={
                             newConfig.workload_type === 'pod'
@@ -780,16 +780,16 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                         />
                         {newConfig.workload_type === 'pod' &&
                           podsQuery.isError && (
-                          <Text color='red.300' fontSize='xs'>
+                            <Text color='red.300' fontSize='xs'>
                               Error fetching pods
-                          </Text>
-                        )}
+                            </Text>
+                          )}
                         {newConfig.workload_type !== 'pod' &&
                           serviceQuery.isError && (
-                          <Text color='red.300' fontSize='xs'>
+                            <Text color='red.300' fontSize='xs'>
                               Error fetching services
-                          </Text>
-                        )}
+                            </Text>
+                          )}
                       </Stack>
 
                       <Stack gap={1.5}>
@@ -816,56 +816,56 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                           !portOptions.find(
                             p => p.value === newConfig.remote_port,
                           )) ? (
-                            <Input
-                              type='number'
-                              name='remote_port'
-                              value={newConfig.remote_port || ''}
-                              onChange={e => {
-                                const value = parseInt(e.target.value, 10)
+                          <Input
+                            type='number'
+                            name='remote_port'
+                            value={newConfig.remote_port || ''}
+                            onChange={e => {
+                              const value = parseInt(e.target.value, 10)
 
-                                if (!isNaN(value)) {
-                                  setFormState(prev => ({
-                                    ...prev,
-                                    selectedPort: CUSTOM_PORT,
-                                  }))
-                                  const syntheticEvent = {
-                                    ...e,
-                                    target: {
-                                      ...e.target,
-                                      name: 'remote_port',
-                                      value: value.toString(),
-                                    },
-                                  }
-
-                                  handleInputChange(syntheticEvent)
+                              if (!isNaN(value)) {
+                                setFormState(prev => ({
+                                  ...prev,
+                                  selectedPort: CUSTOM_PORT,
+                                }))
+                                const syntheticEvent = {
+                                  ...e,
+                                  target: {
+                                    ...e.target,
+                                    name: 'remote_port',
+                                    value: value.toString(),
+                                  },
                                 }
-                              }}
-                              bg='#161616'
-                              border='1px solid rgba(255, 255, 255, 0.08)'
-                              _hover={{
-                                borderColor: 'rgba(255, 255, 255, 0.15)',
-                              }}
-                              _focus={{
-                                borderColor: 'blue.400',
-                                boxShadow: 'none',
-                              }}
-                              height='28px'
-                              fontSize='13px'
-                              placeholder='Enter port number'
-                            />
-                          ) : (
-                            <Select
-                              name='remote_port'
-                              value={formState.selectedPort}
-                              onChange={handleSelectChange}
-                              options={[CUSTOM_PORT, ...portOptions]}
-                              placeholder='Select port'
-                              isDisabled={
-                                !newConfig.context || !newConfig.namespace
+
+                                handleInputChange(syntheticEvent)
                               }
-                              styles={selectStyles}
-                            />
-                          )}
+                            }}
+                            bg='#161616'
+                            border='1px solid rgba(255, 255, 255, 0.08)'
+                            _hover={{
+                              borderColor: 'rgba(255, 255, 255, 0.15)',
+                            }}
+                            _focus={{
+                              borderColor: 'blue.400',
+                              boxShadow: 'none',
+                            }}
+                            height='28px'
+                            fontSize='13px'
+                            placeholder='Enter port number'
+                          />
+                        ) : (
+                          <Select
+                            name='remote_port'
+                            value={formState.selectedPort}
+                            onChange={handleSelectChange}
+                            options={[CUSTOM_PORT, ...portOptions]}
+                            placeholder='Select port'
+                            isDisabled={
+                              !newConfig.context || !newConfig.namespace
+                            }
+                            styles={selectStyles}
+                          />
+                        )}
                         {portQuery.isError && (
                           <Text color='red.300' fontSize='xs'>
                             Error fetching ports
