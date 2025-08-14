@@ -98,9 +98,9 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
               selectedConfigs.length > 0
                 ? startSelectedPortForwarding
                 : () =>
-                  initiatePortForwarding(
-                    configs.filter(config => !config.is_running),
-                  )
+                    initiatePortForwarding(
+                      configs.filter(config => !config.is_running),
+                    )
             }
             _hover={{ bg: 'whiteAlpha.100' }}
             height='26px'

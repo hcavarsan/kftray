@@ -37,17 +37,17 @@ const PortForwardTable: React.FC<TableProps> = ({
     const searchLower = search.toLowerCase()
 
     return configs
-    .filter(
-      config =>
-        config.alias.toLowerCase().includes(searchLower) ||
+      .filter(
+        config =>
+          config.alias.toLowerCase().includes(searchLower) ||
           config.context.toLowerCase().includes(searchLower) ||
           config.remote_address?.toLowerCase().includes(searchLower) ||
           config.local_port.toString().includes(searchLower),
-    )
-    .sort(
-      (a, b) =>
-        a.alias.localeCompare(b.alias) || a.context.localeCompare(b.context),
-    )
+      )
+      .sort(
+        (a, b) =>
+          a.alias.localeCompare(b.alias) || a.context.localeCompare(b.context),
+      )
   }, [configs, search])
 
   const configsByContext = useConfigsByContext(filteredConfigs)
@@ -123,12 +123,12 @@ const PortForwardTable: React.FC<TableProps> = ({
 
         const configIdsFiltered = new Set(
           prev
-          .filter(
-            config =>
-              config.context !== context ||
+            .filter(
+              config =>
+                config.context !== context ||
                 !filteredConfigs.some(fc => fc.id === config.id),
-          )
-          .map(config => config.id),
+            )
+            .map(config => config.id),
         )
 
         return prev.filter(config => configIdsFiltered.has(config.id))

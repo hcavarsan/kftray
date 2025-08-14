@@ -53,17 +53,17 @@ const createToastWrapper = (
 ) => {
   const wrapToastFunction =
     (fn: ChakraToastFunction): CustomToastFunction =>
-      (options: ToastOptions) => {
-        const id = fn({
-          ...options,
-          duration: options.duration ?? 1000,
-          onStatusChange: (details: StatusChangeDetails) => {
-            options.onStatusChange?.(details)
-          },
-        })
+    (options: ToastOptions) => {
+      const id = fn({
+        ...options,
+        duration: options.duration ?? 1000,
+        onStatusChange: (details: StatusChangeDetails) => {
+          options.onStatusChange?.(details)
+        },
+      })
 
-        return id
-      }
+      return id
+    }
 
   return {
     ...originalToaster,
