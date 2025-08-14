@@ -19,8 +19,8 @@ pub struct CacheConfig {
 impl Default for CacheConfig {
     fn default() -> Self {
         Self {
-            cache_ttl: Duration::from_secs(3600),
-            validation_interval: Duration::from_secs(1800),
+            cache_ttl: Duration::from_secs(90),
+            validation_interval: Duration::from_secs(10),
             max_entries: 1000,
         }
     }
@@ -193,6 +193,10 @@ impl TargetCache {
         self.cache.insert(key, CachedTarget::new(target_pod));
     }
 
+    pub fn get_timestamp(&self, key: &TargetCacheKey) -> Option<Instant> {
+        self.cache.get(key).map(|cached| cached.cached_at)
+    }
+
     fn evict_oldest_entries(&self) {
         let entries_to_remove = (self.cache.len() / 4).max(1);
 
@@ -272,8 +276,8 @@ mod tests {
     #[test]
     fn test_cache_config_default() {
         let config = CacheConfig::default();
-        assert_eq!(config.cache_ttl, Duration::from_secs(3600));
-        assert_eq!(config.validation_interval, Duration::from_secs(1800));
+        assert_eq!(config.cache_ttl, Duration::from_secs(90));
+        assert_eq!(config.validation_interval, Duration::from_secs(10));
         assert_eq!(config.max_entries, 1000);
     }
 

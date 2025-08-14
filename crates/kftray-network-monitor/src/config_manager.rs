@@ -1,4 +1,7 @@
+use std::sync::Arc;
+
 use kftray_commons::models::config_model::Config;
+use kftray_http_logs::HttpLogState;
 use log::{
     error,
     info,
@@ -42,9 +45,7 @@ impl ConfigManager {
         Ok(configs)
     }
 
-    pub async fn restart_port_forwards(
-        configs: Vec<Config>, http_log_state: crate::types::HttpLogState,
-    ) {
+    pub async fn restart_port_forwards(configs: Vec<Config>, http_log_state: Arc<HttpLogState>) {
         for protocol in ["tcp", "udp"] {
             let protocol_configs: Vec<Config> = configs
                 .iter()
@@ -60,7 +61,7 @@ impl ConfigManager {
     }
 
     async fn restart_protocol_batch(
-        configs: Vec<Config>, protocol: &str, http_log_state: crate::types::HttpLogState,
+        configs: Vec<Config>, protocol: &str, http_log_state: Arc<HttpLogState>,
     ) {
         info!("Restarting {} {} port forwards", configs.len(), protocol);
 

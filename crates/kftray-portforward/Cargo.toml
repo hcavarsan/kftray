@@ -65,6 +65,8 @@ tracing = { workspace = true }
 uuid = { workspace = true }
 whoami = { workspace = true }
 http = { workspace = true }
+bb8 = { workspace = true }
+arc-swap = { workspace = true }
 
 [dev-dependencies]
 http = { workspace = true }
