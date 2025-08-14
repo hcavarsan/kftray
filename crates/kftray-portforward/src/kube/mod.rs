@@ -16,11 +16,15 @@ mod tests;
 
 pub use proxy::{
     deploy_and_forward_pod,
+    deploy_and_forward_pod_with_mode,
     stop_proxy_forward,
     stop_proxy_forward_with_mode,
 };
 pub use service::retrieve_service_configs;
-pub use start::start_port_forward;
+pub use start::{
+    start_port_forward,
+    start_port_forward_with_mode,
+};
 pub use stop::{
     stop_all_port_forward,
     stop_all_port_forward_with_mode,

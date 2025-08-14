@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::Duration;
 
 use futures::stream::{
     FuturesUnordered,
@@ -15,7 +16,7 @@ use kftray_commons::{
     },
     utils::{
         config::read_configs_with_mode,
-        config_state::update_config_state,
+        config_state::update_config_state_with_mode,
         db_mode::DatabaseMode,
         timeout_manager::cancel_timeout_for_forward,
     },
@@ -26,6 +27,10 @@ use kube::api::{
     ListParams,
 };
 use tokio::task::JoinHandle;
+use tokio::time::{
+    sleep,
+    timeout,
+};
 use tracing::{
     debug,
     error,
@@ -42,6 +47,40 @@ use crate::port_forward::{
     CANCEL_NOTIFIER,
     CHILD_PROCESSES,
 };
+
+async fn is_port_listening(address: &str, port: u16) -> bool {
+    let socket_addr = format!("{address}:{port}");
+
+    for attempt in 1..=5 {
+        let connect_result = timeout(
+            Duration::from_millis(100),
+            tokio::net::TcpStream::connect(&socket_addr),
+        )
+        .await;
+
+        match connect_result {
+            Ok(Ok(_)) => {
+                debug!("Port {socket_addr} is listening (attempt {attempt}/5)");
+                return true;
+            }
+            Ok(Err(e)) => {
+                debug!("Port {socket_addr} connection failed: {e} (attempt {attempt}/5)");
+                if attempt < 5 {
+                    sleep(Duration::from_millis(50)).await;
+                }
+            }
+            Err(_) => {
+                debug!("Port {socket_addr} connection timeout (attempt {attempt}/5)");
+                if attempt < 5 {
+                    sleep(Duration::from_millis(50)).await;
+                }
+            }
+        }
+    }
+
+    debug!("Port {socket_addr} determined not listening after 5 attempts");
+    false
+}
 
 async fn try_release_address(address: &str) -> Result<(), String> {
     let app_id = "com.kftray.app".to_string();
@@ -356,16 +395,27 @@ pub async fn stop_all_port_forward_with_mode(
         .iter()
         .map(|config| {
             let config_id_parsed = config.id.unwrap_or_default();
+            let config_clone = config.clone();
             async move {
-                let config_state = ConfigState {
-                    id: None,
-                    config_id: config_id_parsed,
-                    is_running: false,
-                };
-                if let Err(e) = update_config_state(&config_state).await {
-                    error!("Failed to update config state: {e}");
+                let should_update_state = if let Some(local_port) = config_clone.local_port {
+                    let local_address =
+                        config_clone.local_address.as_deref().unwrap_or("127.0.0.1");
+                    !is_port_listening(local_address, local_port).await
                 } else {
-                    info!("Successfully updated config state for config_id: {config_id_parsed}");
+                    true
+                };
+
+                if should_update_state {
+                    let config_state = ConfigState::new(config_id_parsed, false);
+                    if let Err(e) = update_config_state_with_mode(&config_state, mode).await {
+                        error!("Failed to update config state: {e}");
+                    } else {
+                        info!(
+                            "Successfully updated config state for config_id: {config_id_parsed}"
+                        );
+                    }
+                } else {
+                    debug!("Config {config_id_parsed} port still listening, keeping current state");
                 }
             }
         })
@@ -447,12 +497,8 @@ pub async fn stop_port_forward_with_mode(
                 if let Err(e) = remove_host_entry(config_id_str) {
                     error!("Failed to remove host entry for ID {config_id_str}: {e}");
 
-                    let config_state = ConfigState {
-                        id: None,
-                        config_id: config_id_parsed,
-                        is_running: false,
-                    };
-                    if let Err(e) = update_config_state(&config_state).await {
+                    let config_state = ConfigState::new(config_id_parsed, false);
+                    if let Err(e) = update_config_state_with_mode(&config_state, mode).await {
                         error!("Failed to update config state: {e}");
                     }
                     return Err(e.to_string());
@@ -462,12 +508,8 @@ pub async fn stop_port_forward_with_mode(
             warn!("Config with id '{config_id_str}' not found.");
         }
 
-        let config_state = ConfigState {
-            id: None,
-            config_id: config_id_parsed,
-            is_running: false,
-        };
-        if let Err(e) = update_config_state(&config_state).await {
+        let config_state = ConfigState::new(config_id_parsed, false);
+        if let Err(e) = update_config_state_with_mode(&config_state, mode).await {
             error!("Failed to update config state: {e}");
         }
 
@@ -485,17 +527,63 @@ pub async fn stop_port_forward_with_mode(
         })
     } else {
         let config_id_parsed = config_id.parse::<i64>().unwrap_or_default();
-        let config_state = ConfigState {
-            id: None,
-            config_id: config_id_parsed,
-            is_running: false,
+
+        let configs = match mode {
+            DatabaseMode::File => get_configs().await.unwrap_or_default(),
+            DatabaseMode::Memory => read_configs_with_mode(mode).await.unwrap_or_default(),
         };
-        if let Err(e) = update_config_state(&config_state).await {
-            error!("Failed to update config state: {e}");
+
+        // Check if config exists first
+        let config = configs.iter().find(|c| c.id == Some(config_id_parsed));
+
+        if config.is_none() {
+            return Err(format!(
+                "No port forwarding process found for config_id '{config_id}'"
+            ));
         }
-        Err(format!(
-            "No port forwarding process found for config_id '{config_id}'"
-        ))
+
+        let config = config.unwrap();
+        let should_update_state = if let Some(local_port) = config.local_port {
+            let local_address = config.local_address.as_deref().unwrap_or("127.0.0.1");
+            !is_port_listening(local_address, local_port).await
+        } else {
+            true
+        };
+
+        if should_update_state {
+            let config_state = ConfigState::new(config_id_parsed, false);
+            if let Err(e) = update_config_state_with_mode(&config_state, mode).await {
+                error!("Failed to update config state: {e}");
+            }
+
+            debug!("No active process found for config_id '{config_id}' and port not listening, state updated to stopped");
+            Ok(CustomResponse {
+                id: Some(config_id_parsed),
+                service: String::new(),
+                namespace: String::new(),
+                local_port: 0,
+                remote_port: 0,
+                context: String::new(),
+                protocol: String::new(),
+                stdout: String::from("Port forwarding was already stopped"),
+                stderr: String::new(),
+                status: 0,
+            })
+        } else {
+            debug!("No active process found for config_id '{config_id}' but port is still listening, keeping current state");
+            Ok(CustomResponse {
+                id: Some(config_id_parsed),
+                service: String::new(),
+                namespace: String::new(),
+                local_port: 0,
+                remote_port: 0,
+                context: String::new(),
+                protocol: String::new(),
+                stdout: String::from("Port forwarding process not found but port still active"),
+                stderr: String::new(),
+                status: 0,
+            })
+        }
     }
 }
 
