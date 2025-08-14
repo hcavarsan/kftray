@@ -196,11 +196,7 @@ async fn handle_existing_process(
         info!(
             "External process '{process_name}' found on port {port}, updating state to 'not running'"
         );
-        let config_state = ConfigState {
-            id: None,
-            config_id: config.id.unwrap(),
-            is_running: false,
-        };
+        let config_state = ConfigState::new_without_process(config.id.unwrap(), false);
         port_ops.update_config_state(&config_state).await?;
     }
 
@@ -247,11 +243,7 @@ async fn start_port_forwarding(
 
     match result {
         Ok(_) => {
-            let config_state = ConfigState {
-                id: None,
-                config_id,
-                is_running: true,
-            };
+            let config_state = ConfigState::new(config_id, true);
             port_ops.update_config_state(&config_state).await?;
             Ok(())
         }
@@ -259,11 +251,7 @@ async fn start_port_forwarding(
             let error_msg = format!("Failed to start port forwarding for '{config_alias}': {e}");
             error!("{error_msg}");
 
-            let config_state = ConfigState {
-                id: None,
-                config_id,
-                is_running: false,
-            };
+            let config_state = ConfigState::new_without_process(config_id, false);
             port_ops.update_config_state(&config_state).await?;
 
             Err(error_msg)
@@ -332,6 +320,7 @@ mod tests {
             id: None,
             config_id: id,
             is_running,
+            process_id: if is_running { Some(1234) } else { None },
         }
     }
 

@@ -51,6 +51,7 @@ mod tests {
                 id: None,
                 config_id: i as i64 + 1,
                 is_running,
+                process_id: if is_running { Some(1234) } else { None },
             });
         }
 

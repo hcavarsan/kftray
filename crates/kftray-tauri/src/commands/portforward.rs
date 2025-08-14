@@ -3,7 +3,10 @@ use std::sync::Arc;
 use kftray_commons::config::get_configs;
 use kftray_commons::models::config_model::Config;
 use kftray_commons::models::response::CustomResponse;
-use kftray_commons::utils::config_state::get_configs_state;
+use kftray_commons::utils::config_state::{
+    cleanup_current_process_config_states,
+    get_configs_state,
+};
 use kftray_http_logs::HttpLogState;
 use kftray_portforward::kube::{
     deploy_and_forward_pod,
@@ -156,6 +159,9 @@ pub async fn handle_exit_app(app_handle: tauri::AppHandle) {
         let any_running = config_states.iter().any(|config| config.is_running);
 
         if !any_running {
+            if let Err(e) = cleanup_current_process_config_states().await {
+                error!("Failed to cleanup config states: {e}");
+            }
             app_handle.exit(0);
             return;
         }
@@ -171,10 +177,16 @@ pub async fn handle_exit_app(app_handle: tauri::AppHandle) {
                         match stop_all_port_forward().await {
                             Ok(responses) => {
                                 info!("Successfully stopped all port forwards: {responses:?}");
+                                if let Err(e) = cleanup_current_process_config_states().await {
+                                    error!("Failed to cleanup config states: {e}");
+                                }
                                 app_handle.exit(0);
                             }
                             Err(err) => {
                                 error!("Failed to stop port forwards: {err:?}");
+                                if let Err(e) = cleanup_current_process_config_states().await {
+                                    error!("Failed to cleanup config states: {e}");
+                                }
                                 app_handle.exit(0);
                             }
                         };
@@ -187,6 +199,9 @@ pub async fn handle_exit_app(app_handle: tauri::AppHandle) {
         );
     } else {
         error!("No windows found, exiting application.");
+        if let Err(e) = cleanup_current_process_config_states().await {
+            error!("Failed to cleanup config states: {e}");
+        }
         app_handle.exit(0);
     }
 }
@@ -229,11 +244,13 @@ mod tests {
                 id: Some(1),
                 config_id: 1,
                 is_running: true,
+                process_id: Some(1234),
             },
             ConfigState {
                 id: Some(2),
                 config_id: 2,
                 is_running: false,
+                process_id: None,
             },
         ]
     }
@@ -293,6 +310,7 @@ mod tests {
                 id: config.id,
                 config_id: config.id.unwrap_or_default(),
                 is_running: false,
+                process_id: None,
             })
             .collect();
 
