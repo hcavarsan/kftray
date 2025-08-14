@@ -94,6 +94,7 @@ pub async fn create_db_table(pool: &SqlitePool) -> Result<(), sqlx::Error> {
             id INTEGER PRIMARY KEY,
             config_id INTEGER NOT NULL,
             is_running BOOLEAN NOT NULL DEFAULT false,
+            process_id INTEGER,
             FOREIGN KEY(config_id) REFERENCES configs(id) ON DELETE CASCADE
         )",
     )

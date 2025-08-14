@@ -15,7 +15,10 @@ use kftray_commons::{
         config_model::Config,
         response::CustomResponse,
     },
-    utils::config_dir::get_pod_manifest_path,
+    utils::{
+        config_dir::get_pod_manifest_path,
+        db_mode::DatabaseMode,
+    },
 };
 use kftray_http_logs::HttpLogState;
 use kube::api::ListParams;
@@ -39,6 +42,12 @@ use crate::kube::client::create_client_with_specific_context;
 
 pub async fn deploy_and_forward_pod(
     configs: Vec<Config>, http_log_state: Arc<HttpLogState>,
+) -> Result<Vec<CustomResponse>, String> {
+    deploy_and_forward_pod_with_mode(configs, http_log_state, DatabaseMode::File).await
+}
+
+pub async fn deploy_and_forward_pod_with_mode(
+    configs: Vec<Config>, http_log_state: Arc<HttpLogState>, mode: DatabaseMode,
 ) -> Result<Vec<CustomResponse>, String> {
     let mut responses: Vec<CustomResponse> = Vec::new();
 
@@ -128,18 +137,20 @@ pub async fn deploy_and_forward_pod(
 
                 let start_response = match protocol.as_str() {
                     "udp" => {
-                        super::start::start_port_forward(
+                        super::start::start_port_forward_with_mode(
                             vec![config.clone()],
                             "udp",
                             http_log_state.clone(),
+                            mode,
                         )
                         .await
                     }
                     "tcp" => {
-                        super::start::start_port_forward(
+                        super::start::start_port_forward_with_mode(
                             vec![config.clone()],
                             "tcp",
                             http_log_state.clone(),
+                            mode,
                         )
                         .await
                     }
