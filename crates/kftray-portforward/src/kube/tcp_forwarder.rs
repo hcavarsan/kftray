@@ -17,7 +17,8 @@ use tracing::{
 
 use crate::Logger;
 
-const BUFFER_SIZE: usize = 131072;
+const BUFFER_SIZE: usize = 65536;
+const TIMEOUT_DURATION: Duration = Duration::from_secs(600);
 
 #[derive(Clone)]
 pub struct TcpForwarder {
@@ -81,8 +82,26 @@ impl TcpForwarder {
     pub async fn forward_connection(
         &self, client_conn: Arc<Mutex<TcpStream>>,
         upstream_conn: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
-        http_log_state: Arc<HttpLogState>, cancel_notifier: Arc<Notify>, _local_port: u16,
+        cancel_notifier: Arc<Notify>, logging_enabled: bool,
     ) -> anyhow::Result<()> {
+        if !logging_enabled || self.logger.is_none() {
+            let mut client_conn_guard = client_conn.lock().await;
+            let client_stream = &mut *client_conn_guard;
+            let mut pinned_upstream = Box::pin(upstream_conn);
+
+            tokio::select! {
+                result = tokio::io::copy_bidirectional(client_stream, &mut pinned_upstream) => {
+                    match result {
+                        Ok(_) => {},
+                        Err(e) if matches!(e.kind(), std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::UnexpectedEof) => {},
+                        Err(_) => {},
+                    }
+                }
+                _ = cancel_notifier.notified() => {}
+            }
+            return Ok(());
+        }
+
         let request_id = Arc::new(Mutex::new(None));
 
         let mut client_conn_guard = client_conn.lock().await;
@@ -94,7 +113,6 @@ impl TcpForwarder {
             &mut client_reader,
             &mut upstream_writer,
             self.logger.clone(),
-            &http_log_state,
             Arc::clone(&request_id),
             cancel_notifier.clone(),
         );
@@ -103,7 +121,6 @@ impl TcpForwarder {
             &mut upstream_reader,
             &mut client_writer,
             self.logger.clone(),
-            &http_log_state,
             Arc::clone(&request_id),
             cancel_notifier.clone(),
         );
@@ -127,75 +144,46 @@ impl TcpForwarder {
     async fn handle_client_to_upstream<'a>(
         &'a self, client_reader: &'a mut (impl AsyncReadExt + Unpin),
         upstream_writer: &'a mut (impl AsyncWriteExt + Unpin), logger: Option<Logger>,
-        http_log_state: &HttpLogState, request_id: Arc<Mutex<Option<String>>>,
-        cancel_notifier: Arc<Notify>,
+        request_id: Arc<Mutex<Option<String>>>, cancel_notifier: Arc<Notify>,
     ) -> anyhow::Result<()> {
         let mut buffer = [0; BUFFER_SIZE];
-        let mut timeout_duration = Duration::from_secs(600);
-        let mut request_buffer = Vec::new();
-
-        let logging_enabled = match http_log_state.get_http_logs(self.config_id).await {
-            Ok(enabled) => enabled,
-            Err(e) => {
-                error!("Failed to check HTTP logging state: {:?}", e);
-                false
-            }
-        };
-
-        let should_log = logging_enabled && logger.is_some();
-        if should_log {
-            debug!("HTTP logging is enabled for this connection");
-        }
+        let should_log = logger.is_some();
+        let mut request_buffer = if should_log { Some(Vec::new()) } else { None };
 
         loop {
             tokio::select! {
-                n = timeout(timeout_duration, client_reader.read(&mut buffer)) => {
+                n = timeout(TIMEOUT_DURATION, client_reader.read(&mut buffer)) => {
                     let n = match n {
                         Ok(Ok(n)) => n,
-                        Ok(Err(e)) => {
-                            error!("Error reading from client: {:?}", e);
-                            return Err(e.into());
-                        }
-                        Err(_) => {
-                            error!("Timeout reading from client");
-                            return Err(anyhow::anyhow!("Timeout reading from client"));
-                        }
+                        Ok(Err(e)) => return Err(e.into()),
+                        Err(_) => return Err(anyhow::anyhow!("Read timeout")),
                     };
 
                     if n == 0 {
                         break;
                     }
 
-                    debug!("Read {} bytes from client", n);
-                    request_buffer.extend_from_slice(&buffer[..n]);
-
                     if should_log {
-                        if let Some(logger) = &logger {
+                        if let (Some(ref mut req_buf), Some(ref logger)) = (request_buffer.as_mut(), &logger) {
+                            req_buf.extend_from_slice(&buffer[..n]);
                             let mut req_id_guard = request_id.lock().await;
-                            let new_request_id = logger.log_request(request_buffer.clone().into()).await;
-                            debug!("Generated new request ID: {}", new_request_id);
+                            let new_request_id = logger.log_request(req_buf.clone().into()).await;
                             *req_id_guard = Some(new_request_id);
-                        }
-                    }
 
-                    if let Err(e) = upstream_writer.write_all(&request_buffer).await {
-                        error!("Error writing to upstream: {:?}", e);
+                            if let Err(e) = upstream_writer.write_all(req_buf).await {
+                                return Err(e.into());
+                            }
+                            req_buf.clear();
+                        }
+                    } else if let Err(e) = upstream_writer.write_all(&buffer[..n]).await {
                         return Err(e.into());
                     }
-                    request_buffer.clear();
                 },
-                _ = cancel_notifier.notified() => {
-                    debug!("Client to upstream task cancelled");
-                    break;
-                }
+                _ = cancel_notifier.notified() => break,
             }
-
-            timeout_duration = Duration::from_secs(600);
         }
 
-        if let Err(e) = upstream_writer.shutdown().await {
-            error!("Error shutting down upstream writer: {:?}", e);
-        }
+        let _ = upstream_writer.shutdown().await;
 
         Ok(())
     }
@@ -203,221 +191,195 @@ impl TcpForwarder {
     async fn handle_upstream_to_client<'a>(
         &'a self, upstream_reader: &'a mut (impl AsyncReadExt + Unpin),
         client_writer: &'a mut (impl AsyncWriteExt + Unpin), logger: Option<Logger>,
-        http_log_state: &HttpLogState, request_id: Arc<Mutex<Option<String>>>,
-        cancel_notifier: Arc<Notify>,
+        request_id: Arc<Mutex<Option<String>>>, cancel_notifier: Arc<Notify>,
     ) -> anyhow::Result<()> {
         let mut buffer = [0; BUFFER_SIZE];
-        let mut timeout_duration = Duration::from_secs(600);
-        let mut response_buffer = Vec::new();
+        let should_log = logger.is_some();
 
-        let mut is_chunked = false;
-        let mut found_end_marker = false;
-        let mut total_chunks_received = 0;
-
-        let mut current_response_id: Option<String> = None;
-        let mut current_response_logged = false;
-
-        let mut first_chunk_time: Option<tokio::time::Instant> = None;
-        let mut force_log_time: Option<tokio::time::Instant> = None;
-
-        let logging_enabled = match http_log_state.get_http_logs(self.config_id).await {
-            Ok(enabled) => enabled,
-            Err(e) => {
-                error!("Failed to check HTTP logging state: {:?}", e);
-                false
-            }
+        let mut response_state = if should_log {
+            Some(ResponseState {
+                buffer: Vec::new(),
+                is_chunked: false,
+                found_end_marker: false,
+                total_chunks_received: 0,
+                current_response_id: None,
+                current_response_logged: false,
+                first_chunk_time: None,
+                force_log_time: None,
+            })
+        } else {
+            None
         };
-
-        let should_log = logging_enabled && logger.is_some();
-        if should_log {
-            debug!("HTTP logging is enabled for this connection");
-        }
 
         loop {
             tokio::select! {
-                n = timeout(timeout_duration, upstream_reader.read(&mut buffer)) => {
+                n = timeout(TIMEOUT_DURATION, upstream_reader.read(&mut buffer)) => {
                     let n = match n {
                         Ok(Ok(n)) => n,
-                        Ok(Err(e)) => {
-                            error!("Error reading from upstream: {:?}", e);
-                            return Err(e.into());
-                        }
-                        Err(_) => {
-                            error!("Timeout reading from upstream");
-                            return Err(anyhow::anyhow!("Timeout reading from upstream"));
-                        }
+                        Ok(Err(e)) => return Err(e.into()),
+                        Err(_) => return Err(anyhow::anyhow!("Read timeout")),
                     };
 
                     if n == 0 {
-                        if !response_buffer.is_empty() && !current_response_logged && should_log {
-                            if let Some(logger) = &logger {
-                                let req_id_guard = request_id.lock().await;
-                                if let Some(req_id) = &*req_id_guard {
-                                    debug!("Connection closed, logging final response data for request ID: {}", req_id);
-                                    let buffer_for_logging = response_buffer.clone();
-                                    logger
-                                        .log_response(buffer_for_logging.into(), req_id.clone())
-                                        .await;
+                        if should_log {
+                            if let (Some(ref mut state), Some(ref logger)) = (response_state.as_mut(), &logger) {
+                                if !state.buffer.is_empty() && !state.current_response_logged {
+                                    let req_id_guard = request_id.lock().await;
+                                    if let Some(req_id) = &*req_id_guard {
+                                        logger.log_response(state.buffer.clone().into(), req_id.clone()).await;
+                                    }
                                 }
-                                drop(req_id_guard);
                             }
                         }
                         break;
                     }
 
-                    debug!("Read {} bytes from upstream", n);
-
-                    let req_id_guard = request_id.lock().await;
-                    let current_req_id = req_id_guard.clone();
-                    drop(req_id_guard);
-
-                    let is_new_response = match (&current_response_id, &current_req_id) {
-                        (Some(current_id), Some(req_id)) => current_id != req_id,
-                        (None, Some(_)) => true,
-                        _ => false
-                    };
-
-                    if is_new_response {
-                        debug!("Detected new response for request ID: {:?}", current_req_id);
-                        response_buffer.clear();
-                        is_chunked = false;
-                        found_end_marker = false;
-                        total_chunks_received = 0;
-                        current_response_logged = false;
-                        current_response_id = current_req_id.clone();
-                        first_chunk_time = Some(tokio::time::Instant::now());
-                        force_log_time = None;
-                    }
-
-                    if response_buffer.is_empty() && n > 0 {
-                        if first_chunk_time.is_none() {
-                            first_chunk_time = Some(tokio::time::Instant::now());
-                        }
-
-                        is_chunked = kftray_http_logs::http_response_analyzer::HttpResponseAnalyzer::detect_chunked_encoding(&buffer[..n]);
-                        if is_chunked {
-                            debug!("Detected chunked encoding in response");
+                    if should_log {
+                        if let Some(ref mut state) = response_state.as_mut() {
+                            self.handle_response_logging(&buffer[..n], state, &logger, &request_id).await;
                         }
                     }
 
-                    kftray_http_logs::http_response_analyzer::HttpResponseAnalyzer::process_chunk(
-                        &buffer[..n],
-                        is_chunked,
-                        &mut found_end_marker,
-                        &mut total_chunks_received
-                    );
-
-                    response_buffer.extend_from_slice(&buffer[..n]);
-
-                    if !current_response_logged && should_log {
-                        if let Some(logger) = &logger {
-                            let mut should_log = false;
-
-                            if is_chunked && found_end_marker && force_log_time.is_none() {
-                                debug!("Found end marker for chunked response after {} chunks", total_chunks_received);
-                                let delay = if !response_buffer.is_empty() &&
-                                             response_buffer.len() < 40_000 &&
-                                             total_chunks_received < 20 {
-                                    debug!("Setting delayed logging for chunked response to collect all data");
-                                    tokio::time::Instant::now() + tokio::time::Duration::from_millis(50)
-                                } else {
-                                    debug!("Forcing immediate logging of chunked response");
-                                    tokio::time::Instant::now()
-                                };
-
-                                force_log_time = Some(delay);
-
-                                should_log = delay <= tokio::time::Instant::now();
-                            }
-
-                            if is_chunked {
-                                if let Some(force_time) = force_log_time {
-                                    let now = tokio::time::Instant::now();
-                                    if now >= force_time {
-                                        let needs_more_time = is_chunked &&
-                                            response_buffer.windows(18).any(|w| w == b"Content-Encoding: gzip" ||
-                                                                             w == b"content-encoding: gzip") &&
-                                            total_chunks_received < 20 &&
-                                            now.saturating_duration_since(force_time) < tokio::time::Duration::from_millis(30);
-
-                                        if needs_more_time {
-                                            debug!("Temporarily delaying gzipped chunked response logging to ensure all data arrived");
-                                        } else {
-                                            debug!("Logging chunked response after waiting for additional chunks (chunks: {})",
-                                                  total_chunks_received);
-                                            should_log = true;
-                                        }
-                                    }
-                                } else if let Some(first_time) = first_chunk_time {
-                                    let elapsed = first_time.elapsed();
-                                    if elapsed.as_secs() > 5 {
-                                        debug!("Logging chunked response after {}s timeout", elapsed.as_secs());
-                                        should_log = true;
-                                    }
-                                }
-                            } else {
-                                should_log = kftray_http_logs::http_response_analyzer::HttpResponseAnalyzer::check_content_length_match(&response_buffer);
-
-                                if !should_log {
-                                    should_log = kftray_http_logs::http_response_analyzer::HttpResponseAnalyzer::is_websocket_upgrade(&response_buffer);
-                                }
-                            }
-
-                            if should_log && current_response_id.is_some() && !current_response_logged {
-                                let response_id = current_response_id.as_ref().unwrap().clone();
-                                debug!("Logging response for request ID: {} (chunked: {}, found_end: {})",
-                                      response_id, is_chunked, found_end_marker);
-
-                                current_response_logged = true;
-
-                                let buffer_for_logging = response_buffer.clone();
-
-                                logger
-                                    .log_response(buffer_for_logging.into(), response_id.clone())
-                                    .await;
-
-                                debug!("Response successfully logged for ID: {}", response_id);
-
-                                let can_clear_buffer = if is_chunked {
-                                    found_end_marker
-                                } else {
-                                    kftray_http_logs::http_response_analyzer::HttpResponseAnalyzer::check_content_length_match(&response_buffer)
-                                };
-
-                                if can_clear_buffer {
-                                    debug!("Response fully logged, resetting buffer for next response");
-                                    response_buffer.clear();
-                                    is_chunked = false;
-                                    found_end_marker = false;
-                                    total_chunks_received = 0;
-                                    first_chunk_time = None;
-                                    force_log_time = None;
-                                } else {
-                                    debug!("Keeping buffer for potential additional data");
-                                }
-                            }
-                        }
-                    }
 
                     if let Err(e) = client_writer.write_all(&buffer[..n]).await {
-                        error!("Error writing to client: {:?}", e);
                         return Err(e.into());
                     }
                 },
-                _ = cancel_notifier.notified() => {
-                    debug!("Upstream to client task cancelled");
-                    break;
-                }
+                _ = cancel_notifier.notified() => break,
             }
-
-            timeout_duration = Duration::from_secs(600);
         }
 
-        if let Err(e) = client_writer.shutdown().await {
-            error!("Error shutting down client writer: {:?}", e);
-        }
+        let _ = client_writer.shutdown().await;
 
         Ok(())
+    }
+
+    async fn handle_response_logging(
+        &self, buffer: &[u8], state: &mut ResponseState, logger: &Option<Logger>,
+        request_id: &Arc<Mutex<Option<String>>>,
+    ) {
+        let req_id_guard = request_id.lock().await;
+        let current_req_id = req_id_guard.clone();
+        drop(req_id_guard);
+
+        let is_new_response = match (&state.current_response_id, &current_req_id) {
+            (Some(current_id), Some(req_id)) => current_id != req_id,
+            (None, Some(_)) => true,
+            _ => false,
+        };
+
+        if is_new_response {
+            state.reset_for_new_response(current_req_id);
+        }
+
+        if state.buffer.is_empty() && !buffer.is_empty() {
+            if state.first_chunk_time.is_none() {
+                state.first_chunk_time = Some(tokio::time::Instant::now());
+            }
+            state.is_chunked = kftray_http_logs::http_response_analyzer::HttpResponseAnalyzer::detect_chunked_encoding(buffer);
+        }
+
+        kftray_http_logs::http_response_analyzer::HttpResponseAnalyzer::process_chunk(
+            buffer,
+            state.is_chunked,
+            &mut state.found_end_marker,
+            &mut state.total_chunks_received,
+        );
+
+        state.buffer.extend_from_slice(buffer);
+
+        if !state.current_response_logged {
+            if let Some(logger) = logger {
+                let should_log = self.should_log_response(state);
+                if should_log && state.current_response_id.is_some() {
+                    let response_id = state.current_response_id.as_ref().unwrap().clone();
+                    state.current_response_logged = true;
+                    logger
+                        .log_response(state.buffer.clone().into(), response_id)
+                        .await;
+
+                    if self.can_clear_response_buffer(state) {
+                        state.reset_for_next_response();
+                    }
+                }
+            }
+        }
+    }
+
+    fn should_log_response(&self, state: &mut ResponseState) -> bool {
+        if state.is_chunked {
+            if state.found_end_marker && state.force_log_time.is_none() {
+                let delay = if !state.buffer.is_empty()
+                    && state.buffer.len() < 40_000
+                    && state.total_chunks_received < 20
+                {
+                    tokio::time::Instant::now() + tokio::time::Duration::from_millis(10)
+                } else {
+                    tokio::time::Instant::now()
+                };
+                state.force_log_time = Some(delay);
+                return delay <= tokio::time::Instant::now();
+            }
+            if let Some(force_time) = state.force_log_time {
+                let now = tokio::time::Instant::now();
+                if now >= force_time {
+                    let needs_more_time =
+                        state.buffer.windows(18).any(|w| {
+                            w == b"Content-Encoding: gzip" || w == b"content-encoding: gzip"
+                        }) && state.total_chunks_received < 20
+                            && now.saturating_duration_since(force_time)
+                                < tokio::time::Duration::from_millis(10);
+                    return !needs_more_time;
+                }
+            } else if let Some(first_time) = state.first_chunk_time {
+                return first_time.elapsed().as_secs() > 5;
+            }
+        } else {
+            return kftray_http_logs::http_response_analyzer::HttpResponseAnalyzer::check_content_length_match(&state.buffer)
+                || kftray_http_logs::http_response_analyzer::HttpResponseAnalyzer::is_websocket_upgrade(&state.buffer);
+        }
+        false
+    }
+
+    fn can_clear_response_buffer(&self, state: &ResponseState) -> bool {
+        if state.is_chunked {
+            state.found_end_marker
+        } else {
+            kftray_http_logs::http_response_analyzer::HttpResponseAnalyzer::check_content_length_match(&state.buffer)
+        }
+    }
+}
+
+struct ResponseState {
+    buffer: Vec<u8>,
+    is_chunked: bool,
+    found_end_marker: bool,
+    total_chunks_received: usize,
+    current_response_id: Option<String>,
+    current_response_logged: bool,
+    first_chunk_time: Option<tokio::time::Instant>,
+    force_log_time: Option<tokio::time::Instant>,
+}
+
+impl ResponseState {
+    fn reset_for_new_response(&mut self, request_id: Option<String>) {
+        self.buffer.clear();
+        self.is_chunked = false;
+        self.found_end_marker = false;
+        self.total_chunks_received = 0;
+        self.current_response_logged = false;
+        self.current_response_id = request_id;
+        self.first_chunk_time = Some(tokio::time::Instant::now());
+        self.force_log_time = None;
+    }
+
+    fn reset_for_next_response(&mut self) {
+        self.buffer.clear();
+        self.is_chunked = false;
+        self.found_end_marker = false;
+        self.total_chunks_received = 0;
+        self.first_chunk_time = None;
+        self.force_log_time = None;
     }
 }
 
@@ -526,7 +488,7 @@ mod tests {
         let (upstream_write, mut upstream_read) = tokio::io::duplex(1024);
 
         let forwarder = TcpForwarder::new(1, "pod".to_string());
-        let http_log_state = HttpLogState::new();
+        let _http_log_state = HttpLogState::new();
         let request_id = Arc::new(Mutex::new(None));
         let cancel_notifier = Arc::new(Notify::new());
         let cancel_clone = cancel_notifier.clone();
@@ -551,7 +513,6 @@ mod tests {
                 &mut client_reader,
                 &mut upstream_writer,
                 None,
-                &http_log_state,
                 request_id,
                 cancel_notifier,
             )
@@ -566,7 +527,7 @@ mod tests {
         let (client_write, mut client_read) = tokio::io::duplex(1024);
 
         let forwarder = TcpForwarder::new(1, "pod".to_string());
-        let http_log_state = HttpLogState::new();
+        let _http_log_state = HttpLogState::new();
         let request_id = Arc::new(Mutex::new(Some("req123".to_string())));
         let cancel_notifier = Arc::new(Notify::new());
         let cancel_clone = cancel_notifier.clone();
@@ -594,7 +555,6 @@ mod tests {
                 &mut upstream_reader,
                 &mut client_writer,
                 None,
-                &http_log_state,
                 request_id,
                 cancel_notifier,
             )

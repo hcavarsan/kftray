@@ -1,4 +1,5 @@
 pub mod client;
+pub mod connection_pool;
 pub mod models;
 pub mod operations;
 pub mod pod_finder;

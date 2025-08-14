@@ -1,5 +1,4 @@
 use std::fmt;
-use std::sync::Arc;
 use std::time::{
     Duration,
     Instant,
@@ -110,5 +109,3 @@ pub struct HealthCheckResult {
     pub config: Config,
     pub is_healthy: bool,
 }
-
-pub type HttpLogState = Arc<kftray_http_logs::HttpLogState>;

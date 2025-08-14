@@ -14,6 +14,7 @@ use serde::{
 use tokio::sync::Mutex;
 use tracing::debug;
 
+use super::connection_pool::PooledPortForwarder;
 use super::target_cache::TargetCache;
 
 impl NameSpace {
@@ -53,6 +54,7 @@ impl TargetPod {
         })
     }
 
+    #[inline]
     pub fn into_parts(self) -> (String, u16) {
         (self.pod_name, self.port_number)
     }
@@ -70,40 +72,51 @@ impl Target {
 
     pub fn find(&self, pod: &Pod, port: Option<Port>) -> anyhow::Result<TargetPod> {
         let port = port.as_ref().unwrap_or(&self.port);
-
-        let pod_name = pod.metadata.name.clone().context("Pod Name is None")?;
+        let pod_name = pod.metadata.name.as_ref().context("Pod Name is None")?;
 
         let port_number = match port {
             Port::Number(port) => *port,
             Port::Name(name) => {
-                let spec = pod.spec.as_ref().context("Pod Spec is None")?;
-                let containers = &spec.containers;
-
-                containers
+                pod.spec
+                    .as_ref()
+                    .context("Pod Spec is None")?
+                    .containers
                     .iter()
-                    .flat_map(|c| c.ports.as_ref().map_or(Vec::new(), |v| v.clone()))
-                    .find(|p| p.name.as_ref() == Some(name))
+                    .find_map(|c| {
+                        c.ports
+                            .as_ref()?
+                            .iter()
+                            .find(|p| p.name.as_ref() == Some(name))
+                    })
                     .context("Port not found")?
                     .container_port
             }
         };
 
-        TargetPod::new(pod_name, port_number)
+        TargetPod::new(pod_name.clone(), port_number)
     }
 }
 
+#[inline]
 fn is_pod_ready(pod: &&Pod) -> bool {
-    let conditions = pod.status.as_ref().and_then(|s| s.conditions.as_ref());
+    let is_ready = pod
+        .status
+        .as_ref()
+        .and_then(|s| s.conditions.as_ref())
+        .is_some_and(|conditions| {
+            conditions
+                .iter()
+                .any(|c| c.type_ == "Ready" && c.status == "True")
+        });
 
-    let is_ready = conditions
-        .map(|c| c.iter().any(|c| c.type_ == "Ready" && c.status == "True"))
-        .unwrap_or(false);
+    if tracing::enabled!(tracing::Level::DEBUG) {
+        debug!(
+            "Pod: {}, is_ready: {}",
+            pod.metadata.name.as_deref().unwrap_or("unknown"),
+            is_ready
+        );
+    }
 
-    debug!(
-        "Pod: {}, is_ready: {}",
-        pod.metadata.name.clone().unwrap_or_default(),
-        is_ready
-    );
     is_ready
 }
 
@@ -133,6 +146,15 @@ pub struct PodInfo {
     pub labels_str: String,
 }
 
+pub struct PortForwardConfig {
+    pub local_port: Option<u16>,
+    pub local_address: Option<String>,
+    pub context_name: Option<String>,
+    pub kubeconfig: Option<String>,
+    pub config_id: i64,
+    pub workload_type: String,
+}
+
 #[derive(Clone)]
 #[allow(dead_code)]
 pub struct PortForward {
@@ -141,11 +163,13 @@ pub struct PortForward {
     pub local_address: Option<String>,
     pub pod_api: Api<Pod>,
     pub svc_api: Api<Service>,
+    pub client: kube::Client,
     pub context_name: Option<String>,
     pub config_id: i64,
     pub workload_type: String,
     pub connection: Arc<Mutex<Option<tokio::net::TcpStream>>>,
     pub target_cache: Arc<TargetCache>,
+    pub connection_pool: Option<Arc<PooledPortForwarder>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]

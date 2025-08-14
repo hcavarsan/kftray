@@ -1,21 +1,17 @@
-use std::collections::HashMap;
 use std::env;
-use std::sync::{
-    LazyLock,
-    Mutex,
-};
+use std::sync::LazyLock;
 use std::time::{
     Duration,
     Instant,
 };
 
 use anyhow::Result;
+use dashmap::DashMap;
 use kube::config::Kubeconfig;
 use kube::Client;
 use log::{
     debug,
     info,
-    warn,
 };
 
 use super::config::{
@@ -24,8 +20,6 @@ use super::config::{
     merge_kubeconfigs,
 };
 use super::connection::create_client_with_config;
-
-static ENV_LOCK: Mutex<()> = Mutex::new(());
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 struct ClientCacheKey {
@@ -40,33 +34,31 @@ struct CachedClient {
 }
 
 struct ClientCache {
-    cache: HashMap<ClientCacheKey, CachedClient>,
+    cache: DashMap<ClientCacheKey, CachedClient>,
     ttl: Duration,
 }
 
 impl ClientCache {
     fn new() -> Self {
         Self {
-            cache: HashMap::new(),
-            ttl: Duration::from_secs(300), // 5 minutes cache
+            cache: DashMap::new(),
+            ttl: Duration::from_secs(300),
         }
     }
 
-    fn get(&mut self, key: &ClientCacheKey) -> Option<Client> {
+    fn get(&self, key: &ClientCacheKey) -> Option<Client> {
         if let Some(cached) = self.cache.get(key) {
             if cached.created_at.elapsed() < self.ttl {
-                debug!("Client cache hit for context: {}", key.context_name);
                 return Some(cached.client.clone());
             } else {
-                debug!("Client cache expired for context: {}", key.context_name);
+                drop(cached);
                 self.cache.remove(key);
             }
         }
         None
     }
 
-    fn insert(&mut self, key: ClientCacheKey, client: Client) {
-        debug!("Caching client for context: {}", key.context_name);
+    fn insert(&self, key: ClientCacheKey, client: Client) {
         self.cache.insert(
             key,
             CachedClient {
@@ -76,37 +68,26 @@ impl ClientCache {
         );
     }
 
-    fn cleanup_expired(&mut self) {
-        let expired_keys: Vec<_> = self
-            .cache
-            .iter()
-            .filter_map(|(key, cached)| {
-                if cached.created_at.elapsed() >= self.ttl {
-                    Some(key.clone())
-                } else {
-                    None
-                }
-            })
-            .collect();
-
-        for key in expired_keys {
+    fn cleanup_expired(&self) {
+        let before_count = self.cache.len();
+        self.cache
+            .retain(|_key, cached| cached.created_at.elapsed() < self.ttl);
+        let after_count = self.cache.len();
+        if before_count > after_count {
             debug!(
-                "Removing expired client cache for context: {}",
-                key.context_name
+                "Cleaned up {} expired client cache entries",
+                before_count - after_count
             );
-            self.cache.remove(&key);
         }
     }
 }
 
-static CLIENT_CACHE: LazyLock<Mutex<ClientCache>> =
-    LazyLock::new(|| Mutex::new(ClientCache::new()));
+static CLIENT_CACHE: LazyLock<ClientCache> = LazyLock::new(ClientCache::new);
 
 pub async fn create_client_with_specific_context(
     kubeconfig: Option<String>, context_name: Option<&str>,
 ) -> Result<(Option<Client>, Option<Kubeconfig>, Vec<String>)> {
     {
-        let _guard = ENV_LOCK.lock().unwrap();
         env::remove_var("PYTHONHOME");
         env::remove_var("PYTHONPATH");
     }
@@ -123,20 +104,15 @@ pub async fn create_client_with_specific_context(
             context_name: context_name.to_string(),
         };
 
-        if let Ok(mut cache) = CLIENT_CACHE.lock() {
-            cache.cleanup_expired();
-            if let Some(cached_client) = cache.get(&cache_key) {
-                info!("Using cached client for context: {context_name}");
-                return Ok((Some(cached_client), Some(merged_kubeconfig), all_contexts));
-            }
+        CLIENT_CACHE.cleanup_expired();
+        if let Some(cached_client) = CLIENT_CACHE.get(&cache_key) {
+            return Ok((Some(cached_client), Some(merged_kubeconfig), all_contexts));
         }
 
         match create_config_with_context(&merged_kubeconfig, context_name).await {
             Ok(config) => {
                 if let Some(client) = create_client_with_config(&config).await {
-                    if let Ok(mut cache) = CLIENT_CACHE.lock() {
-                        cache.insert(cache_key, client.clone());
-                    }
+                    CLIENT_CACHE.insert(cache_key, client.clone());
                     info!("Created and cached new client for context: {context_name}");
                     return Ok((Some(client), Some(merged_kubeconfig), all_contexts));
                 } else {
@@ -168,26 +144,17 @@ pub async fn create_client_with_specific_context(
 }
 
 pub fn clear_client_cache() {
-    if let Ok(mut cache) = CLIENT_CACHE.lock() {
-        let count = cache.cache.len();
-        cache.cache.clear();
-        info!("Cleared {count} cached clients");
-    } else {
-        warn!("Failed to acquire lock for client cache clearing");
-    }
+    let _count = CLIENT_CACHE.cache.len();
+    CLIENT_CACHE.cache.clear();
 }
 
 pub fn get_client_cache_stats() -> (usize, usize) {
-    if let Ok(mut cache) = CLIENT_CACHE.lock() {
-        cache.cleanup_expired();
-        let total = cache.cache.len();
-        let expired = cache
-            .cache
-            .iter()
-            .filter(|(_, cached)| cached.created_at.elapsed() >= cache.ttl)
-            .count();
-        (total, expired)
-    } else {
-        (0, 0)
-    }
+    CLIENT_CACHE.cleanup_expired();
+    let total = CLIENT_CACHE.cache.len();
+    let expired = CLIENT_CACHE
+        .cache
+        .iter()
+        .filter(|entry| entry.value().created_at.elapsed() >= CLIENT_CACHE.ttl)
+        .count();
+    (total, expired)
 }

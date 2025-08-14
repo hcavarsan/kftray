@@ -17,6 +17,7 @@ use log::{
 use openssl::ssl::{
     SslConnector,
     SslMethod,
+    SslSessionCacheMode,
     SslVerifyMode,
 };
 use tower::ServiceBuilder;
@@ -214,6 +215,8 @@ fn create_ssl_connector(skip_verify: bool) -> KubeResult<openssl::ssl::SslConnec
     } else {
         SslVerifyMode::PEER
     });
+
+    builder.set_session_cache_mode(SslSessionCacheMode::CLIENT);
 
     Ok(builder)
 }
