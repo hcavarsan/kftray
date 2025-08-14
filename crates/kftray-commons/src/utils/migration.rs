@@ -116,7 +116,45 @@ pub async fn migrate_configs(pool_opt: Option<&SqlitePool>) -> Result<(), String
         e.to_string()
     })?;
 
+    migrate_schema(&pool).await?;
+
     migrate_configs_with_pool(&pool).await
+}
+
+async fn migrate_schema(pool: &SqlitePool) -> Result<(), String> {
+    info!("Running schema migrations");
+    let mut conn = pool.acquire().await.map_err(|e| {
+        error!("Failed to acquire connection for schema migration: {e}");
+        e.to_string()
+    })?;
+
+    let column_exists = sqlx::query(
+        "SELECT COUNT(*) as count FROM pragma_table_info('config_state') WHERE name = 'process_id'",
+    )
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(|e| {
+        error!("Failed to check process_id column: {e}");
+        e.to_string()
+    })?
+    .get::<i64, _>("count")
+        > 0;
+
+    if !column_exists {
+        info!("Adding process_id column to config_state table");
+        sqlx::query("ALTER TABLE config_state ADD COLUMN process_id INTEGER")
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| {
+                error!("Failed to add process_id column: {e}");
+                e.to_string()
+            })?;
+        info!("Successfully added process_id column");
+    } else {
+        info!("process_id column already exists, skipping migration");
+    }
+
+    Ok(())
 }
 
 async fn drop_triggers(transaction: &mut Transaction<'_, Sqlite>) -> Result<(), sqlx::Error> {

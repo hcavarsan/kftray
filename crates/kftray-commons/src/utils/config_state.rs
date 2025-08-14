@@ -15,8 +15,9 @@ pub(crate) async fn update_config_state_with_pool(
     config_state: &ConfigState, pool: &SqlitePool,
 ) -> Result<(), String> {
     let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
-    sqlx::query("UPDATE config_state SET is_running = ?1 WHERE config_id = ?2")
+    sqlx::query("UPDATE config_state SET is_running = ?1, process_id = ?2 WHERE config_id = ?3")
         .bind(config_state.is_running)
+        .bind(config_state.process_id)
         .bind(config_state.config_id)
         .execute(&mut *conn)
         .await
@@ -36,7 +37,7 @@ pub(crate) async fn read_config_states_with_pool(
         error!("Failed to acquire database connection: {e}");
         e
     })?;
-    let rows = sqlx::query("SELECT id, config_id, is_running FROM config_state")
+    let rows = sqlx::query("SELECT id, config_id, is_running, process_id FROM config_state")
         .fetch_all(&mut *conn)
         .await
         .map_err(|e| {
@@ -56,10 +57,12 @@ pub(crate) async fn read_config_states_with_pool(
                 error!("Failed to get is_running: {e}");
                 e
             })?;
+            let process_id: Option<u32> = row.try_get("process_id").ok().flatten();
             Ok(ConfigState {
                 id,
                 config_id,
                 is_running,
+                process_id,
             })
         })
         .collect::<Result<Vec<_>, sqlx::Error>>()?;
@@ -106,6 +109,50 @@ pub async fn get_configs_state_with_mode(mode: DatabaseMode) -> Result<Vec<Confi
             error!("Failed to get config states: {e}");
             e.to_string()
         })
+}
+
+pub async fn cleanup_current_process_config_states() -> Result<(), String> {
+    let current_process_id = std::process::id();
+    let pool = get_db_pool().await.map_err(|e| e.to_string())?;
+    let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
+
+    let affected_rows = sqlx::query(
+        "UPDATE config_state SET is_running = false, process_id = NULL WHERE process_id = ?1",
+    )
+    .bind(current_process_id)
+    .execute(&mut *conn)
+    .await
+    .map_err(|e| e.to_string())?
+    .rows_affected();
+
+    if affected_rows > 0 {
+        log::info!("Cleaned up {affected_rows} config states for process {current_process_id}");
+    }
+
+    Ok(())
+}
+
+pub async fn cleanup_current_process_config_states_with_mode(
+    mode: DatabaseMode,
+) -> Result<(), String> {
+    let current_process_id = std::process::id();
+    let context = DatabaseManager::get_context(mode).await?;
+    let mut conn = context.pool.acquire().await.map_err(|e| e.to_string())?;
+
+    let affected_rows = sqlx::query(
+        "UPDATE config_state SET is_running = false, process_id = NULL WHERE process_id = ?1",
+    )
+    .bind(current_process_id)
+    .execute(&mut *conn)
+    .await
+    .map_err(|e| e.to_string())?
+    .rows_affected();
+
+    if affected_rows > 0 {
+        log::info!("Cleaned up {affected_rows} config states for process {current_process_id} in mode {mode:?}");
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -169,6 +216,7 @@ mod tests {
             id: initial_state.id,
             config_id,
             is_running: true,
+            process_id: Some(1234),
         };
         update_config_state_with_pool(&state_to_update, &pool)
             .await
@@ -218,6 +266,7 @@ mod tests {
             id: None,
             config_id: config1_id,
             is_running: true,
+            process_id: Some(1234),
         };
         update_config_state_with_pool(&state_to_update, &pool)
             .await
@@ -264,6 +313,7 @@ mod tests {
             id: None,
             config_id,
             is_running: true,
+            process_id: Some(1234),
         };
 
         tokio::task::yield_now().await;
@@ -321,6 +371,7 @@ mod tests {
             id: Some(1),
             config_id: 1,
             is_running: true,
+            process_id: Some(1234),
         };
 
         let result = update_config_state_with_pool(&config_state, &pool).await;
@@ -368,6 +419,7 @@ mod tests {
             id: None,
             config_id: config2_id,
             is_running: true,
+            process_id: Some(1234),
         };
 
         update_config_state_with_pool(&state, &pool).await.unwrap();
@@ -407,6 +459,7 @@ mod tests {
             id: initial_states[0].id,
             config_id,
             is_running: true,
+            process_id: Some(1234),
         };
 
         let result = update_config_state_with_pool(&state, &pool).await;
@@ -496,6 +549,7 @@ mod tests {
             id: None,
             config_id,
             is_running: true,
+            process_id: Some(1234),
         };
 
         update_config_state_with_mode(&state_update, DatabaseMode::Memory)

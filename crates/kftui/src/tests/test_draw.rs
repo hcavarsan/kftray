@@ -48,6 +48,7 @@ mod tests {
             id: Some(1),
             config_id: 1,
             is_running: true,
+            process_id: Some(1234),
         }
     }
 

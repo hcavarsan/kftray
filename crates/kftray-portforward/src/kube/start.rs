@@ -8,7 +8,8 @@ use kftray_commons::{
         response::CustomResponse,
     },
     utils::{
-        config_state::update_config_state,
+        config_state::update_config_state_with_mode,
+        db_mode::DatabaseMode,
         timeout_manager::start_timeout_for_forward,
     },
 };
@@ -249,7 +250,13 @@ async fn save_allocated_address_to_db(config: &Config) -> Result<(), String> {
 }
 
 pub async fn start_port_forward(
-    mut configs: Vec<Config>, protocol: &str, http_log_state: Arc<HttpLogState>,
+    configs: Vec<Config>, protocol: &str, http_log_state: Arc<HttpLogState>,
+) -> Result<Vec<CustomResponse>, String> {
+    start_port_forward_with_mode(configs, protocol, http_log_state, DatabaseMode::File).await
+}
+
+pub async fn start_port_forward_with_mode(
+    mut configs: Vec<Config>, protocol: &str, http_log_state: Arc<HttpLogState>, mode: DatabaseMode,
 ) -> Result<Vec<CustomResponse>, String> {
     let mut responses = Vec::new();
     let mut errors = Vec::new();
@@ -375,12 +382,8 @@ pub async fn start_port_forward(
                             .insert(handle_key.clone(), handle);
                         child_handles.push(handle_key.clone());
 
-                        let config_state = ConfigState {
-                            id: None,
-                            config_id: config.id.unwrap(),
-                            is_running: true,
-                        };
-                        if let Err(e) = update_config_state(&config_state).await {
+                        let config_state = ConfigState::new(config.id.unwrap(), true);
+                        if let Err(e) = update_config_state_with_mode(&config_state, mode).await {
                             error!("Failed to update config state: {e}");
                         }
 

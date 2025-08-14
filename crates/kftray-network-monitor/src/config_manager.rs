@@ -13,10 +13,13 @@ impl ConfigManager {
     pub async fn get_active_configs(
     ) -> Result<Vec<Config>, Box<dyn std::error::Error + Send + Sync>> {
         let config_states = kftray_commons::utils::config_state::get_configs_state().await?;
+        let current_process_id = std::process::id();
 
         let active_config_ids: Vec<i64> = config_states
             .into_iter()
-            .filter(|state| state.is_running)
+            .filter(|state| {
+                state.is_running && state.process_id.is_none_or(|pid| pid == current_process_id)
+            })
             .map(|state| state.config_id)
             .collect();
 
