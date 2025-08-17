@@ -1,19 +1,29 @@
 pub mod client;
-pub mod connection_pool;
+pub mod http_log_watcher;
+pub mod listener;
 pub mod models;
 pub mod operations;
-pub mod pod_finder;
+pub mod pod_watcher;
 mod proxy;
 mod service;
+pub mod shared_client;
 mod start;
 mod stop;
-pub mod target_cache;
 pub mod tcp_forwarder;
 pub mod udp_forwarder;
 
 #[cfg(test)]
 mod tests;
 
+pub use http_log_watcher::{
+    HttpLogStateEvent,
+    HttpLogStateWatcher,
+};
+pub use listener::{
+    ListenerConfig,
+    PortForwarder,
+    Protocol,
+};
 pub use proxy::{
     deploy_and_forward_pod,
     deploy_and_forward_pod_with_mode,

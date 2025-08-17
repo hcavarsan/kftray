@@ -85,28 +85,18 @@ fn config_compare_changes<T: PartialEq>(prev: &[T], current: &[T]) -> bool {
 
 #[tauri::command]
 pub async fn start_port_forward_udp_cmd(
-    configs: Vec<Config>, http_log_state: tauri::State<'_, HttpLogState>,
+    configs: Vec<Config>, http_log_state: tauri::State<'_, Arc<HttpLogState>>,
     _app_handle: tauri::AppHandle,
 ) -> Result<Vec<CustomResponse>, String> {
-    start_port_forward(
-        configs.clone(),
-        "udp",
-        Arc::new(http_log_state.inner().clone()),
-    )
-    .await
+    start_port_forward(configs.clone(), "udp", http_log_state.inner().clone()).await
 }
 
 #[tauri::command]
 pub async fn start_port_forward_tcp_cmd(
-    configs: Vec<Config>, http_log_state: tauri::State<'_, HttpLogState>,
+    configs: Vec<Config>, http_log_state: tauri::State<'_, Arc<HttpLogState>>,
     _app_handle: tauri::AppHandle,
 ) -> Result<Vec<CustomResponse>, String> {
-    start_port_forward(
-        configs.clone(),
-        "tcp",
-        Arc::new(http_log_state.inner().clone()),
-    )
-    .await
+    start_port_forward(configs.clone(), "tcp", http_log_state.inner().clone()).await
 }
 
 #[tauri::command]
@@ -125,10 +115,10 @@ pub async fn stop_port_forward_cmd(
 
 #[tauri::command]
 pub async fn deploy_and_forward_pod_cmd(
-    configs: Vec<Config>, http_log_state: tauri::State<'_, HttpLogState>,
+    configs: Vec<Config>, http_log_state: tauri::State<'_, Arc<HttpLogState>>,
     _app_handle: tauri::AppHandle,
 ) -> Result<Vec<CustomResponse>, String> {
-    deploy_and_forward_pod(configs.clone(), Arc::new(http_log_state.inner().clone())).await
+    deploy_and_forward_pod(configs.clone(), http_log_state.inner().clone()).await
 }
 
 #[tauri::command]

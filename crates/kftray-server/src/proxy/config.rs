@@ -1,8 +1,11 @@
 /// Configuration settings for a proxy instance
 #[derive(Debug, Clone)]
 pub struct ProxyConfig {
-    /// Host address of the target server to proxy to
+    /// Original hostname for Host headers (if target was hostname)
     pub target_host: String,
+    /// Resolved IP address (if target was hostname), None if target was already
+    /// an IP
+    pub resolved_ip: Option<String>,
     /// Port number of the target server
     pub target_port: u16,
     /// Local port number the proxy listens on
@@ -15,6 +18,7 @@ pub struct ProxyConfig {
 #[derive(Default)]
 pub struct ProxyConfigBuilder {
     target_host: Option<String>,
+    resolved_ip: Option<String>,
     target_port: Option<u16>,
     proxy_port: Option<u16>,
     proxy_type: Option<ProxyType>,
@@ -27,6 +31,11 @@ impl ProxyConfigBuilder {
 
     pub fn target_host(mut self, host: String) -> Self {
         self.target_host = Some(host);
+        self
+    }
+
+    pub fn resolved_ip(mut self, ip: Option<String>) -> Self {
+        self.resolved_ip = ip;
         self
     }
 
@@ -61,6 +70,7 @@ impl ProxyConfigBuilder {
 
         Ok(ProxyConfig {
             target_host,
+            resolved_ip: self.resolved_ip,
             target_port,
             proxy_port,
             proxy_type,
@@ -98,6 +108,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(config.target_host, "localhost");
+        assert_eq!(config.resolved_ip, None);
         assert_eq!(config.target_port, 8080);
         assert_eq!(config.proxy_port, 9090);
         assert!(matches!(config.proxy_type, ProxyType::Tcp));
@@ -142,6 +153,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(config.target_host, "localhost");
+        assert_eq!(config.resolved_ip, None);
         assert_eq!(config.target_port, 8080);
         assert_eq!(config.proxy_port, 9090);
         assert!(matches!(config.proxy_type, ProxyType::Udp));

@@ -36,7 +36,7 @@ fn load_config() -> Result<ProxyConfig, ProxyError> {
     let target_host = env::var("REMOTE_ADDRESS")
         .map_err(|_| ProxyError::Configuration("REMOTE_ADDRESS not set".into()))?;
 
-    let resolved_host = if target_host.contains("://") {
+    let original_host = if target_host.contains("://") {
         let url = Url::parse(&target_host)
             .map_err(|e| ProxyError::Configuration(format!("Invalid URL: {e}")))?;
 
@@ -44,30 +44,24 @@ fn load_config() -> Result<ProxyConfig, ProxyError> {
             .ok_or_else(|| ProxyError::Configuration("No host found in URL".into()))?
             .to_string()
     } else {
-        // Try parsing as IP address first
-        if let Ok(ip) = target_host.parse::<std::net::IpAddr>() {
-            ip.to_string()
-        } else {
-            // If not an IP, try as URL
-            let test_url = format!("http://{target_host}");
-            if let Ok(url) = Url::parse(&test_url) {
-                if let Some(host) = url.host_str() {
-                    host.to_string()
-                } else {
-                    target_host.clone()
-                }
-            } else {
-                target_host
+        target_host.clone()
+    };
+
+    let resolved_ip = if original_host.parse::<std::net::IpAddr>().is_ok() {
+        None
+    } else {
+        match format!("{}:0", original_host).to_socket_addrs() {
+            Ok(mut addrs) => addrs.next().map(|addr| addr.ip().to_string()),
+            Err(e) => {
+                log::warn!(
+                    "Failed to resolve hostname '{}': {}. Will use hostname directly.",
+                    original_host,
+                    e
+                );
+                None
             }
         }
     };
-
-    // Try to resolve the host to validate it
-    let _socket_addr = format!("{resolved_host}:0")
-        .to_socket_addrs()
-        .map_err(|e| ProxyError::Configuration(format!("Failed to resolve hostname: {e}")))?
-        .next()
-        .ok_or_else(|| ProxyError::Configuration("No IP addresses found for hostname".into()))?;
 
     let target_port = env::var("REMOTE_PORT")
         .map_err(|_| ProxyError::Configuration("REMOTE_PORT not set".into()))?
@@ -100,7 +94,8 @@ fn load_config() -> Result<ProxyConfig, ProxyError> {
     println!("Selected proxy type: {proxy_type:?}");
 
     let config = ProxyConfig::builder()
-        .target_host(resolved_host)
+        .target_host(original_host)
+        .resolved_ip(resolved_ip)
         .target_port(target_port)
         .proxy_port(proxy_port)
         .proxy_type(proxy_type)

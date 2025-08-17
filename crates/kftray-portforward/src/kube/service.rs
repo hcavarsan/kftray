@@ -1,48 +1,64 @@
 use std::collections::HashMap;
 
+use anyhow::Result;
 use futures::stream::{
     self,
     StreamExt,
 };
 use kftray_commons::models::config_model::Config;
+use kube::Client;
 use log::{
     debug,
     error,
     info,
 };
 
-use crate::kube::client::create_client_with_specific_context;
 use crate::kube::operations::{
     get_services_with_annotation,
     list_all_namespaces,
 };
+use crate::kube::shared_client::{
+    ServiceClientKey,
+    SHARED_CLIENT_MANAGER,
+};
 pub async fn retrieve_service_configs(
     context: &str, kubeconfig: Option<String>,
 ) -> Result<Vec<Config>, String> {
-    let (client_opt, _, _) = create_client_with_specific_context(kubeconfig.clone(), Some(context))
+    let client_key = ServiceClientKey::new(Some(context.to_string()), kubeconfig.clone());
+
+    let client = SHARED_CLIENT_MANAGER
+        .get_client(client_key)
         .await
         .map_err(|e| e.to_string())?;
 
-    let client = client_opt.ok_or_else(|| "Client not created".to_string())?;
+    retrieve_service_configs_direct(context, kubeconfig, &client).await
+}
+
+async fn retrieve_service_configs_direct(
+    context: &str, kubeconfig: Option<String>, client: &std::sync::Arc<kube::Client>,
+) -> Result<Vec<Config>, String> {
     let annotation = "kftray.app/configs";
 
-    let namespaces = list_all_namespaces(client.clone())
+    let namespaces = list_all_namespaces(Client::clone(client))
         .await
         .map_err(|e| e.to_string())?;
 
-    debug!("Found {} namespaces", namespaces.len());
+    debug!(
+        "Found {} namespaces for direct API discovery",
+        namespaces.len()
+    );
 
     let concurrency_limit = 10;
 
     stream::iter(namespaces)
         .map(|namespace| {
-            let client = client.clone();
+            let client = Client::clone(client);
             let context = context.to_string();
             let kubeconfig = kubeconfig.clone();
             let annotation = annotation.to_string();
 
             async move {
-                info!("Processing namespace: {namespace}");
+                info!("Processing namespace with direct API: {namespace}");
                 let services =
                     get_services_with_annotation(client.clone(), &namespace, &annotation)
                         .await
@@ -85,7 +101,7 @@ pub async fn retrieve_service_configs(
                         acc
                     }
                     (Ok(_), Err(e)) => {
-                        error!("Error processing namespace: {e}");
+                        error!("Error processing namespace with direct API: {e}");
                         acc
                     }
                     (Err(_), _) => acc,

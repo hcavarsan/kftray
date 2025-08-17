@@ -27,6 +27,7 @@ use kube::api::{
     DeleteParams,
     PostParams,
 };
+use kube::Client;
 use kube_runtime::wait::conditions;
 use log::{
     debug,
@@ -38,7 +39,10 @@ use rand::distr::{
     SampleString,
 };
 
-use crate::kube::client::create_client_with_specific_context;
+use crate::kube::shared_client::{
+    ServiceClientKey,
+    SHARED_CLIENT_MANAGER,
+};
 
 pub async fn deploy_and_forward_pod(
     configs: Vec<Config>, http_log_state: Arc<HttpLogState>,
@@ -52,16 +56,16 @@ pub async fn deploy_and_forward_pod_with_mode(
     let mut responses: Vec<CustomResponse> = Vec::new();
 
     for mut config in configs.into_iter() {
-        let context_name = config.context.as_deref();
-        let kubeconfig_clone = config.kubeconfig.clone();
-        let (client, _, _) = create_client_with_specific_context(kubeconfig_clone, context_name)
+        let client_key = ServiceClientKey::new(config.context.clone(), config.kubeconfig.clone());
+
+        let shared_client = SHARED_CLIENT_MANAGER
+            .get_client(client_key)
             .await
             .map_err(|e| {
-                error!("Failed to create Kubernetes client: {e}");
+                error!("Failed to get shared Kubernetes client: {e}");
                 e.to_string()
             })?;
-
-        let client = client.ok_or_else(|| "Client not created".to_string())?;
+        let client = Client::clone(&shared_client);
 
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -102,7 +106,11 @@ pub async fn deploy_and_forward_pod_with_mode(
             config.remote_address.as_ref().unwrap().clone(),
         );
         values.insert("remote_port", config.remote_port.expect("None").to_string());
-        values.insert("local_port", config.remote_port.expect("None").to_string());
+        let local_port_value = config
+            .remote_port
+            .unwrap_or(config.local_port.expect("None"))
+            .to_string();
+        values.insert("local_port", local_port_value);
         values.insert("protocol", protocol.clone());
 
         let manifest_path = get_pod_manifest_path().map_err(|e| e.to_string())?;
@@ -193,19 +201,16 @@ pub async fn stop_proxy_forward_with_mode(
             e.to_string()
         })?;
 
-    let kubeconfig = config
-        .kubeconfig
-        .ok_or_else(|| "Kubeconfig not found".to_string())?;
-    let context_name = config.context.as_deref();
+    let client_key = ServiceClientKey::new(config.context.clone(), config.kubeconfig.clone());
 
-    let (client, _, _) = create_client_with_specific_context(Some(kubeconfig), context_name)
+    let shared_client = SHARED_CLIENT_MANAGER
+        .get_client(client_key)
         .await
         .map_err(|e| {
-            error!("Failed to create Kubernetes client: {e}");
+            error!("Failed to get shared Kubernetes client: {e}");
             e.to_string()
         })?;
-
-    let client = client.ok_or_else(|| "Client not created".to_string())?;
+    let client = Client::clone(&shared_client);
 
     let pods: Api<Pod> = Api::namespaced(client, namespace);
 
@@ -273,19 +278,16 @@ pub async fn stop_proxy_forward(
             e.to_string()
         })?;
 
-    let kubeconfig = config
-        .kubeconfig
-        .ok_or_else(|| "Kubeconfig not found".to_string())?;
-    let context_name = config.context.as_deref();
+    let client_key = ServiceClientKey::new(config.context.clone(), config.kubeconfig.clone());
 
-    let (client, _, _) = create_client_with_specific_context(Some(kubeconfig), context_name)
+    let shared_client = SHARED_CLIENT_MANAGER
+        .get_client(client_key)
         .await
         .map_err(|e| {
-            error!("Failed to create Kubernetes client: {e}");
+            error!("Failed to get shared Kubernetes client: {e}");
             e.to_string()
         })?;
-
-    let client = client.ok_or_else(|| "Client not created".to_string())?;
+    let client = Client::clone(&shared_client);
 
     let pods: Api<Pod> = Api::namespaced(client, namespace);
 

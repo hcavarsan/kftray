@@ -3,6 +3,7 @@ use std::path::{
     Path,
     PathBuf,
 };
+use std::sync::Arc;
 
 use kftray_commons::utils::config_dir::get_log_folder_path;
 use kftray_http_logs::HttpLogState;
@@ -15,7 +16,7 @@ use log::{
 
 #[tauri::command]
 pub async fn set_http_logs_cmd(
-    state: tauri::State<'_, HttpLogState>, config_id: i64, enable: bool,
+    state: tauri::State<'_, Arc<HttpLogState>>, config_id: i64, enable: bool,
 ) -> Result<(), String> {
     state
         .set_http_logs(config_id, enable)
@@ -25,7 +26,7 @@ pub async fn set_http_logs_cmd(
 
 #[tauri::command]
 pub async fn get_http_logs_cmd(
-    state: tauri::State<'_, HttpLogState>, config_id: i64,
+    state: tauri::State<'_, Arc<HttpLogState>>, config_id: i64,
 ) -> Result<bool, String> {
     state
         .get_http_logs(config_id)

@@ -1,7 +1,6 @@
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::LazyLock;
-use std::time::Duration;
 
 use hyper_openssl::client::legacy::HttpsConnector;
 use hyper_util::client::legacy::connect::HttpConnector;
@@ -36,13 +35,10 @@ use super::proxy::{
 type StrategyFuture<'a> = Pin<Box<dyn Future<Output = KubeResult<Client>> + Send + 'a>>;
 type Strategy<'a> = (&'static str, StrategyFuture<'a>);
 
-const CONNECTION_KEEPALIVE: Duration = Duration::from_secs(90);
-const POOL_IDLE_TIMEOUT: Duration = Duration::from_secs(300);
-const POOL_MAX_IDLE_PER_HOST: usize = 20;
+const POOL_MAX_IDLE_PER_HOST: usize = 5;
 
 static HTTP_CONNECTOR: LazyLock<HttpConnector> = LazyLock::new(|| {
     let mut connector = HttpConnector::new();
-    connector.set_keepalive(Some(CONNECTION_KEEPALIVE));
     connector.set_nodelay(true);
     connector.enforce_http(false);
     connector
@@ -234,7 +230,6 @@ where
     use hyper_util::rt::TokioTimer;
 
     hyper_util::client::legacy::Client::builder(TokioExecutor::new())
-        .pool_idle_timeout(POOL_IDLE_TIMEOUT)
         .pool_max_idle_per_host(POOL_MAX_IDLE_PER_HOST)
         .retry_canceled_requests(true)
         .timer(TokioTimer::new())
