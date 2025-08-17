@@ -29,6 +29,7 @@ insta = "1.43"
 k8s-openapi = { version = "0.25", default-features = false, features = [
   "latest",
 ] }
+kube-core = "1.1"
 keyring = { version = "3.6", features = [
   "apple-native",
   "linux-native",
@@ -61,6 +62,7 @@ reqwest = "0.12.23"
 secrecy = "0.10"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.142"
+socket2 = "0.5"
 sqlx = { version = "0.8", features = ["runtime-tokio-native-tls", "sqlite"] }
 sysinfo = "0.37.0"
 tauri = { version = "1.8.3", default-features = false, features = [

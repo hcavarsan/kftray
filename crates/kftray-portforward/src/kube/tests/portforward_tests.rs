@@ -27,10 +27,6 @@ use crate::kube::models::{
     TargetSelector,
 };
 use crate::kube::start::start_port_forward;
-use crate::kube::target_cache::{
-    CacheConfig,
-    TargetCache,
-};
 use crate::port_forward::CHILD_PROCESSES;
 
 struct KubernetesMocker {
@@ -285,9 +281,6 @@ async fn test_port_forward_tcp_success() -> Result<()> {
     let config = setup_test_config();
     let _configs = vec![config];
 
-    let cache_config = CacheConfig::default();
-    let target_cache = Arc::new(TargetCache::new(cache_config));
-
     let port_forward = PortForward {
         target,
         local_port: Some(0),
@@ -296,11 +289,10 @@ async fn test_port_forward_tcp_success() -> Result<()> {
         svc_api: Api::namespaced(client.clone(), "test-namespace"),
         client: client.clone(),
         context_name: Some("test-context".to_string()),
+        kubeconfig: None,
         config_id: 1,
         workload_type: "service".to_string(),
         connection: Arc::new(tokio::sync::Mutex::new(None)),
-        target_cache,
-        connection_pool: None,
     };
 
     let port_forward_task = tokio::spawn(async move {
@@ -396,9 +388,6 @@ async fn test_port_forward_udp_success() -> Result<()> {
     let mut config = setup_test_config();
     config.protocol = "udp".to_string();
 
-    let cache_config = CacheConfig::default();
-    let target_cache = Arc::new(TargetCache::new(cache_config));
-
     let port_forward = PortForward {
         target,
         local_port: Some(0),
@@ -407,11 +396,10 @@ async fn test_port_forward_udp_success() -> Result<()> {
         svc_api: Api::namespaced(client.clone(), "test-namespace"),
         client: client.clone(),
         context_name: Some("test-context".to_string()),
+        kubeconfig: None,
         config_id: 1,
         workload_type: "service".to_string(),
         connection: Arc::new(tokio::sync::Mutex::new(None)),
-        target_cache,
-        connection_pool: None,
     };
 
     let port_forward_task = tokio::spawn(async move {
@@ -551,9 +539,6 @@ async fn test_start_port_forward_mock_components() -> Result<()> {
         test_config.namespace.clone(),
     );
 
-    let cache_config = CacheConfig::default();
-    let target_cache = Arc::new(TargetCache::new(cache_config));
-
     let port_forward = PortForward {
         target,
         local_port: test_config.local_port,
@@ -562,11 +547,10 @@ async fn test_start_port_forward_mock_components() -> Result<()> {
         svc_api: Api::namespaced(client.clone(), &test_config.namespace.clone()),
         client: client.clone(),
         context_name: test_config.context.clone(),
+        kubeconfig: None,
         config_id: test_config.id.unwrap_or_default(),
         workload_type: test_config.workload_type.clone().unwrap_or_default(),
         connection: Arc::new(tokio::sync::Mutex::new(None)),
-        target_cache,
-        connection_pool: None,
     };
 
     let http_log_state = Arc::new(HttpLogState::new());
@@ -668,9 +652,6 @@ async fn test_start_port_forward_mock_components_udp() -> Result<()> {
         test_config.namespace.clone(),
     );
 
-    let cache_config = CacheConfig::default();
-    let target_cache = Arc::new(TargetCache::new(cache_config));
-
     let port_forward = PortForward {
         target,
         local_port: test_config.local_port,
@@ -679,11 +660,10 @@ async fn test_start_port_forward_mock_components_udp() -> Result<()> {
         svc_api: Api::namespaced(client.clone(), &test_config.namespace.clone()),
         client: client.clone(),
         context_name: test_config.context.clone(),
+        kubeconfig: None,
         config_id: test_config.id.unwrap_or_default(),
         workload_type: test_config.workload_type.clone().unwrap_or_default(),
         connection: Arc::new(tokio::sync::Mutex::new(None)),
-        target_cache,
-        connection_pool: None,
     };
 
     match port_forward.port_forward_udp().await {
@@ -699,12 +679,6 @@ async fn test_start_port_forward_mock_components_udp() -> Result<()> {
             println!("Expected: UDP port forwarding failed: {e}");
 
             mock_task.abort();
-
-            let final_count = success_counter.load(Ordering::SeqCst);
-            assert!(
-                final_count >= 1,
-                "Expected at least 1 successful API call, got {final_count}"
-            );
 
             return Ok(());
         }

@@ -3,34 +3,69 @@ use std::sync::Arc;
 use std::sync::Mutex as StdMutex;
 
 use kftray_http_logs::HttpLogState;
-use kube::{
-    api::Api,
-    Client,
-};
+use kube::api::Api;
+use kube::Client;
 use lazy_static::lazy_static;
 use tokio::sync::Mutex;
 use tokio::sync::Notify;
 use tokio::task::JoinHandle;
-use tracing::{
-    error,
-    instrument,
-};
+use tracing::instrument;
 
-use crate::kube::client::create_client_with_specific_context;
-use crate::kube::connection_pool::PooledPortForwarder;
+use crate::kube::listener::{
+    ListenerConfig,
+    PortForwarder,
+    Protocol,
+};
 use crate::kube::models::{
     PortForward,
     Target,
 };
-use crate::kube::pod_finder::TargetPodFinder;
-use crate::kube::target_cache::{
-    CacheConfig,
-    TargetCache,
+use crate::kube::shared_client::{
+    ServiceClientKey,
+    SHARED_CLIENT_MANAGER,
 };
-use crate::kube::udp_forwarder::UdpForwarder;
+
+pub struct PortForwardProcess {
+    pub handle: JoinHandle<anyhow::Result<()>>,
+    pub direct_forwarder: Option<Arc<PortForwarder>>,
+}
+
+impl PortForwardProcess {
+    pub fn new(handle: JoinHandle<anyhow::Result<()>>) -> Self {
+        Self {
+            handle,
+            direct_forwarder: None,
+        }
+    }
+
+    pub fn with_forwarder(
+        handle: JoinHandle<anyhow::Result<()>>, forwarder: Arc<PortForwarder>,
+    ) -> Self {
+        Self {
+            handle,
+            direct_forwarder: Some(forwarder),
+        }
+    }
+
+    pub async fn cleanup_and_abort(self) {
+        tracing::info!("Aborting main listener task to stop accepting new connections");
+        self.handle.abort();
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+
+        if let Some(forwarder) = &self.direct_forwarder {
+            tracing::info!("Cleaning up forwarder resources");
+            forwarder.shutdown().await;
+        }
+    }
+
+    pub fn abort(&self) {
+        self.handle.abort();
+    }
+}
 
 lazy_static! {
-    pub static ref CHILD_PROCESSES: Arc<StdMutex<HashMap<String, JoinHandle<()>>>> =
+    pub static ref CHILD_PROCESSES: Arc<StdMutex<HashMap<String, PortForwardProcess>>> =
         Arc::new(StdMutex::new(HashMap::new()));
     pub static ref CANCEL_NOTIFIER: Arc<Notify> = Arc::new(Notify::new());
 }
@@ -41,36 +76,27 @@ impl PortForward {
         local_address: impl Into<Option<String>>, context_name: Option<String>,
         kubeconfig: Option<String>, config_id: i64, workload_type: String,
     ) -> anyhow::Result<Self> {
-        let (client, _, _) = if let Some(ref context_name) = context_name {
-            create_client_with_specific_context(kubeconfig, Some(context_name)).await?
-        } else {
-            (Some(Client::try_default().await?), None, Vec::new())
-        };
-
-        let client = client.ok_or_else(|| {
-            anyhow::anyhow!(
-                "Client not created for context '{}'",
-                context_name.clone().unwrap_or_default()
-            )
-        })?;
         let namespace = target.namespace.name_any();
 
-        let cache_config = CacheConfig::default();
-        let target_cache = Arc::new(TargetCache::new(cache_config));
+        let client_key = ServiceClientKey::new(context_name.clone(), kubeconfig.clone());
+        let client = SHARED_CLIENT_MANAGER.get_client(client_key).await?;
+
+        let shared_client = Client::clone(&client);
+        let pod_api = Api::namespaced(shared_client.clone(), &namespace);
+        let svc_api = Api::namespaced(shared_client.clone(), &namespace);
 
         Ok(Self {
             target,
             local_port: local_port.into(),
             local_address: local_address.into(),
-            pod_api: Api::namespaced(client.clone(), &namespace),
-            svc_api: Api::namespaced(client.clone(), &namespace),
-            client,
+            pod_api,
+            svc_api,
+            client: shared_client,
             context_name: context_name.clone(),
+            kubeconfig: kubeconfig.clone(),
             config_id,
             workload_type,
             connection: Arc::new(Mutex::new(None)),
-            target_cache,
-            connection_pool: None,
         })
     }
 
@@ -95,85 +121,84 @@ impl PortForward {
     #[instrument(skip(self, http_log_state), fields(config_id = self.config_id))]
     pub async fn port_forward_tcp(
         self, http_log_state: Arc<HttpLogState>,
-    ) -> anyhow::Result<(u16, tokio::task::JoinHandle<()>)> {
+    ) -> anyhow::Result<(u16, PortForwardProcess)> {
         let local_addr = self
             .local_address
-            .clone()
-            .unwrap_or_else(|| "127.0.0.1".to_string());
+            .as_deref()
+            .unwrap_or("127.0.0.1")
+            .to_owned();
 
-        if let Err(e) = crate::network_utils::ensure_loopback_address(&local_addr).await {
-            return Err(anyhow::anyhow!("Network config failed: {}", e));
-        }
-
-        let addr = format!("{}:{}", local_addr, self.local_port())
-            .parse::<std::net::SocketAddr>()
-            .map_err(|e| anyhow::anyhow!("Invalid address: {}", e))?;
-
-        let client = self.client.clone();
         let namespace = self.target.namespace.name_any();
-        let target = self.target.clone();
-        let target_cache = self.target_cache.clone();
 
-        let portforward_pool =
-            PooledPortForwarder::new(client, &namespace, target, target_cache, 200).await?;
-        let portforward_pool = Arc::new(portforward_pool);
+        let mut direct_forwarder = PortForwarder::new(
+            &namespace,
+            self.target.clone(),
+            self.context_name.clone(),
+            self.kubeconfig.clone(),
+        )
+        .await?;
 
-        let listener = tokio::net::TcpListener::bind(addr).await?;
-        let port = listener.local_addr()?.port();
+        direct_forwarder.initialize(&self.target).await?;
+        let direct_forwarder = Arc::new(direct_forwarder);
 
-        let portforward_pool_for_spawn = portforward_pool.clone();
-        let http_log_state_for_spawn = http_log_state.clone();
-        let config_id = self.config_id;
-        let workload_type = self.workload_type.clone();
+        let listener_config = ListenerConfig {
+            local_address: local_addr,
+            local_port: self.local_port(),
+            protocol: Protocol::Tcp,
+        };
 
-        Ok((
-            port,
-            tokio::spawn(async move {
-                if let Err(e) = portforward_pool_for_spawn
-                    .handle_tcp_listener(
-                        listener,
-                        http_log_state_for_spawn,
-                        config_id,
-                        workload_type,
-                        port,
-                        100,
-                    )
-                    .await
-                {
-                    error!("server error: {}", e);
-                }
-            }),
-        ))
+        let forwarder_clone = direct_forwarder.clone();
+        let (port, handle) = direct_forwarder
+            .start_listener(
+                listener_config,
+                http_log_state,
+                self.config_id,
+                self.workload_type.clone(),
+            )
+            .await?;
+
+        let process = PortForwardProcess::with_forwarder(handle, forwarder_clone);
+        Ok((port, process))
     }
 
-    pub fn finder(&self) -> TargetPodFinder<'_> {
-        TargetPodFinder {
-            pod_api: &self.pod_api,
-            svc_api: &self.svc_api,
-        }
-    }
-
-    pub async fn port_forward_udp(self) -> anyhow::Result<(u16, JoinHandle<()>)> {
-        let target = self.finder().find(&self.target).await?;
-        let (pod_name, pod_port) = target.into_parts();
-
-        let mut port_forwarder = self.pod_api.portforward(&pod_name, &[pod_port]).await?;
-        let upstream_conn = port_forwarder
-            .take_stream(pod_port)
-            .ok_or_else(|| anyhow::anyhow!("port not found in forwarder"))?;
-
+    pub async fn port_forward_udp(self) -> anyhow::Result<(u16, PortForwardProcess)> {
         let local_addr = self
             .local_address
-            .clone()
-            .unwrap_or_else(|| "127.0.0.1".to_string());
+            .as_deref()
+            .unwrap_or("127.0.0.1")
+            .to_owned();
 
-        if let Err(e) = crate::network_utils::ensure_loopback_address(&local_addr).await {
-            return Err(anyhow::anyhow!("Network config failed: {}", e));
-        }
+        let namespace = self.target.namespace.name_any();
 
-        let local_port = self.local_port();
+        let mut direct_forwarder = PortForwarder::new(
+            &namespace,
+            self.target.clone(),
+            self.context_name.clone(),
+            self.kubeconfig.clone(),
+        )
+        .await?;
 
-        UdpForwarder::bind_and_forward(local_addr, local_port, upstream_conn).await
+        direct_forwarder.initialize(&self.target).await?;
+        let direct_forwarder = Arc::new(direct_forwarder);
+
+        let listener_config = ListenerConfig {
+            local_address: local_addr,
+            local_port: self.local_port(),
+            protocol: Protocol::Udp,
+        };
+
+        let forwarder_clone = direct_forwarder.clone();
+        let (port, handle) = direct_forwarder
+            .start_listener(
+                listener_config,
+                Arc::new(HttpLogState::new()),
+                self.config_id,
+                self.workload_type.clone(),
+            )
+            .await?;
+
+        let process = PortForwardProcess::with_forwarder(handle, forwarder_clone);
+        Ok((port, process))
     }
 }
 
@@ -198,6 +223,7 @@ mod tests {
     use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
     use k8s_openapi::List;
     use kube::client::Body;
+    use kube::Client;
     use tokio::net::TcpStream;
     use tokio::time::Duration;
     use tower_test::mock;
@@ -280,7 +306,10 @@ mod tests {
             let mut processes = CHILD_PROCESSES.lock().unwrap();
             assert_eq!(processes.len(), 0);
 
-            processes.insert("test-key".to_string(), dummy_handle());
+            processes.insert(
+                "test-key".to_string(),
+                PortForwardProcess::new(dummy_handle()),
+            );
             assert_eq!(processes.len(), 1);
             assert!(processes.contains_key("test-key"));
 
@@ -292,7 +321,7 @@ mod tests {
         }
     }
 
-    fn dummy_handle() -> JoinHandle<()> {
+    fn dummy_handle() -> JoinHandle<anyhow::Result<()>> {
         use std::pin::Pin;
         use std::task::{
             Context,
@@ -301,9 +330,9 @@ mod tests {
 
         struct DummyFuture;
         impl std::future::Future for DummyFuture {
-            type Output = ();
+            type Output = anyhow::Result<()>;
             fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Self::Output> {
-                Poll::Ready(())
+                Poll::Ready(Ok(()))
             }
         }
 
@@ -336,9 +365,6 @@ mod tests {
         let (mock_service, _handle) = mock::pair::<Request<Body>, Response<Body>>();
         let client = Client::new(mock_service, "default");
 
-        let cache_config = CacheConfig::default();
-        let target_cache = Arc::new(TargetCache::new(cache_config));
-
         let pf_with_port = PortForward {
             target: target.clone(),
             local_port: Some(9090),
@@ -347,11 +373,10 @@ mod tests {
             svc_api: Api::namespaced(client.clone(), "default"),
             client: client.clone(),
             context_name: None,
+            kubeconfig: None,
             config_id: 1,
             workload_type: "pod".to_string(),
             connection: Arc::new(Mutex::new(None)),
-            target_cache: target_cache.clone(),
-            connection_pool: None,
         };
 
         assert_eq!(pf_with_port.local_port(), 9090);
@@ -365,11 +390,10 @@ mod tests {
             svc_api: Api::namespaced(client.clone(), "default"),
             client: client.clone(),
             context_name: None,
+            kubeconfig: None,
             config_id: 2,
             workload_type: "pod".to_string(),
             connection: Arc::new(Mutex::new(None)),
-            target_cache: target_cache.clone(),
-            connection_pool: None,
         };
 
         assert_eq!(pf_defaults.local_port(), 0);
@@ -389,9 +413,6 @@ mod tests {
         let (mock_service, _handle) = mock::pair::<Request<Body>, Response<Body>>();
         let client = Client::new(mock_service, "default");
 
-        let cache_config = CacheConfig::default();
-        let target_cache = Arc::new(TargetCache::new(cache_config));
-
         let pf = PortForward {
             target,
             local_port: Some(12345),
@@ -400,11 +421,10 @@ mod tests {
             svc_api: Api::namespaced(client.clone(), "default"),
             client: client.clone(),
             context_name: context_name.clone(),
+            kubeconfig: None,
             config_id: 1,
             workload_type: "service".to_string(),
             connection: Arc::new(Mutex::new(None)),
-            target_cache,
-            connection_pool: None,
         };
 
         assert_eq!(pf.context_name, context_name);
@@ -424,9 +444,6 @@ mod tests {
         let (mock_service, handle) = mock::pair::<Request<Body>, Response<Body>>();
         let client = Client::new(mock_service, "test-ns");
 
-        let cache_config = CacheConfig::default();
-        let target_cache = Arc::new(TargetCache::new(cache_config));
-
         let pf = PortForward {
             target,
             local_port: Some(0),
@@ -435,11 +452,10 @@ mod tests {
             svc_api: Api::namespaced(client.clone(), "test-ns"),
             client: client.clone(),
             context_name: None,
+            kubeconfig: None,
             config_id: 1,
             workload_type: "service".to_string(),
             connection: Arc::new(Mutex::new(None)),
-            target_cache,
-            connection_pool: None,
         };
         (pf, client, handle)
     }
@@ -562,9 +578,6 @@ mod tests {
 
         let target_clone = pf_base.target.clone();
 
-        let cache_config = CacheConfig::default();
-        let target_cache = Arc::new(TargetCache::new(cache_config));
-
         let pf_test = PortForward {
             target: target_clone,
             local_port: Some(0),
@@ -573,11 +586,10 @@ mod tests {
             svc_api: Api::namespaced(client_test.clone(), "test-ns"),
             client: client_test.clone(),
             context_name: None,
+            kubeconfig: None,
             config_id: 1,
             workload_type: "service".to_string(),
             connection: Arc::new(Mutex::new(None)),
-            target_cache,
-            connection_pool: None,
         };
 
         info!("Spawning mock server task");

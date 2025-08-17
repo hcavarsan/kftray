@@ -26,7 +26,7 @@ use kube::api::{
     DeleteParams,
     ListParams,
 };
-use tokio::task::JoinHandle;
+use kube::Client;
 use tokio::time::{
     sleep,
     timeout,
@@ -42,8 +42,12 @@ use crate::hostsfile::{
     remove_all_host_entries,
     remove_host_entry,
 };
-use crate::kube::client::create_client_with_specific_context;
+use crate::kube::shared_client::{
+    ServiceClientKey,
+    SHARED_CLIENT_MANAGER,
+};
 use crate::port_forward::{
+    PortForwardProcess,
     CANCEL_NOTIFIER,
     CHILD_PROCESSES,
 };
@@ -160,7 +164,7 @@ pub async fn stop_all_port_forward_with_mode(
     let mut responses = Vec::with_capacity(1024);
     CANCEL_NOTIFIER.notify_waiters();
 
-    let handle_map: HashMap<String, JoinHandle<()>> = {
+    let handle_map: HashMap<String, PortForwardProcess> = {
         let mut processes = CHILD_PROCESSES.lock().unwrap();
         if processes.is_empty() {
             debug!("No port forwarding processes to stop");
@@ -204,16 +208,17 @@ pub async fn stop_all_port_forward_with_mode(
     let empty_str = String::new();
 
     let mut abort_handles: FuturesUnordered<_> = handle_map
-        .iter()
-        .map(|(composite_key, handle)| {
-            let ids: Vec<&str> = composite_key.split('_').collect();
+        .into_iter()
+        .map(|(composite_key, process)| {
+            let ids: Vec<String> = composite_key.split('_').map(|s| s.to_string()).collect();
+            let composite_key_clone = composite_key.clone();
             let empty_str_clone = empty_str.clone();
             let config_map_cloned = config_map.clone();
 
             async move {
                 if ids.len() != 2 {
                     error!(
-                        "Invalid composite key format encountered: {composite_key}"
+                        "Invalid composite key format encountered: {composite_key_clone}"
                     );
                     return CustomResponse {
                         id: None,
@@ -229,8 +234,8 @@ pub async fn stop_all_port_forward_with_mode(
                     };
                 }
 
-                let config_id_str = ids[0];
-                let service_id = ids[1].to_string();
+                let config_id_str = &ids[0];
+                let service_id = ids[1].clone();
                 let config_id_parsed = config_id_str.parse::<i64>().unwrap_or_default();
                 let config_option = config_map_cloned.get(&config_id_parsed).cloned();
 
@@ -264,7 +269,7 @@ pub async fn stop_all_port_forward_with_mode(
                     }
                 }
 
-                handle.abort();
+                process.cleanup_and_abort().await;
 
                 CustomResponse {
                     id: Some(config_id_parsed),
@@ -301,13 +306,12 @@ pub async fn stop_all_port_forward_with_mode(
         .map(|(config, kubeconfig)| {
             let config_id_str = config.id.unwrap_or_default();
             async move {
-                match create_client_with_specific_context(
-                    Some(kubeconfig.clone()),
-                    config.context.as_deref(),
-                )
-                .await
-                {
-                    Ok((Some(client), _, _)) => {
+                let client_key =
+                    ServiceClientKey::new(config.context.clone(), Some(kubeconfig.clone()));
+
+                match SHARED_CLIENT_MANAGER.get_client(client_key).await {
+                    Ok(shared_client) => {
+                        let client = Client::clone(&shared_client);
                         let pods: Api<Pod> = Api::all(client.clone());
                         let lp =
                             ListParams::default().labels(&format!("config_id={config_id_str}"));
@@ -354,10 +358,7 @@ pub async fn stop_all_port_forward_with_mode(
                             error!("Error listing pods for config_id {config_id_str}");
                         }
                     }
-                    Ok((None, _, _)) => {
-                        error!("Client not created for kubeconfig: {kubeconfig:?}")
-                    }
-                    Err(e) => error!("Failed to create Kubernetes client: {e}"),
+                    Err(e) => error!("Failed to get shared Kubernetes client: {e}"),
                 }
             }
         })
@@ -474,15 +475,13 @@ pub async fn stop_port_forward_with_mode(
             }
         }
 
-        let join_handle = {
+        let port_forward_process = {
             let mut child_processes = CHILD_PROCESSES.lock().unwrap();
-            debug!("child_processes: {child_processes:?}");
             child_processes.remove(&composite_key)
         };
 
-        if let Some(join_handle) = join_handle {
-            debug!("Join handle: {join_handle:?}");
-            join_handle.abort();
+        if let Some(process) = port_forward_process {
+            process.cleanup_and_abort().await;
         }
 
         let config_id_parsed = config_id.parse::<i64>().unwrap_or_default();
@@ -595,10 +594,12 @@ mod tests {
 
     use super::*;
 
-    async fn create_dummy_handle() -> JoinHandle<()> {
-        tokio::spawn(async {
+    async fn create_dummy_handle() -> PortForwardProcess {
+        let handle = tokio::spawn(async {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        })
+            Ok(())
+        });
+        PortForwardProcess::new(handle)
     }
 
     fn create_test_config() -> Config {
@@ -678,8 +679,8 @@ mod tests {
         }
         {
             let mut processes = CHILD_PROCESSES.lock().unwrap();
-            if let Some(handle) = processes.remove("1_test-service") {
-                handle.abort();
+            if let Some(process) = processes.remove("1_test-service") {
+                process.abort();
             }
         }
 
@@ -703,8 +704,8 @@ mod tests {
         }
         {
             let mut processes = CHILD_PROCESSES.lock().unwrap();
-            if let Some(handle) = processes.remove("2_service2") {
-                handle.abort();
+            if let Some(process) = processes.remove("2_service2") {
+                process.abort();
             }
         }
 

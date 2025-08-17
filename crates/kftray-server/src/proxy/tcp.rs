@@ -36,6 +36,7 @@ impl TcpProxy {
     }
 
     /// Establishes connection to the target server with timeout
+    /// Tries resolved IP first, then falls back to hostname
     ///
     /// # Parameters
     /// * `config` - Proxy configuration containing target details
@@ -45,6 +46,44 @@ impl TcpProxy {
     async fn connect_to_target(&self, config: &ProxyConfig) -> Result<TcpStream, ProxyError> {
         const CONNECTION_TIMEOUT: Duration = Duration::from_secs(5);
 
+        if let Some(ref resolved_ip) = config.resolved_ip {
+            info!(
+                "Attempting connection to resolved IP {}:{}",
+                resolved_ip, config.target_port
+            );
+            match timeout(
+                CONNECTION_TIMEOUT,
+                TcpStream::connect(format!("{}:{}", resolved_ip, config.target_port)),
+            )
+            .await
+            {
+                Ok(Ok(stream)) => {
+                    info!(
+                        "Connected to target via IP {}:{}",
+                        resolved_ip, config.target_port
+                    );
+                    return Ok(stream);
+                }
+                Ok(Err(e)) => {
+                    log::warn!(
+                        "Failed to connect to resolved IP {}: {}. Trying hostname fallback.",
+                        resolved_ip,
+                        e
+                    );
+                }
+                Err(_) => {
+                    log::warn!(
+                        "Connection timeout to resolved IP {}. Trying hostname fallback.",
+                        resolved_ip
+                    );
+                }
+            }
+        }
+
+        info!(
+            "Attempting connection to hostname {}:{}",
+            config.target_host, config.target_port
+        );
         match timeout(
             CONNECTION_TIMEOUT,
             TcpStream::connect(format!("{}:{}", config.target_host, config.target_port)),
@@ -53,7 +92,7 @@ impl TcpProxy {
         {
             Ok(Ok(stream)) => {
                 info!(
-                    "Connected to target {}:{}",
+                    "Connected to target via hostname {}:{}",
                     config.target_host, config.target_port
                 );
                 Ok(stream)

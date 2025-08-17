@@ -14,9 +14,6 @@ use serde::{
 use tokio::sync::Mutex;
 use tracing::debug;
 
-use super::connection_pool::PooledPortForwarder;
-use super::target_cache::TargetCache;
-
 impl NameSpace {
     pub fn name_any(&self) -> String {
         self.0.clone().unwrap_or_else(|| "default".to_string())
@@ -165,11 +162,10 @@ pub struct PortForward {
     pub svc_api: Api<Service>,
     pub client: kube::Client,
     pub context_name: Option<String>,
+    pub kubeconfig: Option<String>,
     pub config_id: i64,
     pub workload_type: String,
     pub connection: Arc<Mutex<Option<tokio::net::TcpStream>>>,
-    pub target_cache: Arc<TargetCache>,
-    pub connection_pool: Option<Arc<PooledPortForwarder>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]

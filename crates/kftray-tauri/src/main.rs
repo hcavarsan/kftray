@@ -50,7 +50,7 @@ fn main() {
     let is_plugin_moving = Arc::new(AtomicBool::new(false));
     let is_pinned = Arc::new(AtomicBool::new(false));
     let runtime = Arc::new(Runtime::new().expect("Failed to create a Tokio runtime"));
-    let http_log_state = HttpLogState::new();
+    let http_log_state = Arc::new(HttpLogState::new());
 
     // TODO: Remove this workaround when the tauri issue is resolved
     // tauri Issue: https://github.com/tauri-apps/tauri/issues/9394
@@ -90,8 +90,6 @@ fn main() {
                 if let Err(e) = kftray_commons::utils::migration::migrate_configs(None).await {
                     error!("Database migration failed during setup: {e}");
                 }
-
-                kftray_portforward::kube::client::clear_client_cache();
             });
 
             tauri::async_runtime::spawn(async move {
@@ -103,7 +101,9 @@ fn main() {
 
             tauri::async_runtime::spawn(async move {
                 info!("Starting port management checks");
-                if let Err(e) = init_check::check_and_manage_ports(port_ops_clone).await {
+                if let Err(e) =
+                    init_check::check_and_manage_ports(port_ops_clone, http_log_state.clone()).await
+                {
                     error!("Error in port management: {e}");
                 }
             });

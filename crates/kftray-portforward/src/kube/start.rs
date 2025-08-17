@@ -34,6 +34,14 @@ use crate::{
     port_forward::CHILD_PROCESSES,
 };
 
+fn workload_type_description(workload_type: Option<&str>) -> &'static str {
+    match workload_type {
+        Some("pod") => "pod label",
+        Some("proxy") => "proxy pod",
+        _ => "service",
+    }
+}
+
 static FALLBACK_ALLOCATION_MUTEX: Lazy<TokioMutex<()>> = Lazy::new(|| TokioMutex::new(()));
 
 async fn allocate_local_address_for_config(config: &mut Config) -> Result<String, String> {
@@ -263,8 +271,31 @@ pub async fn start_port_forward_with_mode(
     let mut child_handles = Vec::new();
 
     for config in configs.iter_mut() {
-        let selector = match config.workload_type.as_deref() {
-            Some("pod") => TargetSelector::PodLabel(config.target.clone().unwrap_or_default()),
+        let selector = match (config.workload_type.as_deref(), config.protocol.as_str()) {
+            (Some("pod"), "tcp") => {
+                TargetSelector::PodLabel(config.target.clone().unwrap_or_default())
+            }
+            (Some("pod"), "udp") => {
+                TargetSelector::PodLabel(config.target.clone().unwrap_or_default())
+            }
+            (Some("service"), "tcp") => {
+                TargetSelector::ServiceName(config.service.clone().unwrap_or_default())
+            }
+            (Some("service"), "udp") => TargetSelector::PodLabel(format!(
+                "app={},config_id={}",
+                config.service.clone().unwrap_or_default(),
+                config.id.unwrap_or_default()
+            )),
+            (Some("proxy"), "udp") => TargetSelector::PodLabel(format!(
+                "app={},config_id={}",
+                config.service.clone().unwrap_or_default(),
+                config.id.unwrap_or_default()
+            )),
+            (Some("proxy"), "tcp") => TargetSelector::PodLabel(format!(
+                "app={},config_id={}",
+                config.service.clone().unwrap_or_default(),
+                config.id.unwrap_or_default()
+            )),
             _ => TargetSelector::ServiceName(config.service.clone().unwrap_or_default()),
         };
 
@@ -277,10 +308,10 @@ pub async fn start_port_forward_with_mode(
         debug!("Remote Port: {:?}", config.remote_port);
         debug!("Local Port: {:?}", config.local_port);
 
-        if config.workload_type.as_deref() == Some("pod") {
-            info!("Attempting to forward to pod label: {:?}", &config.target);
-        } else {
-            info!("Attempting to forward to service: {:?}", &config.service);
+        match config.workload_type.as_deref() {
+            Some("pod") => info!("Attempting to forward to pod label: {:?}", &config.target),
+            Some("proxy") => info!("Attempting to forward to proxy pod: {:?}", &config.service),
+            _ => info!("Attempting to forward to service: {:?}", &config.service),
         }
 
         let final_local_address = match allocate_local_address_for_config(config).await {
@@ -357,11 +388,7 @@ pub async fn start_port_forward_with_mode(
                             "{} port forwarding is set up on local port: {:?} for {}: {:?}",
                             protocol.to_uppercase(),
                             actual_local_port,
-                            if config.workload_type.as_deref() == Some("pod") {
-                                "pod label"
-                            } else {
-                                "service"
-                            },
+                            workload_type_description(config.workload_type.as_deref()),
                             &config.service
                         );
 
@@ -428,11 +455,7 @@ pub async fn start_port_forward_with_mode(
                         let error_message = format!(
                             "Failed to start {} port forwarding for {} {}: {}",
                             protocol.to_uppercase(),
-                            if config.workload_type.as_deref() == Some("pod") {
-                                "pod label"
-                            } else {
-                                "service"
-                            },
+                            workload_type_description(config.workload_type.as_deref()),
                             config.service.clone().unwrap_or_default(),
                             e
                         );
@@ -444,11 +467,7 @@ pub async fn start_port_forward_with_mode(
             Err(e) => {
                 let error_message = format!(
                     "Failed to create PortForward for {} {}: {}",
-                    if config.workload_type.as_deref() == Some("pod") {
-                        "pod label"
-                    } else {
-                        "service"
-                    },
+                    workload_type_description(config.workload_type.as_deref()),
                     config.service.clone().unwrap_or_default(),
                     e
                 );
@@ -460,8 +479,8 @@ pub async fn start_port_forward_with_mode(
 
     if !errors.is_empty() {
         for handle_key in child_handles {
-            if let Some(handle) = CHILD_PROCESSES.lock().unwrap().remove(&handle_key) {
-                handle.abort();
+            if let Some(process) = CHILD_PROCESSES.lock().unwrap().remove(&handle_key) {
+                process.abort();
             }
         }
         return Err(errors.join("\n"));
@@ -577,6 +596,11 @@ mod tests {
         let config = setup_test_config();
         let selector = match config.workload_type.as_deref() {
             Some("pod") => TargetSelector::PodLabel(config.target.clone().unwrap_or_default()),
+            Some("proxy") => TargetSelector::PodLabel(format!(
+                "app={},config_id={}",
+                config.service.clone().unwrap_or_default(),
+                config.id.unwrap_or_default()
+            )),
             _ => TargetSelector::ServiceName(config.service.clone().unwrap_or_default()),
         };
 
@@ -592,6 +616,11 @@ mod tests {
         let config = setup_pod_config();
         let selector = match config.workload_type.as_deref() {
             Some("pod") => TargetSelector::PodLabel(config.target.clone().unwrap_or_default()),
+            Some("proxy") => TargetSelector::PodLabel(format!(
+                "app={},config_id={}",
+                config.service.clone().unwrap_or_default(),
+                config.id.unwrap_or_default()
+            )),
             _ => TargetSelector::ServiceName(config.service.clone().unwrap_or_default()),
         };
 

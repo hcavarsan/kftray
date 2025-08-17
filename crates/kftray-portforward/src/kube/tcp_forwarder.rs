@@ -15,6 +15,7 @@ use tracing::{
     error,
 };
 
+use crate::kube::http_log_watcher::HttpLogStateWatcher;
 use crate::Logger;
 
 const BUFFER_SIZE: usize = 65536;
@@ -34,6 +35,62 @@ impl TcpForwarder {
             workload_type,
             logger: None,
         }
+    }
+
+    pub fn is_logging_enabled(&self) -> bool {
+        self.logger.is_some()
+    }
+
+    pub fn apply_socket_optimizations(stream: &tokio::net::TcpStream) {
+        use socket2::SockRef;
+
+        if let Err(e) = stream.set_nodelay(true) {
+            tracing::debug!("Failed to set TCP_NODELAY: {}", e);
+        }
+
+        if let Err(e) = stream.set_linger(None) {
+            tracing::debug!("Failed to disable SO_LINGER: {}", e);
+        }
+
+        let sock_ref = SockRef::from(stream);
+
+        if let Err(e) = sock_ref.set_recv_buffer_size(BUFFER_SIZE) {
+            tracing::debug!("Failed to set receive buffer size: {}", e);
+        }
+
+        if let Err(e) = sock_ref.set_send_buffer_size(BUFFER_SIZE) {
+            tracing::debug!("Failed to set send buffer size: {}", e);
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub async fn forward_streams(
+        &mut self, client_stream: tokio::net::TcpStream,
+        upstream_stream: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+        client_address: std::net::SocketAddr, cancel_notifier: Arc<Notify>,
+        http_log_watcher: Arc<HttpLogStateWatcher>, http_log_state: Arc<HttpLogState>,
+        local_port: u16,
+    ) -> anyhow::Result<()> {
+        Self::apply_socket_optimizations(&client_stream);
+
+        let _log_subscriber = http_log_watcher.create_filtered_subscriber(self.config_id);
+        let current_logging_enabled = http_log_watcher.get_http_logs(self.config_id).await;
+
+        if current_logging_enabled && self.logger.is_none() {
+            if let Err(e) = self.initialize_logger(&http_log_state, local_port).await {
+                error!("Failed to initialize logger for {}: {}", client_address, e);
+            }
+        }
+
+        self.forward_connection(
+            Arc::new(Mutex::new(client_stream)),
+            upstream_stream,
+            cancel_notifier,
+            http_log_watcher,
+            http_log_state,
+            local_port,
+        )
+        .await
     }
 
     pub async fn initialize_logger(
@@ -73,81 +130,138 @@ impl TcpForwarder {
         Ok(())
     }
 
-    pub async fn update_logger_state(
-        &mut self, http_log_state: &HttpLogState, local_port: u16,
-    ) -> anyhow::Result<()> {
-        self.initialize_logger(http_log_state, local_port).await
-    }
-
     pub async fn forward_connection(
-        &self, client_conn: Arc<Mutex<TcpStream>>,
-        upstream_conn: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
-        cancel_notifier: Arc<Notify>, logging_enabled: bool,
+        &mut self, client_conn: Arc<Mutex<TcpStream>>,
+        mut upstream_conn: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+        cancel_notifier: Arc<Notify>, http_log_watcher: Arc<HttpLogStateWatcher>,
+        http_log_state: Arc<HttpLogState>, local_port: u16,
     ) -> anyhow::Result<()> {
-        if !logging_enabled || self.logger.is_none() {
+        let log_subscriber = http_log_watcher.create_filtered_subscriber(self.config_id);
+        let current_logging_enabled = http_log_watcher.get_http_logs(self.config_id).await;
+
+        if current_logging_enabled && self.logger.is_none() {
+            let _ = self.initialize_logger(&http_log_state, local_port).await;
+        }
+        if current_logging_enabled || self.logger.is_some() {
+            let config_id = self.config_id;
+            let shared_logger = Arc::new(Mutex::new(self.logger.take()));
+
+            let request_id = Arc::new(Mutex::new(None));
             let mut client_conn_guard = client_conn.lock().await;
-            let client_stream = &mut *client_conn_guard;
-            let mut pinned_upstream = Box::pin(upstream_conn);
+            let (mut client_reader, mut client_writer) = tokio::io::split(&mut *client_conn_guard);
+            let (mut upstream_reader, mut upstream_writer) = tokio::io::split(upstream_conn);
+
+            let client_to_upstream = Self::forward_client_to_upstream(
+                Arc::clone(&shared_logger),
+                config_id,
+                &mut client_reader,
+                &mut upstream_writer,
+                Arc::clone(&request_id),
+                cancel_notifier.clone(),
+                log_subscriber.resubscribe(),
+                http_log_state.clone(),
+                local_port,
+            );
+
+            let upstream_to_client = Self::forward_upstream_to_client(
+                Arc::clone(&shared_logger),
+                config_id,
+                &mut upstream_reader,
+                &mut client_writer,
+                Arc::clone(&request_id),
+                cancel_notifier.clone(),
+                log_subscriber,
+                http_log_state,
+                local_port,
+            );
+
+            let result = tokio::try_join!(client_to_upstream, upstream_to_client);
+
+            self.logger = Arc::try_unwrap(shared_logger).unwrap().into_inner();
+
+            match result {
+                Ok(_) => {
+                    debug!("HTTP-aware connection closed normally");
+                }
+                Err(e) => {
+                    error!("HTTP-aware connection closed with error: {}", e);
+                    return Err(e);
+                }
+            }
+        } else {
+            let mut client_conn_guard = client_conn.lock().await;
+
+            let config_id = self.config_id;
+            let log_subscriber = http_log_watcher.create_filtered_subscriber(config_id);
+            let copy_future =
+                tokio::io::copy_bidirectional(&mut *client_conn_guard, &mut upstream_conn);
+            let state_monitor = Self::monitor_logging_state_simple(
+                config_id,
+                log_subscriber,
+                cancel_notifier.clone(),
+            );
 
             tokio::select! {
-                result = tokio::io::copy_bidirectional(client_stream, &mut pinned_upstream) => {
+                result = copy_future => {
                     match result {
-                        Ok(_) => {},
-                        Err(e) if matches!(e.kind(), std::io::ErrorKind::ConnectionReset | std::io::ErrorKind::BrokenPipe | std::io::ErrorKind::UnexpectedEof) => {},
-                        Err(_) => {},
+                        Ok(_) => debug!("Simple connection closed normally"),
+                        Err(e) => {
+                            error!("Simple connection closed with error: {}", e);
+                            return Err(e.into());
+                        }
                     }
                 }
-                _ = cancel_notifier.notified() => {}
-            }
-            return Ok(());
-        }
-
-        let request_id = Arc::new(Mutex::new(None));
-
-        let mut client_conn_guard = client_conn.lock().await;
-        let (mut client_reader, mut client_writer) = tokio::io::split(&mut *client_conn_guard);
-
-        let (mut upstream_reader, mut upstream_writer) = tokio::io::split(upstream_conn);
-
-        let client_to_upstream = self.handle_client_to_upstream(
-            &mut client_reader,
-            &mut upstream_writer,
-            self.logger.clone(),
-            Arc::clone(&request_id),
-            cancel_notifier.clone(),
-        );
-
-        let upstream_to_client = self.handle_upstream_to_client(
-            &mut upstream_reader,
-            &mut client_writer,
-            self.logger.clone(),
-            Arc::clone(&request_id),
-            cancel_notifier.clone(),
-        );
-
-        match tokio::try_join!(client_to_upstream, upstream_to_client) {
-            Ok(_) => {
-                debug!("Connection closed normally");
-            }
-            Err(e) => {
-                error!(
-                    error = e.as_ref() as &dyn std::error::Error,
-                    "Connection closed with error"
-                );
-                return Err(e);
+                _ = state_monitor => {
+                    debug!("Connection interrupted for logging state change");
+                    return Err(anyhow::anyhow!("Connection needs restart for HTTP logging"));
+                }
             }
         }
 
         Ok(())
     }
 
-    async fn handle_client_to_upstream<'a>(
-        &'a self, client_reader: &'a mut (impl AsyncReadExt + Unpin),
-        upstream_writer: &'a mut (impl AsyncWriteExt + Unpin), logger: Option<Logger>,
+    async fn monitor_logging_state_simple(
+        config_id: i64,
+        mut log_subscriber: tokio::sync::broadcast::Receiver<
+            crate::kube::http_log_watcher::HttpLogStateEvent,
+        >,
+        cancel_notifier: Arc<Notify>,
+    ) {
+        loop {
+            tokio::select! {
+                log_event = log_subscriber.recv() => {
+                    if let Ok(event) = log_event {
+                        debug!("Simple connection received log event: config_id={}, enabled={}", event.config_id, event.enabled);
+                        if event.config_id == config_id && event.enabled {
+                            debug!("HTTP logging enabled, terminating simple connection");
+                            return;
+                        }
+                    } else {
+                        debug!("Simple connection log subscriber error");
+                    }
+                }
+                _ = cancel_notifier.notified() => return,
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn forward_client_to_upstream<'a>(
+        logger: Arc<Mutex<Option<crate::Logger>>>, config_id: i64,
+        client_reader: &'a mut (impl AsyncReadExt + Unpin),
+        upstream_writer: &'a mut (impl AsyncWriteExt + Unpin),
         request_id: Arc<Mutex<Option<String>>>, cancel_notifier: Arc<Notify>,
+        mut log_subscriber: tokio::sync::broadcast::Receiver<
+            crate::kube::http_log_watcher::HttpLogStateEvent,
+        >,
+        http_log_state: Arc<HttpLogState>, local_port: u16,
     ) -> anyhow::Result<()> {
         let mut buffer = [0; BUFFER_SIZE];
-        let should_log = logger.is_some();
+        let mut should_log = {
+            let logger_guard = logger.lock().await;
+            logger_guard.is_some()
+        };
         let mut request_buffer = if should_log { Some(Vec::new()) } else { None };
 
         loop {
@@ -164,19 +278,65 @@ impl TcpForwarder {
                     }
 
                     if should_log {
-                        if let (Some(ref mut req_buf), Some(ref logger)) = (request_buffer.as_mut(), &logger) {
+                        if let Some(ref mut req_buf) = request_buffer.as_mut() {
+                            let logger_guard = logger.lock().await;
+                            if let Some(ref log) = *logger_guard {
                             req_buf.extend_from_slice(&buffer[..n]);
                             let mut req_id_guard = request_id.lock().await;
-                            let new_request_id = logger.log_request(req_buf.clone().into()).await;
-                            *req_id_guard = Some(new_request_id);
+                                let new_request_id = log.log_request(req_buf.clone().into()).await;
+                                drop(logger_guard);
+                                *req_id_guard = Some(new_request_id);
 
-                            if let Err(e) = upstream_writer.write_all(req_buf).await {
-                                return Err(e.into());
+                                if let Err(e) = upstream_writer.write_all(req_buf).await {
+                                    return Err(e.into());
+                                }
+                                req_buf.clear();
                             }
-                            req_buf.clear();
                         }
                     } else if let Err(e) = upstream_writer.write_all(&buffer[..n]).await {
                         return Err(e.into());
+                    }
+                },
+                log_event = log_subscriber.recv() => {
+                    if let Ok(event) = log_event {
+                        if event.config_id == config_id {
+                            let new_should_log = event.enabled && {
+                                let mut logger_guard = logger.lock().await;
+                                if event.enabled && logger_guard.is_none() {
+                                    match http_log_state.get_http_logs(config_id).await {
+                                        Ok(true) => {
+                                            if let Ok(new_logger) = kftray_http_logs::HttpLogger::for_config(config_id, local_port).await {
+                                                *logger_guard = Some(new_logger);
+                                                drop(logger_guard);
+                                                true
+                                            } else {
+                                                drop(logger_guard);
+                                                false
+                                            }
+                                        }
+                                        _ => {
+                                            drop(logger_guard);
+                                            false
+                                        }
+                                    }
+                                } else {
+                                    let result = logger_guard.is_some();
+                                    drop(logger_guard);
+                                    result
+                                }
+                            };
+
+                            if new_should_log != should_log {
+                                should_log = new_should_log;
+                                if should_log {
+                                    request_buffer = Some(Vec::new());
+                                    debug!("Enabled HTTP logging for client-to-upstream");
+                                } else {
+                                    request_buffer = None;
+                                    debug!("Disabled HTTP logging for client-to-upstream");
+                                }
+                            }
+                        }
                     }
                 },
                 _ = cancel_notifier.notified() => break,
@@ -188,13 +348,22 @@ impl TcpForwarder {
         Ok(())
     }
 
-    async fn handle_upstream_to_client<'a>(
-        &'a self, upstream_reader: &'a mut (impl AsyncReadExt + Unpin),
-        client_writer: &'a mut (impl AsyncWriteExt + Unpin), logger: Option<Logger>,
+    #[allow(clippy::too_many_arguments)]
+    async fn forward_upstream_to_client<'a>(
+        logger: Arc<Mutex<Option<crate::Logger>>>, config_id: i64,
+        upstream_reader: &'a mut (impl AsyncReadExt + Unpin),
+        client_writer: &'a mut (impl AsyncWriteExt + Unpin),
         request_id: Arc<Mutex<Option<String>>>, cancel_notifier: Arc<Notify>,
+        mut log_subscriber: tokio::sync::broadcast::Receiver<
+            crate::kube::http_log_watcher::HttpLogStateEvent,
+        >,
+        http_log_state: Arc<HttpLogState>, local_port: u16,
     ) -> anyhow::Result<()> {
         let mut buffer = [0; BUFFER_SIZE];
-        let should_log = logger.is_some();
+        let mut should_log = {
+            let logger_guard = logger.lock().await;
+            logger_guard.is_some()
+        };
 
         let mut response_state = if should_log {
             Some(ResponseState {
@@ -222,11 +391,14 @@ impl TcpForwarder {
 
                     if n == 0 {
                         if should_log {
-                            if let (Some(ref mut state), Some(ref logger)) = (response_state.as_mut(), &logger) {
-                                if !state.buffer.is_empty() && !state.current_response_logged {
-                                    let req_id_guard = request_id.lock().await;
-                                    if let Some(req_id) = &*req_id_guard {
-                                        logger.log_response(state.buffer.clone().into(), req_id.clone()).await;
+                            if let Some(ref mut state) = response_state.as_mut() {
+                                let logger_guard = logger.lock().await;
+                                if let Some(ref log) = *logger_guard {
+                                    if !state.buffer.is_empty() && !state.current_response_logged {
+                                        let req_id_guard = request_id.lock().await;
+                                        if let Some(req_id) = &*req_id_guard {
+                                            log.log_response(state.buffer.clone().into(), req_id.clone()).await;
+                                        }
                                     }
                                 }
                             }
@@ -236,13 +408,63 @@ impl TcpForwarder {
 
                     if should_log {
                         if let Some(ref mut state) = response_state.as_mut() {
-                            self.handle_response_logging(&buffer[..n], state, &logger, &request_id).await;
+                            Self::handle_response_logging_static(&buffer[..n], state, &logger, &request_id).await;
                         }
                     }
 
-
                     if let Err(e) = client_writer.write_all(&buffer[..n]).await {
                         return Err(e.into());
+                    }
+                },
+                log_event = log_subscriber.recv() => {
+                    if let Ok(event) = log_event {
+                        if event.config_id == config_id {
+                            let new_should_log = event.enabled && {
+                                let mut logger_guard = logger.lock().await;
+                                if event.enabled && logger_guard.is_none() {
+                                    match http_log_state.get_http_logs(config_id).await {
+                                        Ok(true) => {
+                                            if let Ok(new_logger) = kftray_http_logs::HttpLogger::for_config(config_id, local_port).await {
+                                                *logger_guard = Some(new_logger);
+                                                drop(logger_guard);
+                                                true
+                                            } else {
+                                                drop(logger_guard);
+                                                false
+                                            }
+                                        }
+                                        _ => {
+                                            drop(logger_guard);
+                                            false
+                                        }
+                                    }
+                                } else {
+                                    let result = logger_guard.is_some();
+                                    drop(logger_guard);
+                                    result
+                                }
+                            };
+
+                            if new_should_log != should_log {
+                                should_log = new_should_log;
+                                if should_log {
+                                    response_state = Some(ResponseState {
+                                        buffer: Vec::new(),
+                                        is_chunked: false,
+                                        found_end_marker: false,
+                                        total_chunks_received: 0,
+                                        current_response_id: None,
+                                        current_response_logged: false,
+                                        first_chunk_time: None,
+                                        force_log_time: None,
+                                    });
+                                    debug!("Enabled HTTP logging for upstream-to-client");
+                                } else {
+                                    response_state = None;
+                                    debug!("Disabled HTTP logging for upstream-to-client");
+                                }
+                            }
+                        }
                     }
                 },
                 _ = cancel_notifier.notified() => break,
@@ -254,8 +476,8 @@ impl TcpForwarder {
         Ok(())
     }
 
-    async fn handle_response_logging(
-        &self, buffer: &[u8], state: &mut ResponseState, logger: &Option<Logger>,
+    async fn handle_response_logging_static(
+        buffer: &[u8], state: &mut ResponseState, logger: &Arc<Mutex<Option<Logger>>>,
         request_id: &Arc<Mutex<Option<String>>>,
     ) {
         let req_id_guard = request_id.lock().await;
@@ -289,16 +511,16 @@ impl TcpForwarder {
         state.buffer.extend_from_slice(buffer);
 
         if !state.current_response_logged {
-            if let Some(logger) = logger {
-                let should_log = self.should_log_response(state);
+            let logger_guard = logger.lock().await;
+            if let Some(ref log) = *logger_guard {
+                let should_log = Self::should_log_response_static(state);
                 if should_log && state.current_response_id.is_some() {
                     let response_id = state.current_response_id.as_ref().unwrap().clone();
                     state.current_response_logged = true;
-                    logger
-                        .log_response(state.buffer.clone().into(), response_id)
+                    log.log_response(state.buffer.clone().into(), response_id)
                         .await;
 
-                    if self.can_clear_response_buffer(state) {
+                    if Self::can_clear_response_buffer_static(state) {
                         state.reset_for_next_response();
                     }
                 }
@@ -306,7 +528,7 @@ impl TcpForwarder {
         }
     }
 
-    fn should_log_response(&self, state: &mut ResponseState) -> bool {
+    fn should_log_response_static(state: &mut ResponseState) -> bool {
         if state.is_chunked {
             if state.found_end_marker && state.force_log_time.is_none() {
                 let delay = if !state.buffer.is_empty()
@@ -341,7 +563,7 @@ impl TcpForwarder {
         false
     }
 
-    fn can_clear_response_buffer(&self, state: &ResponseState) -> bool {
+    fn can_clear_response_buffer_static(state: &ResponseState) -> bool {
         if state.is_chunked {
             state.found_end_marker
         } else {
@@ -405,11 +627,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_update_logger_state() {
+    async fn test_initialize_logger_state() {
         let mut forwarder = TcpForwarder::new(1, "pod".to_string());
         let http_log_state = kftray_http_logs::HttpLogState::new();
 
-        let result = forwarder.update_logger_state(&http_log_state, 8080).await;
+        let result = forwarder.initialize_logger(&http_log_state, 8080).await;
         assert!(result.is_ok());
     }
 
@@ -508,15 +730,22 @@ mod tests {
         let mut client_reader = client_read;
         let mut upstream_writer = upstream_write;
 
-        let result = forwarder
-            .handle_client_to_upstream(
-                &mut client_reader,
-                &mut upstream_writer,
-                None,
-                request_id,
-                cancel_notifier,
-            )
-            .await;
+        let (_, log_subscriber) = tokio::sync::broadcast::channel(1);
+        let http_log_state = Arc::new(HttpLogState::new());
+
+        let logger = Arc::new(Mutex::new(None));
+        let result = TcpForwarder::forward_client_to_upstream(
+            logger,
+            forwarder.config_id,
+            &mut client_reader,
+            &mut upstream_writer,
+            request_id,
+            cancel_notifier,
+            log_subscriber,
+            http_log_state,
+            8080,
+        )
+        .await;
 
         assert!(result.is_ok());
     }
@@ -550,15 +779,22 @@ mod tests {
         let mut upstream_reader = upstream_read;
         let mut client_writer = client_write;
 
-        let result = forwarder
-            .handle_upstream_to_client(
-                &mut upstream_reader,
-                &mut client_writer,
-                None,
-                request_id,
-                cancel_notifier,
-            )
-            .await;
+        let (_, log_subscriber) = tokio::sync::broadcast::channel(1);
+        let http_log_state = Arc::new(HttpLogState::new());
+
+        let logger = Arc::new(Mutex::new(None));
+        let result = TcpForwarder::forward_upstream_to_client(
+            logger,
+            forwarder.config_id,
+            &mut upstream_reader,
+            &mut client_writer,
+            request_id,
+            cancel_notifier,
+            log_subscriber,
+            http_log_state,
+            8080,
+        )
+        .await;
 
         assert!(result.is_ok());
     }
