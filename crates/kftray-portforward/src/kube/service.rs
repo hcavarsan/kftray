@@ -24,7 +24,7 @@ use crate::kube::shared_client::{
 pub async fn retrieve_service_configs(
     context: &str, kubeconfig: Option<String>,
 ) -> Result<Vec<Config>, String> {
-    let client_key = ServiceClientKey::new(Some(context.to_string()), kubeconfig.clone());
+    let client_key = ServiceClientKey::new(Some(context.to_string()), kubeconfig.clone(), -1);
 
     let client = SHARED_CLIENT_MANAGER
         .get_client(client_key)

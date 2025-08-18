@@ -16,7 +16,7 @@ use tokio::sync::{
 };
 use tokio::task::JoinHandle;
 use tracing::{
-    debug,
+    error,
     info,
 };
 #[derive(Debug, Clone, PartialEq)]
@@ -201,18 +201,9 @@ impl HttpLogStateWatcher {
 
         let external_result = external_state.get_http_logs(config_id).await;
         let external_enabled = match external_result {
-            Ok(enabled) => {
-                debug!(
-                    "External state query successful for config {}: {}",
-                    config_id, enabled
-                );
-                enabled
-            }
+            Ok(enabled) => enabled,
             Err(e) => {
-                debug!(
-                    "External state query failed for config {}: {:?}",
-                    config_id, e
-                );
+                error!("Failed to get HTTP logs for config {}: {:?}", config_id, e);
                 false
             }
         };

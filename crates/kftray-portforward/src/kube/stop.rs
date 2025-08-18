@@ -46,10 +46,11 @@ use crate::kube::shared_client::{
     ServiceClientKey,
     SHARED_CLIENT_MANAGER,
 };
+#[cfg(test)]
+use crate::port_forward::PortForwardProcess;
 use crate::port_forward::{
-    PortForwardProcess,
-    CANCEL_NOTIFIER,
     CHILD_PROCESSES,
+    PROCESS_MANAGEMENT_LOCK,
 };
 
 async fn is_port_listening(address: &str, port: u16) -> bool {
@@ -162,19 +163,22 @@ pub async fn stop_all_port_forward_with_mode(
     info!("Attempting to stop all port forwards in mode: {mode:?}");
 
     let mut responses = Vec::with_capacity(1024);
-    CANCEL_NOTIFIER.notify_waiters();
 
-    let handle_map: HashMap<String, PortForwardProcess> = {
-        let mut processes = CHILD_PROCESSES.lock().unwrap();
+    let handle_keys: Vec<String> = {
+        let _global_lock = PROCESS_MANAGEMENT_LOCK.lock().await;
+        let processes = CHILD_PROCESSES.lock().await;
         if processes.is_empty() {
             debug!("No port forwarding processes to stop");
             return Ok(Vec::new());
         }
-        processes.drain().collect()
+        processes.keys().cloned().collect()
     };
 
-    for composite_key in handle_map.keys() {
-        if let Some((config_id_str, _)) = composite_key.split_once('_') {
+    for composite_key in &handle_keys {
+        if let Some(config_id_str) = composite_key
+            .strip_prefix("config:")
+            .and_then(|s| s.split(":service:").next())
+        {
             if let Ok(config_id) = config_id_str.parse::<i64>() {
                 cancel_timeout_for_forward(config_id).await;
             }
@@ -207,19 +211,33 @@ pub async fn stop_all_port_forward_with_mode(
 
     let empty_str = String::new();
 
-    let mut abort_handles: FuturesUnordered<_> = handle_map
+    let mut abort_handles: FuturesUnordered<_> = handle_keys
         .into_iter()
-        .map(|(composite_key, process)| {
-            let ids: Vec<String> = composite_key.split('_').map(|s| s.to_string()).collect();
-            let composite_key_clone = composite_key.clone();
+        .map(|composite_key| {
             let empty_str_clone = empty_str.clone();
             let config_map_cloned = config_map.clone();
 
             async move {
-                if ids.len() != 2 {
-                    error!(
-                        "Invalid composite key format encountered: {composite_key_clone}"
-                    );
+                let (config_id_str, service_id) = if let Some(content) = composite_key.strip_prefix("config:") {
+                    if let Some((config_part, service_part)) = content.split_once(":service:") {
+                        (config_part, service_part.to_string())
+                    } else {
+                        error!("Invalid composite key format encountered: {composite_key}");
+                        return CustomResponse {
+                            id: None,
+                            service: empty_str_clone.clone(),
+                            namespace: empty_str_clone.clone(),
+                            local_port: 0,
+                            remote_port: 0,
+                            context: empty_str_clone.clone(),
+                            protocol: empty_str_clone.clone(),
+                            stdout: empty_str_clone.clone(),
+                            stderr: String::from("Invalid composite key format"),
+                            status: 1,
+                        };
+                    }
+                } else {
+                    error!("Invalid composite key format encountered: {composite_key}");
                     return CustomResponse {
                         id: None,
                         service: empty_str_clone.clone(),
@@ -232,10 +250,7 @@ pub async fn stop_all_port_forward_with_mode(
                         stderr: String::from("Invalid composite key format"),
                         status: 1,
                     };
-                }
-
-                let config_id_str = &ids[0];
-                let service_id = ids[1].clone();
+                };
                 let config_id_parsed = config_id_str.parse::<i64>().unwrap_or_default();
                 let config_option = config_map_cloned.get(&config_id_parsed).cloned();
 
@@ -269,7 +284,14 @@ pub async fn stop_all_port_forward_with_mode(
                     }
                 }
 
-                process.cleanup_and_abort().await;
+                let process = {
+                    let _global_lock = PROCESS_MANAGEMENT_LOCK.lock().await;
+                    CHILD_PROCESSES.lock().await.remove(&composite_key)
+                };
+
+                if let Some(process) = process {
+                    process.cleanup_and_abort().await;
+                }
 
                 CustomResponse {
                     id: Some(config_id_parsed),
@@ -306,8 +328,11 @@ pub async fn stop_all_port_forward_with_mode(
         .map(|(config, kubeconfig)| {
             let config_id_str = config.id.unwrap_or_default();
             async move {
-                let client_key =
-                    ServiceClientKey::new(config.context.clone(), Some(kubeconfig.clone()));
+                let client_key = ServiceClientKey::new(
+                    config.context.clone(),
+                    Some(kubeconfig.clone()),
+                    config_id_str,
+                );
 
                 match SHARED_CLIENT_MANAGER.get_client(client_key).await {
                     Ok(shared_client) => {
@@ -443,14 +468,12 @@ pub async fn stop_port_forward(config_id: String) -> Result<CustomResponse, Stri
 pub async fn stop_port_forward_with_mode(
     config_id: String, mode: DatabaseMode,
 ) -> Result<CustomResponse, String> {
-    let cancellation_notifier = CANCEL_NOTIFIER.clone();
-    cancellation_notifier.notify_waiters();
-
     let composite_key = {
-        let child_processes = CHILD_PROCESSES.lock().unwrap();
+        let _global_lock = PROCESS_MANAGEMENT_LOCK.lock().await;
+        let child_processes = CHILD_PROCESSES.lock().await;
         child_processes
             .keys()
-            .find(|key| key.starts_with(&format!("{config_id}_")))
+            .find(|key| key.starts_with(&format!("config:{config_id}:service:")))
             .map(|key| key.to_string())
     };
 
@@ -476,7 +499,8 @@ pub async fn stop_port_forward_with_mode(
         }
 
         let port_forward_process = {
-            let mut child_processes = CHILD_PROCESSES.lock().unwrap();
+            let _global_lock = PROCESS_MANAGEMENT_LOCK.lock().await;
+            let mut child_processes = CHILD_PROCESSES.lock().await;
             child_processes.remove(&composite_key)
         };
 
@@ -487,14 +511,17 @@ pub async fn stop_port_forward_with_mode(
         let config_id_parsed = config_id.parse::<i64>().unwrap_or_default();
         cancel_timeout_for_forward(config_id_parsed).await;
 
-        let (config_id_str, service_name) = composite_key.split_once('_').unwrap_or(("", ""));
-        let config_id_parsed = config_id_str.parse::<i64>().unwrap_or_default();
+        let service_name = composite_key
+            .strip_prefix("config:")
+            .and_then(|s| s.split_once(":service:"))
+            .map(|(_, service)| service)
+            .unwrap_or("");
 
         // Handle host entry cleanup for domain-enabled configs
         if let Some(config) = configs.iter().find(|c| c.id == Some(config_id_parsed)) {
             if config.domain_enabled.unwrap_or_default() {
-                if let Err(e) = remove_host_entry(config_id_str) {
-                    error!("Failed to remove host entry for ID {config_id_str}: {e}");
+                if let Err(e) = remove_host_entry(&config_id) {
+                    error!("Failed to remove host entry for ID {config_id}: {e}");
 
                     let config_state = ConfigState::new(config_id_parsed, false);
                     if let Err(e) = update_config_state_with_mode(&config_state, mode).await {
@@ -504,12 +531,23 @@ pub async fn stop_port_forward_with_mode(
                 }
             }
         } else {
-            warn!("Config with id '{config_id_str}' not found.");
+            warn!("Config with id '{config_id}' not found.");
         }
 
         let config_state = ConfigState::new(config_id_parsed, false);
         if let Err(e) = update_config_state_with_mode(&config_state, mode).await {
             error!("Failed to update config state: {e}");
+        }
+
+        // Invalidate the client for this specific config
+        if let Some(config) = configs.iter().find(|c| c.id == Some(config_id_parsed)) {
+            let client_key = ServiceClientKey::new(
+                config.context.clone(),
+                config.kubeconfig.clone(),
+                config_id_parsed,
+            );
+            SHARED_CLIENT_MANAGER.invalidate_client(&client_key);
+            debug!("Invalidated client for config {}", config_id);
         }
 
         Ok(CustomResponse {
@@ -599,7 +637,7 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             Ok(())
         });
-        PortForwardProcess::new(handle)
+        PortForwardProcess::new(handle, "test-config".to_string())
     }
 
     fn create_test_config() -> Config {
@@ -648,7 +686,7 @@ mod tests {
     #[tokio::test]
     async fn test_stop_all_port_forward_empty() {
         {
-            let mut processes = CHILD_PROCESSES.lock().unwrap();
+            let mut processes = CHILD_PROCESSES.lock().await;
             processes.clear();
             assert!(processes.is_empty());
         }
@@ -673,18 +711,18 @@ mod tests {
         let dummy_handle = create_dummy_handle().await;
 
         {
-            let mut processes = CHILD_PROCESSES.lock().unwrap();
+            let mut processes = CHILD_PROCESSES.lock().await;
             processes.clear();
             processes.insert("1_test-service".to_string(), dummy_handle);
         }
         {
-            let mut processes = CHILD_PROCESSES.lock().unwrap();
+            let mut processes = CHILD_PROCESSES.lock().await;
             if let Some(process) = processes.remove("1_test-service") {
                 process.abort();
             }
         }
 
-        let processes = CHILD_PROCESSES.lock().unwrap();
+        let processes = CHILD_PROCESSES.lock().await;
         assert!(processes.is_empty(), "Process handle should be removed");
     }
 
@@ -695,7 +733,7 @@ mod tests {
         let dummy_handle3 = create_dummy_handle().await;
 
         {
-            let mut processes = CHILD_PROCESSES.lock().unwrap();
+            let mut processes = CHILD_PROCESSES.lock().await;
             processes.clear();
             processes.insert("1_service1".to_string(), dummy_handle1);
             processes.insert("2_service2".to_string(), dummy_handle2);
@@ -703,13 +741,13 @@ mod tests {
             assert_eq!(processes.len(), 3);
         }
         {
-            let mut processes = CHILD_PROCESSES.lock().unwrap();
+            let mut processes = CHILD_PROCESSES.lock().await;
             if let Some(process) = processes.remove("2_service2") {
                 process.abort();
             }
         }
 
-        let processes = CHILD_PROCESSES.lock().unwrap();
+        let processes = CHILD_PROCESSES.lock().await;
         assert_eq!(
             processes.len(),
             2,

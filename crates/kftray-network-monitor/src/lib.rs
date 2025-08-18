@@ -5,33 +5,32 @@ mod monitor;
 mod network;
 mod types;
 
-use controller::NetworkMonitorController;
+use std::sync::OnceLock;
+
+pub use controller::NetworkMonitorController;
 pub use types::{
     MonitorConfig,
     NetworkMonitorError,
 };
 
-static CONTROLLER: tokio::sync::OnceCell<NetworkMonitorController> =
-    tokio::sync::OnceCell::const_new();
+static DEFAULT_CONTROLLER: OnceLock<NetworkMonitorController> = OnceLock::new();
 
-async fn get_controller() -> &'static NetworkMonitorController {
-    CONTROLLER
-        .get_or_init(|| async { NetworkMonitorController::new() })
-        .await
+fn get_default_controller() -> &'static NetworkMonitorController {
+    DEFAULT_CONTROLLER.get_or_init(NetworkMonitorController::new)
 }
 
 pub async fn start() -> Result<(), NetworkMonitorError> {
-    get_controller().await.start().await
+    get_default_controller().start().await
 }
 
 pub async fn stop() -> Result<(), NetworkMonitorError> {
-    get_controller().await.stop().await
+    get_default_controller().stop().await
 }
 
 pub async fn is_running() -> bool {
-    get_controller().await.is_running().await
+    get_default_controller().is_running().await
 }
 
 pub async fn restart() -> Result<(), NetworkMonitorError> {
-    get_controller().await.restart().await
+    get_default_controller().restart().await
 }

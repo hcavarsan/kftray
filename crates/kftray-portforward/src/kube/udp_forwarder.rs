@@ -7,6 +7,7 @@ use tokio::io::{
 };
 use tokio::net::UdpSocket as TokioUdpSocket;
 use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
 use tracing::{
     error,
     info,
@@ -20,6 +21,7 @@ impl UdpForwarder {
     pub async fn bind_and_forward(
         local_address: String, local_port: u16,
         upstream_conn: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+        cancellation_token: CancellationToken,
     ) -> anyhow::Result<(u16, tokio::task::JoinHandle<()>)> {
         let local_udp_addr = format!("{local_address}:{local_port}");
 
@@ -43,16 +45,17 @@ impl UdpForwarder {
         let handle = tokio::spawn({
             let tcp_read = tcp_read.clone();
             let tcp_write = tcp_write.clone();
+            let cancel_token = cancellation_token.clone();
             async move {
                 let mut udp_buffer = [0u8; BUFFER_SIZE];
-                let mut peer: Option<std::net::SocketAddr> = None;
+                let peer: Arc<Mutex<Option<std::net::SocketAddr>>> = Arc::new(Mutex::new(None));
 
                 loop {
                     tokio::select! {
                         result = local_udp_socket_read.recv_from(&mut udp_buffer) => {
                             match result {
                                 Ok((len, src)) => {
-                                    peer = Some(src);
+                                    *peer.lock().await = Some(src);
                                     let mut writer = tcp_write.lock().await;
 
                                     let packet_len = (len as u32).to_be_bytes();
@@ -81,8 +84,9 @@ impl UdpForwarder {
                         } => {
                             match result {
                                 Ok(Some(packet)) => {
-                                    if let Some(peer) = peer {
-                                        if let Err(e) = local_udp_socket_write.send_to(&packet, &peer).await {
+                                    let peer_addr = *peer.lock().await;
+                                    if let Some(peer_addr) = peer_addr {
+                                        if let Err(e) = local_udp_socket_write.send_to(&packet, &peer_addr).await {
                                             error!("Failed to send UDP packet to peer: {:?}", e);
                                             break;
                                         }
@@ -97,6 +101,10 @@ impl UdpForwarder {
                                     break;
                                 }
                             }
+                        }
+                        _ = cancel_token.cancelled() => {
+                            info!("UDP forwarder cancelled, shutting down");
+                            break;
                         }
                     }
                 }
@@ -137,6 +145,7 @@ mod tests {
 
     use tokio::io::duplex;
     use tokio::net::UdpSocket;
+    use tokio_util::sync::CancellationToken;
 
     use super::*;
 
@@ -174,9 +183,15 @@ mod tests {
     #[tokio::test]
     async fn test_bind_and_forward_basic() {
         let (_, server_stream) = duplex(1024);
+        let cancellation_token = CancellationToken::new();
 
-        let result =
-            UdpForwarder::bind_and_forward("127.0.0.1".to_string(), 0, server_stream).await;
+        let result = UdpForwarder::bind_and_forward(
+            "127.0.0.1".to_string(),
+            0,
+            server_stream,
+            cancellation_token,
+        )
+        .await;
 
         assert!(result.is_ok());
 

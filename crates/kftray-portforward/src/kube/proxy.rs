@@ -56,7 +56,11 @@ pub async fn deploy_and_forward_pod_with_mode(
     let mut responses: Vec<CustomResponse> = Vec::new();
 
     for mut config in configs.into_iter() {
-        let client_key = ServiceClientKey::new(config.context.clone(), config.kubeconfig.clone());
+        let client_key = ServiceClientKey::new(
+            config.context.clone(),
+            config.kubeconfig.clone(),
+            config.id.unwrap_or(-1),
+        );
 
         let shared_client = SHARED_CLIENT_MANAGER
             .get_client(client_key)
@@ -201,7 +205,11 @@ pub async fn stop_proxy_forward_with_mode(
             e.to_string()
         })?;
 
-    let client_key = ServiceClientKey::new(config.context.clone(), config.kubeconfig.clone());
+    let client_key = ServiceClientKey::new(
+        config.context.clone(),
+        config.kubeconfig.clone(),
+        config.id.unwrap_or(-1),
+    );
 
     let shared_client = SHARED_CLIENT_MANAGER
         .get_client(client_key)
@@ -278,7 +286,11 @@ pub async fn stop_proxy_forward(
             e.to_string()
         })?;
 
-    let client_key = ServiceClientKey::new(config.context.clone(), config.kubeconfig.clone());
+    let client_key = ServiceClientKey::new(
+        config.context.clone(),
+        config.kubeconfig.clone(),
+        config.id.unwrap_or(-1),
+    );
 
     let shared_client = SHARED_CLIENT_MANAGER
         .get_client(client_key)

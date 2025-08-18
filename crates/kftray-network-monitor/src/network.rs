@@ -2,7 +2,6 @@ use futures::stream::{
     FuturesUnordered,
     StreamExt,
 };
-use log::warn;
 use tokio::time::timeout;
 
 use crate::types::MonitorConfig;
@@ -32,12 +31,17 @@ impl NetworkChecker {
             })
             .collect();
 
+        let mut success_count = 0;
+        let mut total_count = 0;
+
         while let Some(ok) = futs.next().await {
+            total_count += 1;
             if ok {
-                return true;
+                success_count += 1;
             }
         }
-        false
+
+        success_count > 0 || total_count == 0
     }
 
     pub async fn get_network_fingerprint(&self) -> String {
@@ -82,27 +86,14 @@ impl NetworkChecker {
 }
 
 pub async fn is_port_listening(address: &str, port: u16) -> bool {
-    use std::net::{
-        SocketAddr,
-        TcpListener,
-    };
+    let addr = format!("{address}:{port}");
 
-    let addr: SocketAddr = match format!("{address}:{port}").parse() {
-        Ok(addr) => addr,
-        Err(_) => return false,
-    };
-
-    match TcpListener::bind(addr) {
-        Ok(listener) => {
-            drop(listener);
-            false
-        }
-        Err(err) => match err.kind() {
-            std::io::ErrorKind::AddrInUse => true,
-            other => {
-                warn!("port-check bind failed: {other}");
-                false
-            }
-        },
-    }
+    matches!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            tokio::net::TcpStream::connect(&addr)
+        )
+        .await,
+        Ok(Ok(_))
+    )
 }

@@ -303,7 +303,7 @@ async fn test_port_forward_tcp_success() -> Result<()> {
             Ok((port, handle)) => {
                 let key = "1_test-service".to_string();
                 {
-                    let mut processes = CHILD_PROCESSES.lock().unwrap();
+                    let mut processes = CHILD_PROCESSES.lock().await;
                     processes.insert(key.clone(), handle);
                 }
 
@@ -350,7 +350,7 @@ async fn test_port_forward_tcp_success() -> Result<()> {
     mock_task.abort();
 
     {
-        let mut processes = CHILD_PROCESSES.lock().unwrap();
+        let mut processes = CHILD_PROCESSES.lock().await;
         processes.clear();
     }
 
@@ -407,7 +407,7 @@ async fn test_port_forward_udp_success() -> Result<()> {
             Ok((port, handle)) => {
                 let key = "1_test-service".to_string();
                 {
-                    let mut processes = CHILD_PROCESSES.lock().unwrap();
+                    let mut processes = CHILD_PROCESSES.lock().await;
                     processes.insert(key.clone(), handle);
                 }
 
@@ -433,7 +433,7 @@ async fn test_port_forward_udp_success() -> Result<()> {
             println!("UDP Port forwarding unexpectedly succeeded (port {bound_port})");
 
             {
-                let mut processes = CHILD_PROCESSES.lock().unwrap();
+                let mut processes = CHILD_PROCESSES.lock().await;
                 if let Some(handle) = processes.remove("1_test-service") {
                     handle.abort();
                 }
@@ -579,12 +579,12 @@ async fn test_start_port_forward_mock_components() -> Result<()> {
                 test_config.service.clone().unwrap_or_default()
             );
             {
-                let mut processes = CHILD_PROCESSES.lock().unwrap();
+                let mut processes = CHILD_PROCESSES.lock().await;
                 processes.insert(handle_key.clone(), handle);
             }
 
             {
-                let mut processes = CHILD_PROCESSES.lock().unwrap();
+                let mut processes = CHILD_PROCESSES.lock().await;
                 if let Some(handle) = processes.remove(&handle_key) {
                     handle.abort();
                 }

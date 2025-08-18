@@ -6,7 +6,6 @@ use std::time::{
 };
 
 use futures::FutureExt;
-use kftray_portforward::port_forward::CANCEL_NOTIFIER;
 use log::{
     debug,
     error,
@@ -45,6 +44,23 @@ impl NetworkMonitor {
     pub async fn start(self) {
         info!("Starting network monitor");
 
+        let initial_configs = match ConfigManager::get_active_configs().await {
+            Ok(configs) => configs,
+            Err(e) => {
+                error!("Failed to get initial active configs: {e}");
+                Vec::new()
+            }
+        };
+
+        if initial_configs.is_empty() {
+            info!("No active port forward configs found, network monitor will idle until configs are started");
+        } else {
+            info!(
+                "Network monitor starting with {} active port forward configs",
+                initial_configs.len()
+            );
+        }
+
         let monitor = Arc::new(self);
         let background_monitor = monitor.clone();
         tokio::spawn(async move {
@@ -62,6 +78,16 @@ impl NetworkMonitor {
 
         loop {
             sleep(self.get_sleep_duration(network_up, failure_count)).await;
+
+            let active_configs: Vec<kftray_commons::config_model::Config> =
+                (ConfigManager::get_active_configs().await).unwrap_or_default();
+
+            if active_configs.is_empty() {
+                debug!("No active port forward configs found, network monitor idling");
+                sleep(Duration::from_secs(60)).await;
+                failure_count = 0;
+                continue;
+            }
 
             let is_up = self.network_checker.check_connectivity().await;
 
@@ -81,7 +107,7 @@ impl NetworkMonitor {
                         monitor.handle_reconnect_with_state().await;
                     });
                 } else {
-                    debug!("Skipping reconnection - network not stable long enough or too soon after last reconnect");
+                    debug!("Skipping reconnection - rate limited or network unstable");
                 }
                 last_health = Instant::now();
             } else if network_up && !is_up {
@@ -122,6 +148,15 @@ impl NetworkMonitor {
         loop {
             sleep(self.config.monitor_interval).await;
 
+            let active_configs: Vec<kftray_commons::config_model::Config> =
+                (ConfigManager::get_active_configs().await).unwrap_or_default();
+
+            if active_configs.is_empty() {
+                debug!("No active port forward configs found, background monitor idling");
+                sleep(Duration::from_secs(120)).await;
+                continue;
+            }
+
             let current_network_info = self.network_checker.get_network_fingerprint().await;
             if current_network_info != last_network_info {
                 info!("Network interface change detected (background monitor) - monitoring state changes only");
@@ -129,12 +164,6 @@ impl NetworkMonitor {
             }
 
             let current_network_state = self.network_checker.check_connectivity().await;
-
-            {
-                let state = self.get_task_state().await;
-                let mut guard = state.lock().await;
-                guard.update_network_state(current_network_state);
-            }
 
             if current_network_state != last_network_state {
                 info!("Network state change detected: {last_network_state} -> {current_network_state}");
@@ -186,8 +215,7 @@ impl NetworkMonitor {
             return;
         }
 
-        CANCEL_NOTIFIER.notify_waiters();
-        sleep(self.config.sleep_up).await;
+        sleep(Duration::from_secs(5)).await;
 
         info!("Restarting {} port forwards", active_configs.len());
 
@@ -213,14 +241,27 @@ impl NetworkMonitor {
         if !failed_configs.is_empty() {
             let mut confirmed_failed = Vec::new();
             for config in failed_configs {
-                sleep(self.config.sleep_down).await;
-                if !self.health_checker.check_single_port_forward(&config).await {
+                sleep(Duration::from_secs(3)).await;
+
+                let mut is_failed = true;
+                for _ in 0..3 {
+                    if self.health_checker.check_single_port_forward(&config).await {
+                        is_failed = false;
+                        break;
+                    }
+                    sleep(Duration::from_secs(1)).await;
+                }
+
+                if is_failed {
                     confirmed_failed.push(config);
                 }
             }
 
             if !confirmed_failed.is_empty() {
-                info!("Restarting {} failed port forwards", confirmed_failed.len());
+                info!(
+                    "Restarting {} confirmed failed port forwards",
+                    confirmed_failed.len()
+                );
                 let http_log_state = Arc::new(kftray_http_logs::HttpLogState::new());
                 ConfigManager::restart_port_forwards(confirmed_failed, http_log_state).await;
             }
@@ -260,6 +301,14 @@ impl NetworkMonitor {
     }
 
     async fn should_start_reconnect(&self) -> bool {
+        let active_configs: Vec<kftray_commons::config_model::Config> =
+            (ConfigManager::get_active_configs().await).unwrap_or_default();
+
+        if active_configs.is_empty() {
+            debug!("Cannot reconnect: no active port forward configs");
+            return false;
+        }
+
         let state = self.get_task_state().await;
         let mut guard = state.lock().await;
 
@@ -268,11 +317,19 @@ impl NetworkMonitor {
             return false;
         }
 
+        if !guard.can_reconnect() {
+            debug!(
+                "Cannot reconnect: circuit breaker tripped (attempts: {}/{})",
+                guard.reconnect_attempts, guard.max_reconnect_attempts
+            );
+            return false;
+        }
+
         if let Some(last) = guard.last_reconnect {
             let elapsed = last.elapsed();
-            if elapsed < Duration::from_secs(10) {
+            if elapsed < Duration::from_secs(30) {
                 debug!(
-                    "Cannot reconnect: only {:.1}s since last reconnect (need 10s)",
+                    "Cannot reconnect: only {:.1}s since last reconnect (need 30s)",
                     elapsed.as_secs_f32()
                 );
                 return false;
@@ -281,16 +338,18 @@ impl NetworkMonitor {
 
         if let Some(stable_since) = guard.network_stable_since {
             let stable_duration = stable_since.elapsed();
-            if stable_duration < Duration::from_secs(3) {
+            if stable_duration < Duration::from_secs(10) {
                 debug!(
-                    "Cannot reconnect: network only stable for {:.1}s (need 3s)",
+                    "Cannot reconnect: network only stable for {:.1}s (need 10s)",
                     stable_duration.as_secs_f32()
                 );
                 return false;
             }
             debug!(
-                "Network stable for {:.1}s, proceeding with reconnect",
-                stable_duration.as_secs_f32()
+                "Network stable for {:.1}s, proceeding with reconnect (attempt {}/{})",
+                stable_duration.as_secs_f32(),
+                guard.reconnect_attempts + 1,
+                guard.max_reconnect_attempts
             );
         } else {
             debug!("Cannot reconnect: network not stable");
@@ -302,6 +361,13 @@ impl NetworkMonitor {
     }
 
     async fn should_start_health_check(&self) -> bool {
+        let active_configs: Vec<kftray_commons::config_model::Config> =
+            (ConfigManager::get_active_configs().await).unwrap_or_default();
+
+        if active_configs.is_empty() {
+            return false;
+        }
+
         let state = self.get_task_state().await;
         let mut guard = state.lock().await;
         if guard.should_health_check() {
