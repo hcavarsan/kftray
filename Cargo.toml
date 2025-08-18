@@ -62,7 +62,7 @@ reqwest = "0.12.23"
 secrecy = "0.10"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0.142"
-socket2 = "0.5"
+socket2 = "0.6.0"
 sqlx = { version = "0.8", features = ["runtime-tokio-native-tls", "sqlite"] }
 sysinfo = "0.37.0"
 tauri = { version = "1.8.3", default-features = false, features = [
@@ -76,9 +76,10 @@ tauri = { version = "1.8.3", default-features = false, features = [
 tauri-build = { version = "1.5.6", features = [] }
 tauri-plugin-positioner = { version = "1.0.5", features = ["system-tray"] }
 tempfile = "3.20"
-thiserror = "2.0.14"
+thiserror = "2.0.15"
 tokio = { version = "1.47.1", features = ["full", "macros", "rt-multi-thread"] }
 tokio-stream = { version = "0.1", features = ["net"] }
+tokio-util = { version = "0.7.16", features = ["full"] }
 tower = { version = "0.5", features = ["util"] }
 tower-test = "0.4"
 tracing = "0.1"

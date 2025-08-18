@@ -45,18 +45,17 @@ pub struct MonitorConfig {
 impl Default for MonitorConfig {
     fn default() -> Self {
         Self {
-            network_timeout: Duration::from_millis(200),
-            health_interval: Duration::from_secs(3),
-            monitor_interval: Duration::from_secs(2),
-            sleep_up: Duration::from_millis(500),
-            sleep_down: Duration::from_millis(100),
-            retry_delay: Duration::from_millis(5),
+            network_timeout: Duration::from_secs(3),
+            health_interval: Duration::from_secs(30),
+            monitor_interval: Duration::from_secs(15),
+            sleep_up: Duration::from_secs(5),
+            sleep_down: Duration::from_secs(3),
+            retry_delay: Duration::from_millis(200),
             network_endpoints: vec!["8.8.8.8:53", "1.1.1.1:53", "8.8.4.4:53"],
         }
     }
 }
 
-#[derive(Default)]
 pub struct TaskState {
     pub reconnect_in_progress: bool,
     pub health_check_in_progress: bool,
@@ -64,6 +63,23 @@ pub struct TaskState {
     pub last_health_check: Option<Instant>,
     pub network_stable_since: Option<Instant>,
     pub last_network_state: bool,
+    pub reconnect_attempts: u32,
+    pub max_reconnect_attempts: u32,
+}
+
+impl Default for TaskState {
+    fn default() -> Self {
+        Self {
+            reconnect_in_progress: false,
+            health_check_in_progress: false,
+            last_reconnect: None,
+            last_health_check: None,
+            network_stable_since: None,
+            last_network_state: false,
+            reconnect_attempts: 0,
+            max_reconnect_attempts: 5,
+        }
+    }
 }
 
 impl TaskState {
@@ -79,16 +95,21 @@ impl TaskState {
             self.last_network_state = is_up;
             if is_up {
                 self.network_stable_since = Some(Instant::now());
+                self.reconnect_attempts = 0;
             } else {
                 self.network_stable_since = None;
             }
         }
     }
 
+    pub fn can_reconnect(&self) -> bool {
+        self.reconnect_attempts < self.max_reconnect_attempts
+    }
+
     pub fn start_reconnect(&mut self) {
         self.reconnect_in_progress = true;
         self.last_reconnect = Some(Instant::now());
-        self.network_stable_since = Some(Instant::now());
+        self.reconnect_attempts += 1;
     }
 
     pub fn finish_reconnect(&mut self) {

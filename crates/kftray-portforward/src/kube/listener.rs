@@ -5,6 +5,7 @@ use kftray_http_logs::HttpLogState;
 use kube::Api;
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 use tracing::{
     debug,
     error,
@@ -20,7 +21,6 @@ use crate::kube::pod_watcher::PodWatcher;
 use crate::kube::shared_client::SHARED_CLIENT_MANAGER;
 use crate::kube::tcp_forwarder::TcpForwarder;
 use crate::kube::udp_forwarder::UdpForwarder;
-use crate::port_forward::CANCEL_NOTIFIER;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Protocol {
@@ -56,14 +56,16 @@ pub struct PortForwarder {
     next_portforwarder: Arc<tokio::sync::Mutex<Option<kube::api::Portforwarder>>>,
     portforward_semaphore: Arc<tokio::sync::Semaphore>,
     http_log_watcher: HttpLogStateWatcher,
+    initialization_lock: Arc<tokio::sync::Mutex<bool>>,
 }
 
 impl PortForwarder {
     pub async fn new(
         namespace: &str, target: Target, context_name: Option<String>, kubeconfig: Option<String>,
+        config_id: i64,
     ) -> anyhow::Result<Self> {
         let client_key =
-            crate::kube::shared_client::ServiceClientKey::new(context_name, kubeconfig);
+            crate::kube::shared_client::ServiceClientKey::new(context_name, kubeconfig, config_id);
         let client = SHARED_CLIENT_MANAGER.get_client(client_key).await?;
         let pod_watcher = PodWatcher::new((*client).clone(), target.clone()).await?;
 
@@ -75,6 +77,7 @@ impl PortForwarder {
             next_portforwarder: Arc::new(tokio::sync::Mutex::new(None)),
             portforward_semaphore: Arc::new(tokio::sync::Semaphore::new(10)),
             http_log_watcher: HttpLogStateWatcher::new(),
+            initialization_lock: Arc::new(tokio::sync::Mutex::new(false)),
         })
     }
 
@@ -102,6 +105,11 @@ impl PortForwarder {
     }
 
     pub async fn initialize(&mut self, target: &Target) -> anyhow::Result<()> {
+        let mut init_lock = self.initialization_lock.lock().await;
+        if *init_lock {
+            return Ok(());
+        }
+
         let target_port = self.resolve_target_port(target).await?;
         self.target_port = Some(target_port);
 
@@ -115,6 +123,7 @@ impl PortForwarder {
             self.spawn_next_portforwarder(target_port);
         }
 
+        *init_lock = true;
         info!(
             "Initialized port forwarder for port {} with 1 ready + 2 creating",
             target_port
@@ -123,6 +132,14 @@ impl PortForwarder {
     }
 
     pub async fn get_stream(&self) -> anyhow::Result<Box<dyn PortForwardStream>> {
+        let init_lock = self.initialization_lock.lock().await;
+        if !*init_lock {
+            return Err(anyhow::anyhow!(
+                "Port forwarder not initialized - call initialize() first"
+            ));
+        }
+        drop(init_lock);
+
         let target_port = self.target_port.ok_or_else(|| {
             anyhow::anyhow!("Port forwarder not initialized - call initialize() first")
         })?;
@@ -189,13 +206,34 @@ impl PortForwarder {
             .await
             .ok_or_else(|| anyhow::anyhow!("No ready pods available"))?;
 
-        tokio::time::timeout(
-            tokio::time::Duration::from_secs(3),
-            self.pod_api
-                .portforward(&selected_pod.pod_name, &[target_port]),
-        )
-        .await?
-        .map_err(|e| anyhow::anyhow!("Failed to create portforwarder: {}", e))
+        for attempt in 1..=2 {
+            let result = tokio::time::timeout(
+                tokio::time::Duration::from_secs(3),
+                self.pod_api
+                    .portforward(&selected_pod.pod_name, &[target_port]),
+            )
+            .await;
+
+            match result {
+                Ok(Ok(portforwarder)) => return Ok(portforwarder),
+                Ok(Err(e)) => {
+                    if e.to_string().contains("404") && attempt == 1 {
+                        debug!(
+                            "Portforward attempt {} failed with 404, retrying in 2s",
+                            attempt
+                        );
+                        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                        continue;
+                    }
+                    return Err(anyhow::anyhow!("Failed to create portforwarder: {}", e));
+                }
+                Err(e) => return Err(anyhow::anyhow!("Portforward timeout: {}", e)),
+            }
+        }
+
+        Err(anyhow::anyhow!(
+            "Failed to create portforwarder after 2 attempts"
+        ))
     }
 
     fn spawn_next_portforwarder(&self, target_port: u16) {
@@ -204,26 +242,43 @@ impl PortForwarder {
         let next_pf = self.next_portforwarder.clone();
 
         tokio::spawn(async move {
-            {
-                let guard = next_pf.lock().await;
-                if guard.is_some() {
-                    return;
-                }
+            let mut guard = next_pf.lock().await;
+            if guard.is_some() {
+                return;
             }
 
             if let Some(selected_pod) = pod_watcher
                 .wait_for_ready_pod(tokio::time::Duration::from_secs(5))
                 .await
             {
-                if let Ok(Ok(portforwarder)) = tokio::time::timeout(
-                    tokio::time::Duration::from_secs(3),
-                    pod_api.portforward(&selected_pod.pod_name, &[target_port]),
-                )
-                .await
-                {
-                    let mut guard = next_pf.lock().await;
-                    if guard.is_none() {
-                        *guard = Some(portforwarder);
+                for attempt in 1..=2 {
+                    let result = tokio::time::timeout(
+                        tokio::time::Duration::from_secs(3),
+                        pod_api.portforward(&selected_pod.pod_name, &[target_port]),
+                    )
+                    .await;
+
+                    match result {
+                        Ok(Ok(portforwarder)) => {
+                            *guard = Some(portforwarder);
+                            return;
+                        }
+                        Ok(Err(e)) => {
+                            if e.to_string().contains("404") && attempt == 1 {
+                                debug!(
+                                    "Spawn portforward attempt {} failed with 404, retrying in 2s",
+                                    attempt
+                                );
+                                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                                continue;
+                            }
+                            debug!("Spawn portforward failed: {}", e);
+                            return;
+                        }
+                        Err(e) => {
+                            debug!("Spawn portforward timeout: {}", e);
+                            return;
+                        }
                     }
                 }
             }
@@ -232,7 +287,7 @@ impl PortForwarder {
 
     pub async fn handle_tcp_listener(
         self: Arc<Self>, listener: TcpListener, http_log_state: Arc<HttpLogState>, config_id: i64,
-        workload_type: String, port: u16,
+        workload_type: String, port: u16, cancellation_token: CancellationToken,
     ) -> anyhow::Result<()> {
         let initial_logging_enabled = http_log_state
             .get_http_logs(config_id)
@@ -245,15 +300,23 @@ impl PortForwarder {
 
         let http_log_watcher_clone = self.http_log_watcher.clone();
         let http_log_state_clone = http_log_state.clone();
+        let sync_cancel_token = cancellation_token.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_millis(200));
             loop {
-                interval.tick().await;
-                if let Err(e) = http_log_watcher_clone
-                    .sync_from_external_state(&http_log_state_clone, config_id)
-                    .await
-                {
-                    debug!("Sync error for config {}: {}", config_id, e);
+                tokio::select! {
+                    _ = interval.tick() => {
+                        if let Err(e) = http_log_watcher_clone
+                            .sync_from_external_state(&http_log_state_clone, config_id)
+                            .await
+                        {
+                            debug!("Sync error for config {}: {}", config_id, e);
+                        }
+                    }
+                    _ = sync_cancel_token.cancelled() => {
+                        debug!("HTTP log sync task cancelled for config {}", config_id);
+                        break;
+                    }
                 }
             }
         });
@@ -261,6 +324,7 @@ impl PortForwarder {
         let tcp_forwarder = TcpForwarder::new(config_id, workload_type);
 
         let forwarder_clone = Arc::clone(&self);
+        let cancel_token = cancellation_token.clone();
 
         loop {
             let (client_conn, client_addr) = tokio::select! {
@@ -273,7 +337,7 @@ impl PortForwarder {
                         }
                     }
                 }
-                _ = CANCEL_NOTIFIER.notified() => {
+                _ = cancel_token.cancelled() => {
                     break;
                 }
             };
@@ -282,6 +346,7 @@ impl PortForwarder {
             let mut tcp_forwarder = tcp_forwarder.clone();
             let http_log_watcher_clone = Arc::new(self.http_log_watcher.clone());
             let http_log_state_clone = http_log_state.clone();
+            let cancel_token_clone = cancel_token.clone();
             tokio::spawn(async move {
                 let upstream_stream = match forwarder.get_stream().await {
                     Ok(stream) => stream,
@@ -296,7 +361,7 @@ impl PortForwarder {
                         client_conn,
                         upstream_stream,
                         client_addr,
-                        CANCEL_NOTIFIER.clone(),
+                        cancel_token_clone,
                         http_log_watcher_clone,
                         http_log_state_clone,
                         port,
@@ -313,7 +378,7 @@ impl PortForwarder {
 
     pub async fn start_listener(
         self: Arc<Self>, listener_config: ListenerConfig, http_log_state: Arc<HttpLogState>,
-        config_id: i64, workload_type: String,
+        config_id: i64, workload_type: String, cancellation_token: CancellationToken,
     ) -> anyhow::Result<(u16, JoinHandle<anyhow::Result<()>>)> {
         if let Err(e) =
             crate::network_utils::ensure_loopback_address(&listener_config.local_address).await
@@ -323,19 +388,31 @@ impl PortForwarder {
 
         match listener_config.protocol {
             Protocol::Tcp => {
-                self.start_tcp_listener(listener_config, http_log_state, config_id, workload_type)
-                    .await
+                self.start_tcp_listener(
+                    listener_config,
+                    http_log_state,
+                    config_id,
+                    workload_type,
+                    cancellation_token,
+                )
+                .await
             }
             Protocol::Udp => {
-                self.start_udp_listener(listener_config, http_log_state, config_id, workload_type)
-                    .await
+                self.start_udp_listener(
+                    listener_config,
+                    http_log_state,
+                    config_id,
+                    workload_type,
+                    cancellation_token,
+                )
+                .await
             }
         }
     }
 
     async fn start_tcp_listener(
         self: Arc<Self>, listener_config: ListenerConfig, http_log_state: Arc<HttpLogState>,
-        config_id: i64, workload_type: String,
+        config_id: i64, workload_type: String, cancellation_token: CancellationToken,
     ) -> anyhow::Result<(u16, JoinHandle<anyhow::Result<()>>)> {
         let ip = listener_config
             .local_address
@@ -349,12 +426,21 @@ impl PortForwarder {
             })?;
         let addr = std::net::SocketAddr::new(ip, listener_config.local_port);
 
-        let listener = TcpListener::bind(addr).await?;
+        let listener = TcpListener::bind(addr)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to bind TCP listener to {}: {}", addr, e))?;
         let port = listener.local_addr()?.port();
 
         let handle = tokio::spawn(async move {
-            self.handle_tcp_listener(listener, http_log_state, config_id, workload_type, port)
-                .await
+            self.handle_tcp_listener(
+                listener,
+                http_log_state,
+                config_id,
+                workload_type,
+                port,
+                cancellation_token,
+            )
+            .await
         });
 
         Ok((port, handle))
@@ -362,11 +448,20 @@ impl PortForwarder {
 
     async fn start_udp_listener(
         self: Arc<Self>, listener_config: ListenerConfig, _http_log_state: Arc<HttpLogState>,
-        _config_id: i64, workload_type: String,
+        _config_id: i64, workload_type: String, cancellation_token: CancellationToken,
     ) -> anyhow::Result<(u16, JoinHandle<anyhow::Result<()>>)> {
         if workload_type == "service" || workload_type == "proxy" {
             tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
         }
+
+        let test_addr = format!(
+            "{}:{}",
+            listener_config.local_address, listener_config.local_port
+        );
+        let _test_socket = tokio::net::UdpSocket::bind(&test_addr)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to bind local UDP socket: {}", e))?;
+        drop(_test_socket);
 
         let upstream_stream = self
             .get_stream()
@@ -377,6 +472,7 @@ impl PortForwarder {
             listener_config.local_address,
             listener_config.local_port,
             upstream_stream,
+            cancellation_token,
         )
         .await?;
 
@@ -409,5 +505,10 @@ impl PortForwarder {
             "Shutting down port forwarder for namespace: {}",
             self.namespace.as_ref()
         );
+
+        let mut next_pf = self.next_portforwarder.lock().await;
+        if let Some(portforwarder) = next_pf.take() {
+            drop(portforwarder);
+        }
     }
 }

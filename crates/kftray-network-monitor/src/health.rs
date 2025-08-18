@@ -40,6 +40,10 @@ impl HealthChecker {
         };
         let local_address = config.local_address.as_deref().unwrap_or("127.0.0.1");
 
+        if config.protocol == "udp" {
+            return true;
+        }
+
         if !is_port_listening(local_address, local_port).await {
             return false;
         }

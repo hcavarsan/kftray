@@ -8,8 +8,8 @@ use tokio::io::{
 };
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
-use tokio::sync::Notify;
 use tokio::time::timeout;
+use tokio_util::sync::CancellationToken;
 use tracing::{
     debug,
     error,
@@ -67,7 +67,7 @@ impl TcpForwarder {
     pub async fn forward_streams(
         &mut self, client_stream: tokio::net::TcpStream,
         upstream_stream: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
-        client_address: std::net::SocketAddr, cancel_notifier: Arc<Notify>,
+        client_address: std::net::SocketAddr, cancellation_token: CancellationToken,
         http_log_watcher: Arc<HttpLogStateWatcher>, http_log_state: Arc<HttpLogState>,
         local_port: u16,
     ) -> anyhow::Result<()> {
@@ -85,7 +85,7 @@ impl TcpForwarder {
         self.forward_connection(
             Arc::new(Mutex::new(client_stream)),
             upstream_stream,
-            cancel_notifier,
+            cancellation_token,
             http_log_watcher,
             http_log_state,
             local_port,
@@ -133,7 +133,7 @@ impl TcpForwarder {
     pub async fn forward_connection(
         &mut self, client_conn: Arc<Mutex<TcpStream>>,
         mut upstream_conn: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
-        cancel_notifier: Arc<Notify>, http_log_watcher: Arc<HttpLogStateWatcher>,
+        cancellation_token: CancellationToken, http_log_watcher: Arc<HttpLogStateWatcher>,
         http_log_state: Arc<HttpLogState>, local_port: u16,
     ) -> anyhow::Result<()> {
         let log_subscriber = http_log_watcher.create_filtered_subscriber(self.config_id);
@@ -157,7 +157,7 @@ impl TcpForwarder {
                 &mut client_reader,
                 &mut upstream_writer,
                 Arc::clone(&request_id),
-                cancel_notifier.clone(),
+                cancellation_token.clone(),
                 log_subscriber.resubscribe(),
                 http_log_state.clone(),
                 local_port,
@@ -169,7 +169,7 @@ impl TcpForwarder {
                 &mut upstream_reader,
                 &mut client_writer,
                 Arc::clone(&request_id),
-                cancel_notifier.clone(),
+                cancellation_token.clone(),
                 log_subscriber,
                 http_log_state,
                 local_port,
@@ -198,7 +198,7 @@ impl TcpForwarder {
             let state_monitor = Self::monitor_logging_state_simple(
                 config_id,
                 log_subscriber,
-                cancel_notifier.clone(),
+                cancellation_token.clone(),
             );
 
             tokio::select! {
@@ -226,7 +226,7 @@ impl TcpForwarder {
         mut log_subscriber: tokio::sync::broadcast::Receiver<
             crate::kube::http_log_watcher::HttpLogStateEvent,
         >,
-        cancel_notifier: Arc<Notify>,
+        cancellation_token: CancellationToken,
     ) {
         loop {
             tokio::select! {
@@ -241,7 +241,7 @@ impl TcpForwarder {
                         debug!("Simple connection log subscriber error");
                     }
                 }
-                _ = cancel_notifier.notified() => return,
+                _ = cancellation_token.cancelled() => return,
             }
         }
     }
@@ -251,7 +251,7 @@ impl TcpForwarder {
         logger: Arc<Mutex<Option<crate::Logger>>>, config_id: i64,
         client_reader: &'a mut (impl AsyncReadExt + Unpin),
         upstream_writer: &'a mut (impl AsyncWriteExt + Unpin),
-        request_id: Arc<Mutex<Option<String>>>, cancel_notifier: Arc<Notify>,
+        request_id: Arc<Mutex<Option<String>>>, cancellation_token: CancellationToken,
         mut log_subscriber: tokio::sync::broadcast::Receiver<
             crate::kube::http_log_watcher::HttpLogStateEvent,
         >,
@@ -339,7 +339,7 @@ impl TcpForwarder {
                         }
                     }
                 },
-                _ = cancel_notifier.notified() => break,
+                _ = cancellation_token.cancelled() => break,
             }
         }
 
@@ -353,7 +353,7 @@ impl TcpForwarder {
         logger: Arc<Mutex<Option<crate::Logger>>>, config_id: i64,
         upstream_reader: &'a mut (impl AsyncReadExt + Unpin),
         client_writer: &'a mut (impl AsyncWriteExt + Unpin),
-        request_id: Arc<Mutex<Option<String>>>, cancel_notifier: Arc<Notify>,
+        request_id: Arc<Mutex<Option<String>>>, cancellation_token: CancellationToken,
         mut log_subscriber: tokio::sync::broadcast::Receiver<
             crate::kube::http_log_watcher::HttpLogStateEvent,
         >,
@@ -467,7 +467,7 @@ impl TcpForwarder {
                         }
                     }
                 },
-                _ = cancel_notifier.notified() => break,
+                _ = cancellation_token.cancelled() => break,
             }
         }
 
@@ -646,8 +646,8 @@ mod tests {
         let (tx, rx) = tokio::sync::oneshot::channel::<Vec<u8>>();
 
         let _forwarder = TcpForwarder::new(1, "pod".to_string());
-        let cancel_notifier = Arc::new(Notify::new());
-        let cancel_clone = Arc::clone(&cancel_notifier);
+        let cancellation_token = CancellationToken::new();
+        let cancel_clone = cancellation_token.clone();
 
         let upstream_task = tokio::spawn(async move {
             let mut buf = vec![0u8; 1024];
@@ -665,7 +665,7 @@ mod tests {
                 .expect("Write should succeed");
 
             tokio::time::sleep(Duration::from_millis(50)).await;
-            cancel_clone.notify_one();
+            cancel_clone.cancel();
         });
 
         let client_task = tokio::spawn(async move {
@@ -712,14 +712,14 @@ mod tests {
         let forwarder = TcpForwarder::new(1, "pod".to_string());
         let _http_log_state = HttpLogState::new();
         let request_id = Arc::new(Mutex::new(None));
-        let cancel_notifier = Arc::new(Notify::new());
-        let cancel_clone = cancel_notifier.clone();
+        let cancellation_token = CancellationToken::new();
+        let cancel_clone = cancellation_token.clone();
 
         tokio::spawn(async move {
             client_write.write_all(b"test data").await.unwrap();
             client_write.flush().await.unwrap();
             tokio::time::sleep(Duration::from_millis(50)).await;
-            cancel_clone.notify_one();
+            cancel_clone.cancel();
         });
 
         tokio::spawn(async move {
@@ -740,7 +740,7 @@ mod tests {
             &mut client_reader,
             &mut upstream_writer,
             request_id,
-            cancel_notifier,
+            cancellation_token,
             log_subscriber,
             http_log_state,
             8080,
@@ -758,8 +758,8 @@ mod tests {
         let forwarder = TcpForwarder::new(1, "pod".to_string());
         let _http_log_state = HttpLogState::new();
         let request_id = Arc::new(Mutex::new(Some("req123".to_string())));
-        let cancel_notifier = Arc::new(Notify::new());
-        let cancel_clone = cancel_notifier.clone();
+        let cancellation_token = CancellationToken::new();
+        let cancel_clone = cancellation_token.clone();
 
         tokio::spawn(async move {
             upstream_write
@@ -768,7 +768,7 @@ mod tests {
                 .unwrap();
             upstream_write.flush().await.unwrap();
             tokio::time::sleep(Duration::from_millis(50)).await;
-            cancel_clone.notify_one();
+            cancel_clone.cancel();
         });
 
         tokio::spawn(async move {
@@ -789,7 +789,7 @@ mod tests {
             &mut upstream_reader,
             &mut client_writer,
             request_id,
-            cancel_notifier,
+            cancellation_token,
             log_subscriber,
             http_log_state,
             8080,

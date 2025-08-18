@@ -1,9 +1,6 @@
 use std::sync::Arc;
 
-use log::{
-    info,
-    warn,
-};
+use log::info;
 use tokio::sync::{
     Mutex,
     RwLock,
@@ -20,6 +17,12 @@ pub struct NetworkMonitorController {
 struct ControllerState {
     task_handle: RwLock<Option<JoinHandle<()>>>,
     is_running: Mutex<bool>,
+}
+
+impl Default for NetworkMonitorController {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl NetworkMonitorController {
@@ -63,18 +66,15 @@ impl NetworkMonitorController {
 
         if let Some(handle) = handle {
             handle.abort();
-            let _ = handle.await;
+            if (handle.await).is_err() {}
         }
-
         *running = false;
         Ok(())
     }
 
     pub async fn restart(&self) -> Result<(), NetworkMonitorError> {
         if self.is_running().await {
-            if let Err(e) = self.stop().await {
-                warn!("Failed to stop network monitor during restart: {e}");
-            }
+            self.stop().await?;
         }
         self.start().await
     }

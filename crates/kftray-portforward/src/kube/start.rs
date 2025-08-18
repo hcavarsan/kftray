@@ -31,7 +31,10 @@ use crate::{
         Target,
         TargetSelector,
     },
-    port_forward::CHILD_PROCESSES,
+    port_forward::{
+        CHILD_PROCESSES,
+        PROCESS_MANAGEMENT_LOCK,
+    },
 };
 
 fn workload_type_description(workload_type: Option<&str>) -> &'static str {
@@ -184,13 +187,24 @@ async fn try_fallback_allocate_and_save(
                     config.id.unwrap_or_default()
                 );
 
-                if let Err(e) = save_allocated_address_to_db(config).await {
-                    error!("Failed to save fallback allocated address {} to database for config {}: {}", address, config.id.unwrap_or_default(), e);
-                } else {
-                    info!("Successfully updated database with fallback allocated address {} for config {}", address, config.id.unwrap_or_default());
+                match save_allocated_address_to_db(config).await {
+                    Ok(_) => {
+                        info!("Successfully updated database with fallback allocated address {} for config {}", address, config.id.unwrap_or_default());
+                        return Ok(address);
+                    }
+                    Err(e) => {
+                        error!("Failed to save fallback allocated address {} to database for config {}: {}", address, config.id.unwrap_or_default(), e);
+                        if let Err(cleanup_err) =
+                            crate::network_utils::remove_loopback_address(&address).await
+                        {
+                            error!(
+                                "Failed to cleanup address {} after DB save failure: {}",
+                                address, cleanup_err
+                            );
+                        }
+                        continue;
+                    }
                 }
-
-                return Ok(address);
             }
             Err(e) => {
                 let error_msg = e.to_string();
@@ -268,7 +282,7 @@ pub async fn start_port_forward_with_mode(
 ) -> Result<Vec<CustomResponse>, String> {
     let mut responses = Vec::new();
     let mut errors = Vec::new();
-    let mut child_handles = Vec::new();
+    let mut failed_handles = Vec::new();
 
     for config in configs.iter_mut() {
         let selector = match (config.workload_type.as_deref(), config.protocol.as_str()) {
@@ -399,15 +413,16 @@ pub async fn start_port_forward_with_mode(
                         debug!("Actual local port: {actual_local_port}");
 
                         let handle_key = format!(
-                            "{}_{}",
+                            "config:{}:service:{}",
                             config.id.unwrap(),
                             config.service.clone().unwrap_or_default()
                         );
+
+                        let _global_lock = PROCESS_MANAGEMENT_LOCK.lock().await;
                         CHILD_PROCESSES
                             .lock()
-                            .unwrap()
+                            .await
                             .insert(handle_key.clone(), handle);
-                        child_handles.push(handle_key.clone());
 
                         let config_state = ConfigState::new(config.id.unwrap(), true);
                         if let Err(e) = update_config_state_with_mode(&config_state, mode).await {
@@ -461,6 +476,21 @@ pub async fn start_port_forward_with_mode(
                         );
                         error!("{}", &error_message);
                         errors.push(error_message);
+
+                        if let Err(cleanup_err) = port_forward.cleanup_resources().await {
+                            error!(
+                                "Failed to cleanup resources for failed port forward: {}",
+                                cleanup_err
+                            );
+                        }
+
+                        if let Some(config_id) = config.id {
+                            failed_handles.push(format!(
+                                "config:{}:service:{}",
+                                config_id,
+                                config.service.clone().unwrap_or_default()
+                            ));
+                        }
                     }
                 }
             }
@@ -473,20 +503,49 @@ pub async fn start_port_forward_with_mode(
                 );
                 error!("{}", &error_message);
                 errors.push(error_message);
+
+                if let Some(local_addr) = &config.local_address {
+                    if crate::network_utils::is_custom_loopback_address(local_addr) {
+                        if let Err(cleanup_err) =
+                            crate::network_utils::remove_loopback_address(local_addr).await
+                        {
+                            error!("Failed to cleanup loopback address {} after PortForward creation failure: {}", local_addr, cleanup_err);
+                        }
+                    }
+                }
+
+                if let Some(config_id) = config.id {
+                    failed_handles.push(format!(
+                        "config:{}:service:{}",
+                        config_id,
+                        config.service.clone().unwrap_or_default()
+                    ));
+                }
             }
         }
     }
 
-    if !errors.is_empty() {
-        for handle_key in child_handles {
-            if let Some(process) = CHILD_PROCESSES.lock().unwrap().remove(&handle_key) {
+    if !failed_handles.is_empty() {
+        let _global_lock = PROCESS_MANAGEMENT_LOCK.lock().await;
+        for handle_key in failed_handles {
+            if let Some(process) = CHILD_PROCESSES.lock().await.remove(&handle_key) {
                 process.abort();
             }
         }
-        return Err(errors.join("\n"));
     }
 
-    Ok(responses)
+    if !responses.is_empty() {
+        if !errors.is_empty() {
+            for error in errors {
+                warn!("Partial failure: {}", error);
+            }
+        }
+        Ok(responses)
+    } else if !errors.is_empty() {
+        Err(errors.join("\n"))
+    } else {
+        Ok(Vec::new())
+    }
 }
 
 #[cfg(test)]

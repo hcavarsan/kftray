@@ -1,14 +1,13 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::Mutex as StdMutex;
 
 use kftray_http_logs::HttpLogState;
 use kube::api::Api;
 use kube::Client;
 use lazy_static::lazy_static;
 use tokio::sync::Mutex;
-use tokio::sync::Notify;
 use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 use tracing::instrument;
 
 use crate::kube::listener::{
@@ -28,35 +27,76 @@ use crate::kube::shared_client::{
 pub struct PortForwardProcess {
     pub handle: JoinHandle<anyhow::Result<()>>,
     pub direct_forwarder: Option<Arc<PortForwarder>>,
+    pub cancellation_token: CancellationToken,
+    pub config_id: String,
 }
 
 impl PortForwardProcess {
-    pub fn new(handle: JoinHandle<anyhow::Result<()>>) -> Self {
+    pub fn new(handle: JoinHandle<anyhow::Result<()>>, config_id: String) -> Self {
         Self {
             handle,
             direct_forwarder: None,
+            cancellation_token: CancellationToken::new(),
+            config_id,
+        }
+    }
+
+    pub fn new_with_token(
+        handle: JoinHandle<anyhow::Result<()>>, config_id: String,
+        cancellation_token: CancellationToken,
+    ) -> Self {
+        Self {
+            handle,
+            direct_forwarder: None,
+            cancellation_token,
+            config_id,
         }
     }
 
     pub fn with_forwarder(
-        handle: JoinHandle<anyhow::Result<()>>, forwarder: Arc<PortForwarder>,
+        handle: JoinHandle<anyhow::Result<()>>, forwarder: Arc<PortForwarder>, config_id: String,
     ) -> Self {
         Self {
             handle,
             direct_forwarder: Some(forwarder),
+            cancellation_token: CancellationToken::new(),
+            config_id,
+        }
+    }
+
+    pub fn with_forwarder_and_token(
+        handle: JoinHandle<anyhow::Result<()>>, forwarder: Arc<PortForwarder>, config_id: String,
+        cancellation_token: CancellationToken,
+    ) -> Self {
+        Self {
+            handle,
+            direct_forwarder: Some(forwarder),
+            cancellation_token,
+            config_id,
         }
     }
 
     pub async fn cleanup_and_abort(self) {
-        tracing::info!("Aborting main listener task to stop accepting new connections");
-        self.handle.abort();
+        tracing::info!("Cancelling port forward for config: {}", self.config_id);
 
-        tokio::time::sleep(tokio::time::Duration::from_millis(200)).await;
+        self.cancellation_token.cancel();
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
         if let Some(forwarder) = &self.direct_forwarder {
-            tracing::info!("Cleaning up forwarder resources");
+            tracing::info!(
+                "Cleaning up forwarder resources for config: {}",
+                self.config_id
+            );
             forwarder.shutdown().await;
         }
+
+        self.handle.abort();
+    }
+
+    pub fn cancel(&self) {
+        tracing::info!("Cancelling port forward for config: {}", self.config_id);
+        self.cancellation_token.cancel();
     }
 
     pub fn abort(&self) {
@@ -65,9 +105,9 @@ impl PortForwardProcess {
 }
 
 lazy_static! {
-    pub static ref CHILD_PROCESSES: Arc<StdMutex<HashMap<String, PortForwardProcess>>> =
-        Arc::new(StdMutex::new(HashMap::new()));
-    pub static ref CANCEL_NOTIFIER: Arc<Notify> = Arc::new(Notify::new());
+    pub static ref CHILD_PROCESSES: Arc<Mutex<HashMap<String, PortForwardProcess>>> =
+        Arc::new(Mutex::new(HashMap::new()));
+    pub static ref PROCESS_MANAGEMENT_LOCK: Arc<Mutex<()>> = Arc::new(Mutex::new(()));
 }
 
 impl PortForward {
@@ -78,7 +118,7 @@ impl PortForward {
     ) -> anyhow::Result<Self> {
         let namespace = target.namespace.name_any();
 
-        let client_key = ServiceClientKey::new(context_name.clone(), kubeconfig.clone());
+        let client_key = ServiceClientKey::new(context_name.clone(), kubeconfig.clone(), config_id);
         let client = SHARED_CLIENT_MANAGER.get_client(client_key).await?;
 
         let shared_client = Client::clone(&client);
@@ -135,10 +175,14 @@ impl PortForward {
             self.target.clone(),
             self.context_name.clone(),
             self.kubeconfig.clone(),
+            self.config_id,
         )
         .await?;
 
-        direct_forwarder.initialize(&self.target).await?;
+        if let Err(e) = direct_forwarder.initialize(&self.target).await {
+            direct_forwarder.shutdown().await;
+            return Err(e);
+        }
         let direct_forwarder = Arc::new(direct_forwarder);
 
         let listener_config = ListenerConfig {
@@ -148,16 +192,30 @@ impl PortForward {
         };
 
         let forwarder_clone = direct_forwarder.clone();
-        let (port, handle) = direct_forwarder
+        let cancellation_token = CancellationToken::new();
+        let (port, handle) = match direct_forwarder
             .start_listener(
                 listener_config,
                 http_log_state,
                 self.config_id,
                 self.workload_type.clone(),
+                cancellation_token.clone(),
             )
-            .await?;
+            .await
+        {
+            Ok(result) => result,
+            Err(e) => {
+                forwarder_clone.shutdown().await;
+                return Err(e);
+            }
+        };
 
-        let process = PortForwardProcess::with_forwarder(handle, forwarder_clone);
+        let process = PortForwardProcess::with_forwarder_and_token(
+            handle,
+            forwarder_clone,
+            self.config_id.to_string(),
+            cancellation_token,
+        );
         Ok((port, process))
     }
 
@@ -175,10 +233,14 @@ impl PortForward {
             self.target.clone(),
             self.context_name.clone(),
             self.kubeconfig.clone(),
+            self.config_id,
         )
         .await?;
 
-        direct_forwarder.initialize(&self.target).await?;
+        if let Err(e) = direct_forwarder.initialize(&self.target).await {
+            direct_forwarder.shutdown().await;
+            return Err(e);
+        }
         let direct_forwarder = Arc::new(direct_forwarder);
 
         let listener_config = ListenerConfig {
@@ -188,16 +250,30 @@ impl PortForward {
         };
 
         let forwarder_clone = direct_forwarder.clone();
-        let (port, handle) = direct_forwarder
+        let cancellation_token = CancellationToken::new();
+        let (port, handle) = match direct_forwarder
             .start_listener(
                 listener_config,
                 Arc::new(HttpLogState::new()),
                 self.config_id,
                 self.workload_type.clone(),
+                cancellation_token.clone(),
             )
-            .await?;
+            .await
+        {
+            Ok(result) => result,
+            Err(e) => {
+                forwarder_clone.shutdown().await;
+                return Err(e);
+            }
+        };
 
-        let process = PortForwardProcess::with_forwarder(handle, forwarder_clone);
+        let process = PortForwardProcess::with_forwarder_and_token(
+            handle,
+            forwarder_clone,
+            self.config_id.to_string(),
+            cancellation_token,
+        );
         Ok((port, process))
     }
 }
@@ -298,17 +374,17 @@ mod tests {
     #[tokio::test]
     async fn test_child_processes_map() {
         {
-            let mut processes = CHILD_PROCESSES.lock().unwrap();
+            let mut processes = CHILD_PROCESSES.lock().await;
             processes.clear();
         }
 
         {
-            let mut processes = CHILD_PROCESSES.lock().unwrap();
+            let mut processes = CHILD_PROCESSES.lock().await;
             assert_eq!(processes.len(), 0);
 
             processes.insert(
                 "test-key".to_string(),
-                PortForwardProcess::new(dummy_handle()),
+                PortForwardProcess::new(dummy_handle(), "test-key".to_string()),
             );
             assert_eq!(processes.len(), 1);
             assert!(processes.contains_key("test-key"));
@@ -340,16 +416,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_cancel_notifier() {
-        let notifier = CANCEL_NOTIFIER.clone();
+    async fn test_process_cancellation() {
+        let process = PortForwardProcess::new(dummy_handle(), "test-process".to_string());
+        let cancellation_token = process.cancellation_token.clone();
+
         let task = tokio::spawn(async move {
             tokio::select! {
-                _ = notifier.notified() => true,
+                _ = cancellation_token.cancelled() => true,
                 _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => false,
             }
         });
 
-        CANCEL_NOTIFIER.notify_one();
+        process.cancel();
 
         assert!(task.await.unwrap());
     }

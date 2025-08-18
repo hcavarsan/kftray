@@ -7,6 +7,7 @@ use std::time::{
 use dashmap::DashMap;
 use kube::Client;
 use once_cell::sync::Lazy;
+use tokio::sync::Mutex;
 
 use crate::kube::client::create_client_with_specific_context;
 
@@ -14,13 +15,17 @@ use crate::kube::client::create_client_with_specific_context;
 pub struct ServiceClientKey {
     pub context_name: Option<String>,
     pub kubeconfig_path: Option<String>,
+    pub config_id: i64,
 }
 
 impl ServiceClientKey {
-    pub fn new(context_name: Option<String>, kubeconfig_path: Option<String>) -> Self {
+    pub fn new(
+        context_name: Option<String>, kubeconfig_path: Option<String>, config_id: i64,
+    ) -> Self {
         Self {
             context_name,
             kubeconfig_path,
+            config_id,
         }
     }
 }
@@ -46,6 +51,7 @@ impl CachedClient {
 pub struct SharedClientManager {
     clients: DashMap<ServiceClientKey, CachedClient>,
     client_ttl: Duration,
+    cache_lock: Mutex<()>,
 }
 
 impl SharedClientManager {
@@ -53,10 +59,13 @@ impl SharedClientManager {
         Self {
             clients: DashMap::new(),
             client_ttl: Duration::from_secs(3600),
+            cache_lock: Mutex::new(()),
         }
     }
 
     pub async fn get_client(&self, key: ServiceClientKey) -> anyhow::Result<Arc<Client>> {
+        let _lock = self.cache_lock.lock().await;
+
         if let Some(cached) = self.clients.get(&key) {
             if !cached.is_expired(self.client_ttl) {
                 return Ok(cached.client.clone());
@@ -110,11 +119,13 @@ mod tests {
         let key1 = ServiceClientKey::new(
             Some("context1".to_string()),
             Some("/path/to/config".to_string()),
+            1,
         );
 
         let key2 = ServiceClientKey::new(
             Some("context1".to_string()),
             Some("/path/to/config".to_string()),
+            1,
         );
 
         assert_eq!(key1, key2);

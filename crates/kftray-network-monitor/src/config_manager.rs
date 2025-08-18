@@ -80,7 +80,9 @@ impl ConfigManager {
             .collect();
 
         for stop_task in stop_tasks {
-            let _ = stop_task.await;
+            if let Err(e) = stop_task.await {
+                log::warn!("Stop task failed: {e}");
+            }
         }
 
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
@@ -88,7 +90,13 @@ impl ConfigManager {
         match kftray_portforward::kube::start_port_forward(configs, protocol, http_log_state).await
         {
             Ok(_) => info!("Successfully restarted {protocol} port forwards"),
-            Err(e) => error!("Failed to restart {protocol} port forwards: {e}"),
+            Err(e) => {
+                if protocol == "udp" && e.contains("No ready pods available") {
+                    log::warn!("UDP port forward restart skipped - no ready pods available: {e}");
+                } else {
+                    error!("Failed to restart {protocol} port forwards: {e}");
+                }
+            }
         }
     }
 }
