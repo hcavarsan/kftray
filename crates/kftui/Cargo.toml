@@ -20,10 +20,10 @@ clap = { workspace = true }
 crossterm = { workspace = true }
 env_logger = { workspace = true }
 futures = { workspace = true }
-kftray-commons = { path = "../kftray-commons" }
-kftray-http-logs = { path = "../kftray-http-logs" }
-kftray-network-monitor = { path = "../kftray-network-monitor" }
-kftray-portforward = { path = "../kftray-portforward" }
+kftray-commons = { path = "../kftray-commons", version = "0.22.1" }
+kftray-http-logs = { path = "../kftray-http-logs", version = "0.22.1" }
+kftray-network-monitor = { path = "../kftray-network-monitor", version = "0.22.1" }
+kftray-portforward = { path = "../kftray-portforward", version = "0.22.1" }
 libc = { workspace = true }
 log = { workspace = true }
 ratatui = { workspace = true }
