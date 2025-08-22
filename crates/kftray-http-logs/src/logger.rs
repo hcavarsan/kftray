@@ -40,10 +40,16 @@ use uuid::Uuid;
 use crate::config::LogConfig;
 use crate::formatter::MessageFormatter;
 use crate::message::LogMessage;
-use crate::models::{
-    calculate_time_diff,
-    TraceInfo,
-};
+
+#[derive(Debug, Clone)]
+pub struct TraceInfo {
+    pub trace_id: String,
+    pub timestamp: DateTime<Utc>,
+}
+
+pub fn calculate_time_diff(start: DateTime<Utc>, end: DateTime<Utc>) -> i64 {
+    (end - start).num_milliseconds()
+}
 
 lazy_static! {
     static ref BUFFER_POOL: Arc<tokio::sync::Mutex<Vec<BytesMut>>> =

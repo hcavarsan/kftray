@@ -11,7 +11,6 @@ use k8s_openapi::api::core::v1::{
     Service,
 };
 use kftray_commons::models::config_model::Config;
-use kftray_http_logs::HttpLogState;
 use kube::client::Body;
 use kube::{
     Api,
@@ -226,6 +225,10 @@ fn setup_test_config() -> Config {
         auto_loopback_address: false,
         domain_enabled: None,
         remote_address: None,
+        http_logs_enabled: Some(false),
+        http_logs_max_file_size: Some(10 * 1024 * 1024),
+        http_logs_retention_days: Some(7),
+        http_logs_auto_cleanup: Some(true),
     }
 }
 
@@ -296,10 +299,7 @@ async fn test_port_forward_tcp_success() -> Result<()> {
     };
 
     let port_forward_task = tokio::spawn(async move {
-        match port_forward
-            .port_forward_tcp(Arc::new(HttpLogState::new()))
-            .await
-        {
+        match port_forward.port_forward_tcp().await {
             Ok((port, handle)) => {
                 let key = "1_test-service".to_string();
                 {
@@ -464,7 +464,7 @@ async fn test_start_port_forward_success() -> Result<()> {
     udp_config.protocol = "udp".to_string();
     configs.push(udp_config);
 
-    let result = start_port_forward(configs, "tcp", Arc::new(HttpLogState::new())).await;
+    let result = start_port_forward(configs, "tcp").await;
 
     assert!(
         result.is_err(),
@@ -553,8 +553,7 @@ async fn test_start_port_forward_mock_components() -> Result<()> {
         connection: Arc::new(tokio::sync::Mutex::new(None)),
     };
 
-    let http_log_state = Arc::new(HttpLogState::new());
-    let port_forward_result = port_forward.port_forward_tcp(http_log_state).await;
+    let port_forward_result = port_forward.port_forward_tcp().await;
 
     match port_forward_result {
         Ok((port, handle)) => {

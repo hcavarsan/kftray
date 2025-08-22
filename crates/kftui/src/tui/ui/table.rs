@@ -13,6 +13,7 @@ use ratatui::{
         Rect,
     },
     style::{
+        Color,
         Modifier,
         Style,
     },
@@ -195,7 +196,59 @@ pub fn render_details(
         .map(|s| s.is_running)
         .unwrap_or(false);
 
-    let details = vec![
+    let http_logs_enabled = if let Some(config_id) = config.id {
+        *app.http_logs_enabled.get(&config_id).unwrap_or(&false)
+    } else {
+        false
+    };
+
+    let mut details = vec![Line::from(vec![
+        Span::styled("HTTP Logs: ", Style::default().add_modifier(Modifier::BOLD)),
+        Span::styled(
+            if http_logs_enabled {
+                "Enabled"
+            } else {
+                "Disabled"
+            },
+            Style::default().fg(if http_logs_enabled {
+                Color::Green
+            } else {
+                Color::Red
+            }),
+        ),
+    ])];
+
+    if http_logs_enabled {
+        if let Some(config_id) = config.id {
+            if let Some(local_port) = config.local_port {
+                let log_file_name = format!("{}_{}.http", config_id, local_port);
+                if let Ok(log_folder_path) =
+                    kftray_commons::utils::config_dir::get_log_folder_path()
+                {
+                    let log_file_path = log_folder_path.join(&log_file_name);
+                    details.push(Line::from(vec![
+                        Span::styled(
+                            "  Log File: ",
+                            Style::default().add_modifier(Modifier::BOLD),
+                        ),
+                        Span::raw(log_file_path.display().to_string()),
+                    ]));
+                } else {
+                    details.push(Line::from(vec![
+                        Span::styled(
+                            "  Log File: ",
+                            Style::default().add_modifier(Modifier::BOLD),
+                        ),
+                        Span::raw(log_file_name),
+                    ]));
+                }
+            }
+        }
+    }
+
+    details.push(Line::from(""));
+
+    details.extend(vec![
         Line::from(vec![
             Span::styled("Context: ", Style::default().add_modifier(Modifier::BOLD)),
             Span::raw(config.context.as_deref().unwrap_or_default()),
@@ -281,7 +334,7 @@ pub fn render_details(
             Span::styled("Status: ", Style::default().add_modifier(Modifier::BOLD)),
             Span::raw(state.to_string()),
         ]),
-    ];
+    ]);
 
     let details_clone = details.clone();
 

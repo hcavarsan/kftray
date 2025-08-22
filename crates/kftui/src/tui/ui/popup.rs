@@ -1,6 +1,7 @@
 use std::borrow::Cow;
 
 use ratatui::prelude::*;
+use ratatui::style::Modifier;
 use ratatui::text::{
     Line,
     Span,
@@ -9,10 +10,13 @@ use ratatui::text::{
 use ratatui::widgets::{
     Block,
     Borders,
+    Cell,
     Clear,
     List,
     ListItem,
     Paragraph,
+    Row,
+    Table,
 };
 
 use crate::core::built_info;
@@ -25,16 +29,23 @@ use crate::tui::ui::{
 };
 use crate::tui::ui::{
     BASE,
+    BLUE,
+    GREEN,
+    MAUVE,
+    SUBTEXT0,
+    SURFACE0,
+    SURFACE1,
+    SURFACE2,
+    TEXT,
+    YELLOW,
+};
+use crate::tui::ui::{
     CRUST,
     LAVENDER,
     MANTLE,
-    MAUVE,
     PINK,
     RED,
-    SUBTEXT0,
     TEAL,
-    TEXT,
-    YELLOW,
 };
 fn create_common_popup_style(title: &str, title_color: Color) -> Block<'_> {
     Block::default()
@@ -122,6 +133,216 @@ pub fn render_confirmation_popup(f: &mut Frame, message: &Option<String>, area: 
     f.render_widget(close_button, button_area);
 }
 
+pub fn render_http_logs_config_popup(f: &mut Frame, app: &App, area: Rect) {
+    let (width_percent, height_percent) = if area.width < 60 {
+        (95, 70)
+    } else if area.width < 80 {
+        (85, 60)
+    } else if area.width < 120 {
+        (65, 50)
+    } else {
+        (50, 40)
+    };
+
+    let popup_area = centered_rect(width_percent, height_percent, area);
+
+    let title = if popup_area.width > 60 {
+        format!(
+            " HTTP Logs - Config #{} ",
+            app.http_logs_config_id.unwrap_or(0)
+        )
+    } else {
+        " HTTP Logs ".to_string()
+    };
+
+    let popup_block = Block::default()
+        .title(title)
+        .title_style(Style::default().fg(YELLOW).bold())
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(MAUVE))
+        .style(Style::default().bg(BASE));
+
+    f.render_widget(Clear, popup_area);
+    f.render_widget(popup_block, popup_area);
+
+    let inner_area = popup_area.inner(Margin {
+        horizontal: 1,
+        vertical: 1,
+    });
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(2)])
+        .split(inner_area);
+
+    let content_area = chunks[0];
+    let footer_area = chunks[1];
+
+    let use_vertical_layout = false;
+
+    let grid_areas = if use_vertical_layout {
+        let rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(4),
+                Constraint::Length(4),
+                Constraint::Length(4),
+                Constraint::Length(4),
+            ])
+            .split(content_area);
+        [rows[0], rows[1], rows[2], rows[3]]
+    } else {
+        let rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(content_area);
+
+        let top_columns = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(rows[0]);
+
+        let bottom_columns = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(rows[1]);
+
+        [
+            top_columns[0],
+            top_columns[1],
+            bottom_columns[0],
+            bottom_columns[1],
+        ]
+    };
+    let grid_options = [
+        (
+            0,
+            "Enable",
+            "",
+            (if app.http_logs_config_enabled {
+                "ON"
+            } else {
+                "OFF"
+            })
+            .to_string(),
+        ),
+        (
+            3,
+            "Auto Cleanup",
+            "",
+            (if app.http_logs_config_auto_cleanup {
+                "ON"
+            } else {
+                "OFF"
+            })
+            .to_string(),
+        ),
+        (
+            1,
+            "Max Size",
+            "",
+            format!(
+                "{}MB{}",
+                app.http_logs_config_max_file_size_input,
+                if app.http_logs_config_editing && app.http_logs_config_selected_option == 1 {
+                    " [EDIT]"
+                } else {
+                    ""
+                }
+            ),
+        ),
+        (
+            2,
+            "Retention",
+            "",
+            format!(
+                "{}d{}",
+                app.http_logs_config_retention_days_input,
+                if app.http_logs_config_editing && app.http_logs_config_selected_option == 2 {
+                    " [EDIT]"
+                } else {
+                    ""
+                }
+            ),
+        ),
+    ];
+
+    for (grid_index, (option_index, title, _description, value)) in grid_options.iter().enumerate()
+    {
+        let is_selected = app.http_logs_config_selected_option == *option_index;
+        let is_editing = app.http_logs_config_editing && is_selected;
+
+        let border_style = if is_selected {
+            Style::default().fg(YELLOW).bold()
+        } else {
+            Style::default().fg(SURFACE2)
+        };
+
+        let bg_style = if is_selected {
+            Style::default().bg(SURFACE0)
+        } else {
+            Style::default().bg(BASE)
+        };
+
+        let block = Block::default()
+            .title(*title)
+            .title_style(
+                Style::default()
+                    .fg(if is_selected { YELLOW } else { TEXT })
+                    .bold(),
+            )
+            .borders(Borders::ALL)
+            .border_style(border_style)
+            .style(bg_style);
+
+        let content = vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                value.clone(),
+                Style::default()
+                    .fg(if is_editing {
+                        GREEN
+                    } else if is_selected {
+                        YELLOW
+                    } else {
+                        TEXT
+                    })
+                    .bold()
+                    .add_modifier(if is_selected {
+                        ratatui::style::Modifier::UNDERLINED
+                    } else {
+                        ratatui::style::Modifier::empty()
+                    }),
+            )),
+            Line::from(""),
+        ];
+
+        let paragraph = Paragraph::new(content)
+            .alignment(Alignment::Center)
+            .block(block)
+            .wrap(ratatui::widgets::Wrap { trim: true });
+
+        f.render_widget(paragraph, grid_areas[grid_index]);
+    }
+
+    let instructions = if app.http_logs_config_editing {
+        "Type numbers | Backspace: delete | Enter: finish editing | Esc: Cancel"
+    } else {
+        "Arrow keys: Navigate | Enter: Toggle/Edit | Changes save automatically | Esc: Close"
+    };
+
+    let footer_block = Block::default()
+        .borders(Borders::TOP)
+        .border_style(Style::default().fg(SURFACE2));
+
+    let instruction_paragraph = Paragraph::new(instructions)
+        .style(Style::default().fg(SUBTEXT0))
+        .alignment(Alignment::Center)
+        .block(footer_block);
+
+    f.render_widget(instruction_paragraph, footer_area);
+}
+
 pub fn render_help_popup(f: &mut Frame, area: Rect) {
     let help_message = vec![
         Line::from(Span::styled("Ctrl+C: Quit", Style::default().fg(YELLOW))),
@@ -158,6 +379,22 @@ pub fn render_help_popup(f: &mut Frame, area: Rect) {
             Style::default().fg(YELLOW),
         )),
         Line::from(Span::styled("c: Clear Output", Style::default().fg(YELLOW))),
+        Line::from(Span::styled(
+            "l: Toggle HTTP Logs",
+            Style::default().fg(YELLOW),
+        )),
+        Line::from(Span::styled(
+            "L: HTTP Logs Config",
+            Style::default().fg(YELLOW),
+        )),
+        Line::from(Span::styled(
+            "V: View HTTP Logs",
+            Style::default().fg(YELLOW),
+        )),
+        Line::from(Span::styled(
+            "o: Open HTTP Log File",
+            Style::default().fg(YELLOW),
+        )),
         Line::from(Span::styled(
             "PageUp/PageDown: Scroll Page Up/Down",
             Style::default().fg(YELLOW),
@@ -229,7 +466,7 @@ pub fn render_error_popup(f: &mut Frame, error_message: &str, area: Rect, top_pa
     };
 
     let popup_area = centered_rect(width_percent, height_percent, area);
-    let content_width = popup_area.width.saturating_sub(4) as usize; // Account for borders
+    let content_width = popup_area.width.saturating_sub(4) as usize;
 
     let mut lines = Vec::new();
 
@@ -427,146 +664,563 @@ pub fn render_context_selection_popup(f: &mut Frame, app: &mut App, area: Rect) 
 }
 
 pub fn render_settings_popup(f: &mut Frame, app: &App, area: Rect) {
-    // Use responsive sizing like error popup
-    let (width_percent, height_percent) = if area.width < 80 {
-        (95, 85)
+    let (width_percent, height_percent) = if area.width < 60 {
+        (95, 75)
+    } else if area.width < 80 {
+        (85, 65)
     } else if area.width < 120 {
-        (85, 75)
+        (65, 55)
     } else {
-        (70, 65)
+        (50, 45)
     };
 
     let popup_area = centered_rect(width_percent, height_percent, area);
-    let content_width = popup_area.width.saturating_sub(4) as usize; // Account for borders
 
-    let mut lines = Vec::new();
-
-    // Add some top padding
-    lines.push("".into());
-
-    // Timeout Setting Section
-    let timeout_indicator = if app.settings_selected_option == 0 {
-        "▶ "
+    let title = if popup_area.width > 60 {
+        " Settings "
     } else {
-        "  "
-    };
-    let timeout_style = if app.settings_selected_option == 0 {
-        Style::default().fg(YELLOW).add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(LAVENDER)
+        " Config "
     };
 
-    lines.push(Line::from(vec![
-        Span::raw(timeout_indicator),
-        Span::styled("Global Port Forward Timeout", timeout_style),
-    ]));
+    let popup_block = Block::default()
+        .title(title)
+        .title_style(Style::default().fg(YELLOW).bold())
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(MAUVE))
+        .style(Style::default().bg(BASE));
 
-    // Wrap timeout description text
-    let timeout_desc =
-        "Automatically disconnect port forwards after the specified time. Set to 0 to disable.";
-    let timeout_wrapped = wrap_text_simple(timeout_desc, content_width.saturating_sub(6));
-    for line in timeout_wrapped {
-        lines.push(Line::from(vec![Span::raw(format!("    {line}")).fg(TEXT)]));
-    }
+    f.render_widget(Clear, popup_area);
+    f.render_widget(popup_block, popup_area);
 
-    // Timeout value display
-    let timeout_display =
-        if app.settings_timeout_input == "0" || app.settings_timeout_input.is_empty() {
-            "disabled"
-        } else {
-            "minutes"
+    let inner_area = popup_area.inner(Margin {
+        horizontal: 1,
+        vertical: 1,
+    });
+
+    let use_vertical_layout = false;
+
+    let chunks = if use_vertical_layout {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Min(0), Constraint::Length(2)])
+            .split(inner_area)
+    } else {
+        Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(2),
+                Constraint::Min(0),
+                Constraint::Length(2),
+            ])
+            .split(inner_area)
+    };
+
+    let (description_area, content_area, footer_area) = if use_vertical_layout {
+        (None, chunks[0], chunks[1])
+    } else {
+        (Some(chunks[0]), chunks[1], chunks[2])
+    };
+
+    if let Some(desc_area) = description_area {
+        let description_text = match app.settings_selected_option {
+            0 => "Enable timeout functionality",
+            1 => "Set timeout minutes",
+            2 => "Monitor network connectivity",
+            3 => "Reserved for future use",
+            _ => "Navigate with arrow keys",
         };
 
-    let timeout_value_line = if app.settings_editing && app.settings_selected_option == 0 {
-        Line::from(vec![
-            Span::raw("    Value: "),
-            Span::styled(
-                format!("{}_", app.settings_timeout_input),
-                Style::default().fg(TEAL).add_modifier(Modifier::UNDERLINED),
-            ),
-            Span::styled(format!(" {timeout_display}"), Style::default().fg(TEXT)),
-        ])
-    } else {
-        Line::from(vec![
-            Span::raw("    Value: "),
-            Span::styled(
-                &app.settings_timeout_input,
-                Style::default().fg(TEAL).add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(format!(" {timeout_display}"), Style::default().fg(TEXT)),
-        ])
-    };
-    lines.push(timeout_value_line);
-    lines.push("".into());
+        let description_paragraph = Paragraph::new(description_text)
+            .style(Style::default().fg(SUBTEXT0).italic())
+            .alignment(Alignment::Center)
+            .wrap(ratatui::widgets::Wrap { trim: true });
 
-    // Network Monitor Section
-    let monitor_indicator = if app.settings_selected_option == 1 {
-        "▶ "
-    } else {
-        "  "
-    };
-    let monitor_style = if app.settings_selected_option == 1 {
-        Style::default().fg(YELLOW).add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(LAVENDER)
-    };
-
-    lines.push(Line::from(vec![
-        Span::raw(monitor_indicator),
-        Span::styled("Network Monitor", monitor_style),
-    ]));
-
-    // Wrap network monitor description text
-    let monitor_desc = "Monitor network connectivity and automatically reconnect port forwards when network is restored.";
-    let monitor_wrapped = wrap_text_simple(monitor_desc, content_width.saturating_sub(6));
-    for line in monitor_wrapped {
-        lines.push(Line::from(vec![Span::raw(format!("    {line}")).fg(TEXT)]));
+        f.render_widget(description_paragraph, desc_area);
     }
 
-    // Network monitor status
-    lines.push(Line::from(vec![
-        Span::raw("    Status: "),
-        Span::styled(
-            if app.settings_network_monitor {
-                "Enabled"
-            } else {
-                "Disabled"
-            },
-            Style::default()
-                .fg(if app.settings_network_monitor {
-                    TEAL
-                } else {
-                    RED
-                })
-                .add_modifier(Modifier::BOLD),
+    let grid_areas = if use_vertical_layout {
+        let rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(4),
+                Constraint::Length(4),
+                Constraint::Length(4),
+                Constraint::Length(4),
+            ])
+            .split(content_area);
+        [rows[0], rows[1], rows[2], rows[3]]
+    } else {
+        let rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(content_area);
+
+        let top_columns = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(rows[0]);
+
+        let bottom_columns = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(rows[1]);
+
+        [
+            top_columns[0],
+            top_columns[1],
+            bottom_columns[0],
+            bottom_columns[1],
+        ]
+    };
+
+    let timeout_enabled =
+        !(app.settings_timeout_input == "0" || app.settings_timeout_input.is_empty());
+    let grid_options = [
+        (
+            0,
+            "Timeout",
+            "",
+            (if timeout_enabled { "ON" } else { "OFF" }).to_string(),
         ),
-    ]));
+        (
+            1,
+            "Minutes",
+            "",
+            if timeout_enabled {
+                format!(
+                    "{}m{}",
+                    app.settings_timeout_input,
+                    if app.settings_editing && app.settings_selected_option == 1 {
+                        " [EDIT]"
+                    } else {
+                        ""
+                    }
+                )
+            } else {
+                "OFF".to_string()
+            },
+        ),
+        (
+            2,
+            "Monitor",
+            "",
+            (if app.settings_network_monitor {
+                "ON"
+            } else {
+                "OFF"
+            })
+            .to_string(),
+        ),
+        (3, "Reserved", "", "N/A".to_string()),
+    ];
 
-    lines.push("".into());
+    for (grid_index, (option_index, title, _description, value)) in grid_options.iter().enumerate()
+    {
+        let is_selected = app.settings_selected_option == *option_index;
+        let is_editing = app.settings_editing && is_selected;
+        let is_disabled = *option_index == 1 && !timeout_enabled;
+        let is_reserved = *option_index == 3;
 
-    // Navigation instructions - wrap if needed
-    let nav_text = if app.settings_editing && app.settings_selected_option == 0 {
-        "↑/↓: Navigate | Enter: Save | Backspace: Delete | Esc: Close"
-    } else if app.settings_selected_option == 0 {
-        "↑/↓: Navigate | Enter: Edit | Esc: Close"
-    } else {
-        "↑/↓: Navigate | Enter: Toggle | Esc: Close"
-    };
+        let border_style = if is_reserved {
+            Style::default().fg(SURFACE2).dim()
+        } else if is_disabled {
+            Style::default().fg(SURFACE2)
+        } else if is_selected {
+            Style::default().fg(YELLOW).bold()
+        } else {
+            Style::default().fg(SURFACE2)
+        };
 
-    let nav_wrapped = wrap_text_simple(nav_text, content_width.saturating_sub(4));
-    for line in nav_wrapped {
-        lines.push(Line::from(vec![Span::raw(format!("  {line}"))
-            .fg(PINK)
-            .italic()]));
+        let bg_style = if is_reserved {
+            Style::default().bg(BASE).dim()
+        } else if is_disabled {
+            Style::default().bg(BASE)
+        } else if is_selected {
+            Style::default().bg(SURFACE0)
+        } else {
+            Style::default().bg(BASE)
+        };
+
+        let block = Block::default()
+            .title(*title)
+            .title_style(
+                Style::default()
+                    .fg(if is_reserved || is_disabled {
+                        SURFACE2
+                    } else if is_selected {
+                        YELLOW
+                    } else {
+                        TEXT
+                    })
+                    .bold(),
+            )
+            .borders(Borders::ALL)
+            .border_style(border_style)
+            .style(bg_style);
+
+        let content = vec![
+            Line::from(""),
+            Line::from(Span::styled(
+                value.clone(),
+                Style::default()
+                    .fg(if is_reserved || is_disabled {
+                        SURFACE2
+                    } else if is_editing {
+                        GREEN
+                    } else if is_selected {
+                        YELLOW
+                    } else {
+                        TEXT
+                    })
+                    .bold()
+                    .add_modifier(if is_selected && !is_disabled && !is_reserved {
+                        Modifier::UNDERLINED
+                    } else {
+                        Modifier::empty()
+                    }),
+            )),
+            Line::from(""),
+        ];
+
+        let paragraph = Paragraph::new(content)
+            .alignment(Alignment::Center)
+            .block(block)
+            .wrap(ratatui::widgets::Wrap { trim: true });
+
+        f.render_widget(paragraph, grid_areas[grid_index]);
     }
 
-    let formatted_text = Text::from(lines);
-    render_popup(
-        f,
-        popup_area,
-        "Settings",
-        MAUVE,
-        formatted_text,
-        Alignment::Left,
-    );
+    let instructions = if app.settings_editing {
+        "Type numbers | Backspace: delete | Enter: save | Esc: Cancel"
+    } else {
+        "Arrow keys: Navigate | Enter: Toggle/Edit | Changes save automatically | Esc: Close"
+    };
+
+    let footer_block = Block::default()
+        .borders(Borders::TOP)
+        .border_style(Style::default().fg(SURFACE2));
+
+    let instruction_paragraph = Paragraph::new(instructions)
+        .style(Style::default().fg(SUBTEXT0))
+        .alignment(Alignment::Center)
+        .block(footer_block);
+
+    f.render_widget(instruction_paragraph, footer_area);
+}
+
+pub fn render_http_logs_viewer_popup(f: &mut Frame, app: &mut App, area: Rect) {
+    app.update_http_logs_viewer();
+
+    let popup_area = centered_rect(90, 80, area);
+
+    let title = if app.http_logs_detail_mode {
+        format!(
+            " HTTP Request Details - Config #{} ",
+            app.http_logs_viewer_config_id.unwrap_or(0)
+        )
+    } else {
+        let auto_scroll_indicator = if app.http_logs_viewer_auto_scroll {
+            " [LIVE]"
+        } else {
+            " [PAUSED]"
+        };
+        format!(
+            " HTTP Requests - Config #{}{} ",
+            app.http_logs_viewer_config_id.unwrap_or(0),
+            auto_scroll_indicator
+        )
+    };
+
+    let popup_block = Block::default()
+        .title(title)
+        .title_style(Style::default().fg(YELLOW).bold())
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(MAUVE))
+        .style(Style::default().bg(BASE));
+
+    f.render_widget(Clear, popup_area);
+    f.render_widget(popup_block, popup_area);
+
+    let inner_area = popup_area.inner(Margin {
+        horizontal: 1,
+        vertical: 1,
+    });
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(0), Constraint::Length(2)])
+        .split(inner_area);
+
+    let content_area = chunks[0];
+    let footer_area = chunks[1];
+
+    if app.http_logs_detail_mode {
+        render_http_request_detail(f, app, content_area);
+    } else {
+        render_http_requests_list(f, app, content_area);
+    }
+
+    render_http_logs_footer(f, app, footer_area);
+}
+
+fn render_http_requests_list(f: &mut Frame, app: &mut App, area: Rect) {
+    if app.http_logs_requests.is_empty() {
+        let empty_message = Paragraph::new("No HTTP requests found in logs")
+            .style(Style::default().fg(SUBTEXT0).italic())
+            .alignment(Alignment::Center);
+        f.render_widget(empty_message, area);
+        return;
+    }
+
+    let rows: Vec<Row> = app
+        .http_logs_requests
+        .iter()
+        .enumerate()
+        .map(|(i, entry)| {
+            let status_color = match entry.status_code.as_deref() {
+                Some(code) if code.starts_with('2') => GREEN,
+                Some(code) if code.starts_with('4') => YELLOW,
+                Some(code) if code.starts_with('5') => RED,
+                _ => TEXT,
+            };
+
+            let method_color = match entry.method.as_str() {
+                "GET" => GREEN,
+                "POST" => BLUE,
+                "PUT" => YELLOW,
+                "DELETE" => RED,
+                _ => TEXT,
+            };
+
+            let row_style = if i == app.http_logs_list_selected {
+                Style::default().bg(SURFACE1)
+            } else {
+                Style::default()
+            };
+
+            Row::new(vec![
+                {
+                    let preview: String = entry.trace_id.chars().take(12).collect();
+                    Cell::from(Span::styled(preview, Style::default().fg(MAUVE)))
+                },
+                Cell::from(Span::styled(
+                    &entry.method,
+                    Style::default().fg(method_color),
+                )),
+                Cell::from(entry.path.as_str()),
+                Cell::from(Span::styled(
+                    entry.status_code.as_deref().unwrap_or("-"),
+                    Style::default().fg(status_color),
+                )),
+                Cell::from(entry.duration_ms.as_deref().unwrap_or("-")),
+                Cell::from(
+                    entry
+                        .request_timestamp
+                        .get(11..19)
+                        .unwrap_or(entry.request_timestamp.as_str()),
+                ),
+            ])
+            .style(row_style)
+        })
+        .collect();
+
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Length(10),
+            Constraint::Length(8),
+            Constraint::Min(15),
+            Constraint::Length(6),
+            Constraint::Length(8),
+            Constraint::Length(8),
+        ],
+    )
+    .header(
+        Row::new(vec![
+            Cell::from("Trace ID"),
+            Cell::from("Method"),
+            Cell::from("Path"),
+            Cell::from("Status"),
+            Cell::from("Duration"),
+            Cell::from("Time"),
+        ])
+        .style(Style::default().fg(MAUVE).bold()),
+    )
+    .row_highlight_style(Style::default().bg(SURFACE1).fg(TEXT));
+
+    let mut table_state = ratatui::widgets::TableState::default();
+    table_state.select(Some(app.http_logs_list_selected));
+
+    f.render_stateful_widget(table, area, &mut table_state);
+}
+
+fn render_http_request_detail(f: &mut Frame, app: &mut App, area: Rect) {
+    if let Some(entry) = &app.http_logs_selected_entry {
+        let mut lines = vec![];
+
+        if entry.trace_id.starts_with("replay-") {
+            lines.push(Line::from(Span::styled(
+                "[ REPLAYED REQUEST ]",
+                Style::default().bold().fg(YELLOW),
+            )));
+            lines.push(Line::from(""));
+        }
+
+        lines.extend(vec![
+            Line::from(vec![
+                Span::styled("Trace ID: ", Style::default().bold()),
+                Span::styled(&entry.trace_id, Style::default().fg(MAUVE)),
+            ]),
+            Line::from(vec![
+                Span::styled("Method: ", Style::default().bold()),
+                Span::styled(&entry.method, Style::default().fg(GREEN)),
+            ]),
+            Line::from(vec![
+                Span::styled("Path: ", Style::default().bold()),
+                Span::raw(&entry.path),
+            ]),
+            Line::from(vec![
+                Span::styled("Status: ", Style::default().bold()),
+                Span::styled(
+                    entry.status_code.as_deref().unwrap_or("Pending"),
+                    Style::default().fg(GREEN),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled("Duration: ", Style::default().bold()),
+                Span::raw(entry.duration_ms.as_deref().unwrap_or("N/A")),
+                Span::raw("ms"),
+            ]),
+            Line::from(""),
+            Line::from(Span::styled(
+                "Request Headers:",
+                Style::default().bold().fg(BLUE),
+            )),
+        ]);
+
+        for header in &entry.request_headers {
+            lines.push(Line::from(Span::styled(
+                format!("  {}", header),
+                Style::default().fg(SUBTEXT0),
+            )));
+        }
+
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "Request Body:",
+            Style::default().bold().fg(BLUE),
+        )));
+
+        if entry.request_body.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "  (empty)",
+                Style::default().fg(SUBTEXT0).italic(),
+            )));
+        } else {
+            for line in entry.request_body.lines() {
+                lines.push(Line::from(format!("  {}", line)));
+            }
+        }
+
+        if entry.status_code.is_some() {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "Response Headers:",
+                Style::default().bold().fg(GREEN),
+            )));
+
+            for header in &entry.response_headers {
+                lines.push(Line::from(Span::styled(
+                    format!("  {}", header),
+                    Style::default().fg(SUBTEXT0),
+                )));
+            }
+
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "Response Body:",
+                Style::default().bold().fg(GREEN),
+            )));
+
+            if entry.response_body.is_empty() {
+                lines.push(Line::from(Span::styled(
+                    "  (empty)",
+                    Style::default().fg(SUBTEXT0).italic(),
+                )));
+            } else {
+                for line in entry.response_body.lines() {
+                    lines.push(Line::from(format!("  {}", line)));
+                }
+            }
+        }
+
+        if let Some(replay_error) = &app.http_logs_replay_result {
+            if replay_error.starts_with("Request failed") || replay_error.starts_with("Failed to") {
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    "━".repeat(50),
+                    Style::default().fg(SURFACE2),
+                )));
+                lines.push(Line::from(Span::styled(
+                    "Replay Error:",
+                    Style::default().bold().fg(RED),
+                )));
+                lines.push(Line::from(""));
+                lines.push(Line::from(Span::styled(
+                    replay_error,
+                    Style::default().fg(RED),
+                )));
+            }
+        }
+
+        let visible_height = area.height as usize;
+        let max_scroll = lines.len().saturating_sub(visible_height);
+        let start_index = app.http_logs_viewer_scroll.min(max_scroll);
+        let end_index = (start_index + visible_height).min(lines.len());
+
+        let visible_lines = lines[start_index..end_index].to_vec();
+
+        let paragraph = Paragraph::new(Text::from(visible_lines))
+            .style(Style::default().fg(TEXT))
+            .wrap(ratatui::widgets::Wrap { trim: false });
+
+        f.render_widget(paragraph, area);
+    } else {
+        let error_message = Paragraph::new("No request selected")
+            .style(Style::default().fg(RED).italic())
+            .alignment(Alignment::Center);
+        f.render_widget(error_message, area);
+    }
+}
+
+fn render_http_logs_footer(f: &mut Frame, app: &mut App, area: Rect) {
+    let instructions = if app.http_logs_detail_mode {
+        "↑/↓: Scroll | PgUp/PgDn: Page | R: Replay Request | Esc: Back to List".to_string()
+    } else {
+        let auto_scroll_status = if app.http_logs_viewer_auto_scroll {
+            "ON"
+        } else {
+            "OFF"
+        };
+        let list_info = format!(
+            "{}/{}",
+            app.http_logs_list_selected + 1,
+            app.http_logs_requests.len().max(1)
+        );
+        format!(
+            "↑/↓: Select | Enter: View Details | A: Auto-scroll {} | Esc: Close | {}",
+            auto_scroll_status, list_info
+        )
+    };
+
+    let footer_block = Block::default()
+        .borders(Borders::TOP)
+        .border_style(Style::default().fg(SURFACE2));
+
+    let instruction_paragraph = Paragraph::new(instructions)
+        .style(Style::default().fg(SUBTEXT0))
+        .alignment(Alignment::Center)
+        .block(footer_block);
+
+    f.render_widget(instruction_paragraph, area);
 }

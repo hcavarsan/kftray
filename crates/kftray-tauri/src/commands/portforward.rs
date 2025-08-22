@@ -7,7 +7,6 @@ use kftray_commons::utils::config_state::{
     cleanup_current_process_config_states,
     get_configs_state,
 };
-use kftray_http_logs::HttpLogState;
 use kftray_portforward::kube::{
     deploy_and_forward_pod,
     start_port_forward,
@@ -85,18 +84,16 @@ fn config_compare_changes<T: PartialEq>(prev: &[T], current: &[T]) -> bool {
 
 #[tauri::command]
 pub async fn start_port_forward_udp_cmd(
-    configs: Vec<Config>, http_log_state: tauri::State<'_, Arc<HttpLogState>>,
-    _app_handle: tauri::AppHandle,
+    configs: Vec<Config>, _app_handle: tauri::AppHandle,
 ) -> Result<Vec<CustomResponse>, String> {
-    start_port_forward(configs.clone(), "udp", http_log_state.inner().clone()).await
+    start_port_forward(configs.clone(), "udp").await
 }
 
 #[tauri::command]
 pub async fn start_port_forward_tcp_cmd(
-    configs: Vec<Config>, http_log_state: tauri::State<'_, Arc<HttpLogState>>,
-    _app_handle: tauri::AppHandle,
+    configs: Vec<Config>, _app_handle: tauri::AppHandle,
 ) -> Result<Vec<CustomResponse>, String> {
-    start_port_forward(configs.clone(), "tcp", http_log_state.inner().clone()).await
+    start_port_forward(configs.clone(), "tcp").await
 }
 
 #[tauri::command]
@@ -115,10 +112,9 @@ pub async fn stop_port_forward_cmd(
 
 #[tauri::command]
 pub async fn deploy_and_forward_pod_cmd(
-    configs: Vec<Config>, http_log_state: tauri::State<'_, Arc<HttpLogState>>,
-    _app_handle: tauri::AppHandle,
+    configs: Vec<Config>, _app_handle: tauri::AppHandle,
 ) -> Result<Vec<CustomResponse>, String> {
-    deploy_and_forward_pod(configs.clone(), http_log_state.inner().clone()).await
+    deploy_and_forward_pod(configs.clone()).await
 }
 
 #[tauri::command]

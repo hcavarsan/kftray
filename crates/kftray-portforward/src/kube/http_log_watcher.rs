@@ -68,47 +68,20 @@ impl HttpLogStateWatcher {
         Self::new_with_external_sync(None)
     }
 
-    pub fn new_with_external_sync(
-        external_state: Option<Arc<kftray_http_logs::HttpLogState>>,
-    ) -> Self {
+    pub fn new_with_external_sync(_external_state: Option<()>) -> Self {
         info!("Starting HTTP log state watcher with event-driven pattern");
 
         let current_state = Arc::new(RwLock::new(HashMap::new()));
         let (event_sender, mut event_receiver) = broadcast::channel(256);
 
         let current_state_clone = current_state.clone();
-        let event_sender_clone = event_sender.clone();
+        let _event_sender_clone = event_sender.clone();
         let processor_task = tokio::spawn(async move {
-            let mut sync_interval = tokio::time::interval(std::time::Duration::from_millis(500));
-            let known_configs: HashMap<i64, bool> = HashMap::new();
-
             loop {
                 tokio::select! {
                     event = event_receiver.recv() => {
                         if let Ok(event) = event {
                             Self::update_current_state(&current_state_clone, &event).await;
-                        }
-                    }
-                    _ = sync_interval.tick() => {
-                        if let Some(ref ext_state) = external_state {
-                            let current_state_guard = current_state_clone.read().await;
-                            let configs_to_check: Vec<i64> = current_state_guard.keys().copied()
-                                .chain(known_configs.keys().copied())
-                                .collect();
-                            drop(current_state_guard);
-
-                            for config_id in configs_to_check {
-                                if let Ok(external_enabled) = ext_state.get_http_logs(config_id).await {
-                                    let current_enabled = known_configs.get(&config_id).copied().unwrap_or(false);
-
-                                    if current_enabled != external_enabled {
-
-
-                                        let event = HttpLogStateEvent::new(config_id, external_enabled);
-                                        let _ = event_sender_clone.send(event);
-                                    }
-                                }
-                            }
                         }
                     }
                 }
@@ -194,19 +167,17 @@ impl HttpLogStateWatcher {
         self.subscribe()
     }
 
-    pub async fn sync_from_external_state(
-        &self, external_state: &kftray_http_logs::HttpLogState, config_id: i64,
-    ) -> Result<()> {
+    pub async fn sync_from_external_state(&self, config_id: i64) -> Result<()> {
         let current_enabled = self.get_http_logs(config_id).await;
 
-        let external_result = external_state.get_http_logs(config_id).await;
-        let external_enabled = match external_result {
-            Ok(enabled) => enabled,
-            Err(e) => {
-                error!("Failed to get HTTP logs for config {}: {:?}", config_id, e);
-                false
-            }
-        };
+        let external_enabled =
+            match kftray_commons::utils::http_logs_config::get_http_logs_config(config_id).await {
+                Ok(config) => config.enabled,
+                Err(e) => {
+                    error!("Failed to get HTTP logs for config {}: {:?}", config_id, e);
+                    false
+                }
+            };
 
         if current_enabled != external_enabled {
             self.set_http_logs(config_id, external_enabled).await?;

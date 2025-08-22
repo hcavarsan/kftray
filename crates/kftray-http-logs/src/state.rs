@@ -13,6 +13,11 @@ use anyhow::{
     Context,
     Result,
 };
+use kftray_commons::models::http_logs_config_model::HttpLogsConfig;
+use kftray_commons::utils::http_logs_config::{
+    get_http_logs_config,
+    update_http_logs_config,
+};
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio::time::interval;
@@ -59,6 +64,7 @@ impl ConfigState {
         }
     }
 
+    #[allow(dead_code)]
     fn is_enabled(&self) -> bool {
         self.enabled.load(Ordering::SeqCst)
     }
@@ -141,9 +147,24 @@ impl LogStateManager {
     }
 
     pub async fn set_http_logs(&self, config_id: i64, enable: bool) -> Result<()> {
-        let mut state = self.state.lock().await;
         debug!("Setting HTTP logs for config {}: {}", config_id, enable);
 
+        let mut http_logs_config = match get_http_logs_config(config_id).await {
+            Ok(config) => config,
+            Err(_) => HttpLogsConfig::new(config_id),
+        };
+
+        http_logs_config.enabled = enable;
+
+        if let Err(e) = update_http_logs_config(&http_logs_config).await {
+            error!("Failed to persist HTTP logs config to database: {}", e);
+            return Err(anyhow::Error::msg(format!(
+                "Failed to persist HTTP logs config: {}",
+                e
+            )));
+        }
+
+        let mut state = self.state.lock().await;
         if let Some(config_state) = state.get_mut(&config_id) {
             config_state.set_enabled(enable);
             config_state.touch();
@@ -155,16 +176,44 @@ impl LogStateManager {
     }
 
     pub async fn get_http_logs(&self, config_id: i64) -> Result<bool> {
-        let mut state = self.state.lock().await;
-
-        let is_enabled = if let Some(config_state) = state.get_mut(&config_id) {
-            config_state.touch();
-            config_state.is_enabled()
-        } else {
-            false
+        let db_enabled = match get_http_logs_config(config_id).await {
+            Ok(config) => {
+                trace!(
+                    "HTTP logs for config {} from database: {}",
+                    config_id,
+                    config.enabled
+                );
+                Some(config.enabled)
+            }
+            Err(e) => {
+                trace!(
+                    "HTTP logs for config {} not found/readable in database ({}); will fallback to memory",
+                    config_id, e
+                );
+                None
+            }
         };
 
-        trace!("HTTP logs for config {}: {}", config_id, is_enabled);
+        let mut state = self.state.lock().await;
+
+        if let None = db_enabled {
+            if let Some(config_state) = state.get_mut(&config_id) {
+                config_state.touch();
+                return Ok(config_state.is_enabled());
+            } else {
+                state.insert(config_id, ConfigState::new(false, None));
+                return Ok(false);
+            }
+        }
+
+        let is_enabled = db_enabled.unwrap();
+        if let Some(config_state) = state.get_mut(&config_id) {
+            config_state.set_enabled(is_enabled);
+            config_state.touch();
+        } else {
+            state.insert(config_id, ConfigState::new(is_enabled, None));
+        }
+
         Ok(is_enabled)
     }
 
@@ -188,6 +237,42 @@ impl LogStateManager {
 
     pub async fn run_cleanup(&self) -> Result<usize> {
         Self::cleanup_stale_configs(&self.state, self.retention_period).await
+    }
+
+    pub async fn load_from_database(&self) -> Result<()> {
+        use kftray_commons::utils::http_logs_config::read_all_http_logs_configs;
+
+        debug!("Loading HTTP logs configurations from database");
+
+        match read_all_http_logs_configs().await {
+            Ok(configs) => {
+                let mut state = self.state.lock().await;
+                for config in configs {
+                    if let Some(existing_state) = state.get_mut(&config.config_id) {
+                        existing_state.set_enabled(config.enabled);
+                        existing_state.touch();
+                    } else {
+                        state.insert(config.config_id, ConfigState::new(config.enabled, None));
+                    }
+                }
+                info!(
+                    "Loaded {} HTTP logs configurations from database",
+                    state.len()
+                );
+            }
+            Err(e) => {
+                error!(
+                    "Failed to load HTTP logs configurations from database: {}",
+                    e
+                );
+                return Err(anyhow::Error::msg(format!(
+                    "Failed to load HTTP logs configs: {}",
+                    e
+                )));
+            }
+        }
+
+        Ok(())
     }
 
     async fn cleanup_stale_configs(
@@ -254,9 +339,28 @@ impl Drop for LogStateManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+    use sqlx::SqlitePool;
+    use tokio::sync::Mutex as AsyncMutex;
+    use lazy_static::lazy_static;
+
+    lazy_static! {
+        static ref TEST_MUTEX: AsyncMutex<()> = AsyncMutex::new(());
+    }
+
+    async fn setup_isolated_test_db() -> Arc<SqlitePool> {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        kftray_commons::utils::db::create_db_table(&pool).await.unwrap();
+        kftray_commons::utils::migration::migrate_configs(Some(&pool)).await.unwrap();
+        let arc_pool = Arc::new(pool);
+        let _ = kftray_commons::utils::db::DB_POOL.set(arc_pool.clone());
+        arc_pool
+    }
 
     #[tokio::test]
     async fn test_set_and_get_http_logs() {
+        let _guard = TEST_MUTEX.lock().await;
+        let _pool = setup_isolated_test_db().await;
         let manager = LogStateManager::new();
 
         assert!(!manager.get_http_logs(1).await.unwrap());
@@ -269,10 +373,35 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_cleanup_stale_configs() {}
+    async fn test_cleanup_stale_configs() {
+        let _guard = TEST_MUTEX.lock().await;
+        let _pool = setup_isolated_test_db().await;
+        let config = LogStateConfig {
+            cleanup_interval: Duration::from_millis(1000),
+            retention_period: Duration::from_millis(100),
+        };
+
+        let manager = LogStateManager::with_config(config);
+
+        manager.set_http_logs(1, true).await.unwrap();
+        manager.set_http_logs(2, false).await.unwrap();
+        assert_eq!(manager.config_count().await, 2);
+
+        tokio::time::sleep(Duration::from_millis(150)).await;
+
+        let removed = manager.run_cleanup().await.unwrap();
+        assert_eq!(removed, 2, "Expected both configs to be removed as stale");
+        assert_eq!(
+            manager.config_count().await,
+            0,
+            "Expected no configs to remain"
+        );
+    }
 
     #[tokio::test]
     async fn test_cleanup_basic() {
+        let _guard = TEST_MUTEX.lock().await;
+        let _pool = setup_isolated_test_db().await;
         let config = LogStateConfig {
             cleanup_interval: Duration::from_millis(1000),
             retention_period: Duration::from_millis(500),
@@ -299,6 +428,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_metadata() {
+        let _guard = TEST_MUTEX.lock().await;
+        let _pool = setup_isolated_test_db().await;
         let manager = LogStateManager::new();
 
         manager

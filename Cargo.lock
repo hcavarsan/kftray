@@ -3041,6 +3041,7 @@ dependencies = [
  "dirs",
  "flate2",
  "httparse",
+ "kftray-commons",
  "lazy_static",
  "mockall",
  "serde_json",
@@ -3165,6 +3166,7 @@ name = "kftui"
 version = "0.21.2"
 dependencies = [
  "built",
+ "chrono",
  "clap",
  "crossterm",
  "env_logger",
@@ -3178,10 +3180,12 @@ dependencies = [
  "log",
  "ratatui",
  "ratatui-explorer",
+ "reqwest 0.12.23",
  "tempfile",
  "throbber-widgets-tui",
  "tokio",
  "tui-logger",
+ "uuid",
 ]
 
 [[package]]

@@ -15,7 +15,7 @@ component_management:
     statuses:
       - type: project
         target: auto
-        threshold: 10%
+        threshold: 50%
 
   individual_components:
     - component_id: kftray-commons

@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use k8s_openapi::api::core::v1::Pod;
-use kftray_http_logs::HttpLogState;
 use kube::Api;
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
@@ -286,20 +285,20 @@ impl PortForwarder {
     }
 
     pub async fn handle_tcp_listener(
-        self: Arc<Self>, listener: TcpListener, http_log_state: Arc<HttpLogState>, config_id: i64,
-        workload_type: String, port: u16, cancellation_token: CancellationToken,
+        self: Arc<Self>, listener: TcpListener, config_id: i64, workload_type: String, port: u16,
+        cancellation_token: CancellationToken,
     ) -> anyhow::Result<()> {
-        let initial_logging_enabled = http_log_state
-            .get_http_logs(config_id)
-            .await
-            .unwrap_or_default();
+        let initial_logging_enabled =
+            match kftray_commons::utils::http_logs_config::get_http_logs_config(config_id).await {
+                Ok(config) => config.enabled,
+                Err(_) => false,
+            };
 
         self.http_log_watcher
             .set_http_logs(config_id, initial_logging_enabled)
             .await?;
 
         let http_log_watcher_clone = self.http_log_watcher.clone();
-        let http_log_state_clone = http_log_state.clone();
         let sync_cancel_token = cancellation_token.clone();
         tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_millis(200));
@@ -307,7 +306,7 @@ impl PortForwarder {
                 tokio::select! {
                     _ = interval.tick() => {
                         if let Err(e) = http_log_watcher_clone
-                            .sync_from_external_state(&http_log_state_clone, config_id)
+                            .sync_from_external_state(config_id)
                             .await
                         {
                             debug!("Sync error for config {}: {}", config_id, e);
@@ -345,7 +344,6 @@ impl PortForwarder {
             let forwarder = Arc::clone(&forwarder_clone);
             let mut tcp_forwarder = tcp_forwarder.clone();
             let http_log_watcher_clone = Arc::new(self.http_log_watcher.clone());
-            let http_log_state_clone = http_log_state.clone();
             let cancel_token_clone = cancel_token.clone();
             tokio::spawn(async move {
                 let upstream_stream = match forwarder.get_stream().await {
@@ -363,7 +361,6 @@ impl PortForwarder {
                         client_addr,
                         cancel_token_clone,
                         http_log_watcher_clone,
-                        http_log_state_clone,
                         port,
                     )
                     .await
@@ -377,8 +374,8 @@ impl PortForwarder {
     }
 
     pub async fn start_listener(
-        self: Arc<Self>, listener_config: ListenerConfig, http_log_state: Arc<HttpLogState>,
-        config_id: i64, workload_type: String, cancellation_token: CancellationToken,
+        self: Arc<Self>, listener_config: ListenerConfig, config_id: i64, workload_type: String,
+        cancellation_token: CancellationToken,
     ) -> anyhow::Result<(u16, JoinHandle<anyhow::Result<()>>)> {
         if let Err(e) =
             crate::network_utils::ensure_loopback_address(&listener_config.local_address).await
@@ -390,7 +387,6 @@ impl PortForwarder {
             Protocol::Tcp => {
                 self.start_tcp_listener(
                     listener_config,
-                    http_log_state,
                     config_id,
                     workload_type,
                     cancellation_token,
@@ -400,7 +396,6 @@ impl PortForwarder {
             Protocol::Udp => {
                 self.start_udp_listener(
                     listener_config,
-                    http_log_state,
                     config_id,
                     workload_type,
                     cancellation_token,
@@ -411,8 +406,8 @@ impl PortForwarder {
     }
 
     async fn start_tcp_listener(
-        self: Arc<Self>, listener_config: ListenerConfig, http_log_state: Arc<HttpLogState>,
-        config_id: i64, workload_type: String, cancellation_token: CancellationToken,
+        self: Arc<Self>, listener_config: ListenerConfig, config_id: i64, workload_type: String,
+        cancellation_token: CancellationToken,
     ) -> anyhow::Result<(u16, JoinHandle<anyhow::Result<()>>)> {
         let ip = listener_config
             .local_address
@@ -432,23 +427,16 @@ impl PortForwarder {
         let port = listener.local_addr()?.port();
 
         let handle = tokio::spawn(async move {
-            self.handle_tcp_listener(
-                listener,
-                http_log_state,
-                config_id,
-                workload_type,
-                port,
-                cancellation_token,
-            )
-            .await
+            self.handle_tcp_listener(listener, config_id, workload_type, port, cancellation_token)
+                .await
         });
 
         Ok((port, handle))
     }
 
     async fn start_udp_listener(
-        self: Arc<Self>, listener_config: ListenerConfig, _http_log_state: Arc<HttpLogState>,
-        _config_id: i64, workload_type: String, cancellation_token: CancellationToken,
+        self: Arc<Self>, listener_config: ListenerConfig, _config_id: i64, workload_type: String,
+        cancellation_token: CancellationToken,
     ) -> anyhow::Result<(u16, JoinHandle<anyhow::Result<()>>)> {
         if workload_type == "service" || workload_type == "proxy" {
             tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;

@@ -1,7 +1,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use kftray_http_logs::HttpLogState;
 use tokio::io::{
     AsyncReadExt,
     AsyncWriteExt,
@@ -68,8 +67,7 @@ impl TcpForwarder {
         &mut self, client_stream: tokio::net::TcpStream,
         upstream_stream: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
         client_address: std::net::SocketAddr, cancellation_token: CancellationToken,
-        http_log_watcher: Arc<HttpLogStateWatcher>, http_log_state: Arc<HttpLogState>,
-        local_port: u16,
+        http_log_watcher: Arc<HttpLogStateWatcher>, local_port: u16,
     ) -> anyhow::Result<()> {
         Self::apply_socket_optimizations(&client_stream);
 
@@ -77,7 +75,7 @@ impl TcpForwarder {
         let current_logging_enabled = http_log_watcher.get_http_logs(self.config_id).await;
 
         if current_logging_enabled && self.logger.is_none() {
-            if let Err(e) = self.initialize_logger(&http_log_state, local_port).await {
+            if let Err(e) = self.initialize_logger(local_port).await {
                 error!("Failed to initialize logger for {}: {}", client_address, e);
             }
         }
@@ -87,44 +85,40 @@ impl TcpForwarder {
             upstream_stream,
             cancellation_token,
             http_log_watcher,
-            http_log_state,
             local_port,
         )
         .await
     }
 
-    pub async fn initialize_logger(
-        &mut self, http_log_state: &HttpLogState, local_port: u16,
-    ) -> anyhow::Result<()> {
+    pub async fn initialize_logger(&mut self, local_port: u16) -> anyhow::Result<()> {
         if self.workload_type != "service" && self.workload_type != "pod" {
             return Ok(());
         }
 
-        match http_log_state.get_http_logs(self.config_id).await {
-            Ok(true) => {
-                if self.logger.is_none() {
-                    debug!(
-                        "Initializing HTTP logger for config_id {} on port {}",
-                        self.config_id, local_port
-                    );
-                    let logger =
-                        kftray_http_logs::HttpLogger::for_config(self.config_id, local_port)
-                            .await?;
-                    self.logger = Some(logger);
-                }
+        let http_logs_enabled =
+            match kftray_commons::utils::http_logs_config::get_http_logs_config(self.config_id)
+                .await
+            {
+                Ok(config) => config.enabled,
+                Err(_) => false,
+            };
+
+        if http_logs_enabled {
+            if self.logger.is_none() {
+                debug!(
+                    "Initializing HTTP logger for config_id {} on port {}",
+                    self.config_id, local_port
+                );
+                let logger =
+                    kftray_http_logs::HttpLogger::for_config(self.config_id, local_port).await?;
+                self.logger = Some(logger);
             }
-            Ok(false) => {
-                if self.logger.is_some() {
-                    debug!(
-                        "HTTP logging disabled for config_id {}, clearing logger",
-                        self.config_id
-                    );
-                    self.logger = None;
-                }
-            }
-            Err(e) => {
-                error!("Failed to check HTTP logging state: {:?}", e);
-            }
+        } else if self.logger.is_some() {
+            debug!(
+                "HTTP logging disabled for config_id {}, clearing logger",
+                self.config_id
+            );
+            self.logger = None;
         }
 
         Ok(())
@@ -134,13 +128,13 @@ impl TcpForwarder {
         &mut self, client_conn: Arc<Mutex<TcpStream>>,
         mut upstream_conn: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
         cancellation_token: CancellationToken, http_log_watcher: Arc<HttpLogStateWatcher>,
-        http_log_state: Arc<HttpLogState>, local_port: u16,
+        local_port: u16,
     ) -> anyhow::Result<()> {
         let log_subscriber = http_log_watcher.create_filtered_subscriber(self.config_id);
         let current_logging_enabled = http_log_watcher.get_http_logs(self.config_id).await;
 
         if current_logging_enabled && self.logger.is_none() {
-            let _ = self.initialize_logger(&http_log_state, local_port).await;
+            let _ = self.initialize_logger(local_port).await;
         }
         if current_logging_enabled || self.logger.is_some() {
             let config_id = self.config_id;
@@ -159,7 +153,6 @@ impl TcpForwarder {
                 Arc::clone(&request_id),
                 cancellation_token.clone(),
                 log_subscriber.resubscribe(),
-                http_log_state.clone(),
                 local_port,
             );
 
@@ -171,7 +164,6 @@ impl TcpForwarder {
                 Arc::clone(&request_id),
                 cancellation_token.clone(),
                 log_subscriber,
-                http_log_state,
                 local_port,
             );
 
@@ -255,7 +247,7 @@ impl TcpForwarder {
         mut log_subscriber: tokio::sync::broadcast::Receiver<
             crate::kube::http_log_watcher::HttpLogStateEvent,
         >,
-        http_log_state: Arc<HttpLogState>, local_port: u16,
+        local_port: u16,
     ) -> anyhow::Result<()> {
         let mut buffer = [0; BUFFER_SIZE];
         let mut should_log = {
@@ -303,8 +295,12 @@ impl TcpForwarder {
                             let new_should_log = event.enabled && {
                                 let mut logger_guard = logger.lock().await;
                                 if event.enabled && logger_guard.is_none() {
-                                    match http_log_state.get_http_logs(config_id).await {
-                                        Ok(true) => {
+                                    let http_logs_enabled = match kftray_commons::utils::http_logs_config::get_http_logs_config(config_id).await {
+                                        Ok(config) => config.enabled,
+                                        Err(_) => false,
+                                    };
+
+                                    if http_logs_enabled {
                                             if let Ok(new_logger) = kftray_http_logs::HttpLogger::for_config(config_id, local_port).await {
                                                 *logger_guard = Some(new_logger);
                                                 drop(logger_guard);
@@ -313,11 +309,9 @@ impl TcpForwarder {
                                                 drop(logger_guard);
                                                 false
                                             }
-                                        }
-                                        _ => {
-                                            drop(logger_guard);
-                                            false
-                                        }
+                                    } else {
+                                        drop(logger_guard);
+                                        false
                                     }
                                 } else {
                                     let result = logger_guard.is_some();
@@ -357,7 +351,7 @@ impl TcpForwarder {
         mut log_subscriber: tokio::sync::broadcast::Receiver<
             crate::kube::http_log_watcher::HttpLogStateEvent,
         >,
-        http_log_state: Arc<HttpLogState>, local_port: u16,
+        local_port: u16,
     ) -> anyhow::Result<()> {
         let mut buffer = [0; BUFFER_SIZE];
         let mut should_log = {
@@ -422,8 +416,12 @@ impl TcpForwarder {
                             let new_should_log = event.enabled && {
                                 let mut logger_guard = logger.lock().await;
                                 if event.enabled && logger_guard.is_none() {
-                                    match http_log_state.get_http_logs(config_id).await {
-                                        Ok(true) => {
+                                    let http_logs_enabled = match kftray_commons::utils::http_logs_config::get_http_logs_config(config_id).await {
+                                        Ok(config) => config.enabled,
+                                        Err(_) => false,
+                                    };
+
+                                    if http_logs_enabled {
                                             if let Ok(new_logger) = kftray_http_logs::HttpLogger::for_config(config_id, local_port).await {
                                                 *logger_guard = Some(new_logger);
                                                 drop(logger_guard);
@@ -432,11 +430,9 @@ impl TcpForwarder {
                                                 drop(logger_guard);
                                                 false
                                             }
-                                        }
-                                        _ => {
-                                            drop(logger_guard);
-                                            false
-                                        }
+                                    } else {
+                                        drop(logger_guard);
+                                        false
                                     }
                                 } else {
                                     let result = logger_guard.is_some();
@@ -620,8 +616,7 @@ mod tests {
     #[tokio::test]
     async fn test_initialize_logger_non_service_workload() {
         let mut forwarder = TcpForwarder::new(1, "deployment".to_string());
-        let http_log_state = kftray_http_logs::HttpLogState::new();
-        let result = forwarder.initialize_logger(&http_log_state, 8080).await;
+        let result = forwarder.initialize_logger(8080).await;
         assert!(result.is_ok());
         assert!(forwarder.logger.is_none());
     }
@@ -629,9 +624,8 @@ mod tests {
     #[tokio::test]
     async fn test_initialize_logger_state() {
         let mut forwarder = TcpForwarder::new(1, "pod".to_string());
-        let http_log_state = kftray_http_logs::HttpLogState::new();
 
-        let result = forwarder.initialize_logger(&http_log_state, 8080).await;
+        let result = forwarder.initialize_logger(8080).await;
         assert!(result.is_ok());
     }
 
@@ -710,7 +704,6 @@ mod tests {
         let (upstream_write, mut upstream_read) = tokio::io::duplex(1024);
 
         let forwarder = TcpForwarder::new(1, "pod".to_string());
-        let _http_log_state = HttpLogState::new();
         let request_id = Arc::new(Mutex::new(None));
         let cancellation_token = CancellationToken::new();
         let cancel_clone = cancellation_token.clone();
@@ -731,7 +724,6 @@ mod tests {
         let mut upstream_writer = upstream_write;
 
         let (_, log_subscriber) = tokio::sync::broadcast::channel(1);
-        let http_log_state = Arc::new(HttpLogState::new());
 
         let logger = Arc::new(Mutex::new(None));
         let result = TcpForwarder::forward_client_to_upstream(
@@ -742,7 +734,6 @@ mod tests {
             request_id,
             cancellation_token,
             log_subscriber,
-            http_log_state,
             8080,
         )
         .await;
@@ -756,7 +747,6 @@ mod tests {
         let (client_write, mut client_read) = tokio::io::duplex(1024);
 
         let forwarder = TcpForwarder::new(1, "pod".to_string());
-        let _http_log_state = HttpLogState::new();
         let request_id = Arc::new(Mutex::new(Some("req123".to_string())));
         let cancellation_token = CancellationToken::new();
         let cancel_clone = cancellation_token.clone();
@@ -780,7 +770,6 @@ mod tests {
         let mut client_writer = client_write;
 
         let (_, log_subscriber) = tokio::sync::broadcast::channel(1);
-        let http_log_state = Arc::new(HttpLogState::new());
 
         let logger = Arc::new(Mutex::new(None));
         let result = TcpForwarder::forward_upstream_to_client(
@@ -791,7 +780,6 @@ mod tests {
             request_id,
             cancellation_token,
             log_subscriber,
-            http_log_state,
             8080,
         )
         .await;

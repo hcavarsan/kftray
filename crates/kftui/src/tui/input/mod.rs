@@ -37,6 +37,132 @@ use crate::core::port_forward::stop_all_port_forward_and_exit;
 use crate::logging::LoggerState;
 use crate::tui::input::navigation::handle_auto_add_configs;
 use crate::tui::input::navigation::handle_context_selection;
+#[derive(Debug, Clone)]
+pub struct HttpLogEntry {
+    pub trace_id: String,
+    pub request_timestamp: String,
+    pub response_timestamp: Option<String>,
+    pub method: String,
+    pub path: String,
+    pub status_code: Option<String>,
+    pub duration_ms: Option<String>,
+    pub request_headers: Vec<String>,
+    pub request_body: String,
+    pub response_headers: Vec<String>,
+    pub response_body: String,
+}
+
+impl HttpLogEntry {
+    pub async fn replay(&self, base_url: &str) -> Result<HttpLogEntry, String> {
+        let url = if self.path.starts_with("http") {
+            self.path.clone()
+        } else {
+            format!("{}{}", base_url.trim_end_matches('/'), &self.path)
+        };
+
+        let method = match self.method.to_uppercase().as_str() {
+            "GET" => reqwest::Method::GET,
+            "POST" => reqwest::Method::POST,
+            "PUT" => reqwest::Method::PUT,
+            "DELETE" => reqwest::Method::DELETE,
+            "PATCH" => reqwest::Method::PATCH,
+            "HEAD" => reqwest::Method::HEAD,
+            "OPTIONS" => reqwest::Method::OPTIONS,
+            _ => return Err(format!("Unsupported HTTP method: {}", self.method)),
+        };
+
+        let client = reqwest::Client::builder()
+            .default_headers(reqwest::header::HeaderMap::new())
+            .http1_only()
+            .build()
+            .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
+
+        let mut request_builder = client.request(method.clone(), &url);
+
+        let mut headers = reqwest::header::HeaderMap::new();
+
+        let skip_headers = ["host", "connection", "content-length", "transfer-encoding"];
+        let mut added_headers = 0;
+
+        for header_line in &self.request_headers {
+            if let Some((name, value)) = header_line.split_once(": ") {
+                let name_lower = name.to_lowercase();
+                let value_trimmed = value.trim();
+
+                if skip_headers.contains(&name_lower.as_str()) {
+                    continue;
+                }
+
+                if value.is_empty() {
+                    log::debug!("Skipping truly empty header: {}", name);
+                    continue;
+                }
+
+                log::debug!("Adding header: {} = '{}'", name, value_trimmed);
+
+                if let (Ok(header_name), Ok(header_value)) = (
+                    reqwest::header::HeaderName::from_bytes(name.as_bytes()),
+                    reqwest::header::HeaderValue::from_str(value_trimmed),
+                ) {
+                    headers.insert(header_name, header_value);
+                    added_headers += 1;
+                }
+            }
+        }
+
+        request_builder = request_builder.headers(headers);
+
+        let actual_body = self.request_body.trim();
+        if !actual_body.is_empty() && actual_body != "<empty body>" && actual_body != "(empty)" {
+            request_builder = request_builder.body(self.request_body.clone());
+        }
+
+        log::debug!(
+            "Sending request: {} {} with {} headers",
+            method,
+            url,
+            added_headers
+        );
+
+        match request_builder.send().await {
+            Ok(response) => {
+                let status = response.status();
+                let response_headers: Vec<String> = response
+                    .headers()
+                    .iter()
+                    .map(|(k, v)| format!("{}: {}", k, v.to_str().unwrap_or("")))
+                    .collect();
+
+                match response.text().await {
+                    Ok(response_body) => {
+                        let now = chrono::Utc::now();
+                        let uuid_str = uuid::Uuid::new_v4().to_string();
+                        let trace_id = format!("replay-{}", &uuid_str[..8]);
+
+                        let replay_entry = HttpLogEntry {
+                            trace_id,
+                            request_timestamp: now.format("%Y-%m-%d %H:%M:%S").to_string(),
+                            response_timestamp: Some(now.format("%Y-%m-%d %H:%M:%S").to_string()),
+                            method: self.method.clone(),
+                            path: self.path.clone(),
+                            status_code: Some(status.as_u16().to_string()),
+                            duration_ms: Some("0".to_string()),
+                            request_headers: self.request_headers.clone(),
+                            request_body: self.request_body.clone(),
+                            response_headers,
+                            response_body,
+                        };
+
+                        Ok(replay_entry)
+                    }
+                    Err(e) => Err(format!("Failed to read response body: {}", e)),
+                }
+            }
+            Err(e) => Err(format!("Request failed: {}", e)),
+        }
+    }
+}
+
 #[derive(PartialEq, Clone, Copy, Debug)]
 pub enum DeleteButton {
     Confirm,
@@ -71,6 +197,8 @@ pub enum AppState {
     ShowDeleteConfirmation,
     ShowContextSelection,
     ShowSettings,
+    ShowHttpLogsConfig,
+    ShowHttpLogsViewer,
 }
 
 pub struct App {
@@ -107,6 +235,25 @@ pub struct App {
     pub settings_editing: bool,
     pub settings_network_monitor: bool,
     pub settings_selected_option: usize,
+    pub http_logs_enabled: std::collections::HashMap<i64, bool>,
+    pub http_logs_config_id: Option<i64>,
+    pub http_logs_config_editing: bool,
+    pub http_logs_config_selected_option: usize,
+    pub http_logs_config_max_file_size_input: String,
+    pub http_logs_config_retention_days_input: String,
+    pub http_logs_config_enabled: bool,
+    pub http_logs_config_auto_cleanup: bool,
+    pub http_logs_viewer_content: Vec<String>,
+    pub http_logs_viewer_scroll: usize,
+    pub http_logs_viewer_config_id: Option<i64>,
+    pub http_logs_viewer_auto_scroll: bool,
+    pub http_logs_viewer_file_path: Option<std::path::PathBuf>,
+    pub http_logs_requests: Vec<HttpLogEntry>,
+    pub http_logs_list_selected: usize,
+    pub http_logs_detail_mode: bool,
+    pub http_logs_selected_entry: Option<HttpLogEntry>,
+    pub http_logs_replay_result: Option<String>,
+    pub http_logs_replay_in_progress: bool,
     pub throbber_state: throbber_widgets_tui::ThrobberState,
     pub configs_being_processed:
         std::collections::HashMap<i64, (Arc<AtomicBool>, std::time::Instant)>,
@@ -162,6 +309,25 @@ impl App {
             settings_editing: false,
             settings_network_monitor: true,
             settings_selected_option: 0,
+            http_logs_enabled: std::collections::HashMap::new(),
+            http_logs_config_id: None,
+            http_logs_config_editing: false,
+            http_logs_config_selected_option: 0,
+            http_logs_config_max_file_size_input: String::new(),
+            http_logs_config_retention_days_input: String::new(),
+            http_logs_config_enabled: false,
+            http_logs_config_auto_cleanup: true,
+            http_logs_viewer_content: Vec::new(),
+            http_logs_viewer_scroll: 0,
+            http_logs_viewer_config_id: None,
+            http_logs_viewer_auto_scroll: true,
+            http_logs_viewer_file_path: None,
+            http_logs_requests: Vec::new(),
+            http_logs_list_selected: 0,
+            http_logs_detail_mode: false,
+            http_logs_selected_entry: None,
+            http_logs_replay_result: None,
+            http_logs_replay_in_progress: false,
             throbber_state: throbber_widgets_tui::ThrobberState::default(),
             configs_being_processed: std::collections::HashMap::new(),
             error_receiver: Some(error_receiver),
@@ -173,6 +339,170 @@ impl App {
         }
 
         app
+    }
+
+    pub fn update_http_logs_viewer(&mut self) {
+        if let Some(file_path) = &self.http_logs_viewer_file_path {
+            if let Ok(content) = std::fs::read_to_string(file_path) {
+                let new_lines: Vec<String> = content.lines().map(|line| line.to_string()).collect();
+                let old_len = self.http_logs_viewer_content.len();
+
+                if new_lines.len() != old_len || new_lines != self.http_logs_viewer_content {
+                    self.http_logs_viewer_content = new_lines;
+
+                    self.http_logs_requests = Self::parse_http_logs(&self.http_logs_viewer_content);
+
+                    if self.http_logs_viewer_auto_scroll
+                        && self.http_logs_viewer_content.len() > old_len
+                    {
+                        self.http_logs_viewer_scroll = if self.http_logs_viewer_content.is_empty() {
+                            0
+                        } else {
+                            self.http_logs_viewer_content.len().saturating_sub(1)
+                        };
+                    }
+                }
+            }
+        }
+    }
+
+    fn parse_http_logs(lines: &[String]) -> Vec<HttpLogEntry> {
+        let mut entries = Vec::new();
+        let mut current_entry: Option<HttpLogEntry> = None;
+        let mut i = 0;
+
+        while i < lines.len() {
+            let line = lines[i].trim();
+
+            if line.starts_with("# Trace ID: ")
+                && i + 1 < lines.len()
+                && lines[i + 1].trim().starts_with("# Request at: ")
+            {
+                if let Some(entry) = current_entry.take() {
+                    entries.push(entry);
+                }
+
+                let trace_id = line.replace("# Trace ID: ", "");
+                let request_timestamp = lines[i + 1].trim().replace("# Request at: ", "");
+
+                if i + 2 < lines.len() {
+                    let request_line = &lines[i + 2];
+                    let parts: Vec<&str> = request_line.split_whitespace().collect();
+                    let (method, path) = if parts.len() >= 2 {
+                        (parts[0].to_string(), parts[1].to_string())
+                    } else {
+                        ("UNKNOWN".to_string(), "/".to_string())
+                    };
+
+                    let mut headers = Vec::new();
+                    let mut body = String::new();
+                    let mut j = i + 3;
+                    let mut in_body = false;
+
+                    while j < lines.len() && lines[j].trim() != "###" {
+                        let line = &lines[j];
+                        if line.trim().is_empty() && !in_body {
+                            in_body = true;
+                        } else if line.trim().starts_with("# <empty body>") {
+                            body = "<empty body>".to_string();
+                        } else if in_body {
+                            if !body.is_empty() {
+                                body.push('\n');
+                            }
+                            body.push_str(line);
+                        } else if !line.trim().starts_with("#") && line.contains(':') {
+                            headers.push(line.trim().to_string());
+                        }
+                        j += 1;
+                    }
+
+                    current_entry = Some(HttpLogEntry {
+                        trace_id,
+                        request_timestamp,
+                        response_timestamp: None,
+                        method,
+                        path,
+                        status_code: None,
+                        duration_ms: None,
+                        request_headers: headers,
+                        request_body: body,
+                        response_headers: Vec::new(),
+                        response_body: String::new(),
+                    });
+                }
+            } else if line.starts_with("# Response at: ") && current_entry.is_some() {
+                let response_timestamp = line.replace("# Response at: ", "");
+                if i + 1 < lines.len() && lines[i + 1].trim().starts_with("# Took: ") {
+                    let duration = lines[i + 1].trim().replace("# Took: ", "");
+
+                    if i + 2 < lines.len() {
+                        let status_line = &lines[i + 2];
+                        let parts: Vec<&str> = status_line.split_whitespace().collect();
+                        let status_code = if parts.len() >= 2 {
+                            parts[1].to_string()
+                        } else {
+                            "000".to_string()
+                        };
+
+                        let mut headers = Vec::new();
+                        let mut body = String::new();
+                        let mut j = i + 3;
+                        let mut in_body = false;
+
+                        while j < lines.len() && lines[j].trim() != "###" {
+                            let line = &lines[j];
+                            if line.trim().is_empty() && !in_body {
+                                in_body = true;
+                            } else if in_body {
+                                if !body.is_empty() {
+                                    body.push('\n');
+                                }
+                                body.push_str(line);
+                            } else if !line.trim().starts_with("#") && line.contains(':') {
+                                headers.push(line.trim().to_string());
+                            }
+                            j += 1;
+                        }
+
+                        if let Some(ref mut entry) = current_entry {
+                            entry.response_timestamp = Some(response_timestamp);
+                            entry.duration_ms = Some(duration);
+                            entry.status_code = Some(status_code);
+                            entry.response_headers = headers;
+                            entry.response_body = body;
+                        }
+                    }
+                }
+            }
+            i += 1;
+        }
+
+        // Add the last entry if it exists
+        if let Some(entry) = current_entry {
+            entries.push(entry);
+        }
+
+        entries
+    }
+
+    pub async fn load_http_logs_states(&mut self, configs: &[Config], mode: DatabaseMode) {
+        for config in configs {
+            if let Some(config_id) = config.id {
+                match kftray_commons::utils::http_logs_config::get_http_logs_config_with_mode(
+                    config_id, mode,
+                )
+                .await
+                {
+                    Ok(http_logs_config) => {
+                        self.http_logs_enabled
+                            .insert(config_id, http_logs_config.enabled);
+                    }
+                    Err(_) => {
+                        self.http_logs_enabled.insert(config_id, false);
+                    }
+                }
+            }
+        }
     }
 
     pub fn update_visible_rows(&mut self, terminal_height: u16) {
@@ -348,6 +678,14 @@ pub async fn handle_input(app: &mut App, mode: DatabaseMode) -> io::Result<bool>
                 AppState::ShowSettings => {
                     log::debug!("Handling ShowSettings state");
                     handle_settings_input(app, key.code, mode).await?;
+                }
+                AppState::ShowHttpLogsConfig => {
+                    log::debug!("Handling ShowHttpLogsConfig state");
+                    handle_http_logs_config_input(app, key.code, mode).await?;
+                }
+                AppState::ShowHttpLogsViewer => {
+                    log::debug!("Handling ShowHttpLogsViewer state");
+                    handle_http_logs_viewer_input(app, key.code).await?;
                 }
                 AppState::Normal => {
                     log::debug!("Handling Normal state");
@@ -600,6 +938,10 @@ pub async fn handle_stopped_table_input(
         KeyCode::Char('f') => handle_port_forwarding(app, mode).await?,
         KeyCode::Char('d') => show_delete_confirmation(app),
         KeyCode::Char('a') => toggle_select_all(app),
+        KeyCode::Char('l') => handle_http_logs_toggle(app, mode).await?,
+        KeyCode::Char('L') => handle_http_logs_config(app, mode).await?,
+        KeyCode::Char('o') => handle_open_http_logs(app, mode).await?,
+        KeyCode::Char('V') => handle_view_http_logs(app, mode).await?,
         _ => {}
     }
     Ok(())
@@ -645,6 +987,10 @@ pub async fn handle_running_table_input(
         KeyCode::Char('f') => handle_port_forwarding(app, mode).await?,
         KeyCode::Char('d') => show_delete_confirmation(app),
         KeyCode::Char('a') => toggle_select_all(app),
+        KeyCode::Char('l') => handle_http_logs_toggle(app, mode).await?,
+        KeyCode::Char('L') => handle_http_logs_config(app, mode).await?,
+        KeyCode::Char('o') => handle_open_http_logs(app, mode).await?,
+        KeyCode::Char('V') => handle_view_http_logs(app, mode).await?,
         _ => {}
     }
     Ok(())
@@ -737,6 +1083,14 @@ pub async fn handle_common_hotkeys(
             }
             app.settings_editing = false;
             app.settings_selected_option = 0;
+            Ok(true)
+        }
+        KeyCode::Char('L') => {
+            handle_http_logs_config(app, mode).await?;
+            Ok(true)
+        }
+        KeyCode::Char('V') => {
+            handle_view_http_logs(app, mode).await?;
             Ok(true)
         }
         _ => Ok(false),
@@ -962,44 +1316,103 @@ pub async fn handle_settings_input(
             app.settings_editing = false;
         }
         KeyCode::Up => {
-            if app.settings_selected_option > 0 {
-                app.settings_selected_option -= 1;
-            }
+            app.settings_selected_option = match app.settings_selected_option {
+                0 => 0,
+                1 => 1,
+                2 => 0,
+                3 => 1,
+                _ => 0,
+            };
         }
         KeyCode::Down => {
-            if app.settings_selected_option < 1 {
-                app.settings_selected_option += 1;
-            }
+            app.settings_selected_option = match app.settings_selected_option {
+                0 => 2,
+                1 => 3,
+                2 => 2,
+                3 => 3,
+                _ => 0,
+            };
+        }
+        KeyCode::Left => {
+            app.settings_selected_option = match app.settings_selected_option {
+                0 => 0,
+                1 => 0,
+                2 => 2,
+                3 => 2,
+                _ => 0,
+            };
+        }
+        KeyCode::Right => {
+            app.settings_selected_option = match app.settings_selected_option {
+                0 => 1,
+                1 => 1,
+                2 => 3,
+                3 => 3,
+                _ => 0,
+            };
         }
         KeyCode::Enter => {
             match app.settings_selected_option {
                 0 => {
-                    // Handle timeout setting
-                    if app.settings_editing {
-                        if let Ok(timeout_value) = app.settings_timeout_input.parse::<u32>() {
-                            if (kftray_commons::utils::settings::set_disconnect_timeout_with_mode(
-                                timeout_value,
-                                mode,
-                            )
-                            .await)
-                                .is_err()
-                            {
-                                app.error_message =
-                                    Some("Failed to save timeout setting".to_string());
-                                app.state = AppState::ShowErrorPopup;
-                            } else {
-                                app.settings_editing = false;
-                            }
-                        } else {
-                            app.error_message =
-                                Some("Invalid timeout value. Please enter a number.".to_string());
+                    let timeout_enabled = !(app.settings_timeout_input == "0"
+                        || app.settings_timeout_input.is_empty());
+                    if timeout_enabled {
+                        app.settings_timeout_input = "0".to_string();
+                    } else {
+                        app.settings_timeout_input = "5".to_string();
+                    }
+
+                    if let Ok(timeout_value) = app.settings_timeout_input.parse::<u32>() {
+                        if (kftray_commons::utils::settings::set_disconnect_timeout_with_mode(
+                            timeout_value,
+                            mode,
+                        )
+                        .await)
+                            .is_err()
+                        {
+                            app.error_message = Some("Failed to save timeout setting".to_string());
                             app.state = AppState::ShowErrorPopup;
                         }
-                    } else {
-                        app.settings_editing = true;
                     }
                 }
                 1 => {
+                    let timeout_enabled = !(app.settings_timeout_input == "0"
+                        || app.settings_timeout_input.is_empty());
+                    if timeout_enabled {
+                        if app.settings_editing {
+                            if let Ok(timeout_value) = app.settings_timeout_input.parse::<u32>() {
+                                if timeout_value > 0 {
+                                    if (kftray_commons::utils::settings::set_disconnect_timeout_with_mode(
+                                        timeout_value,
+                                        mode,
+                                    )
+                                    .await)
+                                        .is_err()
+                                    {
+                                        app.error_message =
+                                            Some("Failed to save timeout setting".to_string());
+                                        app.state = AppState::ShowErrorPopup;
+                                    } else {
+                                        app.settings_editing = false;
+                                    }
+                                } else {
+                                    app.error_message =
+                                        Some("Timeout must be greater than 0".to_string());
+                                    app.state = AppState::ShowErrorPopup;
+                                }
+                            } else {
+                                app.error_message = Some(
+                                    "Invalid timeout value. Please enter a number.".to_string(),
+                                );
+                                app.state = AppState::ShowErrorPopup;
+                            }
+                        } else {
+                            // Start editing
+                            app.settings_editing = true;
+                        }
+                    }
+                }
+                2 => {
                     // Handle network monitor toggle
                     app.settings_network_monitor = !app.settings_network_monitor;
                     if let Err(e) = kftray_commons::utils::settings::set_network_monitor_with_mode(
@@ -1026,17 +1439,644 @@ pub async fn handle_settings_input(
                         }
                     }
                 }
+                3 => {}
                 _ => {}
             }
         }
         KeyCode::Char(c) => {
-            if app.settings_editing && app.settings_selected_option == 0 && c.is_ascii_digit() {
+            if app.settings_editing && app.settings_selected_option == 1 && c.is_ascii_digit() {
                 app.settings_timeout_input.push(c);
             }
         }
         KeyCode::Backspace => {
-            if app.settings_editing && app.settings_selected_option == 0 {
+            if app.settings_editing && app.settings_selected_option == 1 {
                 app.settings_timeout_input.pop();
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+async fn handle_http_logs_toggle(app: &mut App, mode: DatabaseMode) -> io::Result<()> {
+    let config_id = match app.active_table {
+        ActiveTable::Stopped => {
+            if let Some(index) = app.table_state_stopped.selected() {
+                if index < app.stopped_configs.len() {
+                    app.stopped_configs[index].id
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        }
+        ActiveTable::Running => {
+            if let Some(index) = app.table_state_running.selected() {
+                if index < app.running_configs.len() {
+                    app.running_configs[index].id
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        }
+    };
+
+    if let Some(id) = config_id {
+        let current_state = app.http_logs_enabled.get(&id).unwrap_or(&false);
+        let new_state = !current_state;
+
+        let mut config =
+            match kftray_commons::utils::http_logs_config::get_http_logs_config_with_mode(id, mode)
+                .await
+            {
+                Ok(config) => config,
+                Err(_) => kftray_commons::models::http_logs_config_model::HttpLogsConfig::new(id),
+            };
+
+        config.enabled = new_state;
+
+        match kftray_commons::utils::http_logs_config::update_http_logs_config_with_mode(
+            &config, mode,
+        )
+        .await
+        {
+            Ok(()) => {
+                app.http_logs_enabled.insert(id, new_state);
+                app.import_export_message = Some(format!(
+                    "HTTP logs {} for config ID: {}",
+                    if new_state { "enabled" } else { "disabled" },
+                    id
+                ));
+            }
+            Err(e) => {
+                app.error_message = Some(format!("Failed to toggle HTTP logs: {}", e));
+                app.state = AppState::ShowErrorPopup;
+            }
+        }
+    } else {
+        app.error_message = Some("No configuration selected for HTTP logs toggle".to_string());
+        app.state = AppState::ShowErrorPopup;
+    }
+
+    Ok(())
+}
+
+async fn handle_view_http_logs(app: &mut App, mode: DatabaseMode) -> io::Result<()> {
+    let config_info = match app.active_table {
+        ActiveTable::Stopped => app
+            .stopped_configs
+            .get(app.table_state_stopped.selected().unwrap_or(0)),
+        ActiveTable::Running => app
+            .running_configs
+            .get(app.table_state_running.selected().unwrap_or(0)),
+    };
+
+    if let Some(config) = config_info {
+        if let (Some(config_id), Some(local_port)) = (config.id, config.local_port) {
+            let http_logs_enabled =
+                match kftray_commons::utils::http_logs_config::get_http_logs_config_with_mode(
+                    config_id, mode,
+                )
+                .await
+                {
+                    Ok(http_config) => http_config.enabled,
+                    Err(_) => *app.http_logs_enabled.get(&config_id).unwrap_or(&false),
+                };
+
+            if !http_logs_enabled {
+                app.error_message =
+                    Some("HTTP logs are not enabled for this configuration".to_string());
+                app.state = AppState::ShowErrorPopup;
+                return Ok(());
+            }
+
+            let log_file_name = format!("{}_{}.http", config_id, local_port);
+
+            match kftray_commons::utils::config_dir::get_log_folder_path() {
+                Ok(log_folder_path) => {
+                    let log_file_path = log_folder_path.join(&log_file_name);
+
+                    if !log_file_path.exists() {
+                        app.error_message = Some(format!(
+                            "HTTP log file does not exist: {}",
+                            log_file_path.display()
+                        ));
+                        app.state = AppState::ShowErrorPopup;
+                        return Ok(());
+                    }
+
+                    match std::fs::read_to_string(&log_file_path) {
+                        Ok(content) => {
+                            app.http_logs_viewer_content =
+                                content.lines().map(|line| line.to_string()).collect();
+                            app.http_logs_requests =
+                                App::parse_http_logs(&app.http_logs_viewer_content);
+                            app.http_logs_viewer_scroll = if app.http_logs_viewer_content.is_empty()
+                            {
+                                0
+                            } else {
+                                app.http_logs_viewer_content.len().saturating_sub(1)
+                            };
+                            app.http_logs_viewer_config_id = Some(config_id);
+                            app.http_logs_viewer_auto_scroll = true;
+                            app.http_logs_viewer_file_path = Some(log_file_path);
+                            app.state = AppState::ShowHttpLogsViewer;
+                        }
+                        Err(e) => {
+                            app.error_message =
+                                Some(format!("Failed to read HTTP log file: {}", e));
+                            app.state = AppState::ShowErrorPopup;
+                        }
+                    }
+                }
+                Err(e) => {
+                    app.error_message = Some(format!("Failed to get log folder path: {}", e));
+                    app.state = AppState::ShowErrorPopup;
+                }
+            }
+        } else {
+            app.error_message = Some("Configuration is missing ID or local port".to_string());
+            app.state = AppState::ShowErrorPopup;
+        }
+    } else {
+        app.error_message = Some("No configuration selected for viewing HTTP logs".to_string());
+        app.state = AppState::ShowErrorPopup;
+    }
+
+    Ok(())
+}
+
+async fn handle_http_logs_config(app: &mut App, mode: DatabaseMode) -> io::Result<()> {
+    let config_id = match app.active_table {
+        ActiveTable::Stopped => {
+            if let Some(index) = app.table_state_stopped.selected() {
+                if index < app.stopped_configs.len() {
+                    app.stopped_configs[index].id
+                } else {
+                    None
+                }
+            } else if !app.stopped_configs.is_empty() {
+                app.stopped_configs[0].id
+            } else {
+                None
+            }
+        }
+        ActiveTable::Running => {
+            if let Some(index) = app.table_state_running.selected() {
+                if index < app.running_configs.len() {
+                    app.running_configs[index].id
+                } else {
+                    None
+                }
+            } else if !app.running_configs.is_empty() {
+                app.running_configs[0].id
+            } else {
+                None
+            }
+        }
+    };
+
+    let config_id = config_id.or_else(|| {
+        if !app.stopped_configs.is_empty() {
+            app.stopped_configs[0].id
+        } else if !app.running_configs.is_empty() {
+            app.running_configs[0].id
+        } else {
+            None
+        }
+    });
+
+    if let Some(id) = config_id {
+        let config =
+            match kftray_commons::utils::http_logs_config::get_http_logs_config_with_mode(id, mode)
+                .await
+            {
+                Ok(config) => config,
+                Err(_) => kftray_commons::models::http_logs_config_model::HttpLogsConfig::new(id),
+            };
+
+        app.http_logs_config_id = Some(id);
+        app.http_logs_config_enabled = config.enabled;
+        app.http_logs_config_auto_cleanup = config.auto_cleanup;
+        app.http_logs_config_max_file_size_input =
+            (config.max_file_size / (1024 * 1024)).to_string();
+        app.http_logs_config_retention_days_input = config.retention_days.to_string();
+        app.http_logs_config_editing = false;
+        app.http_logs_config_selected_option = 0;
+
+        app.state = AppState::ShowHttpLogsConfig;
+    } else {
+        app.error_message = Some("No configuration available for HTTP logs config".to_string());
+        app.state = AppState::ShowErrorPopup;
+    }
+
+    Ok(())
+}
+
+async fn handle_open_http_logs(app: &mut App, _mode: DatabaseMode) -> io::Result<()> {
+    let config_info = match app.active_table {
+        ActiveTable::Stopped => {
+            if let Some(index) = app.table_state_stopped.selected() {
+                if index < app.stopped_configs.len() {
+                    Some((
+                        app.stopped_configs[index].id,
+                        app.stopped_configs[index].local_port,
+                    ))
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        }
+        ActiveTable::Running => {
+            if let Some(index) = app.table_state_running.selected() {
+                if index < app.running_configs.len() {
+                    Some((
+                        app.running_configs[index].id,
+                        app.running_configs[index].local_port,
+                    ))
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        }
+    };
+
+    if let Some((config_id, local_port)) = config_info {
+        if let (Some(id), Some(port)) = (config_id, local_port) {
+            let log_file_name = format!("{}_{}.http", id, port);
+
+            match open_http_log_file(&log_file_name).await {
+                Ok(()) => {
+                    app.import_export_message =
+                        Some(format!("Opened HTTP log file: {}", log_file_name));
+                }
+                Err(err) => {
+                    app.error_message = Some(format!("Failed to open HTTP log file: {}", err));
+                    app.state = AppState::ShowErrorPopup;
+                }
+            }
+        } else {
+            app.error_message = Some("Selected config missing ID or port".to_string());
+            app.state = AppState::ShowErrorPopup;
+        }
+    } else {
+        app.error_message = Some("No configuration selected for opening HTTP logs".to_string());
+        app.state = AppState::ShowErrorPopup;
+    }
+
+    Ok(())
+}
+
+async fn open_http_log_file(log_file_name: &str) -> Result<(), String> {
+    use std::env;
+    use std::process::Command;
+
+    let log_folder_path = kftray_commons::utils::config_dir::get_log_folder_path()
+        .map_err(|e| format!("Failed to get log folder path: {e}"))?;
+
+    let log_file_path = log_folder_path.join(log_file_name);
+
+    if !log_file_path.exists() {
+        return Err(format!(
+            "HTTP log file does not exist: {}",
+            log_file_path.display()
+        ));
+    }
+
+    let file_path_str = log_file_path.to_str().ok_or("Invalid UTF-8 in file path")?;
+
+    if let Ok(editor) = env::var("EDITOR") {
+        if Command::new(&editor).arg(file_path_str).spawn().is_ok() {
+            return Ok(());
+        }
+    }
+
+    if let Ok(visual) = env::var("VISUAL") {
+        if Command::new(&visual).arg(file_path_str).spawn().is_ok() {
+            return Ok(());
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        if Command::new("open")
+            .args(["-t", file_path_str])
+            .spawn()
+            .is_ok()
+        {
+            return Ok(());
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        if Command::new("xdg-open").arg(file_path_str).spawn().is_ok() {
+            return Ok(());
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        if Command::new("notepad").arg(file_path_str).spawn().is_ok() {
+            return Ok(());
+        }
+    }
+
+    Err("Failed to open file with any available editor".to_string())
+}
+
+async fn handle_http_logs_config_input(
+    app: &mut App, key: KeyCode, mode: DatabaseMode,
+) -> io::Result<()> {
+    match key {
+        KeyCode::Esc => {
+            app.state = AppState::Normal;
+            app.http_logs_config_editing = false;
+        }
+        KeyCode::Up => {
+            app.http_logs_config_selected_option = match app.http_logs_config_selected_option {
+                0 => 0,
+                1 => 0,
+                2 => 3,
+                3 => 3,
+                _ => 0,
+            };
+        }
+        KeyCode::Down => {
+            app.http_logs_config_selected_option = match app.http_logs_config_selected_option {
+                0 => 1,
+                1 => 1,
+                2 => 2,
+                3 => 2,
+                _ => 0,
+            };
+        }
+        KeyCode::Left => {
+            app.http_logs_config_selected_option = match app.http_logs_config_selected_option {
+                0 => 0,
+                1 => 1,
+                2 => 1,
+                3 => 0,
+                _ => 0,
+            };
+        }
+        KeyCode::Right => {
+            app.http_logs_config_selected_option = match app.http_logs_config_selected_option {
+                0 => 3,
+                1 => 2,
+                2 => 2,
+                3 => 3,
+                _ => 0,
+            };
+        }
+        KeyCode::Enter => match app.http_logs_config_selected_option {
+            0 => {
+                app.http_logs_config_enabled = !app.http_logs_config_enabled;
+                auto_save_http_logs_config(app, mode).await;
+            }
+            1 => {
+                if app.http_logs_config_editing {
+                    app.http_logs_config_editing = false;
+                    auto_save_http_logs_config(app, mode).await;
+                } else {
+                    app.http_logs_config_editing = true;
+                }
+            }
+            2 => {
+                if app.http_logs_config_editing {
+                    app.http_logs_config_editing = false;
+                    auto_save_http_logs_config(app, mode).await;
+                } else {
+                    app.http_logs_config_editing = true;
+                }
+            }
+            3 => {
+                app.http_logs_config_auto_cleanup = !app.http_logs_config_auto_cleanup;
+                auto_save_http_logs_config(app, mode).await;
+            }
+            _ => {}
+        },
+        KeyCode::Char(c) if app.http_logs_config_editing => {
+            match app.http_logs_config_selected_option {
+                1 => {
+                    if c.is_ascii_digit() {
+                        app.http_logs_config_max_file_size_input.push(c);
+                    }
+                }
+                2 => {
+                    if c.is_ascii_digit() {
+                        app.http_logs_config_retention_days_input.push(c);
+                    }
+                }
+                _ => {}
+            }
+        }
+        KeyCode::Backspace if app.http_logs_config_editing => {
+            match app.http_logs_config_selected_option {
+                1 => {
+                    app.http_logs_config_max_file_size_input.pop();
+                }
+                2 => {
+                    app.http_logs_config_retention_days_input.pop();
+                }
+                _ => {}
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+async fn auto_save_http_logs_config(app: &mut App, mode: DatabaseMode) {
+    if let Some(config_id) = app.http_logs_config_id {
+        let max_file_size = match app.http_logs_config_max_file_size_input.parse::<u64>() {
+            Ok(size) if size > 0 && size <= 1000 => size * 1024 * 1024,
+            Ok(_) => {
+                app.error_message = Some("Max file size must be between 1 and 1000 MB".to_string());
+                app.state = AppState::ShowErrorPopup;
+                return;
+            }
+            Err(_) => {
+                app.error_message = Some("Invalid max file size value".to_string());
+                app.state = AppState::ShowErrorPopup;
+                return;
+            }
+        };
+
+        let retention_days = match app.http_logs_config_retention_days_input.parse::<u64>() {
+            Ok(days) if days > 0 && days <= 365 => days,
+            Ok(_) => {
+                app.error_message = Some("Retention days must be between 1 and 365".to_string());
+                app.state = AppState::ShowErrorPopup;
+                return;
+            }
+            Err(_) => {
+                app.error_message = Some("Invalid retention days value".to_string());
+                app.state = AppState::ShowErrorPopup;
+                return;
+            }
+        };
+
+        let config = kftray_commons::models::http_logs_config_model::HttpLogsConfig {
+            config_id,
+            enabled: app.http_logs_config_enabled,
+            max_file_size,
+            retention_days,
+            auto_cleanup: app.http_logs_config_auto_cleanup,
+        };
+
+        match kftray_commons::utils::http_logs_config::update_http_logs_config_with_mode(
+            &config, mode,
+        )
+        .await
+        {
+            Ok(()) => {
+                app.http_logs_enabled.insert(config_id, config.enabled);
+                app.import_export_message = Some("✅ HTTP logs configuration saved".to_string());
+            }
+            Err(e) => {
+                app.error_message = Some(format!("Failed to save HTTP logs configuration: {}", e));
+                app.state = AppState::ShowErrorPopup;
+            }
+        }
+    }
+}
+
+async fn handle_http_logs_viewer_input(app: &mut App, key: KeyCode) -> io::Result<()> {
+    match key {
+        KeyCode::Esc => {
+            if app.http_logs_detail_mode {
+                app.http_logs_detail_mode = false;
+                app.http_logs_selected_entry = None;
+                app.http_logs_replay_result = None;
+                app.http_logs_replay_in_progress = false;
+            } else {
+                app.state = AppState::Normal;
+                app.http_logs_viewer_content.clear();
+                app.http_logs_viewer_scroll = 0;
+                app.http_logs_viewer_config_id = None;
+                app.http_logs_viewer_auto_scroll = true;
+                app.http_logs_viewer_file_path = None;
+                app.http_logs_requests.clear();
+                app.http_logs_list_selected = 0;
+                app.http_logs_detail_mode = false;
+                app.http_logs_selected_entry = None;
+                app.http_logs_replay_result = None;
+                app.http_logs_replay_in_progress = false;
+            }
+        }
+        KeyCode::Up => {
+            if app.http_logs_detail_mode {
+                if app.http_logs_viewer_scroll > 0 {
+                    app.http_logs_viewer_scroll -= 1;
+                }
+            } else if app.http_logs_list_selected > 0 {
+                app.http_logs_list_selected -= 1;
+            }
+        }
+        KeyCode::Down => {
+            if app.http_logs_detail_mode {
+                app.http_logs_viewer_scroll += 1;
+            } else if app.http_logs_list_selected < app.http_logs_requests.len().saturating_sub(1) {
+                app.http_logs_list_selected += 1;
+            }
+        }
+        KeyCode::PageUp => {
+            if app.http_logs_detail_mode {
+                if app.http_logs_viewer_scroll > 10 {
+                    app.http_logs_viewer_scroll -= 10;
+                } else {
+                    app.http_logs_viewer_scroll = 0;
+                }
+            } else if app.http_logs_list_selected > 10 {
+                app.http_logs_list_selected -= 10;
+            } else {
+                app.http_logs_list_selected = 0;
+            }
+        }
+        KeyCode::PageDown => {
+            if app.http_logs_detail_mode {
+                app.http_logs_viewer_scroll += 10;
+            } else {
+                let new_selected = app.http_logs_list_selected + 10;
+                if new_selected < app.http_logs_requests.len() {
+                    app.http_logs_list_selected = new_selected;
+                } else if !app.http_logs_requests.is_empty() {
+                    app.http_logs_list_selected = app.http_logs_requests.len() - 1;
+                }
+            }
+        }
+        KeyCode::Home => {
+            if app.http_logs_detail_mode {
+                app.http_logs_viewer_scroll = 0;
+            } else {
+                app.http_logs_list_selected = 0;
+            }
+        }
+        KeyCode::End => {
+            if app.http_logs_detail_mode {
+            } else if !app.http_logs_requests.is_empty() {
+                app.http_logs_list_selected = app.http_logs_requests.len() - 1;
+            }
+        }
+        KeyCode::Char('a') | KeyCode::Char('A') => {
+            if !app.http_logs_detail_mode {
+                app.http_logs_viewer_auto_scroll = !app.http_logs_viewer_auto_scroll;
+            }
+        }
+        KeyCode::Char('r') | KeyCode::Char('R') => {
+            if app.http_logs_detail_mode && app.http_logs_selected_entry.is_some() {
+                if let Some(entry) = &app.http_logs_selected_entry {
+                    let base_url = if let Some(config_id) = app.http_logs_viewer_config_id {
+                        let local_port = app
+                            .stopped_configs
+                            .iter()
+                            .chain(app.running_configs.iter())
+                            .find(|c| c.id == Some(config_id))
+                            .and_then(|c| c.local_port)
+                            .unwrap_or(8080);
+                        format!("http://localhost:{}", local_port)
+                    } else {
+                        "http://localhost:8080".to_string()
+                    };
+
+                    let entry_clone = entry.clone();
+
+                    match entry_clone.replay(&base_url).await {
+                        Ok(replay_entry) => {
+                            app.http_logs_selected_entry = Some(replay_entry);
+                            app.http_logs_viewer_scroll = 0;
+                            app.http_logs_replay_result = None;
+                            app.http_logs_replay_in_progress = false;
+                        }
+                        Err(error) => {
+                            app.http_logs_replay_result = Some(error);
+                            app.http_logs_replay_in_progress = false;
+                        }
+                    }
+                }
+            }
+        }
+        KeyCode::Enter => {
+            if !app.http_logs_detail_mode && !app.http_logs_requests.is_empty() {
+                if let Some(entry) = app
+                    .http_logs_requests
+                    .get(app.http_logs_list_selected)
+                    .cloned()
+                {
+                    app.http_logs_selected_entry = Some(entry);
+                    app.http_logs_detail_mode = true;
+                    app.http_logs_viewer_scroll = 0;
+                    app.http_logs_replay_result = None;
+                    app.http_logs_replay_in_progress = false;
+                }
             }
         }
         _ => {}
