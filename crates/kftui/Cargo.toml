@@ -1,6 +1,6 @@
 [package]
 name = "kftui"
-version = "0.21.2"
+version = "0.22.0"
 authors = [
   "Henrique Cavarsan <hencavarsan@gmail.com>",
 ]
@@ -29,6 +29,7 @@ log = { workspace = true }
 ratatui = { workspace = true }
 ratatui-explorer = { workspace = true }
 reqwest = { workspace = true }
+serde_json = { workspace = true }
 tempfile = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
