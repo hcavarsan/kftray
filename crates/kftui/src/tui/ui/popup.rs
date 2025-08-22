@@ -1056,49 +1056,126 @@ fn render_http_requests_list(f: &mut Frame, app: &mut App, area: Rect) {
 
 fn render_http_request_detail(f: &mut Frame, app: &mut App, area: Rect) {
     if let Some(entry) = &app.http_logs_selected_entry {
-        let mut lines = vec![];
+        // Split the area into left (request) and right (response) columns
+        let chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+            .split(area);
 
-        if entry.trace_id.starts_with("replay-") {
-            lines.push(Line::from(Span::styled(
-                "[ REPLAYED REQUEST ]",
-                Style::default().bold().fg(YELLOW),
-            )));
-            lines.push(Line::from(""));
+        let request_area = chunks[0];
+        let response_area = chunks[1];
+
+        // Render request side
+        render_request_side(f, app, entry, request_area);
+
+        // Render response side
+        render_response_side(f, app, entry, response_area);
+    } else {
+        let error_message = Paragraph::new("No request selected")
+            .style(Style::default().fg(RED).italic())
+            .alignment(Alignment::Center);
+        f.render_widget(error_message, area);
+    }
+}
+
+fn render_request_side(
+    f: &mut Frame, app: &App, entry: &crate::tui::input::HttpLogEntry, area: Rect,
+) {
+    let mut lines = vec![];
+
+    // Header information
+    if entry.trace_id.starts_with("replay-") {
+        lines.push(Line::from(Span::styled(
+            "[ REPLAYED REQUEST ]",
+            Style::default().bold().fg(YELLOW),
+        )));
+        lines.push(Line::from(""));
+    }
+
+    lines.extend(vec![
+        Line::from(vec![
+            Span::styled("Trace ID: ", Style::default().bold()),
+            Span::styled(&entry.trace_id, Style::default().fg(MAUVE)),
+        ]),
+        Line::from(vec![
+            Span::styled("Method: ", Style::default().bold()),
+            Span::styled(&entry.method, Style::default().fg(GREEN)),
+        ]),
+        Line::from(vec![
+            Span::styled("Path: ", Style::default().bold()),
+            Span::raw(&entry.path),
+        ]),
+        Line::from(vec![
+            Span::styled("Status: ", Style::default().bold()),
+            Span::styled(
+                entry.status_code.as_deref().unwrap_or("Pending"),
+                Style::default().fg(GREEN),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("Duration: ", Style::default().bold()),
+            Span::raw(entry.duration_ms.as_deref().unwrap_or("N/A")),
+            Span::raw("ms"),
+        ]),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Request Headers:",
+            Style::default().bold().fg(BLUE),
+        )),
+    ]);
+
+    for header in &entry.request_headers {
+        lines.push(Line::from(Span::styled(
+            format!("  {}", header),
+            Style::default().fg(SUBTEXT0),
+        )));
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Request Body:",
+        Style::default().bold().fg(BLUE),
+    )));
+
+    if entry.request_body.is_empty() || entry.request_body.trim() == "<empty body>" {
+        lines.push(Line::from(Span::styled(
+            "  (empty)",
+            Style::default().fg(SUBTEXT0).italic(),
+        )));
+    } else {
+        let formatted_body = format_body_content(&entry.request_body, &entry.request_headers);
+        for line in formatted_body.lines() {
+            lines.push(Line::from(format!("  {}", line)));
         }
+    }
 
-        lines.extend(vec![
-            Line::from(vec![
-                Span::styled("Trace ID: ", Style::default().bold()),
-                Span::styled(&entry.trace_id, Style::default().fg(MAUVE)),
-            ]),
-            Line::from(vec![
-                Span::styled("Method: ", Style::default().bold()),
-                Span::styled(&entry.method, Style::default().fg(GREEN)),
-            ]),
-            Line::from(vec![
-                Span::styled("Path: ", Style::default().bold()),
-                Span::raw(&entry.path),
-            ]),
-            Line::from(vec![
-                Span::styled("Status: ", Style::default().bold()),
-                Span::styled(
-                    entry.status_code.as_deref().unwrap_or("Pending"),
-                    Style::default().fg(GREEN),
-                ),
-            ]),
-            Line::from(vec![
-                Span::styled("Duration: ", Style::default().bold()),
-                Span::raw(entry.duration_ms.as_deref().unwrap_or("N/A")),
-                Span::raw("ms"),
-            ]),
-            Line::from(""),
-            Line::from(Span::styled(
-                "Request Headers:",
-                Style::default().bold().fg(BLUE),
-            )),
-        ]);
+    let visible_height = area.height as usize;
+    let max_scroll = lines.len().saturating_sub(visible_height);
+    let start_index = app.http_logs_viewer_scroll.min(max_scroll);
+    let end_index = (start_index + visible_height).min(lines.len());
 
-        for header in &entry.request_headers {
+    let visible_lines = lines[start_index..end_index].to_vec();
+
+    let paragraph = Paragraph::new(Text::from(visible_lines))
+        .style(Style::default().fg(TEXT))
+        .wrap(ratatui::widgets::Wrap { trim: false })
+        .block(Block::default().borders(Borders::RIGHT).title("Request"));
+
+    f.render_widget(paragraph, area);
+}
+
+fn render_response_side(
+    f: &mut Frame, app: &App, entry: &crate::tui::input::HttpLogEntry, area: Rect,
+) {
+    let mut lines = vec![];
+
+    if entry.status_code.is_some() {
+        lines.push(Line::from(Span::styled(
+            "Response Headers:",
+            Style::default().bold().fg(GREEN),
+        )));
+
+        for header in &entry.response_headers {
             lines.push(Line::from(Span::styled(
                 format!("  {}", header),
                 Style::default().fg(SUBTEXT0),
@@ -1107,90 +1184,87 @@ fn render_http_request_detail(f: &mut Frame, app: &mut App, area: Rect) {
 
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
-            "Request Body:",
-            Style::default().bold().fg(BLUE),
+            "Response Body:",
+            Style::default().bold().fg(GREEN),
         )));
 
-        if entry.request_body.is_empty() {
+        if entry.response_body.is_empty() || entry.response_body.trim() == "<empty body>" {
             lines.push(Line::from(Span::styled(
                 "  (empty)",
                 Style::default().fg(SUBTEXT0).italic(),
             )));
         } else {
-            for line in entry.request_body.lines() {
+            let formatted_body = format_body_content(&entry.response_body, &entry.response_headers);
+            for line in formatted_body.lines() {
                 lines.push(Line::from(format!("  {}", line)));
             }
         }
+    } else {
+        lines.push(Line::from(Span::styled(
+            "No response available",
+            Style::default().fg(SUBTEXT0).italic(),
+        )));
+    }
 
-        if entry.status_code.is_some() {
+    // Show replay error if any
+    if let Some(replay_error) = &app.http_logs_replay_result {
+        if replay_error.starts_with("Request failed") || replay_error.starts_with("Failed to") {
             lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(
-                "Response Headers:",
-                Style::default().bold().fg(GREEN),
+                "━".repeat(30),
+                Style::default().fg(SURFACE2),
             )));
-
-            for header in &entry.response_headers {
-                lines.push(Line::from(Span::styled(
-                    format!("  {}", header),
-                    Style::default().fg(SUBTEXT0),
-                )));
-            }
-
-            lines.push(Line::from(""));
             lines.push(Line::from(Span::styled(
-                "Response Body:",
-                Style::default().bold().fg(GREEN),
+                "Replay Error:",
+                Style::default().bold().fg(RED),
             )));
-
-            if entry.response_body.is_empty() {
+            lines.push(Line::from(""));
+            for error_line in replay_error.lines() {
                 lines.push(Line::from(Span::styled(
-                    "  (empty)",
-                    Style::default().fg(SUBTEXT0).italic(),
-                )));
-            } else {
-                for line in entry.response_body.lines() {
-                    lines.push(Line::from(format!("  {}", line)));
-                }
-            }
-        }
-
-        if let Some(replay_error) = &app.http_logs_replay_result {
-            if replay_error.starts_with("Request failed") || replay_error.starts_with("Failed to") {
-                lines.push(Line::from(""));
-                lines.push(Line::from(Span::styled(
-                    "━".repeat(50),
-                    Style::default().fg(SURFACE2),
-                )));
-                lines.push(Line::from(Span::styled(
-                    "Replay Error:",
-                    Style::default().bold().fg(RED),
-                )));
-                lines.push(Line::from(""));
-                lines.push(Line::from(Span::styled(
-                    replay_error,
+                    format!("  {}", error_line),
                     Style::default().fg(RED),
                 )));
             }
         }
-
-        let visible_height = area.height as usize;
-        let max_scroll = lines.len().saturating_sub(visible_height);
-        let start_index = app.http_logs_viewer_scroll.min(max_scroll);
-        let end_index = (start_index + visible_height).min(lines.len());
-
-        let visible_lines = lines[start_index..end_index].to_vec();
-
-        let paragraph = Paragraph::new(Text::from(visible_lines))
-            .style(Style::default().fg(TEXT))
-            .wrap(ratatui::widgets::Wrap { trim: false });
-
-        f.render_widget(paragraph, area);
-    } else {
-        let error_message = Paragraph::new("No request selected")
-            .style(Style::default().fg(RED).italic())
-            .alignment(Alignment::Center);
-        f.render_widget(error_message, area);
     }
+
+    let visible_height = area.height as usize;
+    let max_scroll = lines.len().saturating_sub(visible_height);
+    let start_index = app.http_logs_viewer_scroll.min(max_scroll);
+    let end_index = (start_index + visible_height).min(lines.len());
+
+    let visible_lines = lines[start_index..end_index].to_vec();
+
+    let paragraph = Paragraph::new(Text::from(visible_lines))
+        .style(Style::default().fg(TEXT))
+        .wrap(ratatui::widgets::Wrap { trim: false })
+        .block(Block::default().title("Response"));
+
+    f.render_widget(paragraph, area);
+}
+
+fn format_body_content(body: &str, headers: &[String]) -> String {
+    if body.is_empty() || body.trim() == "<empty body>" {
+        return body.to_string();
+    }
+
+    // Check if content is JSON by looking at headers or content structure
+    let is_json = headers.iter().any(|h| {
+        h.to_lowercase().contains("content-type") && h.to_lowercase().contains("application/json")
+    }) || (body.trim_start().starts_with('{') && body.trim_end().ends_with('}'))
+        || (body.trim_start().starts_with('[') && body.trim_end().ends_with(']'));
+
+    if is_json {
+        // Try to parse and format JSON if it's not already formatted
+        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(body.trim()) {
+            if let Ok(pretty) = serde_json::to_string_pretty(&parsed) {
+                return pretty;
+            }
+        }
+    }
+
+    // Return original content if not JSON or already formatted
+    body.to_string()
 }
 
 fn render_http_logs_footer(f: &mut Frame, app: &mut App, area: Rect) {

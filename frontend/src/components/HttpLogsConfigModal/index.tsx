@@ -77,15 +77,14 @@ const HttpLogsConfigModal: React.FC<HttpLogsConfigModalProps> = ({
       config.retention_days < 1 ||
       config.retention_days > 365
 
-
     if (invalid) {
       toaster.error({
         title: 'Invalid settings',
         description: 'Please fix highlighted fields before saving',
         duration: 3000,
       })
-      
-return
+
+      return
     }
     setIsSaving(true)
     try {
@@ -124,10 +123,8 @@ return
     const value = e.target.value
     const numValue = parseInt(value, 10)
 
-
     if (!Number.isNaN(numValue)) {
       const mb = Math.min(100, Math.max(1, numValue))
-
 
       setConfig(prev => ({ ...prev, max_file_size: mb * 1024 * 1024 }))
     }
@@ -139,10 +136,8 @@ return
     const value = e.target.value
     const numValue = parseInt(value, 10)
 
-
     if (!Number.isNaN(numValue)) {
       const days = Math.min(365, Math.max(1, numValue))
-
 
       setConfig(prev => ({ ...prev, retention_days: days }))
     }
