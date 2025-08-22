@@ -32,7 +32,7 @@ use crate::utils::db_mode::{
 };
 use crate::utils::error::DbError;
 
-pub(crate) async fn delete_config_with_pool(id: i64, pool: &SqlitePool) -> Result<(), DbError> {
+pub async fn delete_config_with_pool(id: i64, pool: &SqlitePool) -> Result<(), DbError> {
     let mut conn = pool.acquire().await?;
     sqlx::query("DELETE FROM configs WHERE id = ?1")
         .bind(id)
@@ -49,9 +49,7 @@ pub async fn delete_config(id: i64) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
-pub(crate) async fn delete_configs_with_pool(
-    ids: Vec<i64>, pool: &SqlitePool,
-) -> Result<(), DbError> {
+pub async fn delete_configs_with_pool(ids: Vec<i64>, pool: &SqlitePool) -> Result<(), DbError> {
     let mut transaction = pool.begin().await?;
     for id in ids {
         sqlx::query("DELETE FROM configs WHERE id = ?1")
@@ -73,7 +71,7 @@ pub async fn delete_configs(ids: Vec<i64>) -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
-pub(crate) async fn delete_all_configs_with_pool(pool: &SqlitePool) -> Result<(), DbError> {
+pub async fn delete_all_configs_with_pool(pool: &SqlitePool) -> Result<(), DbError> {
     let mut conn = pool.acquire().await?;
     sqlx::query("DELETE FROM configs")
         .execute(&mut *conn)
@@ -89,9 +87,7 @@ pub async fn delete_all_configs() -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
-pub(crate) async fn insert_config_with_pool(
-    config: Config, pool: &SqlitePool,
-) -> Result<(), String> {
+pub async fn insert_config_with_pool(config: Config, pool: &SqlitePool) -> Result<(), String> {
     let config = prepare_config(config);
     let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
 
@@ -196,7 +192,7 @@ pub async fn insert_config(config: Config) -> Result<(), String> {
     insert_config_with_pool(config, &pool).await
 }
 
-pub(crate) async fn read_configs_with_pool(pool: &SqlitePool) -> Result<Vec<Config>, String> {
+pub async fn read_configs_with_pool(pool: &SqlitePool) -> Result<Vec<Config>, String> {
     let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
     let rows = sqlx::query("SELECT id, data FROM configs")
         .fetch_all(&mut *conn)
@@ -377,6 +373,24 @@ fn validate_imported_config(config: &Config) -> Result<(), String> {
         }
         None => {
             return Err("Workload type is required".to_string());
+        }
+    }
+
+    if let Some(max_file_size) = config.http_logs_max_file_size {
+        if max_file_size == 0 {
+            return Err("HTTP logs max file size must be greater than 0".to_string());
+        }
+        if max_file_size > 100 * 1024 * 1024 {
+            return Err("HTTP logs max file size cannot exceed 100MB".to_string());
+        }
+    }
+
+    if let Some(retention_days) = config.http_logs_retention_days {
+        if retention_days == 0 {
+            return Err("HTTP logs retention days must be greater than 0".to_string());
+        }
+        if retention_days > 365 {
+            return Err("HTTP logs retention days cannot exceed 365 days".to_string());
         }
     }
 
@@ -576,6 +590,19 @@ fn prepare_config(mut config: Config) -> Config {
 
     if config.kubeconfig.as_deref() == Some("") || config.kubeconfig.is_none() {
         config.kubeconfig = Some("default".to_string());
+    }
+
+    if config.http_logs_enabled.is_none() {
+        config.http_logs_enabled = Some(false);
+    }
+    if config.http_logs_max_file_size.is_none() {
+        config.http_logs_max_file_size = Some(10 * 1024 * 1024); // 10MB
+    }
+    if config.http_logs_retention_days.is_none() {
+        config.http_logs_retention_days = Some(7);
+    }
+    if config.http_logs_auto_cleanup.is_none() {
+        config.http_logs_auto_cleanup = Some(true);
     }
 
     config

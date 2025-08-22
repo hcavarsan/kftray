@@ -2,7 +2,6 @@ use std::{
     collections::HashMap,
     fs::File,
     io::Read,
-    sync::Arc,
     time::{
         SystemTime,
         UNIX_EPOCH,
@@ -20,7 +19,6 @@ use kftray_commons::{
         db_mode::DatabaseMode,
     },
 };
-use kftray_http_logs::HttpLogState;
 use kube::api::ListParams;
 use kube::api::{
     Api,
@@ -44,14 +42,12 @@ use crate::kube::shared_client::{
     SHARED_CLIENT_MANAGER,
 };
 
-pub async fn deploy_and_forward_pod(
-    configs: Vec<Config>, http_log_state: Arc<HttpLogState>,
-) -> Result<Vec<CustomResponse>, String> {
-    deploy_and_forward_pod_with_mode(configs, http_log_state, DatabaseMode::File).await
+pub async fn deploy_and_forward_pod(configs: Vec<Config>) -> Result<Vec<CustomResponse>, String> {
+    deploy_and_forward_pod_with_mode(configs, DatabaseMode::File).await
 }
 
 pub async fn deploy_and_forward_pod_with_mode(
-    configs: Vec<Config>, http_log_state: Arc<HttpLogState>, mode: DatabaseMode,
+    configs: Vec<Config>, mode: DatabaseMode,
 ) -> Result<Vec<CustomResponse>, String> {
     let mut responses: Vec<CustomResponse> = Vec::new();
 
@@ -152,7 +148,6 @@ pub async fn deploy_and_forward_pod_with_mode(
                         super::start::start_port_forward_with_mode(
                             vec![config.clone()],
                             "udp",
-                            http_log_state.clone(),
                             mode,
                         )
                         .await
@@ -161,7 +156,6 @@ pub async fn deploy_and_forward_pod_with_mode(
                         super::start::start_port_forward_with_mode(
                             vec![config.clone()],
                             "tcp",
-                            http_log_state.clone(),
                             mode,
                         )
                         .await
@@ -371,10 +365,8 @@ fn render_json_template(template: &str, values: &HashMap<&str, String>) -> Strin
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
-    use std::sync::Arc;
 
     use kftray_commons::models::config_model::Config;
-    use kftray_http_logs::HttpLogState;
 
     use super::*;
 
@@ -476,9 +468,8 @@ mod tests {
     #[tokio::test]
     async fn test_deploy_and_forward_pod_empty_config() {
         let configs = Vec::new();
-        let http_log_state = Arc::new(HttpLogState::new());
 
-        let result = deploy_and_forward_pod(configs, http_log_state).await;
+        let result = deploy_and_forward_pod(configs).await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_empty());
     }
@@ -501,11 +492,13 @@ mod tests {
             auto_loopback_address: false,
             remote_address: None,
             domain_enabled: None,
+            http_logs_enabled: Some(false),
+            http_logs_max_file_size: Some(10 * 1024 * 1024),
+            http_logs_retention_days: Some(7),
+            http_logs_auto_cleanup: Some(true),
         };
 
-        let http_log_state = Arc::new(HttpLogState::new());
-
-        let result = deploy_and_forward_pod(vec![config], http_log_state).await;
+        let result = deploy_and_forward_pod(vec![config]).await;
         assert!(result.is_err());
     }
 

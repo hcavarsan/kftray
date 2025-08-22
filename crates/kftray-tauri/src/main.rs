@@ -23,7 +23,6 @@ use std::sync::atomic::Ordering;
 
 use kftray_commons::models::window::AppState;
 use kftray_commons::models::window::SaveDialogState;
-use kftray_http_logs::HttpLogState;
 use tauri::{
     GlobalShortcutManager,
     Manager,
@@ -50,7 +49,6 @@ fn main() {
     let is_plugin_moving = Arc::new(AtomicBool::new(false));
     let is_pinned = Arc::new(AtomicBool::new(false));
     let runtime = Arc::new(Runtime::new().expect("Failed to create a Tokio runtime"));
-    let http_log_state = Arc::new(HttpLogState::new());
 
     // TODO: Remove this workaround when the tauri issue is resolved
     // tauri Issue: https://github.com/tauri-apps/tauri/issues/9394
@@ -72,10 +70,10 @@ fn main() {
             is_pinned: is_pinned.clone(),
             runtime: runtime.clone(),
         })
-        .manage(http_log_state.clone())
+        // HttpLogState removed - using direct database access
         .setup(move |app| {
             let app_handle = app.app_handle();
-            let app_handle_clone = app_handle.clone();
+            let app_handle_clone2 = app_handle.clone();
             tauri::async_runtime::spawn(async move {
                 if let Err(e) =
                     kftray_commons::utils::config::clean_all_custom_hosts_entries().await
@@ -93,7 +91,7 @@ fn main() {
             });
 
             tauri::async_runtime::spawn(async move {
-                alert_multiple_configs(app_handle_clone).await;
+                alert_multiple_configs(app_handle_clone2).await;
             });
 
             let port_ops = Arc::new(RealPortOperations);
@@ -101,9 +99,7 @@ fn main() {
 
             tauri::async_runtime::spawn(async move {
                 info!("Starting port management checks");
-                if let Err(e) =
-                    init_check::check_and_manage_ports(port_ops_clone, http_log_state.clone()).await
-                {
+                if let Err(e) = init_check::check_and_manage_ports(port_ops_clone).await {
                     error!("Error in port management: {e}");
                 }
             });
@@ -172,6 +168,8 @@ fn main() {
             commands::portforward::stop_proxy_forward_cmd,
             commands::httplogs::set_http_logs_cmd,
             commands::httplogs::get_http_logs_cmd,
+            commands::httplogs::get_http_logs_config_cmd,
+            commands::httplogs::update_http_logs_config_cmd,
             commands::config::get_configs_cmd,
             commands::config::insert_config_cmd,
             commands::config::delete_config_cmd,
@@ -237,18 +235,6 @@ mod tests {
     fn test_save_dialog_state() {
         let state = SaveDialogState::default();
         assert!(!state.is_open.load(Ordering::SeqCst));
-    }
-
-    #[test]
-    fn test_http_log_state() {
-        let state = HttpLogState::new();
-        let rt = Runtime::new().unwrap();
-
-        rt.block_on(async {
-            assert!(!state.get_http_logs(1).await.unwrap());
-            state.set_http_logs(1, true).await.unwrap();
-            assert!(state.get_http_logs(1).await.unwrap());
-        });
     }
 
     #[test]

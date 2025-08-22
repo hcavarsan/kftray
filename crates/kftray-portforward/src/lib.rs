@@ -6,10 +6,7 @@ pub mod network_utils;
 pub mod port_forward;
 pub mod port_forward_error;
 
-pub use kftray_http_logs::{
-    HttpLogState,
-    HttpLogger as Logger,
-};
+pub use kftray_http_logs::HttpLogger as Logger;
 pub use kube::client::*;
 pub use kube::models::{
     KubeContextInfo,

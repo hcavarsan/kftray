@@ -24,12 +24,22 @@ impl HttpLogState {
         }
     }
 
+    pub async fn new_with_database_load() -> Result<Self> {
+        let state = Self::new();
+        state.state_manager.load_from_database().await?;
+        Ok(state)
+    }
+
     pub async fn set_http_logs(&self, config_id: i64, enable: bool) -> Result<()> {
         self.state_manager.set_http_logs(config_id, enable).await
     }
 
     pub async fn get_http_logs(&self, config_id: i64) -> Result<bool> {
         self.state_manager.get_http_logs(config_id).await
+    }
+
+    pub async fn load_from_database(&self) -> Result<()> {
+        self.state_manager.load_from_database().await
     }
 }
 

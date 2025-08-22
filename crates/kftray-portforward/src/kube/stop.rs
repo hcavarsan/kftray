@@ -579,6 +579,10 @@ mod tests {
             auto_loopback_address: false,
             remote_address: None,
             domain_enabled: Some(true),
+            http_logs_enabled: Some(false),
+            http_logs_max_file_size: Some(10 * 1024 * 1024),
+            http_logs_retention_days: Some(7),
+            http_logs_auto_cleanup: Some(true),
         }
     }
 

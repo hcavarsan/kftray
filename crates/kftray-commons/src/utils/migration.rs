@@ -154,6 +154,82 @@ async fn migrate_schema(pool: &SqlitePool) -> Result<(), String> {
         info!("process_id column already exists, skipping migration");
     }
 
+    migrate_http_logs_config_table(&mut conn).await?;
+
+    Ok(())
+}
+
+async fn migrate_http_logs_config_table(conn: &mut sqlx::SqliteConnection) -> Result<(), String> {
+    info!("Running HTTP logs configuration table migration");
+
+    let table_exists = sqlx::query(
+        "SELECT COUNT(*) as count FROM sqlite_master WHERE type='table' AND name='http_logs_config'",
+    )
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(|e| {
+        error!("Failed to check http_logs_config table: {e}");
+        e.to_string()
+    })?
+    .get::<i64, _>("count")
+        > 0;
+
+    if !table_exists {
+        info!("Creating http_logs_config table");
+        sqlx::query(
+            "CREATE TABLE http_logs_config (
+                config_id INTEGER PRIMARY KEY,
+                enabled BOOLEAN NOT NULL DEFAULT false,
+                max_file_size INTEGER DEFAULT 10485760,
+                retention_days INTEGER DEFAULT 7,
+                auto_cleanup BOOLEAN DEFAULT true,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(config_id) REFERENCES configs(id) ON DELETE CASCADE
+            )",
+        )
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| {
+            error!("Failed to create http_logs_config table: {e}");
+            e.to_string()
+        })?;
+        info!("Successfully created http_logs_config table");
+
+        sqlx::query(
+            "CREATE TRIGGER IF NOT EXISTS after_insert_config_http_logs
+             AFTER INSERT ON configs
+             FOR EACH ROW
+             BEGIN
+                 INSERT INTO http_logs_config (config_id, enabled) VALUES (NEW.id, false);
+             END;",
+        )
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| {
+            error!("Failed to create after_insert_config_http_logs trigger: {e}");
+            e.to_string()
+        })?;
+        info!("Successfully created after_insert_config_http_logs trigger");
+
+        sqlx::query(
+            "INSERT INTO http_logs_config (config_id, enabled)
+             SELECT c.id, false
+             FROM configs c
+             LEFT JOIN http_logs_config hlc ON c.id = hlc.config_id
+             WHERE hlc.config_id IS NULL",
+        )
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| {
+            error!("Failed to populate http_logs_config for existing configs: {e}");
+            e.to_string()
+        })?;
+        info!("Successfully populated http_logs_config for existing configs");
+    } else {
+        info!("http_logs_config table already exists, skipping migration");
+    }
+
     Ok(())
 }
 
@@ -172,6 +248,14 @@ async fn drop_triggers(transaction: &mut Transaction<'_, Sqlite>) -> Result<(), 
         .await
         .map_err(|e| {
             error!("Failed to drop after_delete_config trigger: {e}");
+            e
+        })?;
+
+    sqlx::query("DROP TRIGGER IF EXISTS after_insert_config_http_logs;")
+        .execute(&mut **transaction)
+        .await
+        .map_err(|e| {
+            error!("Failed to drop after_insert_config_http_logs trigger: {e}");
             e
         })?;
 
@@ -208,6 +292,21 @@ async fn create_triggers(conn: &mut SqliteConnection) -> Result<(), sqlx::Error>
     .await
     .map_err(|e| {
         error!("Failed to create after_delete_config trigger: {e}");
+        e
+    })?;
+
+    sqlx::query(
+        "CREATE TRIGGER IF NOT EXISTS after_insert_config_http_logs
+         AFTER INSERT ON configs
+         FOR EACH ROW
+         BEGIN
+             INSERT INTO http_logs_config (config_id, enabled) VALUES (NEW.id, false);
+         END;",
+    )
+    .execute(&mut *conn)
+    .await
+    .map_err(|e| {
+        error!("Failed to create after_insert_config_http_logs trigger: {e}");
         e
     })?;
 
@@ -481,5 +580,99 @@ mod tests {
 
         assert!(check_trigger_exists(&pool, "after_insert_config").await);
         assert!(check_trigger_exists(&pool, "after_delete_config").await);
+    }
+
+    #[tokio::test]
+    async fn test_migrate_http_logs_config_table() {
+        let pool = SqlitePool::connect("sqlite::memory:")
+            .await
+            .expect("Failed to connect");
+
+        sqlx::query("CREATE TABLE configs (id INTEGER PRIMARY KEY, data TEXT NOT NULL)")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let mut conn = pool.acquire().await.unwrap();
+
+        let table_exists_before = sqlx::query(
+            "SELECT COUNT(*) as count FROM sqlite_master WHERE type='table' AND name='http_logs_config'"
+        )
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap()
+        .get::<i64, _>("count") > 0;
+        assert!(!table_exists_before);
+
+        migrate_http_logs_config_table(&mut conn).await.unwrap();
+
+        let table_exists_after = sqlx::query(
+            "SELECT COUNT(*) as count FROM sqlite_master WHERE type='table' AND name='http_logs_config'"
+        )
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap()
+        .get::<i64, _>("count") > 0;
+        assert!(table_exists_after);
+
+        assert!(check_trigger_exists(&pool, "after_insert_config_http_logs").await);
+
+        let config_insert_result = sqlx::query("INSERT INTO configs (data) VALUES (?1)")
+            .bind("{\"service\": \"test\"}")
+            .execute(&mut *conn)
+            .await
+            .unwrap();
+        let config_id = config_insert_result.last_insert_rowid();
+
+        let http_logs_config =
+            sqlx::query("SELECT config_id, enabled FROM http_logs_config WHERE config_id = ?1")
+                .bind(config_id)
+                .fetch_one(&mut *conn)
+                .await
+                .unwrap();
+
+        assert_eq!(http_logs_config.get::<i64, _>("config_id"), config_id);
+        assert!(!http_logs_config.get::<bool, _>("enabled"));
+
+        migrate_http_logs_config_table(&mut conn).await.unwrap();
+
+        let count = sqlx::query("SELECT COUNT(*) as count FROM http_logs_config")
+            .fetch_one(&mut *conn)
+            .await
+            .unwrap()
+            .get::<i64, _>("count");
+        assert_eq!(count, 1);
+    }
+
+    #[tokio::test]
+    async fn test_full_schema_migration_with_http_logs() {
+        let pool = setup_test_db().await;
+
+        let config_insert_result = sqlx::query("INSERT INTO configs (data) VALUES (?1)")
+            .bind("{\"service\": \"test-service\"}")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let config_id = config_insert_result.last_insert_rowid();
+
+        migrate_configs(Some(&pool)).await.unwrap();
+
+        let http_logs_config = sqlx::query(
+            "SELECT config_id, enabled, max_file_size, retention_days, auto_cleanup FROM http_logs_config WHERE config_id = ?1"
+        )
+        .bind(config_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+        assert_eq!(http_logs_config.get::<i64, _>("config_id"), config_id);
+        assert!(!http_logs_config.get::<bool, _>("enabled"));
+        assert_eq!(http_logs_config.get::<i64, _>("max_file_size"), 10485760);
+        assert_eq!(http_logs_config.get::<i64, _>("retention_days"), 7);
+        assert!(http_logs_config.get::<bool, _>("auto_cleanup"));
+
+        assert!(check_trigger_exists(&pool, "after_insert_config").await);
+        assert!(check_trigger_exists(&pool, "after_delete_config").await);
+        assert!(check_trigger_exists(&pool, "after_insert_config_http_logs").await);
     }
 }

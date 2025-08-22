@@ -219,8 +219,7 @@ impl NetworkMonitor {
 
         info!("Restarting {} port forwards", active_configs.len());
 
-        let http_log_state = Arc::new(kftray_http_logs::HttpLogState::new());
-        ConfigManager::restart_port_forwards(active_configs, http_log_state).await;
+        ConfigManager::restart_port_forwards(active_configs).await;
     }
 
     async fn check_health(&self) {
@@ -262,8 +261,7 @@ impl NetworkMonitor {
                     "Restarting {} confirmed failed port forwards",
                     confirmed_failed.len()
                 );
-                let http_log_state = Arc::new(kftray_http_logs::HttpLogState::new());
-                ConfigManager::restart_port_forwards(confirmed_failed, http_log_state).await;
+                ConfigManager::restart_port_forwards(confirmed_failed).await;
             }
         }
     }

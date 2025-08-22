@@ -97,35 +97,40 @@ mod tests {
         static ref TEST_MUTEX: Mutex<()> = Mutex::new(());
     }
 
-    async fn setup_test_db() {
+    async fn setup_isolated_test_db() -> Arc<SqlitePool> {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
         kftray_commons::utils::db::create_db_table(&pool)
             .await
             .unwrap();
+        kftray_commons::utils::migration::migrate_configs(Some(&pool))
+            .await
+            .unwrap();
 
         let arc_pool = Arc::new(pool);
-        let _ = kftray_commons::utils::db::DB_POOL.set(arc_pool);
+
+        // Set this as the global pool for command functions to use
+        let _ = kftray_commons::utils::db::DB_POOL.set(arc_pool.clone());
+
+        arc_pool
     }
 
     #[tokio::test]
     async fn test_delete_config_cmd() {
         let _guard = TEST_MUTEX.lock().await;
-        setup_test_db().await;
-
-        let _ = delete_all_configs().await;
+        let _pool = setup_isolated_test_db().await;
 
         let config = Config::default();
-        insert_config(config)
+        insert_config_cmd(config)
             .await
             .expect("Failed to insert test config");
 
-        let configs = get_configs().await.expect("Failed to get configs");
+        let configs = get_configs_cmd().await.expect("Failed to get configs");
         let id = configs[0].id.expect("Config should have an ID");
 
         let result = delete_config_cmd(id).await;
         assert!(result.is_ok(), "Delete config command should succeed");
 
-        let configs_after = get_configs()
+        let configs_after = get_configs_cmd()
             .await
             .expect("Failed to get configs after deletion");
         assert!(
@@ -137,9 +142,7 @@ mod tests {
     #[tokio::test]
     async fn test_delete_configs_cmd() {
         let _guard = TEST_MUTEX.lock().await;
-        setup_test_db().await;
-
-        let _ = delete_all_configs().await;
+        let _pool = setup_isolated_test_db().await;
 
         let config1 = Config {
             service: Some("test-service-1".to_string()),
@@ -150,20 +153,20 @@ mod tests {
             ..Config::default()
         };
 
-        insert_config(config1)
+        insert_config_cmd(config1)
             .await
             .expect("Failed to insert test config 1");
-        insert_config(config2)
+        insert_config_cmd(config2)
             .await
             .expect("Failed to insert test config 2");
 
-        let configs = get_configs().await.expect("Failed to get configs");
+        let configs = get_configs_cmd().await.expect("Failed to get configs");
         let ids: Vec<i64> = configs.iter().map(|c| c.id.unwrap()).collect();
 
         let result = delete_configs_cmd(ids).await;
         assert!(result.is_ok(), "Delete configs command should succeed");
 
-        let configs_after = get_configs()
+        let configs_after = get_configs_cmd()
             .await
             .expect("Failed to get configs after deletion");
         assert!(
@@ -175,19 +178,19 @@ mod tests {
     #[tokio::test]
     async fn test_delete_all_configs_cmd() {
         let _guard = TEST_MUTEX.lock().await;
-        setup_test_db().await;
+        let _pool = setup_isolated_test_db().await;
 
         let config1 = Config::default();
         let config2 = Config::default();
 
-        insert_config(config1)
+        insert_config_cmd(config1)
             .await
             .expect("Failed to insert test config 1");
-        insert_config(config2)
+        insert_config_cmd(config2)
             .await
             .expect("Failed to insert test config 2");
 
-        let configs_before = get_configs().await.expect("Failed to get configs");
+        let configs_before = get_configs_cmd().await.expect("Failed to get configs");
         assert!(
             !configs_before.is_empty(),
             "Should have test configs before deletion"
@@ -196,7 +199,7 @@ mod tests {
         let result = delete_all_configs_cmd().await;
         assert!(result.is_ok(), "Delete all configs command should succeed");
 
-        let configs_after = get_configs()
+        let configs_after = get_configs_cmd()
             .await
             .expect("Failed to get configs after deletion");
         assert!(
@@ -208,9 +211,7 @@ mod tests {
     #[tokio::test]
     async fn test_insert_config_cmd() {
         let _guard = TEST_MUTEX.lock().await;
-        setup_test_db().await;
-
-        let _ = delete_all_configs().await;
+        let _pool = setup_isolated_test_db().await;
 
         let test_config = Config {
             service: Some("insert-test-service".to_string()),
@@ -221,7 +222,7 @@ mod tests {
         let result = insert_config_cmd(test_config.clone()).await;
         assert!(result.is_ok(), "Insert config command should succeed");
 
-        let configs = get_configs()
+        let configs = get_configs_cmd()
             .await
             .expect("Failed to get configs after insertion");
         assert!(
@@ -236,16 +237,14 @@ mod tests {
     #[tokio::test]
     async fn test_get_configs_cmd() {
         let _guard = TEST_MUTEX.lock().await;
-        setup_test_db().await;
-
-        let _ = delete_all_configs().await;
+        let _pool = setup_isolated_test_db().await;
 
         let config = Config {
             service: Some("get-configs-test".to_string()),
             ..Config::default()
         };
 
-        insert_config(config)
+        insert_config_cmd(config)
             .await
             .expect("Failed to insert test config");
 
@@ -265,20 +264,18 @@ mod tests {
     #[tokio::test]
     async fn test_get_config_cmd() {
         let _guard = TEST_MUTEX.lock().await;
-        setup_test_db().await;
-
-        let _ = delete_all_configs().await;
+        let _pool = setup_isolated_test_db().await;
 
         let config = Config {
             service: Some("get-config-test".to_string()),
             ..Config::default()
         };
 
-        insert_config(config)
+        insert_config_cmd(config)
             .await
             .expect("Failed to insert test config");
 
-        let configs = get_configs().await.expect("Failed to get configs");
+        let configs = get_configs_cmd().await.expect("Failed to get configs");
         let test_config = configs
             .iter()
             .find(|c| c.service == Some("get-config-test".to_string()))
@@ -304,20 +301,18 @@ mod tests {
     #[tokio::test]
     async fn test_update_config_cmd() {
         let _guard = TEST_MUTEX.lock().await;
-        setup_test_db().await;
-
-        let _ = delete_all_configs().await;
+        let _pool = setup_isolated_test_db().await;
 
         let config = Config {
             service: Some("update-test-original".to_string()),
             ..Config::default()
         };
 
-        insert_config(config)
+        insert_config_cmd(config)
             .await
             .expect("Failed to insert test config");
 
-        let configs = get_configs().await.expect("Failed to get configs");
+        let configs = get_configs_cmd().await.expect("Failed to get configs");
         let mut test_config = configs
             .iter()
             .find(|c| c.service == Some("update-test-original".to_string()))
@@ -329,7 +324,7 @@ mod tests {
         let result = update_config_cmd(test_config.clone()).await;
         assert!(result.is_ok(), "Update config command should succeed");
 
-        let updated_config = get_config(test_config.id.unwrap())
+        let updated_config = get_config_cmd(test_config.id.unwrap())
             .await
             .expect("Failed to get updated config");
         assert_eq!(
@@ -342,9 +337,7 @@ mod tests {
     #[tokio::test]
     async fn test_export_configs_cmd() {
         let _guard = TEST_MUTEX.lock().await;
-        setup_test_db().await;
-
-        let _ = delete_all_configs().await;
+        let _pool = setup_isolated_test_db().await;
 
         let config = Config {
             service: Some("export-test-service".to_string()),
@@ -352,7 +345,7 @@ mod tests {
             ..Config::default()
         };
 
-        insert_config(config)
+        insert_config_cmd(config)
             .await
             .expect("Failed to insert test config");
 
@@ -373,9 +366,7 @@ mod tests {
     #[tokio::test]
     async fn test_import_configs_cmd() {
         let _guard = TEST_MUTEX.lock().await;
-        setup_test_db().await;
-
-        let _ = delete_all_configs().await;
+        let _pool = setup_isolated_test_db().await;
 
         let test_config_json = serde_json::json!([{
             "service": "import-test-service",
@@ -390,7 +381,7 @@ mod tests {
         let result = import_configs_cmd(test_config_json).await;
         assert!(result.is_ok(), "Import configs command should succeed");
 
-        let configs = get_configs()
+        let configs = get_configs_cmd()
             .await
             .expect("Failed to get configs after import");
         assert!(
@@ -406,7 +397,7 @@ mod tests {
     #[tokio::test]
     async fn test_import_configs_cmd_error() {
         let _guard = TEST_MUTEX.lock().await;
-        setup_test_db().await;
+        let _pool = setup_isolated_test_db().await;
 
         let invalid_json = "{\"service\": \"malformed\",";
 
@@ -446,20 +437,20 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_configs_cmd_format() {
-        setup_test_db().await;
+        let _pool = setup_isolated_test_db().await;
         let _ = get_configs_cmd().await;
     }
 
     #[tokio::test]
     async fn test_get_config_cmd_format() {
-        setup_test_db().await;
+        let _pool = setup_isolated_test_db().await;
         let id = 123;
         let _ = get_config_cmd(id).await;
     }
 
     #[tokio::test]
     async fn test_delete_config_cmd_format() {
-        setup_test_db().await;
+        let _pool = setup_isolated_test_db().await;
         let id = 123;
         let _ = delete_config_cmd(id).await;
     }
