@@ -9,7 +9,6 @@ license = "MIT"
 [dependencies]
 clap = { workspace = true }
 dirs = { workspace = true }
-hostsfile = { workspace = true }
 kftray-commons = { path = "../kftray-commons", version = "0.22.1" }
 libc = { workspace = true }
 log = { workspace = true }

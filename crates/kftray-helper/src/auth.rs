@@ -3,6 +3,11 @@ use std::time::{
     UNIX_EPOCH,
 };
 
+use log::{
+    debug,
+    info,
+};
+
 use crate::error::HelperError;
 use crate::messages::HelperRequest;
 
@@ -142,14 +147,14 @@ pub fn validate_peer_credentials(
     let current_uid = unsafe { libc::getuid() };
     let authorized_uid = get_authorized_user_uid();
 
-    println!(
+    debug!(
         "Current UID: {}, Peer UID: {}, Authorized UID: {}",
         current_uid, cred.cr_uid, authorized_uid
     );
 
     if current_uid == 0 {
         if cred.cr_uid == authorized_uid {
-            println!(
+            info!(
                 "Peer credentials validated (root accepting authorized user): UID={}",
                 cred.cr_uid
             );
@@ -178,7 +183,7 @@ pub fn validate_peer_credentials(
 fn get_authorized_user_uid() -> u32 {
     if let Ok(sudo_uid) = std::env::var("SUDO_UID") {
         if let Ok(uid) = sudo_uid.parse::<u32>() {
-            println!("Found authorized UID from SUDO_UID: {uid}");
+            info!("Found authorized UID from SUDO_UID: {uid}");
             return uid;
         }
     }
@@ -188,7 +193,7 @@ fn get_authorized_user_uid() -> u32 {
             use std::os::unix::fs::MetadataExt;
             let owner_uid = metadata.uid();
             if owner_uid != 0 {
-                println!("Found authorized UID from socket file ownership: {owner_uid}");
+                info!("Found authorized UID from socket file ownership: {owner_uid}");
                 return owner_uid;
             }
         }
@@ -200,7 +205,7 @@ fn get_authorized_user_uid() -> u32 {
                 use std::os::unix::fs::MetadataExt;
                 let owner_uid = metadata.uid();
                 if owner_uid != 0 {
-                    println!("Found authorized UID from socket directory ownership: {owner_uid}");
+                    info!("Found authorized UID from socket directory ownership: {owner_uid}");
                     return owner_uid;
                 }
             }
@@ -208,7 +213,7 @@ fn get_authorized_user_uid() -> u32 {
     }
 
     let current_uid = unsafe { libc::getuid() };
-    println!("No specific authorized UID found, falling back to current UID: {current_uid}");
+    info!("No specific authorized UID found, falling back to current UID: {current_uid}");
     current_uid
 }
 
@@ -566,12 +571,12 @@ pub fn validate_peer_credentials(
 
 #[cfg(not(any(unix, windows)))]
 fn get_authorized_user_uid() -> u32 {
-    println!("Unsupported platform: No UID-based authorization, using default");
+    warn!("Unsupported platform: No UID-based authorization, using default");
     0
 }
 
 #[cfg(not(any(unix, windows)))]
 pub fn validate_peer_credentials<T>(_stream: &T) -> Result<(), HelperError> {
-    println!("Unsupported platform: Peer credential validation skipped");
+    warn!("Unsupported platform: Peer credential validation skipped");
     Ok(())
 }

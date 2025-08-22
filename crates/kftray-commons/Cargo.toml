@@ -17,7 +17,6 @@ anyhow = { workspace = true }
 dirs = { workspace = true }
 futures = { workspace = true }
 git2 = { workspace = true }
-hostsfile = { workspace = true }
 lazy_static = { workspace = true }
 log = { workspace = true }
 portpicker = { workspace = true }

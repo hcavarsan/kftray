@@ -36,7 +36,6 @@ dirs = { workspace = true }
 env_logger = { workspace = true }
 flate2 = { workspace = true }
 futures = { workspace = true }
-hostsfile = { workspace = true }
 httparse = { workspace = true }
 hyper = { workspace = true }
 hyper-openssl = { workspace = true }
