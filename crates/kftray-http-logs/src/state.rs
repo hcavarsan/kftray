@@ -176,28 +176,40 @@ impl LogStateManager {
     }
 
     pub async fn get_http_logs(&self, config_id: i64) -> Result<bool> {
-        let is_enabled = match get_http_logs_config(config_id).await {
+        let db_enabled = match get_http_logs_config(config_id).await {
             Ok(config) => {
                 trace!(
                     "HTTP logs for config {} from database: {}",
                     config_id,
                     config.enabled
                 );
-                config.enabled
+                Some(config.enabled)
             }
-            Err(_) => {
+            Err(e) => {
                 trace!(
-                    "HTTP logs for config {} not found in database, defaulting to false",
-                    config_id
+                    "HTTP logs for config {} not found/readable in database ({}); will fallback to memory",
+                    config_id, e
                 );
-                false
+                None
             }
         };
 
         let mut state = self.state.lock().await;
+
+        if let None = db_enabled {
+            if let Some(config_state) = state.get_mut(&config_id) {
+                config_state.touch();
+                return Ok(config_state.is_enabled());
+            } else {
+                state.insert(config_id, ConfigState::new(false, None));
+                return Ok(false);
+            }
+        }
+
+        let is_enabled = db_enabled.unwrap();
         if let Some(config_state) = state.get_mut(&config_id) {
-            config_state.touch();
             config_state.set_enabled(is_enabled);
+            config_state.touch();
         } else {
             state.insert(config_id, ConfigState::new(is_enabled, None));
         }
@@ -327,9 +339,28 @@ impl Drop for LogStateManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+    use sqlx::SqlitePool;
+    use tokio::sync::Mutex as AsyncMutex;
+    use lazy_static::lazy_static;
+
+    lazy_static! {
+        static ref TEST_MUTEX: AsyncMutex<()> = AsyncMutex::new(());
+    }
+
+    async fn setup_isolated_test_db() -> Arc<SqlitePool> {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        kftray_commons::utils::db::create_db_table(&pool).await.unwrap();
+        kftray_commons::utils::migration::migrate_configs(Some(&pool)).await.unwrap();
+        let arc_pool = Arc::new(pool);
+        let _ = kftray_commons::utils::db::DB_POOL.set(arc_pool.clone());
+        arc_pool
+    }
 
     #[tokio::test]
     async fn test_set_and_get_http_logs() {
+        let _guard = TEST_MUTEX.lock().await;
+        let _pool = setup_isolated_test_db().await;
         let manager = LogStateManager::new();
 
         assert!(!manager.get_http_logs(1).await.unwrap());
@@ -343,6 +374,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_cleanup_stale_configs() {
+        let _guard = TEST_MUTEX.lock().await;
+        let _pool = setup_isolated_test_db().await;
         let config = LogStateConfig {
             cleanup_interval: Duration::from_millis(1000),
             retention_period: Duration::from_millis(100),
@@ -367,6 +400,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_cleanup_basic() {
+        let _guard = TEST_MUTEX.lock().await;
+        let _pool = setup_isolated_test_db().await;
         let config = LogStateConfig {
             cleanup_interval: Duration::from_millis(1000),
             retention_period: Duration::from_millis(500),
@@ -393,6 +428,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_metadata() {
+        let _guard = TEST_MUTEX.lock().await;
+        let _pool = setup_isolated_test_db().await;
         let manager = LogStateManager::new();
 
         manager

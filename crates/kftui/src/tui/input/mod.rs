@@ -1896,17 +1896,33 @@ async fn handle_http_logs_config_input(
 
 async fn auto_save_http_logs_config(app: &mut App, mode: DatabaseMode) {
     if let Some(config_id) = app.http_logs_config_id {
-        let max_file_size = app
-            .http_logs_config_max_file_size_input
-            .parse::<u64>()
-            .unwrap_or(10)
-            * 1024
-            * 1024;
+        let max_file_size = match app.http_logs_config_max_file_size_input.parse::<u64>() {
+            Ok(size) if size > 0 && size <= 1000 => size * 1024 * 1024,
+            Ok(_) => {
+                app.error_message = Some("Max file size must be between 1 and 1000 MB".to_string());
+                app.state = AppState::ShowErrorPopup;
+                return;
+            }
+            Err(_) => {
+                app.error_message = Some("Invalid max file size value".to_string());
+                app.state = AppState::ShowErrorPopup;
+                return;
+            }
+        };
 
-        let retention_days = app
-            .http_logs_config_retention_days_input
-            .parse::<u64>()
-            .unwrap_or(7);
+        let retention_days = match app.http_logs_config_retention_days_input.parse::<u64>() {
+            Ok(days) if days > 0 && days <= 365 => days,
+            Ok(_) => {
+                app.error_message = Some("Retention days must be between 1 and 365".to_string());
+                app.state = AppState::ShowErrorPopup;
+                return;
+            }
+            Err(_) => {
+                app.error_message = Some("Invalid retention days value".to_string());
+                app.state = AppState::ShowErrorPopup;
+                return;
+            }
+        };
 
         let config = kftray_commons::models::http_logs_config_model::HttpLogsConfig {
             config_id,

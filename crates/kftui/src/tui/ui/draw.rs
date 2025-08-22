@@ -198,9 +198,8 @@ pub fn draw_ui(f: &mut Frame, app: &mut App, config_states: &[ConfigState]) {
             render_settings_popup(f, app, settings_area);
         }
         AppState::ShowHttpLogsConfig => {
-            let http_logs_area = centered_rect(70, 50, size);
             render_background_overlay(f, size);
-            render_http_logs_config_popup(f, app, http_logs_area);
+            render_http_logs_config_popup(f, app, size);
         }
         AppState::ShowHttpLogsViewer => {
             render_background_overlay(f, size);

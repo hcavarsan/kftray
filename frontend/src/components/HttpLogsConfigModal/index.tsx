@@ -46,7 +46,7 @@ const HttpLogsConfigModal: React.FC<HttpLogsConfigModalProps> = ({
       const httpConfig = await invoke<HttpLogsConfig>(
         'get_http_logs_config_cmd',
         {
-          configId,
+          config_id: configId,
         },
       )
 
@@ -70,6 +70,23 @@ const HttpLogsConfigModal: React.FC<HttpLogsConfigModalProps> = ({
   }, [isOpen, loadConfig])
 
   const handleSave = async () => {
+    const mb = config.max_file_size / (1024 * 1024)
+    const invalid =
+      mb < 1 ||
+      mb > 100 ||
+      config.retention_days < 1 ||
+      config.retention_days > 365
+
+
+    if (invalid) {
+      toaster.error({
+        title: 'Invalid settings',
+        description: 'Please fix highlighted fields before saving',
+        duration: 3000,
+      })
+      
+return
+    }
     setIsSaving(true)
     try {
       await invoke('update_http_logs_config_cmd', { config })
@@ -107,12 +124,12 @@ const HttpLogsConfigModal: React.FC<HttpLogsConfigModalProps> = ({
     const value = e.target.value
     const numValue = parseInt(value, 10)
 
-    // Convert MB to bytes for storage
-    if (value === '' || (!isNaN(numValue) && numValue > 0 && numValue <= 100)) {
-      setConfig(prev => ({
-        ...prev,
-        max_file_size: (numValue || 0) * 1024 * 1024,
-      }))
+
+    if (!Number.isNaN(numValue)) {
+      const mb = Math.min(100, Math.max(1, numValue))
+
+
+      setConfig(prev => ({ ...prev, max_file_size: mb * 1024 * 1024 }))
     }
   }
 
@@ -122,8 +139,12 @@ const HttpLogsConfigModal: React.FC<HttpLogsConfigModalProps> = ({
     const value = e.target.value
     const numValue = parseInt(value, 10)
 
-    if (value === '' || (!isNaN(numValue) && numValue > 0 && numValue <= 365)) {
-      setConfig(prev => ({ ...prev, retention_days: numValue || 0 }))
+
+    if (!Number.isNaN(numValue)) {
+      const days = Math.min(365, Math.max(1, numValue))
+
+
+      setConfig(prev => ({ ...prev, retention_days: days }))
     }
   }
 
@@ -262,6 +283,7 @@ const HttpLogsConfigModal: React.FC<HttpLogsConfigModalProps> = ({
                     </Text>
                     <Flex align='center' gap={1}>
                       <Input
+                        type='number'
                         value={(
                           config.max_file_size /
                           (1024 * 1024)
@@ -271,6 +293,8 @@ const HttpLogsConfigModal: React.FC<HttpLogsConfigModalProps> = ({
                         size='xs'
                         width='60px'
                         height='24px'
+                        min={1}
+                        max={100}
                         bg='#111111'
                         border='1px solid rgba(255, 255, 255, 0.08)'
                         _hover={{
@@ -310,12 +334,15 @@ const HttpLogsConfigModal: React.FC<HttpLogsConfigModalProps> = ({
                     </Text>
                     <Flex align='center' gap={1}>
                       <Input
+                        type='number'
                         value={config.retention_days.toString()}
                         onChange={handleRetentionDaysChange}
                         placeholder='7'
                         size='xs'
                         width='60px'
                         height='24px'
+                        min={1}
+                        max={365}
                         bg='#111111'
                         border='1px solid rgba(255, 255, 255, 0.08)'
                         _hover={{

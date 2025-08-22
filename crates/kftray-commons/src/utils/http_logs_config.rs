@@ -69,9 +69,14 @@ pub(crate) async fn update_http_logs_config_with_pool(
     let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
 
     sqlx::query(
-        "INSERT OR REPLACE INTO http_logs_config 
-         (config_id, enabled, max_file_size, retention_days, auto_cleanup, updated_at) 
-         VALUES (?1, ?2, ?3, ?4, ?5, CURRENT_TIMESTAMP)",
+        "INSERT INTO http_logs_config (config_id, enabled, max_file_size, retention_days, auto_cleanup, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, CURRENT_TIMESTAMP)
+         ON CONFLICT(config_id) DO UPDATE SET
+             enabled=excluded.enabled,
+             max_file_size=excluded.max_file_size,
+             retention_days=excluded.retention_days,
+             auto_cleanup=excluded.auto_cleanup,
+             updated_at=CURRENT_TIMESTAMP",
     )
     .bind(config.config_id)
     .bind(config.enabled)

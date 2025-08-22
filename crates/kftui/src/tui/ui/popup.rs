@@ -999,10 +999,10 @@ fn render_http_requests_list(f: &mut Frame, app: &mut App, area: Rect) {
             };
 
             Row::new(vec![
-                Cell::from(Span::styled(
-                    &entry.trace_id[..entry.trace_id.len().min(12)],
-                    Style::default().fg(MAUVE),
-                )),
+                {
+                    let preview: String = entry.trace_id.chars().take(12).collect();
+                    Cell::from(Span::styled(preview, Style::default().fg(MAUVE)))
+                },
                 Cell::from(Span::styled(
                     &entry.method,
                     Style::default().fg(method_color),
@@ -1013,11 +1013,12 @@ fn render_http_requests_list(f: &mut Frame, app: &mut App, area: Rect) {
                     Style::default().fg(status_color),
                 )),
                 Cell::from(entry.duration_ms.as_deref().unwrap_or("-")),
-                Cell::from(if entry.request_timestamp.len() >= 19 {
-                    &entry.request_timestamp[11..19]
-                } else {
-                    &entry.request_timestamp
-                }), // Show only time part
+                Cell::from(
+                    entry
+                        .request_timestamp
+                        .get(11..19)
+                        .unwrap_or(entry.request_timestamp.as_str()),
+                ),
             ])
             .style(row_style)
         })

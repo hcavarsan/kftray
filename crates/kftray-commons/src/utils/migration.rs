@@ -295,20 +295,31 @@ async fn create_triggers(conn: &mut SqliteConnection) -> Result<(), sqlx::Error>
         e
     })?;
 
-    sqlx::query(
-        "CREATE TRIGGER IF NOT EXISTS after_insert_config_http_logs
-         AFTER INSERT ON configs
-         FOR EACH ROW
-         BEGIN
-             INSERT INTO http_logs_config (config_id, enabled) VALUES (NEW.id, false);
-         END;",
+    let http_logs_table_exists = sqlx::query(
+        "SELECT COUNT(*) as count FROM sqlite_master WHERE type='table' AND name='http_logs_config'"
     )
-    .execute(&mut *conn)
-    .await
-    .map_err(|e| {
-        error!("Failed to create after_insert_config_http_logs trigger: {e}");
-        e
-    })?;
+    .fetch_one(&mut *conn)
+    .await?
+    .get::<i64, _>("count") > 0;
+
+    if http_logs_table_exists {
+        sqlx::query(
+            "CREATE TRIGGER IF NOT EXISTS after_insert_config_http_logs
+             AFTER INSERT ON configs
+             FOR EACH ROW
+             BEGIN
+                 INSERT INTO http_logs_config (config_id, enabled) VALUES (NEW.id, false);
+             END;",
+        )
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| {
+            error!("Failed to create after_insert_config_http_logs trigger: {e}");
+            e
+        })?;
+    } else {
+        info!("Skipping after_insert_config_http_logs — http_logs_config table not found");
+    }
 
     info!("Triggers created successfully.");
     Ok(())
