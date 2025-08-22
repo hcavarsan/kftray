@@ -5,6 +5,7 @@ pub mod db;
 pub mod db_mode;
 pub mod error;
 pub mod github;
+pub mod http_logs_config;
 pub mod migration;
 pub mod settings;
 pub mod timeout_manager;

@@ -11,7 +11,7 @@ use crate::utils::db_mode::{
     DatabaseMode,
 };
 
-pub(crate) async fn update_config_state_with_pool(
+pub async fn update_config_state_with_pool(
     config_state: &ConfigState, pool: &SqlitePool,
 ) -> Result<(), String> {
     let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
@@ -30,7 +30,7 @@ pub async fn update_config_state(config_state: &ConfigState) -> Result<(), Strin
     update_config_state_with_pool(config_state, &pool).await
 }
 
-pub(crate) async fn read_config_states_with_pool(
+pub async fn read_config_states_with_pool(
     pool: &SqlitePool,
 ) -> Result<Vec<ConfigState>, sqlx::Error> {
     let mut conn = pool.acquire().await.map_err(|e| {
@@ -77,12 +77,16 @@ pub async fn read_config_states() -> Result<Vec<ConfigState>, sqlx::Error> {
     read_config_states_with_pool(&pool).await
 }
 
-pub async fn get_configs_state() -> Result<Vec<ConfigState>, String> {
-    let pool = get_db_pool().await.map_err(|e| e.to_string())?;
-    read_config_states_with_pool(&pool).await.map_err(|e| {
+pub async fn get_configs_state_with_pool(pool: &SqlitePool) -> Result<Vec<ConfigState>, String> {
+    read_config_states_with_pool(pool).await.map_err(|e| {
         error!("Failed to get config states: {e}");
         e.to_string()
     })
+}
+
+pub async fn get_configs_state() -> Result<Vec<ConfigState>, String> {
+    let pool = get_db_pool().await.map_err(|e| e.to_string())?;
+    get_configs_state_with_pool(&pool).await
 }
 
 pub async fn update_config_state_with_mode(

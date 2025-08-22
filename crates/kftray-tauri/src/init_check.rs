@@ -8,7 +8,6 @@ use kftray_commons::config_state::{
 };
 use kftray_commons::config_state_model::ConfigState;
 use kftray_commons::models::config_model::Config;
-use kftray_http_logs::HttpLogState;
 use kftray_portforward::kube::deploy_and_forward_pod;
 use kftray_portforward::start_port_forward;
 use log::{
@@ -36,11 +35,9 @@ pub trait PortOperations: Send + Sync {
     async fn update_config_state(&self, state: &ConfigState) -> Result<(), String>;
     async fn find_process_by_port(&self, port: u16) -> Option<(i32, String)>;
     async fn start_port_forward(
-        &self, configs: Vec<Config>, protocol: &str, http_log_state: Arc<HttpLogState>,
+        &self, configs: Vec<Config>, protocol: &str,
     ) -> Result<Vec<String>, String>;
-    async fn deploy_and_forward_pod(
-        &self, configs: Vec<Config>, http_log_state: Arc<HttpLogState>,
-    ) -> Result<Vec<String>, String>;
+    async fn deploy_and_forward_pod(&self, configs: Vec<Config>) -> Result<Vec<String>, String>;
 }
 
 pub struct RealPortOperations;
@@ -64,17 +61,15 @@ impl PortOperations for RealPortOperations {
     }
 
     async fn start_port_forward(
-        &self, configs: Vec<Config>, protocol: &str, http_log_state: Arc<HttpLogState>,
+        &self, configs: Vec<Config>, protocol: &str,
     ) -> Result<Vec<String>, String> {
-        start_port_forward(configs, protocol, http_log_state)
+        start_port_forward(configs, protocol)
             .await
             .map(|responses| responses.into_iter().map(|r| format!("{r:?}")).collect())
     }
 
-    async fn deploy_and_forward_pod(
-        &self, configs: Vec<Config>, http_log_state: Arc<HttpLogState>,
-    ) -> Result<Vec<String>, String> {
-        deploy_and_forward_pod(configs, http_log_state)
+    async fn deploy_and_forward_pod(&self, configs: Vec<Config>) -> Result<Vec<String>, String> {
+        deploy_and_forward_pod(configs)
             .await
             .map(|responses| responses.into_iter().map(|r| format!("{r:?}")).collect())
     }
@@ -113,9 +108,7 @@ async fn fetch_configs_in_parallel(
     results
 }
 
-pub async fn check_and_manage_ports(
-    port_ops: Arc<dyn PortOperations>, shared_http_log_state: Arc<HttpLogState>,
-) -> Result<(), String> {
+pub async fn check_and_manage_ports(port_ops: Arc<dyn PortOperations>) -> Result<(), String> {
     let running_configs = match port_ops.get_configs_state().await {
         Ok(states) => states
             .into_iter()
@@ -143,11 +136,8 @@ pub async fn check_and_manage_ports(
         match result {
             Ok(config) => {
                 let port_ops = Arc::clone(&port_ops);
-                let shared_http_log_state_clone = shared_http_log_state.clone();
                 let task = tokio::spawn(async move {
-                    if let Err(err) =
-                        check_and_manage_port(port_ops, config, shared_http_log_state_clone).await
-                    {
+                    if let Err(err) = check_and_manage_port(port_ops, config).await {
                         error!("Error checking state for config {config_id}: {err}");
                     }
                 });
@@ -177,14 +167,14 @@ pub async fn check_and_manage_ports(
 }
 
 async fn check_and_manage_port(
-    port_ops: Arc<dyn PortOperations>, config: Config, shared_http_log_state: Arc<HttpLogState>,
+    port_ops: Arc<dyn PortOperations>, config: Config,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let port = config.local_port.unwrap_or(0);
 
     if let Some((pid, process_name)) = port_ops.find_process_by_port(port).await {
         handle_existing_process(Arc::clone(&port_ops), config, port, pid, process_name).await?;
     } else {
-        start_port_forwarding(port_ops, config, shared_http_log_state.clone()).await?;
+        start_port_forwarding(port_ops, config).await?;
     }
 
     Ok(())
@@ -209,7 +199,7 @@ async fn handle_existing_process(
 }
 
 async fn start_port_forwarding(
-    port_ops: Arc<dyn PortOperations>, config: Config, shared_http_log_state: Arc<HttpLogState>,
+    port_ops: Arc<dyn PortOperations>, config: Config,
 ) -> Result<(), String> {
     let port = config.local_port.unwrap_or(0);
     debug!(
@@ -228,16 +218,8 @@ async fn start_port_forwarding(
         .unwrap_or_else(|| format!("ID:{config_id}"));
 
     let result = match config.workload_type.as_deref() {
-        Some("proxy") => {
-            port_ops
-                .deploy_and_forward_pod(configs, shared_http_log_state.clone())
-                .await
-        }
-        _ => {
-            port_ops
-                .start_port_forward(configs, protocol, shared_http_log_state.clone())
-                .await
-        }
+        Some("proxy") => port_ops.deploy_and_forward_pod(configs).await,
+        _ => port_ops.start_port_forward(configs, protocol).await,
     };
 
     match result {
@@ -330,7 +312,7 @@ mod tests {
             .times(1)
             .returning(|| Ok(vec![]));
 
-        let result = check_and_manage_ports(Arc::new(mock), Arc::new(HttpLogState::new())).await;
+        let result = check_and_manage_ports(Arc::new(mock)).await;
         assert!(result.is_ok());
     }
 
@@ -356,13 +338,13 @@ mod tests {
 
         mock.expect_start_port_forward()
             .times(1)
-            .returning(|_, _, _| Ok(vec!["Port forwarding started".to_string()]));
+            .returning(|_, _| Ok(vec!["Port forwarding started".to_string()]));
 
         mock.expect_update_config_state()
             .times(1)
             .returning(|_| Ok(()));
 
-        let result = check_and_manage_ports(Arc::new(mock), Arc::new(HttpLogState::new())).await;
+        let result = check_and_manage_ports(Arc::new(mock)).await;
         assert!(result.is_ok());
     }
 
@@ -373,7 +355,7 @@ mod tests {
             .times(1)
             .returning(|| Err("Failed to get config states".to_string()));
 
-        let result = check_and_manage_ports(Arc::new(mock), Arc::new(HttpLogState::new())).await;
+        let result = check_and_manage_ports(Arc::new(mock)).await;
         assert!(result.is_err());
         assert_eq!(result.unwrap_err(), "Failed to get config states");
     }
@@ -392,7 +374,7 @@ mod tests {
             .times(1)
             .returning(|id| Err(format!("Failed to get config {id}")));
 
-        let result = check_and_manage_ports(Arc::new(mock), Arc::new(HttpLogState::new())).await;
+        let result = check_and_manage_ports(Arc::new(mock)).await;
 
         assert!(result.is_ok());
     }
@@ -414,8 +396,7 @@ mod tests {
             .times(1)
             .returning(|_| Ok(()));
 
-        let result =
-            check_and_manage_port(Arc::new(mock), config, Arc::new(HttpLogState::new())).await;
+        let result = check_and_manage_port(Arc::new(mock), config).await;
         assert!(result.is_ok());
     }
 
@@ -429,8 +410,7 @@ mod tests {
             .times(1)
             .returning(|_| Some((1234, "kftray".to_string())));
 
-        let result =
-            check_and_manage_port(Arc::new(mock), config, Arc::new(HttpLogState::new())).await;
+        let result = check_and_manage_port(Arc::new(mock), config).await;
         assert!(result.is_ok());
     }
 
@@ -444,8 +424,7 @@ mod tests {
             .times(1)
             .returning(|_| Some((1234, "kftui".to_string())));
 
-        let result =
-            check_and_manage_port(Arc::new(mock), config, Arc::new(HttpLogState::new())).await;
+        let result = check_and_manage_port(Arc::new(mock), config).await;
         assert!(result.is_ok());
     }
 
@@ -463,8 +442,7 @@ mod tests {
             .times(1)
             .returning(|_| Err("Failed to update state".to_string()));
 
-        let result =
-            check_and_manage_port(Arc::new(mock), config, Arc::new(HttpLogState::new())).await;
+        let result = check_and_manage_port(Arc::new(mock), config).await;
         assert!(result.is_err());
     }
 
@@ -480,14 +458,13 @@ mod tests {
 
         mock.expect_start_port_forward()
             .times(1)
-            .returning(|_, _, _| Ok(vec!["Port forwarding started".to_string()]));
+            .returning(|_, _| Ok(vec!["Port forwarding started".to_string()]));
 
         mock.expect_update_config_state()
             .times(1)
             .returning(|_| Ok(()));
 
-        let result =
-            check_and_manage_port(Arc::new(mock), config, Arc::new(HttpLogState::new())).await;
+        let result = check_and_manage_port(Arc::new(mock), config).await;
         assert!(result.is_ok());
     }
 
@@ -498,7 +475,7 @@ mod tests {
 
         mock.expect_start_port_forward()
             .times(1)
-            .returning(|_, _, _| Ok(vec!["Port forwarding started".to_string()]));
+            .returning(|_, _| Ok(vec!["Port forwarding started".to_string()]));
 
         mock.expect_update_config_state()
             .with(function(|state: &ConfigState| {
@@ -507,8 +484,7 @@ mod tests {
             .times(1)
             .returning(|_| Ok(()));
 
-        let result =
-            start_port_forwarding(Arc::new(mock), config, Arc::new(HttpLogState::new())).await;
+        let result = start_port_forwarding(Arc::new(mock), config).await;
         assert!(result.is_ok());
     }
 
@@ -519,7 +495,7 @@ mod tests {
 
         mock.expect_deploy_and_forward_pod()
             .times(1)
-            .returning(|_, _| Ok(vec!["Proxy pod deployed and forwarded".to_string()]));
+            .returning(|_| Ok(vec!["Proxy pod deployed and forwarded".to_string()]));
 
         mock.expect_update_config_state()
             .with(function(|state: &ConfigState| {
@@ -528,8 +504,7 @@ mod tests {
             .times(1)
             .returning(|_| Ok(()));
 
-        let result =
-            start_port_forwarding(Arc::new(mock), config, Arc::new(HttpLogState::new())).await;
+        let result = start_port_forwarding(Arc::new(mock), config).await;
         assert!(result.is_ok());
     }
 
@@ -540,7 +515,7 @@ mod tests {
 
         mock.expect_start_port_forward()
             .times(1)
-            .returning(|_, _, _| Err("Port forwarding failed".to_string()));
+            .returning(|_, _| Err("Port forwarding failed".to_string()));
 
         mock.expect_update_config_state()
             .with(function(|state: &ConfigState| {
@@ -549,8 +524,7 @@ mod tests {
             .times(1)
             .returning(|_| Ok(()));
 
-        let result =
-            start_port_forwarding(Arc::new(mock), config, Arc::new(HttpLogState::new())).await;
+        let result = start_port_forwarding(Arc::new(mock), config).await;
         assert!(result.is_err());
     }
 
@@ -561,14 +535,13 @@ mod tests {
 
         mock.expect_start_port_forward()
             .times(1)
-            .returning(|_, _, _| Ok(vec!["Port forwarding started".to_string()]));
+            .returning(|_, _| Ok(vec!["Port forwarding started".to_string()]));
 
         mock.expect_update_config_state()
             .times(1)
             .returning(|_| Err("Failed to update state".to_string()));
 
-        let result =
-            start_port_forwarding(Arc::new(mock), config, Arc::new(HttpLogState::new())).await;
+        let result = start_port_forwarding(Arc::new(mock), config).await;
         assert!(result.is_err());
     }
 

@@ -40,6 +40,10 @@ mod tests {
             domain_enabled: Some(false),
             kubeconfig: None,
             target: Some("test-target".to_string()),
+            http_logs_enabled: Some(false),
+            http_logs_max_file_size: Some(10 * 1024 * 1024),
+            http_logs_retention_days: Some(7),
+            http_logs_auto_cleanup: Some(true),
         }
     }
 

@@ -13,7 +13,6 @@ use kftray_commons::{
         timeout_manager::start_timeout_for_forward,
     },
 };
-use kftray_http_logs::HttpLogState;
 use log::{
     debug,
     error,
@@ -272,13 +271,13 @@ async fn save_allocated_address_to_db(config: &Config) -> Result<(), String> {
 }
 
 pub async fn start_port_forward(
-    configs: Vec<Config>, protocol: &str, http_log_state: Arc<HttpLogState>,
+    configs: Vec<Config>, protocol: &str,
 ) -> Result<Vec<CustomResponse>, String> {
-    start_port_forward_with_mode(configs, protocol, http_log_state, DatabaseMode::File).await
+    start_port_forward_with_mode(configs, protocol, DatabaseMode::File).await
 }
 
 pub async fn start_port_forward_with_mode(
-    mut configs: Vec<Config>, protocol: &str, http_log_state: Arc<HttpLogState>, mode: DatabaseMode,
+    mut configs: Vec<Config>, protocol: &str, mode: DatabaseMode,
 ) -> Result<Vec<CustomResponse>, String> {
     let mut responses = Vec::new();
     let mut errors = Vec::new();
@@ -384,12 +383,7 @@ pub async fn start_port_forward_with_mode(
             Ok(port_forward) => {
                 let forward_result = match protocol {
                     "udp" => port_forward.clone().port_forward_udp().await,
-                    "tcp" => {
-                        port_forward
-                            .clone()
-                            .port_forward_tcp(http_log_state.clone())
-                            .await
-                    }
+                    "tcp" => port_forward.clone().port_forward_tcp().await,
                     _ => {
                         error!("Unsupported protocol: {protocol}");
                         Err(anyhow::anyhow!("Unsupported protocol: {}", protocol))
@@ -551,9 +545,6 @@ pub async fn start_port_forward_with_mode(
 #[cfg(test)]
 mod tests {
     use std::net::IpAddr;
-    use std::sync::Arc;
-
-    use kftray_http_logs::HttpLogState;
 
     use super::*;
 
@@ -574,6 +565,10 @@ mod tests {
             remote_address: None,
             domain_enabled: None,
             auto_loopback_address: false,
+            http_logs_enabled: Some(false),
+            http_logs_max_file_size: Some(10 * 1024 * 1024),
+            http_logs_retention_days: Some(7),
+            http_logs_auto_cleanup: Some(true),
         }
     }
 
@@ -608,9 +603,8 @@ mod tests {
     #[tokio::test]
     async fn test_start_port_forward_empty_configs() {
         let configs = Vec::new();
-        let http_log_state = Arc::new(HttpLogState::new());
 
-        let result = start_port_forward(configs, "tcp", http_log_state).await;
+        let result = start_port_forward(configs, "tcp").await;
         assert!(result.is_ok());
         assert!(result.unwrap().is_empty());
     }
@@ -626,27 +620,24 @@ mod tests {
     #[tokio::test]
     async fn test_start_port_forward_with_pod_label() {
         let configs = vec![setup_pod_config()];
-        let http_log_state = Arc::new(HttpLogState::new());
 
-        let result = start_port_forward(configs, "tcp", http_log_state).await;
+        let result = start_port_forward(configs, "tcp").await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn test_start_port_forward_with_domain_enabled() {
         let configs = vec![setup_config_with_domain()];
-        let http_log_state = Arc::new(HttpLogState::new());
 
-        let result = start_port_forward(configs, "tcp", http_log_state).await;
+        let result = start_port_forward(configs, "tcp").await;
         assert!(result.is_err());
     }
 
     #[tokio::test]
     async fn test_start_port_forward_with_invalid_ip() {
         let configs = vec![setup_config_with_invalid_ip()];
-        let http_log_state = Arc::new(HttpLogState::new());
 
-        let result = start_port_forward(configs, "tcp", http_log_state).await;
+        let result = start_port_forward(configs, "tcp").await;
         assert!(result.is_err());
     }
 

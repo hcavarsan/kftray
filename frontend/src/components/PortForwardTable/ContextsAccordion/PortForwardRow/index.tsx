@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { ExternalLinkIcon, FileIcon } from 'lucide-react'
+import { ExternalLinkIcon, FileIcon, SettingsIcon } from 'lucide-react'
 
 import {
   Box,
@@ -23,6 +23,7 @@ import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { open as openShell } from '@tauri-apps/api/shell'
 import { invoke } from '@tauri-apps/api/tauri'
 
+import HttpLogsConfigModal from '@/components/HttpLogsConfigModal'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
   MenuContent,
@@ -52,6 +53,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   }>({})
   const prevConfigIdRef = useRef<number | null>(null)
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
+  const [isHttpLogsConfigOpen, setIsHttpLogsConfigOpen] = useState(false)
 
   const fetchHttpLogState = useCallback(async () => {
     try {
@@ -102,6 +104,18 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
         duration: 1000,
       })
     }
+  }
+
+  const handleOpenHttpLogsConfig = () => {
+    setIsHttpLogsConfigOpen(true)
+  }
+
+  const handleCloseHttpLogsConfig = () => {
+    setIsHttpLogsConfigOpen(false)
+  }
+
+  const handleHttpLogsConfigSave = () => {
+    fetchHttpLogState()
   }
 
   const handleOpenLocalURL = () => {
@@ -315,17 +329,29 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
                 </Text>
               </MenuItem>
               {config.protocol === 'tcp' && (
-                <MenuItem
-                  className='menu-item'
-                  value='http-logs'
-                  onClick={handleToggleHttpLogs}
-                >
-                  <FileIcon size={12} />
-                  <Text ml={2} fontSize='xs'>
-                    {httpLogsEnabled[config.id] ? 'Disable' : 'Enable'} HTTP
-                    Logs
-                  </Text>
-                </MenuItem>
+                <>
+                  <MenuItem
+                    className='menu-item'
+                    value='http-logs'
+                    onClick={handleToggleHttpLogs}
+                  >
+                    <FileIcon size={12} />
+                    <Text ml={2} fontSize='xs'>
+                      {httpLogsEnabled[config.id] ? 'Disable' : 'Enable'} HTTP
+                      Logs
+                    </Text>
+                  </MenuItem>
+                  <MenuItem
+                    className='menu-item'
+                    value='http-logs-config'
+                    onClick={handleOpenHttpLogsConfig}
+                  >
+                    <SettingsIcon size={12} />
+                    <Text ml={2} fontSize='xs'>
+                      HTTP Logs Settings
+                    </Text>
+                  </MenuItem>
+                </>
               )}
             </MenuContent>
           </MenuRoot>
@@ -368,6 +394,13 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
           </DialogContent>
         </DialogRoot>
       )}
+
+      <HttpLogsConfigModal
+        configId={config.id}
+        isOpen={isHttpLogsConfigOpen}
+        onClose={handleCloseHttpLogsConfig}
+        onSave={handleHttpLogsConfigSave}
+      />
     </>
   )
 }

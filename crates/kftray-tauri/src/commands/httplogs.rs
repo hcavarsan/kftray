@@ -3,33 +3,51 @@ use std::path::{
     Path,
     PathBuf,
 };
-use std::sync::Arc;
 
+use kftray_commons::models::http_logs_config_model::HttpLogsConfig;
 use kftray_commons::utils::config_dir::get_log_folder_path;
-use kftray_http_logs::HttpLogState;
+use kftray_commons::utils::http_logs_config::{
+    get_http_logs_config,
+    update_http_logs_config,
+};
 use log::{
     error,
     info,
 };
 
-// HTTP Log State Management Commands
+// HTTP Log Management Commands (using direct database access)
 
 #[tauri::command]
-pub async fn set_http_logs_cmd(
-    state: tauri::State<'_, Arc<HttpLogState>>, config_id: i64, enable: bool,
-) -> Result<(), String> {
-    state
-        .set_http_logs(config_id, enable)
+pub async fn set_http_logs_cmd(config_id: i64, enable: bool) -> Result<(), String> {
+    let mut config = match get_http_logs_config(config_id).await {
+        Ok(config) => config,
+        Err(_) => HttpLogsConfig::new(config_id),
+    };
+
+    config.enabled = enable;
+    update_http_logs_config(&config)
         .await
         .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub async fn get_http_logs_cmd(
-    state: tauri::State<'_, Arc<HttpLogState>>, config_id: i64,
-) -> Result<bool, String> {
-    state
-        .get_http_logs(config_id)
+pub async fn get_http_logs_cmd(config_id: i64) -> Result<bool, String> {
+    match get_http_logs_config(config_id).await {
+        Ok(config) => Ok(config.enabled),
+        Err(_) => Ok(false),
+    }
+}
+
+#[tauri::command]
+pub async fn get_http_logs_config_cmd(config_id: i64) -> Result<HttpLogsConfig, String> {
+    get_http_logs_config(config_id)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn update_http_logs_config_cmd(config: HttpLogsConfig) -> Result<(), String> {
+    update_http_logs_config(&config)
         .await
         .map_err(|e| e.to_string())
 }
@@ -501,9 +519,82 @@ mod tests {
         Mutex,
     };
 
+    use kftray_commons::models::config_model::Config;
+    use lazy_static::lazy_static;
+    use sqlx::SqlitePool;
     use tempfile::TempDir;
+    use tokio::sync::Mutex as TokioMutex;
 
     use super::*;
+
+    lazy_static! {
+        static ref TEST_MUTEX: TokioMutex<()> = TokioMutex::new(());
+    }
+
+    async fn setup_isolated_test_db() -> Arc<SqlitePool> {
+        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
+        kftray_commons::utils::db::create_db_table(&pool)
+            .await
+            .unwrap();
+        kftray_commons::utils::migration::migrate_configs(Some(&pool))
+            .await
+            .unwrap();
+
+        let arc_pool = Arc::new(pool);
+
+        // Set this as the global pool for command functions to use
+        let _ = kftray_commons::utils::db::DB_POOL.set(arc_pool.clone());
+
+        arc_pool
+    }
+
+    async fn create_test_config() -> Result<i64, String> {
+        use std::time::SystemTime;
+
+        let timestamp = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let service_name = format!("test-service-{}", timestamp);
+
+        let config = Config {
+            service: Some(service_name.clone()),
+            namespace: "test-namespace".to_string(),
+            local_port: Some(8080),
+            remote_port: Some(80),
+            context: Some("test-context".to_string()),
+            workload_type: Some("service".to_string()),
+            protocol: "tcp".to_string(),
+            remote_address: Some("remote-address".to_string()),
+            local_address: Some("127.0.0.1".to_string()),
+            auto_loopback_address: false,
+            alias: Some("test-alias".to_string()),
+            domain_enabled: Some(false),
+            kubeconfig: None,
+            target: Some("test-target".to_string()),
+            http_logs_enabled: Some(false),
+            http_logs_max_file_size: Some(10 * 1024 * 1024),
+            http_logs_retention_days: Some(7),
+            http_logs_auto_cleanup: Some(true),
+            ..Default::default()
+        };
+
+        kftray_commons::config::insert_config(config)
+            .await
+            .map_err(|e| e.to_string())?;
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+
+        let configs = kftray_commons::config::get_configs()
+            .await
+            .map_err(|e| e.to_string())?;
+        let inserted_config = configs
+            .iter()
+            .find(|c| c.service == Some(service_name.clone()))
+            .ok_or("Failed to find inserted config")?;
+
+        inserted_config.id.ok_or("Config missing ID".to_string())
+    }
 
     struct EnvGuard {
         vars: Vec<(String, Option<String>)>,
@@ -798,5 +889,143 @@ mod tests {
                 "Error message should not be empty for invalid UTF-8 path"
             ),
         }
+    }
+
+    #[tokio::test]
+    async fn test_http_logs_config_persistence() {
+        let _guard = TEST_MUTEX.lock().await;
+        let _pool = setup_isolated_test_db().await;
+
+        let config_id = create_test_config()
+            .await
+            .expect("Failed to create test config");
+
+        let initial_config = get_http_logs_config_cmd(config_id).await.unwrap();
+        assert_eq!(initial_config.config_id, config_id);
+        assert!(!initial_config.enabled);
+        assert_eq!(initial_config.max_file_size, 10 * 1024 * 1024);
+        assert_eq!(initial_config.retention_days, 7);
+        assert!(initial_config.auto_cleanup);
+
+        let updated_config = HttpLogsConfig {
+            config_id,
+            enabled: true,
+            max_file_size: 20 * 1024 * 1024,
+            retention_days: 14,
+            auto_cleanup: false,
+        };
+
+        update_http_logs_config_cmd(updated_config.clone())
+            .await
+            .unwrap();
+
+        let retrieved_config = get_http_logs_config_cmd(config_id).await.unwrap();
+        assert_eq!(retrieved_config.config_id, config_id);
+        assert!(retrieved_config.enabled);
+        assert_eq!(retrieved_config.max_file_size, 20 * 1024 * 1024);
+        assert_eq!(retrieved_config.retention_days, 14);
+        assert!(!retrieved_config.auto_cleanup);
+    }
+
+    #[tokio::test]
+    async fn test_http_logs_direct_database_integration() {
+        let _guard = TEST_MUTEX.lock().await;
+        let _pool = setup_isolated_test_db().await;
+
+        let config_id = create_test_config()
+            .await
+            .expect("Failed to create test config");
+
+        let initial_state = get_http_logs_cmd(config_id).await.unwrap();
+        assert!(!initial_state);
+
+        set_http_logs_cmd(config_id, true).await.unwrap();
+        let enabled_state = get_http_logs_cmd(config_id).await.unwrap();
+        assert!(enabled_state);
+
+        let db_config = get_http_logs_config_cmd(config_id).await.unwrap();
+        assert_eq!(db_config.config_id, config_id);
+        assert!(db_config.enabled);
+
+        set_http_logs_cmd(config_id, false).await.unwrap();
+        let disabled_state = get_http_logs_cmd(config_id).await.unwrap();
+        assert!(!disabled_state);
+
+        let db_config_disabled = get_http_logs_config_cmd(config_id).await.unwrap();
+        assert_eq!(db_config_disabled.config_id, config_id);
+        assert!(!db_config_disabled.enabled);
+    }
+
+    #[tokio::test]
+    async fn test_http_logs_config_validation() {
+        let _guard = TEST_MUTEX.lock().await;
+        let _pool = setup_isolated_test_db().await;
+
+        let config_id = create_test_config()
+            .await
+            .expect("Failed to create test config");
+
+        let max_size_config = HttpLogsConfig {
+            config_id,
+            enabled: true,
+            max_file_size: 100 * 1024 * 1024,
+            retention_days: 365,
+            auto_cleanup: true,
+        };
+
+        update_http_logs_config_cmd(max_size_config.clone())
+            .await
+            .unwrap();
+        let retrieved = get_http_logs_config_cmd(config_id).await.unwrap();
+        assert_eq!(retrieved.max_file_size, 100 * 1024 * 1024);
+        assert_eq!(retrieved.retention_days, 365);
+
+        let min_config = HttpLogsConfig {
+            config_id,
+            enabled: false,
+            max_file_size: 1024,
+            retention_days: 1,
+            auto_cleanup: false,
+        };
+
+        update_http_logs_config_cmd(min_config.clone())
+            .await
+            .unwrap();
+        let retrieved_min = get_http_logs_config_cmd(config_id).await.unwrap();
+        assert_eq!(retrieved_min.max_file_size, 1024);
+        assert_eq!(retrieved_min.retention_days, 1);
+        assert!(!retrieved_min.enabled);
+        assert!(!retrieved_min.auto_cleanup);
+    }
+
+    #[tokio::test]
+    async fn test_http_logs_state_load_from_database() {
+        let _guard = TEST_MUTEX.lock().await;
+        let _pool = setup_isolated_test_db().await;
+
+        let config_id = create_test_config()
+            .await
+            .expect("Failed to create test config");
+        let test_config = HttpLogsConfig {
+            config_id,
+            enabled: true,
+            max_file_size: 15 * 1024 * 1024,
+            retention_days: 10,
+            auto_cleanup: true,
+        };
+        update_http_logs_config_cmd(test_config.clone())
+            .await
+            .unwrap();
+
+        let loaded_state = get_http_logs_cmd(config_id).await.unwrap();
+        assert!(
+            loaded_state,
+            "HTTP logs should be enabled after loading from database"
+        );
+
+        let db_config = get_http_logs_config_cmd(config_id).await.unwrap();
+        assert_eq!(db_config.max_file_size, 15 * 1024 * 1024);
+        assert_eq!(db_config.retention_days, 10);
+        assert!(db_config.auto_cleanup);
     }
 }

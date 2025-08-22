@@ -1,7 +1,4 @@
-use std::sync::Arc;
-
 use kftray_commons::models::config_model::Config;
-use kftray_http_logs::HttpLogState;
 use log::{
     error,
     info,
@@ -48,7 +45,7 @@ impl ConfigManager {
         Ok(configs)
     }
 
-    pub async fn restart_port_forwards(configs: Vec<Config>, http_log_state: Arc<HttpLogState>) {
+    pub async fn restart_port_forwards(configs: Vec<Config>) {
         for protocol in ["tcp", "udp"] {
             let protocol_configs: Vec<Config> = configs
                 .iter()
@@ -57,15 +54,12 @@ impl ConfigManager {
                 .collect();
 
             if !protocol_configs.is_empty() {
-                Self::restart_protocol_batch(protocol_configs, protocol, http_log_state.clone())
-                    .await;
+                Self::restart_protocol_batch(protocol_configs, protocol).await;
             }
         }
     }
 
-    async fn restart_protocol_batch(
-        configs: Vec<Config>, protocol: &str, http_log_state: Arc<HttpLogState>,
-    ) {
+    async fn restart_protocol_batch(configs: Vec<Config>, protocol: &str) {
         info!("Restarting {} {} port forwards", configs.len(), protocol);
 
         let stop_tasks: Vec<_> = configs
@@ -87,8 +81,7 @@ impl ConfigManager {
 
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
-        match kftray_portforward::kube::start_port_forward(configs, protocol, http_log_state).await
-        {
+        match kftray_portforward::kube::start_port_forward(configs, protocol).await {
             Ok(_) => info!("Successfully restarted {protocol} port forwards"),
             Err(e) => {
                 if protocol == "udp" && e.contains("No ready pods available") {

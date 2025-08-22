@@ -36,7 +36,7 @@ pub fn render_legend(f: &mut Frame, area: Rect, active_component: ActiveComponen
 
     let menu_legend = "←/→: navigate | enter: open | tab: switch to configs tab";
 
-    let table_legend = "pageup/down: scroll | ↑/↓: navigate | ←/→: switch table | space: select | f: start/stop | d: delete | ctrla: select all | tab: switch to details";
+    let table_legend = "pageup/down: scroll | ↑/↓: navigate | ←/→: switch table | space: select | f: start/stop | d: delete | l: http logs | L: logs config | ctrla: select all | tab: switch to details";
 
     let details_legend = "pageup/pagedown: scroll | ←/→: switch tabs | tab: switch to menu";
 

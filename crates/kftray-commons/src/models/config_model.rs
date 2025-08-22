@@ -39,6 +39,18 @@ pub struct Config {
     pub kubeconfig: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub target: Option<String>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub http_logs_enabled: Option<bool>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub http_logs_max_file_size: Option<u64>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub http_logs_retention_days: Option<u64>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub http_logs_auto_cleanup: Option<bool>,
 }
 
 impl Default for Config {
@@ -59,6 +71,10 @@ impl Default for Config {
             alias: Some("default-alias".to_string()),
             kubeconfig: Some("default".to_string()),
             target: Some("default-target".to_string()),
+            http_logs_enabled: Some(false),
+            http_logs_max_file_size: Some(10 * 1024 * 1024), // 10MB
+            http_logs_retention_days: Some(7),
+            http_logs_auto_cleanup: Some(true),
         }
     }
 }
@@ -89,5 +105,9 @@ mod tests {
         assert_eq!(config.alias, Some("default-alias".to_string()));
         assert_eq!(config.kubeconfig, Some("default".to_string()));
         assert_eq!(config.target, Some("default-target".to_string()));
+        assert_eq!(config.http_logs_enabled, Some(false));
+        assert_eq!(config.http_logs_max_file_size, Some(10 * 1024 * 1024));
+        assert_eq!(config.http_logs_retention_days, Some(7));
+        assert_eq!(config.http_logs_auto_cleanup, Some(true));
     }
 }

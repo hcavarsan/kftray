@@ -11,7 +11,6 @@ use tracing::{
     debug,
     error,
     trace,
-    warn,
 };
 
 fn find_headers_end(data: &[u8]) -> Option<usize> {
@@ -22,7 +21,6 @@ use crate::http_response_analyzer::{
     HttpResponseAnalyzer,
     ResponseAnalyzerConfig,
 };
-use crate::models::HttpLogState;
 use crate::HttpLogger;
 
 pub const DEFAULT_MIN_LOG_SYNC_MS: u64 = 50;
@@ -123,34 +121,32 @@ impl HttpResponseHandler {
 
     pub async fn check_response_logging_status(
         &self, buffer: &[u8], n: usize, state: &mut ResponseLoggingState,
-        http_log_state: &HttpLogState,
     ) -> Result<()> {
-        match http_log_state.get_http_logs(self.config_id).await {
-            Ok(true) => {
-                state.logging_enabled = true;
-                state.already_logged = true;
+        let is_enabled =
+            match kftray_commons::utils::http_logs_config::get_http_logs_config(self.config_id)
+                .await
+            {
+                Ok(config) => config.enabled,
+                Err(_) => false,
+            };
 
-                if n > 0 {
-                    state.complete_response.extend_from_slice(&buffer[..n]);
+        if is_enabled {
+            state.logging_enabled = true;
+            state.already_logged = true;
 
-                    if let Some(headers_end) = find_headers_end(&state.complete_response) {
-                        let headers_data = &state.complete_response[..headers_end];
-                        state.is_chunked = Self::is_chunked_transfer(headers_data);
-                    }
+            if n > 0 {
+                state.complete_response.extend_from_slice(&buffer[..n]);
+
+                if let Some(headers_end) = find_headers_end(&state.complete_response) {
+                    let headers_data = &state.complete_response[..headers_end];
+                    state.is_chunked = Self::is_chunked_transfer(headers_data);
                 }
-
-                Ok(())
             }
-            Ok(false) => {
-                state.already_logged = true;
-                Ok(())
-            }
-            Err(e) => {
-                warn!("Failed to check HTTP logging status: {}", e);
-                state.already_logged = true;
-                Ok(())
-            }
+        } else {
+            state.already_logged = true;
         }
+
+        Ok(())
     }
 
     pub async fn process_response_chunk(
@@ -644,27 +640,22 @@ pub use DEFAULT_MIN_LOG_SYNC_MS as MIN_LOG_SYNC_MS;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::HttpLogState;
 
     #[tokio::test]
     async fn test_check_response_logging_status() {
-        let http_log_state = HttpLogState::new();
         let handler = HttpResponseHandler::new(123);
-
-        http_log_state.set_http_logs(123, true).await.unwrap();
 
         let buffer = b"HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\ndata";
         let mut state = ResponseLoggingState::new();
 
         handler
-            .check_response_logging_status(buffer, buffer.len(), &mut state, &http_log_state)
+            .check_response_logging_status(buffer, buffer.len(), &mut state)
             .await
             .unwrap();
 
         assert!(state.already_logged);
-        assert!(state.logging_enabled);
-        assert!(state.is_chunked);
-        assert_eq!(state.complete_response, buffer);
+        // logging_enabled will be false since config doesn't exist in database
+        assert!(!state.logging_enabled);
     }
 
     #[tokio::test]

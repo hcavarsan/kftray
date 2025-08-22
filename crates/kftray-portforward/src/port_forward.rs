@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use kftray_http_logs::HttpLogState;
 use kube::api::Api;
 use kube::Client;
 use lazy_static::lazy_static;
@@ -158,10 +157,8 @@ impl PortForward {
         Ok(())
     }
 
-    #[instrument(skip(self, http_log_state), fields(config_id = self.config_id))]
-    pub async fn port_forward_tcp(
-        self, http_log_state: Arc<HttpLogState>,
-    ) -> anyhow::Result<(u16, PortForwardProcess)> {
+    #[instrument(skip(self), fields(config_id = self.config_id))]
+    pub async fn port_forward_tcp(self) -> anyhow::Result<(u16, PortForwardProcess)> {
         let local_addr = self
             .local_address
             .as_deref()
@@ -196,7 +193,6 @@ impl PortForward {
         let (port, handle) = match direct_forwarder
             .start_listener(
                 listener_config,
-                http_log_state,
                 self.config_id,
                 self.workload_type.clone(),
                 cancellation_token.clone(),
@@ -254,7 +250,6 @@ impl PortForward {
         let (port, handle) = match direct_forwarder
             .start_listener(
                 listener_config,
-                Arc::new(HttpLogState::new()),
                 self.config_id,
                 self.workload_type.clone(),
                 cancellation_token.clone(),
@@ -649,7 +644,6 @@ mod tests {
         info!("Starting test_port_forward_tcp_api_calls");
 
         let (pf_base, _client, _handle) = setup_mock_pf_for_api_test();
-        let http_log_state = Arc::new(HttpLogState::new());
 
         let (mock_service_test, mut handle_test) = mock::pair::<Request<Body>, Response<Body>>();
         let client_test = Client::new(mock_service_test, "test-ns");
@@ -676,7 +670,7 @@ mod tests {
         });
 
         info!("Calling port_forward_tcp");
-        let pf_result = pf_test.port_forward_tcp(http_log_state).await;
+        let pf_result = pf_test.port_forward_tcp().await;
         if pf_result.is_err() {
             info!(
                 "Port forward failed as expected in test environment: {:?}",

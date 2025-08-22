@@ -96,6 +96,51 @@ impl SettingsManager {
             .await
     }
 
+    pub async fn get_http_logs_default_enabled(&self) -> bool {
+        if let Some(value) = self.get_setting("http_logs_default_enabled").await {
+            value.parse::<bool>().unwrap_or(false)
+        } else {
+            false // Default to false
+        }
+    }
+
+    pub async fn set_http_logs_default_enabled(
+        &self, enabled: bool,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.set_setting("http_logs_default_enabled", &enabled.to_string())
+            .await
+    }
+
+    pub async fn get_http_logs_max_file_size(&self) -> u64 {
+        if let Some(value) = self.get_setting("http_logs_max_file_size").await {
+            value.parse::<u64>().unwrap_or(10 * 1024 * 1024)
+        } else {
+            10 * 1024 * 1024 // Default 10MB
+        }
+    }
+
+    pub async fn set_http_logs_max_file_size(
+        &self, size: u64,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.set_setting("http_logs_max_file_size", &size.to_string())
+            .await
+    }
+
+    pub async fn get_http_logs_retention_days(&self) -> u64 {
+        if let Some(value) = self.get_setting("http_logs_retention_days").await {
+            value.parse::<u64>().unwrap_or(7)
+        } else {
+            7 // Default 7 days
+        }
+    }
+
+    pub async fn set_http_logs_retention_days(
+        &self, days: u64,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.set_setting("http_logs_retention_days", &days.to_string())
+            .await
+    }
+
     pub async fn get_all_settings(&self) -> HashMap<String, String> {
         let cache = self.cache.read().await;
         cache.clone()

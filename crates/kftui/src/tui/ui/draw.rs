@@ -36,6 +36,8 @@ use crate::tui::input::{
 use crate::tui::ui::render_context_selection_popup;
 use crate::tui::ui::render_delete_confirmation_popup;
 use crate::tui::ui::render_details;
+use crate::tui::ui::render_http_logs_config_popup;
+use crate::tui::ui::render_http_logs_viewer_popup;
 use crate::tui::ui::render_settings_popup;
 use crate::tui::ui::MAUVE;
 use crate::tui::ui::{
@@ -194,6 +196,14 @@ pub fn draw_ui(f: &mut Frame, app: &mut App, config_states: &[ConfigState]) {
             let settings_area = centered_rect(60, 40, size);
             render_background_overlay(f, size);
             render_settings_popup(f, app, settings_area);
+        }
+        AppState::ShowHttpLogsConfig => {
+            render_background_overlay(f, size);
+            render_http_logs_config_popup(f, app, size);
+        }
+        AppState::ShowHttpLogsViewer => {
+            render_background_overlay(f, size);
+            render_http_logs_viewer_popup(f, app, size);
         }
         _ => {}
     }

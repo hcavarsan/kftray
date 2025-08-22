@@ -154,6 +154,10 @@ fn parse_configs(
                 auto_loopback_address: false,
                 remote_address: None,
                 domain_enabled: None,
+                http_logs_enabled: None,
+                http_logs_max_file_size: None,
+                http_logs_retention_days: None,
+                http_logs_auto_cleanup: None,
             })
         })
         .collect()
@@ -181,6 +185,10 @@ fn create_default_configs(
             auto_loopback_address: false,
             remote_address: None,
             domain_enabled: None,
+            http_logs_enabled: None,
+            http_logs_max_file_size: None,
+            http_logs_retention_days: None,
+            http_logs_auto_cleanup: None,
         })
         .collect()
 }

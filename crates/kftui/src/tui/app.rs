@@ -73,6 +73,7 @@ pub async fn run_app<B: ratatui::backend::Backend>(
         let config_states = read_config_states_with_mode(mode).await.unwrap_or_default();
 
         app.update_configs(&configs, &config_states);
+        app.load_http_logs_states(&configs, mode).await;
 
         if !app.logger_state.is_file_output_enabled() {
             tui_logger::move_events();
