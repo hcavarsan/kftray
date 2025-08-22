@@ -1,20 +1,24 @@
+#[cfg(unix)]
 use std::os::unix::net::{
     UnixListener,
     UnixStream,
 };
+#[cfg(unix)]
 use std::{
     fs,
     io::{
         Read,
         Write,
     },
+};
+use std::{
     path::PathBuf,
     sync::Arc,
     time::Duration,
 };
 
-use kftray_commons::utils::config_dir;
 #[cfg(unix)]
+use kftray_commons::utils::config_dir;
 use log::{
     debug,
     error,
@@ -32,12 +36,11 @@ use tokio::{
     task,
 };
 
+#[cfg(unix)]
+use crate::auth::validate_peer_credentials;
 use crate::{
     address_pool::AddressPoolManager,
-    auth::{
-        validate_peer_credentials,
-        validate_request,
-    },
+    auth::validate_request,
     error::HelperError,
     hostfile::HostfileManager,
     messages::{
@@ -998,17 +1001,17 @@ async fn process_request(
                 }
             }
             NetworkCommand::List => {
-                println!("Processing List request");
+                debug!("Processing List request");
                 match network_manager.list_loopback_addresses().await {
                     Ok(addresses) => {
-                        println!(
+                        info!(
                             "List request successful, found {} addresses",
                             addresses.len()
                         );
                         Ok(HelperResponse::list_success(request_id, addresses))
                     }
                     Err(e) => {
-                        println!("List request failed: {e}");
+                        error!("List request failed: {e}");
                         Ok(HelperResponse::list_success(request_id, vec![]))
                     }
                 }
@@ -1016,28 +1019,28 @@ async fn process_request(
         },
         RequestCommand::Address(cmd) => match cmd {
             AddressCommand::Allocate { service_name } => {
-                println!("Processing Allocate request for service: {service_name}");
+                debug!("Processing Allocate request for service: {service_name}");
                 match pool_manager.allocate_address(&service_name).await {
                     Ok(address) => {
-                        println!(
+                        info!(
                             "Address pool allocation successful for service {service_name}: {address}"
                         );
 
                         match network_manager.add_loopback_address(&address).await {
                             Ok(_) => {
-                                println!(
+                                info!(
                                     "Network interface addition successful for address: {address}"
                                 );
                                 Ok(HelperResponse::string_success(request_id, address))
                             }
                             Err(e) => {
-                                println!(
+                                error!(
                                     "Network interface addition failed for address {address}: {e}"
                                 );
                                 if let Err(release_err) =
                                     pool_manager.release_address(&address).await
                                 {
-                                    println!("Failed to release address from pool after network error: {release_err}");
+                                    warn!("Failed to release address from pool after network error: {release_err}");
                                 }
                                 Ok(HelperResponse::string_success(
                                     request_id,
@@ -1047,7 +1050,7 @@ async fn process_request(
                         }
                     }
                     Err(e) => {
-                        println!("Address pool allocation failed for service {service_name}: {e}");
+                        error!("Address pool allocation failed for service {service_name}: {e}");
 
                         Ok(HelperResponse::string_success(
                             request_id,
@@ -1057,47 +1060,47 @@ async fn process_request(
                 }
             }
             AddressCommand::Release { address } => {
-                println!("Processing Release request for address: {address}");
+                debug!("Processing Release request for address: {address}");
 
                 let pool_result = pool_manager.release_address(&address).await;
                 match pool_result {
-                    Ok(_) => println!("Address pool release successful for address: {address}"),
-                    Err(e) => println!("Address pool release failed for address {address}: {e}"),
+                    Ok(_) => info!("Address pool release successful for address: {address}"),
+                    Err(e) => error!("Address pool release failed for address {address}: {e}"),
                 }
 
                 let network_result = network_manager.remove_loopback_address(&address).await;
                 match network_result {
                     Ok(_) => {
-                        println!("Network interface removal successful for address: {address}");
+                        info!("Network interface removal successful for address: {address}");
                         Ok(HelperResponse::success(request_id))
                     }
                     Err(e) => {
-                        println!("Network interface removal failed for address {address}: {e}");
+                        error!("Network interface removal failed for address {address}: {e}");
 
                         if e.to_string().contains("not found")
                             || e.to_string().contains("No such process")
                         {
-                            println!("Address already removed from interface, considering operation successful");
+                            info!("Address already removed from interface, considering operation successful");
                             Ok(HelperResponse::success(request_id))
                         } else {
-                            println!("Returning error response for failed network removal");
+                            debug!("Returning error response for failed network removal");
                             Ok(HelperResponse::error(request_id, format!("Error: {e}")))
                         }
                     }
                 }
             }
             AddressCommand::List => {
-                println!("Processing List request");
+                debug!("Processing List request");
                 match pool_manager.list_allocations().await {
                     Ok(allocations) => {
-                        println!(
+                        info!(
                             "List request successful, found {} allocations",
                             allocations.len()
                         );
                         Ok(HelperResponse::allocations_success(request_id, allocations))
                     }
                     Err(e) => {
-                        println!("List request failed: {e}");
+                        error!("List request failed: {e}");
 
                         Ok(HelperResponse::allocations_success(request_id, vec![]))
                     }
@@ -1106,78 +1109,78 @@ async fn process_request(
         },
         RequestCommand::Service(cmd) => match cmd {
             ServiceCommand::Status => {
-                println!("Processing Status request");
+                debug!("Processing Status request");
 
                 Ok(HelperResponse::string_success(request_id, "running".into()))
             }
             ServiceCommand::Stop => {
-                println!("Processing Stop request");
+                debug!("Processing Stop request");
                 Ok(HelperResponse::success(request_id))
             }
             ServiceCommand::Restart => {
-                println!("Processing Restart request");
+                debug!("Processing Restart request");
                 Ok(HelperResponse::success(request_id))
             }
         },
         RequestCommand::Host(cmd) => match cmd {
             HostCommand::Add { id, entry } => {
-                println!("Processing Host Add request for ID: {id}");
+                debug!("Processing Host Add request for ID: {id}");
                 match hostfile_manager.add_entry(id, entry) {
                     Ok(_) => {
-                        println!("Host Add request successful");
+                        info!("Host Add request successful");
                         Ok(HelperResponse::success(request_id))
                     }
                     Err(e) => {
-                        println!("Host Add request failed: {e}");
+                        error!("Host Add request failed: {e}");
                         Ok(HelperResponse::error(request_id, format!("Error: {e}")))
                     }
                 }
             }
             HostCommand::Remove { id } => {
-                println!("Processing Host Remove request for ID: {id}");
+                debug!("Processing Host Remove request for ID: {id}");
                 match hostfile_manager.remove_entry(&id) {
                     Ok(_) => {
-                        println!("Host Remove request successful");
+                        info!("Host Remove request successful");
                         Ok(HelperResponse::success(request_id))
                     }
                     Err(e) => {
-                        println!("Host Remove request failed: {e}");
+                        error!("Host Remove request failed: {e}");
                         Ok(HelperResponse::error(request_id, format!("Error: {e}")))
                     }
                 }
             }
             HostCommand::RemoveAll => {
-                println!("Processing Host RemoveAll request");
+                debug!("Processing Host RemoveAll request");
                 match hostfile_manager.remove_all_entries() {
                     Ok(_) => {
-                        println!("Host RemoveAll request successful");
+                        info!("Host RemoveAll request successful");
                         Ok(HelperResponse::success(request_id))
                     }
                     Err(e) => {
-                        println!("Host RemoveAll request failed: {e}");
+                        error!("Host RemoveAll request failed: {e}");
                         Ok(HelperResponse::error(request_id, format!("Error: {e}")))
                     }
                 }
             }
             HostCommand::List => {
-                println!("Processing Host List request");
+                debug!("Processing Host List request");
                 match hostfile_manager.list_entries() {
                     Ok(entries) => {
-                        println!(
+                        info!(
                             "Host List request successful, found {} entries",
                             entries.len()
                         );
                         Ok(HelperResponse::host_entries_success(request_id, entries))
                     }
                     Err(e) => {
-                        println!("Host List request failed: {e}");
+                        error!("Host List request failed: {e}");
                         Ok(HelperResponse::error(request_id, format!("Error: {e}")))
                     }
                 }
             }
         },
         RequestCommand::Ping => {
-            println!("Processing Ping request");
+            debug!("Processing Ping request");
             Ok(HelperResponse::string_success(request_id, "pong".into()))
         }
     }
