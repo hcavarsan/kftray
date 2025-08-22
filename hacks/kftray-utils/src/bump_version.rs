@@ -165,6 +165,14 @@ fn bump_version(bump_type: &str) -> io::Result<()> {
 
     println!("kftray-network-monitor Cargo.toml updated");
 
+	update_file_content(
+        "../../crates/kftray-http-logs/Cargo.toml",
+        new_version,
+        update_cargo_toml_version,
+    )?;
+
+    println!("kftray-http-logs Cargo.toml updated");
+
     update_file_content(
         "../../docs/kftray/INSTALL.md",
         new_version,

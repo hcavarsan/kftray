@@ -3031,7 +3031,7 @@ dependencies = [
 
 [[package]]
 name = "kftray-http-logs"
-version = "0.15.8"
+version = "0.22.1"
 dependencies = [
  "anyhow",
  "brotli 8.0.1",
