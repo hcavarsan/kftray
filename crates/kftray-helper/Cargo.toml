@@ -10,7 +10,7 @@ license = "MIT"
 clap = { workspace = true }
 dirs = { workspace = true }
 hostsfile = { workspace = true }
-kftray-commons = { path = "../kftray-commons" }
+kftray-commons = { path = "../kftray-commons", version = "0.22.1" }
 libc = { workspace = true }
 log = { workspace = true }
 serde = { workspace = true }

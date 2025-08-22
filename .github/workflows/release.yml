@@ -584,7 +584,7 @@ jobs:
         with:
           release_id: ${{ needs.create-release-draft.outputs.release_id }}
 
-  publish-kftui-cargo:
+  publish-cargo-crates:
     needs: [update-release]
     permissions:
       contents: read
@@ -605,6 +605,41 @@ jobs:
       - name: Cache Rust
         uses: swatinem/rust-cache@7e1e2d0a10862b34e5df481373b2b0f295d1a2ef
 
+      - name: Publish kftray-commons to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          cd crates/kftray-commons
+          cargo publish --token $CARGO_REGISTRY_TOKEN
+
+      - name: Publish kftray-helper to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          cd crates/kftray-helper
+          cargo publish --token $CARGO_REGISTRY_TOKEN
+
+      - name: Publish kftray-http-logs to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          cd crates/kftray-http-logs
+          cargo publish --token $CARGO_REGISTRY_TOKEN
+
+      - name: Publish kftray-portforward to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          cd crates/kftray-portforward
+          cargo publish --token $CARGO_REGISTRY_TOKEN
+
+      - name: Publish kftray-network-monitor to crates.io
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: |
+          cd crates/kftray-network-monitor
+          cargo publish --token $CARGO_REGISTRY_TOKEN
+
       - name: Publish kftui to crates.io
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
@@ -613,7 +648,7 @@ jobs:
           cargo publish --token $CARGO_REGISTRY_TOKEN
 
   update-homebrew:
-    needs: [update-release]
+    needs: [publish-cargo-crates]
     permissions:
       contents: write
     runs-on: macos-latest
