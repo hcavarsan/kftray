@@ -605,6 +605,23 @@ jobs:
       - name: Cache Rust
         uses: swatinem/rust-cache@7e1e2d0a10862b34e5df481373b2b0f295d1a2ef
 
+      - name: Install dependencies
+        run: |
+          echo "deb http://gb.archive.ubuntu.com/ubuntu jammy main" | sudo tee /etc/apt/sources.list.d/ubuntu-jammy-main.list
+          sudo apt-get update
+          sudo apt-get install -y \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libsoup2.4-dev \
+            libwebkit2gtk-4.0-37=2.36.0-2ubuntu1 \
+            libwebkit2gtk-4.0-dev=2.36.0-2ubuntu1 \
+            libjavascriptcoregtk-4.0-18=2.36.0-2ubuntu1 \
+            libjavascriptcoregtk-4.0-dev=2.36.0-2ubuntu1 \
+            gir1.2-javascriptcoregtk-4.0=2.36.0-2ubuntu1 \
+            gir1.2-webkit2-4.0=2.36.0-2ubuntu1;
+
       - name: Publish kftray-commons to crates.io
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
