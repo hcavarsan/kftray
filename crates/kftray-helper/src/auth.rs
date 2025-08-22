@@ -83,7 +83,7 @@ pub fn validate_peer_credentials(
 
     if current_uid == 0 {
         if cred.uid == authorized_uid {
-            log::debug!(
+            debug!(
                 "Peer credentials validated (root accepting authorized user): UID={}, GID={}, PID={}",
                 cred.uid, cred.gid, cred.pid
             );
@@ -103,11 +103,9 @@ pub fn validate_peer_credentials(
         )));
     }
 
-    log::debug!(
+    debug!(
         "Peer credentials validated: UID={}, GID={}, PID={}",
-        cred.uid,
-        cred.gid,
-        cred.pid
+        cred.uid, cred.gid, cred.pid
     );
 
     Ok(())
@@ -174,7 +172,7 @@ pub fn validate_peer_credentials(
         )));
     }
 
-    log::debug!("Peer credentials validated: UID={}", cred.cr_uid);
+    debug!("Peer credentials validated: UID={}", cred.cr_uid);
 
     Ok(())
 }
@@ -371,7 +369,7 @@ fn get_authorized_user_sid() -> Result<String, HelperError> {
         if let Ok(pipe_path) = get_default_named_pipe_path() {
             if let Ok(owner_sid) = get_file_owner_sid(&pipe_path) {
                 if !owner_sid.starts_with("S-1-5-18") && !is_admin_sid(&owner_sid)? {
-                    log::debug!(
+                    debug!(
                         "Found authorized SID from pipe file ownership: {}",
                         owner_sid
                     );
@@ -384,7 +382,7 @@ fn get_authorized_user_sid() -> Result<String, HelperError> {
             if let Some(parent_dir) = std::path::Path::new(&pipe_path).parent() {
                 if let Ok(owner_sid) = get_file_owner_sid(parent_dir) {
                     if !owner_sid.starts_with("S-1-5-18") && !is_admin_sid(&owner_sid)? {
-                        log::debug!(
+                        debug!(
                             "Found authorized SID from pipe directory ownership: {}",
                             owner_sid
                         );
@@ -395,16 +393,12 @@ fn get_authorized_user_sid() -> Result<String, HelperError> {
         }
     }
 
-    log::debug!("Using current user SID as authorized: {}", current_sid);
+    debug!("Using current user SID as authorized: {}", current_sid);
     Ok(current_sid)
 }
 
 #[cfg(windows)]
 fn is_running_as_admin() -> Result<bool, HelperError> {
-    use windows::Win32::Foundation::{
-        VARIANT_BOOL,
-        VARIANT_FALSE,
-    };
     use windows::Win32::Security::{
         CheckTokenMembership,
         CreateWellKnownSid,
@@ -550,16 +544,16 @@ pub fn validate_peer_credentials(
     pipe_handle: windows::Win32::Foundation::HANDLE,
 ) -> Result<(), HelperError> {
     let client_process_id = get_pipe_client_process_id(pipe_handle)?;
-    log::debug!("Client process ID: {}", client_process_id);
+    debug!("Client process ID: {}", client_process_id);
 
     let client_sid = get_process_user_sid(client_process_id)?;
-    log::debug!("Client user SID: {}", client_sid);
+    debug!("Client user SID: {}", client_sid);
 
     let authorized_sid = get_authorized_user_sid()?;
-    log::debug!("Authorized user SID: {}", authorized_sid);
+    debug!("Authorized user SID: {}", authorized_sid);
 
     if client_sid == authorized_sid {
-        log::debug!("Peer credentials validated: SID matches");
+        debug!("Peer credentials validated: SID matches");
         Ok(())
     } else {
         Err(HelperError::Authentication(format!(
