@@ -2215,14 +2215,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "hostsfile"
-version = "1.2.0"
-source = "git+https://github.com/tonarino/innernet?branch=main#05b3a6aea9eddb2c71e286ff919598cc65c35dbc"
-dependencies = [
- "log",
-]
-
-[[package]]
 name = "html5ever"
 version = "0.26.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2996,7 +2988,6 @@ dependencies = [
  "dirs",
  "futures",
  "git2",
- "hostsfile",
  "lazy_static",
  "log",
  "portpicker",
@@ -3015,7 +3006,6 @@ dependencies = [
  "clap",
  "dirs",
  "env_logger",
- "hostsfile",
  "kftray-commons",
  "libc",
  "log",
@@ -3078,7 +3068,6 @@ dependencies = [
  "env_logger",
  "flate2",
  "futures",
- "hostsfile",
  "http 1.3.1",
  "httparse",
  "hyper 1.6.0",

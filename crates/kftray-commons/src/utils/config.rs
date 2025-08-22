@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 
 use futures::stream::StreamExt;
-use hostsfile::HostsBuilder;
 use log::{
     error,
     info,
@@ -24,6 +23,7 @@ use crate::db::{
     create_db_table,
     get_db_pool,
 };
+use crate::hostsfile::HostsFile;
 use crate::migration::migrate_configs;
 use crate::models::config_model::Config;
 use crate::utils::db_mode::{
@@ -249,10 +249,10 @@ async fn clean_all_custom_hosts_entries_with_pool_and_path(
             config.service.unwrap_or_default(),
             config.id.unwrap_or_default()
         );
-        let hosts_builder = HostsBuilder::new(&hostfile_comment);
+        let hosts_file = HostsFile::new(&hostfile_comment);
         let result = match custom_hosts_path {
-            Some(path) => hosts_builder.write_to(path),
-            None => hosts_builder.write(),
+            Some(path) => hosts_file.write_to(path),
+            None => hosts_file.write(),
         };
         result
             .map_err(|e| format!("Failed to write to the hostfile for {hostfile_comment}: {e}"))?;

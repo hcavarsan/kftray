@@ -3,6 +3,12 @@ use std::{
     sync::Arc,
 };
 
+use log::{
+    debug,
+    error,
+    info,
+    warn,
+};
 use tokio::sync::Mutex;
 
 use crate::error::HelperError;
@@ -19,22 +25,22 @@ impl NetworkConfigManager {
     }
 
     pub async fn add_loopback_address(&self, address: &str) -> Result<(), HelperError> {
-        println!("Starting add_loopback_address for: {address}");
+        debug!("Starting add_loopback_address for: {address}");
 
         let _guard = self.lock.lock().await;
 
         if let Err(e) = self.validate_loopback_address(address) {
-            println!("Address validation failed: {e}");
+            error!("Address validation failed: {e}");
             return Err(e);
         }
 
-        println!("Address validation successful for: {address}");
+        debug!("Address validation successful for: {address}");
 
         #[cfg(target_os = "macos")]
         {
-            println!("Using macOS-specific implementation");
+            debug!("Using macOS-specific implementation");
             let result = self.add_loopback_macos(address).await;
-            println!(
+            debug!(
                 "macOS implementation completed with result: {:?}",
                 result.is_ok()
             );
@@ -43,19 +49,19 @@ impl NetworkConfigManager {
 
         #[cfg(target_os = "linux")]
         {
-            println!("Using Linux-specific implementation");
+            debug!("Using Linux-specific implementation");
             self.add_loopback_linux(address).await
         }
 
         #[cfg(target_os = "windows")]
         {
-            println!("Using Windows-specific implementation");
+            debug!("Using Windows-specific implementation");
             self.add_loopback_windows(address).await
         }
 
         #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
         {
-            println!("Unsupported platform");
+            error!("Unsupported platform");
             Err(HelperError::UnsupportedPlatform)
         }
     }
@@ -66,11 +72,11 @@ impl NetworkConfigManager {
         self.validate_loopback_address(address)?;
 
         if !self.is_address_configured(address).await? {
-            println!("Address already removed, returning success: {address}");
+            info!("Address already removed, returning success: {address}");
             return Ok(());
         }
 
-        println!("Address is configured, proceeding with removal: {address}");
+        debug!("Address is configured, proceeding with removal: {address}");
 
         #[cfg(target_os = "macos")]
         {
@@ -120,11 +126,11 @@ impl NetworkConfigManager {
     async fn is_address_configured(&self, address: &str) -> Result<bool, HelperError> {
         #[cfg(target_os = "macos")]
         {
-            println!("Checking if address is configured on macOS: {address}");
+            debug!("Checking if address is configured on macOS: {address}");
 
             let address_owned = address.to_string();
             let result = tokio::task::spawn_blocking(move || {
-                println!("Executing ifconfig command to check if address exists");
+                debug!("Executing ifconfig command to check if address exists");
 
                 let output = Command::new("/sbin/ifconfig").arg("lo0").output();
 
@@ -140,11 +146,11 @@ impl NetworkConfigManager {
                             }
                         }
 
-                        println!("Address {address_owned} found status: {found}");
+                        debug!("Address {address_owned} found status: {found}");
                         Ok(found)
                     }
                     Err(e) => {
-                        println!("Error checking interface: {e}");
+                        error!("Error checking interface: {e}");
                         Err(HelperError::NetworkConfig(format!(
                             "Failed to check if address is configured: {e}"
                         )))
@@ -156,7 +162,7 @@ impl NetworkConfigManager {
             match result {
                 Ok(inner_result) => inner_result,
                 Err(e) => {
-                    println!("Task execution error: {e}");
+                    error!("Task execution error: {e}");
                     Err(HelperError::NetworkConfig(format!(
                         "Task execution error: {e}"
                     )))
@@ -215,11 +221,11 @@ impl NetworkConfigManager {
 
     #[cfg(target_os = "macos")]
     async fn add_loopback_macos(&self, address: &str) -> Result<(), HelperError> {
-        println!("Adding loopback address on macOS: {address}");
+        debug!("Adding loopback address on macOS: {address}");
 
         let address_owned = address.to_string();
         let result = tokio::task::spawn_blocking(move || {
-            println!("Executing ifconfig command to add loopback address");
+            debug!("Executing ifconfig command to add loopback address");
 
             let output = Command::new("/sbin/ifconfig")
                 .args(["lo0", "alias", &address_owned])
@@ -228,18 +234,18 @@ impl NetworkConfigManager {
             match output {
                 Ok(output) => {
                     if output.status.success() {
-                        println!("Successfully added loopback address: {address_owned}");
+                        info!("Successfully added loopback address: {address_owned}");
                         Ok(())
                     } else {
                         let error = String::from_utf8_lossy(&output.stderr);
-                        println!("Failed to add loopback address: {error}");
+                        error!("Failed to add loopback address: {error}");
                         Err(HelperError::NetworkConfig(format!(
                             "Failed to add loopback address: {error}"
                         )))
                     }
                 }
                 Err(e) => {
-                    println!("Error executing ifconfig command: {e}");
+                    error!("Error executing ifconfig command: {e}");
                     Err(HelperError::NetworkConfig(format!(
                         "Failed to add loopback address: {e}"
                     )))
@@ -251,7 +257,7 @@ impl NetworkConfigManager {
         match result {
             Ok(inner_result) => inner_result,
             Err(e) => {
-                println!("Task execution error: {e}");
+                error!("Task execution error: {e}");
                 Err(HelperError::NetworkConfig(format!(
                     "Task execution error: {e}"
                 )))
@@ -261,15 +267,15 @@ impl NetworkConfigManager {
 
     #[cfg(target_os = "macos")]
     async fn remove_loopback_macos(&self, address: &str) -> Result<(), HelperError> {
-        println!("Removing loopback address on macOS: {address}");
-        println!("Thread ID: {:?}", std::thread::current().id());
+        debug!("Removing loopback address on macOS: {address}");
+        debug!("Thread ID: {:?}", std::thread::current().id());
 
         let address_owned = address.to_string();
         let result = tokio::task::spawn_blocking(move || {
-            println!("Executing ifconfig command to remove loopback address: {address_owned}");
-            println!("Blocking task thread ID: {:?}", std::thread::current().id());
+            debug!("Executing ifconfig command to remove loopback address: {address_owned}");
+            debug!("Blocking task thread ID: {:?}", std::thread::current().id());
 
-            println!("Directly calling ifconfig to remove loopback address");
+            debug!("Directly calling ifconfig to remove loopback address");
             let output = Command::new("/sbin/ifconfig")
                 .args(["lo0", "-alias", &address_owned])
                 .output();
@@ -279,7 +285,7 @@ impl NetworkConfigManager {
                     let stdout = String::from_utf8_lossy(&output.stdout);
                     let stderr = String::from_utf8_lossy(&output.stderr);
 
-                    println!(
+                    debug!(
                         "ifconfig -alias result: success={}, stdout={}, stderr={}",
                         output.status.success(),
                         stdout,
@@ -287,20 +293,20 @@ impl NetworkConfigManager {
                     );
 
                     if output.status.success() {
-                        println!("Successfully removed loopback address: {address_owned}");
+                        info!("Successfully removed loopback address: {address_owned}");
                         Ok(())
                     } else if stderr.contains("not found") || stderr.contains("No such process") {
-                        println!("Address already removed, considering operation successful");
+                        info!("Address already removed, considering operation successful");
                         Ok(())
                     } else {
-                        println!("Failed to remove loopback address, error: {stderr}");
+                        error!("Failed to remove loopback address, error: {stderr}");
                         Err(HelperError::NetworkConfig(format!(
                             "Failed to remove loopback address: {stderr}"
                         )))
                     }
                 }
                 Err(e) => {
-                    println!("Error executing ifconfig command: {e}");
+                    error!("Error executing ifconfig command: {e}");
                     Err(HelperError::NetworkConfig(format!(
                         "Failed to remove loopback address: {e}"
                     )))
@@ -311,7 +317,7 @@ impl NetworkConfigManager {
 
         match result {
             Ok(inner_result) => {
-                println!(
+                debug!(
                     "Address removal task completed with result: {:?}",
                     inner_result.is_ok()
                 );
@@ -320,22 +326,20 @@ impl NetworkConfigManager {
                 match verify_result {
                     Ok(still_exists) => {
                         if !still_exists {
-                            println!("Verified address was successfully removed: {address}");
+                            info!("Verified address was successfully removed: {address}");
                         } else {
-                            println!(
-                                "Warning: Address still exists after removal attempt: {address}"
-                            );
+                            warn!("Warning: Address still exists after removal attempt: {address}");
                         }
                     }
                     Err(e) => {
-                        println!("Error verifying address removal: {e}");
+                        error!("Error verifying address removal: {e}");
                     }
                 }
 
                 inner_result
             }
             Err(e) => {
-                println!("Task execution error: {e}");
+                error!("Task execution error: {e}");
                 Err(HelperError::NetworkConfig(format!(
                     "Task execution error: {e}"
                 )))
@@ -345,10 +349,10 @@ impl NetworkConfigManager {
 
     #[cfg(target_os = "macos")]
     async fn list_loopback_macos(&self) -> Result<Vec<String>, HelperError> {
-        println!("Listing loopback addresses on macOS");
+        debug!("Listing loopback addresses on macOS");
 
         let result = tokio::task::spawn_blocking(move || {
-            println!("Executing ifconfig command to list loopback addresses");
+            debug!("Executing ifconfig command to list loopback addresses");
 
             let output = Command::new("/sbin/ifconfig").arg("lo0").output();
 
@@ -370,18 +374,18 @@ impl NetworkConfigManager {
                             }
                         }
 
-                        println!("Found {} loopback addresses", addresses.len());
+                        debug!("Found {} loopback addresses", addresses.len());
                         Ok(addresses)
                     } else {
                         let error = String::from_utf8_lossy(&output.stderr);
-                        println!("Failed to list loopback addresses: {error}");
+                        error!("Failed to list loopback addresses: {error}");
                         Err(HelperError::NetworkConfig(format!(
                             "Failed to list loopback addresses: {error}"
                         )))
                     }
                 }
                 Err(e) => {
-                    println!("Error executing ifconfig command: {e}");
+                    error!("Error executing ifconfig command: {e}");
                     Err(HelperError::NetworkConfig(format!(
                         "Failed to list loopback addresses: {e}"
                     )))
@@ -393,7 +397,7 @@ impl NetworkConfigManager {
         match result {
             Ok(inner_result) => inner_result,
             Err(e) => {
-                println!("Task execution error: {e}");
+                error!("Task execution error: {e}");
                 Err(HelperError::NetworkConfig(format!(
                     "Task execution error: {e}"
                 )))

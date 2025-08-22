@@ -1,4 +1,3 @@
-#[cfg(unix)]
 use std::os::unix::net::{
     UnixListener,
     UnixStream,
@@ -15,6 +14,13 @@ use std::{
 };
 
 use kftray_commons::utils::config_dir;
+#[cfg(unix)]
+use log::{
+    debug,
+    error,
+    info,
+    warn,
+};
 #[cfg(windows)]
 use tokio::net::windows::named_pipe::{
     NamedPipeServer,
@@ -64,21 +70,21 @@ fn is_running_as_root() -> bool {
 fn get_user_config_dir() -> Option<PathBuf> {
     if let Ok(socket_path) = std::env::var("SOCKET_PATH") {
         if !socket_path.is_empty() {
-            println!("Using explicit SOCKET_PATH from environment: {socket_path}");
+            info!("Using explicit SOCKET_PATH from environment: {socket_path}");
             return Some(PathBuf::from(socket_path).parent()?.to_path_buf());
         }
     }
 
     if let Ok(config_dir) = std::env::var("KFTRAY_CONFIG") {
         if !config_dir.is_empty() {
-            println!("Using KFTRAY_CONFIG from environment: {config_dir}");
+            info!("Using KFTRAY_CONFIG from environment: {config_dir}");
             return Some(PathBuf::from(config_dir));
         }
     }
 
     if let Ok(config_dir) = std::env::var("CONFIG_DIR") {
         if !config_dir.is_empty() {
-            println!("Using CONFIG_DIR from environment: {config_dir}");
+            info!("Using CONFIG_DIR from environment: {config_dir}");
             return Some(PathBuf::from(config_dir));
         }
     }
@@ -87,7 +93,7 @@ fn get_user_config_dir() -> Option<PathBuf> {
         if !home.is_empty() {
             if let Ok(user) = std::env::var("USER") {
                 if user != "root" {
-                    println!("Using home directory for user '{user}': {home}");
+                    info!("Using home directory for user '{user}': {home}");
                     let mut path = PathBuf::from(home);
                     path.push(".kftray");
                     return Some(path);
@@ -97,13 +103,13 @@ fn get_user_config_dir() -> Option<PathBuf> {
             if home.starts_with("/Users/") || home.starts_with("/home/") {
                 let mut path = PathBuf::from(home);
                 path.push(".kftray");
-                println!("Using user's home directory: {}", path.display());
+                info!("Using user's home directory: {}", path.display());
                 return Some(path);
             }
 
             if let Ok(sudo_user) = std::env::var("SUDO_USER") {
                 if !sudo_user.is_empty() && sudo_user != "root" {
-                    println!("Using SUDO_USER's home directory for: {sudo_user}");
+                    info!("Using SUDO_USER's home directory for: {sudo_user}");
                     let user_home = if cfg!(target_os = "macos") {
                         format!("/Users/{sudo_user}")
                     } else {
@@ -123,7 +129,7 @@ fn get_user_config_dir() -> Option<PathBuf> {
 pub fn get_default_socket_path() -> Result<PathBuf, HelperError> {
     #[cfg(target_os = "macos")]
     {
-        println!("Getting socket path from user config directory");
+        debug!("Getting socket path from user config directory");
 
         let socket_path = if let Some(mut user_dir) = get_user_config_dir() {
             user_dir.push(SOCKET_FILENAME);
@@ -135,7 +141,7 @@ pub fn get_default_socket_path() -> Result<PathBuf, HelperError> {
                     path
                 }
                 Err(_) => {
-                    println!("WARNING: Could not get config directory, falling back to /tmp");
+                    warn!("Could not get config directory, falling back to /tmp");
                     PathBuf::from(format!("/tmp/{SOCKET_FILENAME}"))
                 }
             }
@@ -143,9 +149,9 @@ pub fn get_default_socket_path() -> Result<PathBuf, HelperError> {
 
         if let Some(parent) = socket_path.parent() {
             if !parent.exists() {
-                println!("Creating socket parent directory: {parent:?}");
+                info!("Creating socket parent directory: {parent:?}");
                 if let Err(e) = fs::create_dir_all(parent) {
-                    println!("Failed to create socket directory: {e}");
+                    error!("Failed to create socket directory: {e}");
                     return Err(HelperError::Communication(format!(
                         "Failed to create socket directory: {parent:?}, error: {e}"
                     )));
@@ -156,13 +162,13 @@ pub fn get_default_socket_path() -> Result<PathBuf, HelperError> {
                     if let (Ok(user_id), Ok(group_id)) =
                         (std::env::var("SUDO_UID"), std::env::var("SUDO_GID"))
                     {
-                        println!("Fixing directory ownership for socket directory");
+                        info!("Fixing directory ownership for socket directory");
                         if let Err(e) = std::process::Command::new("chown")
                             .arg(format!("{user_id}:{group_id}"))
                             .arg(parent.as_os_str())
                             .status()
                         {
-                            println!("Failed to fix directory ownership: {e}");
+                            warn!("Failed to fix directory ownership: {e}");
                         }
                     }
                 }
@@ -170,15 +176,15 @@ pub fn get_default_socket_path() -> Result<PathBuf, HelperError> {
 
             match parent.metadata() {
                 Ok(_) => {
-                    println!("Socket parent directory exists at: {}", parent.display());
+                    info!("Socket parent directory exists at: {}", parent.display());
                 }
                 Err(e) => {
-                    println!("Warning: Couldn't check socket parent directory: {e}");
+                    warn!("Couldn't check socket parent directory: {e}");
                 }
             }
         }
 
-        println!("Using socket path: {}", socket_path.display());
+        info!("Using socket path: {}", socket_path.display());
         Ok(socket_path)
     }
 
@@ -186,14 +192,14 @@ pub fn get_default_socket_path() -> Result<PathBuf, HelperError> {
     {
         let socket_path = if let Ok(path) = std::env::var("SOCKET_PATH") {
             if !path.is_empty() {
-                println!("Using explicit SOCKET_PATH from environment: {}", path);
+                info!("Using explicit SOCKET_PATH from environment: {}", path);
                 PathBuf::from(path)
             } else {
                 find_linux_socket_path()
             }
         } else if let Ok(config_dir) = std::env::var("KFTRAY_CONFIG") {
             if !config_dir.is_empty() {
-                println!("Using KFTRAY_CONFIG from environment: {}", config_dir);
+                info!("Using KFTRAY_CONFIG from environment: {}", config_dir);
                 let mut path = PathBuf::from(config_dir);
                 path.push(SOCKET_FILENAME);
                 path
@@ -202,7 +208,7 @@ pub fn get_default_socket_path() -> Result<PathBuf, HelperError> {
             }
         } else if let Ok(config_dir) = std::env::var("CONFIG_DIR") {
             if !config_dir.is_empty() {
-                println!("Using CONFIG_DIR from environment: {}", config_dir);
+                info!("Using CONFIG_DIR from environment: {}", config_dir);
                 let mut path = PathBuf::from(config_dir);
                 path.push(SOCKET_FILENAME);
                 path
@@ -220,7 +226,7 @@ pub fn get_default_socket_path() -> Result<PathBuf, HelperError> {
                         if !home.is_empty()
                             && (home.starts_with("/home/") || home.starts_with("/Users/"))
                         {
-                            println!("Using home directory for user '{}': {}", user, home);
+                            info!("Using home directory for user '{}': {}", user, home);
                             let mut path = PathBuf::from(home);
                             path.push(".kftray");
                             path.push(SOCKET_FILENAME);
@@ -233,7 +239,7 @@ pub fn get_default_socket_path() -> Result<PathBuf, HelperError> {
             if is_running_as_root() {
                 if let Ok(sudo_user) = std::env::var("SUDO_USER") {
                     if !sudo_user.is_empty() && sudo_user != "root" {
-                        println!("Using SUDO_USER's home directory for: {}", sudo_user);
+                        info!("Using SUDO_USER's home directory for: {}", sudo_user);
                         let user_home = format!("/home/{}", sudo_user);
                         let mut path = PathBuf::from(user_home);
                         path.push(".kftray");
@@ -245,7 +251,7 @@ pub fn get_default_socket_path() -> Result<PathBuf, HelperError> {
 
             if let Ok(home) = std::env::var("HOME") {
                 if !home.is_empty() && (home.starts_with("/home/") || home.starts_with("/Users/")) {
-                    println!("Using home directory: {}", home);
+                    info!("Using home directory: {}", home);
                     let mut path = PathBuf::from(home);
                     path.push(".kftray");
                     path.push(SOCKET_FILENAME);
@@ -264,9 +270,9 @@ pub fn get_default_socket_path() -> Result<PathBuf, HelperError> {
 
         if let Some(parent) = socket_path.parent() {
             if !parent.exists() {
-                println!("Creating socket parent directory: {:?}", parent);
+                info!("Creating socket parent directory: {:?}", parent);
                 if let Err(e) = fs::create_dir_all(parent) {
-                    println!("Failed to create socket directory: {}", e);
+                    error!("Failed to create socket directory: {}", e);
                     return Err(HelperError::Communication(format!(
                         "Failed to create socket directory: {:?}, error: {}",
                         parent, e
@@ -277,20 +283,20 @@ pub fn get_default_socket_path() -> Result<PathBuf, HelperError> {
                     if let (Ok(user_id), Ok(group_id)) =
                         (std::env::var("SUDO_UID"), std::env::var("SUDO_GID"))
                     {
-                        println!("Fixing directory ownership for socket directory");
+                        info!("Fixing directory ownership for socket directory");
                         if let Err(e) = std::process::Command::new("chown")
                             .arg(format!("{}:{}", user_id, group_id))
                             .arg(parent.as_os_str())
                             .status()
                         {
-                            println!("Failed to fix directory ownership: {}", e);
+                            warn!("Failed to fix directory ownership: {}", e);
                         }
                     }
                 }
             }
         }
 
-        println!("Using socket path: {}", socket_path.display());
+        info!("Using socket path: {}", socket_path.display());
         Ok(socket_path)
     }
 
@@ -330,10 +336,10 @@ async fn start_unix_socket_server(
     socket_path: PathBuf, pool_manager: AddressPoolManager, network_manager: NetworkConfigManager,
     hostfile_manager: HostfileManager,
 ) -> Result<(), HelperError> {
-    println!("Starting Unix socket server on: {}", socket_path.display());
+    info!("Starting Unix socket server on: {}", socket_path.display());
 
     if socket_path.exists() {
-        println!("Removing existing socket file");
+        info!("Removing existing socket file");
         fs::remove_file(&socket_path).map_err(|e| {
             HelperError::Communication(format!("Failed to remove existing socket: {e}"))
         })?;
@@ -341,7 +347,7 @@ async fn start_unix_socket_server(
 
     if let Some(parent) = socket_path.parent() {
         if !parent.exists() {
-            println!("Creating socket directory: {}", parent.display());
+            info!("Creating socket directory: {}", parent.display());
             fs::create_dir_all(parent).map_err(|e| {
                 HelperError::Communication(format!("Failed to create socket directory: {e}"))
             })?;
@@ -350,11 +356,11 @@ async fn start_unix_socket_server(
         #[cfg(unix)]
         {
             if is_running_as_root() {
-                println!("Running as root, proceeding with socket creation");
+                debug!("Running as root, proceeding with socket creation");
             } else if !parent.exists() {
-                println!("Creating socket directory: {}", parent.display());
+                info!("Creating socket directory: {}", parent.display());
                 if let Err(e) = fs::create_dir_all(parent) {
-                    println!("Warning: Couldn't create socket directory: {e}");
+                    warn!("Couldn't create socket directory: {e}");
                 }
             }
         }
@@ -367,34 +373,34 @@ async fn start_unix_socket_server(
     {
         use std::os::unix::fs::PermissionsExt;
         if let Err(e) = fs::set_permissions(&socket_path, fs::Permissions::from_mode(0o666)) {
-            println!("Warning: Failed to set socket permissions: {e}");
+            warn!("Failed to set socket permissions: {e}");
         } else {
-            println!("Set socket permissions to 666 (rw-rw-rw-)");
+            info!("Set socket permissions to 666 (rw-rw-rw-)");
         }
 
         if is_running_as_root() {
             if let (Ok(user_id), Ok(group_id)) =
                 (std::env::var("SUDO_UID"), std::env::var("SUDO_GID"))
             {
-                println!("Fixing socket ownership for user access");
+                info!("Fixing socket ownership for user access");
                 if let Err(e) = std::process::Command::new("chown")
                     .arg(format!("{user_id}:{group_id}"))
                     .arg(&socket_path)
                     .status()
                 {
-                    println!("Warning: Failed to fix socket ownership: {e}");
+                    warn!("Failed to fix socket ownership: {e}");
                 } else {
-                    println!("Set socket ownership to {user_id}:{group_id}");
+                    info!("Set socket ownership to {user_id}:{group_id}");
                 }
             }
         }
 
         if socket_path.exists() {
-            println!("Socket file exists at: {}", socket_path.display());
+            info!("Socket file exists at: {}", socket_path.display());
         }
     }
 
-    println!(
+    info!(
         "Unix socket bound successfully at: {}",
         socket_path.display()
     );
@@ -407,7 +413,7 @@ async fn start_unix_socket_server(
 
     let socket_path_clone = socket_path.clone();
     let listener_task = task::spawn(async move {
-        println!("Listening on Unix socket: {socket_path_clone:?}");
+        info!("Listening on Unix socket: {socket_path_clone:?}");
 
         listener.set_nonblocking(true).map_err(|e| {
             HelperError::Communication(format!("Failed to set non-blocking mode: {e}"))
@@ -429,7 +435,7 @@ async fn start_unix_socket_server(
                         )
                         .await
                         {
-                            eprintln!("Error handling connection: {e}");
+                            error!("Error handling connection: {e}");
                         }
                     });
                 }
@@ -444,7 +450,7 @@ async fn start_unix_socket_server(
             }
 
             if shutdown_rx.try_recv().is_ok() {
-                println!("Shutting down Unix socket server");
+                info!("Shutting down Unix socket server");
                 break;
             }
         }
@@ -469,15 +475,15 @@ async fn handle_connection(
     mut stream: UnixStream, pool_manager: Arc<AddressPoolManager>,
     network_manager: Arc<NetworkConfigManager>, hostfile_manager: Arc<HostfileManager>,
 ) -> Result<(), HelperError> {
-    println!("New connection received");
+    info!("New connection received");
 
     #[cfg(any(target_os = "linux", target_os = "macos"))]
     {
         if let Err(e) = validate_peer_credentials(&stream) {
-            println!("Peer credential validation failed: {e}");
+            error!("Peer credential validation failed: {e}");
             return Err(e);
         }
-        println!("Peer credentials validated successfully");
+        debug!("Peer credentials validated successfully");
     }
 
     stream
@@ -490,33 +496,33 @@ async fn handle_connection(
     loop {
         match stream.read(&mut tmp_buf) {
             Ok(0) => {
-                println!("Client closed connection (0 bytes read)");
+                info!("Client closed connection (0 bytes read)");
                 break;
             }
             Ok(n) => {
-                println!("Read {n} bytes from client");
+                debug!("Read {n} bytes from client");
                 buffer.extend_from_slice(&tmp_buf[..n]);
 
                 if n < tmp_buf.len() {
-                    println!("Read less than buffer size, assuming message is complete");
+                    debug!("Read less than buffer size, assuming message is complete");
                     break;
                 }
             }
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                println!("Socket would block, waiting briefly");
+                debug!("Socket would block, waiting briefly");
                 std::thread::sleep(Duration::from_millis(50));
                 continue;
             }
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {
-                println!("Socket read interrupted, continuing");
+                debug!("Socket read interrupted, continuing");
                 continue;
             }
             Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
-                println!("Socket read timed out, ending read loop");
+                debug!("Socket read timed out, ending read loop");
                 break;
             }
             Err(e) => {
-                println!("Error reading from client: {e}");
+                error!("Error reading from client: {e}");
                 return Err(HelperError::Communication(format!(
                     "Failed to read from socket: {e}"
                 )));
@@ -525,58 +531,58 @@ async fn handle_connection(
     }
 
     if buffer.is_empty() {
-        println!("Empty request received, will wait for more data");
+        debug!("Empty request received, will wait for more data");
         std::thread::sleep(std::time::Duration::from_millis(500));
 
         match stream.read(&mut tmp_buf) {
             Ok(0) => {
-                println!("Client still sent 0 bytes, closing connection");
+                info!("Client still sent 0 bytes, closing connection");
                 return Ok(());
             }
             Ok(n) => {
-                println!("Read {n} bytes from client after wait");
+                debug!("Read {n} bytes from client after wait");
                 buffer.extend_from_slice(&tmp_buf[..n]);
             }
             Err(e) => {
-                println!("Error reading more data: {e}");
+                warn!("Error reading more data: {e}");
                 return Ok(());
             }
         }
 
         if buffer.is_empty() {
-            println!("Request is still empty after retry, cannot process");
+            warn!("Request is still empty after retry, cannot process");
             return Ok(());
         }
     }
 
     let request = match serde_json::from_slice::<HelperRequest>(&buffer) {
         Ok(req) => {
-            println!("Request parsed successfully");
+            debug!("Request parsed successfully");
 
             if let Err(e) = validate_request(&req) {
-                println!("Request validation failed: {e}");
+                error!("Request validation failed: {e}");
                 return Err(e);
             }
-            println!("Request validation passed");
+            debug!("Request validation passed");
 
             req
         }
         Err(e) => {
-            println!("Failed to parse request: {e}");
+            error!("Failed to parse request: {e}");
             return Err(HelperError::Communication(format!(
                 "Failed to parse request: {e}"
             )));
         }
     };
 
-    println!("Processing request...");
+    debug!("Processing request...");
     let response =
         process_request(request, pool_manager, network_manager, hostfile_manager).await?;
-    println!("Request processed successfully");
+    debug!("Request processed successfully");
 
     let response_bytes = match serde_json::to_vec(&response) {
         Ok(bytes) => {
-            println!(
+            debug!(
                 "Response serialized ({} bytes), result={:?}",
                 bytes.len(),
                 response.result
@@ -584,7 +590,7 @@ async fn handle_connection(
             bytes
         }
         Err(e) => {
-            println!("Failed to serialize response: {e}");
+            error!("Failed to serialize response: {e}");
             return Err(HelperError::Communication(format!(
                 "Failed to serialize response: {e}"
             )));
@@ -594,20 +600,20 @@ async fn handle_connection(
     stream
         .set_write_timeout(Some(Duration::from_secs(5)))
         .map_err(|e| {
-            println!("Failed to set write timeout: {e}");
+            warn!("Failed to set write timeout: {e}");
             HelperError::Communication(format!("Failed to set socket write timeout: {e}"))
         })?;
 
-    println!(
+    debug!(
         "Writing response directly to client socket ({} bytes)",
         response_bytes.len()
     );
     match stream.write_all(&response_bytes) {
-        Ok(_) => println!("Response written successfully"),
+        Ok(_) => debug!("Response written successfully"),
         Err(e) => {
-            println!("Failed to write response: {e}");
+            error!("Failed to write response: {e}");
             if e.kind() == std::io::ErrorKind::BrokenPipe {
-                println!("Client disconnected (broken pipe), ignoring error");
+                info!("Client disconnected (broken pipe), ignoring error");
                 return Ok(());
             }
             return Err(HelperError::Communication(format!(
@@ -616,13 +622,13 @@ async fn handle_connection(
         }
     }
 
-    println!("Flushing socket output");
+    debug!("Flushing socket output");
     match stream.flush() {
-        Ok(_) => println!("Response flushed successfully"),
+        Ok(_) => debug!("Response flushed successfully"),
         Err(e) => {
-            println!("Failed to flush response: {e}");
+            error!("Failed to flush response: {e}");
             if e.kind() == std::io::ErrorKind::BrokenPipe {
-                println!("Client disconnected (broken pipe), ignoring error");
+                info!("Client disconnected (broken pipe), ignoring error");
                 return Ok(());
             }
             return Err(HelperError::Communication(format!(
@@ -633,7 +639,7 @@ async fn handle_connection(
 
     std::thread::sleep(std::time::Duration::from_millis(100));
 
-    println!("Connection handled successfully");
+    info!("Connection handled successfully");
     Ok(())
 }
 
@@ -651,7 +657,7 @@ async fn start_named_pipe_server(
     _pipe_path: PathBuf, _pool_manager: AddressPoolManager, _network_manager: NetworkConfigManager,
     _hostfile_manager: HostfileManager,
 ) -> Result<(), HelperError> {
-    println!(
+    info!(
         "Starting Windows named pipe server on: {}",
         _pipe_path.display()
     );
@@ -666,23 +672,23 @@ async fn start_named_pipe_server(
 
     let pipe_name_clone = pipe_name.to_string();
     let listener_task = task::spawn(async move {
-        println!("Listening on Windows named pipe: {}", pipe_name_clone);
+        info!("Listening on Windows named pipe: {}", pipe_name_clone);
 
         loop {
             let pipe = match create_secure_pipe(&pipe_name_clone) {
                 Ok(pipe) => pipe,
                 Err(e) => {
-                    eprintln!("Failed to create named pipe: {}", e);
+                    error!("Failed to create named pipe: {}", e);
                     tokio::time::sleep(Duration::from_millis(1000)).await;
                     continue;
                 }
             };
 
-            println!("Named pipe created, waiting for connection");
+            debug!("Named pipe created, waiting for connection");
 
             match pipe.connect().await {
                 Ok(()) => {
-                    println!("Client connected to named pipe");
+                    info!("Client connected to named pipe");
                     let pool_manager_clone = Arc::clone(&pool_manager);
                     let network_manager_clone = Arc::clone(&network_manager);
                     let hostfile_manager_clone = Arc::clone(&hostfile_manager);
@@ -696,19 +702,19 @@ async fn start_named_pipe_server(
                         )
                         .await
                         {
-                            eprintln!("Error handling Windows pipe connection: {}", e);
+                            error!("Error handling Windows pipe connection: {}", e);
                         }
                     });
                 }
                 Err(e) => {
-                    eprintln!("Failed to connect client to named pipe: {}", e);
+                    error!("Failed to connect client to named pipe: {}", e);
                     tokio::time::sleep(Duration::from_millis(100)).await;
                     continue;
                 }
             }
 
             if shutdown_rx.try_recv().is_ok() {
-                println!("Shutting down Windows named pipe server");
+                info!("Shutting down Windows named pipe server");
                 break;
             }
 
@@ -736,7 +742,7 @@ async fn handle_windows_connection(
         AsyncReadExt,
         AsyncWriteExt,
     };
-    println!("New connection received on Windows named pipe");
+    info!("New connection received on Windows named pipe");
 
     let mut buffer = Vec::new();
     let mut tmp_buf = [0u8; 4096];
@@ -747,7 +753,7 @@ async fn handle_windows_connection(
 
     loop {
         if start_time.elapsed() > timeout {
-            println!(
+            warn!(
                 "Read operation timed out after {} seconds",
                 timeout.as_secs()
             );
@@ -757,32 +763,32 @@ async fn handle_windows_connection(
         match tokio::time::timeout(Duration::from_secs(5), pipe.read(&mut tmp_buf)).await {
             Ok(read_result) => match read_result {
                 Ok(0) => {
-                    println!("Client closed connection (0 bytes read)");
+                    info!("Client closed connection (0 bytes read)");
                     break;
                 }
                 Ok(n) => {
-                    println!("Read {} bytes from client", n);
+                    debug!("Read {} bytes from client", n);
                     buffer.extend_from_slice(&tmp_buf[..n]);
                     total_read += n;
 
                     if n < tmp_buf.len() {
-                        println!("Read less than buffer size, assuming message is complete");
+                        debug!("Read less than buffer size, assuming message is complete");
                         break;
                     }
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    println!("Pipe would block, waiting briefly");
+                    debug!("Pipe would block, waiting briefly");
                     tokio::time::sleep(Duration::from_millis(50)).await;
                     continue;
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {
-                    println!("Pipe read interrupted, continuing");
+                    debug!("Pipe read interrupted, continuing");
                     continue;
                 }
                 Err(e) => {
-                    println!("Error reading from client: {}", e);
+                    error!("Error reading from client: {}", e);
                     if total_read > 0 {
-                        println!(
+                        debug!(
                             "Have partial data ({} bytes), continuing with processing",
                             total_read
                         );
@@ -795,9 +801,9 @@ async fn handle_windows_connection(
                 }
             },
             Err(_) => {
-                println!("Read operation timed out");
+                debug!("Read operation timed out");
                 if total_read > 0 {
-                    println!(
+                    debug!(
                         "Have partial data ({} bytes), continuing with processing",
                         total_read
                     );
@@ -809,50 +815,50 @@ async fn handle_windows_connection(
     }
 
     if buffer.is_empty() {
-        println!("Empty request received, will wait for more data");
+        debug!("Empty request received, will wait for more data");
         tokio::time::sleep(Duration::from_millis(500)).await;
 
         match tokio::time::timeout(Duration::from_secs(5), pipe.read(&mut tmp_buf)).await {
             Ok(result) => match result {
                 Ok(0) => {
-                    println!("Client still sent 0 bytes, closing connection");
+                    info!("Client still sent 0 bytes, closing connection");
                     return Ok(());
                 }
                 Ok(n) => {
-                    println!("Read {} bytes from client after wait", n);
+                    debug!("Read {} bytes from client after wait", n);
                     buffer.extend_from_slice(&tmp_buf[..n]);
                 }
                 Err(e) => {
-                    println!("Error reading more data: {}", e);
+                    warn!("Error reading more data: {}", e);
                     return Ok(());
                 }
             },
             Err(_) => {
-                println!("Additional read timed out, closing connection");
+                info!("Additional read timed out, closing connection");
                 return Ok(());
             }
         }
 
         if buffer.is_empty() {
-            println!("Request is still empty after retry, cannot process");
+            warn!("Request is still empty after retry, cannot process");
             return Ok(());
         }
     }
 
     let request = match serde_json::from_slice::<HelperRequest>(&buffer) {
         Ok(req) => {
-            println!("Request parsed successfully");
+            debug!("Request parsed successfully");
 
             if let Err(e) = validate_request(&req) {
-                println!("Request validation failed: {}", e);
+                error!("Request validation failed: {}", e);
                 return Err(e);
             }
-            println!("Request validation passed");
+            debug!("Request validation passed");
 
             req
         }
         Err(e) => {
-            println!("Failed to parse request: {}", e);
+            error!("Failed to parse request: {}", e);
             return Err(HelperError::Communication(format!(
                 "Failed to parse request: {}",
                 e
@@ -860,14 +866,14 @@ async fn handle_windows_connection(
         }
     };
 
-    println!("Processing request...");
+    debug!("Processing request...");
     let response =
         process_request(request, pool_manager, network_manager, hostfile_manager).await?;
-    println!("Request processed successfully");
+    debug!("Request processed successfully");
 
     let response_bytes = match serde_json::to_vec(&response) {
         Ok(bytes) => {
-            println!(
+            debug!(
                 "Response serialized ({} bytes), result={:?}",
                 bytes.len(),
                 response.result
@@ -875,7 +881,7 @@ async fn handle_windows_connection(
             bytes
         }
         Err(e) => {
-            println!("Failed to serialize response: {}", e);
+            error!("Failed to serialize response: {}", e);
             return Err(HelperError::Communication(format!(
                 "Failed to serialize response: {}",
                 e
@@ -883,17 +889,17 @@ async fn handle_windows_connection(
         }
     };
 
-    println!(
+    debug!(
         "Writing response directly to client pipe ({} bytes)",
         response_bytes.len()
     );
 
     match pipe.write_all(&response_bytes).await {
-        Ok(_) => println!("Response written successfully"),
+        Ok(_) => debug!("Response written successfully"),
         Err(e) => {
-            println!("Failed to write response: {}", e);
+            error!("Failed to write response: {}", e);
             if e.kind() == std::io::ErrorKind::BrokenPipe {
-                println!("Client disconnected (broken pipe), ignoring error");
+                info!("Client disconnected (broken pipe), ignoring error");
                 return Ok(());
             }
             return Err(HelperError::Communication(format!(
@@ -903,13 +909,13 @@ async fn handle_windows_connection(
         }
     }
 
-    println!("Flushing pipe output");
+    debug!("Flushing pipe output");
     match pipe.flush().await {
-        Ok(_) => println!("Response flushed successfully"),
+        Ok(_) => debug!("Response flushed successfully"),
         Err(e) => {
-            println!("Failed to flush response: {}", e);
+            error!("Failed to flush response: {}", e);
             if e.kind() == std::io::ErrorKind::BrokenPipe {
-                println!("Client disconnected (broken pipe), ignoring error");
+                info!("Client disconnected (broken pipe), ignoring error");
                 return Ok(());
             }
             return Err(HelperError::Communication(format!(
@@ -921,7 +927,7 @@ async fn handle_windows_connection(
 
     tokio::time::sleep(Duration::from_millis(100)).await;
 
-    println!("Connection handled successfully");
+    info!("Connection handled successfully");
     Ok(())
 }
 
@@ -931,59 +937,59 @@ async fn process_request(
 ) -> Result<HelperResponse, HelperError> {
     let request_id = request.request_id.clone();
 
-    println!("Processing request: {:?}", request.command);
+    debug!("Processing request: {:?}", request.command);
 
     match request.command {
         RequestCommand::Network(cmd) => match cmd {
             NetworkCommand::Add { address } => {
-                println!("Processing Add request for address: {address}");
+                debug!("Processing Add request for address: {address}");
                 match network_manager.add_loopback_address(&address).await {
                     Ok(_) => {
-                        println!("Add request successful for address: {address}");
+                        info!("Add request successful for address: {address}");
                         Ok(HelperResponse::success(request_id))
                     }
                     Err(e) => {
-                        println!("Add request failed for address {address}: {e}");
+                        error!("Add request failed for address {address}: {e}");
                         Ok(HelperResponse::error(request_id, format!("Error: {e}")))
                     }
                 }
             }
             NetworkCommand::Remove { address } => {
-                println!("Processing Remove request for address: {address}");
+                debug!("Processing Remove request for address: {address}");
 
                 let result = match network_manager.remove_loopback_address(&address).await {
                     Ok(_) => {
-                        println!("Remove request successful for address: {address}");
-                        println!("Successfully removed loopback address: {address}");
+                        info!("Remove request successful for address: {address}");
+                        info!("Successfully removed loopback address: {address}");
                         HelperResponse::success(request_id.clone())
                     }
                     Err(e) => {
-                        println!("Remove request failed for address {address}: {e}");
+                        error!("Remove request failed for address {address}: {e}");
 
                         if e.to_string().contains("not found")
                             || e.to_string().contains("No such process")
                         {
-                            println!("Address already removed, considering operation successful");
+                            info!("Address already removed, considering operation successful");
                             HelperResponse::success(request_id.clone())
                         } else {
-                            println!("Returning error response for failed removal");
+                            debug!("Returning error response for failed removal");
                             HelperResponse::error(request_id.clone(), format!("Error: {e}"))
                         }
                     }
                 };
 
-                println!(
+                debug!(
                     "Prepared response for address removal: result={:?}",
                     result.result
                 );
 
                 match serde_json::to_vec(&result) {
                     Ok(bytes) => {
-                        println!("Serialized response: {} bytes", bytes.len());
+                        debug!("Serialized response: {} bytes", bytes.len());
                         Ok(result)
                     }
                     Err(e) => {
-                        println!("Failed to serialize response: {e}");
+                        error!("Failed to serialize response: {e}");
                         Ok(HelperResponse::error(
                             request_id.clone(),
                             format!("Error serializing response: {e}"),

@@ -10,6 +10,10 @@ use kftray_helper::{
     },
     HelperClient,
 };
+use log::{
+    info,
+    warn,
+};
 
 #[derive(Parser)]
 #[command(author, version, about = "KFTray privileged helper")]
@@ -45,17 +49,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .clone()
                 .unwrap_or_else(|| "kftray.helper".to_string());
             install_platform_service(&service)?;
-            println!("Service installed successfully");
+            info!("Service installed successfully");
         }
         Commands::Uninstall { service_name } => {
             let service = service_name
                 .clone()
                 .unwrap_or_else(|| "kftray.helper".to_string());
             uninstall_platform_service(&service)?;
-            println!("Service uninstalled successfully");
+            info!("Service uninstalled successfully");
         }
         Commands::Service => {
-            println!("Starting platform service...");
+            info!("Starting platform service...");
             run_platform_service()?;
         }
         Commands::Status => {
@@ -65,16 +69,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if client.is_helper_available() {
                 match client.ping() {
                     Ok(true) => {
-                        println!("Helper service is running and responding");
+                        info!("Helper service is running and responding");
                         std::process::exit(0);
                     }
                     _ => {
-                        println!("Helper service socket exists but is not responding properly");
+                        warn!("Helper service socket exists but is not responding properly");
                         std::process::exit(1);
                     }
                 }
             } else {
-                println!("Helper service is not running");
+                info!("Helper service is not running");
                 std::process::exit(1);
             }
         }

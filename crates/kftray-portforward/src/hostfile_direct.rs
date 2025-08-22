@@ -7,8 +7,8 @@ use std::sync::{
 use std::thread;
 use std::time::Duration;
 
-use hostsfile::HostsBuilder;
 use kftray_commons::models::hostfile::HostEntry;
+use kftray_commons::utils::hostsfile::HostsFile;
 use log::{
     debug,
     error,
@@ -200,14 +200,14 @@ impl DirectHostfileManager {
             }
         };
 
-        let mut hosts_builder = HostsBuilder::new(KFTRAY_HOSTS_TAG);
+        let mut hosts_file = HostsFile::new(KFTRAY_HOSTS_TAG);
 
         for (id, entry) in &entries_snapshot {
             debug!("Adding entry for ID {id} to hosts file: {entry:?}");
-            hosts_builder.add_hostname(entry.ip, &entry.hostname);
+            hosts_file.add_entry(entry.ip, &entry.hostname);
         }
 
-        match hosts_builder.write() {
+        match hosts_file.write() {
             Ok(_) => {
                 debug!(
                     "Successfully wrote {} entries to hosts file",
@@ -364,12 +364,11 @@ mod tests {
     }
 
     fn can_write_hosts_file() -> bool {
-        use hostsfile::HostsBuilder;
-        let test_builder = HostsBuilder::new("test-permission-check");
-        match test_builder.write() {
+        let test_hosts_file = HostsFile::new("test-permission-check");
+        match test_hosts_file.write() {
             Ok(_) => {
-                let cleanup_builder = HostsBuilder::new("test-permission-check");
-                let _ = cleanup_builder.write();
+                let cleanup_hosts_file = HostsFile::new("test-permission-check");
+                let _ = cleanup_hosts_file.write();
                 true
             }
             Err(_) => false,

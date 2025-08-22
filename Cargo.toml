@@ -19,7 +19,6 @@ fix-path-env = { git = "https://github.com/tauri-apps/fix-path-env-rs" }
 flate2 = "1.1"
 futures = "0.3"
 git2 = { version = "0.20", features = ["ssh"] }
-hostsfile = { branch = "main", git = "https://github.com/tonarino/innernet" }
 http = "1.3"
 httparse = "1.10"
 hyper = { version = "1.6", features = ["client", "http1", "http2"] }
