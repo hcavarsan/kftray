@@ -10,8 +10,8 @@ license = "MIT"
 
 [dependencies]
 futures = { workspace = true }
-kftray-commons = { path = "../kftray-commons" }
-kftray-http-logs = { path = "../kftray-http-logs" }
-kftray-portforward = { path = "../kftray-portforward" }
+kftray-commons = { path = "../kftray-commons", version = "0.22.1" }
+kftray-http-logs = { path = "../kftray-http-logs", version = "0.22.1" }
+kftray-portforward = { path = "../kftray-portforward", version = "0.22.1" }
 log = { workspace = true }
 tokio = { workspace = true }
