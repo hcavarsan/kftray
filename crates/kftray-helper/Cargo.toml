@@ -4,7 +4,7 @@ version = "0.22.1"
 authors = ["KFTray Contributors"]
 edition = "2021"
 description = "Privileged helper binary for KFTray"
-license = "MIT"
+license = "GPL-3.0"
 
 [dependencies]
 clap = { workspace = true }
