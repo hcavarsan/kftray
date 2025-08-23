@@ -21,17 +21,36 @@
 <p align="center">
 <div align="center">
 <img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/refs/heads/main/public/img/kftui2025.png" alt="Kftray github"/>
+
 </div>
 
-kubectl port-forward manager with traffic inspection, udp support, proxy connections through k8s clusters and state via local files or git repos
 
-kftui and kftray are basically the same tool with different interfaces. kftray is the GUI version with windows and buttons. kftui is the terminal version that runs in your command line. They share the same database and configs. Set up a port-forward in kftray's GUI, and you'll see it in kftui too. Save something in kftui, and it shows up in kftray. You can use whichever one you prefer or switch between them.
+# Overview
+
+kftray and kftui are independent, cross-platform applications. They help you set up and manage multiple port-forwarding settings easily. Both apps are basically the same tool with different interfaces. kftray is the GUI version with windows and buttons. kftui is the terminal version that runs in your command line. They share the same database and configs. Set up a port-forward in kftray's GUI, and you'll see it in kftui too. Save something in kftui, and it shows up in kftray. You can use whichever one you prefer or switch between them.
 
 kftui has most of the same stuff as kftray, but this guide is just about the terminal version.
 
 Start with a simple configuration file. Create `config.json`:
 
-# KFtui Usage Guide
+## Quickstart
+
+To install `kftui`, run one of the following commands:
+
+Using `cargo`:
+
+```sh
+cargo install kftui
+```
+
+Using `brew`:
+
+```sh
+brew tap hcavarsan/kftray
+brew install kftui
+```
+
+## Usage
 
 ```json
 [
