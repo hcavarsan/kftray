@@ -1,6 +1,6 @@
 [package]
 name = "kftray-helper"
-version = "0.22.1"
+version = "0.22.2"
 authors = ["KFTray Contributors"]
 edition = "2021"
 description = "Privileged helper binary for KFTray"
@@ -9,7 +9,7 @@ license = "GPL-3.0"
 [dependencies]
 clap = { workspace = true }
 dirs = { workspace = true }
-kftray-commons = { path = "../kftray-commons", version = "0.22.1" }
+kftray-commons = { path = "../kftray-commons", version = "0.22.2" }
 libc = { workspace = true }
 log = { workspace = true }
 serde = { workspace = true }

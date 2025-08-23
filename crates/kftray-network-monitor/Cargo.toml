@@ -1,6 +1,6 @@
 [package]
 name = "kftray-network-monitor"
-version = "0.22.1"
+version = "0.22.2"
 authors = ["Henrique Cavarsan <hencavarsan@gmail.com>"]
 edition = "2021"
 description = "Network monitoring and management for KFtray"
@@ -10,8 +10,8 @@ license = "GPL-3.0"
 
 [dependencies]
 futures = { workspace = true }
-kftray-commons = { path = "../kftray-commons", version = "0.22.1" }
-kftray-http-logs = { path = "../kftray-http-logs", version = "0.22.1" }
-kftray-portforward = { path = "../kftray-portforward", version = "0.22.1" }
+kftray-commons = { path = "../kftray-commons", version = "0.22.2" }
+kftray-http-logs = { path = "../kftray-http-logs", version = "0.22.2" }
+kftray-portforward = { path = "../kftray-portforward", version = "0.22.2" }
 log = { workspace = true }
 tokio = { workspace = true }
