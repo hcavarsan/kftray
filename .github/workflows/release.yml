@@ -687,7 +687,7 @@ jobs:
           echo "All crates published successfully!"
 
   update-homebrew:
-    needs: [publish-cargo-crates]
+    needs: [update-release]
     permissions:
       contents: write
     runs-on: macos-latest
