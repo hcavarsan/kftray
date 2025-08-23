@@ -585,7 +585,7 @@ jobs:
           release_id: ${{ needs.create-release-draft.outputs.release_id }}
 
   publish-cargo-crates:
-    needs: [kftui]
+    needs: [update-release]
     permissions:
       contents: read
     runs-on: ubuntu-24.04
