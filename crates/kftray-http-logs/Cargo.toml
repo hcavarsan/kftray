@@ -1,6 +1,6 @@
 [package]
 name = "kftray-http-logs"
-version = "0.22.1"
+version = "0.22.2"
 authors = ["Henrique Cavarsan <hencavarsan@gmail.com>"]
 edition = "2021"
 description = "HTTP logging library for KFtray"
@@ -21,7 +21,7 @@ dashmap = { workspace = true }
 dirs = { workspace = true }
 flate2 = { workspace = true }
 httparse = { workspace = true }
-kftray-commons = { path = "../kftray-commons", version = "0.22.1" }
+kftray-commons = { path = "../kftray-commons", version = "0.22.2" }
 lazy_static = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
