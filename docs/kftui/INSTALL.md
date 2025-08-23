@@ -11,6 +11,19 @@
 
 To install `kftui`, run one of the following commands:
 
+Using `cargo`:
+
+```sh
+cargo install kftui
+```
+
+Using `brew`:
+
+```sh
+brew tap hcavarsan/kftray
+brew install kftui
+```
+
 Using `curl`:
 
 #### Bash Shell
