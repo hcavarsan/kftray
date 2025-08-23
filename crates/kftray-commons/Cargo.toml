@@ -6,7 +6,7 @@ edition = "2021"
 description = "KFtray commons"
 homepage = "https://kftray.app"
 repository = "https://github.com/hcavarsan/kftray"
-license = "MIT"
+license = "GPL-3.0"
 
 [lib]
 name = "kftray_commons"

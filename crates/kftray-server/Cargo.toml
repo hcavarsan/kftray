@@ -6,7 +6,7 @@ edition = "2021"
 description = "KFtray Server is a Rust application that relays UDP/TCP traffic to an upstream server"
 homepage = "https://kftray.app"
 repository = "https://github.com/hcavarsan/kftray"
-license = "MIT"
+license = "GPL-3.0"
 
 [dependencies]
 async-trait = "0.1.88"

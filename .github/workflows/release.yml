@@ -585,7 +585,7 @@ jobs:
           release_id: ${{ needs.create-release-draft.outputs.release_id }}
 
   publish-cargo-crates:
-    needs: [update-release]
+    needs: [kftui]
     permissions:
       contents: read
     runs-on: ubuntu-24.04
@@ -622,47 +622,69 @@ jobs:
             gir1.2-javascriptcoregtk-4.0=2.36.0-2ubuntu1 \
             gir1.2-webkit2-4.0=2.36.0-2ubuntu1;
 
-      - name: Publish kftray-commons to crates.io
+      - name: Publish crates to crates.io
         env:
           CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
         run: |
-          cd crates/kftray-commons
-          cargo publish --token $CARGO_REGISTRY_TOKEN
+          publish_crate() {
+            local crate_path="$1"
+            local crate_name=$(basename "$crate_path")
+            local max_retries=3
+            local retry_delay=30
 
-      - name: Publish kftray-helper to crates.io
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: |
-          cd crates/kftray-helper
-          cargo publish --token $CARGO_REGISTRY_TOKEN
+            echo "Publishing $crate_name..."
+            cd "$crate_path"
 
-      - name: Publish kftray-http-logs to crates.io
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: |
-          cd crates/kftray-http-logs
-          cargo publish --token $CARGO_REGISTRY_TOKEN
+            for attempt in $(seq 1 $max_retries); do
+              echo "Attempt $attempt/$max_retries for $crate_name"
 
-      - name: Publish kftray-portforward to crates.io
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: |
-          cd crates/kftray-portforward
-          cargo publish --token $CARGO_REGISTRY_TOKEN
+              if cargo publish --token $CARGO_REGISTRY_TOKEN; then
+                echo "Successfully published $crate_name"
+                cd - > /dev/null
+                return 0
+              fi
 
-      - name: Publish kftray-network-monitor to crates.io
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: |
-          cd crates/kftray-network-monitor
-          cargo publish --token $CARGO_REGISTRY_TOKEN
+              local exit_code=$?
+              if [ $exit_code -eq 0 ]; then
+                cd - > /dev/null
+                return 0
+              fi
 
-      - name: Publish kftui to crates.io
-        env:
-          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-        run: |
-          cd crates/kftui
-          cargo publish --token $CARGO_REGISTRY_TOKEN
+              if cargo publish --dry-run --token $CARGO_REGISTRY_TOKEN 2>&1 | grep -q "already uploaded\|already exists"; then
+                echo "$crate_name already published, skipping"
+                cd - > /dev/null
+                return 0
+              fi
+
+              if [ $attempt -lt $max_retries ]; then
+                echo "Retrying $crate_name in ${retry_delay}s... (attempt $((attempt + 1))/$max_retries)"
+                sleep $retry_delay
+                retry_delay=$((retry_delay * 2))
+              else
+                echo "Failed to publish $crate_name after $max_retries attempts"
+                cd - > /dev/null
+                return 1
+              fi
+            done
+          }
+          crates=(
+            "crates/kftray-commons"
+            "crates/kftray-helper"
+            "crates/kftray-http-logs"
+            "crates/kftray-portforward"
+            "crates/kftray-network-monitor"
+            "crates/kftui"
+          )
+
+          for crate in "${crates[@]}"; do
+            publish_crate "$crate"
+            if [ "$crate" != "crates/kftui" ]; then
+              echo "Waiting 60s to avoid rate limiting..."
+              sleep 60
+            fi
+          done
+
+          echo "All crates published successfully!"
 
   update-homebrew:
     needs: [publish-cargo-crates]
