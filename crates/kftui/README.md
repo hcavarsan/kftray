@@ -1,5 +1,27 @@
-
-# KFtui Usage Guide
+<div align="center">
+  <br>
+  <img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/logo.png" width="128px" alt="kftray Logo" />
+  <br><br>
+  <a href="https://kftray.app"><strong>Visit kftray.app »</strong></a>
+  <br><br>
+  <a href="https://join.slack.com/t/kftray/shared_invite/zt-2q6lwn15f-Y8Mi_4NlenH9TuEDMjxPUA">
+    <img src="https://img.shields.io/badge/Slack-Join%20our%20Slack-blue?style=for-the-badge&logo=slack" alt="Join Slack">
+  </a>
+  <a href="https://github.com/hcavarsan/kftray/releases">
+    <img src="https://img.shields.io/github/v/release/hcavarsan/kftray?style=for-the-badge" alt="Latest Release">
+  </a>
+  <a href="https://github.com/hcavarsan/kftray">
+    <img src="https://img.shields.io/github/downloads/hcavarsan/kftray/total?style=for-the-badge" alt="Total Downloads">
+  </a>
+  <a href="https://codecov.io/gh/hcavarsan/kftray">
+    <img src="https://img.shields.io/codecov/c/github/hcavarsan/kftray?style=for-the-badge&logo=codecov" alt="Codecov Coverage">
+  </a>
+  <br><br>
+</div>
+<p align="center">
+<div align="center">
+<img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/refs/heads/main/public/img/kftui2025.png" alt="Kftray github"/>
+</div>
 
 kubectl port-forward manager with traffic inspection, udp support, proxy connections through k8s clusters and state via local files or git repos
 
@@ -8,6 +30,8 @@ kftui and kftray are basically the same tool with different interfaces. kftray i
 kftui has most of the same stuff as kftray, but this guide is just about the terminal version.
 
 Start with a simple configuration file. Create `config.json`:
+
+# KFtui Usage Guide
 
 ```json
 [
