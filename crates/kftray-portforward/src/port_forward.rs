@@ -80,7 +80,7 @@ impl PortForwardProcess {
 
         self.cancellation_token.cancel();
 
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+        tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
 
         if let Some(forwarder) = &self.direct_forwarder {
             tracing::info!(

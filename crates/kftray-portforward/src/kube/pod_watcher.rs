@@ -32,6 +32,7 @@ use kube_runtime::{
 };
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 use tracing::{
     debug,
     error,
@@ -51,10 +52,12 @@ pub struct PodWatcher {
     latest_ready_pod: Arc<RwLock<Option<TargetPod>>>,
     _reflector_task: JoinHandle<()>,
     _subscriber_task: JoinHandle<()>,
+    cancellation_token: CancellationToken,
 }
 
 impl Drop for PodWatcher {
     fn drop(&mut self) {
+        self.cancellation_token.cancel();
         self._reflector_task.abort();
         self._subscriber_task.abort();
         debug!("PodWatcher background tasks aborted");
@@ -76,6 +79,7 @@ impl PodWatcher {
             .subscribe()
             .ok_or_else(|| anyhow!("Failed to create subscriber"))?;
 
+        let cancellation_token = CancellationToken::new();
         let latest_ready_pod = Arc::new(RwLock::new(None));
         let latest_pod_clone = latest_ready_pod.clone();
         let target_clone = target.clone();
@@ -84,6 +88,7 @@ impl PodWatcher {
         let pods_api: Api<Pod> = Api::namespaced(client, &namespace);
         let watcher_config = WatcherConfig::default().labels(&label_selector);
 
+        let token_clone = cancellation_token.clone();
         let reflector_task = tokio::spawn(async move {
             let stream = watcher::watcher(pods_api, watcher_config)
                 .default_backoff()
@@ -101,20 +106,33 @@ impl PodWatcher {
 
             let mut stream = std::pin::pin!(stream);
 
-            while let Some(result) = stream.next().await {
-                match result {
-                    Ok(pod) => {
-                        debug!("Pod reflected: {}", pod.name_any());
+            loop {
+                tokio::select! {
+                    _ = token_clone.cancelled() => {
+                        debug!("Pod reflector task cancelled");
+                        break;
                     }
-                    Err(e) => {
-                        error!("Reflector error: {}", e);
-                        tokio::time::sleep(Duration::from_secs(1)).await;
+                    result = stream.next() => {
+                        match result {
+                            Some(Ok(pod)) => {
+                                debug!("Pod reflected: {}", pod.name_any());
+                            }
+                            Some(Err(e)) => {
+                                error!("Reflector error: {}", e);
+                                tokio::time::sleep(Duration::from_secs(1)).await;
+                            }
+                            None => {
+                                debug!("Pod reflector stream ended");
+                                break;
+                            }
+                        }
                     }
                 }
             }
         });
 
         let subscriber_clone = subscriber.clone();
+        let token_clone2 = cancellation_token.clone();
         let subscriber_task = tokio::spawn(async move {
             let filtered_stream = subscriber_clone.filter_map(move |pod| {
                 let namespace = namespace_clone.clone();
@@ -128,8 +146,24 @@ impl PodWatcher {
 
             let mut stream = std::pin::pin!(filtered_stream);
 
-            while let Some(pod) = stream.next().await {
-                Self::update_latest_pod(&latest_pod_clone, &pod, &target_clone).await;
+            loop {
+                tokio::select! {
+                    _ = token_clone2.cancelled() => {
+                        debug!("Pod subscriber task cancelled");
+                        break;
+                    }
+                    pod = stream.next() => {
+                        match pod {
+                            Some(pod) => {
+                                Self::update_latest_pod(&latest_pod_clone, &pod, &target_clone).await;
+                            }
+                            None => {
+                                debug!("Pod subscriber stream ended");
+                                break;
+                            }
+                        }
+                    }
+                }
             }
         });
 
@@ -139,6 +173,7 @@ impl PodWatcher {
             latest_ready_pod,
             _reflector_task: reflector_task,
             _subscriber_task: subscriber_task,
+            cancellation_token,
         })
     }
 
@@ -190,6 +225,10 @@ impl PodWatcher {
 
     pub fn create_subscriber(&self) -> ReflectHandle<Pod> {
         self.subscriber.clone()
+    }
+
+    pub fn shutdown(&self) {
+        self.cancellation_token.cancel();
     }
 
     async fn resolve_label_selector(
