@@ -15,6 +15,7 @@ use tokio::sync::{
     RwLock,
 };
 use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 use tracing::{
     error,
     info,
@@ -51,6 +52,7 @@ pub struct HttpLogStateWatcher {
     current_state: Arc<RwLock<HashMap<i64, bool>>>,
     event_sender: broadcast::Sender<HttpLogStateEvent>,
     _processor_task: JoinHandle<()>,
+    cancellation_token: CancellationToken,
 }
 
 impl Clone for HttpLogStateWatcher {
@@ -58,8 +60,16 @@ impl Clone for HttpLogStateWatcher {
         Self {
             current_state: self.current_state.clone(),
             event_sender: self.event_sender.clone(),
-            _processor_task: tokio::spawn(async {}),
+            _processor_task: tokio::spawn(async {}), // Dummy task for clone
+            cancellation_token: self.cancellation_token.clone(),
         }
+    }
+}
+
+impl Drop for HttpLogStateWatcher {
+    fn drop(&mut self) {
+        self.cancellation_token.cancel();
+        self._processor_task.abort();
     }
 }
 
@@ -73,15 +83,30 @@ impl HttpLogStateWatcher {
 
         let current_state = Arc::new(RwLock::new(HashMap::new()));
         let (event_sender, mut event_receiver) = broadcast::channel(256);
+        let cancellation_token = CancellationToken::new();
 
         let current_state_clone = current_state.clone();
-        let _event_sender_clone = event_sender.clone();
+        let token_clone = cancellation_token.clone();
         let processor_task = tokio::spawn(async move {
             loop {
                 tokio::select! {
+                    _ = token_clone.cancelled() => {
+                        info!("HTTP log watcher processor task cancelled");
+                        break;
+                    }
                     event = event_receiver.recv() => {
-                        if let Ok(event) = event {
-                            Self::update_current_state(&current_state_clone, &event).await;
+                        match event {
+                            Ok(event) => {
+                                Self::update_current_state(&current_state_clone, &event).await;
+                            }
+                            Err(broadcast::error::RecvError::Closed) => {
+                                info!("HTTP log watcher event channel closed");
+                                break;
+                            }
+                            Err(broadcast::error::RecvError::Lagged(_)) => {
+                                error!("HTTP log watcher event channel lagged, continuing");
+                                continue;
+                            }
                         }
                     }
                 }
@@ -92,6 +117,7 @@ impl HttpLogStateWatcher {
             current_state,
             event_sender,
             _processor_task: processor_task,
+            cancellation_token,
         }
     }
 
@@ -165,6 +191,10 @@ impl HttpLogStateWatcher {
         &self, _config_id: i64,
     ) -> broadcast::Receiver<HttpLogStateEvent> {
         self.subscribe()
+    }
+
+    pub fn shutdown(&self) {
+        self.cancellation_token.cancel();
     }
 
     pub async fn sync_from_external_state(&self, config_id: i64) -> Result<()> {

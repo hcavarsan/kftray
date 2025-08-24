@@ -46,7 +46,7 @@ const HttpLogsConfigModal: React.FC<HttpLogsConfigModalProps> = ({
       const httpConfig = await invoke<HttpLogsConfig>(
         'get_http_logs_config_cmd',
         {
-          config_id: configId,
+          configId: configId,
         },
       )
 
@@ -155,8 +155,8 @@ const HttpLogsConfigModal: React.FC<HttpLogsConfigModalProps> = ({
         boxShadow='0 20px 25px -5px rgba(0, 0, 0, 0.3), 0 10px 10px -5px rgba(0, 0, 0, 0.1)'
         css={{
           '&::-webkit-scrollbar': { display: 'none' },
-          '-ms-overflow-style': 'none',
-          'scrollbar-width': 'none',
+          msOverflowStyle: 'none',
+          scrollbarWidth: 'none',
         }}
       >
         <DialogCloseTrigger

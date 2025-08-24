@@ -56,6 +56,7 @@ pub struct PortForwarder {
     portforward_semaphore: Arc<tokio::sync::Semaphore>,
     http_log_watcher: HttpLogStateWatcher,
     initialization_lock: Arc<tokio::sync::Mutex<bool>>,
+    background_tasks: Arc<tokio::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
 }
 
 impl PortForwarder {
@@ -77,6 +78,7 @@ impl PortForwarder {
             portforward_semaphore: Arc::new(tokio::sync::Semaphore::new(10)),
             http_log_watcher: HttpLogStateWatcher::new(),
             initialization_lock: Arc::new(tokio::sync::Mutex::new(false)),
+            background_tasks: Arc::new(tokio::sync::Mutex::new(Vec::new())),
         })
     }
 
@@ -300,7 +302,7 @@ impl PortForwarder {
 
         let http_log_watcher_clone = self.http_log_watcher.clone();
         let sync_cancel_token = cancellation_token.clone();
-        tokio::spawn(async move {
+        let sync_task = tokio::spawn(async move {
             let mut interval = tokio::time::interval(std::time::Duration::from_millis(200));
             loop {
                 tokio::select! {
@@ -319,6 +321,7 @@ impl PortForwarder {
                 }
             }
         });
+        self.track_task(sync_task).await;
 
         let tcp_forwarder = TcpForwarder::new(config_id, workload_type);
 
@@ -488,12 +491,32 @@ impl PortForwarder {
         self.http_log_watcher.get_http_logs(config_id).await
     }
 
+    async fn track_task(&self, handle: tokio::task::JoinHandle<()>) {
+        let mut tasks = self.background_tasks.lock().await;
+        tasks.push(handle);
+    }
+
+    async fn cleanup_background_tasks(&self) {
+        let mut tasks = self.background_tasks.lock().await;
+        for handle in tasks.drain(..) {
+            handle.abort();
+        }
+    }
+
     pub async fn shutdown(&self) {
         info!(
             "Shutting down port forwarder for namespace: {}",
             self.namespace.as_ref()
         );
 
+        // Cancel watchers first for graceful shutdown
+        self.pod_watcher.shutdown();
+        self.http_log_watcher.shutdown();
+
+        // Cleanup background tasks
+        self.cleanup_background_tasks().await;
+
+        // Close port forwarder
         let mut next_pf = self.next_portforwarder.lock().await;
         if let Some(portforwarder) = next_pf.take() {
             drop(portforwarder);
