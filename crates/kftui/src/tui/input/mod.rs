@@ -236,6 +236,7 @@ pub struct App {
     pub settings_network_monitor: bool,
     pub settings_selected_option: usize,
     pub http_logs_enabled: std::collections::HashMap<i64, bool>,
+    pub active_pods: std::collections::HashMap<i64, Option<String>>,
     pub http_logs_config_id: Option<i64>,
     pub http_logs_config_editing: bool,
     pub http_logs_config_selected_option: usize,
@@ -310,6 +311,7 @@ impl App {
             settings_network_monitor: true,
             settings_selected_option: 0,
             http_logs_enabled: std::collections::HashMap::new(),
+            active_pods: std::collections::HashMap::new(),
             http_logs_config_id: None,
             http_logs_config_editing: false,
             http_logs_config_selected_option: 0,
@@ -501,6 +503,31 @@ impl App {
                         self.http_logs_enabled.insert(config_id, false);
                     }
                 }
+            }
+        }
+    }
+
+    pub async fn load_active_pods(&mut self, config_states: &[ConfigState]) {
+        use kftray_portforward::port_forward::CHILD_PROCESSES;
+
+        for config_state in config_states {
+            if config_state.is_running {
+                let handle_key = format!("config:{}:service:", config_state.config_id);
+                let processes = CHILD_PROCESSES.lock().await;
+
+                let mut active_pod = None;
+                for (key, process) in processes.iter() {
+                    if key.starts_with(&handle_key) {
+                        if let Some(pod_name) = process.get_current_active_pod().await {
+                            active_pod = Some(pod_name);
+                            break;
+                        }
+                    }
+                }
+
+                self.active_pods.insert(config_state.config_id, active_pod);
+            } else {
+                self.active_pods.insert(config_state.config_id, None);
             }
         }
     }

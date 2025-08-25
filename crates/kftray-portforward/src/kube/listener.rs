@@ -503,6 +503,13 @@ impl PortForwarder {
         }
     }
 
+    pub async fn get_current_active_pod(&self) -> Option<String> {
+        match self.pod_watcher.get_ready_pod().await {
+            Some(target_pod) => Some(target_pod.pod_name),
+            None => None,
+        }
+    }
+
     pub async fn shutdown(&self) {
         info!(
             "Shutting down port forwarder for namespace: {}",

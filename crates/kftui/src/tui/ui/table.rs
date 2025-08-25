@@ -246,6 +246,20 @@ pub fn render_details(
         }
     }
 
+    if state {
+        if let Some(config_id) = config.id {
+            if let Some(Some(active_pod)) = app.active_pods.get(&config_id) {
+                details.push(Line::from(vec![
+                    Span::styled(
+                        "Active Pod: ",
+                        Style::default().add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(active_pod, Style::default().fg(Color::Green)),
+                ]));
+            }
+        }
+    }
+
     details.push(Line::from(""));
 
     details.extend(vec![

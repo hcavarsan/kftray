@@ -1,5 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { ExternalLinkIcon, FileIcon, SettingsIcon } from 'lucide-react'
+import {
+  ClipboardIcon,
+  ExternalLinkIcon,
+  FileIcon,
+  SettingsIcon,
+} from 'lucide-react'
 
 import {
   Box,
@@ -20,6 +25,7 @@ import {
   faTrash,
 } from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { listen } from '@tauri-apps/api/event'
 import { open as openShell } from '@tauri-apps/api/shell'
 import { invoke } from '@tauri-apps/api/tauri'
 
@@ -54,6 +60,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   const prevConfigIdRef = useRef<number | null>(null)
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
   const [isHttpLogsConfigOpen, setIsHttpLogsConfigOpen] = useState(false)
+  const [activePod, setActivePod] = useState<string | null>(null)
 
   const fetchHttpLogState = useCallback(async () => {
     try {
@@ -71,6 +78,47 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
       fetchHttpLogState()
     }
   }, [config.id, fetchHttpLogState])
+
+  useEffect(() => {
+    if (!config.is_running) {
+      setActivePod(null)
+    } else {
+      const fetchInitialPod = async () => {
+        try {
+          const podName = await invoke<string | null>('get_active_pod_cmd', {
+            configId: config.id.toString(),
+          })
+
+          setActivePod(podName)
+        } catch (error) {
+          console.error('Error fetching initial active pod:', error)
+          setActivePod(null)
+        }
+      }
+
+      fetchInitialPod()
+    }
+  }, [config.is_running, config.id])
+
+  useEffect(() => {
+    const setupListener = async () => {
+      const unlisten = await listen('active_pod_changed', (event: any) => {
+        const { configId, podName } = event.payload
+
+        if (configId === config.id.toString()) {
+          setActivePod(podName)
+        }
+      })
+
+      return unlisten
+    }
+
+    const unlistenPromise = setupListener()
+
+    return () => {
+      unlistenPromise.then(unlisten => unlisten())
+    }
+  }, [config.id])
 
   const handleToggleHttpLogs = async () => {
     try {
@@ -212,6 +260,26 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
     setIsDeleteDialogOpen(true)
   }
 
+  const handleCopyPodName = async () => {
+    if (activePod) {
+      try {
+        await navigator.clipboard.writeText(activePod)
+        toaster.success({
+          title: 'Pod name copied',
+          description: `${activePod} copied to clipboard`,
+          duration: 1000,
+        })
+      } catch (error) {
+        console.error('Failed to copy pod name:', error)
+        toaster.error({
+          title: 'Copy failed',
+          description: 'Failed to copy pod name to clipboard',
+          duration: 1000,
+        })
+      }
+    }
+  }
+
   return (
     <>
       <Table.Row className='table-row'>
@@ -263,8 +331,15 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
               unstyled={true}
               className='switch'
             />
-            {config.is_running && (
-              <Flex gap={1.5}>
+
+            <Flex
+              align='center'
+              gap={0.5}
+              mr={-10}
+              minWidth='48px'
+              justifyContent='flex-end'
+            >
+              {config.is_running ? (
                 <Tooltip content='Open in browser' portalled>
                   <IconButton
                     size='2xs'
@@ -273,24 +348,41 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
                     onClick={handleOpenLocalURL}
                     className='icon-button'
                   >
-                    <ExternalLinkIcon size={12} />
+                    <ExternalLinkIcon size={10} />
                   </IconButton>
                 </Tooltip>
-                {httpLogsEnabled[config.id] && (
-                  <Tooltip content='View HTTP logs' portalled>
-                    <IconButton
-                      size='2xs'
-                      variant='ghost'
-                      onClick={handleInspectLogs}
-                      aria-label='HTTP Logs'
-                      className='icon-button'
-                    >
-                      <FileIcon size={10} />
-                    </IconButton>
-                  </Tooltip>
-                )}
-              </Flex>
-            )}
+              ) : (
+                <Box width='24px' height='24px' />
+              )}
+
+              {config.is_running && activePod ? (
+                <Tooltip
+                  content={
+                    <Box>
+                      <Text fontSize='xs' color='gray.500'>
+                        Active pod target
+                      </Text>
+                      <Text fontSize='xs' fontWeight='medium'>
+                        {activePod}
+                      </Text>
+                    </Box>
+                  }
+                  portalled
+                >
+                  <IconButton
+                    size='2xs'
+                    variant='ghost'
+                    onClick={handleCopyPodName}
+                    aria-label='Copy Active Pod Name'
+                    className='icon-button'
+                  >
+                    <ClipboardIcon size={10} />
+                  </IconButton>
+                </Tooltip>
+              ) : (
+                <Box width='24px' height='24px' />
+              )}
+            </Flex>
           </Flex>
         </Table.Cell>
 
@@ -341,6 +433,18 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
                       Logs
                     </Text>
                   </MenuItem>
+                  {httpLogsEnabled[config.id] && (
+                    <MenuItem
+                      className='menu-item'
+                      value='open-http-logs'
+                      onClick={handleInspectLogs}
+                    >
+                      <FileIcon size={12} />
+                      <Text ml={2} fontSize='xs'>
+                        Open HTTP Logs File
+                      </Text>
+                    </MenuItem>
+                  )}
                   <MenuItem
                     className='menu-item'
                     value='http-logs-config'

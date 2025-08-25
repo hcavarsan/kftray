@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use kftray_commons::config::get_configs;
@@ -16,6 +17,7 @@ use kftray_portforward::kube::{
 };
 use log::error;
 use log::info;
+use serde_json::json;
 use tauri::AppHandle;
 use tauri::Manager;
 use tokio::sync::Mutex;
@@ -28,6 +30,7 @@ pub async fn check_and_emit_changes(app_handle: AppHandle) {
     let mut interval = interval(Duration::from_millis(500));
     let previous_config_states = Arc::new(Mutex::new(Vec::new()));
     let previous_configs = Arc::new(Mutex::new(Vec::new()));
+    let previous_active_pods = Arc::new(Mutex::new(HashMap::<String, Option<String>>::new()));
 
     loop {
         interval.tick().await;
@@ -47,6 +50,41 @@ pub async fn check_and_emit_changes(app_handle: AppHandle) {
                 continue;
             }
         };
+        let mut current_active_pods = HashMap::new();
+        for state in &current_config_states {
+            if state.is_running {
+                match get_active_pod_cmd(state.config_id.to_string()).await {
+                    Ok(pod_name) => {
+                        current_active_pods.insert(state.config_id.to_string(), pod_name);
+                    }
+                    Err(_) => {
+                        current_active_pods.insert(state.config_id.to_string(), None);
+                    }
+                }
+            }
+        }
+        let mut prev_pods = previous_active_pods.lock().await;
+        for (config_id, current_pod) in &current_active_pods {
+            let should_emit = if let Some(prev_pod) = prev_pods.get(config_id) {
+                prev_pod != current_pod
+            } else {
+                current_pod.is_some()
+            };
+
+            if should_emit {
+                let payload = json!({
+                    "configId": config_id,
+                    "podName": current_pod
+                });
+
+                app_handle
+                    .emit_all("active_pod_changed", payload)
+                    .unwrap_or_else(|e| {
+                        error!("Failed to emit active pod changed event: {e}");
+                    });
+            }
+        }
+        *prev_pods = current_active_pods;
 
         let mut prev_states = previous_config_states.lock().await;
         let mut prev_configs = previous_configs.lock().await;
@@ -126,6 +164,25 @@ pub async fn stop_proxy_forward_cmd(
         .map_err(|e| format!("Failed to parse config_id: {e}"))?;
 
     stop_proxy_forward(config_id, namespace, service_name).await
+}
+
+#[tauri::command]
+pub async fn get_active_pod_cmd(config_id: String) -> Result<Option<String>, String> {
+    use kftray_portforward::port_forward::CHILD_PROCESSES;
+
+    let handle_key = format!("config:{}:service:", config_id);
+
+    let processes = CHILD_PROCESSES.lock().await;
+
+    for (key, process) in processes.iter() {
+        if key.starts_with(&handle_key) {
+            if let Some(pod_name) = process.get_current_active_pod().await {
+                return Ok(Some(pod_name));
+            }
+        }
+    }
+
+    Ok(None)
 }
 
 #[tauri::command]
