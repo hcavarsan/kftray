@@ -101,6 +101,14 @@ impl PortForwardProcess {
     pub fn abort(&self) {
         self.handle.abort();
     }
+
+    pub async fn get_current_active_pod(&self) -> Option<String> {
+        if let Some(forwarder) = &self.direct_forwarder {
+            forwarder.get_current_active_pod().await
+        } else {
+            None
+        }
+    }
 }
 
 lazy_static! {
