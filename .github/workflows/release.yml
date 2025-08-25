@@ -126,14 +126,13 @@ jobs:
       - name: Create release draft
         id: create_release
         if: steps.check_release.outputs.release_exists != 'true'
-        uses: actions/create-release@4c11c9fe1dcd9636620a16455165783b20fc7ea0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        uses: softprops/action-gh-release@72f2c25fcb47643c292f7107632f7a47c1df5cd8
         with:
           tag_name: ${{ github.ref_name }}
-          release_name: "KFtray - ${{ github.ref_name }}"
+          name: "KFtray - ${{ github.ref_name }}"
           draft: true
           prerelease: false
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set release ID output
         run: |
