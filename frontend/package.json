@@ -19,7 +19,7 @@
     "@emotion/react": "^11.14.0",
     "@fortawesome/fontawesome-svg-core": "^7.0.0",
     "@fortawesome/free-solid-svg-icons": "^7.0.0",
-    "@fortawesome/react-fontawesome": "^0.2.2",
+    "@fortawesome/react-fontawesome": "^3.0.0",
     "@types/lodash": "^4.17.16",
     "@vitejs/plugin-react-swc": "^4.0.0",
     "lodash": "^4.17.21",
