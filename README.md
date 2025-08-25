@@ -72,7 +72,7 @@ For more information about kftray features and components, visit our blog post a
 - **One-Click Multiple Port Forwards:** Allows for the setup of several port forwarding instances simultaneously with a single click.
 - **Independent of Kubectl:** Directly interfaces with the Kubernetes API, eliminating the need for `kubectl`.
 - **Multi-Protocol Support:** Enables access to internal or external servers through a Proxy Relay server deployed in a Kubernetes cluster, including TCP and UDP port forwarding.
-- **HTTP Logs Tracing:** Enable or disable HTTP logs for specific configurations to save the requests and responses in a local log file. _(Currently available only in the kftray desktop app)_ - [Blog Post](https://kftray.app/blog/posts/12-kftray-http-logs-vscode)
+- **HTTP Logs Tracing:** Enable or disable HTTP logs for specific configurations to save the requests and responses in a local log file.  - [Blog Post](https://kftray.app/blog/posts/12-kftray-http-logs-vscode)
 - **GitHub Sync:** Keep your configurations saved on GitHub and share or synchronize them in a GitOps style. _(Currently available only in the kftray desktop app)_
 - **Auto Import:** Automatically import Kubernetes service configurations based on specific annotations. An example with an explanation can be found in this repo: https://github.com/hcavarsan/kftray-k8s-tf-example
 
@@ -87,7 +87,7 @@ For more information about kftray features and components, visit our blog post a
 | Independent of Kubectl                       | ✔️                   | ✔️                  |
 | Multi-Protocol Support (TCP/UDP)             | ✔️                   | ✔️                  |
 | GitHub Import                                | ✔️                   | ✔️                  |
-| HTTP Logs Tracing                            | ✔️                   | ❌ (Coming Soon)    |
+| HTTP Logs Tracing                            | ✔️                   | ✔️                  |
 | Local JSON File Configuration                | ✔️                   | ✔️                  |
 | Auto Import with k8s Annotations             | ✔️                   | ✔️                  |
 
