@@ -71,6 +71,8 @@ jobs:
 
       - name: Install rust-cache
         uses: swatinem/rust-cache@7e1e2d0a10862b34e5df481373b2b0f295d1a2ef
+        with:
+          key: rust-coverage
 
       - name: Run tests
         run: cargo build --bin kftray-helper --release && INSTA_UPDATE=1 cargo llvm-cov nextest --profile ci --config-file .cargo/nextest.toml --locked --workspace --all-features --lib --bins --examples --tests --lcov --output-path lcov.info
@@ -189,6 +191,8 @@ jobs:
 
       - name: Cache Rust
         uses: swatinem/rust-cache@7e1e2d0a10862b34e5df481373b2b0f295d1a2ef
+        with:
+          key: kftray-tauri-${{ matrix.rust_target }}
 
       - name: Install pnpm
         uses: pnpm/action-setup@f2b2b233b538f500472c7274c7012f57857d8ce0
@@ -368,7 +372,8 @@ jobs:
 
       - name: Cache Rust
         uses: swatinem/rust-cache@7e1e2d0a10862b34e5df481373b2b0f295d1a2ef
-
+        with:
+          key: kftui-${{ matrix.rust_target }}
 
       - name: Install pnpm
         uses: pnpm/action-setup@f2b2b233b538f500472c7274c7012f57857d8ce0
@@ -603,6 +608,8 @@ jobs:
 
       - name: Cache Rust
         uses: swatinem/rust-cache@7e1e2d0a10862b34e5df481373b2b0f295d1a2ef
+        with:
+          key: publish-cargo-crates
 
       - name: Install dependencies
         run: |
