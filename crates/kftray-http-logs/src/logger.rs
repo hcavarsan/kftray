@@ -309,7 +309,14 @@ impl HttpLogger {
     ) -> Result<()> {
         debug!("Formatting request log for trace ID: {}", trace_id);
 
-        let log_entry = MessageFormatter::format_request(&buffer, &trace_id, timestamp).await?;
+        let log_entry = match MessageFormatter::format_request(&buffer, &trace_id, timestamp).await
+        {
+            Ok(entry) => entry,
+            Err(e) => {
+                debug!("Failed to parse HTTP request for logging: {:?}", e);
+                return Ok(());
+            }
+        };
 
         match self.log_sender.send(log_entry).await {
             Ok(_) => debug!("Successfully sent request log message to channel"),
@@ -336,7 +343,13 @@ impl HttpLogger {
         }
 
         let log_entry =
-            MessageFormatter::format_response(&buffer, &trace_id, timestamp, took_ms).await?;
+            match MessageFormatter::format_response(&buffer, &trace_id, timestamp, took_ms).await {
+                Ok(entry) => entry,
+                Err(e) => {
+                    debug!("Failed to parse HTTP response for logging: {:?}", e);
+                    return Ok(());
+                }
+            };
 
         let message_size = log_entry.size();
         match self.log_sender.send(log_entry).await {
