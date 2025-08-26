@@ -1,6 +1,6 @@
 [package]
 name = "kftray-server"
-version = "0.22.3"
+version = "0.22.4"
 authors = ["Henrique Cavarsan <hencavarsan@gmail.com>"]
 edition = "2021"
 description = "KFtray Server is a Rust application that relays UDP/TCP traffic to an upstream server"
