@@ -424,17 +424,108 @@ pub async fn start_port_forward_with_mode(
                         }
 
                         let config_id = config.id.unwrap();
-                        let timeout_callback = Arc::new(move |id: i64| {
-                            tokio::spawn(async move {
-                                if let Err(e) =
-                                    crate::kube::stop::stop_port_forward(id.to_string()).await
-                                {
-                                    error!("Failed to stop port forward {id} on timeout: {e}");
-                                } else {
-                                    info!("Port forward {id} stopped due to timeout");
-                                }
-                            });
-                        });
+
+                        fn create_timeout_callback() -> Arc<dyn Fn(i64) + Send + Sync> {
+                            Arc::new(move |id: i64| {
+                                let callback_fn = create_timeout_callback();
+                                tokio::spawn(async move {
+                                    let composite_key = {
+                                        let _global_lock = PROCESS_MANAGEMENT_LOCK.lock().await;
+                                        let child_processes = CHILD_PROCESSES.lock().await;
+                                        child_processes
+                                            .keys()
+                                            .find(|key| {
+                                                key.starts_with(&format!("config:{id}:service:"))
+                                            })
+                                            .map(|key| key.to_string())
+                                    };
+
+                                    if let Some(composite_key) = composite_key {
+                                        let has_active_pod = {
+                                            let _global_lock = PROCESS_MANAGEMENT_LOCK.lock().await;
+                                            let child_processes = CHILD_PROCESSES.lock().await;
+                                            if let Some(process) =
+                                                child_processes.get(&composite_key)
+                                            {
+                                                process.get_current_active_pod().await.is_some()
+                                            } else {
+                                                false
+                                            }
+                                        };
+
+                                        if has_active_pod {
+                                            info!("Port forward {id} has ready pod, restarting timeout instead of stopping");
+                                            if let Err(e) =
+                                                start_timeout_for_forward(id, callback_fn).await
+                                            {
+                                                error!("Failed to restart timeout for config {id}: {e}");
+                                            }
+                                            return;
+                                        }
+
+                                        info!("No ready pod found for {id}, checking for running pods during rollout");
+
+                                        tokio::time::sleep(tokio::time::Duration::from_secs(10))
+                                            .await;
+
+                                        let has_pods_during_rollout = {
+                                            let _global_lock = PROCESS_MANAGEMENT_LOCK.lock().await;
+                                            let child_processes = CHILD_PROCESSES.lock().await;
+                                            if let Some(process) =
+                                                child_processes.get(&composite_key)
+                                            {
+                                                process.get_current_active_pod().await.is_some()
+                                            } else {
+                                                false
+                                            }
+                                        };
+
+                                        if has_pods_during_rollout {
+                                            info!("Port forward {id} has running pods during rollout, checking if ready");
+
+                                            let has_ready_pod = {
+                                                let _global_lock =
+                                                    PROCESS_MANAGEMENT_LOCK.lock().await;
+                                                let child_processes = CHILD_PROCESSES.lock().await;
+                                                if let Some(process) =
+                                                    child_processes.get(&composite_key)
+                                                {
+                                                    let pod_name =
+                                                        process.get_current_active_pod().await;
+                                                    pod_name.is_some()
+                                                        && pod_name
+                                                            != Some("pending-rollout".to_string())
+                                                } else {
+                                                    false
+                                                }
+                                            };
+
+                                            if has_ready_pod {
+                                                info!("Port forward {id} found ready pod after rollout, restarting timeout");
+                                                if let Err(e) =
+                                                    start_timeout_for_forward(id, callback_fn).await
+                                                {
+                                                    error!("Failed to restart timeout for config {id}: {e}");
+                                                }
+                                                return;
+                                            } else {
+                                                info!("Port forward {id} still in rollout, stopping to allow restart");
+                                            }
+                                        }
+                                    }
+
+                                    if let Err(e) =
+                                        crate::kube::stop::stop_port_forward(id.to_string()).await
+                                    {
+                                        error!("Failed to stop port forward {id} on timeout: {e}");
+                                    } else {
+                                        info!("Port forward {id} stopped due to timeout");
+                                    }
+                                });
+                            })
+                        }
+
+                        let timeout_callback = create_timeout_callback();
 
                         if let Err(e) = start_timeout_for_forward(config_id, timeout_callback).await
                         {
