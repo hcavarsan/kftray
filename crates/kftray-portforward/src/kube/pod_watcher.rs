@@ -53,6 +53,8 @@ pub struct PodWatcher {
     _reflector_task: JoinHandle<()>,
     _subscriber_task: JoinHandle<()>,
     cancellation_token: CancellationToken,
+    pod_change_tx: tokio::sync::broadcast::Sender<String>,
+    target: Target,
 }
 
 impl Drop for PodWatcher {
@@ -84,6 +86,9 @@ impl PodWatcher {
         let latest_pod_clone = latest_ready_pod.clone();
         let target_clone = target.clone();
         let namespace_clone = namespace.clone();
+
+        let (pod_change_tx, _) = tokio::sync::broadcast::channel(16);
+        let pod_change_tx_clone = pod_change_tx.clone();
 
         let pods_api: Api<Pod> = Api::namespaced(client, &namespace);
         let watcher_config = WatcherConfig::default().labels(&label_selector);
@@ -155,7 +160,7 @@ impl PodWatcher {
                     pod = stream.next() => {
                         match pod {
                             Some(pod) => {
-                                Self::update_latest_pod(&latest_pod_clone, &pod, &target_clone).await;
+                                Self::update_latest_pod(&latest_pod_clone, &pod, &target_clone, &pod_change_tx_clone).await;
                             }
                             None => {
                                 debug!("Pod subscriber stream ended");
@@ -174,11 +179,14 @@ impl PodWatcher {
             _reflector_task: reflector_task,
             _subscriber_task: subscriber_task,
             cancellation_token,
+            pod_change_tx,
+            target,
         })
     }
 
     async fn update_latest_pod(
         latest_ready_pod: &Arc<RwLock<Option<TargetPod>>>, pod: &Pod, target: &Target,
+        pod_change_tx: &tokio::sync::broadcast::Sender<String>,
     ) {
         if Self::is_pod_ready(pod) {
             if let Ok(port_number) = Self::extract_port_from_pod(pod, &target.port) {
@@ -188,22 +196,65 @@ impl PodWatcher {
                 };
 
                 let mut latest = latest_ready_pod.write().await;
+                let pod_changed = match latest.as_ref() {
+                    Some(current) => current.pod_name != target_pod.pod_name,
+                    None => true,
+                };
+
+                if pod_changed {
+                    debug!(
+                        "Pod changed to: {}, connections should reconnect",
+                        pod.name_any()
+                    );
+                    let _ = pod_change_tx.send(target_pod.pod_name.clone());
+                }
+
                 *latest = Some(target_pod);
                 debug!("Updated latest ready pod: {}", pod.name_any());
-            }
-        } else {
-            let mut latest = latest_ready_pod.write().await;
-            if let Some(current) = latest.as_ref() {
-                if current.pod_name == pod.name_any() {
-                    *latest = None;
-                    debug!("Cleared no-longer-ready pod: {}", pod.name_any());
-                }
             }
         }
     }
 
     pub async fn get_ready_pod(&self) -> Option<TargetPod> {
-        self.latest_ready_pod.read().await.clone()
+        if let Some(cached) = self.latest_ready_pod.read().await.clone() {
+            for pod in self.store.state() {
+                if pod.name_any() == cached.pod_name && Self::is_pod_ready(&pod) {
+                    return Some(cached);
+                }
+            }
+        }
+
+        for pod in self.store.state() {
+            if Self::is_pod_ready(&pod) {
+                if let Ok(port_number) = Self::extract_port_from_pod(&pod, &self.target.port) {
+                    let target_pod = TargetPod {
+                        pod_name: pod.name_any(),
+                        port_number,
+                    };
+
+                    let mut latest = self.latest_ready_pod.write().await;
+                    *latest = Some(target_pod.clone());
+                    debug!("Found ready pod: {}", pod.name_any());
+                    return Some(target_pod);
+                }
+            }
+        }
+
+        let mut latest = self.latest_ready_pod.write().await;
+        *latest = None;
+        None
+    }
+
+    pub async fn has_running_pods(&self) -> bool {
+        let store = self.store.clone();
+        for pod in store.state() {
+            if let Some(status) = &pod.status {
+                if status.phase.as_deref() == Some("Running") {
+                    return true;
+                }
+            }
+        }
+        false
     }
 
     pub async fn wait_for_ready_pod(&self, timeout: Duration) -> Option<TargetPod> {
@@ -229,6 +280,10 @@ impl PodWatcher {
 
     pub fn shutdown(&self) {
         self.cancellation_token.cancel();
+    }
+
+    pub fn subscribe_pod_changes(&self) -> tokio::sync::broadcast::Receiver<String> {
+        self.pod_change_tx.subscribe()
     }
 
     async fn resolve_label_selector(

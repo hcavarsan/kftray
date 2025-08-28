@@ -328,6 +328,10 @@ impl PortForwarder {
         let forwarder_clone = Arc::clone(&self);
         let cancel_token = cancellation_token.clone();
 
+        let mut pod_change_rx = self.pod_watcher.subscribe_pod_changes();
+        let mut last_pod_change = tokio::time::Instant::now();
+        let mut pending_pod: Option<String> = None;
+
         loop {
             let (client_conn, client_addr) = tokio::select! {
                 result = listener.accept() => {
@@ -338,6 +342,36 @@ impl PortForwarder {
                             break;
                         }
                     }
+                }
+                pod_change = pod_change_rx.recv() => {
+                    if let Ok(new_pod) = pod_change {
+                        let mut next_pf = self.next_portforwarder.lock().await;
+                        *next_pf = None;
+                        drop(next_pf);
+
+                        pending_pod = Some(new_pod.clone());
+                        last_pod_change = tokio::time::Instant::now();
+                        debug!("Pod change detected: {}, killed connections, debouncing for 3s", new_pod);
+                    }
+                    continue;
+                }
+                _ = tokio::time::sleep(tokio::time::Duration::from_secs(3)), if pending_pod.is_some() => {
+                    if pending_pod.take().is_some()
+                        && last_pod_change.elapsed() >= tokio::time::Duration::from_secs(3) {
+                            if let Some(current_pod) = self.pod_watcher.get_ready_pod().await {
+                                debug!("Pod {} stable for 3s, creating fresh connections", current_pod.pod_name);
+                                let mut next_pf = self.next_portforwarder.lock().await;
+                                *next_pf = None;
+                                drop(next_pf);
+
+                                if let Ok(fresh_pf) = self.create_portforwarder(port).await {
+                                    let mut next_pf = self.next_portforwarder.lock().await;
+                                    *next_pf = Some(fresh_pf);
+                                    debug!("Created stable connection to pod {}", current_pod.pod_name);
+                                }
+                            }
+                        }
+                    continue;
                 }
                 _ = cancel_token.cancelled() => {
                     break;
@@ -506,7 +540,13 @@ impl PortForwarder {
     pub async fn get_current_active_pod(&self) -> Option<String> {
         match self.pod_watcher.get_ready_pod().await {
             Some(target_pod) => Some(target_pod.pod_name),
-            None => None,
+            None => {
+                if self.pod_watcher.has_running_pods().await {
+                    Some("pending-rollout".to_string())
+                } else {
+                    None
+                }
+            }
         }
     }
 
