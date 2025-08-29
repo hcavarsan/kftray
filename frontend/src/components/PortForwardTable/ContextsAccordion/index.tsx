@@ -160,7 +160,7 @@ const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
                     handleSelectionChange(config, isSelected)
                   }
                   setIsAlertOpen={setIsAlertOpen}
-                  isInitiating={isInitiating}
+                  _isInitiating={isInitiating}
                   setIsInitiating={setIsInitiating}
                   isStopping={isStopping}
                 />

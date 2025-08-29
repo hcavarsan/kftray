@@ -223,7 +223,7 @@ impl PortForwarder {
                             "Portforward attempt {} failed with 404, retrying in 2s",
                             attempt
                         );
-                        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                        tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
                         continue;
                     }
                     return Err(anyhow::anyhow!("Failed to create portforwarder: {}", e));

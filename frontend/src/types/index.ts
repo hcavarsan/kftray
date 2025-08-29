@@ -72,6 +72,7 @@ export interface TableProps {
   isInitiating: boolean
   isStopping: boolean
   initiatePortForwarding: (configs: Config[]) => Promise<void>
+  startSelectedPortForwarding: () => Promise<void>
   stopSelectedPortForwarding: () => Promise<void>
   stopAllPortForwarding: () => Promise<void>
   confirmDeleteConfig: () => void
@@ -94,7 +95,7 @@ export interface PortForwardRowProps {
   showContext?: boolean
   onSelectionChange: (isSelected: boolean) => void
   selected: boolean
-  isInitiating: boolean
+  _isInitiating: boolean
   setIsInitiating: React.Dispatch<React.SetStateAction<boolean>>
   isStopping: boolean
 }

@@ -15,6 +15,7 @@ const PortForwardTable: React.FC<TableProps> = ({
   setIsInitiating,
   isStopping,
   initiatePortForwarding,
+  startSelectedPortForwarding,
   stopSelectedPortForwarding,
   stopAllPortForwarding,
   handleEditConfig,
@@ -65,10 +66,20 @@ const PortForwardTable: React.FC<TableProps> = ({
       )
 
       setSelectedConfigsByContext(newSelectedConfigsByContext)
-      setIsSelectAllChecked(selectedConfigs.length === configs.length)
+      setIsSelectAllChecked(
+        configs.every(config =>
+          selectedConfigs.some(selected => selected.id === config.id),
+        ),
+      )
       prevSelectedConfigsRef.current = selectedConfigs
     }
   }, [selectedConfigs, configs, configsByContext])
+
+  useEffect(() => {
+    setSelectedConfigs(prev =>
+      prev.map(selected => configs.find(c => c.id === selected.id) || selected),
+    )
+  }, [configs, setSelectedConfigs])
 
   const toggleExpandAll = () => {
     const allContexts = Object.keys(configsByContext)
@@ -76,14 +87,6 @@ const PortForwardTable: React.FC<TableProps> = ({
     setExpandedIndices(current =>
       current.length === allContexts.length ? [] : allContexts,
     )
-  }
-
-  const startSelectedPortForwarding = async () => {
-    const configsToStart = selectedConfigs.filter(config => !config.is_running)
-
-    if (configsToStart.length > 0) {
-      await initiatePortForwarding(configsToStart)
-    }
   }
 
   const handleAccordionChange = (details: ValueChangeDetails) => {
@@ -95,15 +98,15 @@ const PortForwardTable: React.FC<TableProps> = ({
   const handleCheckboxChange = useCallback(
     (context: string, isChecked: boolean) => {
       setIsCheckboxAction(true)
-      const selectableConfigs = filteredConfigs.filter(
-        config => config.context === context && !config.is_running,
+      const contextConfigs = filteredConfigs.filter(
+        config => config.context === context,
       )
 
       setSelectedConfigs(prev => {
         if (isChecked) {
           const newSelections = [...prev]
 
-          selectableConfigs.forEach(config => {
+          contextConfigs.forEach(config => {
             if (!prev.some(p => p.id === config.id)) {
               newSelections.push(config)
             }
@@ -131,19 +134,13 @@ const PortForwardTable: React.FC<TableProps> = ({
 
   const handleSelectionChange = useCallback(
     (config: Config, isSelected: boolean) => {
-      setSelectedConfigs(prev => {
-        const newSelection = isSelected
-          ? [...prev, config]
-          : prev.filter(c => c.id !== config.id)
-
-        return newSelection
-      })
-
-      const contextConfigs = configs.filter(c => c.context === config.context)
       const newSelection = isSelected
         ? [...selectedConfigs, config]
         : selectedConfigs.filter(c => c.id !== config.id)
 
+      setSelectedConfigs(newSelection)
+
+      const contextConfigs = configs.filter(c => c.context === config.context)
       const allContextSelected = contextConfigs.every(contextConfig =>
         newSelection.some(selected => selected.id === contextConfig.id),
       )

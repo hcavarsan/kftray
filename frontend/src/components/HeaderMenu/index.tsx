@@ -82,7 +82,16 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
             size='xs'
             variant='ghost'
             disabled={
-              isInitiating || configs.every(config => config.is_running)
+              isInitiating ||
+              (selectedConfigs.length > 0
+                ? selectedConfigs.every(selected => {
+                    const currentConfig = configs.find(
+                      c => c.id === selected.id,
+                    )
+
+                    return currentConfig && currentConfig.is_running
+                  })
+                : configs.every(config => config.is_running))
             }
             loading={isInitiating}
             loadingText='Starting...'
@@ -104,14 +113,32 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
           >
             <Box as={RefreshCw} width='12px' height='12px' marginRight={1.5} />
             <span style={{ fontSize: '11px' }}>
-              {selectedConfigs.length > 0 ? 'Start Selected' : 'Start All'}
+              {selectedConfigs.length > 0 &&
+              selectedConfigs.some(selected => {
+                const currentConfig = configs.find(c => c.id === selected.id)
+
+                return currentConfig && !currentConfig.is_running
+              })
+                ? 'Start Selected'
+                : 'Start All'}
             </span>
           </Button>
 
           <Button
             size='xs'
             variant='ghost'
-            disabled={isStopping || configs.every(config => !config.is_running)}
+            disabled={
+              isStopping ||
+              (selectedConfigs.length > 0
+                ? selectedConfigs.every(selected => {
+                    const currentConfig = configs.find(
+                      c => c.id === selected.id,
+                    )
+
+                    return currentConfig && !currentConfig.is_running
+                  })
+                : configs.every(config => !config.is_running))
+            }
             loading={isStopping}
             loadingText='Stopping...'
             onClick={
@@ -129,7 +156,14 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
           >
             <Box as={X} width='12px' height='12px' marginRight={1.5} />
             <span style={{ fontSize: '11px' }}>
-              {selectedConfigs.length > 0 ? 'Stop Selected' : 'Stop All'}
+              {selectedConfigs.length > 0 &&
+              selectedConfigs.some(selected => {
+                const currentConfig = configs.find(c => c.id === selected.id)
+
+                return currentConfig && currentConfig.is_running
+              })
+                ? 'Stop Selected'
+                : 'Stop All'}
             </span>
           </Button>
         </Group>

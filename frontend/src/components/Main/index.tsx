@@ -18,7 +18,6 @@ import { Config } from '@/types'
 const initialRemotePort = 0
 const initialLocalPort = 0
 const initialId = 0
-const initialStatus = 0
 
 const KFTray = () => {
   const [pollingInterval, setPollingInterval] = useState(0)
@@ -86,7 +85,7 @@ const KFTray = () => {
     }
     debouncedUpdateTimer.current = setTimeout(() => {
       updateConfigsWithState()
-    }, 300)
+    }, 100)
   }, [updateConfigsWithState])
 
   useEffect(() => {
@@ -467,39 +466,39 @@ const KFTray = () => {
     setIsAlertOpen(false)
   }
 
+  const startSelectedPortForwarding = async () => {
+    const configsToStart = selectedConfigs
+      .map(selected => configs.find(c => c.id === selected.id))
+      .filter(
+        (config): config is Config =>
+          config !== undefined && !config.is_running,
+      )
+
+    if (configsToStart.length > 0) {
+      await initiatePortForwarding(configsToStart)
+    }
+  }
+
   const stopSelectedPortForwarding = async () => {
-    const configsToStop = selectedConfigs.filter(config => config.is_running)
+    const configsToStop = selectedConfigs
+      .map(selected => configs.find(c => c.id === selected.id))
+      .filter(
+        (config): config is Config => config !== undefined && config.is_running,
+      )
 
     if (configsToStop.length > 0) {
       setIsStopping(true)
       try {
         const stopPromises = configsToStop.map(config =>
-          invoke<Response>('stop_port_forward_cmd', {
-            configId: config.id.toString(),
-          }),
+          stopPortForwardingForConfig(config),
         )
 
-        const responses = await Promise.all(stopPromises)
-        const allStopped = responses.every(res => res.status === initialStatus)
-
-        if (allStopped) {
-          toaster.success({
-            title: 'Success',
-            description: 'Selected port forwards stopped successfully.',
-            duration: 1000,
-          })
-        } else {
-          const errorMessages = responses
-            .filter(res => res.status !== initialStatus)
-            .map(res => `${res.status}: ${res.statusText}`)
-            .join(', ')
-
-          toaster.error({
-            title: 'Error',
-            description: `Some port forwards failed to stop: ${errorMessages}`,
-            duration: 1000,
-          })
-        }
+        await Promise.all(stopPromises)
+        toaster.success({
+          title: 'Success',
+          description: 'Selected port forwards stopped successfully.',
+          duration: 1000,
+        })
       } catch (error) {
         console.error('Error stopping selected port forwards:', error)
         toaster.error({
@@ -514,39 +513,36 @@ const KFTray = () => {
   }
 
   const stopAllPortForwarding = async () => {
-    setIsStopping(true)
-    try {
-      const responses = await invoke<Response[]>('stop_all_port_forward_cmd')
-      const allStopped = responses.every(res => res.status === initialStatus)
+    const configsToStop = configs.filter(config => config.is_running)
 
-      if (allStopped) {
+    if (configsToStop.length > 0) {
+      setIsStopping(true)
+      try {
+        const stopPromises = configsToStop.map(config =>
+          stopPortForwardingForConfig(config),
+        )
+
+        await Promise.all(stopPromises)
         toaster.success({
           title: 'Success',
           description:
             'Port forwarding stopped successfully for all configurations.',
           duration: 1000,
         })
-      } else {
-        const errorMessages = responses
-          .filter(res => res.status !== initialStatus)
-          .map(res => `${res.status}: ${res.statusText}`)
-          .join(', ')
-
+      } catch (error) {
+        console.error(
+          'An error occurred while stopping port forwarding:',
+          error,
+        )
         toaster.error({
           title: 'Error',
-          description: `Port forwarding failed for some configurations: ${errorMessages}`,
+          description: `An error occurred while stopping port forwarding: ${error}`,
           duration: 1000,
         })
+      } finally {
+        setIsStopping(false)
       }
-    } catch (error) {
-      console.error('An error occurred while stopping port forwarding:', error)
-      toaster.error({
-        title: 'Error',
-        description: `An error occurred while stopping port forwarding: ${error}`,
-        duration: 1000,
-      })
     }
-    setIsStopping(false)
   }
 
   const handleSetCredentialsSaved = useCallback((value: boolean) => {
@@ -622,6 +618,7 @@ const KFTray = () => {
             <PortForwardTable
               configs={configs}
               initiatePortForwarding={initiatePortForwarding}
+              startSelectedPortForwarding={startSelectedPortForwarding}
               isInitiating={isInitiating}
               setIsInitiating={setIsInitiating}
               isStopping={isStopping}
