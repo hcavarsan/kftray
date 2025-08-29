@@ -72,6 +72,7 @@ export interface TableProps {
   isInitiating: boolean
   isStopping: boolean
   initiatePortForwarding: (configs: Config[]) => Promise<void>
+  stopSelectedPortForwarding: () => Promise<void>
   stopAllPortForwarding: () => Promise<void>
   confirmDeleteConfig: () => void
   handleDeleteConfig: (id: number) => void
@@ -188,6 +189,7 @@ export interface HeaderMenuProps {
   selectedConfigs: Config[]
   initiatePortForwarding: (configs: Config[]) => void
   startSelectedPortForwarding: () => void
+  stopSelectedPortForwarding: () => void
   stopAllPortForwarding: () => void
   isInitiating: boolean
   isStopping: boolean

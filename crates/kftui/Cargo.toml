@@ -16,14 +16,15 @@ ignored = ["built"]
 
 [dependencies]
 built = { workspace = true }
+chrono = { workspace = true }
 clap = { workspace = true }
 crossterm = { workspace = true }
 env_logger = { workspace = true }
 futures = { workspace = true }
-kftray-commons = { path = "../kftray-commons", version = "0.22.2" }
-kftray-http-logs = { path = "../kftray-http-logs", version = "0.22.2" }
-kftray-network-monitor = { path = "../kftray-network-monitor", version = "0.22.2" }
-kftray-portforward = { path = "../kftray-portforward", version = "0.22.2" }
+kftray-commons = { workspace = true }
+kftray-http-logs = { workspace = true }
+kftray-network-monitor = { workspace = true }
+kftray-portforward = { workspace = true }
 libc = { workspace = true }
 log = { workspace = true }
 ratatui = { workspace = true }
@@ -31,11 +32,10 @@ ratatui-explorer = { workspace = true }
 reqwest = { workspace = true }
 serde_json = { workspace = true }
 tempfile = { workspace = true }
-chrono = { workspace = true }
-uuid = { workspace = true }
-throbber-widgets-tui = "0.8.0"
+throbber-widgets-tui = { workspace = true }
 tokio = { workspace = true }
 tui-logger = { workspace = true }
+uuid = { workspace = true }
 
 [dev-dependencies]
 insta = { workspace = true }

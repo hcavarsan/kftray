@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 
 import { Box, VStack } from '@chakra-ui/react'
 import { open, save } from '@tauri-apps/api/dialog'
@@ -79,6 +79,16 @@ const KFTray = () => {
     }
   }, [fetchConfigsWithState])
 
+  const debouncedUpdateTimer = useRef<NodeJS.Timeout | null>(null)
+  const debouncedUpdateConfigs = useCallback(() => {
+    if (debouncedUpdateTimer.current) {
+      clearTimeout(debouncedUpdateTimer.current)
+    }
+    debouncedUpdateTimer.current = setTimeout(() => {
+      updateConfigsWithState()
+    }, 300)
+  }, [updateConfigsWithState])
+
   useEffect(() => {
     let isMounted = true
 
@@ -103,7 +113,7 @@ const KFTray = () => {
       try {
         unsubscribe = await listen('config_state_changed', async () => {
           if (isMounted) {
-            await updateConfigsWithState()
+            debouncedUpdateConfigs()
             console.log('config_state_changed')
           }
         })
@@ -120,7 +130,7 @@ const KFTray = () => {
         unsubscribe()
       }
     }
-  }, [fetchConfigsWithState, updateConfigsWithState])
+  }, [fetchConfigsWithState, debouncedUpdateConfigs])
 
   const openModal = () => {
     setNewConfig({
@@ -457,6 +467,52 @@ const KFTray = () => {
     setIsAlertOpen(false)
   }
 
+  const stopSelectedPortForwarding = async () => {
+    const configsToStop = selectedConfigs.filter(config => config.is_running)
+
+    if (configsToStop.length > 0) {
+      setIsStopping(true)
+      try {
+        const stopPromises = configsToStop.map(config =>
+          invoke<Response>('stop_port_forward_cmd', {
+            configId: config.id.toString(),
+          }),
+        )
+
+        const responses = await Promise.all(stopPromises)
+        const allStopped = responses.every(res => res.status === initialStatus)
+
+        if (allStopped) {
+          toaster.success({
+            title: 'Success',
+            description: 'Selected port forwards stopped successfully.',
+            duration: 1000,
+          })
+        } else {
+          const errorMessages = responses
+            .filter(res => res.status !== initialStatus)
+            .map(res => `${res.status}: ${res.statusText}`)
+            .join(', ')
+
+          toaster.error({
+            title: 'Error',
+            description: `Some port forwards failed to stop: ${errorMessages}`,
+            duration: 1000,
+          })
+        }
+      } catch (error) {
+        console.error('Error stopping selected port forwards:', error)
+        toaster.error({
+          title: 'Error',
+          description: 'Failed to stop selected port forwards.',
+          duration: 1000,
+        })
+      } finally {
+        setIsStopping(false)
+      }
+    }
+  }
+
   const stopAllPortForwarding = async () => {
     setIsStopping(true)
     try {
@@ -570,6 +626,7 @@ const KFTray = () => {
               setIsInitiating={setIsInitiating}
               isStopping={isStopping}
               handleEditConfig={handleEditConfig}
+              stopSelectedPortForwarding={stopSelectedPortForwarding}
               stopAllPortForwarding={stopAllPortForwarding}
               handleDeleteConfig={handleDeleteConfig}
               confirmDeleteConfig={confirmDeleteConfig}

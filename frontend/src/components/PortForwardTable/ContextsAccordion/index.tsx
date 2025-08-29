@@ -37,15 +37,7 @@ const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
   setIsAlertOpen,
 }) => {
   const isContextSelected = useMemo(() => {
-    const selectableConfigs = contextConfigs.filter(
-      config => !config.is_running,
-    )
-
-    if (selectableConfigs.length === 0) {
-      return false
-    }
-
-    return selectableConfigs.every(config =>
+    return contextConfigs.every(config =>
       selectedConfigs.some(selected => selected.id === config.id),
     )
   }, [contextConfigs, selectedConfigs])
@@ -75,7 +67,7 @@ const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
                 onCheckedChange={e =>
                   handleCheckboxChange(context, e.checked === true)
                 }
-                disabled={contextConfigs.every(config => config.is_running)}
+                disabled={false}
               />
             </Box>
             <span className='context-tag'>{context}</span>
