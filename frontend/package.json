@@ -1,6 +1,6 @@
 {
   "name": "@kftray/ui",
-  "version": "0.22.5",
+  "version": "0.22.7",
   "private": true,
   "type": "module",
   "scripts": {
