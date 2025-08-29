@@ -12,6 +12,7 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
   selectedConfigs,
   initiatePortForwarding,
   startSelectedPortForwarding,
+  stopSelectedPortForwarding,
   stopAllPortForwarding,
   isInitiating,
   isStopping,
@@ -21,13 +22,8 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
   setSelectedConfigs,
 }) => {
   const isSelectAllChecked = useMemo(() => {
-    const selectableConfigs = configs.filter(config => !config.is_running)
-
-    return (
-      selectableConfigs.length > 0 &&
-      selectableConfigs.every(config =>
-        selectedConfigs.some(selected => selected.id === config.id),
-      )
+    return configs.every(config =>
+      selectedConfigs.some(selected => selected.id === config.id),
     )
   }, [configs, selectedConfigs])
 
@@ -36,9 +32,7 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
   }: {
     checked: boolean | 'indeterminate'
   }) => {
-    const selectableConfigs = configs.filter(config => !config.is_running)
-
-    setSelectedConfigs(checked === true ? selectableConfigs : [])
+    setSelectedConfigs(checked === true ? configs : [])
   }
 
   return (
@@ -88,9 +82,7 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
             size='xs'
             variant='ghost'
             disabled={
-              isInitiating ||
-              (!selectedConfigs.length &&
-                !configs.some(config => !config.is_running))
+              isInitiating || configs.every(config => config.is_running)
             }
             loading={isInitiating}
             loadingText='Starting...'
@@ -119,20 +111,26 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
           <Button
             size='xs'
             variant='ghost'
-            disabled={isStopping || !configs.some(config => config.is_running)}
+            disabled={isStopping || configs.every(config => !config.is_running)}
             loading={isStopping}
             loadingText='Stopping...'
-            onClick={stopAllPortForwarding}
+            onClick={
+              selectedConfigs.length > 0
+                ? stopSelectedPortForwarding
+                : stopAllPortForwarding
+            }
             _hover={{ bg: 'whiteAlpha.100' }}
             height='26px'
-            minWidth='70px'
+            minWidth='90px'
             bg='whiteAlpha.50'
             px={2}
             borderRadius='md'
             border='1px solid rgba(255, 255, 255, 0.08)'
           >
             <Box as={X} width='12px' height='12px' marginRight={1.5} />
-            <span style={{ fontSize: '11px' }}>Stop All</span>
+            <span style={{ fontSize: '11px' }}>
+              {selectedConfigs.length > 0 ? 'Stop Selected' : 'Stop All'}
+            </span>
           </Button>
         </Group>
       </Group>

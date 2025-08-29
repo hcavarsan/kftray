@@ -10,8 +10,8 @@ license = "GPL-3.0"
 
 [dependencies]
 futures = { workspace = true }
-kftray-commons = { path = "../kftray-commons", version = "0.22.2" }
-kftray-http-logs = { path = "../kftray-http-logs", version = "0.22.2" }
-kftray-portforward = { path = "../kftray-portforward", version = "0.22.2" }
+kftray-commons = { workspace = true }
+kftray-http-logs = { workspace = true }
+kftray-portforward = { workspace = true }
 log = { workspace = true }
 tokio = { workspace = true }

@@ -51,7 +51,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   handleEditConfig,
   selected,
   onSelectionChange,
-  isInitiating,
+  _isInitiating,
   setIsInitiating,
 }) => {
   const [httpLogsEnabled, setHttpLogsEnabled] = useState<{
@@ -61,6 +61,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
   const [isHttpLogsConfigOpen, setIsHttpLogsConfigOpen] = useState(false)
   const [activePod, setActivePod] = useState<string | null>(null)
+  const [localInitiating, setLocalInitiating] = useState(false)
 
   const fetchHttpLogState = useCallback(async () => {
     try {
@@ -80,9 +81,9 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   }, [config.id, fetchHttpLogState])
 
   useEffect(() => {
-    if (!config.is_running) {
+    if (!config.is_running && !localInitiating) {
       setActivePod(null)
-    } else {
+    } else if (config.is_running) {
       const fetchInitialPod = async () => {
         try {
           const podName = await invoke<string | null>('get_active_pod_cmd', {
@@ -98,7 +99,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
 
       fetchInitialPod()
     }
-  }, [config.is_running, config.id])
+  }, [config.is_running, config.id, localInitiating])
 
   useEffect(() => {
     const setupListener = async () => {
@@ -174,6 +175,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
 
   const togglePortForwarding = async (isChecked: boolean) => {
     setIsInitiating(true)
+    setLocalInitiating(true)
     try {
       if (isChecked) {
         await startPortForwarding()
@@ -184,6 +186,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
       console.error('Error toggling port-forwarding:', error)
     } finally {
       setIsInitiating(false)
+      setLocalInitiating(false)
     }
   }
 
@@ -280,22 +283,100 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
     }
   }
 
+  const getStatusInfo = () => {
+    // Follow same logic as checkbox: config.is_running
+    if (config.is_running) {
+      // Orange: Running but has specific issues
+      if (activePod && activePod.includes('pending-rollout')) {
+        return {
+          color: 'rgba(161, 98, 7, 0.7)',
+          status: 'Rollout',
+          description: 'Pod rollout in progress',
+        }
+      }
+
+      // Blue: Running (default for any running state)
+      const status = localInitiating
+        ? config.is_running
+          ? 'Stopping'
+          : 'Starting'
+        : activePod
+          ? 'Running'
+          : 'Pending'
+
+      const description = localInitiating
+        ? config.is_running
+          ? 'Port forward is stopping...'
+          : 'Port forward is starting...'
+        : activePod
+          ? `Connected to ${activePod}`
+          : 'Waiting for healthy pod...'
+
+      return {
+        color: 'rgba(59, 130, 246, 0.8)',
+        status,
+        description,
+      }
+    }
+
+    // Gray: Stopped
+    return {
+      color: 'rgba(100, 116, 139, 0.4)',
+      status: 'Stopped',
+      description: 'Port forward is stopped',
+    }
+  }
+
   return (
     <>
       <Table.Row className='table-row'>
         <Table.Cell className='table-cell'>
           <Flex align='center' gap={1.5}>
-            <Tooltip content={getTooltipContent(config)} portalled>
+            <Tooltip
+              content={
+                <Box p={1}>
+                  <Text fontSize='xs' fontWeight='medium'>
+                    Status: {getStatusInfo().status}
+                  </Text>
+                  <Box
+                    borderTop='1px solid'
+                    borderColor='rgba(255,255,255,0.1)'
+                    pt={1}
+                    mt={1}
+                  >
+                    <Text fontSize='xs'>
+                      <strong>Alias:</strong> {config.alias}
+                    </Text>
+                    <Text fontSize='xs'>
+                      <strong>Workload:</strong> {config.workload_type}
+                    </Text>
+                    <Text fontSize='xs'>
+                      <strong>Service:</strong> {config.service}
+                    </Text>
+                    <Text fontSize='xs'>
+                      <strong>Context:</strong> {config.context}
+                    </Text>
+                    <Text fontSize='xs'>
+                      <strong>Namespace:</strong> {config.namespace}
+                    </Text>
+                    <Text fontSize='xs'>
+                      <strong>Target Port:</strong> {config.remote_port}
+                    </Text>
+                    <Text fontSize='xs'>
+                      <strong>Protocol:</strong> {config.protocol}
+                    </Text>
+                  </Box>
+                </Box>
+              }
+              portalled
+            >
               <Flex align='center' gap={1.5}>
                 <Checkbox
                   size='xs'
-                  checked={selected || config.is_running}
+                  checked={selected}
                   onCheckedChange={e => {
-                    if (!config.is_running) {
-                      onSelectionChange(e.checked === true)
-                    }
+                    onSelectionChange(e.checked === true)
                   }}
-                  disabled={config.is_running}
                   className='checkbox'
                 />
 
@@ -304,6 +385,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
                   variant='ghost'
                   aria-label='Info'
                   className='icon-button'
+                  style={{ color: getStatusInfo().color }}
                 >
                   <FontAwesomeIcon icon={faInfoCircle} size='xs' />
                 </IconButton>
@@ -324,10 +406,10 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
           <Flex align='center' gap={1.5}>
             <Switch
               size='sm'
-              checked={config.is_running && !isInitiating}
+              checked={config.is_running}
               onCheckedChange={details => togglePortForwarding(details.checked)}
-              disabled={isInitiating}
-              data-loading={isInitiating ? '' : undefined}
+              disabled={localInitiating}
+              data-loading={localInitiating ? '' : undefined}
               unstyled={true}
               className='switch'
             />
@@ -358,12 +440,12 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
               {config.is_running && activePod ? (
                 <Tooltip
                   content={
-                    <Box>
-                      <Text fontSize='xs' color='gray.500'>
-                        Active pod target
-                      </Text>
+                    <Box p={1}>
                       <Text fontSize='xs' fontWeight='medium'>
-                        {activePod}
+                        Status: {getStatusInfo().status}
+                      </Text>
+                      <Text fontSize='xs' color='gray.400'>
+                        Pod: {activePod} (click to copy)
                       </Text>
                     </Box>
                   }
@@ -373,7 +455,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
                     size='2xs'
                     variant='ghost'
                     onClick={handleCopyPodName}
-                    aria-label='Copy Active Pod Name'
+                    aria-label='Copy Pod Name'
                     className='icon-button'
                   >
                     <ClipboardIcon size={10} />
@@ -508,37 +590,5 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
     </>
   )
 }
-
-const getTooltipContent = (config: any) => (
-  <Box p={1.5}>
-    <Text fontSize='xs'>
-      <strong>Alias:</strong> {config.alias}
-    </Text>
-    <Text fontSize='xs'>
-      <strong>Workload Type:</strong> {config.workload_type}
-    </Text>
-    <Text fontSize='xs'>
-      <strong>Service:</strong> {config.service}
-    </Text>
-    <Text fontSize='xs'>
-      <strong>Context:</strong> {config.context}
-    </Text>
-    <Text fontSize='xs'>
-      <strong>Namespace:</strong> {config.namespace}
-    </Text>
-    <Text fontSize='xs'>
-      <strong>Target Port:</strong> {config.remote_port}
-    </Text>
-    <Text fontSize='xs'>
-      <strong>Local Address:</strong> {config.local_address}
-    </Text>
-    <Text fontSize='xs'>
-      <strong>Protocol:</strong> {config.protocol}
-    </Text>
-    <Text fontSize='xs'>
-      <strong>Domain Enabled:</strong> {config.domain_enabled ? 'Yes' : 'No'}
-    </Text>
-  </Box>
-)
 
 export default PortForwardRow

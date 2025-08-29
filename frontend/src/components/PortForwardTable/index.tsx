@@ -15,6 +15,7 @@ const PortForwardTable: React.FC<TableProps> = ({
   setIsInitiating,
   isStopping,
   initiatePortForwarding,
+  stopSelectedPortForwarding,
   stopAllPortForwarding,
   handleEditConfig,
   handleDeleteConfig,
@@ -51,16 +52,6 @@ const PortForwardTable: React.FC<TableProps> = ({
   }, [configs, search])
 
   const configsByContext = useConfigsByContext(filteredConfigs)
-
-  useEffect(() => {
-    setSelectedConfigs(prev =>
-      prev.filter(selected => {
-        const config = configs.find(c => c.id === selected.id)
-
-        return config && !config.is_running
-      }),
-    )
-  }, [configs, setSelectedConfigs])
 
   useEffect(() => {
     if (prevSelectedConfigsRef.current !== selectedConfigs) {
@@ -140,31 +131,29 @@ const PortForwardTable: React.FC<TableProps> = ({
 
   const handleSelectionChange = useCallback(
     (config: Config, isSelected: boolean) => {
-      if (config.is_running) {
-        return
-      }
-
       setSelectedConfigs(prev => {
         const newSelection = isSelected
           ? [...prev, config]
           : prev.filter(c => c.id !== config.id)
 
-        const contextConfigs = configs.filter(
-          c => c.context === config.context && !c.is_running,
-        )
-        const allContextSelected = contextConfigs.every(contextConfig =>
-          newSelection.some(selected => selected.id === contextConfig.id),
-        )
-
-        setSelectedConfigsByContext(prev => ({
-          ...prev,
-          [config.context]: allContextSelected,
-        }))
-
         return newSelection
       })
+
+      const contextConfigs = configs.filter(c => c.context === config.context)
+      const newSelection = isSelected
+        ? [...selectedConfigs, config]
+        : selectedConfigs.filter(c => c.id !== config.id)
+
+      const allContextSelected = contextConfigs.every(contextConfig =>
+        newSelection.some(selected => selected.id === contextConfig.id),
+      )
+
+      setSelectedConfigsByContext(prev => ({
+        ...prev,
+        [config.context]: allContextSelected,
+      }))
     },
-    [configs, setSelectedConfigs],
+    [configs, selectedConfigs, setSelectedConfigs],
   )
 
   return (
@@ -189,6 +178,7 @@ const PortForwardTable: React.FC<TableProps> = ({
             setSelectedConfigs={setSelectedConfigs}
             initiatePortForwarding={initiatePortForwarding}
             startSelectedPortForwarding={startSelectedPortForwarding}
+            stopSelectedPortForwarding={stopSelectedPortForwarding}
             stopAllPortForwarding={stopAllPortForwarding}
             isInitiating={isInitiating}
             isStopping={isStopping}

@@ -9,7 +9,7 @@ license = "GPL-3.0"
 [dependencies]
 clap = { workspace = true }
 dirs = { workspace = true }
-kftray-commons = { path = "../kftray-commons", version = "0.22.2" }
+kftray-commons = { workspace = true }
 libc = { workspace = true }
 log = { workspace = true }
 serde = { workspace = true }
