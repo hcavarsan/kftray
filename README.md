@@ -54,8 +54,8 @@ check out our blog post at [kftray.app/blog/posts/13-kftray-manage-all-k8s-port-
   <table>
     <tr>
       <td>
-        <a href="https://youtu.be/H6UJCfUr8yE">
-          <img src="https://img.youtube.com/vi/H6UJCfUr8yE/maxresdefault.jpg" alt="Watch the video" width="800px">
+        <a href="https://youtu.be/3pIDGB6Tx_o">
+          <img src="https://img.youtube.com/vi/3pIDGB6Tx_o/maxresdefault.jpg" alt="Watch the video" width="800px">
         </a>
       </td>
       <td>
@@ -96,6 +96,7 @@ Both tools share the same core features with slightly different interfaces:
 | **Hosts file management** – Auto-update /etc/hosts entries | ✅ | ✅ |
 | **System tray integration** – Quick access from tray | ✅ | ❌ |
 | **Request replay** – Replay HTTP requests for debugging | ❌ | ✅ |
+<sub>Notes: (1) Hosts file updates may require admin privileges and vary by OS. (2) HTTP logs/replay can expose sensitive data—opt-in and sanitize where needed.</sub>
 
 </div>
 
