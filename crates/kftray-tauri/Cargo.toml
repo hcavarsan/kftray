@@ -14,6 +14,7 @@ ignored = ["tauri-build"]
 [lib]
 name = "kftray_tauri"
 path = "src/lib.rs"
+crate-type = ["lib", "staticlib", "cdylib"]
 
 [dependencies]
 anyhow = { workspace = true }
@@ -39,7 +40,16 @@ serde_json = { workspace = true }
 sqlx = { workspace = true }
 sysinfo = { workspace = true }
 tauri = { workspace = true }
+tauri-plugin-notification = { workspace = true }
 tauri-plugin-positioner = { workspace = true }
+tauri-plugin-fs = { workspace = true }
+tauri-plugin-shell = { workspace = true }
+tauri-plugin-dialog = { workspace = true }
+tauri-plugin-http = { workspace = true }
+tauri-plugin-global-shortcut = { workspace = true }
+tauri-plugin-os = { workspace = true }
+tauri-plugin-process = { workspace = true }
+tauri-plugin-clipboard-manager = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true }
 url = { workspace = true }

@@ -261,7 +261,7 @@ impl RequestParser {
             Err(_) => {
                 return Ok(ChunkParseResult::Skip {
                     consumed: line_end + 2,
-                })
+                });
             }
         };
 
@@ -282,7 +282,7 @@ impl RequestParser {
             Err(_) => {
                 return Ok(ChunkParseResult::Skip {
                     consumed: line_end + 2,
-                })
+                });
             }
         };
 
@@ -442,8 +442,11 @@ impl BodyParser {
                         decompressed = Some(result);
                     }
                     Ok(result) if !result.is_empty() => {
-                        debug!("Partial gzip decompression: {} bytes -> {} bytes, trying alternative approaches",
-                              dechunked_body.len(), result.len());
+                        debug!(
+                            "Partial gzip decompression: {} bytes -> {} bytes, trying alternative approaches",
+                            dechunked_body.len(),
+                            result.len()
+                        );
                         decompressed = Some(result);
                     }
                     _ => {
@@ -454,7 +457,10 @@ impl BodyParser {
                 if decompressed.is_none() || decompressed.as_ref().unwrap().is_empty() {
                     if let Some(gzip_start) = Self::find_gzip_header(&dechunked_body) {
                         if gzip_start > 0 {
-                            debug!("Found gzip header at offset {}, attempting alternative decompression", gzip_start);
+                            debug!(
+                                "Found gzip header at offset {}, attempting alternative decompression",
+                                gzip_start
+                            );
                             match Self::decompress_gzip(&dechunked_body[gzip_start..]).await {
                                 Ok(result) if !result.is_empty() => {
                                     debug!(
@@ -464,7 +470,9 @@ impl BodyParser {
                                     decompressed = Some(result);
                                 }
                                 _ => {
-                                    debug!("Alternative gzip decompression failed or produced empty output");
+                                    debug!(
+                                        "Alternative gzip decompression failed or produced empty output"
+                                    );
                                 }
                             }
                         }

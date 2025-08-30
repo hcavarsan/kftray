@@ -8,15 +8,22 @@ use log::{
     info,
 };
 use tauri::{
-    CustomMenuItem,
-    GlobalWindowEvent,
+    menu::{
+        MenuBuilder,
+        MenuItemBuilder,
+        PredefinedMenuItem,
+        SubmenuBuilder,
+    },
+    tray::{
+        MouseButton,
+        MouseButtonState,
+        TrayIconBuilder,
+        TrayIconEvent,
+    },
     Manager,
     RunEvent,
-    SystemTray,
-    SystemTrayEvent,
-    SystemTrayMenu,
-    SystemTrayMenuItem,
-    SystemTraySubmenu,
+    WindowEvent,
+    Wry,
 };
 use tauri_plugin_positioner::Position;
 use tokio::time::sleep;
@@ -32,92 +39,209 @@ use crate::window::{
     toggle_window_visibility,
 };
 
-pub fn create_tray_menu() -> SystemTray {
-    let quit = CustomMenuItem::new("quit".to_string(), "Quit").accelerator("CmdOrCtrl+Shift+Q");
-    let open = CustomMenuItem::new("toggle".to_string(), "Toggle App");
-    let pin = CustomMenuItem::new("pin".to_string(), "Pin Window");
+pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<tauri::tray::TrayIcon<Wry>, tauri::Error> {
+    let quit = MenuItemBuilder::with_id("quit", "Quit")
+        .accelerator("CmdOrCtrl+Shift+Q")
+        .build(app)?;
+    let open = MenuItemBuilder::with_id("toggle", "Toggle App").build(app)?;
+    let pin = MenuItemBuilder::with_id("pin", "Pin Window").build(app)?;
 
-    let set_center_position = CustomMenuItem::new("set_center_position".to_string(), "Center");
+    let set_center_position =
+        MenuItemBuilder::with_id("set_center_position", "Center").build(app)?;
     let set_top_right_position =
-        CustomMenuItem::new("set_top_right_position".to_string(), "Top Right");
+        MenuItemBuilder::with_id("set_top_right_position", "Top Right").build(app)?;
     let set_bottom_right_position =
-        CustomMenuItem::new("set_bottom_right_position".to_string(), "Bottom Right");
+        MenuItemBuilder::with_id("set_bottom_right_position", "Bottom Right").build(app)?;
     let set_bottom_left_position =
-        CustomMenuItem::new("set_bottom_left_position".to_string(), "Bottom Left");
+        MenuItemBuilder::with_id("set_bottom_left_position", "Bottom Left").build(app)?;
     let set_top_left_position =
-        CustomMenuItem::new("set_top_left_position".to_string(), "Top Left");
-
-    let mut set_window_position_menu = SystemTrayMenu::new()
-        .add_item(set_center_position)
-        .add_item(set_top_right_position)
-        .add_item(set_bottom_right_position)
-        .add_item(set_bottom_left_position)
-        .add_item(set_top_left_position);
+        MenuItemBuilder::with_id("set_top_left_position", "Top Left").build(app)?;
 
     #[cfg(any(target_os = "windows", target_os = "macos"))]
-    {
-        let set_traycenter_position =
-            CustomMenuItem::new("set_traycenter_position".to_string(), "System Tray Center");
-        set_window_position_menu = set_window_position_menu.add_item(set_traycenter_position);
+    let set_traycenter_position =
+        MenuItemBuilder::with_id("set_traycenter_position", "System Tray Center").build(app)?;
+
+    let mut position_menu_items = vec![
+        &set_center_position,
+        &set_top_right_position,
+        &set_bottom_right_position,
+        &set_bottom_left_position,
+        &set_top_left_position,
+    ];
+
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    position_menu_items.push(&set_traycenter_position);
+
+    let reset_position = MenuItemBuilder::with_id("reset_position", "Reset Position").build(app)?;
+
+    let separator = PredefinedMenuItem::separator(app)?;
+    let mut position_submenu_builder = SubmenuBuilder::new(app, "Set Window Position");
+
+    for item in position_menu_items {
+        position_submenu_builder = position_submenu_builder.item(item);
     }
 
-    let reset_position = CustomMenuItem::new("reset_position".to_string(), "Reset Position");
-    set_window_position_menu =
-        set_window_position_menu.add_native_item(tauri::SystemTrayMenuItem::Separator);
-    set_window_position_menu = set_window_position_menu.add_item(reset_position);
+    let set_window_position_submenu = position_submenu_builder
+        .item(&separator)
+        .item(&reset_position)
+        .build()?;
 
-    let set_window_position_submenu =
-        SystemTraySubmenu::new("Set Window Position", set_window_position_menu);
+    let main_separator = PredefinedMenuItem::separator(app)?;
+    let menu = MenuBuilder::new(app)
+        .item(&open)
+        .item(&main_separator)
+        .item(&pin)
+        .item(&set_window_position_submenu)
+        .item(&quit)
+        .build()?;
+    let icon_bytes = include_bytes!("../icons/tray.ico");
+    let icon = tauri::image::Image::from_bytes(icon_bytes)?;
 
-    let system_tray_menu = SystemTrayMenu::new()
-        .add_item(open)
-        .add_item(pin)
-        .add_native_item(SystemTrayMenuItem::Separator)
-        .add_submenu(set_window_position_submenu)
-        .add_item(quit);
+    let tray = TrayIconBuilder::new()
+        .menu(&menu)
+        .show_menu_on_left_click(false)
+        .icon(icon)
+        .on_menu_event(move |app, event| match event.id().as_ref() {
+            "quit" => {
+                tauri::async_runtime::block_on(handle_exit_app(app.clone()));
+            }
+            "toggle" => {
+                if let Some(window) = app.get_webview_window("main") {
+                    toggle_window_visibility(&window);
+                } else {
+                    error!("Main window not found on menu event");
+                }
+            }
+            "reset_position" => {
+                if let Some(window) = app.get_webview_window("main") {
+                    reset_window_position(&window);
+                }
+            }
+            "set_center_position" => {
+                if let Some(window) = app.get_webview_window("main") {
+                    set_window_position(&window, Position::Center);
+                }
+            }
+            "set_top_right_position" => {
+                if let Some(window) = app.get_webview_window("main") {
+                    set_window_position(&window, Position::TopRight);
+                }
+            }
+            "set_bottom_right_position" => {
+                if let Some(window) = app.get_webview_window("main") {
+                    set_window_position(&window, Position::BottomRight);
+                }
+            }
+            "set_bottom_left_position" => {
+                if let Some(window) = app.get_webview_window("main") {
+                    set_window_position(&window, Position::BottomLeft);
+                }
+            }
+            "set_top_left_position" => {
+                if let Some(window) = app.get_webview_window("main") {
+                    set_window_position(&window, Position::TopLeft);
+                }
+            }
+            #[cfg(any(target_os = "windows", target_os = "macos"))]
+            "set_traycenter_position" => {
+                if let Some(window) = app.get_webview_window("main") {
+                    set_window_position(&window, Position::TrayCenter);
+                }
+            }
+            "pin" => {
+                if let Some(window) = app.get_webview_window("main") {
+                    toggle_pin_state(app.state::<AppState>(), window);
+                }
+            }
+            _ => {}
+        })
+        .on_tray_icon_event(|tray, event| {
+            tauri_plugin_positioner::on_tray_event(tray.app_handle(), &event);
 
-    SystemTray::new().with_menu(system_tray_menu)
+            info!("Tray event received: {:?}", event);
+
+            match event {
+                TrayIconEvent::Click {
+                    button,
+                    button_state,
+                    ..
+                } => {
+                    info!(
+                        "Click event - button: {:?}, state: {:?}",
+                        button, button_state
+                    );
+                    if button == MouseButton::Left && button_state == MouseButtonState::Up {
+                        let app = tray.app_handle();
+                        if let Some(window) = app.get_webview_window("main") {
+                            toggle_window_visibility(&window);
+                        }
+                    }
+                }
+                TrayIconEvent::DoubleClick { button, .. } => {
+                    info!("Double click event - button: {:?}", button);
+                    if button == MouseButton::Left {
+                        let app = tray.app_handle();
+                        if let Some(window) = app.get_webview_window("main") {
+                            toggle_window_visibility(&window);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        })
+        .build(app)?;
+
+    Ok(tray)
 }
-pub fn handle_window_event(event: GlobalWindowEvent) {
-    if let tauri::WindowEvent::ScaleFactorChanged {
+
+pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
+    // Get the webview window for window management operations
+    let webview_window =
+        if let Some(webview_window) = window.app_handle().get_webview_window(window.label()) {
+            webview_window
+        } else {
+            error!("Failed to get webview window for label: {}", window.label());
+            return;
+        };
+
+    if let WindowEvent::ScaleFactorChanged {
         scale_factor,
         new_inner_size,
         ..
-    } = event.event()
+    } = event
     {
-        let window = event.window();
-        adjust_window_size_and_position(window, *scale_factor, *new_inner_size);
-        if !window.is_visible().unwrap() || !window.is_focused().unwrap() {
-            set_default_position(window);
-            window.show().unwrap();
-            window.set_focus().unwrap();
+        adjust_window_size_and_position(&webview_window, *scale_factor, *new_inner_size);
+        if !webview_window.is_visible().unwrap() || !webview_window.is_focused().unwrap() {
+            set_default_position(&webview_window);
+            webview_window.show().unwrap();
+            webview_window.set_focus().unwrap();
         }
 
         return;
     }
 
-    info!("event: {:?}", event.event());
-    let app_state = event.window().state::<AppState>();
+    info!("event: {:?}", event);
+    let app_state = webview_window.state::<AppState>();
     let mut is_moving = app_state.is_moving.lock().unwrap();
 
-    if let tauri::WindowEvent::Focused(is_focused) = event.event() {
+    if let WindowEvent::Focused(is_focused) = event {
         if !is_focused && !*is_moving && !app_state.is_pinned.load(Ordering::SeqCst) {
-            let app_handle = event.window().app_handle();
+            let app_handle = webview_window.app_handle();
 
             if let Some(state) = app_handle.try_state::<SaveDialogState>() {
                 if !state.is_open.load(Ordering::SeqCst) {
-                    let window = event.window().clone();
+                    let webview_window_clone = webview_window.clone();
                     let app_handle_clone = app_handle.clone();
                     let runtime = app_state.runtime.clone();
                     runtime.spawn(async move {
                         sleep(Duration::from_millis(200)).await;
                         if !app_handle_clone
-                            .get_window("main")
+                            .get_webview_window("main")
                             .unwrap()
                             .is_focused()
                             .unwrap()
                         {
-                            window.hide().unwrap()
+                            webview_window_clone.hide().unwrap()
                         }
                     });
                 }
@@ -125,10 +249,9 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
         }
     }
 
-    if let tauri::WindowEvent::Moved(_) = event.event() {
-        let win = event.window();
+    if let WindowEvent::Moved(_) = event {
         #[warn(unused_must_use)]
-        let _ = win.with_webview(|_webview| {
+        let _ = webview_window.with_webview(|_webview| {
             #[cfg(target_os = "linux")]
             {}
 
@@ -152,25 +275,23 @@ pub fn handle_window_event(event: GlobalWindowEvent) {
                 app_state.is_plugin_moving.load(Ordering::SeqCst)
             );
             *is_moving = true;
-            let app_handle = event.window().app_handle();
 
-            if let Some(window) = app_handle.get_window("main") {
-                save_window_position(&window);
-            }
-
+            save_window_position(&webview_window);
             *is_moving = false;
         }
     }
 
-    if let tauri::WindowEvent::CloseRequested { api, .. } = event.event() {
+    if let WindowEvent::CloseRequested { api, .. } = event {
         if !app_state.is_pinned.load(Ordering::SeqCst) {
             api.prevent_close();
-            event.window().hide().unwrap();
+            // Call the same exit logic as tray quit to handle active port forwards
+            let app_handle = webview_window.app_handle();
+            tauri::async_runtime::block_on(handle_exit_app(app_handle.clone()));
         }
     }
 }
 
-pub fn handle_run_event(app_handle: &tauri::AppHandle, event: RunEvent) {
+pub fn handle_run_event(app_handle: &tauri::AppHandle<Wry>, event: RunEvent) {
     match event {
         RunEvent::ExitRequested { ref api, .. } => {
             api.prevent_exit();
@@ -179,70 +300,6 @@ pub fn handle_run_event(app_handle: &tauri::AppHandle, event: RunEvent) {
         RunEvent::Exit => {
             tauri::async_runtime::block_on(handle_exit_app(app_handle.clone()));
         }
-        _ => {}
-    }
-}
-
-pub fn handle_system_tray_event(app: &tauri::AppHandle, event: SystemTrayEvent) {
-    tauri_plugin_positioner::on_tray_event(app, &event);
-
-    match event {
-        SystemTrayEvent::LeftClick { .. } => {
-            if let Some(window) = app.get_window("main") {
-                toggle_window_visibility(&window);
-            } else {
-                error!("Main window not found on SystemTrayEvent");
-            }
-        }
-        SystemTrayEvent::RightClick { .. } => {}
-        SystemTrayEvent::DoubleClick { .. } => {}
-        SystemTrayEvent::MenuItemClick { id, .. } => match id.as_str() {
-            "quit" => {
-                tauri::async_runtime::block_on(handle_exit_app(app.clone()));
-            }
-            "toggle" => {
-                if let Some(window) = app.get_window("main") {
-                    toggle_window_visibility(&window);
-                } else {
-                    error!("Main window not found on SystemTrayEvent");
-                }
-            }
-            "reset_position" => {
-                let window = app.get_window("main").unwrap();
-                reset_window_position(&window);
-            }
-            "set_center_position" => {
-                let window = app.get_window("main").unwrap();
-                set_window_position(&window, Position::Center);
-            }
-            "set_top_right_position" => {
-                let window = app.get_window("main").unwrap();
-                set_window_position(&window, Position::TopRight);
-            }
-            "set_bottom_right_position" => {
-                let window = app.get_window("main").unwrap();
-                set_window_position(&window, Position::BottomRight);
-            }
-            "set_bottom_left_position" => {
-                let window = app.get_window("main").unwrap();
-                set_window_position(&window, Position::BottomLeft);
-            }
-            "set_top_left_position" => {
-                let window = app.get_window("main").unwrap();
-                set_window_position(&window, Position::TopLeft);
-            }
-            #[cfg(any(target_os = "windows", target_os = "macos"))]
-            "set_traycenter_position" => {
-                let window = app.get_window("main").unwrap();
-                set_window_position(&window, Position::TrayCenter);
-            }
-            "pin" => {
-                if let Some(window) = app.get_window("main") {
-                    toggle_pin_state(app.state::<AppState>(), window);
-                }
-            }
-            _ => {}
-        },
         _ => {}
     }
 }

@@ -77,7 +77,9 @@ pub async fn export_configs_cmd() -> Result<String, String> {
 #[tauri::command]
 pub async fn import_configs_cmd(json: String) -> Result<(), String> {
     if let Err(e) = import_configs(json).await {
-        error!("Error migrating configs: {e}. Please check if the configurations are valid and compatible with the current system/version.");
+        error!(
+            "Error migrating configs: {e}. Please check if the configurations are valid and compatible with the current system/version."
+        );
         return Err(format!("Error migrating configs: {e}"));
     }
     Ok(())

@@ -386,14 +386,17 @@ async fn start_unix_socket_server(
                 (std::env::var("SUDO_UID"), std::env::var("SUDO_GID"))
             {
                 info!("Fixing socket ownership for user access");
-                if let Err(e) = std::process::Command::new("chown")
+                match std::process::Command::new("chown")
                     .arg(format!("{user_id}:{group_id}"))
                     .arg(&socket_path)
                     .status()
                 {
-                    warn!("Failed to fix socket ownership: {e}");
-                } else {
-                    info!("Set socket ownership to {user_id}:{group_id}");
+                    Err(e) => {
+                        warn!("Failed to fix socket ownership: {e}");
+                    }
+                    _ => {
+                        info!("Set socket ownership to {user_id}:{group_id}");
+                    }
                 }
             }
         }
@@ -1040,7 +1043,9 @@ async fn process_request(
                                 if let Err(release_err) =
                                     pool_manager.release_address(&address).await
                                 {
-                                    warn!("Failed to release address from pool after network error: {release_err}");
+                                    warn!(
+                                        "Failed to release address from pool after network error: {release_err}"
+                                    );
                                 }
                                 Ok(HelperResponse::string_success(
                                     request_id,
@@ -1080,7 +1085,9 @@ async fn process_request(
                         if e.to_string().contains("not found")
                             || e.to_string().contains("No such process")
                         {
-                            info!("Address already removed from interface, considering operation successful");
+                            info!(
+                                "Address already removed from interface, considering operation successful"
+                            );
                             Ok(HelperResponse::success(request_id))
                         } else {
                             debug!("Returning error response for failed network removal");

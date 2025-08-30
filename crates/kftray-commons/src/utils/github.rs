@@ -157,7 +157,9 @@ impl GitHubRepository {
         } else {
             let error_msg = String::from_utf8_lossy(&output.stderr);
             error!("System git clone failed: {error_msg}");
-            Err(format!("Failed to clone repository. Please check your credentials and repository URL. Error: {error_msg}"))
+            Err(format!(
+                "Failed to clone repository. Please check your credentials and repository URL. Error: {error_msg}"
+            ))
         }
     }
 

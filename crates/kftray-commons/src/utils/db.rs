@@ -300,7 +300,7 @@ mod tests {
                 .collect::<Vec<_>>();
 
             for key in keys {
-                env::remove_var(key);
+                unsafe { env::remove_var(key) };
             }
 
             StrictEnvGuard { saved_vars }
@@ -311,8 +311,9 @@ mod tests {
         fn drop(&mut self) {
             for (key, value) in self.saved_vars.drain(..) {
                 match value {
-                    Some(val) => env::set_var(key, val),
-                    None => env::remove_var(key),
+                    Some(val) => unsafe { env::set_var(key, val) },
+
+                    None => unsafe { env::remove_var(key) },
                 }
             }
         }
@@ -328,7 +329,7 @@ mod tests {
 
         let db_path = temp_path.join("configs.db");
 
-        env::set_var("KFTRAY_CONFIG", temp_path.to_str().unwrap());
+        unsafe { env::set_var("KFTRAY_CONFIG", temp_path.to_str().unwrap()) };
 
         assert_eq!(
             get_config_dir().unwrap().to_str().unwrap(),
@@ -364,7 +365,8 @@ mod tests {
         assert!(test_dir.exists(), "Test directory should exist");
 
         let config_path = test_dir.to_str().unwrap();
-        env::set_var("KFTRAY_CONFIG", config_path);
+
+        unsafe { env::set_var("KFTRAY_CONFIG", config_path) };
         println!("Set KFTRAY_CONFIG to: {config_path}");
 
         assert!(env::var("HOME").is_err(), "HOME should not be set");
@@ -429,7 +431,8 @@ mod tests {
         std::fs::create_dir_all(&manifest_dir).unwrap();
 
         let manifest_dir_str = manifest_dir.to_str().unwrap();
-        env::set_var("KFTRAY_CONFIG", manifest_dir_str);
+
+        unsafe { env::set_var("KFTRAY_CONFIG", manifest_dir_str) };
 
         assert!(manifest_dir.exists(), "Directory should exist");
 
@@ -520,7 +523,7 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let temp_path = temp_dir.path();
 
-        env::set_var("KFTRAY_CONFIG", temp_path.to_str().unwrap());
+        unsafe { env::set_var("KFTRAY_CONFIG", temp_path.to_str().unwrap()) };
 
         let db_path = temp_path.join("configs.db");
         let manifest_path = temp_path.join("proxy_manifest.json");

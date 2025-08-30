@@ -1442,27 +1442,30 @@ pub async fn handle_settings_input(
                 2 => {
                     // Handle network monitor toggle
                     app.settings_network_monitor = !app.settings_network_monitor;
-                    if let Err(e) = kftray_commons::utils::settings::set_network_monitor_with_mode(
+                    match kftray_commons::utils::settings::set_network_monitor_with_mode(
                         app.settings_network_monitor,
                         mode,
                     )
                     .await
                     {
-                        app.error_message =
-                            Some(format!("Failed to save network monitor setting: {e}"));
-                        app.state = AppState::ShowErrorPopup;
-                    } else {
-                        // Control network monitor at runtime
-                        if app.settings_network_monitor {
-                            if let Err(e) = kftray_network_monitor::restart().await {
+                        Err(e) => {
+                            app.error_message =
+                                Some(format!("Failed to save network monitor setting: {e}"));
+                            app.state = AppState::ShowErrorPopup;
+                        }
+                        _ => {
+                            // Control network monitor at runtime
+                            if app.settings_network_monitor {
+                                if let Err(e) = kftray_network_monitor::restart().await {
+                                    app.error_message =
+                                        Some(format!("Failed to start network monitor: {e}"));
+                                    app.state = AppState::ShowErrorPopup;
+                                }
+                            } else if let Err(e) = kftray_network_monitor::stop().await {
                                 app.error_message =
-                                    Some(format!("Failed to start network monitor: {e}"));
+                                    Some(format!("Failed to stop network monitor: {e}"));
                                 app.state = AppState::ShowErrorPopup;
                             }
-                        } else if let Err(e) = kftray_network_monitor::stop().await {
-                            app.error_message =
-                                Some(format!("Failed to stop network monitor: {e}"));
-                            app.state = AppState::ShowErrorPopup;
                         }
                     }
                 }

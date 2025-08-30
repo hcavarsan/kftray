@@ -153,7 +153,9 @@ pub async fn cleanup_current_process_config_states_with_mode(
     .rows_affected();
 
     if affected_rows > 0 {
-        log::info!("Cleaned up {affected_rows} config states for process {current_process_id} in mode {mode:?}");
+        log::info!(
+            "Cleaned up {affected_rows} config states for process {current_process_id} in mode {mode:?}"
+        );
     }
 
     Ok(())

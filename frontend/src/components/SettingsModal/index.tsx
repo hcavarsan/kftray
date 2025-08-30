@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { Settings } from 'lucide-react'
 
 import { Box, Dialog, Flex, Input, Stack, Text } from '@chakra-ui/react'
-import { invoke } from '@tauri-apps/api/tauri'
+import { invoke } from '@tauri-apps/api/core'
 
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'

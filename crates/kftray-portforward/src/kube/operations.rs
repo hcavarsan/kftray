@@ -124,7 +124,9 @@ pub async fn list_kube_contexts(kubeconfig: Option<String>) -> KubeResult<Vec<Ku
             .map(|name| KubeContextInfo { name })
             .collect())
     } else {
-        Err(KubeClientError::config_error("No kubeconfig found or no contexts available. Please check your kubeconfig file exists and contains valid contexts"))
+        Err(KubeClientError::config_error(
+            "No kubeconfig found or no contexts available. Please check your kubeconfig file exists and contains valid contexts",
+        ))
     }
 }
 

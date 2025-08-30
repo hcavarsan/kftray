@@ -24,5 +24,6 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 sqlx = { workspace = true }
 tauri = { workspace = true }
+tauri-plugin-dialog = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true }

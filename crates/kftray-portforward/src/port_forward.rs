@@ -561,7 +561,9 @@ mod tests {
                     break;
                 }
                 Err(_) => {
-                    info!("Mock server: Timeout waiting for request, checking if we have minimum required");
+                    info!(
+                        "Mock server: Timeout waiting for request, checking if we have minimum required"
+                    );
                     if service_requests > 0 && pod_requests > 0 {
                         info!("Mock server: Have minimum required requests, stopping");
                         break;
@@ -643,7 +645,9 @@ mod tests {
             }
         }
 
-        info!("Mock server: Handled {service_requests} service, {pod_requests} pod, {portforward_requests} portforward requests");
+        info!(
+            "Mock server: Handled {service_requests} service, {pod_requests} pod, {portforward_requests} portforward requests"
+        );
     }
 
     #[tokio::test]

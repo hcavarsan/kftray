@@ -301,14 +301,14 @@ impl TcpForwarder {
                                     };
 
                                     if http_logs_enabled {
-                                            if let Ok(new_logger) = kftray_http_logs::HttpLogger::for_config(config_id, local_port).await {
+                                            match kftray_http_logs::HttpLogger::for_config(config_id, local_port).await { Ok(new_logger) => {
                                                 *logger_guard = Some(new_logger);
                                                 drop(logger_guard);
                                                 true
-                                            } else {
+                                            } _ => {
                                                 drop(logger_guard);
                                                 false
-                                            }
+                                            }}
                                     } else {
                                         drop(logger_guard);
                                         false
@@ -422,14 +422,14 @@ impl TcpForwarder {
                                     };
 
                                     if http_logs_enabled {
-                                            if let Ok(new_logger) = kftray_http_logs::HttpLogger::for_config(config_id, local_port).await {
+                                            match kftray_http_logs::HttpLogger::for_config(config_id, local_port).await { Ok(new_logger) => {
                                                 *logger_guard = Some(new_logger);
                                                 drop(logger_guard);
                                                 true
-                                            } else {
+                                            } _ => {
                                                 drop(logger_guard);
                                                 false
-                                            }
+                                            }}
                                     } else {
                                         drop(logger_guard);
                                         false

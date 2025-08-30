@@ -302,46 +302,51 @@ pub async fn stop_all_port_forward_with_mode(
                         let lp =
                             ListParams::default().labels(&format!("config_id={config_id_str}"));
 
-                        if let Ok(pod_list) = pods.list(&lp).await {
-                            let username = whoami::username();
-                            let pod_prefix = format!("kftray-forward-{username}");
-                            let delete_tasks: FuturesUnordered<_> = pod_list
-                                .items
-                                .into_iter()
-                                .filter_map(|pod| {
-                                    if let Some(pod_name) = pod.metadata.name {
-                                        if pod_name.starts_with(&pod_prefix) {
-                                            let namespace = pod
-                                                .metadata
-                                                .namespace
-                                                .unwrap_or_else(|| "default".to_string());
-                                            let pods_in_namespace: Api<Pod> =
-                                                Api::namespaced(client.clone(), &namespace);
-                                            let dp = DeleteParams {
-                                                grace_period_seconds: Some(0),
-                                                ..DeleteParams::default()
-                                            };
+                        match pods.list(&lp).await {
+                            Ok(pod_list) => {
+                                let username = whoami::username();
+                                let pod_prefix = format!("kftray-forward-{username}");
+                                let delete_tasks: FuturesUnordered<_> = pod_list
+                                    .items
+                                    .into_iter()
+                                    .filter_map(|pod| {
+                                        if let Some(pod_name) = pod.metadata.name {
+                                            if pod_name.starts_with(&pod_prefix) {
+                                                let namespace = pod
+                                                    .metadata
+                                                    .namespace
+                                                    .unwrap_or_else(|| "default".to_string());
+                                                let pods_in_namespace: Api<Pod> =
+                                                    Api::namespaced(client.clone(), &namespace);
+                                                let dp = DeleteParams {
+                                                    grace_period_seconds: Some(0),
+                                                    ..DeleteParams::default()
+                                                };
 
-                                            return Some(async move {
-                                                match pods_in_namespace.delete(&pod_name, &dp).await
-                                                {
-                                                    Ok(_) => info!(
-                                                        "Successfully deleted pod: {pod_name}"
-                                                    ),
-                                                    Err(e) => error!(
-                                                        "Failed to delete pod {pod_name}: {e}"
-                                                    ),
-                                                }
-                                            });
+                                                return Some(async move {
+                                                    match pods_in_namespace
+                                                        .delete(&pod_name, &dp)
+                                                        .await
+                                                    {
+                                                        Ok(_) => info!(
+                                                            "Successfully deleted pod: {pod_name}"
+                                                        ),
+                                                        Err(e) => error!(
+                                                            "Failed to delete pod {pod_name}: {e}"
+                                                        ),
+                                                    }
+                                                });
+                                            }
                                         }
-                                    }
-                                    None
-                                })
-                                .collect();
+                                        None
+                                    })
+                                    .collect();
 
-                            delete_tasks.collect::<Vec<_>>().await;
-                        } else {
-                            error!("Error listing pods for config_id {config_id_str}");
+                                delete_tasks.collect::<Vec<_>>().await;
+                            }
+                            _ => {
+                                error!("Error listing pods for config_id {config_id_str}");
+                            }
                         }
                     }
                     Err(e) => error!("Failed to get shared Kubernetes client: {e}"),
@@ -434,11 +439,16 @@ pub async fn stop_port_forward_with_mode(
 
         // Handle loopback address cleanup
         if let Some(config) = configs.iter().find(|c| c.id == Some(config_id_parsed)) {
-            info!("Found config {} during stop with local_address: {:?} and auto_loopback_address: {}",
-                  config_id, config.local_address, config.auto_loopback_address);
+            info!(
+                "Found config {} during stop with local_address: {:?} and auto_loopback_address: {}",
+                config_id, config.local_address, config.auto_loopback_address
+            );
             if let Some(local_addr) = &config.local_address {
                 if crate::network_utils::is_custom_loopback_address(local_addr) {
-                    info!("Cleaning up loopback address for config {config_id}: {local_addr} (auto_allocated: {})", config.auto_loopback_address);
+                    info!(
+                            "Cleaning up loopback address for config {config_id}: {local_addr} (auto_allocated: {})",
+                            config.auto_loopback_address
+                        );
                     release_address_with_fallback(local_addr).await;
                 }
             }

@@ -18,15 +18,23 @@ use kftray_portforward::kube::{
 use log::error;
 use log::info;
 use serde_json::json;
-use tauri::AppHandle;
-use tauri::Manager;
+use tauri::{
+    AppHandle,
+    Emitter,
+    Manager,
+    Wry,
+};
+use tauri_plugin_dialog::{
+    DialogExt,
+    MessageDialogButtons,
+};
 use tokio::sync::Mutex;
 use tokio::time::{
     interval,
     Duration,
 };
 
-pub async fn check_and_emit_changes(app_handle: AppHandle) {
+pub async fn check_and_emit_changes(app_handle: AppHandle<Wry>) {
     let mut interval = interval(Duration::from_millis(500));
     let previous_config_states = Arc::new(Mutex::new(Vec::new()));
     let previous_configs = Arc::new(Mutex::new(Vec::new()));
@@ -78,7 +86,7 @@ pub async fn check_and_emit_changes(app_handle: AppHandle) {
                 });
 
                 app_handle
-                    .emit_all("active_pod_changed", payload)
+                    .emit("active_pod_changed", payload)
                     .unwrap_or_else(|e| {
                         error!("Failed to emit active pod changed event: {e}");
                     });
@@ -93,7 +101,7 @@ pub async fn check_and_emit_changes(app_handle: AppHandle) {
             || !config_compare_changes(&prev_configs, &current_configs)
         {
             app_handle
-                .emit_all("config_state_changed", &Vec::<Config>::new())
+                .emit("config_state_changed", &Vec::<Config>::new())
                 .unwrap_or_else(|e| {
                     error!("Failed to emit configs changed event: {e}");
                 });
@@ -122,42 +130,42 @@ fn config_compare_changes<T: PartialEq>(prev: &[T], current: &[T]) -> bool {
 
 #[tauri::command]
 pub async fn start_port_forward_udp_cmd(
-    configs: Vec<Config>, _app_handle: tauri::AppHandle,
+    configs: Vec<Config>, _app_handle: tauri::AppHandle<Wry>,
 ) -> Result<Vec<CustomResponse>, String> {
     start_port_forward(configs.clone(), "udp").await
 }
 
 #[tauri::command]
 pub async fn start_port_forward_tcp_cmd(
-    configs: Vec<Config>, _app_handle: tauri::AppHandle,
+    configs: Vec<Config>, _app_handle: tauri::AppHandle<Wry>,
 ) -> Result<Vec<CustomResponse>, String> {
     start_port_forward(configs.clone(), "tcp").await
 }
 
 #[tauri::command]
 pub async fn stop_all_port_forward_cmd(
-    _app_handle: tauri::AppHandle,
+    _app_handle: tauri::AppHandle<Wry>,
 ) -> Result<Vec<CustomResponse>, String> {
     stop_all_port_forward().await
 }
 
 #[tauri::command]
 pub async fn stop_port_forward_cmd(
-    config_id: String, _app_handle: tauri::AppHandle,
+    config_id: String, _app_handle: tauri::AppHandle<Wry>,
 ) -> Result<CustomResponse, String> {
     stop_port_forward(config_id.clone()).await
 }
 
 #[tauri::command]
 pub async fn deploy_and_forward_pod_cmd(
-    configs: Vec<Config>, _app_handle: tauri::AppHandle,
+    configs: Vec<Config>, _app_handle: tauri::AppHandle<Wry>,
 ) -> Result<Vec<CustomResponse>, String> {
     deploy_and_forward_pod(configs.clone()).await
 }
 
 #[tauri::command]
 pub async fn stop_proxy_forward_cmd(
-    config_id: String, namespace: &str, service_name: String, _app_handle: tauri::AppHandle,
+    config_id: String, namespace: &str, service_name: String, _app_handle: tauri::AppHandle<Wry>,
 ) -> Result<CustomResponse, String> {
     let config_id = config_id
         .parse::<i64>()
@@ -186,16 +194,13 @@ pub async fn get_active_pod_cmd(config_id: String) -> Result<Option<String>, Str
 }
 
 #[tauri::command]
-pub async fn handle_exit_app(app_handle: tauri::AppHandle) {
-    let windows_map = app_handle.windows();
-
-    if let Some((_, window)) = windows_map.iter().next() {
+pub async fn handle_exit_app(app_handle: tauri::AppHandle<Wry>) {
+    if let Some(window) = app_handle.get_webview_window("main") {
         let config_states = match get_configs_state().await {
             Ok(config_states) => config_states,
             Err(err) => {
                 error!("Failed to get config states: {err:?}");
-                app_handle.exit(0);
-                return;
+                std::process::exit(0);
             }
         };
 
@@ -205,47 +210,47 @@ pub async fn handle_exit_app(app_handle: tauri::AppHandle) {
             if let Err(e) = cleanup_current_process_config_states().await {
                 error!("Failed to cleanup config states: {e}");
             }
-            app_handle.exit(0);
-            return;
+            std::process::exit(0);
         }
 
-        tauri::api::dialog::ask(
-            Some(window),
-            "Exit Kftray",
-            "There are active port forwards. Do you want to stop all port forwards before closing?\n\nIf you choose 'No', the active port forwards will resume the next time you open the app.\n\nIf you choose 'Yes', the active port forwards will be stopped and the app will close.",
-            move |ask_result| {
-                tauri::async_runtime::spawn(async move {
-                    if ask_result {
-                        info!("Attempting to stop all port forwards...");
-                        match stop_all_port_forward().await {
-                            Ok(responses) => {
-                                info!("Successfully stopped all port forwards: {responses:?}");
-                                if let Err(e) = cleanup_current_process_config_states().await {
-                                    error!("Failed to cleanup config states: {e}");
+        window
+            .dialog()
+            .message("There are active port forwards. Do you want to stop all port forwards before closing?\n\nIf you choose 'No', the active port forwards will resume the next time you open the app.\n\nIf you choose 'Yes', the active port forwards will be stopped and the app will close.")
+            .title("Exit Kftray")
+            .buttons(MessageDialogButtons::YesNo)
+            .show(move |response| {
+                match response {
+                    true => {
+                        // User clicked "Yes" - stop all port forwards
+                        info!("User chose to stop all port forwards before closing.");
+                        tauri::async_runtime::spawn(async move {
+                            match stop_all_port_forward().await {
+                                Ok(responses) => {
+                                    info!("Successfully stopped all port forwards: {responses:?}");
                                 }
-                                app_handle.exit(0);
-                            }
-                            Err(err) => {
-                                error!("Failed to stop port forwards: {err:?}");
-                                if let Err(e) = cleanup_current_process_config_states().await {
-                                    error!("Failed to cleanup config states: {e}");
+                                Err(err) => {
+                                    error!("Failed to stop port forwards: {err:?}");
                                 }
-                                app_handle.exit(0);
                             }
-                        };
-                    } else {
-                        info!("User chose to leave all port-forwards running.");
-                        app_handle.exit(0);
+                            if let Err(e) = cleanup_current_process_config_states().await {
+                                error!("Failed to cleanup config states: {e}");
+                            }
+                            std::process::exit(0);
+                        });
                     }
-                });
-            },
-        );
+                    false => {
+                        // User clicked "No" - leave port forwards running and just exit
+                        info!("User chose to leave all port-forwards running.");
+                        std::process::exit(0);
+                    }
+                }
+            });
     } else {
         error!("No windows found, exiting application.");
         if let Err(e) = cleanup_current_process_config_states().await {
             error!("Failed to cleanup config states: {e}");
         }
-        app_handle.exit(0);
+        std::process::exit(0);
     }
 }
 

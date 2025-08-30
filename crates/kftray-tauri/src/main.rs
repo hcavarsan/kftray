@@ -13,6 +13,7 @@ use log::{
     error,
     info,
 };
+use tauri_plugin_global_shortcut::GlobalShortcutExt;
 mod commands;
 mod init_check;
 mod logging;
@@ -23,28 +24,23 @@ use std::sync::atomic::Ordering;
 
 use kftray_commons::models::window::AppState;
 use kftray_commons::models::window::SaveDialogState;
-use tauri::{
-    GlobalShortcutManager,
-    Manager,
-};
+use tauri::Manager;
 use tokio::runtime::Runtime;
 
 use crate::commands::portforward::check_and_emit_changes;
 use crate::init_check::RealPortOperations;
 use crate::tray::{
-    create_tray_menu,
+    create_tray_icon,
     handle_run_event,
-    handle_system_tray_event,
     handle_window_event,
 };
-use crate::window::toggle_window_visibility;
 
 fn main() {
     let _ = logging::setup_logging();
 
     let _ = fix_path_env::fix();
 
-    let system_tray = create_tray_menu();
+    // Tray will be created in setup function for Tauri v2
     let is_moving = Arc::new(Mutex::new(false));
     let is_plugin_moving = Arc::new(AtomicBool::new(false));
     let is_pinned = Arc::new(AtomicBool::new(false));
@@ -124,7 +120,7 @@ fn main() {
                 app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             }
 
-            let window = app.get_window("main").unwrap();
+            let window = app.get_webview_window("main").unwrap();
             #[cfg(debug_assertions)]
             {
                 window.open_devtools();
@@ -138,19 +134,27 @@ fn main() {
                 window.set_always_on_top(true).unwrap();
             }
 
-            let mut shortcut = app.global_shortcut_manager();
+            // Register global shortcut using Tauri v2 plugin API
+            app.global_shortcut()
+                .register("CmdOrCtrl+Shift+F1")
+                .unwrap_or_else(|err| error!("Failed to register global shortcut: {err:?}"));
 
-            shortcut
-                .register("CmdOrCtrl+Shift+F1", move || {
-                    toggle_window_visibility(&window);
-                })
-                .unwrap_or_else(|err| error!("{err:?}"));
+            // Create tray icon for Tauri v2
+            if let Err(e) = create_tray_icon(app) {
+                error!("Failed to create tray icon: {e}");
+            }
 
             Ok(())
         })
         .plugin(tauri_plugin_positioner::init())
-        .system_tray(system_tray)
-        .on_system_tray_event(handle_system_tray_event)
+        .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_http::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::default().build())
+        .plugin(tauri_plugin_os::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .on_window_event(handle_window_event)
         .invoke_handler(tauri::generate_handler![
             commands::portforward::start_port_forward_tcp_cmd,

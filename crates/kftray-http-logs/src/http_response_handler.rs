@@ -260,10 +260,14 @@ impl HttpResponseHandler {
                         && h_lower.contains("connection: upgrade")
                     {
                         if h_lower.contains("sec-websocket-accept:") {
-                            debug!("Logging WebSocket upgrade response immediately - complete with all required headers");
+                            debug!(
+                                    "Logging WebSocket upgrade response immediately - complete with all required headers"
+                                );
                             return true;
                         } else {
-                            debug!("Potential WebSocket upgrade response detected but missing accept header");
+                            debug!(
+                                    "Potential WebSocket upgrade response detected but missing accept header"
+                                );
                         }
                     }
                 }
@@ -306,8 +310,11 @@ impl HttpResponseHandler {
 
             let elapsed = start_time.elapsed();
             if elapsed.as_secs() >= 10 && response_data.len() > 5000 {
-                debug!("Long-lived connection detected ({}s, {}B) - logging accumulated data to prevent being stuck",
-                      elapsed.as_secs(), response_data.len());
+                debug!(
+                    "Long-lived connection detected ({}s, {}B) - logging accumulated data to prevent being stuck",
+                    elapsed.as_secs(),
+                    response_data.len()
+                );
                 return true;
             }
 
@@ -574,7 +581,9 @@ impl HttpResponseHandler {
 
                     drop(req_id_guard);
 
-                    debug!("Logging HTTP response at connection close - this ensures all data is captured");
+                    debug!(
+                        "Logging HTTP response at connection close - this ensures all data is captured"
+                    );
 
                     let timeout_duration = Duration::from_secs(5);
                     match tokio::time::timeout(
@@ -809,8 +818,10 @@ mod tests {
             Vec::from(&b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\n"[..]);
         large_response.extend(vec![b'A'; 6000]);
 
-        assert!(handler.check_time_based_logging(&large_response, very_old_time),
-            "Time-based logging should be triggered for large response with sufficient time elapsed");
+        assert!(
+            handler.check_time_based_logging(&large_response, very_old_time),
+            "Time-based logging should be triggered for large response with sufficient time elapsed"
+        );
     }
 
     #[tokio::test]

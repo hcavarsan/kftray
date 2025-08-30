@@ -142,15 +142,18 @@ impl MessageFormatter {
 
                     if is_gzipped {
                         debug!("Decompressing gzipped body");
-                        if let Ok(decompressed) = Self::decompress_gzip(&processed_body) {
-                            debug!(
-                                "Successfully decompressed gzip content: {} -> {} bytes",
-                                processed_body.len(),
-                                decompressed.len()
-                            );
-                            processed_body = decompressed;
-                        } else {
-                            debug!("Failed to decompress gzip content");
+                        match Self::decompress_gzip(&processed_body) {
+                            Ok(decompressed) => {
+                                debug!(
+                                    "Successfully decompressed gzip content: {} -> {} bytes",
+                                    processed_body.len(),
+                                    decompressed.len()
+                                );
+                                processed_body = decompressed;
+                            }
+                            _ => {
+                                debug!("Failed to decompress gzip content");
+                            }
                         }
                     }
 

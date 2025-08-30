@@ -1,8 +1,8 @@
-<div align="center">
-  <br>
+
+<div align="center">  <br>
   <img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/logo.png" width="128px" alt="kftray Logo" />
   <br><br>
-  <a href="https://kftray.app"><strong>Visit kftray.app »</strong></a>
+  <a href="https://kftray.app"><strong>kftray.app »</strong></a>
   <br><br>
   <a href="https://join.slack.com/t/kftray/shared_invite/zt-2q6lwn15f-Y8Mi_4NlenH9TuEDMjxPUA">
     <img src="https://img.shields.io/badge/Slack-Join%20our%20Slack-blue?style=for-the-badge&logo=slack" alt="Join Slack">
@@ -26,22 +26,27 @@
 <div align="center">
 <img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/refs/heads/main/public/img/kftools.webp" alt="Kftray github"/>
 </div>
-  kftray and kftui are independent, cross-platform applications. They help you set up and manage multiple port-forwarding settings easily. Both apps are part of the same open-source project and aim to make working with Kubernetes easier. kftray has a desktop interface, while kftui has a terminal interface, so you can choose the one that suits you best.
-
 </p>
 
-## Why
+## About
 
-Both apps were made to fix common problems with Kubernetes port forwarding. The usual kubectl port-forward command can be unreliable. For example, if a pod dies, it needs manual reconnection. It also has trouble setting up many port forwards at once and doesn't support UDP services.
+kftray and kftui are Kubernetes port forwarding tools that actually work the way you'd expect them to. While `kubectl port-forward` is fine for quick tasks, it falls apart when pods restart or connections drop – and you're stuck manually reconnecting.
 
-They automatically reconnect to running pods if one fails, also it allow setting up multiple port forwards with one click, and support both TCP and UDP protocols. kftray also has extra features like HTTP logs tracing and GitHub sync to make workflows smoother.
+Both kftray (desktop app with tray integration) and kftui (terminal UI) share the same Rust backend and configuration files. They use the Kubernetes watch API to detect when pods come and go, automatically reconnecting your forwards without you having to babysit them. They handle TCP and UDP through a proxy relay in your cluster, support multiple forwards at once, and can even log HTTP traffic for debugging.
 
-## Overview
+### Why Another Port Forwarding Tool?
 
-For more information about kftray features and components, visit our blog post at [kftray.app/blog/posts/13-kftray-manage-all-k8s-port-forward](https://kftray.app/blog/posts/13-kftray-manage-all-k8s-port-forward). The post provides an overview of functionalities including auto-reconnection, multiple port forward management, TCP/UDP support, HTTP logs tracing and GitHub sync.
+There are plenty of Kubernetes tools out there, but port forwarding has always been weirdly neglected. The main issues with `kubectl port-forward`:
 
+- **Connections break** when pods restart or get rescheduled
+- **No automatic reconnection** – you have to manually restart everything
+- **Multiple forwards** means multiple terminal windows
+- **No UDP support** out of the box
+- **No way to debug HTTP traffic** flowing through the tunnel
 
-<br>
+The tools monitor pod lifecycle events and automatically reconnect to healthy pods when things go sideways. You can manage dozens of forwards from a single interface, forward UDP traffic through a proxy relay, and inspect HTTP requests/responses when you need to debug.
+
+check out our blog post at [kftray.app/blog/posts/13-kftray-manage-all-k8s-port-forward](https://kftray.app/blog/posts/13-kftray-manage-all-k8s-port-forward).
 
 <br>
 
@@ -63,63 +68,108 @@ For more information about kftray features and components, visit our blog post a
 </div>
 
 <br>
-<br>
-
 
 ## Features
 
-- **Resilient Port Forwarding Connection:** Ensures continuous service even if a pod dies by reconnecting to another running pod automatically.
-- **One-Click Multiple Port Forwards:** Allows for the setup of several port forwarding instances simultaneously with a single click.
-- **Independent of Kubectl:** Directly interfaces with the Kubernetes API, eliminating the need for `kubectl`.
-- **Multi-Protocol Support:** Enables access to internal or external servers through a Proxy Relay server deployed in a Kubernetes cluster, including TCP and UDP port forwarding.
-- **HTTP Logs Tracing:** Enable or disable HTTP logs for specific configurations to save the requests and responses in a local log file.  - [Blog Post](https://kftray.app/blog/posts/12-kftray-http-logs-vscode)
-- **GitHub Sync:** Keep your configurations saved on GitHub and share or synchronize them in a GitOps style. _(Currently available only in the kftray desktop app)_
-- **Auto Import:** Automatically import Kubernetes service configurations based on specific annotations. An example with an explanation can be found in this repo: https://github.com/hcavarsan/kftray-k8s-tf-example
-
-<br>
+Both tools share the same core features with slightly different interfaces:
 
 <div align="center">
 
-| Feature                                      | kftray (Desktop App) | kftui (Terminal UI) |
-|----------------------------------------------|----------------------|---------------------|
-| Resilient Port Forwarding Connection         | ✔️                   | ✔️                  |
-| One-Click Multiple Port Forwards             | ✔️                   | ✔️                  |
-| Independent of Kubectl                       | ✔️                   | ✔️                  |
-| Multi-Protocol Support (TCP/UDP)             | ✔️                   | ✔️                  |
-| GitHub Import                                | ✔️                   | ✔️                  |
-| HTTP Logs Tracing                            | ✔️                   | ✔️                  |
-| Local JSON File Configuration                | ✔️                   | ✔️                  |
-| Auto Import with k8s Annotations             | ✔️                   | ✔️                  |
+| Feature | kftray (Desktop) | kftui (Terminal) |
+|---------|------------------|------------------|
+| **Auto-reconnection** – Reconnects when pods restart | ✅ | ✅ |
+| **Multiple forwards** – Start/stop many at once | ✅ | ✅ |
+| **No kubectl needed** – Direct K8s API integration | ✅ | ✅ |
+| **TCP/UDP support** – Via cluster proxy relay | ✅ | ✅ |
+| **HTTP traffic logs** – Inspect requests/responses | ✅ | ✅ |
+| **Pod health tracking** – Shows which pod you're connected to | ✅ | ✅ |
+| **Network recovery** – Auto-reconnects after sleep/disconnect | ✅ | ✅ |
+| **GitHub sync** – Share configs with your team | ✅ | ✅ |
+| **Auto-import** – Discover services via K8s annotations | ✅ | ✅ |
+| **Custom kubeconfig** – Use any kubeconfig path | ✅ | ✅ |
+| **Port-forward timeouts** – Auto-close after time limit | ✅ | ✅ |
+| **Hosts file management** – Auto-update /etc/hosts entries | ✅ | ✅ |
+| **System tray integration** – Quick access from tray | ✅ | ❌ |
+| **Request replay** – Replay HTTP requests for debugging | ❌ | ✅ |
 
 </div>
 
-<br>
+### Recent Updates
 
-## kftray - Desktop App
+Check the [releases page](https://github.com/hcavarsan/kftray/releases) for the full changelog.
 
-- [INSTALL.md](https://github.com/hcavarsan/kftray/tree/main/docs/kftray/INSTALL.md)
-- [USAGE.md](https://github.com/hcavarsan/kftray/tree/main/docs/kftray/USAGE.md)
-- [BUILD.md](https://github.com/hcavarsan/kftray/tree/main/docs/kftray/BUILD.md)
+## Getting Started
 
-## kftui - Terminal User Interface
+### kftray - Desktop App
 
-- [INSTALL.md](https://github.com/hcavarsan/kftray/tree/main/docs/kftui/INSTALL.md)
-- [USAGE.md](https://github.com/hcavarsan/kftray/tree/main/docs/kftui/USAGE.md)
-- [BUILD.md](https://github.com/hcavarsan/kftray/tree/main/docs/kftui/BUILD.md)
+The desktop app runs in your system tray and provides a GUI for managing port forwards.
 
-## kftray server - Proxy Relay Server
+- [Installation](https://github.com/hcavarsan/kftray/tree/main/docs/kftray/INSTALL.md) – Download and install
+- [Usage Guide](https://github.com/hcavarsan/kftray/tree/main/docs/kftray/USAGE.md) – How to use kftray
+- [Building from Source](https://github.com/hcavarsan/kftray/tree/main/docs/kftray/BUILD.md) – Build it yourself
 
-- [ARCH.md](https://github.com/hcavarsan/kftray/tree/main/docs/ARCH.md).
+### kftui - Terminal UI
+
+The terminal interface for those who prefer staying in the console.
+
+- [Installation](https://github.com/hcavarsan/kftray/tree/main/docs/kftui/INSTALL.md) – Install via Homebrew, Cargo, or download
+- [Usage Guide](https://github.com/hcavarsan/kftray/tree/main/docs/kftui/USAGE.md) – Terminal shortcuts and features
+- [Building from Source](https://github.com/hcavarsan/kftray/tree/main/docs/kftui/BUILD.md) – Build instructions
+
+### kftray-server - Proxy Relay
+
+The proxy relay that runs in your cluster to handle TCP/UDP forwarding.
+
+- [Architecture Docs](https://github.com/hcavarsan/kftray/tree/main/docs/ARCH.md) – How it all works
+
+## Configuration
+
+Both tools share the same JSON configuration format. Here's a minimal example:
+
+```json
+[
+  {
+    "alias": "my-service",
+    "service": "backend-api",
+    "namespace": "production",
+    "local_port": 8080,
+    "remote_port": 80
+  }
+]
+```
+
+You can import configs from:
+- Local JSON files
+- GitHub repositories (public or private)
+- Direct from your cluster using service annotations
+- Command line (kftui supports `--json` and `--stdin`)
+
+## Architecture
+
+The tools use a shared Rust core that handles all the Kubernetes interaction. Here's the basic flow:
+
+1. **Config Management** – Load port forward configs from files/GitHub/K8s annotations
+2. **Pod Discovery** – Find target pods using label selectors or service definitions
+3. **Connection Setup** – Establish websocket connection to K8s API
+4. **Traffic Relay** – Forward traffic between local ports and pod ports
+5. **Health Monitoring** – Watch for pod changes and reconnect as needed
+
+For UDP or when you need to reach external services, we deploy a small relay pod in your cluster that handles the actual forwarding.
 
 ## Contributing
 
-- **Pull Requests:** Feel free to create pull requests for bug fixes, new features, or improvements.
-- **Issues:** Report bugs, suggest new features, or ask questions.
-- **Feedback:** Your feedback helps improve kftray.
+We're always looking for contributions. Whether it's bug fixes, new features, or just ideas, we'd love to hear from you.
 
-##  License
+- **Pull Requests** – Fork, code, and submit
+- **Issues** – Report bugs or request features
+- **Discussions** – Share ideas and feedback
 
-kftray is available under the [MIT License](LICENSE.md). See the LICENSE file for full details.
+Check out [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines and [HACKING.md](HACKING.md) for development setup.
+
+
+## License
+
+kftray is available under the [GPL 3.0 License](LICENSE.md).
 
 ## Star History
 
@@ -144,6 +194,7 @@ Thanks goes to these wonderful people ([emoji key](https://allcontributors.org/d
       <td align="center" valign="top" width="14.28%"><a href="https://github.com/hcavarsan"><img src="https://avatars.githubusercontent.com/u/30353685?v=4?s=100" width="100px;" alt="Henrique Cavarsan"/><br /><sub><b>Henrique Cavarsan</b></sub></a><br /><a href="https://github.com/hcavarsan/kftray/commits?author=hcavarsan" title="Code">💻</a></td>
       <td align="center" valign="top" width="14.28%"><a href="http://fandujar.dev"><img src="https://avatars.githubusercontent.com/u/6901387?v=4?s=100" width="100px;" alt="Filipe Andujar"/><br /><sub><b>Filipe Andujar</b></sub></a><br /><a href="https://github.com/hcavarsan/kftray/commits?author=fandujar" title="Code">💻</a></td>
       <td align="center" valign="top" width="14.28%"><a href="https://speakerdeck.com/eltociear"><img src="https://avatars.githubusercontent.com/u/22633385?v=4?s=100" width="100px;" alt="Ikko Eltociear Ashimine"/><br /><sub><b>Ikko Eltociear Ashimine</b></sub></a><br /><a href="https://github.com/hcavarsan/kftray/commits?author=eltociear" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/jessegoodier"><img src="https://avatars.githubusercontent.com/u/2019351?v=4?s=100" width="100px;" alt="Jesse Goodier"/><br /><sub><b>Jesse Goodier</b></sub></a><br /><a href="https://github.com/hcavarsan/kftray/commits?author=jessegoodier" title="Code">💻</a></td>
       <td align="center" valign="top" width="14.28%"><a href="https://github.com/honsunrise"><img src="https://avatars.githubusercontent.com/u/3882656?v=4?s=100" width="100px;" alt="Honsun Zhu"/><br /><sub><b>Honsun Zhu</b></sub></a><br /><a href="https://github.com/hcavarsan/kftray/commits?author=honsunrise" title="Code">💻</a></td>
     </tr>
   </tbody>
