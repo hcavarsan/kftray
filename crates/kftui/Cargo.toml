@@ -1,6 +1,6 @@
 [package]
 name = "kftui"
-version = "0.22.7"
+version = "0.22.8"
 authors = [
   "Henrique Cavarsan <hencavarsan@gmail.com>",
 ]
