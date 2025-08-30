@@ -304,8 +304,10 @@ fn update_workspace_dependencies(content: &str, new_version: &str) -> io::Result
     let workspace_section_regex = Regex::new(r"^\[workspace\.dependencies\]\s*$")
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
-    // More flexible regex to handle different spacing
-    let kftray_dependency_regex = Regex::new(r#"^(kftray-[a-zA-Z0-9_-]+\s*=\s*\{\s*path\s*=\s*"[^"]+"\s*,\s*version\s*=\s*)"[^"]+"(.*)$"#)
+    let kftray_dependency_regex_path_first = Regex::new(r#"^(kftray-[a-zA-Z0-9_-]+\s*=\s*\{\s*path\s*=\s*"[^"]+"\s*,\s*version\s*=\s*)"[^"]+"(.*)$"#)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+
+    let kftray_dependency_regex_version_first = Regex::new(r#"^(kftray-[a-zA-Z0-9_-]+\s*=\s*\{\s*version\s*=\s*)"[^"]+"(\s*,\s*path\s*=\s*"[^"]+"\s*\})$"#)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
     let mut in_workspace_dependencies = false;
@@ -318,12 +320,19 @@ fn update_workspace_dependencies(content: &str, new_version: &str) -> io::Result
         } else if line.starts_with('[') && in_workspace_dependencies {
             in_workspace_dependencies = false;
             updated_lines.push(line.to_string());
-        } else if in_workspace_dependencies && kftray_dependency_regex.is_match(line) {
-            let updated_line = kftray_dependency_regex.replace(
+        } else if in_workspace_dependencies && kftray_dependency_regex_path_first.is_match(line) {
+            let updated_line = kftray_dependency_regex_path_first.replace(
                 line,
                 format!(r#"$1"{}"$2"#, new_version)
             ).to_string();
-            println!("Updated workspace dependency: {}", updated_line);
+            println!("Updated workspace dependency (path first): {}", updated_line);
+            updated_lines.push(updated_line);
+        } else if in_workspace_dependencies && kftray_dependency_regex_version_first.is_match(line) {
+            let updated_line = kftray_dependency_regex_version_first.replace(
+                line,
+                format!(r#"$1"{}"$2"#, new_version)
+            ).to_string();
+            println!("Updated workspace dependency (version first): {}", updated_line);
             updated_lines.push(updated_line);
         } else {
             updated_lines.push(line.to_string());
