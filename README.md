@@ -59,8 +59,8 @@ check out our blog post at [kftray.app/blog/posts/13-kftray-manage-all-k8s-port-
         </a>
       </td>
       <td>
-        <a href="https://youtu.be/d-Je34Hy5Lo">
-          <img src="https://img.youtube.com/vi/d-Je34Hy5Lo/maxresdefault.jpg" alt="Watch the video" width="800px">
+        <a href="https://www.youtube.com/watch?v=Zvv9gIhLaSM">
+          <img src="https://img.youtube.com/vi/Zvv9gIhLaSM/maxresdefault.jpg" alt="Watch the video" width="800px">
         </a>
       </td>
     </tr>
@@ -68,6 +68,11 @@ check out our blog post at [kftray.app/blog/posts/13-kftray-manage-all-k8s-port-
 </div>
 
 <br>
+
+## Download
+
+See the [download page](https://kftray.app/downloads) on the kftray website.
+
 
 ## Features
 
@@ -94,7 +99,7 @@ Both tools share the same core features with slightly different interfaces:
 
 </div>
 
-### Recent Updates
+## Recent Updates
 
 Check the [releases page](https://github.com/hcavarsan/kftray/releases) for the full changelog.
 
@@ -164,8 +169,7 @@ We're always looking for contributions. Whether it's bug fixes, new features, or
 - **Issues** – Report bugs or request features
 - **Discussions** – Share ideas and feedback
 
-Check out [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines and [HACKING.md](HACKING.md) for development setup.
-
+Check out [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines
 
 ## License
 
