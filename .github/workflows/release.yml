@@ -158,7 +158,7 @@ jobs:
         include:
           - os: ubuntu-24.04
             arch: arm64
-            runner: ubicloud-standard-4-arm
+            runner: ubicloud-standard-4-arm-ubuntu-2404
             rust_target: aarch64-unknown-linux-gnu
             tauri_args: "--target aarch64-unknown-linux-gnu --bundles appimage,updater --verbose"
           - os: ubuntu-24.04
@@ -340,7 +340,7 @@ jobs:
       matrix:
         include:
           - os: ubuntu-24.04
-            runner: ubicloud-standard-4-arm
+            runner: ubicloud-standard-4-arm-ubuntu-2404
             arch: arm64
             rust_target: aarch64-unknown-linux-gnu
             os_name: linux
