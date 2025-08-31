@@ -108,6 +108,7 @@ jobs:
         uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
 
       - name: Install dependencies
+        if: matrix.os_name == 'linux'
         run: |
           sudo apt-get update
           sudo apt install -y \
