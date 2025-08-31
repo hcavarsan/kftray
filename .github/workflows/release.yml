@@ -233,6 +233,11 @@ jobs:
       - name: Setup platform-specific dependencies
         if: matrix.os == 'ubuntu-24.04'
         run: |
+          if [ "${{ matrix.arch }}" == "arm64" ]; then
+            echo "deb http://ports.ubuntu.com/ubuntu-ports jammy main restricted universe multiverse" | sudo tee /etc/apt/sources.list.d/ubuntu-ports-jammy-main.list
+          else
+            echo "deb http://gb.archive.ubuntu.com/ubuntu jammy main" | sudo tee /etc/apt/sources.list.d/ubuntu-jammy-main.list
+          fi
           sudo apt-get update
           sudo apt install -y \
               libwebkit2gtk-4.1-0=2.44.0-2 \
@@ -408,6 +413,11 @@ jobs:
       - name: Setup platform-specific dependencies
         if: matrix.os == 'ubuntu-24.04'
         run: |
+          if [ "${{ matrix.arch }}" == "arm64" ]; then
+            echo "deb http://ports.ubuntu.com/ubuntu-ports jammy main restricted universe multiverse" | sudo tee /etc/apt/sources.list.d/ubuntu-ports-jammy-main.list
+          else
+            echo "deb http://gb.archive.ubuntu.com/ubuntu jammy main" | sudo tee /etc/apt/sources.list.d/ubuntu-jammy-main.list
+          fi
           sudo apt-get update
           sudo apt install -y \
               libwebkit2gtk-4.1-0=2.44.0-2 \
