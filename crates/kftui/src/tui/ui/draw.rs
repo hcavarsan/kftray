@@ -1,5 +1,6 @@
 use kftray_commons::models::config_state_model::ConfigState;
 use ratatui::{
+    Frame,
     layout::{
         Constraint,
         Direction,
@@ -22,7 +23,6 @@ use ratatui::{
         Paragraph,
         Tabs,
     },
-    Frame,
 };
 use tui_logger::TuiLoggerLevelOutput;
 use tui_logger::TuiLoggerWidget;
@@ -33,14 +33,17 @@ use crate::tui::input::{
     App,
     AppState,
 };
+use crate::tui::ui::MAUVE;
 use crate::tui::ui::render_context_selection_popup;
 use crate::tui::ui::render_delete_confirmation_popup;
 use crate::tui::ui::render_details;
 use crate::tui::ui::render_http_logs_config_popup;
 use crate::tui::ui::render_http_logs_viewer_popup;
 use crate::tui::ui::render_settings_popup;
-use crate::tui::ui::MAUVE;
 use crate::tui::ui::{
+    BASE,
+    TEXT,
+    YELLOW,
     centered_rect,
     draw_configs_tab,
     draw_file_explorer_popup,
@@ -51,9 +54,6 @@ use crate::tui::ui::{
     render_help_popup,
     render_input_prompt,
     render_legend,
-    BASE,
-    TEXT,
-    YELLOW,
 };
 
 const STREAMING_INDICATOR: &str = "●";

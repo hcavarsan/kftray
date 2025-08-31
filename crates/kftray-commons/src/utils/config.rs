@@ -11,8 +11,8 @@ use serde_json::{
     Value,
 };
 use serde_json::{
-    json,
     Value as JsonValue,
+    json,
 };
 use sqlx::{
     Row,
@@ -831,12 +831,16 @@ mod tests {
 
         let configs = read_configs_with_pool(&pool).await.unwrap();
         assert_eq!(configs.len(), 2);
-        assert!(configs
-            .iter()
-            .any(|c| c.service == Some("service1".to_string())));
-        assert!(configs
-            .iter()
-            .any(|c| c.service == Some("service2".to_string())));
+        assert!(
+            configs
+                .iter()
+                .any(|c| c.service == Some("service1".to_string()))
+        );
+        assert!(
+            configs
+                .iter()
+                .any(|c| c.service == Some("service2".to_string()))
+        );
     }
 
     #[tokio::test]
@@ -1090,12 +1094,16 @@ mod tests {
 
         let configs = read_configs_with_pool(&pool).await.unwrap();
         assert_eq!(configs.len(), 2);
-        assert!(configs
-            .iter()
-            .any(|c| c.service == Some("imported-service1".to_string())));
-        assert!(configs
-            .iter()
-            .any(|c| c.service == Some("imported-service2".to_string())));
+        assert!(
+            configs
+                .iter()
+                .any(|c| c.service == Some("imported-service1".to_string()))
+        );
+        assert!(
+            configs
+                .iter()
+                .any(|c| c.service == Some("imported-service2".to_string()))
+        );
     }
 
     #[tokio::test]

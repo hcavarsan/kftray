@@ -5,15 +5,17 @@ import { TiPin, TiPinOutline } from 'react-icons/ti'
 
 import { Box, Image, Input } from '@chakra-ui/react'
 import { app } from '@tauri-apps/api'
+import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import { invoke } from '@tauri-apps/api/tauri'
-import { appWindow } from '@tauri-apps/api/window'
+import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 
 import logo from '@/assets/logo.webp'
 import SettingsModal from '@/components/SettingsModal'
 import { Button } from '@/components/ui/button'
 import { Tooltip } from '@/components/ui/tooltip'
 import { HeaderProps } from '@/types'
+
+const appWindow = getCurrentWebviewWindow()
 
 const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
   const [version, setVersion] = useState('')

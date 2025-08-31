@@ -214,8 +214,8 @@ pub async fn set_setting(
     Ok(())
 }
 
-pub async fn get_disconnect_timeout(
-) -> Result<Option<u32>, Box<dyn std::error::Error + Send + Sync>> {
+pub async fn get_disconnect_timeout()
+-> Result<Option<u32>, Box<dyn std::error::Error + Send + Sync>> {
     if let Some(value) = get_setting("disconnect_timeout_minutes").await? {
         Ok(value.parse::<u32>().ok())
     } else {

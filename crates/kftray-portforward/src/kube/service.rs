@@ -18,8 +18,8 @@ use crate::kube::operations::{
     list_all_namespaces,
 };
 use crate::kube::shared_client::{
-    ServiceClientKey,
     SHARED_CLIENT_MANAGER,
+    ServiceClientKey,
 };
 pub async fn retrieve_service_configs(
     context: &str, kubeconfig: Option<String>,

@@ -3,10 +3,10 @@ use std::io;
 use crossterm::{
     execute,
     terminal::{
-        disable_raw_mode,
-        enable_raw_mode,
         EnterAlternateScreen,
         LeaveAlternateScreen,
+        disable_raw_mode,
+        enable_raw_mode,
     },
 };
 use kftray_commons::utils::config::read_configs_with_mode;
@@ -14,8 +14,8 @@ use kftray_commons::utils::config_state::read_config_states_with_mode;
 use kftray_commons::utils::db_mode::DatabaseMode;
 use log::error;
 use ratatui::{
-    backend::CrosstermBackend,
     Terminal,
+    backend::CrosstermBackend,
 };
 use tokio::time::{
     self,
@@ -24,8 +24,8 @@ use tokio::time::{
 
 use crate::logging::LoggerState;
 use crate::tui::input::{
-    handle_input,
     App,
+    handle_input,
 };
 use crate::tui::ui::draw_ui;
 
@@ -42,12 +42,10 @@ pub async fn run_tui(
 
     // Start network monitor if enabled
     if let Ok(enabled) = kftray_commons::utils::settings::get_network_monitor_with_mode(mode).await
+        && enabled
+        && let Err(e) = kftray_network_monitor::start().await
     {
-        if enabled {
-            if let Err(e) = kftray_network_monitor::start().await {
-                error!("Failed to start network monitor: {e}");
-            }
-        }
+        error!("Failed to start network monitor: {e}");
     }
 
     let res = run_app(&mut terminal, &mut app, mode).await;
@@ -109,8 +107,8 @@ mod tests {
         config_model::Config,
         config_state_model::ConfigState,
     };
-    use ratatui::backend::TestBackend;
     use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
 
     use crate::logging::{
         LogConfig,

@@ -4,8 +4,8 @@ use crossterm::{
     cursor::Show,
     execute,
     terminal::{
-        disable_raw_mode,
         LeaveAlternateScreen,
+        disable_raw_mode,
     },
 };
 use kftray_commons::models::config_model::Config;

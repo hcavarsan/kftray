@@ -173,7 +173,7 @@ mod tests {
         fn set(key: &str, value: &str) -> Self {
             let key = key.to_string();
             let original_value = env::var(&key).ok();
-            env::set_var(&key, value);
+            unsafe { env::set_var(&key, value) };
             EnvVarGuard {
                 key,
                 original_value,
@@ -183,7 +183,7 @@ mod tests {
         fn remove(key: &str) -> Self {
             let key = key.to_string();
             let original_value = env::var(&key).ok();
-            env::remove_var(&key);
+            unsafe { env::remove_var(&key) };
             EnvVarGuard {
                 key,
                 original_value,
@@ -194,8 +194,9 @@ mod tests {
     impl Drop for EnvVarGuard {
         fn drop(&mut self) {
             match &self.original_value {
-                Some(val) => env::set_var(&self.key, val),
-                None => env::remove_var(&self.key),
+                Some(val) => unsafe { env::set_var(&self.key, val) },
+
+                None => unsafe { env::remove_var(&self.key) },
             }
         }
     }

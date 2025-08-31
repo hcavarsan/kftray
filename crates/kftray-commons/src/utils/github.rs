@@ -42,11 +42,11 @@ impl GitHubRepository {
         github_token: Option<String>,
     ) -> GitHubResult<String> {
         use git2::{
-            build::RepoBuilder,
             CertificateCheckStatus,
             Cred,
             FetchOptions,
             RemoteCallbacks,
+            build::RepoBuilder,
         };
         use tempfile::TempDir;
 
@@ -75,12 +75,12 @@ impl GitHubRepository {
 
                 let is_https_url = url.starts_with("https://");
 
-                if is_https_url && allowed_types.contains(git2::CredentialType::USER_PASS_PLAINTEXT)
+                if is_https_url
+                    && allowed_types.contains(git2::CredentialType::USER_PASS_PLAINTEXT)
+                    && let Some(token) = &token
                 {
-                    if let Some(token) = &token {
-                        info!("Using token authentication for HTTPS");
-                        return Cred::userpass_plaintext("git", token);
-                    }
+                    info!("Using token authentication for HTTPS");
+                    return Cred::userpass_plaintext("git", token);
                 }
 
                 if use_system_credentials {
@@ -117,18 +117,18 @@ impl GitHubRepository {
     fn get_system_credentials(url: &str, username: &str) -> Result<git2::Cred, git2::Error> {
         use git2::Cred;
 
-        if url.starts_with("git@") || url.starts_with("ssh://") {
-            if let Ok(cred) = Cred::ssh_key_from_agent(username) {
-                info!("Successfully authenticated with SSH agent");
-                return Ok(cred);
-            }
+        if (url.starts_with("git@") || url.starts_with("ssh://"))
+            && let Ok(cred) = Cred::ssh_key_from_agent(username)
+        {
+            info!("Successfully authenticated with SSH agent");
+            return Ok(cred);
         }
 
-        if let Ok(config) = git2::Config::open_default() {
-            if let Ok(cred) = Cred::credential_helper(&config, url, Some(username)) {
-                info!("Successfully retrieved credentials from OS credential store");
-                return Ok(cred);
-            }
+        if let Ok(config) = git2::Config::open_default()
+            && let Ok(cred) = Cred::credential_helper(&config, url, Some(username))
+        {
+            info!("Successfully retrieved credentials from OS credential store");
+            return Ok(cred);
         }
 
         Err(git2::Error::from_str("No valid credentials found"))
@@ -157,7 +157,9 @@ impl GitHubRepository {
         } else {
             let error_msg = String::from_utf8_lossy(&output.stderr);
             error!("System git clone failed: {error_msg}");
-            Err(format!("Failed to clone repository. Please check your credentials and repository URL. Error: {error_msg}"))
+            Err(format!(
+                "Failed to clone repository. Please check your credentials and repository URL. Error: {error_msg}"
+            ))
         }
     }
 
@@ -405,30 +407,38 @@ mod tests {
         let result_invalid_url = build_github_api_url("invalid-url", "path/to/config.json");
         assert!(result_invalid_url.is_err());
         // Should fail the github.com check first
-        assert!(result_invalid_url
-            .unwrap_err()
-            .contains("URL must be a GitHub repository URL"));
+        assert!(
+            result_invalid_url
+                .unwrap_err()
+                .contains("URL must be a GitHub repository URL")
+        );
 
         // Test non-GitHub URL (should fail the github.com check)
         let result_not_github =
             build_github_api_url("https://gitlab.com/owner/repo", "config.json");
         assert!(result_not_github.is_err());
-        assert!(result_not_github
-            .unwrap_err()
-            .contains("URL must be a GitHub repository URL"));
+        assert!(
+            result_not_github
+                .unwrap_err()
+                .contains("URL must be a GitHub repository URL")
+        );
 
         // Test URL missing repo part (should fail length check after parsing)
         let result_too_short = build_github_api_url("github.com/owner", "config.json");
         assert!(result_too_short.is_err());
-        assert!(result_too_short
-            .unwrap_err()
-            .contains("Invalid GitHub repository URL format after parsing"));
+        assert!(
+            result_too_short
+                .unwrap_err()
+                .contains("Invalid GitHub repository URL format after parsing")
+        );
 
         // Test empty URL (should fail github.com check)
         let result_empty = build_github_api_url("", "config.json");
         assert!(result_empty.is_err());
-        assert!(result_empty
-            .unwrap_err()
-            .contains("URL must be a GitHub repository URL"));
+        assert!(
+            result_empty
+                .unwrap_err()
+                .contains("URL must be a GitHub repository URL")
+        );
     }
 }

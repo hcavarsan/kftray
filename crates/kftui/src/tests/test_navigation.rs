@@ -2,12 +2,12 @@ use kftray_commons::utils::db_mode::DatabaseMode;
 
 use crate::tests::test_logger_state;
 use crate::tui::input::{
+    App,
+    AppState,
     navigation::{
         handle_auto_add_configs,
         handle_context_selection,
     },
-    App,
-    AppState,
 };
 
 #[cfg(test)]

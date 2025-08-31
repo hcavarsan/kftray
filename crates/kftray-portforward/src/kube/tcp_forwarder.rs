@@ -14,8 +14,8 @@ use tracing::{
     error,
 };
 
-use crate::kube::http_log_watcher::HttpLogStateWatcher;
 use crate::Logger;
+use crate::kube::http_log_watcher::HttpLogStateWatcher;
 
 const BUFFER_SIZE: usize = 65536;
 const TIMEOUT_DURATION: Duration = Duration::from_secs(600);
@@ -74,10 +74,11 @@ impl TcpForwarder {
         let _log_subscriber = http_log_watcher.create_filtered_subscriber(self.config_id);
         let current_logging_enabled = http_log_watcher.get_http_logs(self.config_id).await;
 
-        if current_logging_enabled && self.logger.is_none() {
-            if let Err(e) = self.initialize_logger(local_port).await {
-                error!("Failed to initialize logger for {}: {}", client_address, e);
-            }
+        if current_logging_enabled
+            && self.logger.is_none()
+            && let Err(e) = self.initialize_logger(local_port).await
+        {
+            error!("Failed to initialize logger for {}: {}", client_address, e);
         }
 
         self.forward_connection(
@@ -290,8 +291,8 @@ impl TcpForwarder {
                     }
                 },
                 log_event = log_subscriber.recv() => {
-                    if let Ok(event) = log_event {
-                        if event.config_id == config_id {
+                    if let Ok(event) = log_event
+                        && event.config_id == config_id {
                             let new_should_log = event.enabled && {
                                 let mut logger_guard = logger.lock().await;
                                 if event.enabled && logger_guard.is_none() {
@@ -301,14 +302,14 @@ impl TcpForwarder {
                                     };
 
                                     if http_logs_enabled {
-                                            if let Ok(new_logger) = kftray_http_logs::HttpLogger::for_config(config_id, local_port).await {
+                                            match kftray_http_logs::HttpLogger::for_config(config_id, local_port).await { Ok(new_logger) => {
                                                 *logger_guard = Some(new_logger);
                                                 drop(logger_guard);
                                                 true
-                                            } else {
+                                            } _ => {
                                                 drop(logger_guard);
                                                 false
-                                            }
+                                            }}
                                     } else {
                                         drop(logger_guard);
                                         false
@@ -330,7 +331,6 @@ impl TcpForwarder {
                                     debug!("Disabled HTTP logging for client-to-upstream");
                                 }
                             }
-                        }
                     }
                 },
                 _ = cancellation_token.cancelled() => break,
@@ -384,35 +384,32 @@ impl TcpForwarder {
                     };
 
                     if n == 0 {
-                        if should_log {
-                            if let Some(ref mut state) = response_state.as_mut() {
+                        if should_log
+                            && let Some(ref mut state) = response_state.as_mut() {
                                 let logger_guard = logger.lock().await;
-                                if let Some(ref log) = *logger_guard {
-                                    if !state.buffer.is_empty() && !state.current_response_logged {
+                                if let Some(ref log) = *logger_guard
+                                    && !state.buffer.is_empty() && !state.current_response_logged {
                                         let req_id_guard = request_id.lock().await;
                                         if let Some(req_id) = &*req_id_guard {
                                             log.log_response(state.buffer.clone().into(), req_id.clone()).await;
                                         }
                                     }
-                                }
-                            }
                         }
                         break;
                     }
 
-                    if should_log {
-                        if let Some(ref mut state) = response_state.as_mut() {
+                    if should_log
+                        && let Some(ref mut state) = response_state.as_mut() {
                             Self::handle_response_logging_static(&buffer[..n], state, &logger, &request_id).await;
                         }
-                    }
 
                     if let Err(e) = client_writer.write_all(&buffer[..n]).await {
                         return Err(e.into());
                     }
                 },
                 log_event = log_subscriber.recv() => {
-                    if let Ok(event) = log_event {
-                        if event.config_id == config_id {
+                    if let Ok(event) = log_event
+                        && event.config_id == config_id {
                             let new_should_log = event.enabled && {
                                 let mut logger_guard = logger.lock().await;
                                 if event.enabled && logger_guard.is_none() {
@@ -422,14 +419,14 @@ impl TcpForwarder {
                                     };
 
                                     if http_logs_enabled {
-                                            if let Ok(new_logger) = kftray_http_logs::HttpLogger::for_config(config_id, local_port).await {
+                                            match kftray_http_logs::HttpLogger::for_config(config_id, local_port).await { Ok(new_logger) => {
                                                 *logger_guard = Some(new_logger);
                                                 drop(logger_guard);
                                                 true
-                                            } else {
+                                            } _ => {
                                                 drop(logger_guard);
                                                 false
-                                            }
+                                            }}
                                     } else {
                                         drop(logger_guard);
                                         false
@@ -460,7 +457,6 @@ impl TcpForwarder {
                                     debug!("Disabled HTTP logging for upstream-to-client");
                                 }
                             }
-                        }
                     }
                 },
                 _ = cancellation_token.cancelled() => break,

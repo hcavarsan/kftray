@@ -163,7 +163,8 @@ impl PortForwarder {
 
     async fn get_stream_with_retry(
         &self, mut portforwarder: kube::api::Portforwarder, target_port: u16,
-    ) -> anyhow::Result<impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send> {
+    ) -> anyhow::Result<impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + use<>>
+    {
         if let Some(stream) = portforwarder.take_stream(target_port) {
             if let Some(error_future) = portforwarder.take_error(target_port) {
                 tokio::spawn(async move {
@@ -356,21 +357,19 @@ impl PortForwarder {
                     continue;
                 }
                 _ = tokio::time::sleep(tokio::time::Duration::from_secs(3)), if pending_pod.is_some() => {
-                    if pending_pod.take().is_some()
-                        && last_pod_change.elapsed() >= tokio::time::Duration::from_secs(3) {
-                            if let Some(current_pod) = self.pod_watcher.get_ready_pod().await {
-                                debug!("Pod {} stable for 3s, creating fresh connections", current_pod.pod_name);
-                                let mut next_pf = self.next_portforwarder.lock().await;
-                                *next_pf = None;
-                                drop(next_pf);
+                    if pending_pod.take().is_some() && last_pod_change.elapsed() >= tokio::time::Duration::from_secs(3)
+                        && let Some(current_pod) = self.pod_watcher.get_ready_pod().await {
+                            debug!("Pod {} stable for 3s, creating fresh connections", current_pod.pod_name);
+                            let mut next_pf = self.next_portforwarder.lock().await;
+                            *next_pf = None;
+                            drop(next_pf);
 
-                                if let Ok(fresh_pf) = self.create_portforwarder(port).await {
-                                    let mut next_pf = self.next_portforwarder.lock().await;
-                                    *next_pf = Some(fresh_pf);
-                                    debug!("Created stable connection to pod {}", current_pod.pod_name);
-                                }
+                            if let Ok(fresh_pf) = self.create_portforwarder(port).await {
+                                let mut next_pf = self.next_portforwarder.lock().await;
+                                *next_pf = Some(fresh_pf);
+                                debug!("Created stable connection to pod {}", current_pod.pod_name);
                             }
-                        }
+                    }
                     continue;
                 }
                 _ = cancel_token.cancelled() => {

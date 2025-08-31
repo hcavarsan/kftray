@@ -179,34 +179,33 @@ pub fn validate_peer_credentials(
 
 #[cfg(unix)]
 fn get_authorized_user_uid() -> u32 {
-    if let Ok(sudo_uid) = std::env::var("SUDO_UID") {
-        if let Ok(uid) = sudo_uid.parse::<u32>() {
-            info!("Found authorized UID from SUDO_UID: {uid}");
-            return uid;
+    if let Ok(sudo_uid) = std::env::var("SUDO_UID")
+        && let Ok(uid) = sudo_uid.parse::<u32>()
+    {
+        info!("Found authorized UID from SUDO_UID: {uid}");
+        return uid;
+    }
+
+    if let Ok(socket_path) = crate::communication::get_default_socket_path()
+        && let Ok(metadata) = std::fs::metadata(&socket_path)
+    {
+        use std::os::unix::fs::MetadataExt;
+        let owner_uid = metadata.uid();
+        if owner_uid != 0 {
+            info!("Found authorized UID from socket file ownership: {owner_uid}");
+            return owner_uid;
         }
     }
 
-    if let Ok(socket_path) = crate::communication::get_default_socket_path() {
-        if let Ok(metadata) = std::fs::metadata(&socket_path) {
-            use std::os::unix::fs::MetadataExt;
-            let owner_uid = metadata.uid();
-            if owner_uid != 0 {
-                info!("Found authorized UID from socket file ownership: {owner_uid}");
-                return owner_uid;
-            }
-        }
-    }
-
-    if let Ok(socket_path) = crate::communication::get_default_socket_path() {
-        if let Some(parent_dir) = socket_path.parent() {
-            if let Ok(metadata) = std::fs::metadata(parent_dir) {
-                use std::os::unix::fs::MetadataExt;
-                let owner_uid = metadata.uid();
-                if owner_uid != 0 {
-                    info!("Found authorized UID from socket directory ownership: {owner_uid}");
-                    return owner_uid;
-                }
-            }
+    if let Ok(socket_path) = crate::communication::get_default_socket_path()
+        && let Some(parent_dir) = socket_path.parent()
+        && let Ok(metadata) = std::fs::metadata(parent_dir)
+    {
+        use std::os::unix::fs::MetadataExt;
+        let owner_uid = metadata.uid();
+        if owner_uid != 0 {
+            info!("Found authorized UID from socket directory ownership: {owner_uid}");
+            return owner_uid;
         }
     }
 
@@ -218,19 +217,19 @@ fn get_authorized_user_uid() -> u32 {
 #[cfg(windows)]
 fn get_current_user_sid() -> Result<String, HelperError> {
     use windows::{
-        core::PWSTR,
         Win32::Foundation::CloseHandle,
         Win32::Security::Authorization::ConvertSidToStringSidW,
         Win32::Security::{
             GetTokenInformation,
-            TokenUser,
             TOKEN_QUERY,
             TOKEN_USER,
+            TokenUser,
         },
         Win32::System::Threading::{
             GetCurrentProcess,
             OpenProcessToken,
         },
+        core::PWSTR,
     };
 
     unsafe {
@@ -293,7 +292,6 @@ fn get_pipe_client_process_id(
 #[cfg(windows)]
 fn get_process_user_sid(process_id: u32) -> Result<String, HelperError> {
     use windows::{
-        core::PWSTR,
         Win32::Foundation::{
             CloseHandle,
             HANDLE,
@@ -301,15 +299,16 @@ fn get_process_user_sid(process_id: u32) -> Result<String, HelperError> {
         Win32::Security::Authorization::ConvertSidToStringSidW,
         Win32::Security::{
             GetTokenInformation,
-            TokenUser,
             TOKEN_QUERY,
             TOKEN_USER,
+            TokenUser,
         },
         Win32::System::Threading::{
             OpenProcess,
             OpenProcessToken,
             PROCESS_QUERY_INFORMATION,
         },
+        core::PWSTR,
     };
 
     unsafe {
@@ -465,7 +464,6 @@ fn get_default_named_pipe_path() -> Result<String, HelperError> {
 #[cfg(windows)]
 fn get_file_owner_sid<P: AsRef<std::path::Path>>(path: P) -> Result<String, HelperError> {
     use windows::{
-        core::PWSTR,
         Win32::Foundation::LocalFree,
         Win32::Security::Authorization::ConvertSidToStringSidW,
         Win32::Security::{
@@ -473,6 +471,7 @@ fn get_file_owner_sid<P: AsRef<std::path::Path>>(path: P) -> Result<String, Help
             GetSecurityDescriptorOwner,
             OWNER_SECURITY_INFORMATION,
         },
+        core::PWSTR,
     };
 
     let path_str = path.as_ref().to_string_lossy();

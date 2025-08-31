@@ -17,10 +17,10 @@ use log::{
     warn,
 };
 use netstat2::{
-    get_sockets_info,
     AddressFamilyFlags,
     ProtocolFlags,
     ProtocolSocketInfo,
+    get_sockets_info,
 };
 use sysinfo::{
     Pid,
@@ -255,11 +255,11 @@ async fn find_process_by_port_internal(port: u16) -> Option<(i32, String)> {
                 ProtocolSocketInfo::Udp(udp_info) => udp_info.local_port,
             };
 
-            if local_port == port {
-                if let Some(&pid) = socket.associated_pids.first() {
-                    let process_name = get_process_name_by_pid(pid as i32);
-                    return Some((pid as i32, process_name));
-                }
+            if local_port == port
+                && let Some(&pid) = socket.associated_pids.first()
+            {
+                let process_name = get_process_name_by_pid(pid as i32);
+                return Some((pid as i32, process_name));
             }
         }
     }

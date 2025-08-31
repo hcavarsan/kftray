@@ -249,7 +249,9 @@ pub async fn open_log_file(log_file_name: String) -> Result<(), String> {
             match that_in_background(&canonical_file_path).join() {
                 Ok(Ok(_)) => Ok(()),
                 Ok(Err(err)) => {
-                    error!("Error opening log file with default method: {err}. Trying fallback methods...");
+                    error!(
+                        "Error opening log file with default method: {err}. Trying fallback methods..."
+                    );
                     try_fallback_editors(file_path_str)
                 }
                 Err(err) => Err(format!("Failed to join thread: {err:?}")),
@@ -349,7 +351,9 @@ fn open_with_editor(file_path: &str, editor: &str) -> Result<(), String> {
                             // Process still running
                             if start_time.elapsed() > timeout {
                                 // Process is taking too long, assume it's running in background
-                                info!("Editor process is still running after timeout, assuming success");
+                                info!(
+                                    "Editor process is still running after timeout, assuming success"
+                                );
                                 return Ok(());
                             }
                             // Small sleep to prevent CPU spinning
@@ -383,7 +387,7 @@ fn open_with_editor(file_path: &str, editor: &str) -> Result<(), String> {
     thread::spawn(move || {
         let result = handle.join();
         let _ = tx.send(result); // Send the result, ignore errors if receiver
-                                 // is dropped
+        // is dropped
     });
 
     // Wait for the result with a timeout
@@ -614,8 +618,9 @@ mod tests {
         fn drop(&mut self) {
             for (name, value) in &self.vars {
                 match value {
-                    Some(val) => env::set_var(name, val),
-                    None => env::remove_var(name),
+                    Some(val) => unsafe { env::set_var(name, val) },
+
+                    None => unsafe { env::remove_var(name) },
                 }
             }
         }
@@ -843,7 +848,8 @@ mod tests {
         let _guard = EnvGuard::new(&["KFTRAY_CONFIG", "XDG_CONFIG_HOME", "HOME"]);
         let temp_dir = tempfile::tempdir().unwrap();
         let non_existent_path = temp_dir.path().join("non_existent");
-        env::set_var("KFTRAY_CONFIG", non_existent_path.to_str().unwrap());
+
+        unsafe { env::set_var("KFTRAY_CONFIG", non_existent_path.to_str().unwrap()) };
 
         let result = get_and_validate_log_folder();
         assert!(
@@ -863,7 +869,7 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let log_folder = temp_dir.path().join("http_logs");
 
-        env::set_var("KFTRAY_CONFIG", temp_dir.path().to_str().unwrap());
+        unsafe { env::set_var("KFTRAY_CONFIG", temp_dir.path().to_str().unwrap()) };
         std::fs::create_dir_all(&log_folder).unwrap();
 
         let outside_dir = tempfile::tempdir().unwrap();

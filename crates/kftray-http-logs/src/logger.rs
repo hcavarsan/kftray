@@ -24,11 +24,11 @@ use tokio::io::{
     AsyncWriteExt,
     BufWriter,
 };
+use tokio::sync::RwLock;
 use tokio::sync::mpsc::{
     self,
     Sender,
 };
-use tokio::sync::RwLock;
 use tokio::time::Duration;
 use tracing::{
     debug,
@@ -125,19 +125,17 @@ impl HttpLogger {
                                 debug!("Writing log batch of {} messages (contains response: {})",
                                       batch_size, is_response);
 
-                                if let Err(e) = Self::write_log_batch(&log_file, &message_batch).await {
+                                match Self::write_log_batch(&log_file, &message_batch).await { Err(e) => {
                                     error!("Failed to write log batch: {:?}", e);
-                                } else {
+                                } _ => {
                                     debug!("Successfully wrote log batch");
 
-                                    if is_response {
-                                        if let Ok(mut file) = log_file.try_write() {
-                                            if let Err(e) = file.get_mut().sync_data().await {
+                                    if is_response
+                                        && let Ok(mut file) = log_file.try_write()
+                                        && let Err(e) = file.get_mut().sync_data().await {
                                                 error!("Failed to sync response log to disk: {:?}", e);
                                             }
-                                        }
-                                    }
-                                }
+                                }}
                                 message_batch.clear();
                                 last_flush = Utc::now();
                             }
@@ -270,20 +268,23 @@ impl HttpLogger {
         let timestamp = Utc::now();
         let is_preformatted = buffer.len() > 5 && &buffer[0..5] == b"HTTP/";
 
-        if let Some(trace_info) = self.trace_map.get(&request_id) {
-            let took_ms = calculate_time_diff(trace_info.timestamp, timestamp);
-            self.send_response_log_internal(
-                buffer,
-                request_id,
-                timestamp,
-                took_ms,
-                is_preformatted,
-            )
-            .await;
-        } else {
-            debug!("No trace info found for request ID: {}", request_id);
-            self.send_response_log_internal(buffer, request_id, timestamp, 0, is_preformatted)
+        match self.trace_map.get(&request_id) {
+            Some(trace_info) => {
+                let took_ms = calculate_time_diff(trace_info.timestamp, timestamp);
+                self.send_response_log_internal(
+                    buffer,
+                    request_id,
+                    timestamp,
+                    took_ms,
+                    is_preformatted,
+                )
                 .await;
+            }
+            _ => {
+                debug!("No trace info found for request ID: {}", request_id);
+                self.send_response_log_internal(buffer, request_id, timestamp, 0, is_preformatted)
+                    .await;
+            }
         }
     }
 

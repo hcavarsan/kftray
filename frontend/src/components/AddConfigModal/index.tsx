@@ -16,8 +16,8 @@ import {
   Tooltip,
 } from '@chakra-ui/react'
 import { useQuery } from '@tanstack/react-query'
-import { open } from '@tauri-apps/api/dialog'
-import { invoke } from '@tauri-apps/api/tauri'
+import { invoke } from '@tauri-apps/api/core'
+import { open } from '@tauri-apps/plugin-dialog'
 
 import { Checkbox } from '@/components/ui/checkbox'
 import { toaster } from '@/components/ui/toaster'

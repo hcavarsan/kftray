@@ -19,11 +19,11 @@ use kftray_portforward::kube::models::{
 use kftray_portforward::kube::retrieve_service_configs;
 use kube::Resource;
 use kube::{
+    ResourceExt,
     api::{
         Api,
         ListParams,
     },
-    ResourceExt,
 };
 use log::info;
 
@@ -169,48 +169,46 @@ pub async fn list_ports(
         Ok(service) => {
             let mut service_port_infos = Vec::new();
 
-            if let Some(spec) = service.spec {
-                if let Some(service_ports) = spec.ports {
-                    for sp in service_ports {
-                        if let Some(IntOrString::String(ref name)) = sp.target_port {
-                            let selector_string =
-                                spec.selector.as_ref().map_or_else(String::new, |s| {
-                                    s.iter()
-                                        .map(|(key, value)| format!("{key}={value}"))
-                                        .collect::<Vec<_>>()
-                                        .join(", ")
-                                });
+            if let Some(spec) = service.spec
+                && let Some(service_ports) = spec.ports
+            {
+                for sp in service_ports {
+                    if let Some(IntOrString::String(ref name)) = sp.target_port {
+                        let selector_string =
+                            spec.selector.as_ref().map_or_else(String::new, |s| {
+                                s.iter()
+                                    .map(|(key, value)| format!("{key}={value}"))
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            });
 
-                            let pods = api_pod
-                                .list(&ListParams::default().labels(&selector_string))
-                                .await
-                                .map_err(|e| format!("Failed to list pods: {e}"))?;
+                        let pods = api_pod
+                            .list(&ListParams::default().labels(&selector_string))
+                            .await
+                            .map_err(|e| format!("Failed to list pods: {e}"))?;
 
-                            'port_search: for pod in pods {
-                                if let Some(spec) = &pod.spec {
-                                    for container in &spec.containers {
-                                        if let Some(ports) = &container.ports {
-                                            for cp in ports {
-                                                if cp.name.as_deref() == Some(name) {
-                                                    service_port_infos.push(KubeServicePortInfo {
-                                                        name: cp.name.clone(),
-                                                        port: Some(IntOrString::Int(
-                                                            cp.container_port,
-                                                        )),
-                                                    });
-                                                    break 'port_search;
-                                                }
+                        'port_search: for pod in pods {
+                            if let Some(spec) = &pod.spec {
+                                for container in &spec.containers {
+                                    if let Some(ports) = &container.ports {
+                                        for cp in ports {
+                                            if cp.name.as_deref() == Some(name) {
+                                                service_port_infos.push(KubeServicePortInfo {
+                                                    name: cp.name.clone(),
+                                                    port: Some(IntOrString::Int(cp.container_port)),
+                                                });
+                                                break 'port_search;
                                             }
                                         }
                                     }
                                 }
                             }
-                        } else if let Some(IntOrString::Int(port)) = sp.target_port {
-                            service_port_infos.push(KubeServicePortInfo {
-                                name: sp.name,
-                                port: Some(IntOrString::Int(port)),
-                            });
                         }
+                    } else if let Some(IntOrString::Int(port)) = sp.target_port {
+                        service_port_infos.push(KubeServicePortInfo {
+                            name: sp.name,
+                            port: Some(IntOrString::Int(port)),
+                        });
                     }
                 }
             }

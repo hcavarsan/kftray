@@ -11,7 +11,7 @@ import {
 import { RiInstallLine, RiUninstallLine } from 'react-icons/ri'
 
 import { Box, Group } from '@chakra-ui/react'
-import { invoke } from '@tauri-apps/api/tauri'
+import { invoke } from '@tauri-apps/api/core'
 
 import AutoImportModal from '@/components/AutoImportModal'
 import BulkDeleteButton from '@/components/Footer/BulkDeleteButton'

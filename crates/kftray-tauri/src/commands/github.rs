@@ -9,7 +9,7 @@ use kftray_commons::utils::github::{
 };
 use tauri::{
     Error as TauriError,
-    InvokeError,
+    ipc::InvokeError,
 };
 
 #[derive(Debug)]
@@ -150,7 +150,7 @@ mod tests {
             _ => panic!("Wrong error variant for KeyringError conversion"),
         }
 
-        let tauri_error = TauriError::InvalidWindowUrl("test");
+        let tauri_error = TauriError::InvalidWebviewUrl("test");
         let custom_error = CustomError::from(tauri_error);
         match custom_error {
             CustomError::Tauri(_) => (),

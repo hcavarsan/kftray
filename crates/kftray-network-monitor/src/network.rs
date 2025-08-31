@@ -54,12 +54,11 @@ impl NetworkChecker {
                 tokio::net::TcpStream::connect(endpoint),
             )
             .await
+                && let Ok(local_addr) = socket.local_addr()
             {
-                if let Ok(local_addr) = socket.local_addr() {
-                    fingerprint.push(local_addr.ip().to_string());
-                    found_local_addr = true;
-                    break;
-                }
+                fingerprint.push(local_addr.ip().to_string());
+                found_local_addr = true;
+                break;
             }
         }
 

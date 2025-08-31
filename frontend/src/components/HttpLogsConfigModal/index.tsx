@@ -2,7 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react'
 import { FileText } from 'lucide-react'
 
 import { Box, Dialog, Flex, Grid, Input, Stack, Text } from '@chakra-ui/react'
-import { invoke } from '@tauri-apps/api/tauri'
+import { invoke } from '@tauri-apps/api/core'
 
 import { Button } from '@/components/ui/button'
 import { DialogCloseTrigger, DialogContent } from '@/components/ui/dialog'

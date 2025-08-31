@@ -26,16 +26,16 @@ impl HostfileManager {
     }
 
     pub fn add_host_entry(&self, id: String, entry: HostEntry) -> std::io::Result<()> {
-        if let Some(helper) = &self.helper_client {
-            if helper.is_available() {
-                match helper.add_host_entry(id.clone(), entry.clone()) {
-                    Ok(_) => {
-                        debug!("Successfully added host entry via helper for ID: {id}");
-                        return Ok(());
-                    }
-                    Err(e) => {
-                        warn!("Helper hostfile add failed: {e}, falling back to direct");
-                    }
+        if let Some(helper) = &self.helper_client
+            && helper.is_available()
+        {
+            match helper.add_host_entry(id.clone(), entry.clone()) {
+                Ok(_) => {
+                    debug!("Successfully added host entry via helper for ID: {id}");
+                    return Ok(());
+                }
+                Err(e) => {
+                    warn!("Helper hostfile add failed: {e}, falling back to direct");
                 }
             }
         }
@@ -44,16 +44,16 @@ impl HostfileManager {
     }
 
     pub fn remove_host_entry(&self, id: &str) -> std::io::Result<()> {
-        if let Some(helper) = &self.helper_client {
-            if helper.is_available() {
-                match helper.remove_host_entry(id) {
-                    Ok(_) => {
-                        debug!("Successfully removed host entry via helper for ID: {id}");
-                        return Ok(());
-                    }
-                    Err(e) => {
-                        warn!("Helper hostfile remove failed: {e}, falling back to direct");
-                    }
+        if let Some(helper) = &self.helper_client
+            && helper.is_available()
+        {
+            match helper.remove_host_entry(id) {
+                Ok(_) => {
+                    debug!("Successfully removed host entry via helper for ID: {id}");
+                    return Ok(());
+                }
+                Err(e) => {
+                    warn!("Helper hostfile remove failed: {e}, falling back to direct");
                 }
             }
         }
@@ -63,16 +63,16 @@ impl HostfileManager {
 
     pub fn remove_all_host_entries(&self) -> std::io::Result<()> {
         // Try helper first
-        if let Some(helper) = &self.helper_client {
-            if helper.is_available() {
-                match helper.remove_all_host_entries() {
-                    Ok(_) => {
-                        debug!("Successfully removed all host entries via helper");
-                        return Ok(());
-                    }
-                    Err(e) => {
-                        warn!("Helper hostfile remove_all failed: {e}, falling back to direct");
-                    }
+        if let Some(helper) = &self.helper_client
+            && helper.is_available()
+        {
+            match helper.remove_all_host_entries() {
+                Ok(_) => {
+                    debug!("Successfully removed all host entries via helper");
+                    return Ok(());
+                }
+                Err(e) => {
+                    warn!("Helper hostfile remove_all failed: {e}, falling back to direct");
                 }
             }
         }

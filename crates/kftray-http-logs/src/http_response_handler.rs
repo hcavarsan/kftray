@@ -17,11 +17,11 @@ fn find_headers_end(data: &[u8]) -> Option<usize> {
     data.windows(4).position(|w| w == b"\r\n\r\n")
 }
 
+use crate::HttpLogger;
 use crate::http_response_analyzer::{
     HttpResponseAnalyzer,
     ResponseAnalyzerConfig,
 };
-use crate::HttpLogger;
 
 pub const DEFAULT_MIN_LOG_SYNC_MS: u64 = 50;
 
@@ -159,16 +159,14 @@ impl HttpResponseHandler {
         let response_size = context.complete_response.len();
         trace!(
             "Processing response chunk #{}: {}B, total: {}B",
-            context.total_chunks_received,
-            n,
-            response_size
+            context.total_chunks_received, n, response_size
         );
 
-        if !context.is_chunked {
-            if let Some(headers_end) = find_headers_end(&context.complete_response) {
-                let headers_data = &context.complete_response[..headers_end];
-                context.is_chunked = Self::is_chunked_transfer(headers_data);
-            }
+        if !context.is_chunked
+            && let Some(headers_end) = find_headers_end(&context.complete_response)
+        {
+            let headers_data = &context.complete_response[..headers_end];
+            context.is_chunked = Self::is_chunked_transfer(headers_data);
         }
 
         if context.is_chunked && !context.found_end_marker {
@@ -253,18 +251,21 @@ impl HttpResponseHandler {
         if let Some(headers_end) = find_headers_end(response_data) {
             let headers = &response_data[..headers_end];
 
-            if response_data.len() > headers_end + 4 {
-                if let Ok(headers_str) = std::str::from_utf8(headers) {
-                    let h_lower = headers_str.to_lowercase();
-                    if h_lower.contains("upgrade: websocket")
-                        && h_lower.contains("connection: upgrade")
-                    {
-                        if h_lower.contains("sec-websocket-accept:") {
-                            debug!("Logging WebSocket upgrade response immediately - complete with all required headers");
-                            return true;
-                        } else {
-                            debug!("Potential WebSocket upgrade response detected but missing accept header");
-                        }
+            if response_data.len() > headers_end + 4
+                && let Ok(headers_str) = std::str::from_utf8(headers)
+            {
+                let h_lower = headers_str.to_lowercase();
+                if h_lower.contains("upgrade: websocket") && h_lower.contains("connection: upgrade")
+                {
+                    if h_lower.contains("sec-websocket-accept:") {
+                        debug!(
+                            "Logging WebSocket upgrade response immediately - complete with all required headers"
+                        );
+                        return true;
+                    } else {
+                        debug!(
+                            "Potential WebSocket upgrade response detected but missing accept header"
+                        );
                     }
                 }
             }
@@ -272,13 +273,12 @@ impl HttpResponseHandler {
             if let Ok(headers_str) = std::str::from_utf8(headers) {
                 let first_line = headers_str.lines().next().unwrap_or("");
                 let parts: Vec<&str> = first_line.split_whitespace().collect();
-                if parts.len() >= 2 {
-                    if let Ok(status) = parts[1].parse::<u16>() {
-                        if (100..200).contains(&status) || status == 204 || status == 304 {
-                            debug!("Logging status {} response which never has a body", status);
-                            return true;
-                        }
-                    }
+                if parts.len() >= 2
+                    && let Ok(status) = parts[1].parse::<u16>()
+                    && ((100..200).contains(&status) || status == 204 || status == 304)
+                {
+                    debug!("Logging status {} response which never has a body", status);
+                    return true;
                 }
             }
 
@@ -290,24 +290,24 @@ impl HttpResponseHandler {
                 return true;
             }
 
-            if let Ok(headers_str) = std::str::from_utf8(headers) {
-                if headers_str.starts_with("HTTP/1.0")
-                    && !headers_str.to_lowercase().contains("content-length:")
-                    && !headers_str
-                        .to_lowercase()
-                        .contains("transfer-encoding: chunked")
-                {
-                    debug!(
-                        "HTTP/1.0 response without length indicators - logging at connection end"
-                    );
-                    return true;
-                }
+            if let Ok(headers_str) = std::str::from_utf8(headers)
+                && headers_str.starts_with("HTTP/1.0")
+                && !headers_str.to_lowercase().contains("content-length:")
+                && !headers_str
+                    .to_lowercase()
+                    .contains("transfer-encoding: chunked")
+            {
+                debug!("HTTP/1.0 response without length indicators - logging at connection end");
+                return true;
             }
 
             let elapsed = start_time.elapsed();
             if elapsed.as_secs() >= 10 && response_data.len() > 5000 {
-                debug!("Long-lived connection detected ({}s, {}B) - logging accumulated data to prevent being stuck",
-                      elapsed.as_secs(), response_data.len());
+                debug!(
+                    "Long-lived connection detected ({}s, {}B) - logging accumulated data to prevent being stuck",
+                    elapsed.as_secs(),
+                    response_data.len()
+                );
                 return true;
             }
 
@@ -439,30 +439,32 @@ impl HttpResponseHandler {
                 let content_type = crate::parser::BodyParser::get_content_type(&headers);
                 debug!("Content type for body formatting: {:?}", content_type);
 
-                let body_formatted =
-                    match crate::parser::BodyParser::format_body(&processed_body, content_type) {
-                        Ok(formatted) => {
-                            debug!(
-                                "Successfully formatted response body: {} bytes",
-                                formatted.len()
-                            );
-                            formatted
-                        }
-                        Err(e) => {
-                            debug!(
+                let body_formatted = match crate::parser::BodyParser::format_body(
+                    &processed_body,
+                    content_type,
+                ) {
+                    Ok(formatted) => {
+                        debug!(
+                            "Successfully formatted response body: {} bytes",
+                            formatted.len()
+                        );
+                        formatted
+                    }
+                    Err(e) => {
+                        debug!(
                             "Error formatting response body: {:?}, trying direct string conversion",
                             e
                         );
 
-                            if let Ok(text) = std::str::from_utf8(&processed_body) {
-                                debug!("Direct string conversion succeeded");
-                                text.to_string()
-                            } else {
-                                debug!("Direct string conversion failed, using lossy conversion");
-                                String::from_utf8_lossy(&processed_body).to_string()
-                            }
+                        if let Ok(text) = std::str::from_utf8(&processed_body) {
+                            debug!("Direct string conversion succeeded");
+                            text.to_string()
+                        } else {
+                            debug!("Direct string conversion failed, using lossy conversion");
+                            String::from_utf8_lossy(&processed_body).to_string()
                         }
-                    };
+                    }
+                };
 
                 formatted.push_str(&body_formatted);
             } else {
@@ -574,7 +576,9 @@ impl HttpResponseHandler {
 
                     drop(req_id_guard);
 
-                    debug!("Logging HTTP response at connection close - this ensures all data is captured");
+                    debug!(
+                        "Logging HTTP response at connection close - this ensures all data is captured"
+                    );
 
                     let timeout_duration = Duration::from_secs(5);
                     match tokio::time::timeout(
@@ -809,8 +813,10 @@ mod tests {
             Vec::from(&b"HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\n"[..]);
         large_response.extend(vec![b'A'; 6000]);
 
-        assert!(handler.check_time_based_logging(&large_response, very_old_time),
-            "Time-based logging should be triggered for large response with sufficient time elapsed");
+        assert!(
+            handler.check_time_based_logging(&large_response, very_old_time),
+            "Time-based logging should be triggered for large response with sufficient time elapsed"
+        );
     }
 
     #[tokio::test]

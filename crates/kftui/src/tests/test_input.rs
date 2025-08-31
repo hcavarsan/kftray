@@ -4,6 +4,11 @@ use kftray_commons::utils::db_mode::DatabaseMode;
 
 use crate::tests::test_logger_state;
 use crate::tui::input::{
+    ActiveComponent,
+    ActiveTable,
+    App,
+    AppState,
+    DeleteButton,
     clear_selection,
     handle_about_input,
     handle_confirmation_popup_input,
@@ -21,11 +26,6 @@ use crate::tui::input::{
     show_delete_confirmation,
     toggle_row_selection,
     toggle_select_all,
-    ActiveComponent,
-    ActiveTable,
-    App,
-    AppState,
-    DeleteButton,
 };
 
 #[cfg(test)]

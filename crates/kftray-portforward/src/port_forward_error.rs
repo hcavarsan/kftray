@@ -79,10 +79,9 @@ impl fmt::Display for PortForwardError {
                 current_usage,
                 limit,
             } => match (current_usage, limit) {
-                (Some(current), Some(max)) => write!(
-                    f,
-                    "Resource exhausted: {resource_type} ({current}/{max})"
-                ),
+                (Some(current), Some(max)) => {
+                    write!(f, "Resource exhausted: {resource_type} ({current}/{max})")
+                }
                 (Some(current), None) => {
                     write!(f, "Resource exhausted: {resource_type} ({current})")
                 }

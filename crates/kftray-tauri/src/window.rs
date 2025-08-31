@@ -12,7 +12,8 @@ use log::{
 };
 use tauri::{
     Manager,
-    Window,
+    WebviewWindow,
+    Wry,
 };
 use tauri_plugin_positioner::{
     Position,
@@ -20,33 +21,36 @@ use tauri_plugin_positioner::{
 };
 use tokio::time::sleep;
 
-pub fn save_window_position(window: &Window) {
-    if let Ok(position) = window.outer_position() {
-        let position_data = WindowPosition {
-            x: position.x,
-            y: position.y,
-        };
-        let position_json = serde_json::to_string(&position_data).unwrap();
+pub fn save_window_position(window: &WebviewWindow<Wry>) {
+    match window.outer_position() {
+        Ok(position) => {
+            let position_data = WindowPosition {
+                x: position.x,
+                y: position.y,
+            };
+            let position_json = serde_json::to_string(&position_data).unwrap();
 
-        match get_window_state_path() {
-            Ok(path) => {
-                if let Some(parent_dir) = path.parent() {
-                    if let Err(e) = fs::create_dir_all(parent_dir) {
+            match get_window_state_path() {
+                Ok(path) => {
+                    if let Some(parent_dir) = path.parent()
+                        && let Err(e) = fs::create_dir_all(parent_dir)
+                    {
                         info!("Failed to create config directory: {e}");
                         return;
                     }
-                }
 
-                if fs::write(&path, position_json).is_ok() {
-                    info!("Window position saved: {position_data:?}");
-                } else {
-                    info!("Failed to save window position.");
+                    if fs::write(&path, position_json).is_ok() {
+                        info!("Window position saved: {position_data:?}");
+                    } else {
+                        info!("Failed to save window position.");
+                    }
                 }
+                Err(err) => info!("Failed to get window state path: {err}"),
             }
-            Err(err) => info!("Failed to get window state path: {err}"),
         }
-    } else {
-        info!("Failed to get window position.");
+        _ => {
+            info!("Failed to get window position.");
+        }
     }
 }
 
@@ -86,7 +90,7 @@ fn handle_corrupted_file(path: &Path, error: impl std::fmt::Display) {
     }
 }
 
-pub fn toggle_window_visibility(window: &Window) {
+pub fn toggle_window_visibility(window: &WebviewWindow<Wry>) {
     let app_state = window.state::<AppState>();
     if window.is_visible().unwrap() {
         if !app_state.is_pinned.load(Ordering::SeqCst) {
@@ -99,7 +103,7 @@ pub fn toggle_window_visibility(window: &Window) {
     }
 }
 
-pub fn set_default_position(window: &Window) {
+pub fn set_default_position(window: &WebviewWindow<Wry>) {
     let app_state = window.state::<AppState>();
     app_state.is_plugin_moving.store(true, Ordering::SeqCst);
 
@@ -120,7 +124,7 @@ pub fn set_default_position(window: &Window) {
     reset_plugin_moving_state_after_delay(&app_state);
 }
 
-pub fn is_valid_position(window: &Window, x: i32, y: i32) -> bool {
+pub fn is_valid_position(window: &WebviewWindow<Wry>, x: i32, y: i32) -> bool {
     if let Ok(monitors) = window.available_monitors() {
         for monitor in monitors {
             let monitor_position = monitor.position();
@@ -140,7 +144,7 @@ pub fn is_valid_position(window: &Window, x: i32, y: i32) -> bool {
     false
 }
 
-pub fn reset_to_default_position(window: &Window) {
+pub fn reset_to_default_position(window: &WebviewWindow<Wry>) {
     let app_state = window.state::<AppState>();
     app_state.is_plugin_moving.store(true, Ordering::SeqCst);
 
@@ -160,7 +164,7 @@ pub fn reset_to_default_position(window: &Window) {
     reset_plugin_moving_state_after_delay(&app_state);
 }
 
-pub fn reset_window_position(window: &Window) {
+pub fn reset_window_position(window: &WebviewWindow<Wry>) {
     let app_state = window.state::<AppState>();
     app_state.is_plugin_moving.store(true, Ordering::SeqCst);
 
@@ -185,7 +189,7 @@ fn remove_position_file() {
     }
 }
 
-pub fn set_window_position(window: &Window, position: Position) {
+pub fn set_window_position(window: &WebviewWindow<Wry>, position: Position) {
     if let Err(e) = window.move_window(position) {
         warn!("Failed to move window: {e}");
     }
@@ -200,7 +204,7 @@ fn reset_plugin_moving_state_after_delay(app_state: &AppState) {
 }
 
 pub fn adjust_window_size_and_position(
-    window: &Window, _scale_factor: f64, new_inner_size: tauri::PhysicalSize<u32>,
+    window: &WebviewWindow<Wry>, _scale_factor: f64, new_inner_size: tauri::PhysicalSize<u32>,
 ) {
     let app_state = window.state::<AppState>();
     app_state.is_plugin_moving.store(true, Ordering::SeqCst);

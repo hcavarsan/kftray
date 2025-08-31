@@ -19,13 +19,13 @@ use kftray_commons::{
         db_mode::DatabaseMode,
     },
 };
+use kube::Client;
 use kube::api::ListParams;
 use kube::api::{
     Api,
     DeleteParams,
     PostParams,
 };
-use kube::Client;
 use kube_runtime::wait::conditions;
 use log::{
     debug,
@@ -38,8 +38,8 @@ use rand::distr::{
 };
 
 use crate::kube::shared_client::{
-    ServiceClientKey,
     SHARED_CLIENT_MANAGER,
+    ServiceClientKey,
 };
 
 pub async fn deploy_and_forward_pod(configs: Vec<Config>) -> Result<Vec<CustomResponse>, String> {

@@ -53,7 +53,9 @@ impl NetworkMonitor {
         };
 
         if initial_configs.is_empty() {
-            info!("No active port forward configs found, network monitor will idle until configs are started");
+            info!(
+                "No active port forward configs found, network monitor will idle until configs are started"
+            );
         } else {
             info!(
                 "Network monitor starting with {} active port forward configs",
@@ -159,14 +161,18 @@ impl NetworkMonitor {
 
             let current_network_info = self.network_checker.get_network_fingerprint().await;
             if current_network_info != last_network_info {
-                info!("Network interface change detected (background monitor) - monitoring state changes only");
+                info!(
+                    "Network interface change detected (background monitor) - monitoring state changes only"
+                );
                 last_network_info = current_network_info;
             }
 
             let current_network_state = self.network_checker.check_connectivity().await;
 
             if current_network_state != last_network_state {
-                info!("Network state change detected: {last_network_state} -> {current_network_state}");
+                info!(
+                    "Network state change detected: {last_network_state} -> {current_network_state}"
+                );
                 if current_network_state {
                     debug!("Network recovered (background monitor)");
                     if self.should_start_reconnect().await {

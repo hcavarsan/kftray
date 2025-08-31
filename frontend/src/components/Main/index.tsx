@@ -1,10 +1,10 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
 
 import { Box, VStack } from '@chakra-ui/react'
-import { open, save } from '@tauri-apps/api/dialog'
+import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import { readTextFile, writeTextFile } from '@tauri-apps/api/fs'
-import { invoke } from '@tauri-apps/api/tauri'
+import { open, save } from '@tauri-apps/plugin-dialog'
+import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs'
 
 import AddConfigModal from '@/components/AddConfigModal'
 import AutoImportModal from '@/components/AutoImportModal'

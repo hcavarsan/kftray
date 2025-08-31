@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { MdDelete } from 'react-icons/md'
 
 import { Box, Button, HStack, Text } from '@chakra-ui/react'
-import { invoke } from '@tauri-apps/api/tauri'
+import { invoke } from '@tauri-apps/api/core'
 
 import { toaster } from '@/components/ui/toaster'
 import { Tooltip } from '@/components/ui/tooltip'
