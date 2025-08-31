@@ -54,9 +54,9 @@ pub fn toggle_pin_state(app_state: tauri::State<AppState>, window: WebviewWindow
 mod tests {
     use std::collections::HashMap;
     use std::sync::{
-        atomic::AtomicBool,
         Arc,
         Mutex,
+        atomic::AtomicBool,
     };
 
     use tokio::runtime::Runtime;
@@ -273,13 +273,13 @@ mod tests {
         }
 
         fn emit<T: serde::Serialize + Clone>(&self, event: &str, payload: T) -> Result<(), String> {
-            if let Ok(payload) = serde_json::to_value(payload.clone()) {
-                if let Ok(payload_bool) = serde_json::from_value::<bool>(payload) {
-                    self.emitted_events
-                        .lock()
-                        .unwrap()
-                        .push((event.to_string(), payload_bool));
-                }
+            if let Ok(payload) = serde_json::to_value(payload.clone())
+                && let Ok(payload_bool) = serde_json::from_value::<bool>(payload)
+            {
+                self.emitted_events
+                    .lock()
+                    .unwrap()
+                    .push((event.to_string(), payload_bool));
             }
             Ok(())
         }

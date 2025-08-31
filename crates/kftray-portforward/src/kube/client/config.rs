@@ -94,17 +94,17 @@ pub async fn create_config_with_context(
     let mut kubeconfig = kubeconfig.clone();
 
     for auth_info in &mut kubeconfig.auth_infos {
-        if let Some(ref mut auth_info_data) = auth_info.auth_info {
-            if let Some(client_key_data) = &auth_info_data.client_key_data {
-                let decoded_key = decode_block(client_key_data.expose_secret())
-                    .context("Failed to decode client key data")?;
+        if let Some(ref mut auth_info_data) = auth_info.auth_info
+            && let Some(client_key_data) = &auth_info_data.client_key_data
+        {
+            let decoded_key = decode_block(client_key_data.expose_secret())
+                .context("Failed to decode client key data")?;
 
-                if is_pkcs8_key(&decoded_key) {
-                    let converted_key = convert_pkcs8_to_pkcs1(&decoded_key)
-                        .context("Failed to convert PKCS#8 key to PKCS#1")?;
-                    let encoded_key = encode_block(&converted_key);
-                    auth_info_data.client_key_data = Some(encoded_key.into());
-                }
+            if is_pkcs8_key(&decoded_key) {
+                let converted_key = convert_pkcs8_to_pkcs1(&decoded_key)
+                    .context("Failed to convert PKCS#8 key to PKCS#1")?;
+                let encoded_key = encode_block(&converted_key);
+                auth_info_data.client_key_data = Some(encoded_key.into());
             }
         }
     }

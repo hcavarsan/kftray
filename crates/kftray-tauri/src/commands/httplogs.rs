@@ -387,7 +387,7 @@ fn open_with_editor(file_path: &str, editor: &str) -> Result<(), String> {
     thread::spawn(move || {
         let result = handle.join();
         let _ = tx.send(result); // Send the result, ignore errors if receiver
-                                 // is dropped
+        // is dropped
     });
 
     // Wait for the result with a timeout

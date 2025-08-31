@@ -106,12 +106,11 @@ fn main() {
             });
 
             tauri::async_runtime::spawn(async move {
-                if let Ok(enabled) = kftray_commons::utils::settings::get_network_monitor().await {
-                    if enabled {
-                        if let Err(e) = kftray_network_monitor::start().await {
-                            error!("Failed to start network monitor: {e}");
-                        }
-                    }
+                if let Ok(enabled) = kftray_commons::utils::settings::get_network_monitor().await
+                    && enabled
+                    && let Err(e) = kftray_network_monitor::start().await
+                {
+                    error!("Failed to start network monitor: {e}");
                 }
             });
 

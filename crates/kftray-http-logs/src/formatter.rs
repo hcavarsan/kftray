@@ -191,11 +191,11 @@ impl MessageFormatter {
         if content_type_lower.contains("json") {
             debug!("Attempting to format as JSON");
             if let Ok(text) = std::str::from_utf8(body) {
-                if let Ok(json) = serde_json::from_str::<serde_json::Value>(text.trim()) {
-                    if let Ok(pretty) = serde_json::to_string_pretty(&json) {
-                        log_entry.push_str(&pretty);
-                        return;
-                    }
+                if let Ok(json) = serde_json::from_str::<serde_json::Value>(text.trim())
+                    && let Ok(pretty) = serde_json::to_string_pretty(&json)
+                {
+                    log_entry.push_str(&pretty);
+                    return;
                 }
                 log_entry.push_str(text);
             } else {
@@ -437,18 +437,18 @@ impl MessageFormatter {
             "<!-- Debug: Failed to process content: {error} -->"
         ));
 
-        if let Some(content_type) = Self::extract_content_type(headers) {
-            if content_type.contains("javascript") {
-                Self::insert_js_placeholder(content_type, log_entry);
-                return Ok(Vec::new());
-            }
+        if let Some(content_type) = Self::extract_content_type(headers)
+            && content_type.contains("javascript")
+        {
+            Self::insert_js_placeholder(content_type, log_entry);
+            return Ok(Vec::new());
         }
 
-        if let Ok(body_str) = std::str::from_utf8(body) {
-            if !body_str.is_empty() {
-                log_entry.push_str(body_str);
-                return Ok(Vec::new());
-            }
+        if let Ok(body_str) = std::str::from_utf8(body)
+            && !body_str.is_empty()
+        {
+            log_entry.push_str(body_str);
+            return Ok(Vec::new());
         }
 
         Ok(body.to_vec())

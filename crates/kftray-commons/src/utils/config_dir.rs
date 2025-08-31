@@ -67,12 +67,12 @@ pub fn get_kubeconfig_paths() -> Result<Vec<PathBuf>> {
         }
     }
 
-    if paths.is_empty() {
-        if let Some(mut config_path) = dirs::home_dir() {
-            config_path.push(".kube/config");
-            if config_path.exists() {
-                paths.push(config_path);
-            }
+    if paths.is_empty()
+        && let Some(mut config_path) = dirs::home_dir()
+    {
+        config_path.push(".kube/config");
+        if config_path.exists() {
+            paths.push(config_path);
         }
     }
 

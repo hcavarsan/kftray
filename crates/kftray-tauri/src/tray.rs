@@ -8,6 +8,10 @@ use log::{
     info,
 };
 use tauri::{
+    Manager,
+    RunEvent,
+    WindowEvent,
+    Wry,
     menu::{
         MenuBuilder,
         MenuItemBuilder,
@@ -20,10 +24,6 @@ use tauri::{
         TrayIconBuilder,
         TrayIconEvent,
     },
-    Manager,
-    RunEvent,
-    WindowEvent,
-    Wry,
 };
 use tauri_plugin_positioner::Position;
 use tokio::time::sleep;
@@ -105,13 +105,14 @@ pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<tauri::tray::TrayIcon<W
             "quit" => {
                 tauri::async_runtime::block_on(handle_exit_app(app.clone()));
             }
-            "toggle" => {
-                if let Some(window) = app.get_webview_window("main") {
+            "toggle" => match app.get_webview_window("main") {
+                Some(window) => {
                     toggle_window_visibility(&window);
-                } else {
+                }
+                _ => {
                     error!("Main window not found on menu event");
                 }
-            }
+            },
             "reset_position" => {
                 if let Some(window) = app.get_webview_window("main") {
                     reset_window_position(&window);
@@ -196,13 +197,13 @@ pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<tauri::tray::TrayIcon<W
 
 pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
     // Get the webview window for window management operations
-    let webview_window =
-        if let Some(webview_window) = window.app_handle().get_webview_window(window.label()) {
-            webview_window
-        } else {
+    let webview_window = match window.app_handle().get_webview_window(window.label()) {
+        Some(webview_window) => webview_window,
+        _ => {
             error!("Failed to get webview window for label: {}", window.label());
             return;
-        };
+        }
+    };
 
     if let WindowEvent::ScaleFactorChanged {
         scale_factor,
@@ -224,28 +225,30 @@ pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
     let app_state = webview_window.state::<AppState>();
     let mut is_moving = app_state.is_moving.lock().unwrap();
 
-    if let WindowEvent::Focused(is_focused) = event {
-        if !is_focused && !*is_moving && !app_state.is_pinned.load(Ordering::SeqCst) {
-            let app_handle = webview_window.app_handle();
+    if let WindowEvent::Focused(is_focused) = event
+        && !is_focused
+        && !*is_moving
+        && !app_state.is_pinned.load(Ordering::SeqCst)
+    {
+        let app_handle = webview_window.app_handle();
 
-            if let Some(state) = app_handle.try_state::<SaveDialogState>() {
-                if !state.is_open.load(Ordering::SeqCst) {
-                    let webview_window_clone = webview_window.clone();
-                    let app_handle_clone = app_handle.clone();
-                    let runtime = app_state.runtime.clone();
-                    runtime.spawn(async move {
-                        sleep(Duration::from_millis(200)).await;
-                        if !app_handle_clone
-                            .get_webview_window("main")
-                            .unwrap()
-                            .is_focused()
-                            .unwrap()
-                        {
-                            webview_window_clone.hide().unwrap()
-                        }
-                    });
+        if let Some(state) = app_handle.try_state::<SaveDialogState>()
+            && !state.is_open.load(Ordering::SeqCst)
+        {
+            let webview_window_clone = webview_window.clone();
+            let app_handle_clone = app_handle.clone();
+            let runtime = app_state.runtime.clone();
+            runtime.spawn(async move {
+                sleep(Duration::from_millis(200)).await;
+                if !app_handle_clone
+                    .get_webview_window("main")
+                    .unwrap()
+                    .is_focused()
+                    .unwrap()
+                {
+                    webview_window_clone.hide().unwrap()
                 }
-            }
+            });
         }
     }
 
@@ -281,13 +284,13 @@ pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
         }
     }
 
-    if let WindowEvent::CloseRequested { api, .. } = event {
-        if !app_state.is_pinned.load(Ordering::SeqCst) {
-            api.prevent_close();
-            // Call the same exit logic as tray quit to handle active port forwards
-            let app_handle = webview_window.app_handle();
-            tauri::async_runtime::block_on(handle_exit_app(app_handle.clone()));
-        }
+    if let WindowEvent::CloseRequested { api, .. } = event
+        && !app_state.is_pinned.load(Ordering::SeqCst)
+    {
+        api.prevent_close();
+        // Call the same exit logic as tray quit to handle active port forwards
+        let app_handle = webview_window.app_handle();
+        tauri::async_runtime::block_on(handle_exit_app(app_handle.clone()));
     }
 }
 

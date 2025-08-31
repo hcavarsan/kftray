@@ -9,8 +9,8 @@ use kftray_commons::utils::config_dir;
 
 use crate::{
     communication::{
-        get_default_socket_path,
         SOCKET_FILENAME,
+        get_default_socket_path,
     },
     error::HelperError,
 };

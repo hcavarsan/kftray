@@ -2,10 +2,10 @@ use std::env;
 use std::path::PathBuf;
 
 use tauri::{
-    async_runtime::spawn_blocking,
     AppHandle,
     Manager,
     Runtime,
+    async_runtime::spawn_blocking,
 };
 use tauri_plugin_dialog::{
     DialogExt,

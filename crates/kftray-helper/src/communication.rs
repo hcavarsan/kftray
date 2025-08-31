@@ -71,58 +71,59 @@ fn is_running_as_root() -> bool {
 
 #[cfg(target_os = "macos")]
 fn get_user_config_dir() -> Option<PathBuf> {
-    if let Ok(socket_path) = std::env::var("SOCKET_PATH") {
-        if !socket_path.is_empty() {
-            info!("Using explicit SOCKET_PATH from environment: {socket_path}");
-            return Some(PathBuf::from(socket_path).parent()?.to_path_buf());
-        }
+    if let Ok(socket_path) = std::env::var("SOCKET_PATH")
+        && !socket_path.is_empty()
+    {
+        info!("Using explicit SOCKET_PATH from environment: {socket_path}");
+        return Some(PathBuf::from(socket_path).parent()?.to_path_buf());
     }
 
-    if let Ok(config_dir) = std::env::var("KFTRAY_CONFIG") {
-        if !config_dir.is_empty() {
-            info!("Using KFTRAY_CONFIG from environment: {config_dir}");
-            return Some(PathBuf::from(config_dir));
-        }
+    if let Ok(config_dir) = std::env::var("KFTRAY_CONFIG")
+        && !config_dir.is_empty()
+    {
+        info!("Using KFTRAY_CONFIG from environment: {config_dir}");
+        return Some(PathBuf::from(config_dir));
     }
 
-    if let Ok(config_dir) = std::env::var("CONFIG_DIR") {
-        if !config_dir.is_empty() {
-            info!("Using CONFIG_DIR from environment: {config_dir}");
-            return Some(PathBuf::from(config_dir));
-        }
+    if let Ok(config_dir) = std::env::var("CONFIG_DIR")
+        && !config_dir.is_empty()
+    {
+        info!("Using CONFIG_DIR from environment: {config_dir}");
+        return Some(PathBuf::from(config_dir));
     }
 
-    if let Ok(home) = std::env::var("HOME") {
-        if !home.is_empty() {
-            if let Ok(user) = std::env::var("USER") {
-                if user != "root" {
-                    info!("Using home directory for user '{user}': {home}");
-                    let mut path = PathBuf::from(home);
-                    path.push(".kftray");
-                    return Some(path);
-                }
-            }
+    if let Ok(home) = std::env::var("HOME")
+        && !home.is_empty()
+    {
+        if let Ok(user) = std::env::var("USER")
+            && user != "root"
+        {
+            info!("Using home directory for user '{user}': {home}");
+            let mut path = PathBuf::from(home);
+            path.push(".kftray");
+            return Some(path);
+        }
 
-            if home.starts_with("/Users/") || home.starts_with("/home/") {
-                let mut path = PathBuf::from(home);
-                path.push(".kftray");
-                info!("Using user's home directory: {}", path.display());
-                return Some(path);
-            }
+        if home.starts_with("/Users/") || home.starts_with("/home/") {
+            let mut path = PathBuf::from(home);
+            path.push(".kftray");
+            info!("Using user's home directory: {}", path.display());
+            return Some(path);
+        }
 
-            if let Ok(sudo_user) = std::env::var("SUDO_USER") {
-                if !sudo_user.is_empty() && sudo_user != "root" {
-                    info!("Using SUDO_USER's home directory for: {sudo_user}");
-                    let user_home = if cfg!(target_os = "macos") {
-                        format!("/Users/{sudo_user}")
-                    } else {
-                        format!("/home/{sudo_user}")
-                    };
-                    let mut path = PathBuf::from(user_home);
-                    path.push(".kftray");
-                    return Some(path);
-                }
-            }
+        if let Ok(sudo_user) = std::env::var("SUDO_USER")
+            && !sudo_user.is_empty()
+            && sudo_user != "root"
+        {
+            info!("Using SUDO_USER's home directory for: {sudo_user}");
+            let user_home = if cfg!(target_os = "macos") {
+                format!("/Users/{sudo_user}")
+            } else {
+                format!("/home/{sudo_user}")
+            };
+            let mut path = PathBuf::from(user_home);
+            path.push(".kftray");
+            return Some(path);
         }
     }
 
@@ -161,18 +162,17 @@ pub fn get_default_socket_path() -> Result<PathBuf, HelperError> {
                 }
 
                 #[cfg(unix)]
-                if is_running_as_root() {
-                    if let (Ok(user_id), Ok(group_id)) =
+                if is_running_as_root()
+                    && let (Ok(user_id), Ok(group_id)) =
                         (std::env::var("SUDO_UID"), std::env::var("SUDO_GID"))
+                {
+                    info!("Fixing directory ownership for socket directory");
+                    if let Err(e) = std::process::Command::new("chown")
+                        .arg(format!("{user_id}:{group_id}"))
+                        .arg(parent.as_os_str())
+                        .status()
                     {
-                        info!("Fixing directory ownership for socket directory");
-                        if let Err(e) = std::process::Command::new("chown")
-                            .arg(format!("{user_id}:{group_id}"))
-                            .arg(parent.as_os_str())
-                            .status()
-                        {
-                            warn!("Failed to fix directory ownership: {e}");
-                        }
+                        warn!("Failed to fix directory ownership: {e}");
                     }
                 }
             }
@@ -381,22 +381,21 @@ async fn start_unix_socket_server(
             info!("Set socket permissions to 666 (rw-rw-rw-)");
         }
 
-        if is_running_as_root() {
-            if let (Ok(user_id), Ok(group_id)) =
+        if is_running_as_root()
+            && let (Ok(user_id), Ok(group_id)) =
                 (std::env::var("SUDO_UID"), std::env::var("SUDO_GID"))
+        {
+            info!("Fixing socket ownership for user access");
+            match std::process::Command::new("chown")
+                .arg(format!("{user_id}:{group_id}"))
+                .arg(&socket_path)
+                .status()
             {
-                info!("Fixing socket ownership for user access");
-                match std::process::Command::new("chown")
-                    .arg(format!("{user_id}:{group_id}"))
-                    .arg(&socket_path)
-                    .status()
-                {
-                    Err(e) => {
-                        warn!("Failed to fix socket ownership: {e}");
-                    }
-                    _ => {
-                        info!("Set socket ownership to {user_id}:{group_id}");
-                    }
+                Err(e) => {
+                    warn!("Failed to fix socket ownership: {e}");
+                }
+                _ => {
+                    info!("Set socket ownership to {user_id}:{group_id}");
                 }
             }
         }

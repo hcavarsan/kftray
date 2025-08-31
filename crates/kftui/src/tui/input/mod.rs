@@ -4,11 +4,11 @@ mod popup;
 
 use std::collections::HashSet;
 use std::io;
+use std::sync::Arc;
 use std::sync::atomic::{
     AtomicBool,
     Ordering,
 };
-use std::sync::Arc;
 
 use crossterm::event::{
     self,
@@ -344,25 +344,25 @@ impl App {
     }
 
     pub fn update_http_logs_viewer(&mut self) {
-        if let Some(file_path) = &self.http_logs_viewer_file_path {
-            if let Ok(content) = std::fs::read_to_string(file_path) {
-                let new_lines: Vec<String> = content.lines().map(|line| line.to_string()).collect();
-                let old_len = self.http_logs_viewer_content.len();
+        if let Some(file_path) = &self.http_logs_viewer_file_path
+            && let Ok(content) = std::fs::read_to_string(file_path)
+        {
+            let new_lines: Vec<String> = content.lines().map(|line| line.to_string()).collect();
+            let old_len = self.http_logs_viewer_content.len();
 
-                if new_lines.len() != old_len || new_lines != self.http_logs_viewer_content {
-                    self.http_logs_viewer_content = new_lines;
+            if new_lines.len() != old_len || new_lines != self.http_logs_viewer_content {
+                self.http_logs_viewer_content = new_lines;
 
-                    self.http_logs_requests = Self::parse_http_logs(&self.http_logs_viewer_content);
+                self.http_logs_requests = Self::parse_http_logs(&self.http_logs_viewer_content);
 
-                    if self.http_logs_viewer_auto_scroll
-                        && self.http_logs_viewer_content.len() > old_len
-                    {
-                        self.http_logs_viewer_scroll = if self.http_logs_viewer_content.is_empty() {
-                            0
-                        } else {
-                            self.http_logs_viewer_content.len().saturating_sub(1)
-                        };
-                    }
+                if self.http_logs_viewer_auto_scroll
+                    && self.http_logs_viewer_content.len() > old_len
+                {
+                    self.http_logs_viewer_scroll = if self.http_logs_viewer_content.is_empty() {
+                        0
+                    } else {
+                        self.http_logs_viewer_content.len().saturating_sub(1)
+                    };
                 }
             }
         }
@@ -517,11 +517,11 @@ impl App {
 
                 let mut active_pod = None;
                 for (key, process) in processes.iter() {
-                    if key.starts_with(&handle_key) {
-                        if let Some(pod_name) = process.get_current_active_pod().await {
-                            active_pod = Some(pod_name);
-                            break;
-                        }
+                    if key.starts_with(&handle_key)
+                        && let Some(pod_name) = process.get_current_active_pod().await
+                    {
+                        active_pod = Some(pod_name);
+                        break;
                     }
                 }
 
@@ -575,34 +575,32 @@ impl App {
                 true
             });
 
-        if let Some(ref mut receiver) = self.error_receiver {
-            if let Ok(error_msg) = receiver.try_recv() {
-                self.error_message = Some(error_msg);
-                self.state = AppState::ShowErrorPopup;
-            }
+        if let Some(ref mut receiver) = self.error_receiver
+            && let Ok(error_msg) = receiver.try_recv()
+        {
+            self.error_message = Some(error_msg);
+            self.state = AppState::ShowErrorPopup;
         }
     }
 
     pub fn scroll_up(&mut self) {
         match self.active_table {
             ActiveTable::Stopped => {
-                if !self.stopped_configs.is_empty() {
-                    if let Some(selected) = self.table_state_stopped.selected() {
-                        if selected > 0 {
-                            self.table_state_stopped.select(Some(selected - 1));
-                            self.selected_row_stopped = selected - 1;
-                        }
-                    }
+                if !self.stopped_configs.is_empty()
+                    && let Some(selected) = self.table_state_stopped.selected()
+                    && selected > 0
+                {
+                    self.table_state_stopped.select(Some(selected - 1));
+                    self.selected_row_stopped = selected - 1;
                 }
             }
             ActiveTable::Running => {
-                if !self.running_configs.is_empty() {
-                    if let Some(selected) = self.table_state_running.selected() {
-                        if selected > 0 {
-                            self.table_state_running.select(Some(selected - 1));
-                            self.selected_row_running = selected - 1;
-                        }
-                    }
+                if !self.running_configs.is_empty()
+                    && let Some(selected) = self.table_state_running.selected()
+                    && selected > 0
+                {
+                    self.table_state_running.select(Some(selected - 1));
+                    self.selected_row_running = selected - 1;
                 }
             }
         }
@@ -1227,10 +1225,10 @@ pub async fn handle_port_forwarding(app: &mut App, mode: DatabaseMode) -> io::Re
                         stop_port_forwarding(&mut temp_app, config, mode).await;
                     }
 
-                    if let Some(error_msg) = temp_app.error_message {
-                        if let Some(sender) = sender {
-                            let _ = sender.send(error_msg);
-                        }
+                    if let Some(error_msg) = temp_app.error_message
+                        && let Some(sender) = sender
+                    {
+                        let _ = sender.send(error_msg);
                     }
 
                     flag.store(true, Ordering::Relaxed);
@@ -1324,12 +1322,12 @@ pub async fn handle_context_selection_input(
             app.context_list_state
                 .select(Some(app.selected_context_index));
         }
-    } else if let KeyCode::Down = key {
-        if app.selected_context_index < app.contexts.len() - 1 {
-            app.selected_context_index += 1;
-            app.context_list_state
-                .select(Some(app.selected_context_index));
-        }
+    } else if let KeyCode::Down = key
+        && app.selected_context_index < app.contexts.len() - 1
+    {
+        app.selected_context_index += 1;
+        app.context_list_state
+            .select(Some(app.selected_context_index));
     }
     Ok(())
 }
@@ -1389,17 +1387,16 @@ pub async fn handle_settings_input(
                         app.settings_timeout_input = "5".to_string();
                     }
 
-                    if let Ok(timeout_value) = app.settings_timeout_input.parse::<u32>() {
-                        if (kftray_commons::utils::settings::set_disconnect_timeout_with_mode(
+                    if let Ok(timeout_value) = app.settings_timeout_input.parse::<u32>()
+                        && (kftray_commons::utils::settings::set_disconnect_timeout_with_mode(
                             timeout_value,
                             mode,
                         )
                         .await)
                             .is_err()
-                        {
-                            app.error_message = Some("Failed to save timeout setting".to_string());
-                            app.state = AppState::ShowErrorPopup;
-                        }
+                    {
+                        app.error_message = Some("Failed to save timeout setting".to_string());
+                        app.state = AppState::ShowErrorPopup;
                     }
                 }
                 1 => {
@@ -1782,16 +1779,16 @@ async fn open_http_log_file(log_file_name: &str) -> Result<(), String> {
 
     let file_path_str = log_file_path.to_str().ok_or("Invalid UTF-8 in file path")?;
 
-    if let Ok(editor) = env::var("EDITOR") {
-        if Command::new(&editor).arg(file_path_str).spawn().is_ok() {
-            return Ok(());
-        }
+    if let Ok(editor) = env::var("EDITOR")
+        && Command::new(&editor).arg(file_path_str).spawn().is_ok()
+    {
+        return Ok(());
     }
 
-    if let Ok(visual) = env::var("VISUAL") {
-        if Command::new(&visual).arg(file_path_str).spawn().is_ok() {
-            return Ok(());
-        }
+    if let Ok(visual) = env::var("VISUAL")
+        && Command::new(&visual).arg(file_path_str).spawn().is_ok()
+    {
+        return Ok(());
     }
 
     #[cfg(target_os = "macos")]
@@ -2062,51 +2059,52 @@ async fn handle_http_logs_viewer_input(app: &mut App, key: KeyCode) -> io::Resul
             }
         }
         KeyCode::Char('r') | KeyCode::Char('R') => {
-            if app.http_logs_detail_mode && app.http_logs_selected_entry.is_some() {
-                if let Some(entry) = &app.http_logs_selected_entry {
-                    let base_url = if let Some(config_id) = app.http_logs_viewer_config_id {
-                        let local_port = app
-                            .stopped_configs
-                            .iter()
-                            .chain(app.running_configs.iter())
-                            .find(|c| c.id == Some(config_id))
-                            .and_then(|c| c.local_port)
-                            .unwrap_or(8080);
-                        format!("http://localhost:{}", local_port)
-                    } else {
-                        "http://localhost:8080".to_string()
-                    };
+            if app.http_logs_detail_mode
+                && app.http_logs_selected_entry.is_some()
+                && let Some(entry) = &app.http_logs_selected_entry
+            {
+                let base_url = if let Some(config_id) = app.http_logs_viewer_config_id {
+                    let local_port = app
+                        .stopped_configs
+                        .iter()
+                        .chain(app.running_configs.iter())
+                        .find(|c| c.id == Some(config_id))
+                        .and_then(|c| c.local_port)
+                        .unwrap_or(8080);
+                    format!("http://localhost:{}", local_port)
+                } else {
+                    "http://localhost:8080".to_string()
+                };
 
-                    let entry_clone = entry.clone();
+                let entry_clone = entry.clone();
 
-                    match entry_clone.replay(&base_url).await {
-                        Ok(replay_entry) => {
-                            app.http_logs_selected_entry = Some(replay_entry);
-                            app.http_logs_viewer_scroll = 0;
-                            app.http_logs_replay_result = None;
-                            app.http_logs_replay_in_progress = false;
-                        }
-                        Err(error) => {
-                            app.http_logs_replay_result = Some(error);
-                            app.http_logs_replay_in_progress = false;
-                        }
+                match entry_clone.replay(&base_url).await {
+                    Ok(replay_entry) => {
+                        app.http_logs_selected_entry = Some(replay_entry);
+                        app.http_logs_viewer_scroll = 0;
+                        app.http_logs_replay_result = None;
+                        app.http_logs_replay_in_progress = false;
+                    }
+                    Err(error) => {
+                        app.http_logs_replay_result = Some(error);
+                        app.http_logs_replay_in_progress = false;
                     }
                 }
             }
         }
         KeyCode::Enter => {
-            if !app.http_logs_detail_mode && !app.http_logs_requests.is_empty() {
-                if let Some(entry) = app
+            if !app.http_logs_detail_mode
+                && !app.http_logs_requests.is_empty()
+                && let Some(entry) = app
                     .http_logs_requests
                     .get(app.http_logs_list_selected)
                     .cloned()
-                {
-                    app.http_logs_selected_entry = Some(entry);
-                    app.http_logs_detail_mode = true;
-                    app.http_logs_viewer_scroll = 0;
-                    app.http_logs_replay_result = None;
-                    app.http_logs_replay_in_progress = false;
-                }
+            {
+                app.http_logs_selected_entry = Some(entry);
+                app.http_logs_detail_mode = true;
+                app.http_logs_viewer_scroll = 0;
+                app.http_logs_replay_result = None;
+                app.http_logs_replay_in_progress = false;
             }
         }
         _ => {}

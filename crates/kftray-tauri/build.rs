@@ -87,10 +87,10 @@ fn find_workspace_root(start_dir: &Path) -> Option<PathBuf> {
         let cargo_toml = current_dir.join("Cargo.toml");
         if cargo_toml.exists() {
             // Check if it's a workspace by looking for [workspace] section
-            if let Ok(contents) = fs::read_to_string(&cargo_toml) {
-                if contents.contains("[workspace]") {
-                    return Some(current_dir);
-                }
+            if let Ok(contents) = fs::read_to_string(&cargo_toml)
+                && contents.contains("[workspace]")
+            {
+                return Some(current_dir);
             }
         }
         if !current_dir.pop() {

@@ -38,17 +38,22 @@ jobs:
 
       - name: Install dependencies
         run: |
-          echo "deb http://gb.archive.ubuntu.com/ubuntu jammy main" | sudo tee /etc/apt/sources.list.d/ubuntu-jammy-main.list
           sudo apt-get update
-          sudo apt install -y libwebkit2gtk-4.1-dev \
-                           build-essential \
-                           curl \
-                           wget \
-                           file \
-                           libxdo-dev \
-                           libssl-dev \
-                           libayatana-appindicator3-dev \
-                           librsvg2-dev
+          sudo apt install -y \
+              libwebkit2gtk-4.1-0=2.44.0-2 \
+              libwebkit2gtk-4.1-dev=2.44.0-2 \
+              libjavascriptcoregtk-4.1-0=2.44.0-2 \
+              libjavascriptcoregtk-4.1-dev=2.44.0-2 \
+              gir1.2-javascriptcoregtk-4.1=2.44.0-2 \
+              gir1.2-webkit2-4.1=2.44.0-2 \
+              build-essential \
+              curl \
+              wget \
+              file \
+              libxdo-dev \
+              libssl-dev \
+              libayatana-appindicator3-dev \
+              librsvg2-dev
 
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b
@@ -234,15 +239,21 @@ jobs:
             echo "deb http://gb.archive.ubuntu.com/ubuntu jammy main" | sudo tee /etc/apt/sources.list.d/ubuntu-jammy-main.list
           fi
           sudo apt-get update
-          sudo apt install -y libwebkit2gtk-4.1-dev \
-                           build-essential \
-                           curl \
-                           wget \
-                           file \
-                           libxdo-dev \
-                           libssl-dev \
-                           libayatana-appindicator3-dev \
-                           librsvg2-dev
+          sudo apt install -y \
+              libwebkit2gtk-4.1-0=2.44.0-2 \
+              libwebkit2gtk-4.1-dev=2.44.0-2 \
+              libjavascriptcoregtk-4.1-0=2.44.0-2 \
+              libjavascriptcoregtk-4.1-dev=2.44.0-2 \
+              gir1.2-javascriptcoregtk-4.1=2.44.0-2 \
+              gir1.2-webkit2-4.1=2.44.0-2 \
+              build-essential \
+              curl \
+              wget \
+              file \
+              libxdo-dev \
+              libssl-dev \
+              libayatana-appindicator3-dev \
+              librsvg2-dev
 
       - name: Reconfigure Rust targets
         run: |
@@ -408,15 +419,21 @@ jobs:
             echo "deb http://gb.archive.ubuntu.com/ubuntu jammy main" | sudo tee /etc/apt/sources.list.d/ubuntu-jammy-main.list
           fi
           sudo apt-get update
-          sudo apt install -y libwebkit2gtk-4.1-dev \
-                           build-essential \
-                           curl \
-                           wget \
-                           file \
-                           libxdo-dev \
-                           libssl-dev \
-                           libayatana-appindicator3-dev \
-                           librsvg2-dev
+          sudo apt install -y \
+              libwebkit2gtk-4.1-0=2.44.0-2 \
+              libwebkit2gtk-4.1-dev=2.44.0-2 \
+              libjavascriptcoregtk-4.1-0=2.44.0-2 \
+              libjavascriptcoregtk-4.1-dev=2.44.0-2 \
+              gir1.2-javascriptcoregtk-4.1=2.44.0-2 \
+              gir1.2-webkit2-4.1=2.44.0-2 \
+              build-essential \
+              curl \
+              wget \
+              file \
+              libxdo-dev \
+              libssl-dev \
+              libayatana-appindicator3-dev \
+              librsvg2-dev
 
       - name: Reconfigure Rust targets
         run: |
@@ -612,15 +629,21 @@ jobs:
         run: |
           echo "deb http://gb.archive.ubuntu.com/ubuntu jammy main" | sudo tee /etc/apt/sources.list.d/ubuntu-jammy-main.list
           sudo apt-get update
-          sudo apt install -y libwebkit2gtk-4.1-dev \
-                           build-essential \
-                           curl \
-                           wget \
-                           file \
-                           libxdo-dev \
-                           libssl-dev \
-                           libayatana-appindicator3-dev \
-                           librsvg2-dev
+          sudo apt install -y \
+              libwebkit2gtk-4.1-0=2.44.0-2 \
+              libwebkit2gtk-4.1-dev=2.44.0-2 \
+              libjavascriptcoregtk-4.1-0=2.44.0-2 \
+              libjavascriptcoregtk-4.1-dev=2.44.0-2 \
+              gir1.2-javascriptcoregtk-4.1=2.44.0-2 \
+              gir1.2-webkit2-4.1=2.44.0-2 \
+              build-essential \
+              curl \
+              wget \
+              file \
+              libxdo-dev \
+              libssl-dev \
+              libayatana-appindicator3-dev \
+              librsvg2-dev
 
 
       - name: Publish crates to crates.io

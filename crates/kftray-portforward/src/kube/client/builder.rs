@@ -1,8 +1,8 @@
 use std::env;
 
 use anyhow::Result;
-use kube::config::Kubeconfig;
 use kube::Client;
+use kube::config::Kubeconfig;
 use log::info;
 
 use super::config::{

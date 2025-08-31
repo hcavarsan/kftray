@@ -24,11 +24,11 @@ use tokio::io::{
     AsyncWriteExt,
     BufWriter,
 };
+use tokio::sync::RwLock;
 use tokio::sync::mpsc::{
     self,
     Sender,
 };
-use tokio::sync::RwLock;
 use tokio::time::Duration;
 use tracing::{
     debug,
@@ -130,13 +130,11 @@ impl HttpLogger {
                                 } _ => {
                                     debug!("Successfully wrote log batch");
 
-                                    if is_response {
-                                        if let Ok(mut file) = log_file.try_write() {
-                                            if let Err(e) = file.get_mut().sync_data().await {
+                                    if is_response
+                                        && let Ok(mut file) = log_file.try_write()
+                                        && let Err(e) = file.get_mut().sync_data().await {
                                                 error!("Failed to sync response log to disk: {:?}", e);
                                             }
-                                        }
-                                    }
                                 }}
                                 message_batch.clear();
                                 last_flush = Utc::now();

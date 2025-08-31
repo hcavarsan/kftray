@@ -357,8 +357,8 @@ impl PortForwarder {
                     continue;
                 }
                 _ = tokio::time::sleep(tokio::time::Duration::from_secs(3)), if pending_pod.is_some() => {
-                    if pending_pod.take().is_some() && last_pod_change.elapsed() >= tokio::time::Duration::from_secs(3) {
-                        if let Some(current_pod) = self.pod_watcher.get_ready_pod().await {
+                    if pending_pod.take().is_some() && last_pod_change.elapsed() >= tokio::time::Duration::from_secs(3)
+                        && let Some(current_pod) = self.pod_watcher.get_ready_pod().await {
                             debug!("Pod {} stable for 3s, creating fresh connections", current_pod.pod_name);
                             let mut next_pf = self.next_portforwarder.lock().await;
                             *next_pf = None;
@@ -369,7 +369,6 @@ impl PortForwarder {
                                 *next_pf = Some(fresh_pf);
                                 debug!("Created stable connection to pod {}", current_pod.pod_name);
                             }
-                        }
                     }
                     continue;
                 }

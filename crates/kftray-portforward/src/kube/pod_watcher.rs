@@ -5,8 +5,8 @@ use std::time::{
 };
 
 use anyhow::{
-    anyhow,
     Result,
+    anyhow,
 };
 use futures::StreamExt;
 use k8s_openapi::api::core::v1::{
@@ -19,6 +19,7 @@ use kube::{
     ResourceExt,
 };
 use kube_runtime::{
+    WatchStreamExt,
     reflector::{
         self,
         ReflectHandle,
@@ -28,7 +29,6 @@ use kube_runtime::{
         self,
         Config as WatcherConfig,
     },
-    WatchStreamExt,
 };
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
@@ -188,30 +188,30 @@ impl PodWatcher {
         latest_ready_pod: &Arc<RwLock<Option<TargetPod>>>, pod: &Pod, target: &Target,
         pod_change_tx: &tokio::sync::broadcast::Sender<String>,
     ) {
-        if Self::is_pod_ready(pod) {
-            if let Ok(port_number) = Self::extract_port_from_pod(pod, &target.port) {
-                let target_pod = TargetPod {
-                    pod_name: pod.name_any(),
-                    port_number,
-                };
+        if Self::is_pod_ready(pod)
+            && let Ok(port_number) = Self::extract_port_from_pod(pod, &target.port)
+        {
+            let target_pod = TargetPod {
+                pod_name: pod.name_any(),
+                port_number,
+            };
 
-                let mut latest = latest_ready_pod.write().await;
-                let pod_changed = match latest.as_ref() {
-                    Some(current) => current.pod_name != target_pod.pod_name,
-                    None => true,
-                };
+            let mut latest = latest_ready_pod.write().await;
+            let pod_changed = match latest.as_ref() {
+                Some(current) => current.pod_name != target_pod.pod_name,
+                None => true,
+            };
 
-                if pod_changed {
-                    debug!(
-                        "Pod changed to: {}, connections should reconnect",
-                        pod.name_any()
-                    );
-                    let _ = pod_change_tx.send(target_pod.pod_name.clone());
-                }
-
-                *latest = Some(target_pod);
-                debug!("Updated latest ready pod: {}", pod.name_any());
+            if pod_changed {
+                debug!(
+                    "Pod changed to: {}, connections should reconnect",
+                    pod.name_any()
+                );
+                let _ = pod_change_tx.send(target_pod.pod_name.clone());
             }
+
+            *latest = Some(target_pod);
+            debug!("Updated latest ready pod: {}", pod.name_any());
         }
     }
 
@@ -225,18 +225,18 @@ impl PodWatcher {
         }
 
         for pod in self.store.state() {
-            if Self::is_pod_ready(&pod) {
-                if let Ok(port_number) = Self::extract_port_from_pod(&pod, &self.target.port) {
-                    let target_pod = TargetPod {
-                        pod_name: pod.name_any(),
-                        port_number,
-                    };
+            if Self::is_pod_ready(&pod)
+                && let Ok(port_number) = Self::extract_port_from_pod(&pod, &self.target.port)
+            {
+                let target_pod = TargetPod {
+                    pod_name: pod.name_any(),
+                    port_number,
+                };
 
-                    let mut latest = self.latest_ready_pod.write().await;
-                    *latest = Some(target_pod.clone());
-                    debug!("Found ready pod: {}", pod.name_any());
-                    return Some(target_pod);
-                }
+                let mut latest = self.latest_ready_pod.write().await;
+                *latest = Some(target_pod.clone());
+                debug!("Found ready pod: {}", pod.name_any());
+                return Some(target_pod);
             }
         }
 
@@ -248,10 +248,10 @@ impl PodWatcher {
     pub async fn has_running_pods(&self) -> bool {
         let store = self.store.clone();
         for pod in store.state() {
-            if let Some(status) = &pod.status {
-                if status.phase.as_deref() == Some("Running") {
-                    return true;
-                }
+            if let Some(status) = &pod.status
+                && status.phase.as_deref() == Some("Running")
+            {
+                return true;
             }
         }
         false
@@ -327,10 +327,11 @@ impl PodWatcher {
             .map(|status| {
                 let is_running = status.phase.as_deref() == Some("Running");
 
-                if let Some(name) = &pod.metadata.name {
-                    if name.starts_with("kftray-forward-") && is_running {
-                        return true;
-                    }
+                if let Some(name) = &pod.metadata.name
+                    && name.starts_with("kftray-forward-")
+                    && is_running
+                {
+                    return true;
                 }
 
                 let is_ready = status

@@ -38,19 +38,18 @@ pub fn get_controlling_terminal() -> Result<String, Box<dyn std::error::Error>> 
         if let Ok(output) = Command::new("ps")
             .args(["-p", &std::process::id().to_string(), "-o", "tty="])
             .output()
+            && output.status.success()
         {
-            if output.status.success() {
-                let tty_short = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if !tty_short.is_empty() && tty_short != "??" {
-                    let tty_path = if tty_short.starts_with("tty") {
-                        format!("/dev/{tty_short}")
-                    } else {
-                        format!("/dev/tty{tty_short}")
-                    };
+            let tty_short = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !tty_short.is_empty() && tty_short != "??" {
+                let tty_path = if tty_short.starts_with("tty") {
+                    format!("/dev/{tty_short}")
+                } else {
+                    format!("/dev/tty{tty_short}")
+                };
 
-                    if std::fs::File::open(&tty_path).is_ok() {
-                        return Ok(tty_path);
-                    }
+                if std::fs::File::open(&tty_path).is_ok() {
+                    return Ok(tty_path);
                 }
             }
         }

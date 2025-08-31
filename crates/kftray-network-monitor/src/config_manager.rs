@@ -7,8 +7,8 @@ use log::{
 pub struct ConfigManager;
 
 impl ConfigManager {
-    pub async fn get_active_configs(
-    ) -> Result<Vec<Config>, Box<dyn std::error::Error + Send + Sync>> {
+    pub async fn get_active_configs()
+    -> Result<Vec<Config>, Box<dyn std::error::Error + Send + Sync>> {
         let config_states = kftray_commons::utils::config_state::get_configs_state().await?;
         let current_process_id = std::process::id();
 

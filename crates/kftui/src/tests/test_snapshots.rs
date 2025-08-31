@@ -1,14 +1,14 @@
 use std::collections::HashSet;
 
 use insta::{
-    assert_snapshot,
     Settings,
+    assert_snapshot,
 };
 use kftray_commons::models::config_model::Config;
 use kftray_commons::models::config_state_model::ConfigState;
+use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::prelude::Widget;
-use ratatui::Terminal;
 
 use crate::tests::test_logger_state;
 use crate::tui::input::{

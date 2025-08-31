@@ -184,14 +184,14 @@ impl HttpResponseAnalyzer {
                 return true;
             }
 
-            if let Some(status_code) = Self::extract_status_code(headers_str) {
-                if (100..200).contains(&status_code) || status_code == 204 || status_code == 304 {
-                    trace!(
-                        "Response with no-body status code {} - complete",
-                        status_code
-                    );
-                    return true;
-                }
+            if let Some(status_code) = Self::extract_status_code(headers_str)
+                && ((100..200).contains(&status_code) || status_code == 204 || status_code == 304)
+            {
+                trace!(
+                    "Response with no-body status code {} - complete",
+                    status_code
+                );
+                return true;
             }
         }
 

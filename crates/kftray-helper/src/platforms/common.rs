@@ -8,8 +8,8 @@ use crate::{
     network::NetworkConfigManager,
 };
 
-pub(crate) async fn initialize_components(
-) -> Result<(AddressPoolManager, NetworkConfigManager, std::path::PathBuf), HelperError> {
+pub(crate) async fn initialize_components()
+-> Result<(AddressPoolManager, NetworkConfigManager, std::path::PathBuf), HelperError> {
     let pool_manager = match AddressPoolManager::new() {
         Ok(mgr) => {
             println!("Successfully initialized address pool manager");
@@ -49,15 +49,15 @@ pub(crate) async fn initialize_components(
         }
     };
 
-    if let Some(parent) = socket_path.parent() {
-        if !parent.exists() {
-            println!("Creating socket directory: {}", parent.display());
-            if let Err(e) = std::fs::create_dir_all(parent) {
-                eprintln!("Error creating socket directory: {e}");
-                return Err(HelperError::PlatformService(format!(
-                    "Failed to create socket directory: {e}"
-                )));
-            }
+    if let Some(parent) = socket_path.parent()
+        && !parent.exists()
+    {
+        println!("Creating socket directory: {}", parent.display());
+        if let Err(e) = std::fs::create_dir_all(parent) {
+            eprintln!("Error creating socket directory: {e}");
+            return Err(HelperError::PlatformService(format!(
+                "Failed to create socket directory: {e}"
+            )));
         }
     }
 

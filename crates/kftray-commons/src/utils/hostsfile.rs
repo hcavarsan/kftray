@@ -257,10 +257,10 @@ impl<'a> HostsFileWriter<'a> {
             return Ok(false);
         }
 
-        if let Some(last_line) = lines.last() {
-            if !last_line.is_empty() {
-                lines.push(String::new());
-            }
+        if let Some(last_line) = lines.last()
+            && !last_line.is_empty()
+        {
+            lines.push(String::new());
         }
 
         lines.extend(new_section_lines);

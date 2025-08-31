@@ -3,8 +3,8 @@ use std::process::Command;
 use std::str::FromStr;
 
 use anyhow::{
-    anyhow,
     Result,
+    anyhow,
 };
 use tracing::{
     debug,

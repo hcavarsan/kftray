@@ -248,17 +248,16 @@ async fn get_allocated_loopback_addresses() -> std::collections::HashSet<String>
 
     if let Ok(configs) = kftray_commons::config::get_configs().await {
         for config in configs {
-            if let Some(addr) = &config.local_address {
-                if crate::network_utils::is_custom_loopback_address(addr)
-                    && config.auto_loopback_address
-                {
-                    allocated.insert(addr.clone());
-                    debug!(
-                        "Found allocated address {} for config {}",
-                        addr,
-                        config.id.unwrap_or_default()
-                    );
-                }
+            if let Some(addr) = &config.local_address
+                && crate::network_utils::is_custom_loopback_address(addr)
+                && config.auto_loopback_address
+            {
+                allocated.insert(addr.clone());
+                debug!(
+                    "Found allocated address {} for config {}",
+                    addr,
+                    config.id.unwrap_or_default()
+                );
             }
         }
     }
@@ -350,33 +349,33 @@ pub async fn start_port_forward_with_mode(
             }
         };
 
-        if config.domain_enabled.unwrap_or_default() {
-            if let Some(service_name) = &config.service {
-                match final_local_address.parse::<std::net::IpAddr>() {
-                    Ok(ip_addr) => {
-                        let entry_id = format!("{}", config.id.unwrap_or_default());
-                        let host_entry = HostEntry {
-                            ip: ip_addr,
-                            hostname: config.alias.clone().unwrap_or_default(),
-                        };
+        if config.domain_enabled.unwrap_or_default()
+            && let Some(service_name) = &config.service
+        {
+            match final_local_address.parse::<std::net::IpAddr>() {
+                Ok(ip_addr) => {
+                    let entry_id = format!("{}", config.id.unwrap_or_default());
+                    let host_entry = HostEntry {
+                        ip: ip_addr,
+                        hostname: config.alias.clone().unwrap_or_default(),
+                    };
 
-                        if let Err(e) = add_host_entry(entry_id, host_entry) {
-                            let error_message = format!(
-                                    "Failed to write to the hostfile for {service_name}: {e}. Domain alias feature requires hostfile access."
-                                );
-                            error!("{}", &error_message);
-                            errors.push(error_message);
-                            continue;
-                        }
-                    }
-                    Err(_) => {
+                    if let Err(e) = add_host_entry(entry_id, host_entry) {
                         let error_message = format!(
-                            "Invalid IP address format for domain alias: {final_local_address}"
+                            "Failed to write to the hostfile for {service_name}: {e}. Domain alias feature requires hostfile access."
                         );
                         error!("{}", &error_message);
                         errors.push(error_message);
                         continue;
                     }
+                }
+                Err(_) => {
+                    let error_message = format!(
+                        "Invalid IP address format for domain alias: {final_local_address}"
+                    );
+                    error!("{}", &error_message);
+                    errors.push(error_message);
+                    continue;
                 }
             }
         }
@@ -618,17 +617,15 @@ pub async fn start_port_forward_with_mode(
                 error!("{}", &error_message);
                 errors.push(error_message);
 
-                if let Some(local_addr) = &config.local_address {
-                    if crate::network_utils::is_custom_loopback_address(local_addr) {
-                        if let Err(cleanup_err) =
-                            crate::network_utils::remove_loopback_address(local_addr).await
-                        {
-                            error!(
-                                    "Failed to cleanup loopback address {} after PortForward creation failure: {}",
-                                    local_addr, cleanup_err
-                                );
-                        }
-                    }
+                if let Some(local_addr) = &config.local_address
+                    && crate::network_utils::is_custom_loopback_address(local_addr)
+                    && let Err(cleanup_err) =
+                        crate::network_utils::remove_loopback_address(local_addr).await
+                {
+                    error!(
+                        "Failed to cleanup loopback address {} after PortForward creation failure: {}",
+                        local_addr, cleanup_err
+                    );
                 }
 
                 if let Some(config_id) = config.id {

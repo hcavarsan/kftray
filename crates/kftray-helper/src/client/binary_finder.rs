@@ -24,10 +24,10 @@ pub fn find_helper_binary() -> Result<PathBuf, HelperError> {
     let mut target_triple = String::new();
     if let Ok(output) = Command::new("rustc").args(["-Vv"]).output() {
         let output_str = String::from_utf8_lossy(&output.stdout);
-        if let Some(line) = output_str.lines().find(|line| line.starts_with("host:")) {
-            if let Some(triple) = line.split_whitespace().nth(1) {
-                target_triple = triple.to_string();
-            }
+        if let Some(line) = output_str.lines().find(|line| line.starts_with("host:"))
+            && let Some(triple) = line.split_whitespace().nth(1)
+        {
+            target_triple = triple.to_string();
         }
     }
 

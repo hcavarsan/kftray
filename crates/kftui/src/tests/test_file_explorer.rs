@@ -6,10 +6,10 @@ use kftray_commons::utils::db_mode::DatabaseMode;
 use crate::tests::test_logger_state;
 use crate::tui::input::handle_import_file_explorer_input;
 use crate::tui::input::{
-    show_confirmation_popup,
-    show_error_popup,
     App,
     AppState,
+    show_confirmation_popup,
+    show_error_popup,
 };
 #[cfg(test)]
 mod tests {

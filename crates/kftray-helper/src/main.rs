@@ -3,12 +3,12 @@ use clap::{
     Subcommand,
 };
 use kftray_helper::{
+    HelperClient,
     platforms::{
         install_platform_service,
         run_platform_service,
         uninstall_platform_service,
     },
-    HelperClient,
 };
 use log::{
     info,

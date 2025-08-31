@@ -8,8 +8,8 @@ use kftray_commons::utils::github::{
     GitHubRepository,
 };
 use tauri::{
-    ipc::InvokeError,
     Error as TauriError,
+    ipc::InvokeError,
 };
 
 #[derive(Debug)]

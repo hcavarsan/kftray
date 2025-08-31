@@ -32,11 +32,11 @@ pub fn save_window_position(window: &WebviewWindow<Wry>) {
 
             match get_window_state_path() {
                 Ok(path) => {
-                    if let Some(parent_dir) = path.parent() {
-                        if let Err(e) = fs::create_dir_all(parent_dir) {
-                            info!("Failed to create config directory: {e}");
-                            return;
-                        }
+                    if let Some(parent_dir) = path.parent()
+                        && let Err(e) = fs::create_dir_all(parent_dir)
+                    {
+                        info!("Failed to create config directory: {e}");
+                        return;
                     }
 
                     if fs::write(&path, position_json).is_ok() {

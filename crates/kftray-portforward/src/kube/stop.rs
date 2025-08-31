@@ -20,12 +20,12 @@ use kftray_commons::{
         timeout_manager::cancel_timeout_for_forward,
     },
 };
+use kube::Client;
 use kube::api::{
     Api,
     DeleteParams,
     ListParams,
 };
-use kube::Client;
 use tracing::{
     debug,
     error,
@@ -38,8 +38,8 @@ use crate::hostsfile::{
     remove_host_entry,
 };
 use crate::kube::shared_client::{
-    ServiceClientKey,
     SHARED_CLIENT_MANAGER,
+    ServiceClientKey,
 };
 #[cfg(test)]
 use crate::port_forward::PortForwardProcess;
@@ -139,10 +139,9 @@ pub async fn stop_all_port_forward_with_mode(
         if let Some(config_id_str) = composite_key
             .strip_prefix("config:")
             .and_then(|s| s.split(":service:").next())
+            && let Ok(config_id) = config_id_str.parse::<i64>()
         {
-            if let Ok(config_id) = config_id_str.parse::<i64>() {
-                cancel_timeout_for_forward(config_id).await;
-            }
+            cancel_timeout_for_forward(config_id).await;
         }
     }
 
@@ -215,13 +214,13 @@ pub async fn stop_all_port_forward_with_mode(
                 let config_id_parsed = config_id_str.parse::<i64>().unwrap_or_default();
                 let config_option = config_map_cloned.get(&config_id_parsed).cloned();
 
-                if let Some(config) = config_option {
-                    if config.domain_enabled.unwrap_or_default() {
-                        if let Err(e) = remove_host_entry(config_id_str) {
-                            error!(
-                                "Failed to remove host entry for ID {config_id_str}: {e}"
-                            );
-                        }
+                if let Some(config) = config_option
+                    && config.domain_enabled.unwrap_or_default()
+                {
+                    if let Err(e) = remove_host_entry(config_id_str) {
+                        error!(
+                            "Failed to remove host entry for ID {config_id_str}: {e}"
+                        );
                     }
                 } else {
                     warn!("Config with id '{config_id_str}' not found.");
@@ -234,14 +233,12 @@ pub async fn stop_all_port_forward_with_mode(
                 if let Some(config) = config_map_cloned.get(&config_id_parsed).cloned() {
                     info!("stop_all: Found config {} with local_address: {:?} and auto_loopback_address: {}",
                           config_id_str, config.local_address, config.auto_loopback_address);
-                    if let Some(local_addr) = &config.local_address {
-                        if crate::network_utils::is_custom_loopback_address(local_addr) {
-                            info!(
-                                "Cleaning up loopback address for config {config_id_str}: {local_addr}"
-                            );
+                    if let Some(local_addr) = &config.local_address && crate::network_utils::is_custom_loopback_address(local_addr) {
+                        info!(
+                            "Cleaning up loopback address for config {config_id_str}: {local_addr}"
+                        );
 
-                            release_address_with_fallback(local_addr).await;
-                        }
+                        release_address_with_fallback(local_addr).await;
                     }
                 }
 
@@ -310,33 +307,31 @@ pub async fn stop_all_port_forward_with_mode(
                                     .items
                                     .into_iter()
                                     .filter_map(|pod| {
-                                        if let Some(pod_name) = pod.metadata.name {
-                                            if pod_name.starts_with(&pod_prefix) {
-                                                let namespace = pod
-                                                    .metadata
-                                                    .namespace
-                                                    .unwrap_or_else(|| "default".to_string());
-                                                let pods_in_namespace: Api<Pod> =
-                                                    Api::namespaced(client.clone(), &namespace);
-                                                let dp = DeleteParams {
-                                                    grace_period_seconds: Some(0),
-                                                    ..DeleteParams::default()
-                                                };
+                                        if let Some(pod_name) = pod.metadata.name
+                                            && pod_name.starts_with(&pod_prefix)
+                                        {
+                                            let namespace = pod
+                                                .metadata
+                                                .namespace
+                                                .unwrap_or_else(|| "default".to_string());
+                                            let pods_in_namespace: Api<Pod> =
+                                                Api::namespaced(client.clone(), &namespace);
+                                            let dp = DeleteParams {
+                                                grace_period_seconds: Some(0),
+                                                ..DeleteParams::default()
+                                            };
 
-                                                return Some(async move {
-                                                    match pods_in_namespace
-                                                        .delete(&pod_name, &dp)
-                                                        .await
-                                                    {
-                                                        Ok(_) => info!(
-                                                            "Successfully deleted pod: {pod_name}"
-                                                        ),
-                                                        Err(e) => error!(
-                                                            "Failed to delete pod {pod_name}: {e}"
-                                                        ),
-                                                    }
-                                                });
-                                            }
+                                            return Some(async move {
+                                                match pods_in_namespace.delete(&pod_name, &dp).await
+                                                {
+                                                    Ok(_) => info!(
+                                                        "Successfully deleted pod: {pod_name}"
+                                                    ),
+                                                    Err(e) => error!(
+                                                        "Failed to delete pod {pod_name}: {e}"
+                                                    ),
+                                                }
+                                            });
                                         }
                                         None
                                     })
@@ -443,14 +438,14 @@ pub async fn stop_port_forward_with_mode(
                 "Found config {} during stop with local_address: {:?} and auto_loopback_address: {}",
                 config_id, config.local_address, config.auto_loopback_address
             );
-            if let Some(local_addr) = &config.local_address {
-                if crate::network_utils::is_custom_loopback_address(local_addr) {
-                    info!(
-                            "Cleaning up loopback address for config {config_id}: {local_addr} (auto_allocated: {})",
-                            config.auto_loopback_address
-                        );
-                    release_address_with_fallback(local_addr).await;
-                }
+            if let Some(local_addr) = &config.local_address
+                && crate::network_utils::is_custom_loopback_address(local_addr)
+            {
+                info!(
+                    "Cleaning up loopback address for config {config_id}: {local_addr} (auto_allocated: {})",
+                    config.auto_loopback_address
+                );
+                release_address_with_fallback(local_addr).await;
             }
         }
 
@@ -474,17 +469,17 @@ pub async fn stop_port_forward_with_mode(
             .unwrap_or("");
 
         // Handle host entry cleanup for domain-enabled configs
-        if let Some(config) = configs.iter().find(|c| c.id == Some(config_id_parsed)) {
-            if config.domain_enabled.unwrap_or_default() {
-                if let Err(e) = remove_host_entry(&config_id) {
-                    error!("Failed to remove host entry for ID {config_id}: {e}");
+        if let Some(config) = configs.iter().find(|c| c.id == Some(config_id_parsed))
+            && config.domain_enabled.unwrap_or_default()
+        {
+            if let Err(e) = remove_host_entry(&config_id) {
+                error!("Failed to remove host entry for ID {config_id}: {e}");
 
-                    let config_state = ConfigState::new(config_id_parsed, false);
-                    if let Err(e) = update_config_state_with_mode(&config_state, mode).await {
-                        error!("Failed to update config state: {e}");
-                    }
-                    return Err(e.to_string());
+                let config_state = ConfigState::new(config_id_parsed, false);
+                if let Err(e) = update_config_state_with_mode(&config_state, mode).await {
+                    error!("Failed to update config state: {e}");
                 }
+                return Err(e.to_string());
             }
         } else {
             warn!("Config with id '{config_id}' not found.");
@@ -614,9 +609,11 @@ mod tests {
     async fn test_stop_port_forward_nonexistent() {
         let result = stop_port_forward("999".to_string()).await;
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .contains("No port forwarding process found"));
+        assert!(
+            result
+                .unwrap_err()
+                .contains("No port forwarding process found")
+        );
     }
 
     #[tokio::test]

@@ -30,8 +30,8 @@ use tauri_plugin_dialog::{
 };
 use tokio::sync::Mutex;
 use tokio::time::{
-    interval,
     Duration,
+    interval,
 };
 
 pub async fn check_and_emit_changes(app_handle: AppHandle<Wry>) {
@@ -183,10 +183,10 @@ pub async fn get_active_pod_cmd(config_id: String) -> Result<Option<String>, Str
     let processes = CHILD_PROCESSES.lock().await;
 
     for (key, process) in processes.iter() {
-        if key.starts_with(&handle_key) {
-            if let Some(pod_name) = process.get_current_active_pod().await {
-                return Ok(Some(pod_name));
-            }
+        if key.starts_with(&handle_key)
+            && let Some(pod_name) = process.get_current_active_pod().await
+        {
+            return Ok(Some(pod_name));
         }
     }
 
@@ -195,25 +195,26 @@ pub async fn get_active_pod_cmd(config_id: String) -> Result<Option<String>, Str
 
 #[tauri::command]
 pub async fn handle_exit_app(app_handle: tauri::AppHandle<Wry>) {
-    if let Some(window) = app_handle.get_webview_window("main") {
-        let config_states = match get_configs_state().await {
-            Ok(config_states) => config_states,
-            Err(err) => {
-                error!("Failed to get config states: {err:?}");
+    match app_handle.get_webview_window("main") {
+        Some(window) => {
+            let config_states = match get_configs_state().await {
+                Ok(config_states) => config_states,
+                Err(err) => {
+                    error!("Failed to get config states: {err:?}");
+                    std::process::exit(0);
+                }
+            };
+
+            let any_running = config_states.iter().any(|config| config.is_running);
+
+            if !any_running {
+                if let Err(e) = cleanup_current_process_config_states().await {
+                    error!("Failed to cleanup config states: {e}");
+                }
                 std::process::exit(0);
             }
-        };
 
-        let any_running = config_states.iter().any(|config| config.is_running);
-
-        if !any_running {
-            if let Err(e) = cleanup_current_process_config_states().await {
-                error!("Failed to cleanup config states: {e}");
-            }
-            std::process::exit(0);
-        }
-
-        window
+            window
             .dialog()
             .message("There are active port forwards. Do you want to stop all port forwards before closing?\n\nIf you choose 'No', the active port forwards will resume the next time you open the app.\n\nIf you choose 'Yes', the active port forwards will be stopped and the app will close.")
             .title("Exit Kftray")
@@ -245,12 +246,14 @@ pub async fn handle_exit_app(app_handle: tauri::AppHandle<Wry>) {
                     }
                 }
             });
-    } else {
-        error!("No windows found, exiting application.");
-        if let Err(e) = cleanup_current_process_config_states().await {
-            error!("Failed to cleanup config states: {e}");
         }
-        std::process::exit(0);
+        _ => {
+            error!("No windows found, exiting application.");
+            if let Err(e) = cleanup_current_process_config_states().await {
+                error!("Failed to cleanup config states: {e}");
+            }
+            std::process::exit(0);
+        }
     }
 }
 
