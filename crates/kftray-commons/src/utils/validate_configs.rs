@@ -1,19 +1,8 @@
 use std::env;
 use std::path::PathBuf;
 
-use tauri::{
-    AppHandle,
-    Manager,
-    Runtime,
-    async_runtime::spawn_blocking,
-};
-use tauri_plugin_dialog::{
-    DialogExt,
-    MessageDialogButtons,
-};
-
 #[derive(Clone, Debug)]
-struct ConfigLocation {
+pub struct ConfigLocation {
     path: PathBuf,
     origin: String,
 }
@@ -24,7 +13,7 @@ impl ConfigLocation {
     }
 }
 
-fn detect_multiple_configs() -> (Vec<ConfigLocation>, Option<ConfigLocation>) {
+pub fn detect_multiple_configs() -> (Vec<ConfigLocation>, Option<ConfigLocation>) {
     let mut config_locations = Vec::new();
     let mut active_config: Option<ConfigLocation> = None;
 
@@ -64,7 +53,7 @@ fn detect_multiple_configs() -> (Vec<ConfigLocation>, Option<ConfigLocation>) {
     (config_locations, active_config)
 }
 
-fn format_alert_message(
+pub fn format_alert_message(
     configs: Vec<ConfigLocation>, active_config: Option<ConfigLocation>,
 ) -> String {
     let msg = configs
@@ -105,38 +94,6 @@ fn format_alert_message(
             .display()
             .to_string())
     )
-}
-
-async fn show_alert_dialog<R: Runtime>(
-    app_handle: AppHandle<R>, configs: Vec<ConfigLocation>, active_config: Option<ConfigLocation>,
-) {
-    let full_message = format_alert_message(configs, active_config);
-
-    let app_handle_clone = app_handle.clone();
-    spawn_blocking(move || {
-        let app_handle_inner = app_handle_clone.clone();
-        let _ = app_handle_clone.run_on_main_thread(move || {
-            if let Some(window) = app_handle_inner.get_webview_window("main") {
-                window
-                    .dialog()
-                    .message(&full_message)
-                    .title("Multiple Configuration Directories Detected")
-                    .buttons(MessageDialogButtons::Ok)
-                    .show(move |_response| {
-                        // User acknowledged the warning
-                    });
-            }
-        });
-    })
-    .await
-    .unwrap();
-}
-
-pub async fn alert_multiple_configs<R: Runtime>(app_handle: AppHandle<R>) {
-    let (configs, active_config) = detect_multiple_configs();
-    if configs.len() > 1 {
-        show_alert_dialog(app_handle, configs, active_config).await;
-    }
 }
 
 #[cfg(test)]

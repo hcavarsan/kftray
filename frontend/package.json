@@ -1,6 +1,6 @@
 {
   "name": "@kftray/ui",
-  "version": "0.22.8",
+  "version": "0.23.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -35,9 +35,9 @@
     "@rollup/plugin-terser": "^0.4.4",
     "@tauri-apps/api": "2.8.0",
     "@tauri-apps/cli": "2.8.3",
-	"@tauri-apps/plugin-dialog": "~2.3.3",
-	"@tauri-apps/plugin-fs": "~2.4.2",
-	"@tauri-apps/plugin-shell": "~2.3.1",
+    "@tauri-apps/plugin-dialog": "~2.3.3",
+    "@tauri-apps/plugin-fs": "~2.4.2",
+    "@tauri-apps/plugin-shell": "~2.3.1",
     "@types/node": "^24.0.10",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.2",
