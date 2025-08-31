@@ -3,3 +3,5 @@
 /target/
 
 
+# Tauri generated output.
+gen/
