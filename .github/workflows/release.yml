@@ -158,7 +158,6 @@ jobs:
         include:
           - os: ubuntu-24.04
             arch: arm64
-            runner: ubicloud-standard-4-arm
             rust_target: aarch64-unknown-linux-gnu
             tauri_args: "--target aarch64-unknown-linux-gnu --bundles appimage,updater --verbose"
           - os: ubuntu-24.04
@@ -184,7 +183,7 @@ jobs:
             rust_target: aarch64-pc-windows-msvc
             tauri_args: "--target aarch64-pc-windows-msvc --bundles nsis,updater --verbose"
 
-    runs-on: ${{ matrix.runner || matrix.os }}
+    runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
@@ -341,7 +340,6 @@ jobs:
         include:
           - os: ubuntu-24.04
             arch: arm64
-            runner: ubicloud-standard-4-arm
             rust_target: aarch64-unknown-linux-gnu
             os_name: linux
           - os: ubuntu-24.04
@@ -363,7 +361,7 @@ jobs:
             msvc_arch: x64
             os_name: windows
 
-    runs-on: ${{ matrix.runner || matrix.os }}
+    runs-on: ${{  matrix.os }}
 
     outputs:
       os: ${{ matrix.os }}
