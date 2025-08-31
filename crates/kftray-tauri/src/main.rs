@@ -56,7 +56,9 @@ fn main() {
         target_os = "openbsd",
         target_os = "netbsd"
     ))]
-    std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
+    unsafe {
+        std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
+    }
 
     let app = tauri::Builder::default()
         .manage(SaveDialogState::default())
