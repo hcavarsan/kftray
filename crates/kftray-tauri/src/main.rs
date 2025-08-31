@@ -8,16 +8,18 @@ use std::sync::{
     Mutex,
 };
 
-use kftray_commons::utils::validate_configs::alert_multiple_configs;
 use log::{
     error,
     info,
 };
 use tauri_plugin_global_shortcut::GlobalShortcutExt;
+
+use crate::validation::alert_multiple_configs;
 mod commands;
 mod init_check;
 mod logging;
 mod tray;
+mod validation;
 mod window;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;

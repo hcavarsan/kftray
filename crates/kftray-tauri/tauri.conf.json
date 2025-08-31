@@ -1,66 +1,5 @@
 {
-  "build": {
-    "beforeBuildCommand": "pnpm build",
-    "beforeDevCommand": "pnpm dev",
-    "frontendDist": "../../frontend/dist",
-    "devUrl": "http://localhost:1420"
-  },
-  "bundle": {
-    "active": true,
-    "category": "DeveloperTool",
-    "targets": [
-      "app",
-      "dmg",
-      "appimage",
-      "deb",
-      "msi",
-      "nsis"
-    ],
-    "externalBin": [
-      "bin/kftray-helper"
-    ],
-    "icon": [
-      "icons/32x32.png",
-      "icons/128x128.png",
-      "icons/128x128@2x.png",
-      "icons/icon.icns",
-      "icons/icon.ico"
-    ],
-    "windows": {
-      "certificateThumbprint": null,
-      "digestAlgorithm": "sha256",
-      "timestampUrl": ""
-    },
-    "macOS": {
-      "entitlements": "./entitlements.plist",
-      "exceptionDomain": "",
-      "frameworks": [],
-      "providerShortName": null,
-      "signingIdentity": null
-    },
-    "resources": [],
-    "shortDescription": "",
-    "linux": {
-      "deb": {
-        "depends": []
-      }
-    },
-    "createUpdaterArtifacts": "v1Compatible"
-  },
-  "productName": "kftray",
-  "mainBinaryName": "kftray",
-  "version": "0.22.8",
-  "identifier": "com.hcavarsan.kftray",
-  "plugins": {
-    "updater": {
-      "endpoints": [
-        "https://github.com/hcavarsan/kftray/releases/latest/download/latest.json"
-      ],
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDZEMEYxNzA4ODFFNjA3RTgKUldUb0IrYUJDQmNQYmRrZFFUTUN0T3lseStZVmc5YlR4YmxtaHBoanJYeGxSMWFQbjhtTFpERGsK"
-    }
-  },
   "app": {
-    "withGlobalTauri": true,
     "macOSPrivateApi": true,
     "security": {
       "csp": null
@@ -76,10 +15,71 @@
         "skipTaskbar": true,
         "title": "menubar",
         "transparent": true,
+        "useHttpsScheme": true,
         "visible": false,
-        "width": 450,
-        "useHttpsScheme": true
+        "width": 450
       }
-    ]
-  }
+    ],
+    "withGlobalTauri": true
+  },
+  "build": {
+    "beforeBuildCommand": "pnpm build",
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:1420",
+    "frontendDist": "../../frontend/dist"
+  },
+  "bundle": {
+    "active": true,
+    "category": "DeveloperTool",
+    "createUpdaterArtifacts": "v1Compatible",
+    "externalBin": [
+      "bin/kftray-helper"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "linux": {
+      "deb": {
+        "depends": []
+      }
+    },
+    "macOS": {
+      "entitlements": "./entitlements.plist",
+      "exceptionDomain": "",
+      "frameworks": [],
+      "providerShortName": null,
+      "signingIdentity": null
+    },
+    "resources": [],
+    "shortDescription": "",
+    "targets": [
+      "app",
+      "dmg",
+      "appimage",
+      "deb",
+      "msi",
+      "nsis"
+    ],
+    "windows": {
+      "certificateThumbprint": null,
+      "digestAlgorithm": "sha256",
+      "timestampUrl": ""
+    }
+  },
+  "identifier": "com.hcavarsan.kftray",
+  "mainBinaryName": "kftray",
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/hcavarsan/kftray/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDZEMEYxNzA4ODFFNjA3RTgKUldUb0IrYUJDQmNQYmRrZFFUTUN0T3lseStZVmc5YlR4YmxtaHBoanJYeGxSMWFQbjhtTFpERGsK"
+    }
+  },
+  "productName": "kftray",
+  "version": "0.23.0"
 }
