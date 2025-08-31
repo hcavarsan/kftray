@@ -168,7 +168,7 @@ jobs:
           - os: macos-latest
             arch: universal
             rust_target: universal-apple-darwin
-            tauri_args: "--target universal-apple-darwin --bundles dmg,updater --verbose"
+            tauri_args: "--target universal-apple-darwin --bundles dmg,app,updater --verbose"
           - os: windows-latest
             arch: x86
             rust_target: i686-pc-windows-msvc
