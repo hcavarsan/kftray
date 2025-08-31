@@ -2,12 +2,12 @@ use crossterm::event::KeyCode;
 
 use crate::tests::test_logger_state;
 use crate::tui::input::{
+    App,
+    AppState,
     handle_about_input,
     handle_error_popup_input,
     handle_help_input,
     show_error_popup,
-    App,
-    AppState,
 };
 
 #[cfg(test)]

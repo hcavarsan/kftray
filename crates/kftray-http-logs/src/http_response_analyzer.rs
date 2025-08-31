@@ -130,7 +130,9 @@ impl HttpResponseAnalyzer {
                     && h_lower.contains("connection: upgrade")
                     && h_lower.contains("sec-websocket-accept:")
                 {
-                    trace!("WebSocket upgrade response fully confirmed with all necessary headers - complete");
+                    trace!(
+                        "WebSocket upgrade response fully confirmed with all necessary headers - complete"
+                    );
                     return true;
                 }
             }
@@ -142,8 +144,10 @@ impl HttpResponseAnalyzer {
                 }
 
                 if response_data.len() > 100_000_000 {
-                    debug!("Very large chunked response ({}B) - forcing log despite missing end marker",
-                          response_data.len());
+                    debug!(
+                        "Very large chunked response ({}B) - forcing log despite missing end marker",
+                        response_data.len()
+                    );
                     return true;
                 }
 
@@ -180,14 +184,14 @@ impl HttpResponseAnalyzer {
                 return true;
             }
 
-            if let Some(status_code) = Self::extract_status_code(headers_str) {
-                if (100..200).contains(&status_code) || status_code == 204 || status_code == 304 {
-                    trace!(
-                        "Response with no-body status code {} - complete",
-                        status_code
-                    );
-                    return true;
-                }
+            if let Some(status_code) = Self::extract_status_code(headers_str)
+                && ((100..200).contains(&status_code) || status_code == 204 || status_code == 304)
+            {
+                trace!(
+                    "Response with no-body status code {} - complete",
+                    status_code
+                );
+                return true;
             }
         }
 

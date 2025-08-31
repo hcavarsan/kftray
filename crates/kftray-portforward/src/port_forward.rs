@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use kube::api::Api;
 use kube::Client;
+use kube::api::Api;
 use lazy_static::lazy_static;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
@@ -19,8 +19,8 @@ use crate::kube::models::{
     Target,
 };
 use crate::kube::shared_client::{
-    ServiceClientKey,
     SHARED_CLIENT_MANAGER,
+    ServiceClientKey,
 };
 
 pub struct PortForwardProcess {
@@ -157,10 +157,10 @@ impl PortForward {
 
     #[instrument(skip(self), fields(config_id = self.config_id))]
     pub async fn cleanup_resources(&self) -> anyhow::Result<()> {
-        if let Some(addr) = &self.local_address {
-            if crate::network_utils::is_custom_loopback_address(addr) {
-                let _ = crate::network_utils::remove_loopback_address(addr).await;
-            }
+        if let Some(addr) = &self.local_address
+            && crate::network_utils::is_custom_loopback_address(addr)
+        {
+            let _ = crate::network_utils::remove_loopback_address(addr).await;
         }
         Ok(())
     }
@@ -290,6 +290,7 @@ mod tests {
         Response,
         StatusCode,
     };
+    use k8s_openapi::List;
     use k8s_openapi::api::core::v1::{
         Pod,
         PodCondition,
@@ -300,9 +301,8 @@ mod tests {
         ServiceSpec,
     };
     use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
-    use k8s_openapi::List;
-    use kube::client::Body;
     use kube::Client;
+    use kube::client::Body;
     use tokio::net::TcpStream;
     use tokio::time::Duration;
     use tower_test::mock;
@@ -561,7 +561,9 @@ mod tests {
                     break;
                 }
                 Err(_) => {
-                    info!("Mock server: Timeout waiting for request, checking if we have minimum required");
+                    info!(
+                        "Mock server: Timeout waiting for request, checking if we have minimum required"
+                    );
                     if service_requests > 0 && pod_requests > 0 {
                         info!("Mock server: Have minimum required requests, stopping");
                         break;
@@ -643,7 +645,9 @@ mod tests {
             }
         }
 
-        info!("Mock server: Handled {service_requests} service, {pod_requests} pod, {portforward_requests} portforward requests");
+        info!(
+            "Mock server: Handled {service_requests} service, {pod_requests} pod, {portforward_requests} portforward requests"
+        );
     }
 
     #[tokio::test]

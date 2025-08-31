@@ -102,7 +102,9 @@ async fn allocate_local_address_for_config(config: &mut Config) -> Result<String
             Ok(allocated_address)
         }
         Err(e) => {
-            warn!("Failed to auto-allocate address for service {service_name} via helper: {e}. Trying fallback allocation");
+            warn!(
+                "Failed to auto-allocate address for service {service_name} via helper: {e}. Trying fallback allocation"
+            );
 
             match try_fallback_allocate_and_save(&service_name, config).await {
                 Ok(allocated_address) => {
@@ -117,7 +119,9 @@ async fn allocate_local_address_for_config(config: &mut Config) -> Result<String
                         return Err(fallback_err);
                     }
 
-                    warn!("Fallback allocation also failed for service {service_name}: {fallback_err}. Using default 127.0.0.1");
+                    warn!(
+                        "Fallback allocation also failed for service {service_name}: {fallback_err}. Using default 127.0.0.1"
+                    );
                     let default_address = "127.0.0.1".to_string();
                     config.local_address = Some(default_address.clone());
                     Ok(default_address)
@@ -177,7 +181,9 @@ async fn try_fallback_allocate_and_save(
 
         match crate::network_utils::ensure_loopback_address(&address).await {
             Ok(_) => {
-                debug!("Successfully allocated and configured fallback address: {address} for service: {service_name}");
+                debug!(
+                    "Successfully allocated and configured fallback address: {address} for service: {service_name}"
+                );
 
                 config.local_address = Some(address.clone());
                 info!(
@@ -188,11 +194,20 @@ async fn try_fallback_allocate_and_save(
 
                 match save_allocated_address_to_db(config).await {
                     Ok(_) => {
-                        info!("Successfully updated database with fallback allocated address {} for config {}", address, config.id.unwrap_or_default());
+                        info!(
+                            "Successfully updated database with fallback allocated address {} for config {}",
+                            address,
+                            config.id.unwrap_or_default()
+                        );
                         return Ok(address);
                     }
                     Err(e) => {
-                        error!("Failed to save fallback allocated address {} to database for config {}: {}", address, config.id.unwrap_or_default(), e);
+                        error!(
+                            "Failed to save fallback allocated address {} to database for config {}: {}",
+                            address,
+                            config.id.unwrap_or_default(),
+                            e
+                        );
                         if let Err(cleanup_err) =
                             crate::network_utils::remove_loopback_address(&address).await
                         {
@@ -233,17 +248,16 @@ async fn get_allocated_loopback_addresses() -> std::collections::HashSet<String>
 
     if let Ok(configs) = kftray_commons::config::get_configs().await {
         for config in configs {
-            if let Some(addr) = &config.local_address {
-                if crate::network_utils::is_custom_loopback_address(addr)
-                    && config.auto_loopback_address
-                {
-                    allocated.insert(addr.clone());
-                    debug!(
-                        "Found allocated address {} for config {}",
-                        addr,
-                        config.id.unwrap_or_default()
-                    );
-                }
+            if let Some(addr) = &config.local_address
+                && crate::network_utils::is_custom_loopback_address(addr)
+                && config.auto_loopback_address
+            {
+                allocated.insert(addr.clone());
+                debug!(
+                    "Found allocated address {} for config {}",
+                    addr,
+                    config.id.unwrap_or_default()
+                );
             }
         }
     }
@@ -335,33 +349,33 @@ pub async fn start_port_forward_with_mode(
             }
         };
 
-        if config.domain_enabled.unwrap_or_default() {
-            if let Some(service_name) = &config.service {
-                match final_local_address.parse::<std::net::IpAddr>() {
-                    Ok(ip_addr) => {
-                        let entry_id = format!("{}", config.id.unwrap_or_default());
-                        let host_entry = HostEntry {
-                            ip: ip_addr,
-                            hostname: config.alias.clone().unwrap_or_default(),
-                        };
+        if config.domain_enabled.unwrap_or_default()
+            && let Some(service_name) = &config.service
+        {
+            match final_local_address.parse::<std::net::IpAddr>() {
+                Ok(ip_addr) => {
+                    let entry_id = format!("{}", config.id.unwrap_or_default());
+                    let host_entry = HostEntry {
+                        ip: ip_addr,
+                        hostname: config.alias.clone().unwrap_or_default(),
+                    };
 
-                        if let Err(e) = add_host_entry(entry_id, host_entry) {
-                            let error_message = format!(
-                                "Failed to write to the hostfile for {service_name}: {e}. Domain alias feature requires hostfile access."
-                            );
-                            error!("{}", &error_message);
-                            errors.push(error_message);
-                            continue;
-                        }
-                    }
-                    Err(_) => {
+                    if let Err(e) = add_host_entry(entry_id, host_entry) {
                         let error_message = format!(
-                            "Invalid IP address format for domain alias: {final_local_address}"
+                            "Failed to write to the hostfile for {service_name}: {e}. Domain alias feature requires hostfile access."
                         );
                         error!("{}", &error_message);
                         errors.push(error_message);
                         continue;
                     }
+                }
+                Err(_) => {
+                    let error_message = format!(
+                        "Invalid IP address format for domain alias: {final_local_address}"
+                    );
+                    error!("{}", &error_message);
+                    errors.push(error_message);
+                    continue;
                 }
             }
         }
@@ -454,16 +468,22 @@ pub async fn start_port_forward_with_mode(
                                         };
 
                                         if has_active_pod {
-                                            info!("Port forward {id} has ready pod, restarting timeout instead of stopping");
+                                            info!(
+                                                "Port forward {id} has ready pod, restarting timeout instead of stopping"
+                                            );
                                             if let Err(e) =
                                                 start_timeout_for_forward(id, callback_fn).await
                                             {
-                                                error!("Failed to restart timeout for config {id}: {e}");
+                                                error!(
+                                                    "Failed to restart timeout for config {id}: {e}"
+                                                );
                                             }
                                             return;
                                         }
 
-                                        info!("No ready pod found for {id}, checking for running pods during rollout");
+                                        info!(
+                                            "No ready pod found for {id}, checking for running pods during rollout"
+                                        );
 
                                         tokio::time::sleep(tokio::time::Duration::from_secs(10))
                                             .await;
@@ -481,7 +501,9 @@ pub async fn start_port_forward_with_mode(
                                         };
 
                                         if has_pods_during_rollout {
-                                            info!("Port forward {id} has running pods during rollout, checking if ready");
+                                            info!(
+                                                "Port forward {id} has running pods during rollout, checking if ready"
+                                            );
 
                                             let has_ready_pod = {
                                                 let _global_lock =
@@ -501,15 +523,21 @@ pub async fn start_port_forward_with_mode(
                                             };
 
                                             if has_ready_pod {
-                                                info!("Port forward {id} found ready pod after rollout, restarting timeout");
+                                                info!(
+                                                    "Port forward {id} found ready pod after rollout, restarting timeout"
+                                                );
                                                 if let Err(e) =
                                                     start_timeout_for_forward(id, callback_fn).await
                                                 {
-                                                    error!("Failed to restart timeout for config {id}: {e}");
+                                                    error!(
+                                                        "Failed to restart timeout for config {id}: {e}"
+                                                    );
                                                 }
                                                 return;
                                             } else {
-                                                info!("Port forward {id} still in rollout, stopping to allow restart");
+                                                info!(
+                                                    "Port forward {id} still in rollout, stopping to allow restart"
+                                                );
                                             }
                                         }
                                     }
@@ -589,14 +617,15 @@ pub async fn start_port_forward_with_mode(
                 error!("{}", &error_message);
                 errors.push(error_message);
 
-                if let Some(local_addr) = &config.local_address {
-                    if crate::network_utils::is_custom_loopback_address(local_addr) {
-                        if let Err(cleanup_err) =
-                            crate::network_utils::remove_loopback_address(local_addr).await
-                        {
-                            error!("Failed to cleanup loopback address {} after PortForward creation failure: {}", local_addr, cleanup_err);
-                        }
-                    }
+                if let Some(local_addr) = &config.local_address
+                    && crate::network_utils::is_custom_loopback_address(local_addr)
+                    && let Err(cleanup_err) =
+                        crate::network_utils::remove_loopback_address(local_addr).await
+                {
+                    error!(
+                        "Failed to cleanup loopback address {} after PortForward creation failure: {}",
+                        local_addr, cleanup_err
+                    );
                 }
 
                 if let Some(config_id) = config.id {

@@ -31,13 +31,13 @@ pub fn uninstall_helper(helper_path: &Path) -> Result<(), HelperError> {
                     "Failed to uninstall helper with admin privileges: {error}"
                 )));
             }
-        } else if let Ok(output) = output {
-            if !output.status.success() {
-                let error = String::from_utf8_lossy(&output.stderr);
-                return Err(HelperError::PlatformService(format!(
-                    "Failed to uninstall helper: {error}"
-                )));
-            }
+        } else if let Ok(output) = output
+            && !output.status.success()
+        {
+            let error = String::from_utf8_lossy(&output.stderr);
+            return Err(HelperError::PlatformService(format!(
+                "Failed to uninstall helper: {error}"
+            )));
         }
     }
 

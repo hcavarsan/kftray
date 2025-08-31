@@ -1,6 +1,6 @@
 use std::collections::HashSet;
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
 use kftray_commons::models::config_model::Config;
 use kftray_commons::models::config_state_model::ConfigState;
@@ -8,6 +8,7 @@ use ratatui::prelude::Alignment;
 use ratatui::widgets::BorderType;
 use ratatui::widgets::TableState;
 use ratatui::{
+    Frame,
     layout::{
         Constraint,
         Rect,
@@ -33,7 +34,6 @@ use ratatui::{
         ScrollbarState,
         Table,
     },
-    Frame,
 };
 
 use crate::tui::input::App;
@@ -218,46 +218,42 @@ pub fn render_details(
         ),
     ])];
 
-    if http_logs_enabled {
-        if let Some(config_id) = config.id {
-            if let Some(local_port) = config.local_port {
-                let log_file_name = format!("{}_{}.http", config_id, local_port);
-                if let Ok(log_folder_path) =
-                    kftray_commons::utils::config_dir::get_log_folder_path()
-                {
-                    let log_file_path = log_folder_path.join(&log_file_name);
-                    details.push(Line::from(vec![
-                        Span::styled(
-                            "  Log File: ",
-                            Style::default().add_modifier(Modifier::BOLD),
-                        ),
-                        Span::raw(log_file_path.display().to_string()),
-                    ]));
-                } else {
-                    details.push(Line::from(vec![
-                        Span::styled(
-                            "  Log File: ",
-                            Style::default().add_modifier(Modifier::BOLD),
-                        ),
-                        Span::raw(log_file_name),
-                    ]));
-                }
-            }
+    if http_logs_enabled
+        && let Some(config_id) = config.id
+        && let Some(local_port) = config.local_port
+    {
+        let log_file_name = format!("{}_{}.http", config_id, local_port);
+        if let Ok(log_folder_path) = kftray_commons::utils::config_dir::get_log_folder_path() {
+            let log_file_path = log_folder_path.join(&log_file_name);
+            details.push(Line::from(vec![
+                Span::styled(
+                    "  Log File: ",
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(log_file_path.display().to_string()),
+            ]));
+        } else {
+            details.push(Line::from(vec![
+                Span::styled(
+                    "  Log File: ",
+                    Style::default().add_modifier(Modifier::BOLD),
+                ),
+                Span::raw(log_file_name),
+            ]));
         }
     }
 
-    if state {
-        if let Some(config_id) = config.id {
-            if let Some(Some(active_pod)) = app.active_pods.get(&config_id) {
-                details.push(Line::from(vec![
-                    Span::styled(
-                        "Active Pod: ",
-                        Style::default().add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(active_pod, Style::default().fg(Color::Green)),
-                ]));
-            }
-        }
+    if state
+        && let Some(config_id) = config.id
+        && let Some(Some(active_pod)) = app.active_pods.get(&config_id)
+    {
+        details.push(Line::from(vec![
+            Span::styled(
+                "Active Pod: ",
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(active_pod, Style::default().fg(Color::Green)),
+        ]));
     }
 
     details.push(Line::from(""));

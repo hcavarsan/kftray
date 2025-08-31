@@ -17,22 +17,22 @@ lazy_static::lazy_static! {
 pub async fn start_timeout_for_forward(
     config_id: i64, stop_callback: Arc<dyn Fn(i64) + Send + Sync>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    if let Some(timeout_minutes) = get_disconnect_timeout().await? {
-        if timeout_minutes > 0 {
-            info!("Starting timeout for config_id {config_id} ({timeout_minutes} minutes)");
+    if let Some(timeout_minutes) = get_disconnect_timeout().await?
+        && timeout_minutes > 0
+    {
+        info!("Starting timeout for config_id {config_id} ({timeout_minutes} minutes)");
 
-            let timeout_duration = Duration::from_secs((timeout_minutes as u64) * 60);
-            let stop_callback_clone = stop_callback.clone();
+        let timeout_duration = Duration::from_secs((timeout_minutes as u64) * 60);
+        let stop_callback_clone = stop_callback.clone();
 
-            let timeout_handle = tokio::spawn(async move {
-                sleep(timeout_duration).await;
-                info!("Timeout reached for config_id {config_id}, stopping port forward");
-                stop_callback_clone(config_id);
-            });
+        let timeout_handle = tokio::spawn(async move {
+            sleep(timeout_duration).await;
+            info!("Timeout reached for config_id {config_id}, stopping port forward");
+            stop_callback_clone(config_id);
+        });
 
-            let mut timeouts = TIMEOUT_HANDLES.write().await;
-            timeouts.insert(config_id, timeout_handle);
-        }
+        let mut timeouts = TIMEOUT_HANDLES.write().await;
+        timeouts.insert(config_id, timeout_handle);
     }
     Ok(())
 }
@@ -70,14 +70,14 @@ mod tests {
     use sqlx::SqlitePool;
     use tokio::sync::Mutex;
     use tokio::time::{
-        sleep,
         Duration,
+        sleep,
     };
 
     use super::*;
     use crate::utils::db::{
-        create_db_table,
         DB_POOL,
+        create_db_table,
     };
     use crate::utils::settings::set_disconnect_timeout;
 

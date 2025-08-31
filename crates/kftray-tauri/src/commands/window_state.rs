@@ -3,8 +3,12 @@ use std::sync::atomic::Ordering;
 use kftray_commons::models::window::AppState;
 use kftray_commons::models::window::SaveDialogState;
 use log::error;
-use tauri::Manager;
 use tauri::State;
+use tauri::{
+    Emitter,
+    WebviewWindow,
+    Wry,
+};
 
 #[tauri::command]
 pub fn open_save_dialog(state: State<SaveDialogState>) {
@@ -17,7 +21,7 @@ pub fn close_save_dialog(state: State<SaveDialogState>) {
 }
 
 #[tauri::command]
-pub fn toggle_pin_state(app_state: tauri::State<AppState>, window: tauri::Window) {
+pub fn toggle_pin_state(app_state: tauri::State<AppState>, window: WebviewWindow<Wry>) {
     let new_pin_state = !app_state.is_pinned.load(Ordering::SeqCst);
     app_state.is_pinned.store(new_pin_state, Ordering::SeqCst);
 
@@ -36,14 +40,10 @@ pub fn toggle_pin_state(app_state: tauri::State<AppState>, window: tauri::Window
         "Pin Window"
     };
 
-    if let Err(e) = window
-        .app_handle()
-        .tray_handle()
-        .get_item("pin")
-        .set_title(menu_title)
-    {
-        error!("Failed to update menu item text: {e:?}");
-    }
+    // TODO: Update tray menu item text for Tauri v2
+    // The tray API has changed in Tauri v2 and menu item text updates
+    // need to be handled differently
+    let _ = menu_title; // Suppress unused variable warning
 
     if let Err(e) = window.emit("pin-state-changed", new_pin_state) {
         error!("Failed to emit pin state event: {e:?}");
@@ -54,9 +54,9 @@ pub fn toggle_pin_state(app_state: tauri::State<AppState>, window: tauri::Window
 mod tests {
     use std::collections::HashMap;
     use std::sync::{
-        atomic::AtomicBool,
         Arc,
         Mutex,
+        atomic::AtomicBool,
     };
 
     use tokio::runtime::Runtime;
@@ -273,13 +273,13 @@ mod tests {
         }
 
         fn emit<T: serde::Serialize + Clone>(&self, event: &str, payload: T) -> Result<(), String> {
-            if let Ok(payload) = serde_json::to_value(payload.clone()) {
-                if let Ok(payload_bool) = serde_json::from_value::<bool>(payload) {
-                    self.emitted_events
-                        .lock()
-                        .unwrap()
-                        .push((event.to_string(), payload_bool));
-                }
+            if let Ok(payload) = serde_json::to_value(payload.clone())
+                && let Ok(payload_bool) = serde_json::from_value::<bool>(payload)
+            {
+                self.emitted_events
+                    .lock()
+                    .unwrap()
+                    .push((event.to_string(), payload_bool));
             }
             Ok(())
         }

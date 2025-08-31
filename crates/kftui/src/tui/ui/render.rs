@@ -1,6 +1,7 @@
 use kftray_commons::models::config_state_model::ConfigState;
 use ratatui::prelude::Alignment;
 use ratatui::{
+    Frame,
     layout::{
         Constraint,
         Direction,
@@ -18,7 +19,6 @@ use ratatui::{
         Clear,
         Paragraph,
     },
-    Frame,
 };
 
 use crate::tui::input::ActiveComponent;

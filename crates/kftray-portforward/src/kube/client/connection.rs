@@ -5,9 +5,9 @@ use std::sync::LazyLock;
 use hyper_openssl::client::legacy::HttpsConnector;
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::TokioExecutor;
+use kube::Client;
 use kube::client::ConfigExt;
 use kube::config::Config;
-use kube::Client;
 use log::{
     error,
     info,

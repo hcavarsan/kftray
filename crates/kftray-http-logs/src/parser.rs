@@ -5,11 +5,11 @@ use anyhow::Result;
 use brotli::Decompressor;
 use flate2::read::GzDecoder;
 use httparse::{
+    EMPTY_HEADER,
     Header,
     Request as HttpRequest,
     Response as HttpResponse,
     Status as ParseStatus,
-    EMPTY_HEADER,
 };
 use tokio::task;
 use tracing::debug;
@@ -89,10 +89,10 @@ impl RequestParser {
             let header_name = content_length.value();
             for h in headers {
                 if h.name.eq_ignore_ascii_case(header_name) {
-                    if let Ok(v) = str::from_utf8(h.value) {
-                        if let Ok(len) = v.parse::<usize>() {
-                            return len;
-                        }
+                    if let Ok(v) = str::from_utf8(h.value)
+                        && let Ok(len) = v.parse::<usize>()
+                    {
+                        return len;
                     }
                     break;
                 }
@@ -103,10 +103,10 @@ impl RequestParser {
 
     pub fn get_content_encoding<'a>(headers: &'a [Header<'_>]) -> Option<&'a str> {
         for header in headers {
-            if header.name.eq_ignore_ascii_case("content-encoding") {
-                if let Ok(value) = std::str::from_utf8(header.value) {
-                    return Some(value.trim());
-                }
+            if header.name.eq_ignore_ascii_case("content-encoding")
+                && let Ok(value) = std::str::from_utf8(header.value)
+            {
+                return Some(value.trim());
             }
         }
         None
@@ -190,12 +190,11 @@ impl RequestParser {
                 }) => {
                     if let Some(data) = chunk_data {
                         last_incomplete_data = Some(data);
-                        if let Some(chunk_line_end) = data.windows(2).position(|w| w == b"\r\n") {
-                            if let Ok(size_str) = std::str::from_utf8(&data[..chunk_line_end]) {
-                                if let Ok(size) = usize::from_str_radix(size_str.trim(), 16) {
-                                    last_chunk_size = Some(size);
-                                }
-                            }
+                        if let Some(chunk_line_end) = data.windows(2).position(|w| w == b"\r\n")
+                            && let Ok(size_str) = std::str::from_utf8(&data[..chunk_line_end])
+                            && let Ok(size) = usize::from_str_radix(size_str.trim(), 16)
+                        {
+                            last_chunk_size = Some(size);
                         }
                         result.extend_from_slice(data);
                     }
@@ -261,7 +260,7 @@ impl RequestParser {
             Err(_) => {
                 return Ok(ChunkParseResult::Skip {
                     consumed: line_end + 2,
-                })
+                });
             }
         };
 
@@ -282,7 +281,7 @@ impl RequestParser {
             Err(_) => {
                 return Ok(ChunkParseResult::Skip {
                     consumed: line_end + 2,
-                })
+                });
             }
         };
 
@@ -379,10 +378,10 @@ impl BodyParser {
 
     pub fn get_content_encoding<'a>(headers: &'a [Header<'_>]) -> Option<&'a str> {
         for header in headers {
-            if header.name.eq_ignore_ascii_case("content-encoding") {
-                if let Ok(value) = std::str::from_utf8(header.value) {
-                    return Some(value.trim());
-                }
+            if header.name.eq_ignore_ascii_case("content-encoding")
+                && let Ok(value) = std::str::from_utf8(header.value)
+            {
+                return Some(value.trim());
             }
         }
         None
@@ -390,10 +389,10 @@ impl BodyParser {
 
     pub fn get_content_type<'a>(headers: &'a [Header<'_>]) -> Option<&'a str> {
         for header in headers {
-            if header.name.eq_ignore_ascii_case("content-type") {
-                if let Ok(value) = str::from_utf8(header.value) {
-                    return Some(value.trim());
-                }
+            if header.name.eq_ignore_ascii_case("content-type")
+                && let Ok(value) = str::from_utf8(header.value)
+            {
+                return Some(value.trim());
             }
         }
         None
@@ -442,8 +441,11 @@ impl BodyParser {
                         decompressed = Some(result);
                     }
                     Ok(result) if !result.is_empty() => {
-                        debug!("Partial gzip decompression: {} bytes -> {} bytes, trying alternative approaches",
-                              dechunked_body.len(), result.len());
+                        debug!(
+                            "Partial gzip decompression: {} bytes -> {} bytes, trying alternative approaches",
+                            dechunked_body.len(),
+                            result.len()
+                        );
                         decompressed = Some(result);
                     }
                     _ => {
@@ -451,22 +453,26 @@ impl BodyParser {
                     }
                 }
 
-                if decompressed.is_none() || decompressed.as_ref().unwrap().is_empty() {
-                    if let Some(gzip_start) = Self::find_gzip_header(&dechunked_body) {
-                        if gzip_start > 0 {
-                            debug!("Found gzip header at offset {}, attempting alternative decompression", gzip_start);
-                            match Self::decompress_gzip(&dechunked_body[gzip_start..]).await {
-                                Ok(result) if !result.is_empty() => {
-                                    debug!(
-                                        "Alternative gzip decompression succeeded: {} bytes",
-                                        result.len()
-                                    );
-                                    decompressed = Some(result);
-                                }
-                                _ => {
-                                    debug!("Alternative gzip decompression failed or produced empty output");
-                                }
-                            }
+                if (decompressed.is_none() || decompressed.as_ref().unwrap().is_empty())
+                    && let Some(gzip_start) = Self::find_gzip_header(&dechunked_body)
+                    && gzip_start > 0
+                {
+                    debug!(
+                        "Found gzip header at offset {}, attempting alternative decompression",
+                        gzip_start
+                    );
+                    match Self::decompress_gzip(&dechunked_body[gzip_start..]).await {
+                        Ok(result) if !result.is_empty() => {
+                            debug!(
+                                "Alternative gzip decompression succeeded: {} bytes",
+                                result.len()
+                            );
+                            decompressed = Some(result);
+                        }
+                        _ => {
+                            debug!(
+                                "Alternative gzip decompression failed or produced empty output"
+                            );
                         }
                     }
                 }

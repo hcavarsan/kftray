@@ -92,25 +92,23 @@ mod tests {
             ..Config::default()
         };
 
-        if kftray_commons::config::insert_config(config).await.is_ok() {
-            if let Ok(initial_states) = get_config_states().await {
-                if let Some(test_state) = initial_states.first() {
-                    let mut update_state = test_state.clone();
-                    update_state.is_running = true;
-                    let _ = kftray_commons::config_state::update_config_state(&update_state).await;
+        if kftray_commons::config::insert_config(config).await.is_ok()
+            && let Ok(initial_states) = get_config_states().await
+            && let Some(test_state) = initial_states.first()
+        {
+            let mut update_state = test_state.clone();
+            update_state.is_running = true;
+            let _ = kftray_commons::config_state::update_config_state(&update_state).await;
 
-                    if let Ok(updated_states) = get_config_states().await {
-                        if let Some(updated_state) = updated_states
-                            .iter()
-                            .find(|s| s.config_id == test_state.config_id)
-                        {
-                            assert!(
-                                updated_state.is_running,
-                                "Config state should now be running"
-                            );
-                        }
-                    }
-                }
+            if let Ok(updated_states) = get_config_states().await
+                && let Some(updated_state) = updated_states
+                    .iter()
+                    .find(|s| s.config_id == test_state.config_id)
+            {
+                assert!(
+                    updated_state.is_running,
+                    "Config state should now be running"
+                );
             }
         }
     }

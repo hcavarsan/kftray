@@ -30,13 +30,13 @@ pub fn install_helper(helper_path: &Path) -> Result<(), HelperError> {
                     "Failed to install helper with admin privileges: {error}"
                 )));
             }
-        } else if let Ok(output) = output {
-            if !output.status.success() {
-                let error = String::from_utf8_lossy(&output.stderr);
-                return Err(HelperError::PlatformService(format!(
-                    "Failed to install helper: {error}"
-                )));
-            }
+        } else if let Ok(output) = output
+            && !output.status.success()
+        {
+            let error = String::from_utf8_lossy(&output.stderr);
+            return Err(HelperError::PlatformService(format!(
+                "Failed to install helper: {error}"
+            )));
         }
     }
 

@@ -24,8 +24,8 @@ use crate::tui::input::App;
 use crate::tui::input::DeleteButton;
 use crate::tui::ui::centered_rect;
 use crate::tui::ui::{
-    resize_ascii_art,
     ASCII_LOGO,
+    resize_ascii_art,
 };
 use crate::tui::ui::{
     BASE,
@@ -504,9 +504,9 @@ pub fn render_error_popup(f: &mut Frame, error_message: &str, area: Rect, top_pa
     }
 
     lines.push("".into());
-    lines.push(Line::from(vec!["  Press <Enter> to close"
-        .fg(SUBTEXT0)
-        .italic()]));
+    lines.push(Line::from(vec![
+        "  Press <Enter> to close".fg(SUBTEXT0).italic(),
+    ]));
 
     let formatted_text = Text::from(lines).centered();
     render_popup(
@@ -1207,24 +1207,24 @@ fn render_response_side(
     }
 
     // Show replay error if any
-    if let Some(replay_error) = &app.http_logs_replay_result {
-        if replay_error.starts_with("Request failed") || replay_error.starts_with("Failed to") {
-            lines.push(Line::from(""));
+    if let Some(replay_error) = &app.http_logs_replay_result
+        && (replay_error.starts_with("Request failed") || replay_error.starts_with("Failed to"))
+    {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "━".repeat(30),
+            Style::default().fg(SURFACE2),
+        )));
+        lines.push(Line::from(Span::styled(
+            "Replay Error:",
+            Style::default().bold().fg(RED),
+        )));
+        lines.push(Line::from(""));
+        for error_line in replay_error.lines() {
             lines.push(Line::from(Span::styled(
-                "━".repeat(30),
-                Style::default().fg(SURFACE2),
+                format!("  {}", error_line),
+                Style::default().fg(RED),
             )));
-            lines.push(Line::from(Span::styled(
-                "Replay Error:",
-                Style::default().bold().fg(RED),
-            )));
-            lines.push(Line::from(""));
-            for error_line in replay_error.lines() {
-                lines.push(Line::from(Span::styled(
-                    format!("  {}", error_line),
-                    Style::default().fg(RED),
-                )));
-            }
         }
     }
 
@@ -1256,10 +1256,10 @@ fn format_body_content(body: &str, headers: &[String]) -> String {
 
     if is_json {
         // Try to parse and format JSON if it's not already formatted
-        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(body.trim()) {
-            if let Ok(pretty) = serde_json::to_string_pretty(&parsed) {
-                return pretty;
-            }
+        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(body.trim())
+            && let Ok(pretty) = serde_json::to_string_pretty(&parsed)
+        {
+            return pretty;
         }
     }
 

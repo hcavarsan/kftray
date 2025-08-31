@@ -25,9 +25,9 @@ import {
   faTrash,
 } from '@fortawesome/free-solid-svg-icons'
 import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import { open as openShell } from '@tauri-apps/api/shell'
-import { invoke } from '@tauri-apps/api/tauri'
+import { open as openShell } from '@tauri-apps/plugin-shell'
 
 import HttpLogsConfigModal from '@/components/HttpLogsConfigModal'
 import { Checkbox } from '@/components/ui/checkbox'
@@ -168,7 +168,9 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   }
 
   const handleOpenLocalURL = () => {
-    const baseUrl = config.domain_enabled ? config.alias : config.local_address
+    const baseUrl = config.domain_enabled
+      ? config.alias
+      : config.local_address || 'localhost'
 
     openShell(`http://${baseUrl}:${config.local_port}`).catch(console.error)
   }

@@ -2,6 +2,7 @@ use std::collections::HashSet;
 
 use kftray_commons::models::config_model::Config;
 use kftray_commons::models::config_state_model::ConfigState;
+use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::layout::{
     Constraint,
@@ -19,7 +20,6 @@ use ratatui::widgets::{
     Table,
     TableState,
 };
-use ratatui::Terminal;
 
 use crate::tests::test_logger_state;
 use crate::tui::input::{

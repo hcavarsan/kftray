@@ -151,7 +151,7 @@ pub fn send_request(
             Err(e) => {
                 return Err(HelperError::Communication(format!(
                     "Failed to write request: {e}"
-                )))
+                )));
             }
         }
 
@@ -160,7 +160,7 @@ pub fn send_request(
             Err(e) => {
                 return Err(HelperError::Communication(format!(
                     "Failed to flush socket: {e}"
-                )))
+                )));
             }
         }
 
@@ -193,7 +193,7 @@ pub fn send_request(
                     return Err(HelperError::Communication(format!(
                         "Failed to write request: {}",
                         e
-                    )))
+                    )));
                 }
             }
 
@@ -203,7 +203,7 @@ pub fn send_request(
                     return Err(HelperError::Communication(format!(
                         "Failed to flush pipe: {}",
                         e
-                    )))
+                    )));
                 }
             }
 

@@ -2,96 +2,68 @@
   "build": {
     "beforeBuildCommand": "pnpm build",
     "beforeDevCommand": "pnpm dev",
-    "devPath": "http://localhost:1420",
-    "distDir": "../../frontend/dist",
-    "withGlobalTauri": true
+    "frontendDist": "../../frontend/dist",
+    "devUrl": "http://localhost:1420"
   },
-  "package": {
-    "productName": "kftray",
-    "version": "0.22.8"
-  },
-  "tauri": {
-    "allowlist": {
-      "all": true,
-      "dialog": {
-        "all": true
-      },
-      "shell": {
-        "all": true,
-        "execute": true,
-        "open": true,
-        "scope": [
-          {
-            "args": true,
-            "cmd": "aws",
-            "name": "aws-cli"
-          },
-          {
-            "args": true,
-            "name": "kftray-helper",
-            "sidecar": true
-          }
-        ],
-        "sidecar": true
-      }
+  "bundle": {
+    "active": true,
+    "category": "DeveloperTool",
+    "targets": [
+      "app",
+      "dmg",
+      "appimage",
+      "deb",
+      "msi",
+      "nsis"
+    ],
+    "externalBin": [
+      "bin/kftray-helper"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "windows": {
+      "certificateThumbprint": null,
+      "digestAlgorithm": "sha256",
+      "timestampUrl": ""
     },
-    "bundle": {
-      "active": true,
-      "category": "DeveloperTool",
+    "macOS": {
+      "entitlements": "./entitlements.plist",
+      "exceptionDomain": "",
+      "frameworks": [],
+      "providerShortName": null,
+      "signingIdentity": null
+    },
+    "resources": [],
+    "shortDescription": "",
+    "linux": {
       "deb": {
         "depends": []
-      },
-      "externalBin": [
-        "bin/kftray-helper"
-      ],
-      "icon": [
-        "icons/32x32.png",
-        "icons/128x128.png",
-        "icons/128x128@2x.png",
-        "icons/icon.icns",
-        "icons/icon.ico"
-      ],
-      "identifier": "com.hcavarsan.kftray",
-      "macOS": {
-        "entitlements": "./entitlements.plist",
-        "exceptionDomain": "",
-        "frameworks": [],
-        "providerShortName": null,
-        "signingIdentity": null
-      },
-      "resources": [],
-      "shortDescription": "",
-      "targets": [
-        "app",
-        "dmg",
-        "appimage",
-        "deb",
-        "updater",
-        "msi",
-        "nsis"
-      ],
-      "windows": {
-        "certificateThumbprint": null,
-        "digestAlgorithm": "sha256",
-        "timestampUrl": ""
       }
     },
-    "macOSPrivateApi": true,
-    "security": {
-      "csp": null
-    },
-    "systemTray": {
-      "iconAsTemplate": true,
-      "iconPath": "icons/tray.ico",
-      "menuOnLeftClick": false
-    },
+    "createUpdaterArtifacts": "v1Compatible"
+  },
+  "productName": "kftray",
+  "mainBinaryName": "kftray",
+  "version": "0.22.8",
+  "identifier": "com.hcavarsan.kftray",
+  "plugins": {
     "updater": {
-      "active": true,
-      "dialog": true,
       "endpoints": [
         "https://github.com/hcavarsan/kftray/releases/latest/download/latest.json"
       ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDZEMEYxNzA4ODFFNjA3RTgKUldUb0IrYUJDQmNQYmRrZFFUTUN0T3lseStZVmc5YlR4YmxtaHBoanJYeGxSMWFQbjhtTFpERGsK"
+    }
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "macOSPrivateApi": true,
+    "security": {
+      "csp": null
     },
     "windows": [
       {
@@ -105,7 +77,8 @@
         "title": "menubar",
         "transparent": true,
         "visible": false,
-        "width": 450
+        "width": 450,
+        "useHttpsScheme": true
       }
     ]
   }

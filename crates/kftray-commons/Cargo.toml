@@ -2,7 +2,7 @@
 name = "kftray-commons"
 version = "0.22.8"
 authors = ["Henrique Cavarsan <hencavarsan@gmail.com>"]
-edition = "2021"
+edition = "2024"
 description = "KFtray commons"
 homepage = "https://kftray.app"
 repository = "https://github.com/hcavarsan/kftray"
@@ -24,5 +24,6 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 sqlx = { workspace = true }
 tauri = { workspace = true }
+tauri-plugin-dialog = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true }

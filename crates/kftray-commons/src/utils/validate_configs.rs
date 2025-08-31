@@ -1,14 +1,15 @@
 use std::env;
 use std::path::PathBuf;
 
-use tauri::api::dialog::{
-    MessageDialogBuilder,
-    MessageDialogKind,
-};
 use tauri::{
-    async_runtime::spawn_blocking,
     AppHandle,
+    Manager,
     Runtime,
+    async_runtime::spawn_blocking,
+};
+use tauri_plugin_dialog::{
+    DialogExt,
+    MessageDialogButtons,
 };
 
 #[derive(Clone, Debug)]
@@ -99,7 +100,10 @@ fn format_alert_message(
         env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| "Not set".to_string()),
         env::var("HOME").unwrap_or_else(|_| "Not set".to_string()),
         active_config_msg,
-        dirs::home_dir().map_or("<home_directory_not_found>".to_string(), |p| p.join(".kftray").display().to_string())
+        dirs::home_dir().map_or("<home_directory_not_found>".to_string(), |p| p
+            .join(".kftray")
+            .display()
+            .to_string())
     )
 }
 
@@ -108,11 +112,20 @@ async fn show_alert_dialog<R: Runtime>(
 ) {
     let full_message = format_alert_message(configs, active_config);
 
+    let app_handle_clone = app_handle.clone();
     spawn_blocking(move || {
-        let _ = app_handle.run_on_main_thread(move || {
-            MessageDialogBuilder::new("Multiple Configuration Directories Detected", full_message)
-                .kind(MessageDialogKind::Warning)
-                .show(|_| {});
+        let app_handle_inner = app_handle_clone.clone();
+        let _ = app_handle_clone.run_on_main_thread(move || {
+            if let Some(window) = app_handle_inner.get_webview_window("main") {
+                window
+                    .dialog()
+                    .message(&full_message)
+                    .title("Multiple Configuration Directories Detected")
+                    .buttons(MessageDialogButtons::Ok)
+                    .show(move |_response| {
+                        // User acknowledged the warning
+                    });
+            }
         });
     })
     .await
@@ -153,8 +166,9 @@ mod tests {
     fn restore_env_vars(vars: Vec<(String, Option<String>)>) {
         for (key, value) in vars {
             match value {
-                Some(val) => env::set_var(&key, val),
-                None => env::remove_var(&key),
+                Some(val) => unsafe { env::set_var(&key, val) },
+
+                None => unsafe { env::remove_var(&key) },
             }
         }
     }
@@ -169,25 +183,25 @@ mod tests {
         if let Some(dir) = kftray {
             let path = base_path.join(dir);
             fs::create_dir_all(&path).unwrap();
-            env::set_var("KFTRAY_CONFIG", path);
+            unsafe { env::set_var("KFTRAY_CONFIG", path) };
         } else {
-            env::remove_var("KFTRAY_CONFIG");
+            unsafe { env::remove_var("KFTRAY_CONFIG") };
         }
 
         if let Some(dir) = xdg {
             let path = base_path.join(dir);
             fs::create_dir_all(path.join("kftray")).unwrap();
-            env::set_var("XDG_CONFIG_HOME", path);
+            unsafe { env::set_var("XDG_CONFIG_HOME", path) };
         } else {
-            env::remove_var("XDG_CONFIG_HOME");
+            unsafe { env::remove_var("XDG_CONFIG_HOME") };
         }
 
         if let Some(dir) = home {
             let path = base_path.join(dir);
             fs::create_dir_all(path.join(".kftray")).unwrap();
-            env::set_var("HOME", path);
+            unsafe { env::set_var("HOME", path) };
         } else if !preserved.iter().any(|(k, v)| k == "HOME" && v.is_some()) {
-            env::remove_var("HOME");
+            unsafe { env::remove_var("HOME") };
         }
 
         (temp_dir, preserved)
@@ -205,7 +219,7 @@ mod tests {
                 .collect::<Vec<_>>();
 
             for key in keys {
-                env::remove_var(key);
+                unsafe { env::remove_var(key) };
             }
 
             StrictEnvGuard { saved_vars }
@@ -216,8 +230,9 @@ mod tests {
         fn drop(&mut self) {
             for (key, value) in self.saved_vars.drain(..) {
                 match value {
-                    Some(val) => env::set_var(key, val),
-                    None => env::remove_var(key),
+                    Some(val) => unsafe { env::set_var(key, val) },
+
+                    None => unsafe { env::remove_var(key) },
                 }
             }
         }
@@ -238,7 +253,7 @@ mod tests {
                     .collect();
 
                 for var in &["KFTRAY_CONFIG", "XDG_CONFIG_HOME", "HOME"] {
-                    env::remove_var(var);
+                    unsafe { env::remove_var(var) };
                 }
 
                 let temp_dir = tempfile::tempdir().unwrap();
@@ -254,8 +269,11 @@ mod tests {
             fn drop(&mut self) {
                 for (key, value) in self.saved_vars.drain(..) {
                     match value {
-                        Some(val) => env::set_var(&key, val),
-                        None => env::remove_var(&key),
+                        // code.
+                        Some(val) => unsafe { env::set_var(&key, val) },
+
+                        // code.
+                        None => unsafe { env::remove_var(&key) },
                     }
                 }
             }
@@ -263,9 +281,11 @@ mod tests {
 
         let _env_guard = IsolatedEnvGuard::new();
 
-        env::remove_var("KFTRAY_CONFIG");
-        env::remove_var("XDG_CONFIG_HOME");
-        env::remove_var("HOME");
+        unsafe { env::remove_var("KFTRAY_CONFIG") };
+
+        unsafe { env::remove_var("XDG_CONFIG_HOME") };
+
+        unsafe { env::remove_var("HOME") };
 
         let (configs, active) = detect_multiple_configs();
         assert!(
@@ -290,8 +310,9 @@ mod tests {
 
         let home_temp_dir = tempfile::tempdir().unwrap();
 
-        env::set_var("KFTRAY_CONFIG", kftray_dir.to_str().unwrap());
-        env::set_var("HOME", home_temp_dir.path().to_str().unwrap());
+        unsafe { env::set_var("KFTRAY_CONFIG", kftray_dir.to_str().unwrap()) };
+
+        unsafe { env::set_var("HOME", home_temp_dir.path().to_str().unwrap()) };
 
         assert!(kftray_dir.exists());
         assert!(env::var("KFTRAY_CONFIG").is_ok());
@@ -323,9 +344,11 @@ mod tests {
         let kftray_dir = xdg_path.join("kftray");
         std::fs::create_dir_all(&kftray_dir).unwrap();
 
-        env::set_var("XDG_CONFIG_HOME", xdg_path.to_str().unwrap());
-        env::set_var("HOME", home_temp_dir.path().to_str().unwrap());
-        env::remove_var("KFTRAY_CONFIG");
+        unsafe { env::set_var("XDG_CONFIG_HOME", xdg_path.to_str().unwrap()) };
+
+        unsafe { env::set_var("HOME", home_temp_dir.path().to_str().unwrap()) };
+
+        unsafe { env::remove_var("KFTRAY_CONFIG") };
 
         assert!(kftray_dir.exists(), "XDG kftray dir should exist");
         assert!(
@@ -370,8 +393,9 @@ mod tests {
         let _lock = ENV_TEST_MUTEX.lock().unwrap();
         let (_temp_dir, preserved_vars) = setup_env_and_dirs(None, None, Some("home_dir"));
 
-        env::remove_var("KFTRAY_CONFIG");
-        env::remove_var("XDG_CONFIG_HOME");
+        unsafe { env::remove_var("KFTRAY_CONFIG") };
+
+        unsafe { env::remove_var("XDG_CONFIG_HOME") };
 
         let (configs, active) = detect_multiple_configs();
 
@@ -397,9 +421,11 @@ mod tests {
         let xdg_base_path = "/custom/xdg/path";
         let home_base_path = "/custom/home/path";
 
-        env::set_var("KFTRAY_CONFIG", kftray_path);
-        env::set_var("XDG_CONFIG_HOME", xdg_base_path);
-        env::set_var("HOME", home_base_path);
+        unsafe { env::set_var("KFTRAY_CONFIG", kftray_path) };
+
+        unsafe { env::set_var("XDG_CONFIG_HOME", xdg_base_path) };
+
+        unsafe { env::set_var("HOME", home_base_path) };
 
         let xdg_path = PathBuf::from(&xdg_base_path).join("kftray");
         let home_path = PathBuf::from(&home_base_path).join(".kftray");
@@ -493,7 +519,7 @@ mod tests {
         assert_eq!(configs_before.len(), 0, "Should have no configs initially");
 
         if let Some(path_str) = non_existent_path.to_str() {
-            env::set_var("KFTRAY_CONFIG", path_str);
+            unsafe { env::set_var("KFTRAY_CONFIG", path_str) };
         }
 
         let (configs_after, _active) = detect_multiple_configs();
@@ -509,8 +535,9 @@ mod tests {
         let _lock = ENV_TEST_MUTEX.lock().unwrap();
         let preserved_vars = preserve_env_vars(&["KFTRAY_CONFIG", "XDG_CONFIG_HOME", "HOME"]);
 
-        env::remove_var("KFTRAY_CONFIG");
-        env::remove_var("XDG_CONFIG_HOME");
+        unsafe { env::remove_var("KFTRAY_CONFIG") };
+
+        unsafe { env::remove_var("XDG_CONFIG_HOME") };
 
         let configs = vec![
             ConfigLocation::new(PathBuf::from("/fake/path1"), "Origin1".into()),

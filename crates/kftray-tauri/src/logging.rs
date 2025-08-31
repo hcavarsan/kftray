@@ -71,14 +71,14 @@ mod tests {
     fn test_debug_env_detection() {
         let original_debug = std::env::var("KFTRAY_DEBUG").ok();
 
-        std::env::set_var("KFTRAY_DEBUG", "1");
+        unsafe { std::env::set_var("KFTRAY_DEBUG", "1") };
         assert!(std::env::var("KFTRAY_DEBUG").is_ok());
 
-        std::env::remove_var("KFTRAY_DEBUG");
+        unsafe { std::env::remove_var("KFTRAY_DEBUG") };
         assert!(std::env::var("KFTRAY_DEBUG").is_err());
 
         if let Some(val) = original_debug {
-            std::env::set_var("KFTRAY_DEBUG", val);
+            unsafe { std::env::set_var("KFTRAY_DEBUG", val) };
         }
     }
 
@@ -86,21 +86,21 @@ mod tests {
     fn test_rust_log_env_var() {
         let original_rust_log = env::var("RUST_LOG").ok();
 
-        env::set_var("RUST_LOG", "debug");
+        unsafe { env::set_var("RUST_LOG", "debug") };
         let filter = match env::var("RUST_LOG") {
             Ok(filter) => filter.parse().unwrap_or(log::LevelFilter::Info),
             Err(_) => log::LevelFilter::Off,
         };
         assert_eq!(filter, log::LevelFilter::Debug);
 
-        env::set_var("RUST_LOG", "not_a_valid_level");
+        unsafe { env::set_var("RUST_LOG", "not_a_valid_level") };
         let filter = match env::var("RUST_LOG") {
             Ok(filter) => filter.parse().unwrap_or(log::LevelFilter::Info),
             Err(_) => log::LevelFilter::Off,
         };
         assert_eq!(filter, log::LevelFilter::Info);
 
-        env::remove_var("RUST_LOG");
+        unsafe { env::remove_var("RUST_LOG") };
         let filter = match env::var("RUST_LOG") {
             Ok(filter) => filter.parse().unwrap_or(log::LevelFilter::Info),
             Err(_) => log::LevelFilter::Off,
@@ -108,7 +108,7 @@ mod tests {
         assert_eq!(filter, log::LevelFilter::Off);
 
         if let Some(val) = original_rust_log {
-            env::set_var("RUST_LOG", val);
+            unsafe { env::set_var("RUST_LOG", val) };
         }
     }
 
