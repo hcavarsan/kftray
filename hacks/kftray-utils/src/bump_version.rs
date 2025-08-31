@@ -287,14 +287,7 @@ fn update_json_version(content: &str, new_version: &str) -> io::Result<String> {
     let mut json_content: Value =
         serde_json::from_str(content).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
-    if let Some(package) = json_content.get_mut("package") {
-        package["version"] = serde_json::Value::String(new_version.to_string());
-    } else {
-        return Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            "Missing 'package' section in tauri.conf.json",
-        ));
-    }
+    json_content["version"] = serde_json::Value::String(new_version.to_string());
 
     serde_json::to_string_pretty(&json_content)
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))
