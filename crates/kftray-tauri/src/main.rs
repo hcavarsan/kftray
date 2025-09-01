@@ -32,6 +32,7 @@ use tokio::runtime::Runtime;
 use crate::commands::portforward::check_and_emit_changes;
 use crate::init_check::RealPortOperations;
 use crate::tray::{
+    TrayPositionState,
     create_tray_icon,
     handle_run_event,
     handle_window_event,
@@ -64,6 +65,7 @@ fn main() {
 
     let app = tauri::Builder::default()
         .manage(SaveDialogState::default())
+        .manage(TrayPositionState::default())
         .manage(AppState {
             is_moving: is_moving.clone(),
             is_plugin_moving: is_plugin_moving.clone(),

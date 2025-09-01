@@ -1,4 +1,8 @@
 use std::sync::atomic::Ordering;
+use std::sync::{
+    Arc,
+    Mutex,
+};
 use std::time::Duration;
 
 use kftray_commons::models::window::AppState;
@@ -9,6 +13,8 @@ use log::{
 };
 use tauri::{
     Manager,
+    PhysicalPosition,
+    PhysicalSize,
     RunEvent,
     WindowEvent,
     Wry,
@@ -27,6 +33,13 @@ use tauri::{
 };
 use tauri_plugin_positioner::Position;
 use tokio::time::sleep;
+
+type TrayPosition = Option<(PhysicalPosition<f64>, PhysicalSize<f64>)>;
+
+#[derive(Default)]
+pub struct TrayPositionState {
+    pub position: Arc<Mutex<TrayPosition>>,
+}
 
 use crate::commands::portforward::handle_exit_app;
 use crate::commands::window_state::toggle_pin_state;
@@ -159,7 +172,20 @@ pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<tauri::tray::TrayIcon<W
         .on_tray_icon_event(|tray, event| {
             tauri_plugin_positioner::on_tray_event(tray.app_handle(), &event);
 
-            info!("Tray event received: {:?}", event);
+            match &event {
+                TrayIconEvent::Click { rect, .. }
+                | TrayIconEvent::Enter { rect, .. }
+                | TrayIconEvent::Leave { rect, .. }
+                | TrayIconEvent::Move { rect, .. } => {
+                    let size = rect.size.to_physical(1.0);
+                    let position = rect.position.to_physical(1.0);
+
+                    if let Some(tray_state) = tray.app_handle().try_state::<TrayPositionState>() {
+                        *tray_state.position.lock().unwrap() = Some((position, size));
+                    }
+                }
+                _ => {}
+            }
 
             match event {
                 TrayIconEvent::Click {
