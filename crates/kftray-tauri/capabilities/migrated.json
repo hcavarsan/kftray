@@ -65,7 +65,6 @@
     "dialog:allow-ask",
     "dialog:allow-confirm",
     "http:default",
-    "notification:default",
     "global-shortcut:allow-is-registered",
     "global-shortcut:allow-register",
     "global-shortcut:allow-register-all",

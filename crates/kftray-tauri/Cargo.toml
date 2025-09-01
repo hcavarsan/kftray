@@ -21,12 +21,10 @@ anyhow = { workspace = true }
 async-trait = { workspace = true }
 env_logger = { workspace = true }
 fix-path-env = { workspace = true }
-git2 = { workspace = true }
 k8s-openapi = { workspace = true }
 keyring = { workspace = true }
 kftray-commons = { workspace = true }
 kftray-helper = { workspace = true }
-kftray-http-logs = { workspace = true }
 kftray-network-monitor = { workspace = true }
 kftray-portforward = { workspace = true }
 kube = { workspace = true }
@@ -34,7 +32,6 @@ lazy_static = { workspace = true }
 log = { workspace = true }
 netstat2 = { workspace = true }
 open = { workspace = true }
-reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sqlx = { workspace = true }
@@ -45,14 +42,12 @@ tauri-plugin-dialog = { workspace = true }
 tauri-plugin-fs = { workspace = true }
 tauri-plugin-global-shortcut = { workspace = true }
 tauri-plugin-http = { workspace = true }
-tauri-plugin-notification = { workspace = true }
 tauri-plugin-os = { workspace = true }
 tauri-plugin-positioner = { workspace = true }
 tauri-plugin-process = { workspace = true }
 tauri-plugin-shell = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true }
-url = { workspace = true }
 
 [dev-dependencies]
 async-trait = { workspace = true }
