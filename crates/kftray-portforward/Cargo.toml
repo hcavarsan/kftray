@@ -28,11 +28,9 @@ path = "src/lib.rs"
 
 [dependencies]
 anyhow = { workspace = true }
-arc-swap = { workspace = true }
 async-trait = { workspace = true }
 base64 = { workspace = true }
 bytes = { workspace = true }
-crossbeam = { workspace = true }
 dashmap = { workspace = true }
 dirs = { workspace = true }
 env_logger = { workspace = true }
@@ -62,7 +60,6 @@ serde_json = { workspace = true }
 socket2 = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
-tokio-stream = { workspace = true }
 tokio-util = { workspace = true }
 tower = { workspace = true }
 tracing = { workspace = true }
