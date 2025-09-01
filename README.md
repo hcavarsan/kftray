@@ -2,7 +2,7 @@
 <div align="center">  <br>
   <img src="https://raw.githubusercontent.com/hcavarsan/kftray-blog/main/img/logo.png" width="128px" alt="kftray Logo" />
   <br><br>
-  <a href="https://kftray.app"><strong>kftray.app »</strong></a>
+  <a href="https://kftray.app"><strong>Website</strong></a> |  <a href="https://kftray.app/downloads"><strong>Downloads</strong></a> |  <a href="https://kftray.app/blog"><strong>Blog</strong></a>
   <br><br>
   <a href="https://join.slack.com/t/kftray/shared_invite/zt-2q6lwn15f-Y8Mi_4NlenH9TuEDMjxPUA">
     <img src="https://img.shields.io/badge/Slack-Join%20our%20Slack-blue?style=for-the-badge&logo=slack" alt="Join Slack">
@@ -28,11 +28,14 @@
 </div>
 </p>
 
+
 ## About
 
 kftray and kftui are Kubernetes port forwarding tools that actually work the way you'd expect them to. While `kubectl port-forward` is fine for quick tasks, it falls apart when pods restart or connections drop – and you're stuck manually reconnecting.
 
 Both kftray (desktop app with tray integration) and kftui (terminal UI) share the same Rust backend and configuration files. They use the Kubernetes watch API to detect when pods come and go, automatically reconnecting your forwards without you having to babysit them. They handle TCP and UDP through a proxy relay in your cluster, support multiple forwards at once, and can even log HTTP traffic for debugging.
+
+To download apps, you can check the [download page](https://kftray.app/downloads) on the kftray website.
 
 ### Why Another Port Forwarding Tool?
 
@@ -69,14 +72,11 @@ check out our blog post at [kftray.app/blog/posts/13-kftray-manage-all-k8s-port-
 
 <br>
 
-## Download
-
-See the [download page](https://kftray.app/downloads) on the kftray website.
 
 
-## Features
 
-Both tools share the same core features with slightly different interfaces:
+## Features Matrix
+
 
 <div align="center">
 
@@ -130,16 +130,21 @@ The proxy relay that runs in your cluster to handle TCP/UDP forwarding.
 
 ## Configuration
 
-Both tools share the same JSON configuration format. Here's a minimal example:
+Both tools share the same JSON configuration format. Here's a example:
 
 ```json
 [
   {
-    "alias": "my-service",
-    "service": "backend-api",
-    "namespace": "production",
-    "local_port": 8080,
-    "remote_port": 80
+    "alias": "argocd",
+    "context": "kind-kftray-cluster",
+    "kubeconfig": "/Users/henrique/.kube/kind-config-kftray-cluster",
+    "local_port": 16080,
+    "namespace": "argocd",
+    "protocol": "tcp",
+    "remote_port": 8080,
+    "service": "argocd-server",
+    "workload_type": "service",
+    "http_logs_enabled": true
   }
 ]
 ```
@@ -150,7 +155,7 @@ You can import configs from:
 - Direct from your cluster using service annotations
 - Command line (kftui supports `--json` and `--stdin`)
 
-## Architecture
+## Under the hood
 
 The tools use a shared Rust core that handles all the Kubernetes interaction. Here's the basic flow:
 
@@ -186,7 +191,7 @@ kftray is available under the [GPL 3.0 License](LICENSE.md).
  </picture>
 </a>
 
-## Contributors ✨
+## Contributors
 
 Thanks goes to these wonderful people ([emoji key](https://allcontributors.org/docs/en/emoji-key)):
 
