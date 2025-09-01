@@ -98,8 +98,8 @@ tauri-plugin-shell = "2.3.1"
 tempfile = "3.21.0"
 thiserror = "2.0.16"
 throbber-widgets-tui = "0.8.0"
-tokio = { version = "1.47.1", features = ["full", "macros", "rt-multi-thread"] }
-tokio-util = { version = "0.7.16", features = ["full"] }
+tokio = { version = "1.47.1", features = ["net", "time", "sync", "macros", "rt-multi-thread", "io-util", "fs"] }
+tokio-util = { version = "0.7.16", features = ["rt"] }
 tower = { version = "0.5", features = ["util"] }
 tower-test = "0.4"
 tracing = "0.1"
@@ -121,7 +121,7 @@ windows-core = "0.61"
 windows-service = "0.8"
 
 [profile.release]
-opt-level = "s"
+opt-level = "z"
 strip = true
 lto = true
 panic = "abort"
