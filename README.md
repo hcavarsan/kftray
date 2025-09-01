@@ -100,13 +100,7 @@ check out our blog post at [kftray.app/blog/posts/13-kftray-manage-all-k8s-port-
 
 </div>
 
-## Recent Updates
-
-Check the [releases page](https://github.com/hcavarsan/kftray/releases) for the full changelog.
-
-## Getting Started
-
-### kftray - Desktop App
+## kftray - Desktop App
 
 The desktop app runs in your system tray and provides a GUI for managing port forwards.
 
@@ -114,7 +108,7 @@ The desktop app runs in your system tray and provides a GUI for managing port fo
 - [Usage Guide](https://github.com/hcavarsan/kftray/tree/main/docs/kftray/USAGE.md) – How to use kftray
 - [Building from Source](https://github.com/hcavarsan/kftray/tree/main/docs/kftray/BUILD.md) – Build it yourself
 
-### kftui - Terminal UI
+## kftui - Terminal UI
 
 The terminal interface for those who prefer staying in the console.
 
@@ -122,7 +116,7 @@ The terminal interface for those who prefer staying in the console.
 - [Usage Guide](https://github.com/hcavarsan/kftray/tree/main/docs/kftui/USAGE.md) – Terminal shortcuts and features
 - [Building from Source](https://github.com/hcavarsan/kftray/tree/main/docs/kftui/BUILD.md) – Build instructions
 
-### kftray-server - Proxy Relay
+## kftray-server - Proxy Relay
 
 The proxy relay that runs in your cluster to handle TCP/UDP forwarding.
 
@@ -166,6 +160,10 @@ The tools use a shared Rust core that handles all the Kubernetes interaction. He
 5. **Health Monitoring** – Watch for pod changes and reconnect as needed
 
 For UDP or when you need to reach external services, we deploy a small relay pod in your cluster that handles the actual forwarding.
+
+## Recent Updates
+
+Check the [releases page](https://github.com/hcavarsan/kftray/releases) for the full changelog.
 
 ## Contributing
 
