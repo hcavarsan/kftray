@@ -266,7 +266,7 @@ jobs:
       - name: Build kftray-helper for multiple architectures (macOS)
         if: matrix.os == 'macos-latest'
         env:
-          RUSTFLAGS: "-C target-cpu=native -C link-arg=-s"
+          RUSTFLAGS: "-C link-arg=-s"
         run: |
           cargo build --bin kftray-helper --release --target x86_64-apple-darwin
           cargo build --bin kftray-helper --release --target aarch64-apple-darwin
@@ -292,7 +292,7 @@ jobs:
         id: tauri_build
         continue-on-error: true
         env:
-          RUSTFLAGS: "-C target-cpu=native -C link-arg=-s"
+          RUSTFLAGS: ${{ matrix.os == 'macos-latest' && '-C link-arg=-s' || '-C target-cpu=native -C link-arg=-s' }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -317,7 +317,7 @@ jobs:
         if: steps.tauri_build.outcome == 'failure'
         uses: tauri-apps/tauri-action@42e9df6c59070d114bf90dcd3943a1b8f138b113
         env:
-          RUSTFLAGS: "-C target-cpu=native -C link-arg=-s"
+          RUSTFLAGS: ${{ matrix.os == 'macos-latest' && '-C link-arg=-s' || '-C target-cpu=native -C link-arg=-s' }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -462,7 +462,7 @@ jobs:
 
       - name: Build kftui
         env:
-          RUSTFLAGS: "-C target-cpu=native -C link-arg=-s"
+          RUSTFLAGS: ${{ matrix.os == 'macos-latest' && '-C link-arg=-s' || '-C target-cpu=native -C link-arg=-s' }}
         run: |
           if [ "${{ matrix.os }}" == "macos-latest" ]; then
             cargo build --release --bin kftui --target aarch64-apple-darwin
