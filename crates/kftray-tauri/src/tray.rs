@@ -177,8 +177,15 @@ pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<tauri::tray::TrayIcon<W
                 | TrayIconEvent::Enter { rect, .. }
                 | TrayIconEvent::Leave { rect, .. }
                 | TrayIconEvent::Move { rect, .. } => {
-                    let size = rect.size.to_physical(1.0);
-                    let position = rect.position.to_physical(1.0);
+                    let scale_factor = tray
+                        .app_handle()
+                        .get_webview_window("main")
+                        .and_then(|w| w.current_monitor().ok()?)
+                        .map(|m| m.scale_factor())
+                        .unwrap_or(1.0);
+
+                    let size = rect.size.to_physical(scale_factor);
+                    let position = rect.position.to_physical(scale_factor);
 
                     if let Some(tray_state) = tray.app_handle().try_state::<TrayPositionState>() {
                         *tray_state.position.lock().unwrap() = Some((position, size));
@@ -238,10 +245,17 @@ pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
     } = event
     {
         adjust_window_size_and_position(&webview_window, *scale_factor, *new_inner_size);
-        if !webview_window.is_visible().unwrap() || !webview_window.is_focused().unwrap() {
+        let is_visible = webview_window.is_visible().unwrap_or(false);
+        let is_focused = webview_window.is_focused().unwrap_or(false);
+
+        if !is_visible || !is_focused {
             set_default_position(&webview_window);
-            webview_window.show().unwrap();
-            webview_window.set_focus().unwrap();
+            if let Err(e) = webview_window.show() {
+                error!("Failed to show window: {e}");
+            }
+            if let Err(e) = webview_window.set_focus() {
+                error!("Failed to focus window: {e}");
+            }
         }
 
         return;
@@ -249,7 +263,7 @@ pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
 
     info!("event: {:?}", event);
     let app_state = webview_window.state::<AppState>();
-    let mut is_moving = app_state.is_moving.lock().unwrap();
+    let is_moving = app_state.is_moving.lock().unwrap();
 
     if let WindowEvent::Focused(is_focused) = event
         && !is_focused
@@ -266,13 +280,12 @@ pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
             let runtime = app_state.runtime.clone();
             runtime.spawn(async move {
                 sleep(Duration::from_millis(200)).await;
-                if !app_handle_clone
-                    .get_webview_window("main")
-                    .unwrap()
-                    .is_focused()
-                    .unwrap()
-                {
-                    webview_window_clone.hide().unwrap()
+                if let Some(main_window) = app_handle_clone.get_webview_window("main") {
+                    if !main_window.is_focused().unwrap_or(false) {
+                        if let Err(e) = webview_window_clone.hide() {
+                            error!("Failed to hide window: {e}");
+                        }
+                    }
                 }
             });
         }
@@ -298,15 +311,21 @@ pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
             {}
         });
 
-        if !*is_moving && !app_state.is_plugin_moving.load(Ordering::SeqCst) {
-            info!(
-                "is_plugin_moving: {}",
-                app_state.is_plugin_moving.load(Ordering::SeqCst)
-            );
-            *is_moving = true;
+        if let Ok(mut moving_guard) = app_state.is_moving.try_lock() {
+            if !*moving_guard && !app_state.is_plugin_moving.load(Ordering::SeqCst) {
+                info!(
+                    "is_plugin_moving: {}",
+                    app_state.is_plugin_moving.load(Ordering::SeqCst)
+                );
+                *moving_guard = true;
 
-            save_window_position(&webview_window);
-            *is_moving = false;
+                drop(moving_guard);
+                save_window_position(&webview_window);
+
+                if let Ok(mut moving_guard) = app_state.is_moving.try_lock() {
+                    *moving_guard = false;
+                }
+            }
         }
     }
 
