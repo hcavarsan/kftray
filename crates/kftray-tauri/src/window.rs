@@ -41,7 +41,13 @@ pub fn save_window_position(window: &WebviewWindow<Wry>) {
                 x: position.x,
                 y: position.y,
             };
-            let position_json = serde_json::to_string(&position_data).unwrap();
+            let position_json = match serde_json::to_string(&position_data) {
+                Ok(json) => json,
+                Err(e) => {
+                    warn!("Failed to serialize window position: {e}");
+                    return;
+                }
+            };
 
             match get_window_state_path() {
                 Ok(path) => {
@@ -105,13 +111,21 @@ fn handle_corrupted_file(path: &Path, error: impl std::fmt::Display) {
 
 pub fn toggle_window_visibility(window: &WebviewWindow<Wry>) {
     let app_state = window.state::<AppState>();
-    if window.is_visible().unwrap() {
+    let is_visible = window.is_visible().unwrap_or(false);
+
+    if is_visible {
         if !app_state.is_pinned.load(Ordering::SeqCst) {
-            window.hide().unwrap();
+            if let Err(e) = window.hide() {
+                warn!("Failed to hide window: {e}");
+            }
         }
     } else {
-        window.show().unwrap();
-        window.set_focus().unwrap();
+        if let Err(e) = window.show() {
+            warn!("Failed to show window: {e}");
+        }
+        if let Err(e) = window.set_focus() {
+            warn!("Failed to focus window: {e}");
+        }
         set_default_position(window);
     }
 }
@@ -164,7 +178,7 @@ pub fn is_valid_position(window: &WebviewWindow<Wry>, x: i32, y: i32) -> bool {
             let max_x = min_x + monitor_size.width as i32;
             let max_y = min_y + monitor_size.height as i32;
 
-            if x >= min_x && x <= max_x && y >= min_y && y <= max_y {
+            if x >= min_x && x < max_x && y >= min_y && y < max_y {
                 return true;
             }
         }
@@ -251,7 +265,11 @@ fn position_window(
         return;
     };
 
-    let position = calculate_position(monitor, tray_pos, tray_size, window_size);
+    let window_size_f64 = tauri::PhysicalSize {
+        width: window_size.width as f64,
+        height: window_size.height as f64,
+    };
+    let position = calculate_position(monitor, tray_pos, tray_size, window_size_f64);
 
     match window.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(
         position.0, position.1,
@@ -266,29 +284,45 @@ fn position_window(
 
 fn calculate_position(
     monitor: &tauri::Monitor, tray_pos: PhysicalPosition<f64>, tray_size: tauri::PhysicalSize<f64>,
-    window_size: tauri::PhysicalSize<u32>,
+    window_size: tauri::PhysicalSize<f64>,
 ) -> (i32, i32) {
     let monitor_pos = monitor.position();
     let monitor_size = monitor.size();
 
-    let tray_center_x = tray_pos.x as i32 + (tray_size.width as i32 / 2);
-    let tray_bottom = tray_pos.y as i32 + tray_size.height as i32;
+    // Use saturating arithmetic to prevent integer overflow
+    let tray_center_x = (tray_pos.x as i32).saturating_add(tray_size.width as i32 / 2);
+    let tray_bottom = (tray_pos.y as i32).saturating_add(tray_size.height as i32);
     let margin = 10;
 
     let window_x = clamp(
-        tray_center_x - (window_size.width as i32 / 2),
-        monitor_pos.x + margin,
-        monitor_pos.x + monitor_size.width as i32 - window_size.width as i32 - margin,
+        tray_center_x.saturating_sub((window_size.width as i32) / 2),
+        monitor_pos.x.saturating_add(margin),
+        monitor_pos
+            .x
+            .saturating_add(monitor_size.width as i32)
+            .saturating_sub(window_size.width as i32)
+            .saturating_sub(margin),
     );
 
-    let preferred_y = tray_bottom + margin;
-    let min_y = monitor_pos.y + margin;
-    let max_y = monitor_pos.y + monitor_size.height as i32 - window_size.height as i32 - margin;
+    let preferred_y = tray_bottom.saturating_add(margin);
+    let min_y = monitor_pos.y.saturating_add(margin);
+    let max_y = monitor_pos
+        .y
+        .saturating_add(monitor_size.height as i32)
+        .saturating_sub(window_size.height as i32)
+        .saturating_sub(margin);
 
     let window_y = if preferred_y <= max_y {
         preferred_y
     } else {
-        (tray_pos.y as i32 - window_size.height as i32 - margin).max(min_y)
+        let above_tray_y = (tray_pos.y as i32)
+            .saturating_sub(window_size.height as i32)
+            .saturating_sub(margin);
+        if above_tray_y >= min_y {
+            above_tray_y
+        } else {
+            clamp(preferred_y, min_y, max_y)
+        }
     };
 
     (window_x, window_y)
@@ -312,9 +346,14 @@ fn center_on_monitor(window: &WebviewWindow<Wry>) {
     let monitor_size = monitor.size();
     let monitor_pos = monitor.position();
 
-    let center_x = monitor_pos.x + (monitor_size.width as i32 / 2) - (window_size.width as i32 / 2);
-    let center_y =
-        monitor_pos.y + (monitor_size.height as i32 / 2) - (window_size.height as i32 / 2);
+    let center_x = monitor_pos
+        .x
+        .saturating_add(monitor_size.width as i32 / 2)
+        .saturating_sub(window_size.width as i32 / 2);
+    let center_y = monitor_pos
+        .y
+        .saturating_add(monitor_size.height as i32 / 2)
+        .saturating_sub(window_size.height as i32 / 2);
 
     match window.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(
         center_x, center_y,
@@ -364,19 +403,22 @@ fn reset_plugin_moving_state_after_delay(app_state: &AppState) {
 }
 
 pub fn adjust_window_size_and_position(
-    window: &WebviewWindow<Wry>, _scale_factor: f64, new_inner_size: tauri::PhysicalSize<u32>,
+    window: &WebviewWindow<Wry>, scale_factor: f64, new_inner_size: tauri::PhysicalSize<u32>,
 ) {
     let app_state = window.state::<AppState>();
     app_state.is_plugin_moving.store(true, Ordering::SeqCst);
 
-    let new_width = (new_inner_size.width as f64) as u32;
-    let new_height = (new_inner_size.height as f64) as u32;
+    let scaled_width = ((new_inner_size.width as f64) * scale_factor) as u32;
+    let scaled_height = ((new_inner_size.height as f64) * scale_factor) as u32;
 
-    window
-        .set_size(tauri::Size::Physical(tauri::PhysicalSize::new(
-            new_width, new_height,
-        )))
-        .unwrap();
+    if let Err(e) = window.set_size(tauri::Size::Physical(tauri::PhysicalSize::new(
+        scaled_width,
+        scaled_height,
+    ))) {
+        warn!("Failed to set window size: {e}");
+    }
+
+    set_default_position(window);
 
     reset_plugin_moving_state_after_delay(&app_state);
 }
