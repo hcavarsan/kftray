@@ -16,6 +16,7 @@ use std::io::{
     self,
     Read,
 };
+#[cfg(target_os = "macos")]
 use std::process::Command;
 
 use crossterm::tty::IsTty;

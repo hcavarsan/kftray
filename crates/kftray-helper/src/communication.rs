@@ -238,7 +238,8 @@ pub fn get_default_socket_path() -> Result<PathBuf, HelperError> {
 
             if is_running_as_root()
                 && let Ok(sudo_user) = std::env::var("SUDO_USER")
-                && !sudo_user.is_empty() && sudo_user != "root"
+                && !sudo_user.is_empty()
+                && sudo_user != "root"
             {
                 info!("Using SUDO_USER's home directory for: {}", sudo_user);
                 let user_home = format!("/home/{}", sudo_user);

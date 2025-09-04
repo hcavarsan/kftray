@@ -10,6 +10,7 @@ use crate::cli::args::Cli;
 use crate::cli::config::ConfigImporter;
 use crate::cli::runner::PortForwardRunner;
 use crate::logging::LoggerState;
+#[cfg(target_os = "macos")]
 use crate::stdin;
 use crate::tui::run_tui;
 

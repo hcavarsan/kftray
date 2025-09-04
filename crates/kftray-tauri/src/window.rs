@@ -114,10 +114,10 @@ pub fn toggle_window_visibility(window: &WebviewWindow<Wry>) {
     let is_visible = window.is_visible().unwrap_or(false);
 
     if is_visible {
-        if !app_state.is_pinned.load(Ordering::SeqCst) {
-            if let Err(e) = window.hide() {
-                warn!("Failed to hide window: {e}");
-            }
+        if !app_state.is_pinned.load(Ordering::SeqCst)
+            && let Err(e) = window.hide()
+        {
+            warn!("Failed to hide window: {e}");
         }
     } else {
         if let Err(e) = window.show() {

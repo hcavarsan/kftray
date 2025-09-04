@@ -162,7 +162,7 @@ pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<tauri::tray::TrayIcon<W
     let set_traycenter_position =
         MenuItemBuilder::with_id("set_traycenter_position", "System Tray Center").build(app)?;
 
-    let mut position_menu_items = vec![
+    let position_menu_items = vec![
         &set_center_position,
         &set_top_right_position,
         &set_bottom_right_position,
@@ -203,7 +203,7 @@ pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<tauri::tray::TrayIcon<W
         .show_menu_on_left_click(false);
 
     // Set the temp directory for Flatpak compatibility before setting the icon
-    if let Ok(tray_icon_path) = get_tray_icon_path(&app.handle()) {
+    if let Ok(tray_icon_path) = get_tray_icon_path(app.handle()) {
         #[cfg(target_os = "linux")]
         {
             if is_flatpak_environment() {
@@ -389,12 +389,11 @@ pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
             let runtime = app_state.runtime.clone();
             runtime.spawn(async move {
                 sleep(Duration::from_millis(200)).await;
-                if let Some(main_window) = app_handle_clone.get_webview_window("main") {
-                    if !main_window.is_focused().unwrap_or(false) {
-                        if let Err(e) = webview_window_clone.hide() {
-                            error!("Failed to hide window: {e}");
-                        }
-                    }
+                if let Some(main_window) = app_handle_clone.get_webview_window("main")
+                    && !main_window.is_focused().unwrap_or(false)
+                    && let Err(e) = webview_window_clone.hide()
+                {
+                    error!("Failed to hide window: {e}");
                 }
             });
         }
@@ -420,20 +419,21 @@ pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
             {}
         });
 
-        if let Ok(mut moving_guard) = app_state.is_moving.try_lock() {
-            if !*moving_guard && !app_state.is_plugin_moving.load(Ordering::SeqCst) {
-                info!(
-                    "is_plugin_moving: {}",
-                    app_state.is_plugin_moving.load(Ordering::SeqCst)
-                );
-                *moving_guard = true;
+        if let Ok(mut moving_guard) = app_state.is_moving.try_lock()
+            && !*moving_guard
+            && !app_state.is_plugin_moving.load(Ordering::SeqCst)
+        {
+            info!(
+                "is_plugin_moving: {}",
+                app_state.is_plugin_moving.load(Ordering::SeqCst)
+            );
+            *moving_guard = true;
 
-                drop(moving_guard);
-                save_window_position(&webview_window);
+            drop(moving_guard);
+            save_window_position(&webview_window);
 
-                if let Ok(mut moving_guard) = app_state.is_moving.try_lock() {
-                    *moving_guard = false;
-                }
+            if let Ok(mut moving_guard) = app_state.is_moving.try_lock() {
+                *moving_guard = false;
             }
         }
     }
@@ -553,20 +553,26 @@ mod tests {
     #[test]
     fn test_flatpak_environment_detection() {
         // Test when FLATPAK environment variable is not set
-        std::env::remove_var("FLATPAK");
+        unsafe {
+            std::env::remove_var("FLATPAK");
+        }
         assert!(
             !super::is_flatpak_environment(),
             "Should not detect Flatpak when FLATPAK env var is not set"
         );
 
         // Test when FLATPAK environment variable is set
-        std::env::set_var("FLATPAK", "1");
+        unsafe {
+            std::env::set_var("FLATPAK", "1");
+        }
         assert!(
             super::is_flatpak_environment(),
             "Should detect Flatpak when FLATPAK env var is set"
         );
 
         // Clean up
-        std::env::remove_var("FLATPAK");
+        unsafe {
+            std::env::remove_var("FLATPAK");
+        }
     }
 }
