@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::sync::atomic::Ordering;
 use std::sync::{
     Arc,
@@ -51,6 +52,89 @@ use crate::window::{
     set_window_position,
     toggle_window_visibility,
 };
+
+/// Check if the application is running inside Flatpak
+#[allow(dead_code)]
+pub fn is_flatpak_environment() -> bool {
+    std::env::var("FLATPAK").is_ok()
+}
+
+/// Get the appropriate tray icon directory path for the current environment
+pub fn get_tray_icon_path(_app_handle: &tauri::AppHandle<Wry>) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    #[cfg(target_os = "linux")]
+    {
+        if is_flatpak_environment() {
+            let local_data_path = _app_handle
+                .path()
+                .app_local_data_dir()
+                .map_err(|e| format!("Failed to get app local data dir: {}", e))?
+                .join("tray-icon");
+            
+            std::fs::create_dir_all(&local_data_path)
+                .map_err(|e| format!("Failed to create tray icon directory: {}", e))?;
+            
+            return Ok(local_data_path);
+        }
+    }
+    
+    let temp_path = std::env::temp_dir().join("kftray-tray-icons");
+    std::fs::create_dir_all(&temp_path)
+        .map_err(|e| format!("Failed to create temp tray icon directory: {}", e))?;
+    Ok(temp_path)
+}
+
+/// Update tray icon with Flatpak compatibility
+/// This function ensures tray icons are stored in the correct location for sandbox environments
+/// 
+/// # Usage
+/// ```rust
+/// // Update tray icon dynamically with Flatpak support
+/// let icon_path = PathBuf::from("path/to/icon.png");
+/// let icon_image = tauri::image::Image::from_path(icon_path)?;
+/// update_tray_icon_with_flatpak_support(&tray, icon_image, app_handle)?;
+/// ```
+#[allow(dead_code)]
+pub fn update_tray_icon_with_flatpak_support(
+    tray: &tauri::tray::TrayIcon<Wry>,
+    icon_image: tauri::image::Image,
+    app_handle: &tauri::AppHandle<Wry>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let tray_icon_path = get_tray_icon_path(app_handle)?;
+    
+    #[cfg(target_os = "linux")]
+    {
+        if is_flatpak_environment() {
+            info!("Setting tray icon temp directory for Flatpak: {:?}", tray_icon_path);
+        }
+    }
+    
+    tray.set_temp_dir_path(Some(tray_icon_path))
+        .map_err(|e| format!("Failed to set tray temp dir: {}", e))?;
+    
+    tray.set_icon(Some(icon_image))
+        .map_err(|e| format!("Failed to set tray icon: {}", e))?;
+    
+    Ok(())
+}
+
+/// Create a dynamically generated tray icon with Flatpak support
+/// This is useful for cases where you need to generate tray icons at runtime
+/// 
+/// # Usage
+/// ```rust
+/// // Create a dynamic tray icon (e.g., with status indicators)
+/// let icon_bytes = generate_dynamic_icon_bytes(); // Your icon generation logic
+/// let icon_image = tauri::image::Image::from_bytes(&icon_bytes)?;
+/// set_dynamic_tray_icon(&tray, icon_image, app_handle)?;
+/// ```
+#[allow(dead_code)]
+pub fn set_dynamic_tray_icon(
+    tray: &tauri::tray::TrayIcon<Wry>,
+    icon_image: tauri::image::Image,
+    app_handle: &tauri::AppHandle<Wry>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    update_tray_icon_with_flatpak_support(tray, icon_image, app_handle)
+}
 
 pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<tauri::tray::TrayIcon<Wry>, tauri::Error> {
     let quit = MenuItemBuilder::with_id("quit", "Quit")
@@ -110,10 +194,27 @@ pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<tauri::tray::TrayIcon<W
     let icon_bytes = include_bytes!("../icons/tray.ico");
     let icon = tauri::image::Image::from_bytes(icon_bytes)?;
 
-    let tray = TrayIconBuilder::new()
+    let mut tray_builder = TrayIconBuilder::new()
         .menu(&menu)
-        .show_menu_on_left_click(false)
-        .icon(icon)
+        .show_menu_on_left_click(false);
+
+    // Set the temp directory for Flatpak compatibility before setting the icon
+    if let Ok(tray_icon_path) = get_tray_icon_path(&app.handle()) {
+        #[cfg(target_os = "linux")]
+        {
+            if is_flatpak_environment() {
+                info!("Configuring tray icon temp directory for Flatpak: {:?}", tray_icon_path);
+                tray_builder = tray_builder.temp_dir_path(tray_icon_path);
+            }
+        }
+        
+        #[cfg(not(target_os = "linux"))]
+        {
+            tray_builder = tray_builder.temp_dir_path(tray_icon_path);
+        }
+    }
+
+    let tray = tray_builder.icon(icon)
         .on_menu_event(move |app, event| match event.id().as_ref() {
             "quit" => {
                 tauri::async_runtime::block_on(handle_exit_app(app.clone()));
@@ -439,5 +540,25 @@ mod tests {
                 .load(std::sync::atomic::Ordering::SeqCst),
             "Dialog should be closed after setting to false"
         );
+    }
+
+    #[test]
+    fn test_flatpak_environment_detection() {
+        // Test when FLATPAK environment variable is not set
+        std::env::remove_var("FLATPAK");
+        assert!(
+            !super::is_flatpak_environment(),
+            "Should not detect Flatpak when FLATPAK env var is not set"
+        );
+
+        // Test when FLATPAK environment variable is set
+        std::env::set_var("FLATPAK", "1");
+        assert!(
+            super::is_flatpak_environment(),
+            "Should detect Flatpak when FLATPAK env var is set"
+        );
+
+        // Clean up
+        std::env::remove_var("FLATPAK");
     }
 }

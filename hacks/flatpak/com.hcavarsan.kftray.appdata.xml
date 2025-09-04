@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.hcavarsan.kftray</id>
+
+  <name>KFtray</name>
+  <summary>A cross-platform system tray application for managing and sharing multiple kubectl port-forward commands</summary>
+  <developer_name>Henrique Cavarsan</developer_name>
+
+  <metadata_license>FSFAP</metadata_license>
+  <project_license>MIT</project_license>
+
+  <url type="homepage">https://kftray.app</url>
+  <url type="vcs-browser">https://github.com/hcavarsan/kftray</url>
+  <url type="bugtracker">https://github.com/hcavarsan/kftray/issues</url>
+
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+    <control>touch</control>
+    <display_length compare="ge">small</display_length>
+    <display_length compare="le">xlarge</display_length>
+  </supports>
+
+  <description>
+    <p>
+      KFtray is a cross-platform system tray application designed for Kubernetes developers and DevOps engineers who need to manage multiple kubectl port-forward commands efficiently.
+    </p>
+    <p>
+      The application provides an intuitive interface for creating, managing, and sharing port-forwarding configurations across different Kubernetes contexts and namespaces. With KFtray, you can easily start, stop, and monitor multiple port-forward sessions from your system tray.
+    </p>
+    <p>
+      Key features include:
+    </p>
+    <ul>
+      <li>System tray integration for quick access</li>
+      <li>Support for multiple Kubernetes contexts</li>
+      <li>Configuration sharing and import/export</li>
+      <li>Real-time monitoring of port-forward sessions</li>
+      <li>Cross-platform compatibility (Linux, macOS, Windows)</li>
+      <li>Built with Tauri for native performance</li>
+    </ul>
+  </description>
+
+  <launchable type="desktop-id">com.hcavarsan.kftray.desktop</launchable>
+  
+  <screenshots>
+    <screenshot type="default">
+      <image>https://raw.githubusercontent.com/hcavarsan/kftray/main/img/main_screen_with_k8s.png</image>
+      <caption>Main KFtray interface showing active port-forward configurations</caption>
+    </screenshot>
+    <screenshot>
+      <image>https://raw.githubusercontent.com/hcavarsan/kftray/main/img/screenshot-1.png</image>
+      <caption>System tray menu with port-forward controls</caption>
+    </screenshot>
+  </screenshots>
+
+  <categories>
+    <category>Development</category>
+    <category>Network</category>
+    <category>System</category>
+  </categories>
+
+  <keywords>
+    <keyword>kubernetes</keyword>
+    <keyword>kubectl</keyword>
+    <keyword>port-forward</keyword>
+    <keyword>devops</keyword>
+    <keyword>containers</keyword>
+    <keyword>k8s</keyword>
+    <keyword>development</keyword>
+  </keywords>
+
+  <releases>
+    <release type="stable" version="0.23.2" date="2024-09-04">
+      <description>
+        <p>Latest stable release with improvements and bug fixes</p>
+      </description>
+    </release>
+  </releases>
+
+  <content_rating type="oars-1.1"/>
+</component>

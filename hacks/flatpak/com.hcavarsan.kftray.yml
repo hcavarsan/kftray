@@ -1,0 +1,78 @@
+app-id: com.hcavarsan.kftray
+runtime: org.gnome.Platform
+runtime-version: '46'
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+  - org.freedesktop.Sdk.Extension.node20
+
+command: kftray
+finish-args:
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc
+  - --share=network
+  - --filesystem=home
+  - --talk-name=org.freedesktop.Notifications
+  - --talk-name=org.kde.StatusNotifierWatcher
+  - --own-name=org.kde.StatusNotifierItem-*
+  - --device=dri
+  - --env=FLATPAK=1
+  - --env=WEBKIT_DISABLE_COMPOSITING_MODE=1
+
+build-options:
+  append-path: /usr/lib/sdk/node20/bin:/usr/lib/sdk/rust-stable/bin
+
+modules:
+  - shared-modules/libappindicator/libappindicator-gtk3-12.10.json
+
+  - name: kftray
+    buildsystem: simple
+    build-options:
+      env:
+        CARGO_HOME: /run/build/kftray/cargo
+        XDG_CACHE_HOME: /run/build/kftray/flatpak-node/cache
+        npm_config_cache: /run/build/kftray/flatpak-node/npm-cache
+        npm_config_offline: 'true'
+    sources:
+      - type: git
+        url: https://github.com/hcavarsan/kftray.git
+        tag: v0.23.2
+        commit: cad8cf6c4af32f0d8e3c6a8f8b64b8d9c7e9c5b1
+
+      - node-sources.json
+      - cargo-sources.json
+
+      - type: file
+        path: com.hcavarsan.kftray.appdata.xml
+
+    build-commands:
+      - npm ci --offline --legacy-peer-deps
+
+      - cargo --offline fetch --manifest-path crates/kftray-tauri/Cargo.toml --verbose
+
+      - cd frontend && npm run build
+
+      - cd crates/kftray-tauri && npm run --offline tauri build -- --no-bundle
+
+      - install -Dm644 -t /app/share/metainfo/ com.hcavarsan.kftray.appdata.xml
+      - install -Dm755 -t /app/bin/ crates/kftray-tauri/target/release/kftray
+
+      - install -Dm644 crates/kftray-tauri/icons/32x32.png /app/share/icons/hicolor/32x32/apps/com.hcavarsan.kftray.png
+      - install -Dm644 crates/kftray-tauri/icons/128x128.png /app/share/icons/hicolor/128x128/apps/com.hcavarsan.kftray.png
+      - install -Dm644 crates/kftray-tauri/icons/128x128@2x.png /app/share/icons/hicolor/256x256/apps/com.hcavarsan.kftray.png
+
+      - |
+        cat > /app/share/applications/com.hcavarsan.kftray.desktop << 'EOF'
+        [Desktop Entry]
+        Version=1.0
+        Type=Application
+        Name=KFtray
+        Comment=A cross-platform system tray application for managing and sharing multiple kubectl port-forward commands
+        Exec=kftray
+        Icon=com.hcavarsan.kftray
+        Terminal=false
+        Categories=Development;Network;
+        Keywords=kubernetes;kubectl;port-forward;devops;
+        StartupWMClass=kftray
+        EOF
