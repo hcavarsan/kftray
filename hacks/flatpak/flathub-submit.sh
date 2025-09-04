@@ -39,7 +39,7 @@ git commit -m "Add com.hcavarsan.kftray
 Cross-platform system tray application for managing kubectl port-forward commands.
 Built with Tauri, supports offline builds.
 
-License: MIT
+License: GPL-3.0
 Website: https://kftray.app"
 
 git push origin "$BRANCH_NAME"
@@ -57,7 +57,7 @@ gh pr create \
 
 **Technical**:
 - App ID: com.hcavarsan.kftray
-- License: MIT
+- License: GPL-3.0
 - Runtime: GNOME 46
 - Repository: https://github.com/hcavarsan/kftray
 

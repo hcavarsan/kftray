@@ -7,7 +7,7 @@
   <developer_name>Henrique Cavarsan</developer_name>
 
   <metadata_license>FSFAP</metadata_license>
-  <project_license>MIT</project_license>
+  <project_license>GPL-3.0</project_license>
 
   <url type="homepage">https://kftray.app</url>
   <url type="vcs-browser">https://github.com/hcavarsan/kftray</url>
