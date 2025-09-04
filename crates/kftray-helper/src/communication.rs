@@ -225,30 +225,27 @@ pub fn get_default_socket_path() -> Result<PathBuf, HelperError> {
         fn find_linux_socket_path() -> PathBuf {
             if let Ok(user) = std::env::var("USER")
                 && user != "root"
+                && let Ok(home) = std::env::var("HOME")
+                && !home.is_empty()
+                && (home.starts_with("/home/") || home.starts_with("/Users/"))
             {
-                if let Ok(home) = std::env::var("HOME")
-                    && !home.is_empty()
-                    && (home.starts_with("/home/") || home.starts_with("/Users/"))
-                {
-                    info!("Using home directory for user '{}': {}", user, home);
-                    let mut path = PathBuf::from(home);
-                    path.push(".kftray");
-                    path.push(SOCKET_FILENAME);
-                    return path;
-                }
+                info!("Using home directory for user '{}': {}", user, home);
+                let mut path = PathBuf::from(home);
+                path.push(".kftray");
+                path.push(SOCKET_FILENAME);
+                return path;
             }
 
             if is_running_as_root()
                 && let Ok(sudo_user) = std::env::var("SUDO_USER")
+                && !sudo_user.is_empty() && sudo_user != "root"
             {
-                if !sudo_user.is_empty() && sudo_user != "root" {
-                    info!("Using SUDO_USER's home directory for: {}", sudo_user);
-                    let user_home = format!("/home/{}", sudo_user);
-                    let mut path = PathBuf::from(user_home);
-                    path.push(".kftray");
-                    path.push(SOCKET_FILENAME);
-                    return path;
-                }
+                info!("Using SUDO_USER's home directory for: {}", sudo_user);
+                let user_home = format!("/home/{}", sudo_user);
+                let mut path = PathBuf::from(user_home);
+                path.push(".kftray");
+                path.push(SOCKET_FILENAME);
+                return path;
             }
 
             if let Ok(home) = std::env::var("HOME")

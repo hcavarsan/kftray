@@ -7,8 +7,9 @@ use log::{
     debug,
     error,
     info,
-    warn,
 };
+#[cfg(target_os = "macos")]
+use log::warn;
 use tokio::sync::Mutex;
 
 use crate::error::HelperError;
