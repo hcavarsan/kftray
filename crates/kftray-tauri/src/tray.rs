@@ -60,7 +60,9 @@ pub fn is_flatpak_environment() -> bool {
 }
 
 /// Get the appropriate tray icon directory path for the current environment
-pub fn get_tray_icon_path(_app_handle: &tauri::AppHandle<Wry>) -> Result<PathBuf, Box<dyn std::error::Error>> {
+pub fn get_tray_icon_path(
+    _app_handle: &tauri::AppHandle<Wry>,
+) -> Result<PathBuf, Box<dyn std::error::Error>> {
     #[cfg(target_os = "linux")]
     {
         if is_flatpak_environment() {
@@ -69,14 +71,14 @@ pub fn get_tray_icon_path(_app_handle: &tauri::AppHandle<Wry>) -> Result<PathBuf
                 .app_local_data_dir()
                 .map_err(|e| format!("Failed to get app local data dir: {}", e))?
                 .join("tray-icon");
-            
+
             std::fs::create_dir_all(&local_data_path)
                 .map_err(|e| format!("Failed to create tray icon directory: {}", e))?;
-            
+
             return Ok(local_data_path);
         }
     }
-    
+
     let temp_path = std::env::temp_dir().join("kftray-tray-icons");
     std::fs::create_dir_all(&temp_path)
         .map_err(|e| format!("Failed to create temp tray icon directory: {}", e))?;
@@ -84,8 +86,9 @@ pub fn get_tray_icon_path(_app_handle: &tauri::AppHandle<Wry>) -> Result<PathBuf
 }
 
 /// Update tray icon with Flatpak compatibility
-/// This function ensures tray icons are stored in the correct location for sandbox environments
-/// 
+/// This function ensures tray icons are stored in the correct location for
+/// sandbox environments
+///
 /// # Usage
 /// ```rust
 /// // Update tray icon dynamically with Flatpak support
@@ -95,31 +98,33 @@ pub fn get_tray_icon_path(_app_handle: &tauri::AppHandle<Wry>) -> Result<PathBuf
 /// ```
 #[allow(dead_code)]
 pub fn update_tray_icon_with_flatpak_support(
-    tray: &tauri::tray::TrayIcon<Wry>,
-    icon_image: tauri::image::Image,
+    tray: &tauri::tray::TrayIcon<Wry>, icon_image: tauri::image::Image,
     app_handle: &tauri::AppHandle<Wry>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let tray_icon_path = get_tray_icon_path(app_handle)?;
-    
+
     #[cfg(target_os = "linux")]
     {
         if is_flatpak_environment() {
-            info!("Setting tray icon temp directory for Flatpak: {:?}", tray_icon_path);
+            info!(
+                "Setting tray icon temp directory for Flatpak: {:?}",
+                tray_icon_path
+            );
         }
     }
-    
+
     tray.set_temp_dir_path(Some(tray_icon_path))
         .map_err(|e| format!("Failed to set tray temp dir: {}", e))?;
-    
+
     tray.set_icon(Some(icon_image))
         .map_err(|e| format!("Failed to set tray icon: {}", e))?;
-    
+
     Ok(())
 }
 
 /// Create a dynamically generated tray icon with Flatpak support
 /// This is useful for cases where you need to generate tray icons at runtime
-/// 
+///
 /// # Usage
 /// ```rust
 /// // Create a dynamic tray icon (e.g., with status indicators)
@@ -129,8 +134,7 @@ pub fn update_tray_icon_with_flatpak_support(
 /// ```
 #[allow(dead_code)]
 pub fn set_dynamic_tray_icon(
-    tray: &tauri::tray::TrayIcon<Wry>,
-    icon_image: tauri::image::Image,
+    tray: &tauri::tray::TrayIcon<Wry>, icon_image: tauri::image::Image,
     app_handle: &tauri::AppHandle<Wry>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     update_tray_icon_with_flatpak_support(tray, icon_image, app_handle)
@@ -203,18 +207,22 @@ pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<tauri::tray::TrayIcon<W
         #[cfg(target_os = "linux")]
         {
             if is_flatpak_environment() {
-                info!("Configuring tray icon temp directory for Flatpak: {:?}", tray_icon_path);
+                info!(
+                    "Configuring tray icon temp directory for Flatpak: {:?}",
+                    tray_icon_path
+                );
                 tray_builder = tray_builder.temp_dir_path(tray_icon_path);
             }
         }
-        
+
         #[cfg(not(target_os = "linux"))]
         {
             tray_builder = tray_builder.temp_dir_path(tray_icon_path);
         }
     }
 
-    let tray = tray_builder.icon(icon)
+    let tray = tray_builder
+        .icon(icon)
         .on_menu_event(move |app, event| match event.id().as_ref() {
             "quit" => {
                 tauri::async_runtime::block_on(handle_exit_app(app.clone()));

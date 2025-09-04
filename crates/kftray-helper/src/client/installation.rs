@@ -46,7 +46,7 @@ pub fn install_helper(helper_path: &Path) -> Result<(), HelperError> {
             .args([helper_path.to_string_lossy().as_ref(), "install"])
             .output();
 
-        if let Err(_) = output {
+        if output.is_err() {
             let output = Command::new("sudo")
                 .args([helper_path.to_string_lossy().as_ref(), "install"])
                 .output()
@@ -64,14 +64,14 @@ pub fn install_helper(helper_path: &Path) -> Result<(), HelperError> {
                     error
                 )));
             }
-        } else if let Ok(output) = output {
-            if !output.status.success() {
-                let error = String::from_utf8_lossy(&output.stderr);
-                return Err(HelperError::PlatformService(format!(
-                    "Failed to install helper with pkexec: {}",
-                    error
-                )));
-            }
+        } else if let Ok(output) = output
+            && !output.status.success()
+        {
+            let error = String::from_utf8_lossy(&output.stderr);
+            return Err(HelperError::PlatformService(format!(
+                "Failed to install helper with pkexec: {}",
+                error
+            )));
         }
     }
 
