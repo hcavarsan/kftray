@@ -37,8 +37,8 @@ modules:
     sources:
       - type: git
         url: https://github.com/hcavarsan/kftray.git
-        tag: v0.23.2
-        commit: cad8cf6c4af32f0d8e3c6a8f8b64b8d9c7e9c5b1
+        branch: flatpak
+        commit: ffd52621b5734c71492b9d262492b33f7d14141b
 
       - node-sources.json
       - cargo-sources.json
