@@ -6,7 +6,7 @@ echo "Generating offline sources for Flatpak build..."
 
 # Check if we need to use container for the generators
 if command -v toolbox >/dev/null 2>&1; then
-    CONTAINER_PREFIX="toolbox run -c flatpak-dev"
+    CONTAINER_PREFIX="toolbox run -c flatpakdev"
 elif command -v distrobox >/dev/null 2>&1; then
     CONTAINER_PREFIX="distrobox enter flatpak-dev --"
 else

@@ -29,11 +29,11 @@ echo "📦 Installing flatpak-builder-tools..."
 # Check if toolbox is available for container isolation
 if command -v toolbox >/dev/null 2>&1; then
     echo "Using toolbox container for Python packages..."
-    if ! toolbox list | grep -q flatpak-dev; then
-        toolbox create -c flatpak-dev fedora-toolbox:latest
+    if ! toolbox list | grep -q flatpakdev; then
+        toolbox create flatpakdev fedora-toolbox:latest
     fi
 
-    toolbox run -c flatpak-dev bash -c "
+    toolbox run -c flatpakdev bash -c "
         dnf install -y python3-pip git &&
         pip3 install aiohttp toml
     "
@@ -63,7 +63,7 @@ fi
 
 echo "🛠️ Setting up flatpak-builder-tools..."
 if command -v toolbox >/dev/null 2>&1; then
-    CONTAINER_RUN="toolbox run -c flatpak-dev"
+    CONTAINER_RUN="toolbox run -c flatpakdev"
 elif command -v distrobox >/dev/null 2>&1; then
     CONTAINER_RUN="distrobox enter flatpak-dev --"
 else
