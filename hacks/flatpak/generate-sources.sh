@@ -42,9 +42,19 @@ else
 fi
 
 if [ ! -f "../../frontend/package-lock.json" ]; then
-    echo "Generating package-lock.json..."
+    echo "Generating package-lock.json from pnpm-lock.yaml..."
     cd ../../frontend
-    npm install
+    # Clean any existing lockfiles and node_modules
+    rm -rf node_modules package-lock.json
+    # Generate package-lock.json from pnpm
+    if command -v pnpm >/dev/null 2>&1; then
+        pnpm install --frozen-lockfile
+        # Convert pnpm-lock.yaml to package-lock.json format
+        npx synp --source-file pnpm-lock.yaml
+    else
+        echo "Warning: pnpm not found, falling back to npm"
+        npm install --legacy-peer-deps
+    fi
     cd ../hacks/flatpak
 fi
 
