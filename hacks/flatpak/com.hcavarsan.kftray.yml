@@ -47,8 +47,10 @@ modules:
         path: com.hcavarsan.kftray.appdata.xml
 
     build-commands:
-      # Install frontend dependencies using install (not ci since no lock file in git)
-      - cd frontend && npm install --offline --legacy-peer-deps
+      # First generate package-lock.json from package.json in offline mode
+      - cd frontend && npm install --package-lock-only --legacy-peer-deps --offline
+      # Install frontend dependencies using ci now that we have package-lock.json
+      - cd frontend && npm ci --offline --legacy-peer-deps
       # Rust packages  
       - cargo --offline fetch --manifest-path crates/kftray-tauri/Cargo.toml --verbose
       # Build frontend
