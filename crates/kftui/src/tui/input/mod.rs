@@ -172,6 +172,7 @@ pub enum DeleteButton {
 #[derive(PartialEq, Clone, Copy, Debug)]
 pub enum ActiveComponent {
     Menu,
+    SearchBar,
     StoppedTable,
     RunningTable,
     Details,
@@ -260,6 +261,10 @@ pub struct App {
         std::collections::HashMap<i64, (Arc<AtomicBool>, std::time::Instant)>,
     pub error_receiver: Option<tokio::sync::mpsc::UnboundedReceiver<String>>,
     pub error_sender: Option<tokio::sync::mpsc::UnboundedSender<String>>,
+    pub search_query: String,
+    pub search_focused: bool,
+    pub filtered_stopped_configs: Vec<Config>,
+    pub filtered_running_configs: Vec<Config>,
 }
 
 impl Default for App {
@@ -334,6 +339,10 @@ impl App {
             configs_being_processed: std::collections::HashMap::new(),
             error_receiver: Some(error_receiver),
             error_sender: Some(error_sender),
+            search_query: String::new(),
+            search_focused: false,
+            filtered_stopped_configs: Vec::new(),
+            filtered_running_configs: Vec::new(),
         };
 
         if let Ok((_, height)) = size() {
@@ -341,6 +350,88 @@ impl App {
         }
 
         app
+    }
+
+    pub fn update_filtered_configs(&mut self) {
+        if self.search_query.is_empty() {
+            self.filtered_stopped_configs = self.stopped_configs.clone();
+            self.filtered_running_configs = self.running_configs.clone();
+        } else {
+            let query_lower = self.search_query.to_lowercase();
+
+            self.filtered_stopped_configs =
+                self.stopped_configs
+                    .iter()
+                    .filter(|config| {
+                        config
+                            .alias
+                            .as_ref()
+                            .is_some_and(|alias| alias.to_lowercase().contains(&query_lower))
+                            || config.service.as_ref().is_some_and(|service| {
+                                service.to_lowercase().contains(&query_lower)
+                            })
+                            || config.namespace.to_lowercase().contains(&query_lower)
+                            || config.context.as_ref().is_some_and(|context| {
+                                context.to_lowercase().contains(&query_lower)
+                            })
+                            || config.workload_type.as_ref().is_some_and(|workload| {
+                                workload.to_lowercase().contains(&query_lower)
+                            })
+                            || config
+                                .local_port
+                                .is_some_and(|port| port.to_string().contains(&query_lower))
+                            || config
+                                .remote_port
+                                .is_some_and(|port| port.to_string().contains(&query_lower))
+                    })
+                    .cloned()
+                    .collect();
+
+            self.filtered_running_configs =
+                self.running_configs
+                    .iter()
+                    .filter(|config| {
+                        config
+                            .alias
+                            .as_ref()
+                            .is_some_and(|alias| alias.to_lowercase().contains(&query_lower))
+                            || config.service.as_ref().is_some_and(|service| {
+                                service.to_lowercase().contains(&query_lower)
+                            })
+                            || config.namespace.to_lowercase().contains(&query_lower)
+                            || config.context.as_ref().is_some_and(|context| {
+                                context.to_lowercase().contains(&query_lower)
+                            })
+                            || config.workload_type.as_ref().is_some_and(|workload| {
+                                workload.to_lowercase().contains(&query_lower)
+                            })
+                            || config
+                                .local_port
+                                .is_some_and(|port| port.to_string().contains(&query_lower))
+                            || config
+                                .remote_port
+                                .is_some_and(|port| port.to_string().contains(&query_lower))
+                    })
+                    .cloned()
+                    .collect();
+        }
+
+        let stopped_len = self.filtered_stopped_configs.len();
+        let running_len = self.filtered_running_configs.len();
+
+        if self.selected_row_stopped >= stopped_len && stopped_len > 0 {
+            self.selected_row_stopped = 0;
+            self.table_state_stopped.select(Some(0));
+        } else if stopped_len == 0 {
+            self.table_state_stopped.select(None);
+        }
+
+        if self.selected_row_running >= running_len && running_len > 0 {
+            self.selected_row_running = 0;
+            self.table_state_running.select(Some(0));
+        } else if running_len == 0 {
+            self.table_state_running.select(None);
+        }
     }
 
     pub fn update_http_logs_viewer(&mut self) {
@@ -561,6 +652,8 @@ impl App {
             .cloned()
             .collect();
 
+        self.update_filtered_configs();
+
         let now = std::time::Instant::now();
         self.configs_being_processed
             .retain(|&_config_id, (completion_flag, start_time)| {
@@ -586,7 +679,12 @@ impl App {
     pub fn scroll_up(&mut self) {
         match self.active_table {
             ActiveTable::Stopped => {
-                if !self.stopped_configs.is_empty()
+                let configs = if self.search_query.is_empty() {
+                    &self.stopped_configs
+                } else {
+                    &self.filtered_stopped_configs
+                };
+                if !configs.is_empty()
                     && let Some(selected) = self.table_state_stopped.selected()
                     && selected > 0
                 {
@@ -595,7 +693,12 @@ impl App {
                 }
             }
             ActiveTable::Running => {
-                if !self.running_configs.is_empty()
+                let configs = if self.search_query.is_empty() {
+                    &self.running_configs
+                } else {
+                    &self.filtered_running_configs
+                };
+                if !configs.is_empty()
                     && let Some(selected) = self.table_state_running.selected()
                     && selected > 0
                 {
@@ -609,9 +712,14 @@ impl App {
     pub fn scroll_down(&mut self) {
         match self.active_table {
             ActiveTable::Stopped => {
-                if !self.stopped_configs.is_empty() {
+                let configs = if self.search_query.is_empty() {
+                    &self.stopped_configs
+                } else {
+                    &self.filtered_stopped_configs
+                };
+                if !configs.is_empty() {
                     if let Some(selected) = self.table_state_stopped.selected() {
-                        if selected < self.stopped_configs.len() - 1 {
+                        if selected < configs.len() - 1 {
                             self.table_state_stopped.select(Some(selected + 1));
                             self.selected_row_stopped = selected + 1;
                         }
@@ -622,9 +730,14 @@ impl App {
                 }
             }
             ActiveTable::Running => {
-                if !self.running_configs.is_empty() {
+                let configs = if self.search_query.is_empty() {
+                    &self.running_configs
+                } else {
+                    &self.filtered_running_configs
+                };
+                if !configs.is_empty() {
                     if let Some(selected) = self.table_state_running.selected() {
-                        if selected < self.running_configs.len() - 1 {
+                        if selected < configs.len() - 1 {
                             self.table_state_running.select(Some(selected + 1));
                             self.selected_row_running = selected + 1;
                         }
@@ -714,7 +827,11 @@ pub async fn handle_input(app: &mut App, mode: DatabaseMode) -> io::Result<bool>
                 }
                 AppState::Normal => {
                     log::debug!("Handling Normal state");
-                    handle_normal_input(app, key.code, mode).await?;
+                    if app.active_component == ActiveComponent::SearchBar {
+                        handle_search_input(app, key.code)?;
+                    } else {
+                        handle_normal_input(app, key.code, mode).await?;
+                    }
                 }
             }
         } else if let Event::Resize(_, height) = event::read()? {
@@ -735,12 +852,14 @@ pub async fn handle_normal_input(
     match key {
         KeyCode::Tab => {
             app.active_component = match app.active_component {
-                ActiveComponent::Menu => ActiveComponent::StoppedTable,
+                ActiveComponent::Menu => ActiveComponent::SearchBar,
+                ActiveComponent::SearchBar => ActiveComponent::StoppedTable,
                 ActiveComponent::StoppedTable => ActiveComponent::Details,
                 ActiveComponent::Details => ActiveComponent::Menu,
                 _ => ActiveComponent::Menu,
             };
 
+            app.search_focused = app.active_component == ActiveComponent::SearchBar;
             app.active_table = match app.active_component {
                 ActiveComponent::StoppedTable => ActiveTable::Stopped,
                 _ => app.active_table,
@@ -759,6 +878,7 @@ pub async fn handle_normal_input(
         },
         _ => match app.active_component {
             ActiveComponent::Menu => handle_menu_input(app, key, mode).await?,
+            ActiveComponent::SearchBar => handle_search_input(app, key)?,
             ActiveComponent::StoppedTable => handle_stopped_table_input(app, key, mode).await?,
             ActiveComponent::RunningTable => handle_running_table_input(app, key, mode).await?,
             ActiveComponent::Details => handle_details_input(app, key, mode).await?,
@@ -804,21 +924,31 @@ pub fn scroll_page_up(app: &mut App) {
 pub fn scroll_page_down(app: &mut App) {
     match app.active_component {
         ActiveComponent::StoppedTable => {
-            let rows_to_scroll = app.visible_rows;
-            if app.selected_row_stopped + rows_to_scroll < app.stopped_configs.len() {
-                app.selected_row_stopped += rows_to_scroll;
+            let configs = if app.search_query.is_empty() {
+                &app.stopped_configs
             } else {
-                app.selected_row_stopped = app.stopped_configs.len() - 1;
+                &app.filtered_stopped_configs
+            };
+            let rows_to_scroll = app.visible_rows;
+            if app.selected_row_stopped + rows_to_scroll < configs.len() {
+                app.selected_row_stopped += rows_to_scroll;
+            } else if !configs.is_empty() {
+                app.selected_row_stopped = configs.len() - 1;
             }
             app.table_state_stopped
                 .select(Some(app.selected_row_stopped));
         }
         ActiveComponent::RunningTable => {
-            let rows_to_scroll = app.visible_rows;
-            if app.selected_row_running + rows_to_scroll < app.running_configs.len() {
-                app.selected_row_running += rows_to_scroll;
+            let configs = if app.search_query.is_empty() {
+                &app.running_configs
             } else {
-                app.selected_row_running = app.running_configs.len() - 1;
+                &app.filtered_running_configs
+            };
+            let rows_to_scroll = app.visible_rows;
+            if app.selected_row_running + rows_to_scroll < configs.len() {
+                app.selected_row_running += rows_to_scroll;
+            } else if !configs.is_empty() {
+                app.selected_row_running = configs.len() - 1;
             }
             app.table_state_running
                 .select(Some(app.selected_row_running));
@@ -837,13 +967,23 @@ pub fn scroll_page_down(app: &mut App) {
 pub fn select_first_row(app: &mut App) {
     match app.active_table {
         ActiveTable::Stopped => {
-            if !app.stopped_configs.is_empty() {
+            let configs = if app.search_query.is_empty() {
+                &app.stopped_configs
+            } else {
+                &app.filtered_stopped_configs
+            };
+            if !configs.is_empty() {
                 app.table_state_stopped.select(Some(0));
                 app.selected_row_stopped = 0;
             }
         }
         ActiveTable::Running => {
-            if !app.running_configs.is_empty() {
+            let configs = if app.search_query.is_empty() {
+                &app.running_configs
+            } else {
+                &app.filtered_running_configs
+            };
+            if !configs.is_empty() {
                 app.table_state_running.select(Some(0));
                 app.selected_row_running = 0;
             }
@@ -889,10 +1029,8 @@ pub async fn handle_menu_input(app: &mut App, key: KeyCode, mode: DatabaseMode) 
             }
         }
         KeyCode::Down => {
-            app.active_component = ActiveComponent::StoppedTable;
-            app.active_table = ActiveTable::Stopped;
-            clear_selection(app);
-            select_first_row(app);
+            app.active_component = ActiveComponent::SearchBar;
+            app.search_focused = true;
         }
         KeyCode::Enter => match app.selected_menu_item {
             0 => app.state = AppState::ShowHelp,
@@ -939,18 +1077,19 @@ pub async fn handle_stopped_table_input(
         }
         KeyCode::Up => {
             if app.table_state_stopped.selected() == Some(0) {
-                app.active_component = ActiveComponent::Menu;
-                app.table_state_running.select(None);
-                app.selected_rows_stopped.clear();
-                app.table_state_stopped.select(None);
+                app.active_component = ActiveComponent::SearchBar;
+                app.search_focused = true;
             } else {
                 app.scroll_up();
             }
         }
         KeyCode::Down => {
-            if app.stopped_configs.is_empty()
-                || app.table_state_stopped.selected() == Some(app.stopped_configs.len() - 1)
-            {
+            let configs = if app.search_query.is_empty() {
+                &app.stopped_configs
+            } else {
+                &app.filtered_stopped_configs
+            };
+            if configs.is_empty() || app.table_state_stopped.selected() == Some(configs.len() - 1) {
                 app.active_component = ActiveComponent::Details;
                 app.table_state_running.select(None);
                 app.selected_rows_stopped.clear();
@@ -987,19 +1126,25 @@ pub async fn handle_running_table_input(
             select_first_row(app);
         }
         KeyCode::Up => {
-            if app.running_configs.is_empty() || app.table_state_running.selected() == Some(0) {
-                app.active_component = ActiveComponent::Menu;
-                app.table_state_running.select(None);
-                app.selected_rows_stopped.clear();
-                app.table_state_stopped.select(None);
+            let configs = if app.search_query.is_empty() {
+                &app.running_configs
+            } else {
+                &app.filtered_running_configs
+            };
+            if configs.is_empty() || app.table_state_running.selected() == Some(0) {
+                app.active_component = ActiveComponent::SearchBar;
+                app.search_focused = true;
             } else {
                 app.scroll_up();
             }
         }
         KeyCode::Down => {
-            if app.running_configs.is_empty()
-                || app.table_state_running.selected() == Some(app.running_configs.len() - 1)
-            {
+            let configs = if app.search_query.is_empty() {
+                &app.running_configs
+            } else {
+                &app.filtered_running_configs
+            };
+            if configs.is_empty() || app.table_state_running.selected() == Some(configs.len() - 1) {
                 app.active_component = ActiveComponent::Logs;
                 app.table_state_running.select(None);
                 app.selected_rows_stopped.clear();
@@ -1118,8 +1263,55 @@ pub async fn handle_common_hotkeys(
             handle_view_http_logs(app, mode).await?;
             Ok(true)
         }
+        KeyCode::Char('/') => {
+            app.active_component = ActiveComponent::SearchBar;
+            app.search_focused = true;
+            if !app.search_query.is_empty() {
+                app.search_query.clear();
+                app.update_filtered_configs();
+            }
+            Ok(true)
+        }
         _ => Ok(false),
     }
+}
+
+pub fn handle_search_input(app: &mut App, key: KeyCode) -> io::Result<()> {
+    match key {
+        KeyCode::Esc => {
+            app.active_component = ActiveComponent::StoppedTable;
+            app.search_focused = false;
+            app.search_query.clear();
+            app.update_filtered_configs();
+        }
+        KeyCode::Up => {
+            app.active_component = ActiveComponent::Menu;
+            app.search_focused = false;
+        }
+        KeyCode::Enter | KeyCode::Down => {
+            app.search_focused = false;
+            if !app.filtered_stopped_configs.is_empty() {
+                app.active_component = ActiveComponent::StoppedTable;
+                app.active_table = ActiveTable::Stopped;
+            } else if !app.filtered_running_configs.is_empty() {
+                app.active_component = ActiveComponent::RunningTable;
+                app.active_table = ActiveTable::Running;
+            } else {
+                app.active_component = ActiveComponent::StoppedTable;
+            }
+            select_first_row(app);
+        }
+        KeyCode::Backspace => {
+            app.search_query.pop();
+            app.update_filtered_configs();
+        }
+        KeyCode::Char(c) => {
+            app.search_query.push(c);
+            app.update_filtered_configs();
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 pub fn toggle_row_selection(app: &mut App) {
@@ -1151,12 +1343,20 @@ pub async fn handle_port_forwarding(app: &mut App, mode: DatabaseMode) -> io::Re
     let (selected_rows, configs, selected_row) = match app.active_table {
         ActiveTable::Stopped => (
             &mut app.selected_rows_stopped,
-            &app.stopped_configs,
+            if app.search_query.is_empty() {
+                &app.stopped_configs
+            } else {
+                &app.filtered_stopped_configs
+            },
             app.selected_row_stopped,
         ),
         ActiveTable::Running => (
             &mut app.selected_rows_running,
-            &app.running_configs,
+            if app.search_query.is_empty() {
+                &app.running_configs
+            } else {
+                &app.filtered_running_configs
+            },
             app.selected_row_running,
         ),
     };
