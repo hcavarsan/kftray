@@ -47,7 +47,7 @@ modules:
         path: com.hcavarsan.kftray.appdata.xml
 
     build-commands:
-      - npm ci --offline --legacy-peer-deps
+      - cd frontend && npm ci --offline --legacy-peer-deps
 
       - cargo --offline fetch --manifest-path crates/kftray-tauri/Cargo.toml --verbose
 
