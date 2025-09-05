@@ -46,21 +46,19 @@ modules:
       - type: archive
         url: https://registry.npmjs.org/pnpm/-/pnpm-10.15.1.tgz
         sha256: 8c53af02ae3ec1fb0ae75377f8d4d6217c2d7cbe6f03c16350cabf7493de6eff
+        dest: pnpm-src
 
       - type: file
         path: com.hcavarsan.kftray.appdata.xml
 
     build-commands:
-      - tar -xzf pnpm-10.15.1.tgz
-      - npm install -g package/
-
-      - pnpm install --frozen-lockfile --offline
+      - export PATH="$PWD/pnpm-src/bin:$PATH" && pnpm install --frozen-lockfile --offline
 
       - cargo --offline fetch --manifest-path crates/kftray-tauri/Cargo.toml --verbose
 
-      - pnpm run build
+      - export PATH="$PWD/pnpm-src/bin:$PATH" && pnpm run build
 
-      - cd crates/kftray-tauri && pnpm tauri build -- --no-bundle
+      - export PATH="$PWD/pnpm-src/bin:$PATH" && cd crates/kftray-tauri && pnpm tauri build -- --no-bundle
 
       - install -Dm644 -t /app/share/metainfo/ com.hcavarsan.kftray.appdata.xml
       - install -Dm755 -t /app/bin/ crates/kftray-tauri/target/release/kftray
