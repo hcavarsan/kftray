@@ -18,6 +18,10 @@ if [ -n "$CONTAINER_PREFIX" ]; then
         echo "flatpak-node-generator required in container"
         exit 1
     }
+    # Debug: List all flatpak tools in container
+    echo "Debug: Available flatpak tools in container:"
+    $CONTAINER_PREFIX bash -c "export PATH=\$HOME/.local/bin:\$PATH && ls -la \$HOME/.local/bin/ | grep flatpak || echo 'No flatpak tools found'"
+    
     $CONTAINER_PREFIX bash -c "export PATH=\$HOME/.local/bin:\$PATH && (which flatpak-cargo-generator.py || which flatpak-cargo-generator)" >/dev/null 2>&1 || {
         echo "flatpak-cargo-generator required in container"
         exit 1
