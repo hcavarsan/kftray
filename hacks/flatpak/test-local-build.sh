@@ -30,11 +30,11 @@ echo "📦 Installing flatpak-builder-tools..."
 if command -v toolbox >/dev/null 2>&1; then
     echo "Using toolbox container for Python packages..."
     if ! toolbox list | grep -q flatpakdev; then
-        toolbox create flatpakdev fedora-toolbox:latest
+        toolbox create flatpakdev
     fi
 
     toolbox run -c flatpakdev bash -c "
-        dnf install -y python3-pip git &&
+        sudo dnf install -y python3-pip git &&
         pip3 install aiohttp toml
     "
 elif command -v distrobox >/dev/null 2>&1; then
