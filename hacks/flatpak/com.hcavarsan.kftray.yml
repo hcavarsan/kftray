@@ -47,8 +47,8 @@ modules:
         path: com.hcavarsan.kftray.appdata.xml
 
     build-commands:
-      # Install frontend dependencies  
-      - cd frontend && npm ci --offline --legacy-peer-deps
+      # Install frontend dependencies using install (not ci since no lock file in git)
+      - cd frontend && npm install --offline --legacy-peer-deps
       # Rust packages  
       - cargo --offline fetch --manifest-path crates/kftray-tauri/Cargo.toml --verbose
       # Build frontend
