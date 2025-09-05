@@ -10,7 +10,7 @@ importers:
     devDependencies:
       '@codecov/vite-plugin':
         specifier: 1.9.1
-        version: 1.9.1(vite@7.1.3(@types/node@24.3.0)(terser@5.43.1))
+        version: 1.9.1(vite@7.1.4(@types/node@24.3.0)(terser@5.43.1))
       '@eslint/eslintrc':
         specifier: ^3.3.1
         version: 3.3.1
@@ -39,14 +39,14 @@ importers:
         specifier: ^7.0.0
         version: 7.0.0
       '@fortawesome/react-fontawesome':
-        specifier: 3.0.1
-        version: 3.0.1(@fortawesome/fontawesome-svg-core@7.0.0)(react@19.1.1)
+        specifier: 3.0.2
+        version: 3.0.2(@fortawesome/fontawesome-svg-core@7.0.0)(react@19.1.1)
       '@types/lodash':
         specifier: ^4.17.20
         version: 4.17.20
       '@vitejs/plugin-react-swc':
         specifier: ^4.0.1
-        version: 4.0.1(@swc/helpers@0.5.17)(vite@7.1.3(@types/node@24.3.0)(terser@5.43.1))
+        version: 4.0.1(@swc/helpers@0.5.17)(vite@7.1.4(@types/node@24.3.0)(terser@5.43.1))
       lodash:
         specifier: ^4.17.21
         version: 4.17.21
@@ -85,8 +85,8 @@ importers:
         specifier: 2.8.3
         version: 2.8.3
       '@tauri-apps/plugin-dialog':
-        specifier: ~2.3.3
-        version: 2.3.3
+        specifier: ~2.4.0
+        version: 2.4.0
       '@tauri-apps/plugin-fs':
         specifier: ~2.4.2
         version: 2.4.2
@@ -145,11 +145,11 @@ importers:
         specifier: 5.9.2
         version: 5.9.2
       vite:
-        specifier: 7.1.3
-        version: 7.1.3(@types/node@24.3.0)(terser@5.43.1)
+        specifier: 7.1.4
+        version: 7.1.4(@types/node@24.3.0)(terser@5.43.1)
       vite-tsconfig-paths:
         specifier: ^5.1.4
-        version: 5.1.4(typescript@5.9.2)(vite@7.1.3(@types/node@24.3.0)(terser@5.43.1))
+        version: 5.1.4(typescript@5.9.2)(vite@7.1.4(@types/node@24.3.0)(terser@5.43.1))
 
 packages:
 
@@ -560,8 +560,8 @@ packages:
     resolution: {integrity: sha512-njSLAllkOddYDCXgTFboXn54Oe5FcvpkWq+FoetOHR64PbN0608kM02Lze0xtISGpXgP+i26VyXRQA0Irh3Obw==}
     engines: {node: '>=6'}
 
-  '@fortawesome/react-fontawesome@3.0.1':
-    resolution: {integrity: sha512-kpVyf85UHhQ+Y/TPyiNaUldqylhhXiVXv20z7sq+CLmhKLXWbzjIHaRPDrHIydnrL6Qq9oFwuNHq66alJdDM5Q==}
+  '@fortawesome/react-fontawesome@3.0.2':
+    resolution: {integrity: sha512-cmp/nT0pPC7HUALF8uc3+D5ECwEBWxYQbOIHwtGUWEu72sWtZc26k5onr920HWOViF0nYaC+Qzz6Ln56SQcaVg==}
     engines: {node: '>=20'}
     peerDependencies:
       '@fortawesome/fontawesome-svg-core': ~6 || ~7
@@ -1023,8 +1023,8 @@ packages:
     engines: {node: '>= 10'}
     hasBin: true
 
-  '@tauri-apps/plugin-dialog@2.3.3':
-    resolution: {integrity: sha512-cWXB9QJDbLIA0v7I5QY183awazBEQNPhp19iPvrMZoJRX8SbFkhWFx1/q7zy7xGpXXzxz29qtq6z21Ho7W5Iew==}
+  '@tauri-apps/plugin-dialog@2.4.0':
+    resolution: {integrity: sha512-OvXkrEBfWwtd8tzVCEXIvRfNEX87qs2jv6SqmVPiHcJjBhSF/GUvjqUNIDmKByb5N8nvDqVUM7+g1sXwdC/S9w==}
 
   '@tauri-apps/plugin-fs@2.4.2':
     resolution: {integrity: sha512-YGhmYuTgXGsi6AjoV+5mh2NvicgWBfVJHHheuck6oHD+HC9bVWPaHvCP0/Aw4pHDejwrvT8hE3+zZAaWf+hrig==}
@@ -2564,8 +2564,8 @@ packages:
       vite:
         optional: true
 
-  vite@7.1.3:
-    resolution: {integrity: sha512-OOUi5zjkDxYrKhTV3V7iKsoS37VUM7v40+HuwEmcrsf11Cdx9y3DIr2Px6liIcZFwt3XSRpQvFpL3WVy7ApkGw==}
+  vite@7.1.4:
+    resolution: {integrity: sha512-X5QFK4SGynAeeIt+A7ZWnApdUyHYm+pzv/8/A57LqSGcI88U6R6ipOs3uCesdc6yl7nl+zNO0t8LmqAdXcQihw==}
     engines: {node: ^20.19.0 || >=22.12.0}
     hasBin: true
     peerDependencies:
@@ -2896,11 +2896,11 @@ snapshots:
       unplugin: 1.16.1
       zod: 3.25.76
 
-  '@codecov/vite-plugin@1.9.1(vite@7.1.3(@types/node@24.3.0)(terser@5.43.1))':
+  '@codecov/vite-plugin@1.9.1(vite@7.1.4(@types/node@24.3.0)(terser@5.43.1))':
     dependencies:
       '@codecov/bundler-plugin-core': 1.9.1
       unplugin: 1.16.1
-      vite: 7.1.3(@types/node@24.3.0)(terser@5.43.1)
+      vite: 7.1.4(@types/node@24.3.0)(terser@5.43.1)
 
   '@csstools/color-helpers@5.1.0': {}
 
@@ -3139,11 +3139,10 @@ snapshots:
     dependencies:
       '@fortawesome/fontawesome-common-types': 7.0.0
 
-  '@fortawesome/react-fontawesome@3.0.1(@fortawesome/fontawesome-svg-core@7.0.0)(react@19.1.1)':
+  '@fortawesome/react-fontawesome@3.0.2(@fortawesome/fontawesome-svg-core@7.0.0)(react@19.1.1)':
     dependencies:
       '@fortawesome/fontawesome-svg-core': 7.0.0
       react: 19.1.1
-      semver: 7.7.2
 
   '@humanfs/core@0.19.1': {}
 
@@ -3492,7 +3491,7 @@ snapshots:
       '@tauri-apps/cli-win32-ia32-msvc': 2.8.4
       '@tauri-apps/cli-win32-x64-msvc': 2.8.4
 
-  '@tauri-apps/plugin-dialog@2.3.3':
+  '@tauri-apps/plugin-dialog@2.4.0':
     dependencies:
       '@tauri-apps/api': 2.8.0
 
@@ -3627,11 +3626,11 @@ snapshots:
       '@typescript-eslint/types': 8.41.0
       eslint-visitor-keys: 4.2.1
 
-  '@vitejs/plugin-react-swc@4.0.1(@swc/helpers@0.5.17)(vite@7.1.3(@types/node@24.3.0)(terser@5.43.1))':
+  '@vitejs/plugin-react-swc@4.0.1(@swc/helpers@0.5.17)(vite@7.1.4(@types/node@24.3.0)(terser@5.43.1))':
     dependencies:
       '@rolldown/pluginutils': 1.0.0-beta.32
       '@swc/core': 1.13.5(@swc/helpers@0.5.17)
-      vite: 7.1.3(@types/node@24.3.0)(terser@5.43.1)
+      vite: 7.1.4(@types/node@24.3.0)(terser@5.43.1)
     transitivePeerDependencies:
       - '@swc/helpers'
 
@@ -5628,18 +5627,18 @@ snapshots:
     optionalDependencies:
       '@types/react': 19.1.12
 
-  vite-tsconfig-paths@5.1.4(typescript@5.9.2)(vite@7.1.3(@types/node@24.3.0)(terser@5.43.1)):
+  vite-tsconfig-paths@5.1.4(typescript@5.9.2)(vite@7.1.4(@types/node@24.3.0)(terser@5.43.1)):
     dependencies:
       debug: 4.4.1
       globrex: 0.1.2
       tsconfck: 3.1.6(typescript@5.9.2)
     optionalDependencies:
-      vite: 7.1.3(@types/node@24.3.0)(terser@5.43.1)
+      vite: 7.1.4(@types/node@24.3.0)(terser@5.43.1)
     transitivePeerDependencies:
       - supports-color
       - typescript
 
-  vite@7.1.3(@types/node@24.3.0)(terser@5.43.1):
+  vite@7.1.4(@types/node@24.3.0)(terser@5.43.1):
     dependencies:
       esbuild: 0.25.9
       fdir: 6.5.0(picomatch@4.0.3)
