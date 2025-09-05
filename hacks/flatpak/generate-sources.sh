@@ -18,14 +18,18 @@ if [ -n "$CONTAINER_PREFIX" ]; then
         echo "flatpak-node-generator required in container"
         exit 1
     }
-    # Debug: List all flatpak tools in container
-    echo "Debug: Available flatpak tools in container:"
-    $CONTAINER_PREFIX bash -c "export PATH=\$HOME/.local/bin:\$PATH && ls -la \$HOME/.local/bin/ | grep flatpak || echo 'No flatpak tools found'"
-    
-    $CONTAINER_PREFIX bash -c "export PATH=\$HOME/.local/bin:\$PATH && (which flatpak-cargo-generator.py || which flatpak-cargo-generator)" >/dev/null 2>&1 || {
-        echo "flatpak-cargo-generator required in container"
-        exit 1
-    }
+    # Check if we need to install cargo generator manually
+    if ! $CONTAINER_PREFIX bash -c "export PATH=\$HOME/.local/bin:\$PATH && (which flatpak-cargo-generator.py || which flatpak-cargo-generator)" >/dev/null 2>&1; then
+        echo "Installing flatpak-cargo-generator manually..."
+        $CONTAINER_PREFIX bash -c "
+            export PATH=\$HOME/.local/bin:\$PATH
+            cd /tmp/flatpak-builder-tools/cargo
+            python3 flatpak-cargo-generator.py --help >/dev/null 2>&1 && {
+                echo 'Using direct python script'
+                ln -sf /tmp/flatpak-builder-tools/cargo/flatpak-cargo-generator.py \$HOME/.local/bin/flatpak-cargo-generator.py
+            }
+        "
+    fi
 else
     command -v flatpak-node-generator >/dev/null 2>&1 || { 
         echo "flatpak-node-generator required. Install: pip install flatpak-builder-tools"
