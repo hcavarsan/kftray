@@ -25,16 +25,32 @@ else
     sudo dnf install -y flatpak flatpak-builder git python3-pip
 fi
 
-echo "📦 Installing flatpak-builder-tools in toolbx container..."
-# Use toolbx for Python package isolation
-if ! toolbx list | grep -q flatpak-dev; then
-    toolbx create -c flatpak-dev fedora-toolbox:latest
-fi
+echo "📦 Installing flatpak-builder-tools..."
+# Check if toolbox is available for container isolation
+if command -v toolbox >/dev/null 2>&1; then
+    echo "Using toolbox container for Python packages..."
+    if ! toolbox list | grep -q flatpak-dev; then
+        toolbox create -c flatpak-dev fedora-toolbox:latest
+    fi
 
-toolbx run -c flatpak-dev bash -c "
-    dnf install -y python3-pip git &&
-    pip3 install aiohttp toml
-"
+    toolbox run -c flatpak-dev bash -c "
+        dnf install -y python3-pip git &&
+        pip3 install aiohttp toml
+    "
+elif command -v distrobox >/dev/null 2>&1; then
+    echo "Using distrobox container for Python packages..."
+    if ! distrobox list | grep -q flatpak-dev; then
+        distrobox create -n flatpak-dev -i fedora:latest
+    fi
+
+    distrobox enter flatpak-dev -- bash -c "
+        dnf install -y python3-pip git &&
+        pip3 install aiohttp toml
+    "
+else
+    echo "No container tool available, installing directly..."
+    pip3 install --user aiohttp toml
+fi
 
 echo "🏗️ Setting up Flatpak runtime..."
 flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
