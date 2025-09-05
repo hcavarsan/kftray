@@ -8,7 +8,10 @@ use ratatui::{
         Layout,
         Rect,
     },
-    style::Style,
+    style::{
+        Modifier,
+        Style,
+    },
     text::{
         Span,
         Text,
@@ -26,6 +29,7 @@ use crate::tui::input::App;
 use crate::tui::ui::draw_configs_table;
 use crate::tui::ui::{
     BASE,
+    GREEN,
     MAUVE,
     TEXT,
     YELLOW,
@@ -42,8 +46,11 @@ pub fn render_legend(f: &mut Frame, area: Rect, active_component: ActiveComponen
 
     let logs_legend = "pageup/pagedown: scroll | ←/→: switch focus | c: clear output";
 
+    let search_legend = "↑/↓: navigate | enter/esc: exit search | type: filter configs";
+
     let legend_message = match active_component {
         ActiveComponent::Menu => format!("{common_legend} | {menu_legend}"),
+        ActiveComponent::SearchBar => format!("{common_legend} | {search_legend}"),
         ActiveComponent::StoppedTable | ActiveComponent::RunningTable => {
             format!("{common_legend} | {table_legend}")
         }
@@ -160,23 +167,86 @@ pub fn draw_file_explorer_popup(f: &mut Frame, app: &mut App, area: Rect, is_imp
 pub fn draw_configs_tab(
     f: &mut Frame, app: &mut App, config_states: &[ConfigState], area: Rect, has_focus: bool,
 ) {
-    let chunks = Layout::default()
+    let main_chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage(100)].as_ref())
+        .constraints([Constraint::Length(3), Constraint::Min(0)].as_ref())
         .split(area);
+
+    let is_search_focused = app.active_component == ActiveComponent::SearchBar;
+    let search_text = if is_search_focused {
+        app.search_query.clone()
+    } else if app.search_query.is_empty() {
+        "Press / to search...".to_string()
+    } else {
+        format!("/{}", app.search_query)
+    };
+
+    let (search_color, search_title) = if is_search_focused {
+        (YELLOW, "Search (active)")
+    } else if !app.search_query.is_empty() {
+        (GREEN, "Search (filtering)")
+    } else {
+        (TEXT, "Search")
+    };
+
+    let search_widget = Paragraph::new(search_text)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(Span::styled(
+                    search_title,
+                    Style::default().fg(search_color),
+                ))
+                .border_style(if is_search_focused {
+                    Style::default()
+                        .fg(search_color)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(search_color)
+                }),
+        )
+        .style(Style::default().fg(search_color));
+
+    f.render_widget(search_widget, main_chunks[0]);
+
+    let table_area = main_chunks[1];
 
     let tables_chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)].as_ref())
-        .split(chunks[0]);
+        .split(table_area);
+
+    let stopped_configs_to_display = if app.search_query.is_empty() {
+        &app.stopped_configs
+    } else {
+        &app.filtered_stopped_configs
+    };
+
+    let running_configs_to_display = if app.search_query.is_empty() {
+        &app.running_configs
+    } else {
+        &app.filtered_running_configs
+    };
+
+    let stopped_title = if app.search_query.is_empty() {
+        "Stopped Configs".to_string()
+    } else {
+        format!("Stopped Configs ({})", app.filtered_stopped_configs.len())
+    };
+
+    let running_title = if app.search_query.is_empty() {
+        "Running Configs".to_string()
+    } else {
+        format!("Running Configs ({})", app.filtered_running_configs.len())
+    };
 
     draw_configs_table(
         f,
         tables_chunks[0],
-        &app.stopped_configs,
+        stopped_configs_to_display,
         config_states,
         &mut app.table_state_stopped,
-        "Stopped Configs",
+        &stopped_title,
         has_focus && app.active_component == ActiveComponent::StoppedTable,
         &app.selected_rows_stopped,
         &app.configs_being_processed,
@@ -186,10 +256,10 @@ pub fn draw_configs_tab(
     draw_configs_table(
         f,
         tables_chunks[1],
-        &app.running_configs,
+        running_configs_to_display,
         config_states,
         &mut app.table_state_running,
-        "Running Configs",
+        &running_title,
         has_focus && app.active_component == ActiveComponent::RunningTable,
         &app.selected_rows_running,
         &app.configs_being_processed,
