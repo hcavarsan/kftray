@@ -18,8 +18,8 @@ if [ -n "$CONTAINER_PREFIX" ]; then
         echo "flatpak-node-generator required in container"
         exit 1
     }
-    $CONTAINER_PREFIX bash -c "export PATH=\$HOME/.local/bin:\$PATH && which flatpak-cargo-generator.py" >/dev/null 2>&1 || {
-        echo "flatpak-cargo-generator.py required in container"
+    $CONTAINER_PREFIX bash -c "export PATH=\$HOME/.local/bin:\$PATH && (which flatpak-cargo-generator.py || which flatpak-cargo-generator)" >/dev/null 2>&1 || {
+        echo "flatpak-cargo-generator required in container"
         exit 1
     }
 else
@@ -50,9 +50,20 @@ fi
 
 echo "Generating cargo-sources.json..." 
 if [ -n "$CONTAINER_PREFIX" ]; then
-    $CONTAINER_PREFIX bash -c "export PATH=\$HOME/.local/bin:\$PATH && flatpak-cargo-generator.py -d ../../crates/kftray-tauri/Cargo.lock -o cargo-sources.json"
+    $CONTAINER_PREFIX bash -c "
+        export PATH=\$HOME/.local/bin:\$PATH
+        if which flatpak-cargo-generator.py >/dev/null 2>&1; then
+            flatpak-cargo-generator.py -d ../../crates/kftray-tauri/Cargo.lock -o cargo-sources.json
+        else
+            flatpak-cargo-generator -d ../../crates/kftray-tauri/Cargo.lock -o cargo-sources.json
+        fi
+    "
 else
-    flatpak-cargo-generator.py -d ../../crates/kftray-tauri/Cargo.lock -o cargo-sources.json
+    if command -v flatpak-cargo-generator.py >/dev/null 2>&1; then
+        flatpak-cargo-generator.py -d ../../crates/kftray-tauri/Cargo.lock -o cargo-sources.json
+    else
+        flatpak-cargo-generator -d ../../crates/kftray-tauri/Cargo.lock -o cargo-sources.json
+    fi
 fi
 
 if [ ! -d "shared-modules" ]; then
