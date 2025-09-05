@@ -6,7 +6,20 @@ echo "🔧 Installing Flatpak build dependencies..."
 # Check if we're on Fedora Silverblue/Kinoite
 if command -v rpm-ostree >/dev/null 2>&1; then
     echo "Detected Fedora Silverblue/Kinoite - using rpm-ostree..."
-    sudo rpm-ostree install --apply-live flatpak flatpak-builder git python3-pip
+    # Install packages that aren't already present
+    PACKAGES_TO_INSTALL=()
+    for pkg in flatpak flatpak-builder git python3-pip; do
+        if ! rpm -q "$pkg" >/dev/null 2>&1; then
+            PACKAGES_TO_INSTALL+=("$pkg")
+        fi
+    done
+    
+    if [ ${#PACKAGES_TO_INSTALL[@]} -gt 0 ]; then
+        echo "Installing missing packages: ${PACKAGES_TO_INSTALL[*]}"
+        sudo rpm-ostree install --apply-live "${PACKAGES_TO_INSTALL[@]}"
+    else
+        echo "All required packages already installed"
+    fi
 else
     echo "Using traditional package manager..."
     sudo dnf install -y flatpak flatpak-builder git python3-pip
