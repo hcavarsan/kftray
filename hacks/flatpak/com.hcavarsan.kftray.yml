@@ -47,14 +47,14 @@ modules:
         path: com.hcavarsan.kftray.appdata.xml
 
     build-commands:
-      # Node packages - install all workspace dependencies  
-      - npm ci --offline --legacy-peer-deps
+      # Install frontend dependencies  
+      - cd frontend && npm ci --offline --legacy-peer-deps
       # Rust packages  
       - cargo --offline fetch --manifest-path crates/kftray-tauri/Cargo.toml --verbose
-      # Build frontend using workspace command
-      - npm run build
-      # Compile the app without creating any bundle
-      - cd crates/kftray-tauri && npm run tauri build -- --no-bundle
+      # Build frontend
+      - cd frontend && npm run build
+      # Compile the app without creating any bundle - use tauri directly
+      - cd crates/kftray-tauri && cargo tauri build --no-bundle
 
       - install -Dm644 -t /app/share/metainfo/ com.hcavarsan.kftray.appdata.xml
       - install -Dm755 -t /app/bin/ crates/kftray-tauri/target/release/kftray

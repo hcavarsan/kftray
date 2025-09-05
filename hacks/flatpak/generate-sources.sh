@@ -41,36 +41,28 @@ else
     }
 fi
 
-# Generate comprehensive package-lock.json for all workspace dependencies
-echo "Generating comprehensive package-lock.json from pnpm workspace..."
-cd ../../
+# Generate package-lock.json from frontend directory (simpler approach)
+echo "Generating package-lock.json for frontend dependencies..."
 
-# Clean any existing npm artifacts
-rm -rf node_modules package-lock.json frontend/node_modules
-
-# Install all workspace dependencies with pnpm to get complete dependency tree
-if command -v pnpm >/dev/null 2>&1; then
-    echo "Installing all workspace dependencies with pnpm..."
-    pnpm install --frozen-lockfile
-    
-    # Generate package-lock.json from the installed node_modules
-    echo "Generating comprehensive package-lock.json with npm..."
+# Ensure frontend package-lock.json exists and is current
+if [ ! -f "../../frontend/package-lock.json" ]; then
+    echo "Creating package-lock.json in frontend directory..."
+    cd ../../frontend
+    # Clean any existing node_modules
+    rm -rf node_modules
+    # Generate package-lock.json from package.json
     npm install --package-lock-only --legacy-peer-deps
-else
-    echo "Error: pnpm not found, but required for workspace setup"
-    exit 1
+    cd ../hacks/flatpak
 fi
 
-cd hacks/flatpak
-
-echo "Generating node-sources.json..."
-# Clean frontend node_modules before generating sources
-rm -rf ../../frontend/node_modules ../../node_modules
+echo "Generating node-sources.json from frontend package-lock.json..."
+# Clean any existing node_modules before generating sources
+rm -rf ../../frontend/node_modules
 
 if [ -n "$CONTAINER_PREFIX" ]; then
-    $CONTAINER_PREFIX bash -c "export PATH=\$HOME/.local/bin:\$PATH && flatpak-node-generator npm -o node-sources.json ../../package-lock.json"
+    $CONTAINER_PREFIX bash -c "export PATH=\$HOME/.local/bin:\$PATH && flatpak-node-generator npm -o node-sources.json ../../frontend/package-lock.json"
 else
-    flatpak-node-generator npm -o node-sources.json ../../package-lock.json
+    flatpak-node-generator npm -o node-sources.json ../../frontend/package-lock.json
 fi
 
 echo "Generating cargo-sources.json..." 
