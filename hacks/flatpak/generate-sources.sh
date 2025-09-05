@@ -69,9 +69,9 @@ fi
 echo "Generating node-sources.json..."
 rm -rf ../../frontend/node_modules
 if [ -n "$CONTAINER_PREFIX" ]; then
-    $CONTAINER_PREFIX bash -c "export PATH=\$HOME/.local/bin:\$PATH && flatpak-node-generator npm -o node-sources.json ../../frontend/package-lock.json"
+    $CONTAINER_PREFIX bash -c "export PATH=\$HOME/.local/bin:\$PATH && flatpak-node-generator pnpm -o node-sources.json ../../pnpm-lock.yaml"
 else
-    flatpak-node-generator npm -o node-sources.json ../../frontend/package-lock.json
+    flatpak-node-generator pnpm -o node-sources.json ../../pnpm-lock.yaml
 fi
 
 echo "Generating cargo-sources.json..." 
