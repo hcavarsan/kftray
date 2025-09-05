@@ -352,6 +352,32 @@ impl App {
         app
     }
 
+    fn matches_search_query(config: &Config, query_lower: &str) -> bool {
+        config
+            .alias
+            .as_ref()
+            .is_some_and(|alias| alias.to_lowercase().contains(query_lower))
+            || config
+                .service
+                .as_ref()
+                .is_some_and(|service| service.to_lowercase().contains(query_lower))
+            || config.namespace.to_lowercase().contains(query_lower)
+            || config
+                .context
+                .as_ref()
+                .is_some_and(|context| context.to_lowercase().contains(query_lower))
+            || config
+                .workload_type
+                .as_ref()
+                .is_some_and(|workload| workload.to_lowercase().contains(query_lower))
+            || config
+                .local_port
+                .is_some_and(|port| port.to_string().contains(query_lower))
+            || config
+                .remote_port
+                .is_some_and(|port| port.to_string().contains(query_lower))
+    }
+
     pub fn update_filtered_configs(&mut self) {
         if self.search_query.is_empty() {
             self.filtered_stopped_configs = self.stopped_configs.clone();
@@ -359,61 +385,19 @@ impl App {
         } else {
             let query_lower = self.search_query.to_lowercase();
 
-            self.filtered_stopped_configs =
-                self.stopped_configs
-                    .iter()
-                    .filter(|config| {
-                        config
-                            .alias
-                            .as_ref()
-                            .is_some_and(|alias| alias.to_lowercase().contains(&query_lower))
-                            || config.service.as_ref().is_some_and(|service| {
-                                service.to_lowercase().contains(&query_lower)
-                            })
-                            || config.namespace.to_lowercase().contains(&query_lower)
-                            || config.context.as_ref().is_some_and(|context| {
-                                context.to_lowercase().contains(&query_lower)
-                            })
-                            || config.workload_type.as_ref().is_some_and(|workload| {
-                                workload.to_lowercase().contains(&query_lower)
-                            })
-                            || config
-                                .local_port
-                                .is_some_and(|port| port.to_string().contains(&query_lower))
-                            || config
-                                .remote_port
-                                .is_some_and(|port| port.to_string().contains(&query_lower))
-                    })
-                    .cloned()
-                    .collect();
+            self.filtered_stopped_configs = self
+                .stopped_configs
+                .iter()
+                .filter(|config| Self::matches_search_query(config, &query_lower))
+                .cloned()
+                .collect();
 
-            self.filtered_running_configs =
-                self.running_configs
-                    .iter()
-                    .filter(|config| {
-                        config
-                            .alias
-                            .as_ref()
-                            .is_some_and(|alias| alias.to_lowercase().contains(&query_lower))
-                            || config.service.as_ref().is_some_and(|service| {
-                                service.to_lowercase().contains(&query_lower)
-                            })
-                            || config.namespace.to_lowercase().contains(&query_lower)
-                            || config.context.as_ref().is_some_and(|context| {
-                                context.to_lowercase().contains(&query_lower)
-                            })
-                            || config.workload_type.as_ref().is_some_and(|workload| {
-                                workload.to_lowercase().contains(&query_lower)
-                            })
-                            || config
-                                .local_port
-                                .is_some_and(|port| port.to_string().contains(&query_lower))
-                            || config
-                                .remote_port
-                                .is_some_and(|port| port.to_string().contains(&query_lower))
-                    })
-                    .cloned()
-                    .collect();
+            self.filtered_running_configs = self
+                .running_configs
+                .iter()
+                .filter(|config| Self::matches_search_query(config, &query_lower))
+                .cloned()
+                .collect();
         }
 
         let stopped_len = self.filtered_stopped_configs.len();

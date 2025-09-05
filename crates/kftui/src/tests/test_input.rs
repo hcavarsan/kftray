@@ -346,6 +346,11 @@ mod tests {
         handle_normal_input(&mut app, KeyCode::Tab, DatabaseMode::File)
             .await
             .unwrap();
+        assert_eq!(app.active_component, ActiveComponent::SearchBar);
+
+        handle_normal_input(&mut app, KeyCode::Tab, DatabaseMode::File)
+            .await
+            .unwrap();
         assert_eq!(app.active_component, ActiveComponent::StoppedTable);
 
         handle_normal_input(&mut app, KeyCode::Tab, DatabaseMode::File)
@@ -379,7 +384,7 @@ mod tests {
         handle_menu_input(&mut app, KeyCode::Down, DatabaseMode::File)
             .await
             .unwrap();
-        assert_eq!(app.active_component, ActiveComponent::StoppedTable);
+        assert_eq!(app.active_component, ActiveComponent::SearchBar);
 
         app.active_component = ActiveComponent::Menu;
         app.selected_menu_item = 0;
@@ -436,7 +441,7 @@ mod tests {
         handle_stopped_table_input(&mut app, KeyCode::Up, DatabaseMode::File)
             .await
             .unwrap();
-        assert_eq!(app.active_component, ActiveComponent::Menu);
+        assert_eq!(app.active_component, ActiveComponent::SearchBar);
 
         app.active_component = ActiveComponent::StoppedTable;
         app.selected_rows_stopped.insert(1);
@@ -471,7 +476,7 @@ mod tests {
         handle_running_table_input(&mut app, KeyCode::Up, DatabaseMode::File)
             .await
             .unwrap();
-        assert_eq!(app.active_component, ActiveComponent::Menu);
+        assert_eq!(app.active_component, ActiveComponent::SearchBar);
 
         app.active_component = ActiveComponent::RunningTable;
         app.table_state_running.select(Some(1));
