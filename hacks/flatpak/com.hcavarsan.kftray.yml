@@ -47,13 +47,15 @@ modules:
         path: com.hcavarsan.kftray.appdata.xml
 
     build-commands:
-      - cd frontend && npm ci --offline --legacy-peer-deps
+      - npm install -g pnpm
+
+      - cd frontend && pnpm install --frozen-lockfile --offline
 
       - cargo --offline fetch --manifest-path crates/kftray-tauri/Cargo.toml --verbose
 
-      - cd frontend && npm run build
+      - cd frontend && pnpm run build
 
-      - cd crates/kftray-tauri && npm run --offline tauri build -- --no-bundle
+      - cd crates/kftray-tauri && pnpm run --offline tauri build -- --no-bundle
 
       - install -Dm644 -t /app/share/metainfo/ com.hcavarsan.kftray.appdata.xml
       - install -Dm755 -t /app/bin/ crates/kftray-tauri/target/release/kftray
