@@ -79,16 +79,16 @@ if [ -n "$CONTAINER_PREFIX" ]; then
     $CONTAINER_PREFIX bash -c "
         export PATH=\$HOME/.local/bin:\$PATH
         if which flatpak-cargo-generator.py >/dev/null 2>&1; then
-            flatpak-cargo-generator.py -d ../../crates/kftray-tauri/Cargo.lock -o cargo-sources.json
+            flatpak-cargo-generator.py -d ../../Cargo.lock -o cargo-sources.json
         else
-            flatpak-cargo-generator -d ../../crates/kftray-tauri/Cargo.lock -o cargo-sources.json
+            flatpak-cargo-generator -d ../../Cargo.lock -o cargo-sources.json
         fi
     "
 else
     if command -v flatpak-cargo-generator.py >/dev/null 2>&1; then
-        flatpak-cargo-generator.py -d ../../crates/kftray-tauri/Cargo.lock -o cargo-sources.json
+        flatpak-cargo-generator.py -d ../../Cargo.lock -o cargo-sources.json
     else
-        flatpak-cargo-generator -d ../../crates/kftray-tauri/Cargo.lock -o cargo-sources.json
+        flatpak-cargo-generator -d ../../Cargo.lock -o cargo-sources.json
     fi
 fi
 
