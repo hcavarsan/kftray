@@ -116,7 +116,7 @@ tui-logger = "0.17"
 url = "2.5.7"
 uuid = { version = "1.18.0", features = ["v4"] }
 whoami = "1.6.1"
-windows = { version = "0.61", features = [
+windows = { version = "0.62", features = [
   "Win32_Foundation",
   "Win32_Security",
   "Win32_Security_Authorization",
@@ -125,7 +125,7 @@ windows = { version = "0.61", features = [
   "Win32_System_Pipes",
   "Win32_System_Threading",
 ] }
-windows-core = "0.61"
+windows-core = "0.62"
 windows-service = "0.8"
 
 [profile.release]
