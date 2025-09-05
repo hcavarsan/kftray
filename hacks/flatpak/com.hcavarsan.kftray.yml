@@ -52,6 +52,8 @@ modules:
         path: com.hcavarsan.kftray.appdata.xml
 
     build-commands:
+      - ls -la pnpm-src/bin/
+      - chmod +x pnpm-src/bin/*
       - export PATH="$PWD/pnpm-src/bin:$PATH" && pnpm install --frozen-lockfile --offline
 
       - cargo --offline fetch --manifest-path crates/kftray-tauri/Cargo.toml --verbose
