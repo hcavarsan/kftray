@@ -104,14 +104,26 @@ pub fn draw_ui(f: &mut Frame, app: &mut App, config_states: &[ConfigState]) {
         .split(main_chunks[1]);
 
     let selected_config = match app.active_table {
-        ActiveTable::Stopped => app
-            .stopped_configs
-            .get(app.table_state_stopped.selected().unwrap_or(0))
-            .cloned(),
-        ActiveTable::Running => app
-            .running_configs
-            .get(app.table_state_running.selected().unwrap_or(0))
-            .cloned(),
+        ActiveTable::Stopped => {
+            let configs = if app.search_query.is_empty() {
+                &app.stopped_configs
+            } else {
+                &app.filtered_stopped_configs
+            };
+            configs
+                .get(app.table_state_stopped.selected().unwrap_or(0))
+                .cloned()
+        }
+        ActiveTable::Running => {
+            let configs = if app.search_query.is_empty() {
+                &app.running_configs
+            } else {
+                &app.filtered_running_configs
+            };
+            configs
+                .get(app.table_state_running.selected().unwrap_or(0))
+                .cloned()
+        }
     };
 
     if let Some(config) = selected_config {
