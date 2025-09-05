@@ -41,22 +41,35 @@ else
     }
 fi
 
-# Generate package-lock.json from frontend directory (simpler approach)
-echo "Generating package-lock.json for frontend dependencies..."
+# Create a comprehensive package-lock.json with ALL dependencies needed
+echo "Creating comprehensive package-lock.json with all dependencies..."
 
-# Ensure frontend package-lock.json exists and is current
-if [ ! -f "../../frontend/package-lock.json" ]; then
-    echo "Creating package-lock.json in frontend directory..."
-    cd ../../frontend
-    # Clean any existing node_modules
-    rm -rf node_modules
-    # Generate package-lock.json from package.json
-    npm install --package-lock-only --legacy-peer-deps
-    cd ../hacks/flatpak
-fi
+# Go to frontend directory and create a temporary comprehensive package.json
+cd ../../frontend
 
-echo "Generating node-sources.json from frontend package-lock.json..."
-# Clean any existing node_modules before generating sources
+# Backup original package.json
+cp package.json package.json.backup
+
+# Add all root-level devDependencies to frontend package.json for comprehensive lockfile
+cat package.json.backup | jq '.devDependencies += {
+  "@codecov/vite-plugin": "1.9.1",
+  "@eslint/eslintrc": "^3.3.1", 
+  "@eslint/js": "^9.34.0",
+  "@tauri-apps/cli": "^2.8.4"
+}' > package.json
+
+# Clean and regenerate comprehensive package-lock.json
+rm -rf node_modules package-lock.json
+echo "Generating comprehensive package-lock.json..."
+npm install --package-lock-only --legacy-peer-deps
+
+# Restore original package.json
+mv package.json.backup package.json
+
+cd ../hacks/flatpak
+
+echo "Generating node-sources.json from comprehensive package-lock.json..."
+# Clean any existing node_modules before generating sources  
 rm -rf ../../frontend/node_modules
 
 if [ -n "$CONTAINER_PREFIX" ]; then
