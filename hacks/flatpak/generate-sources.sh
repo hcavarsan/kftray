@@ -14,11 +14,11 @@ else
 fi
 
 if [ -n "$CONTAINER_PREFIX" ]; then
-    $CONTAINER_PREFIX flatpak-node-generator --version >/dev/null 2>&1 || { 
+    $CONTAINER_PREFIX bash -c "export PATH=\$HOME/.local/bin:\$PATH && which flatpak-node-generator" >/dev/null 2>&1 || { 
         echo "flatpak-node-generator required in container"
         exit 1
     }
-    $CONTAINER_PREFIX flatpak-cargo-generator.py --version >/dev/null 2>&1 || {
+    $CONTAINER_PREFIX bash -c "export PATH=\$HOME/.local/bin:\$PATH && which flatpak-cargo-generator.py" >/dev/null 2>&1 || {
         echo "flatpak-cargo-generator.py required in container"
         exit 1
     }
@@ -42,10 +42,18 @@ fi
 
 echo "Generating node-sources.json..."
 rm -rf ../../frontend/node_modules
-$CONTAINER_PREFIX flatpak-node-generator npm -o node-sources.json ../../frontend/package-lock.json
+if [ -n "$CONTAINER_PREFIX" ]; then
+    $CONTAINER_PREFIX bash -c "export PATH=\$HOME/.local/bin:\$PATH && flatpak-node-generator npm -o node-sources.json ../../frontend/package-lock.json"
+else
+    flatpak-node-generator npm -o node-sources.json ../../frontend/package-lock.json
+fi
 
 echo "Generating cargo-sources.json..." 
-$CONTAINER_PREFIX flatpak-cargo-generator.py -d ../../crates/kftray-tauri/Cargo.lock -o cargo-sources.json
+if [ -n "$CONTAINER_PREFIX" ]; then
+    $CONTAINER_PREFIX bash -c "export PATH=\$HOME/.local/bin:\$PATH && flatpak-cargo-generator.py -d ../../crates/kftray-tauri/Cargo.lock -o cargo-sources.json"
+else
+    flatpak-cargo-generator.py -d ../../crates/kftray-tauri/Cargo.lock -o cargo-sources.json
+fi
 
 if [ ! -d "shared-modules" ]; then
     echo "Cloning shared-modules..."

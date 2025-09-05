@@ -76,7 +76,8 @@ if [ -n "$CONTAINER_RUN" ]; then
             cd /tmp &&
             git clone https://github.com/flatpak/flatpak-builder-tools.git
         fi &&
-        pip3 install /tmp/flatpak-builder-tools/node
+        pip3 install /tmp/flatpak-builder-tools/node &&
+        pip3 install /tmp/flatpak-builder-tools/cargo
     "
 else
     if [ ! -d "flatpak-builder-tools" ]; then
