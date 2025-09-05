@@ -1,4 +1,5 @@
 [tools]
+cargo = "latest"
 node = "24"
 pnpm = "latest"
-rust = "1.89.0"
+rust = "latest"
