@@ -280,12 +280,11 @@ pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
             let runtime = app_state.runtime.clone();
             runtime.spawn(async move {
                 sleep(Duration::from_millis(200)).await;
-                if let Some(main_window) = app_handle_clone.get_webview_window("main") {
-                    if !main_window.is_focused().unwrap_or(false) {
-                        if let Err(e) = webview_window_clone.hide() {
-                            error!("Failed to hide window: {e}");
-                        }
-                    }
+                if let Some(main_window) = app_handle_clone.get_webview_window("main")
+                    && !main_window.is_focused().unwrap_or(false)
+                    && let Err(e) = webview_window_clone.hide()
+                {
+                    error!("Failed to hide window: {e}");
                 }
             });
         }
@@ -311,20 +310,21 @@ pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
             {}
         });
 
-        if let Ok(mut moving_guard) = app_state.is_moving.try_lock() {
-            if !*moving_guard && !app_state.is_plugin_moving.load(Ordering::SeqCst) {
-                info!(
-                    "is_plugin_moving: {}",
-                    app_state.is_plugin_moving.load(Ordering::SeqCst)
-                );
-                *moving_guard = true;
+        if let Ok(mut moving_guard) = app_state.is_moving.try_lock()
+            && !*moving_guard
+            && !app_state.is_plugin_moving.load(Ordering::SeqCst)
+        {
+            info!(
+                "is_plugin_moving: {}",
+                app_state.is_plugin_moving.load(Ordering::SeqCst)
+            );
+            *moving_guard = true;
 
-                drop(moving_guard);
-                save_window_position(&webview_window);
+            drop(moving_guard);
+            save_window_position(&webview_window);
 
-                if let Ok(mut moving_guard) = app_state.is_moving.try_lock() {
-                    *moving_guard = false;
-                }
+            if let Ok(mut moving_guard) = app_state.is_moving.try_lock() {
+                *moving_guard = false;
             }
         }
     }
