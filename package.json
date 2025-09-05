@@ -1,32 +1,32 @@
 {
-	"name": "kftray",
-	"version": "0.23.2",
-	"private": true,
-	"scripts": {
-		"build": "pnpm --filter @kftray/ui run build",
-		"bump:patch": "cd hacks/kftray-utils && cargo run --bin bump_version patch",
-		"bump:minor": "cd hacks/kftray-utils && cargo run --bin bump_version minor",
-		"bump:major": "cd hacks/kftray-utils && cargo run --bin bump_version major",
-		"check": "pnpm --filter @kftray/ui run check",
-		"dev": "pnpm --filter @kftray/ui run dev",
-		"format": "pnpm run format:front && pnpm run format:back",
-		"format:back": "cargo +nightly fmt",
-		"format:front": "pnpm --filter @kftray/ui run format",
-		"generate-icons": "cargo run --bin generate_icons",
-		"lint": "pnpm --filter @kftray/ui run lint && pnpm run lint:back",
-		"lint:back": "cargo clippy --workspace --all-targets --all-features -- -D warnings",
-		"lint:front": "pnpm --filter @kftray/ui run lint",
-		"test:server": "bash hacks/test_proxy.sh",
-		"test:back": "INSTA_UPDATE=1 RUST_BACKTRACE=1 cargo llvm-cov nextest --profile ci --config-file .cargo/nextest.toml --locked --workspace --all-features --lib --bins --examples --tests",
-		"precommit": "pnpm run format && pnpm run lint && pnpm run test:back",
-		"release:minor": "cargo run --bin bump_version minor && git add . && git commit -m 'chore: release new version'",
-		"release:patch": "cargo run --bin bump_version patch && git add . && git commit -m 'chore: release new version'",
-		"tauri": "cargo build --bin kftray-helper --release && tauri"
-	},
-	"devDependencies": {
-		"@codecov/vite-plugin": "1.9.1",
-		"@eslint/eslintrc": "^3.3.1",
-		"@eslint/js": "^9.34.0",
-		"@tauri-apps/cli": "^2.8.4"
-	}
+  "name": "kftray",
+  "version": "0.23.2",
+  "private": true,
+  "scripts": {
+    "build": "pnpm --filter @kftray/ui run build",
+    "bump:patch": "cd hacks/kftray-utils && cargo run --bin bump_version patch",
+    "bump:minor": "cd hacks/kftray-utils && cargo run --bin bump_version minor",
+    "bump:major": "cd hacks/kftray-utils && cargo run --bin bump_version major",
+    "check": "pnpm --filter @kftray/ui run check",
+    "dev": "pnpm --filter @kftray/ui run dev",
+    "format": "pnpm run format:front && pnpm run format:back",
+    "format:back": "rustup run nightly cargo fmt",
+    "format:front": "pnpm --filter @kftray/ui run format",
+    "generate-icons": "cargo run --bin generate_icons",
+    "lint": "pnpm --filter @kftray/ui run lint && pnpm run lint:back",
+    "lint:back": "cargo clippy --workspace --all-targets --all-features -- -D warnings",
+    "lint:front": "pnpm --filter @kftray/ui run lint",
+    "test:server": "bash hacks/test_proxy.sh",
+    "test:back": "INSTA_UPDATE=1 RUST_BACKTRACE=1 cargo llvm-cov nextest --profile ci --config-file .cargo/nextest.toml --locked --workspace --all-features --lib --bins --examples --tests",
+    "precommit": "pnpm run format && pnpm run lint && pnpm run test:back",
+    "release:minor": "cargo run --bin bump_version minor && git add . && git commit -m 'chore: release new version'",
+    "release:patch": "cargo run --bin bump_version patch && git add . && git commit -m 'chore: release new version'",
+    "tauri": "cargo build --bin kftray-helper --release && tauri"
+  },
+  "devDependencies": {
+    "@codecov/vite-plugin": "1.9.1",
+    "@eslint/eslintrc": "^3.3.1",
+    "@eslint/js": "^9.34.0",
+    "@tauri-apps/cli": "^2.8.4"
+  }
 }
