@@ -61,14 +61,29 @@ if [ ! -d "shared-modules" ]; then
     git clone https://github.com/flathub/shared-modules.git
 fi
 
-echo "🛠️ Setting up flatpak-builder-tools in toolbx..."
-toolbx run -c flatpak-dev bash -c "
-    if [ ! -d '/tmp/flatpak-builder-tools' ]; then
-        cd /tmp &&
+echo "🛠️ Setting up flatpak-builder-tools..."
+if command -v toolbox >/dev/null 2>&1; then
+    CONTAINER_RUN="toolbox run -c flatpak-dev"
+elif command -v distrobox >/dev/null 2>&1; then
+    CONTAINER_RUN="distrobox enter flatpak-dev --"
+else
+    CONTAINER_RUN=""
+fi
+
+if [ -n "$CONTAINER_RUN" ]; then
+    $CONTAINER_RUN bash -c "
+        if [ ! -d '/tmp/flatpak-builder-tools' ]; then
+            cd /tmp &&
+            git clone https://github.com/flatpak/flatpak-builder-tools.git
+        fi &&
+        pip3 install /tmp/flatpak-builder-tools/node
+    "
+else
+    if [ ! -d "flatpak-builder-tools" ]; then
         git clone https://github.com/flatpak/flatpak-builder-tools.git
-    fi &&
-    pip3 install /tmp/flatpak-builder-tools/node
-"
+    fi
+    pip3 install --user ./flatpak-builder-tools/node
+fi
 
 echo "📋 Generating offline sources..."
 ./generate-sources.sh
