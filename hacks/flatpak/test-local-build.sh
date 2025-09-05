@@ -3,11 +3,25 @@
 set -eou pipefail
 
 echo "🔧 Installing Flatpak build dependencies..."
-sudo apt-get update
-sudo apt install -y flatpak flatpak-builder git python3-pip
+# Check if we're on Fedora Silverblue/Kinoite
+if command -v rpm-ostree >/dev/null 2>&1; then
+    echo "Detected Fedora Silverblue/Kinoite - using rpm-ostree..."
+    sudo rpm-ostree install --apply-live flatpak flatpak-builder git python3-pip
+else
+    echo "Using traditional package manager..."
+    sudo dnf install -y flatpak flatpak-builder git python3-pip
+fi
 
-echo "📦 Installing flatpak-builder-tools..."
-pip3 install aiohttp toml
+echo "📦 Installing flatpak-builder-tools in toolbx container..."
+# Use toolbx for Python package isolation
+if ! toolbx list | grep -q flatpak-dev; then
+    toolbx create -c flatpak-dev fedora-toolbox:latest
+fi
+
+toolbx run -c flatpak-dev bash -c "
+    dnf install -y python3-pip git &&
+    pip3 install aiohttp toml
+"
 
 echo "🏗️ Setting up Flatpak runtime..."
 flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
@@ -18,11 +32,14 @@ if [ ! -d "shared-modules" ]; then
     git clone https://github.com/flathub/shared-modules.git
 fi
 
-echo "🛠️ Cloning flatpak-builder-tools..."
-if [ ! -d "flatpak-builder-tools" ]; then
-    git clone https://github.com/flatpak/flatpak-builder-tools.git
-fi
-pip3 install ./flatpak-builder-tools/node
+echo "🛠️ Setting up flatpak-builder-tools in toolbx..."
+toolbx run -c flatpak-dev bash -c "
+    if [ ! -d '/tmp/flatpak-builder-tools' ]; then
+        cd /tmp &&
+        git clone https://github.com/flatpak/flatpak-builder-tools.git
+    fi &&
+    pip3 install /tmp/flatpak-builder-tools/node
+"
 
 echo "📋 Generating offline sources..."
 ./generate-sources.sh
