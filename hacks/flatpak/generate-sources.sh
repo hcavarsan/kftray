@@ -41,15 +41,14 @@ else
     }
 fi
 
-# Check if we have pnpm-lock.yaml or package-lock.json
-if [ -f "../../frontend/pnpm-lock.yaml" ] && [ ! -f "../../frontend/package-lock.json" ]; then
-    echo "Converting pnpm-lock.yaml to package-lock.json..."
-    cd ../../frontend
-    # Clean any existing node_modules
-    rm -rf node_modules
-    # Use pnpm to install and then convert to npm format
+# Generate package-lock.json at root level for all workspace dependencies
+if [ ! -f "../../package-lock.json" ]; then
+    echo "Generating root package-lock.json from pnpm workspace..."
+    cd ../../
+    # Clean any existing lockfiles and node_modules
+    rm -rf node_modules package-lock.json
+    # Use pnpm to install all workspace dependencies first
     if command -v pnpm >/dev/null 2>&1; then
-        # Install with pnpm first
         pnpm install --frozen-lockfile
         # Remove pnpm node_modules and create package-lock.json with npm
         rm -rf node_modules
@@ -58,20 +57,22 @@ if [ -f "../../frontend/pnpm-lock.yaml" ] && [ ! -f "../../frontend/package-lock
         echo "Warning: pnpm not found, falling back to npm"
         npm install --legacy-peer-deps
     fi
-    cd ../hacks/flatpak
-elif [ ! -f "../../frontend/package-lock.json" ]; then
-    echo "Generating package-lock.json..."
-    cd ../../frontend
-    npm install --package-lock-only
-    cd ../hacks/flatpak
+    cd hacks/flatpak
 fi
 
 echo "Generating node-sources.json..."
 rm -rf ../../frontend/node_modules
-if [ -n "$CONTAINER_PREFIX" ]; then
-    $CONTAINER_PREFIX bash -c "export PATH=\$HOME/.local/bin:\$PATH && flatpak-node-generator pnpm -o node-sources.json ../../pnpm-lock.yaml"
+# Generate from root package-lock.json to include workspace dependencies
+if [ -f "../../package-lock.json" ]; then
+    LOCK_FILE="../../package-lock.json"
 else
-    flatpak-node-generator pnpm -o node-sources.json ../../pnpm-lock.yaml
+    LOCK_FILE="../../frontend/package-lock.json"
+fi
+
+if [ -n "$CONTAINER_PREFIX" ]; then
+    $CONTAINER_PREFIX bash -c "export PATH=\$HOME/.local/bin:\$PATH && flatpak-node-generator npm -o node-sources.json $LOCK_FILE"
+else
+    flatpak-node-generator npm -o node-sources.json "$LOCK_FILE"
 fi
 
 echo "Generating cargo-sources.json..." 
