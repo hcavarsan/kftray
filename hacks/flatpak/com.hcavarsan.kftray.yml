@@ -1,6 +1,6 @@
 app-id: com.hcavarsan.kftray
 runtime: org.gnome.Platform
-runtime-version: '46'
+runtime-version: "46"
 sdk: org.gnome.Sdk
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-stable
@@ -33,7 +33,7 @@ modules:
         CARGO_HOME: /run/build/kftray/cargo
         XDG_CACHE_HOME: /run/build/kftray/flatpak-node/cache
         npm_config_cache: /run/build/kftray/flatpak-node/npm-cache
-        npm_config_offline: 'true'
+        npm_config_offline: "true"
     sources:
       - type: git
         url: https://github.com/hcavarsan/kftray.git
@@ -42,16 +42,17 @@ modules:
 
       - node-sources.json
       - cargo-sources.json
-      
+
       - type: archive
         url: https://registry.npmjs.org/pnpm/-/pnpm-10.15.1.tgz
-        sha256: 9f01eec6f3b5ec5eaf6bb0dd3fc0f5e30d0a23fd8a6bfaad4d5bd6a7f4fc6a63
+        sha256: 8c53af02ae3ec1fb0ae75377f8d4d6217c2d7cbe6f03c16350cabf7493de6eff
 
       - type: file
         path: com.hcavarsan.kftray.appdata.xml
 
     build-commands:
-      - npm install -g pnpm-10.15.1.tgz
+      - tar -xzf pnpm-10.15.1.tgz
+      - npm install -g package/
 
       - pnpm install --frozen-lockfile --offline
 
