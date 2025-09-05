@@ -33,7 +33,6 @@ modules:
         CARGO_HOME: /run/build/kftray/cargo
         XDG_CACHE_HOME: /run/build/kftray/flatpak-node/cache
         npm_config_cache: /run/build/kftray/flatpak-node/npm-cache
-        npm_config_offline: "true"
     sources:
       - type: git
         url: https://github.com/hcavarsan/kftray.git
@@ -47,10 +46,12 @@ modules:
         path: com.hcavarsan.kftray.appdata.xml
 
     build-commands:
-      # First generate package-lock.json from package.json in offline mode
-      - cd frontend && npm install --package-lock-only --legacy-peer-deps --offline
-      # Install frontend dependencies using ci now that we have package-lock.json
-      - cd frontend && npm ci --offline --legacy-peer-deps
+      # Debug: Check what sources we have available
+      - ls -la
+      - ls -la frontend/
+      
+      # Install frontend dependencies directly (node-sources.json should provide offline deps)
+      - cd frontend && npm install --legacy-peer-deps
       # Rust packages  
       - cargo --offline fetch --manifest-path crates/kftray-tauri/Cargo.toml --verbose
       # Build frontend
