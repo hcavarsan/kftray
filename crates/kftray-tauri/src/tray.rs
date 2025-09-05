@@ -112,6 +112,7 @@ pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<tauri::tray::TrayIcon<W
 
     let tray = TrayIconBuilder::new()
         .menu(&menu)
+        .icon_as_template(true)
         .show_menu_on_left_click(false)
         .icon(icon)
         .on_menu_event(move |app, event| match event.id().as_ref() {
