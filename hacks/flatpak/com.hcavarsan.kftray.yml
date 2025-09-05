@@ -42,20 +42,24 @@ modules:
 
       - node-sources.json
       - cargo-sources.json
+      
+      - type: archive
+        url: https://registry.npmjs.org/pnpm/-/pnpm-10.15.1.tgz
+        sha256: 9f01eec6f3b5ec5eaf6bb0dd3fc0f5e30d0a23fd8a6bfaad4d5bd6a7f4fc6a63
 
       - type: file
         path: com.hcavarsan.kftray.appdata.xml
 
     build-commands:
-      - npm install -g pnpm
+      - npm install -g pnpm-10.15.1.tgz
 
-      - cd frontend && pnpm install --frozen-lockfile --offline
+      - pnpm install --frozen-lockfile --offline
 
       - cargo --offline fetch --manifest-path crates/kftray-tauri/Cargo.toml --verbose
 
-      - cd frontend && pnpm run build
+      - pnpm run build
 
-      - cd crates/kftray-tauri && pnpm run --offline tauri build -- --no-bundle
+      - cd crates/kftray-tauri && pnpm tauri build -- --no-bundle
 
       - install -Dm644 -t /app/share/metainfo/ com.hcavarsan.kftray.appdata.xml
       - install -Dm755 -t /app/bin/ crates/kftray-tauri/target/release/kftray
