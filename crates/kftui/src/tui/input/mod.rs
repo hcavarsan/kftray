@@ -408,6 +408,7 @@ impl App {
             self.table_state_stopped.select(Some(0));
         } else if stopped_len == 0 {
             self.table_state_stopped.select(None);
+            self.selected_rows_stopped.clear();
         }
 
         if self.selected_row_running >= running_len && running_len > 0 {
@@ -415,6 +416,7 @@ impl App {
             self.table_state_running.select(Some(0));
         } else if running_len == 0 {
             self.table_state_running.select(None);
+            self.selected_rows_running.clear();
         }
     }
 
@@ -1267,6 +1269,8 @@ pub fn handle_search_input(app: &mut App, key: KeyCode) -> io::Result<()> {
             app.search_focused = false;
             app.search_query.clear();
             app.update_filtered_configs();
+            app.selected_rows_stopped.clear();
+            app.selected_rows_running.clear();
         }
         KeyCode::Up => {
             app.active_component = ActiveComponent::Menu;
@@ -1288,10 +1292,14 @@ pub fn handle_search_input(app: &mut App, key: KeyCode) -> io::Result<()> {
         KeyCode::Backspace => {
             app.search_query.pop();
             app.update_filtered_configs();
+            app.selected_rows_stopped.clear();
+            app.selected_rows_running.clear();
         }
         KeyCode::Char(c) => {
             app.search_query.push(c);
             app.update_filtered_configs();
+            app.selected_rows_stopped.clear();
+            app.selected_rows_running.clear();
         }
         _ => {}
     }
