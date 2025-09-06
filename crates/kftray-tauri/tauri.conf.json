@@ -31,7 +31,7 @@
   "bundle": {
     "active": true,
     "category": "DeveloperTool",
-    "createUpdaterArtifacts": "v1Compatible",
+    "createUpdaterArtifacts": true,
     "externalBin": [
       "bin/kftray-helper"
     ],
@@ -81,5 +81,5 @@
     }
   },
   "productName": "kftray",
-  "version": "0.23.3"
+  "version": "0.23.4"
 }
