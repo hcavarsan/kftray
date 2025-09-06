@@ -120,6 +120,71 @@ fn main() {
                 }
             });
 
+            #[cfg(not(debug_assertions))]
+            {
+                let app_handle_clone = app_handle.clone();
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+
+                    match kftray_commons::utils::settings::get_auto_update_enabled().await {
+                        Ok(true) => {
+                            info!("Auto-update enabled, checking for updates on startup...");
+                            match crate::commands::updater::check_for_updates_silent(
+                                app_handle_clone.clone(),
+                            )
+                            .await
+                            {
+                                Ok(true) => {
+                                    info!("Update available on startup, showing update dialog");
+                                    if let Err(e) = crate::commands::updater::check_for_updates(
+                                        app_handle_clone,
+                                    )
+                                    .await
+                                    {
+                                        error!("Failed to show update dialog: {e}");
+                                    }
+                                }
+                                Ok(false) => {
+                                    info!("No updates available on startup");
+                                }
+                                Err(e) => {
+                                    error!("Update check failed on startup: {e}");
+                                }
+                            }
+                        }
+                        Ok(false) => {
+                            info!("Auto-update disabled, skipping startup update check");
+                        }
+                        Err(e) => {
+                            error!("Failed to get auto-update setting, defaulting to enabled: {e}");
+                            info!("Checking for updates on startup...");
+                            match crate::commands::updater::check_for_updates_silent(
+                                app_handle_clone.clone(),
+                            )
+                            .await
+                            {
+                                Ok(true) => {
+                                    info!("Update available on startup, showing update dialog");
+                                    if let Err(e) = crate::commands::updater::check_for_updates(
+                                        app_handle_clone,
+                                    )
+                                    .await
+                                    {
+                                        error!("Failed to show update dialog: {e}");
+                                    }
+                                }
+                                Ok(false) => {
+                                    info!("No updates available on startup");
+                                }
+                                Err(e) => {
+                                    error!("Update check failed on startup: {e}");
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+
             #[cfg(target_os = "macos")]
             {
                 app.set_activation_policy(tauri::ActivationPolicy::Accessory);
@@ -160,6 +225,7 @@ fn main() {
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .on_window_event(handle_window_event)
         .invoke_handler(tauri::generate_handler![
             commands::portforward::start_port_forward_tcp_cmd,
@@ -209,6 +275,12 @@ fn main() {
             commands::settings::update_network_monitor,
             commands::settings::get_setting_value,
             commands::settings::set_setting_value,
+            commands::settings::update_auto_update_enabled,
+            commands::settings::get_auto_update_status,
+            commands::updater::check_for_updates,
+            commands::updater::check_for_updates_silent,
+            commands::updater::get_version_info,
+            commands::updater::install_update_silent,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");

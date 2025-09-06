@@ -141,6 +141,36 @@ impl SettingsManager {
             .await
     }
 
+    pub async fn get_auto_update_enabled(&self) -> bool {
+        if let Some(value) = self.get_setting("auto_update_enabled").await {
+            value.parse::<bool>().unwrap_or(true)
+        } else {
+            true
+        }
+    }
+
+    pub async fn set_auto_update_enabled(
+        &self, enabled: bool,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.set_setting("auto_update_enabled", &enabled.to_string())
+            .await
+    }
+
+    pub async fn get_last_update_check(&self) -> Option<i64> {
+        if let Some(value) = self.get_setting("last_update_check").await {
+            value.parse::<i64>().ok()
+        } else {
+            None
+        }
+    }
+
+    pub async fn set_last_update_check(
+        &self, timestamp: i64,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.set_setting("last_update_check", &timestamp.to_string())
+            .await
+    }
+
     pub async fn get_all_settings(&self) -> HashMap<String, String> {
         let cache = self.cache.read().await;
         cache.clone()
@@ -293,6 +323,51 @@ pub async fn set_network_monitor_with_mode(
     enabled: bool, mode: DatabaseMode,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     set_setting_with_mode("network_monitor", &enabled.to_string(), mode).await
+}
+
+pub async fn get_auto_update_enabled() -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+    if let Some(value) = get_setting("auto_update_enabled").await? {
+        Ok(value.parse::<bool>().unwrap_or(true))
+    } else {
+        Ok(true)
+    }
+}
+
+pub async fn set_auto_update_enabled(
+    enabled: bool,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    set_setting("auto_update_enabled", &enabled.to_string()).await
+}
+
+pub async fn get_last_update_check() -> Result<Option<i64>, Box<dyn std::error::Error + Send + Sync>>
+{
+    if let Some(value) = get_setting("last_update_check").await? {
+        Ok(value.parse::<i64>().ok())
+    } else {
+        Ok(None)
+    }
+}
+
+pub async fn set_last_update_check(
+    timestamp: i64,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    set_setting("last_update_check", &timestamp.to_string()).await
+}
+
+pub async fn get_auto_update_enabled_with_mode(
+    mode: DatabaseMode,
+) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+    if let Some(value) = get_setting_with_mode("auto_update_enabled", mode).await? {
+        Ok(value.parse::<bool>().unwrap_or(true))
+    } else {
+        Ok(true)
+    }
+}
+
+pub async fn set_auto_update_enabled_with_mode(
+    enabled: bool, mode: DatabaseMode,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    set_setting_with_mode("auto_update_enabled", &enabled.to_string(), mode).await
 }
 
 #[cfg(test)]

@@ -1,9 +1,12 @@
 use std::collections::HashMap;
 
 use kftray_commons::utils::settings::{
+    get_auto_update_enabled,
     get_disconnect_timeout,
+    get_last_update_check,
     get_network_monitor,
     get_setting,
+    set_auto_update_enabled,
     set_disconnect_timeout,
     set_network_monitor,
     set_setting,
@@ -47,6 +50,29 @@ pub async fn get_settings() -> Result<HashMap<String, String>, String> {
     // Add network monitor status
     let is_running = kftray_network_monitor::is_running().await;
     settings.insert("network_monitor_status".to_string(), is_running.to_string());
+
+    match get_auto_update_enabled().await {
+        Ok(enabled) => {
+            settings.insert("auto_update_enabled".to_string(), enabled.to_string());
+        }
+        Err(e) => {
+            error!("Failed to get auto update enabled: {e}");
+            settings.insert("auto_update_enabled".to_string(), "true".to_string());
+        }
+    }
+
+    match get_last_update_check().await {
+        Ok(Some(timestamp)) => {
+            settings.insert("last_update_check".to_string(), timestamp.to_string());
+        }
+        Ok(None) => {
+            settings.insert("last_update_check".to_string(), "0".to_string());
+        }
+        Err(e) => {
+            error!("Failed to get last update check: {e}");
+            settings.insert("last_update_check".to_string(), "0".to_string());
+        }
+    }
 
     info!("Retrieved settings: {settings:?}");
     Ok(settings)
@@ -109,4 +135,47 @@ pub async fn update_network_monitor(enabled: bool) -> Result<(), String> {
 
     info!("Successfully updated network monitor to {enabled}");
     Ok(())
+}
+
+#[command]
+pub async fn update_auto_update_enabled(enabled: bool) -> Result<(), String> {
+    info!("Updating auto update enabled to {enabled}");
+
+    set_auto_update_enabled(enabled).await.map_err(|e| {
+        error!("Failed to update auto update enabled: {e}");
+        format!("Failed to update auto update enabled: {e}")
+    })?;
+
+    info!("Successfully updated auto update enabled to {enabled}");
+    Ok(())
+}
+
+#[command]
+pub async fn get_auto_update_status() -> Result<HashMap<String, String>, String> {
+    let mut status = HashMap::new();
+
+    match get_auto_update_enabled().await {
+        Ok(enabled) => {
+            status.insert("enabled".to_string(), enabled.to_string());
+        }
+        Err(e) => {
+            error!("Failed to get auto update enabled: {e}");
+            status.insert("enabled".to_string(), "true".to_string());
+        }
+    }
+
+    match get_last_update_check().await {
+        Ok(Some(timestamp)) => {
+            status.insert("last_check".to_string(), timestamp.to_string());
+        }
+        Ok(None) => {
+            status.insert("last_check".to_string(), "0".to_string());
+        }
+        Err(e) => {
+            error!("Failed to get last update check: {e}");
+            status.insert("last_check".to_string(), "0".to_string());
+        }
+    }
+
+    Ok(status)
 }
