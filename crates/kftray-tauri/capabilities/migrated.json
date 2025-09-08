@@ -86,6 +86,7 @@
     "core:app:allow-app-hide",
     "dialog:default",
     "fs:default",
+    "fs:allow-write-text-file",
     "shell:default"
   ]
 }
