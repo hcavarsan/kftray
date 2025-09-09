@@ -1,0 +1,14 @@
+<services>
+  <service name="download_url">
+    <param name="protocol">https</param>
+    <param name="host">github.com</param>
+    <param name="path">hcavarsan/kftray/releases/download/v{{VERSION}}/kftui_linux_amd64</param>
+    <param name="filename">kftui-{{VERSION}}-amd64</param>
+  </service>
+  <service name="download_url">
+    <param name="protocol">https</param>
+    <param name="host">github.com</param>
+    <param name="path">hcavarsan/kftray/releases/download/v{{VERSION}}/kftui_linux_arm64</param>
+    <param name="filename">kftui-{{VERSION}}-arm64</param>
+  </service>
+</services>

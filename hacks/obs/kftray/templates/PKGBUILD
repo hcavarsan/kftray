@@ -1,0 +1,27 @@
+pkgname=kftray
+pkgver={{VERSION}}
+pkgrel=1
+pkgdesc="Kubernetes port-forwarding GUI manager"
+arch=('x86_64' 'aarch64')
+url="https://github.com/hcavarsan/kftray"
+license=('GPL3')
+depends=('hicolor-icon-theme')
+source_x86_64=("kftray-${pkgver}-amd64.AppImage")
+source_aarch64=("kftray-${pkgver}-arm64.AppImage")
+sha256sums_x86_64=('{{SHA256_AMD64}}')
+sha256sums_aarch64=('{{SHA256_ARM64}}')
+
+build() {
+    return 0
+}
+
+package() {
+    case "$CARCH" in
+        x86_64)
+            install -Dm755 "kftray-${pkgver}-amd64.AppImage" "${pkgdir}/usr/bin/kftray"
+            ;;
+        aarch64)
+            install -Dm755 "kftray-${pkgver}-arm64.AppImage" "${pkgdir}/usr/bin/kftray"
+            ;;
+    esac
+}

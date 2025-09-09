@@ -1,0 +1,10 @@
+Source: kftray
+Section: utils
+Priority: optional
+Maintainer: hcavarsan <hcavarsan@yahoo.com.br>
+Build-Depends: debhelper (>= 11)
+
+Package: kftray
+Architecture: amd64 arm64
+Description: Kubernetes port-forwarding GUI manager
+ KFtray is a cross-platform system tray application for managing Kubernetes port-forwards

@@ -1,0 +1,10 @@
+Source: kftui
+Section: utils
+Priority: optional
+Maintainer: hcavarsan <hcavarsan@yahoo.com.br>
+Build-Depends: debhelper (>= 11)
+
+Package: kftui
+Architecture: amd64 arm64
+Description: Kubernetes port-forwarding CLI manager
+ KFtui is a command-line tool for managing Kubernetes port-forwards
