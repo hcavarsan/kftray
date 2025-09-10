@@ -719,6 +719,7 @@ jobs:
       !contains(github.ref, '-beta') &&
       !contains(github.ref, '-alpha')
     env:
+      VERSION: ${{ github.ref_name }}
       OBS_USER: ${{ secrets.OBS_USER }}
       OBS_PASSWORD: ${{ secrets.OBS_PASSWORD }}
     steps:
