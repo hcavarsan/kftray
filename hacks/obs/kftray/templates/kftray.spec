@@ -5,7 +5,7 @@ Summary:        Kubernetes port-forwarding GUI manager
 License:        GPL-3.0
 URL:            https://github.com/hcavarsan/kftray
 Source0:        kftray-{{VERSION}}-amd64.AppImage
-Source1:        kftray-{{VERSION}}-arm64.AppImage
+Source1:        kftray-{{VERSION}}-aarch64.AppImage
 
 %description
 KFtray - Kubernetes port-forwarding GUI manager

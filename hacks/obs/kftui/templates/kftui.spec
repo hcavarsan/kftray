@@ -15,6 +15,7 @@ KFtui - Kubernetes port-forwarding CLI manager
 %build
 
 %install
+mkdir -p %{buildroot}%{_bindir}
 %ifarch x86_64
 install -Dm755 %{SOURCE0} %{buildroot}%{_bindir}/kftui
 %endif
