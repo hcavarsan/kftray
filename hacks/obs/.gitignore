@@ -1,0 +1,35 @@
+# OBS generated files and directories
+
+# Package preparation directories
+package-*/
+
+# OBS working copy directories
+home:*/
+
+# Generated checksum directories
+checksums-*/
+
+# Generated project metadata
+project.xml
+
+# Generated debian archive files
+*.obscpio
+
+# Temporary files
+*.tmp
+*.temp
+
+# Build artifacts
+*.log
+*.build
+
+# OS specific files
+.DS_Store
+Thumbs.db
+
+# Editor files
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
