@@ -718,15 +718,17 @@ jobs:
       startsWith(github.ref, 'refs/tags/v') &&
       !contains(github.ref, '-beta') &&
       !contains(github.ref, '-alpha')
-    env:
-      VERSION: ${{ github.ref_name }}
-      OBS_USER: ${{ secrets.OBS_USER }}
-      OBS_PASSWORD: ${{ secrets.OBS_PASSWORD }}
     steps:
       - uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
       
       - name: Setup and publish to OBS
+        env:
+          OBS_USER: ${{ secrets.OBS_USER }}
+          OBS_PASSWORD: ${{ secrets.OBS_PASSWORD }}
         run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          export VERSION
+          
           chmod +x ./hacks/obs/*.sh
           ./hacks/obs/setup.sh
           ./hacks/obs/publish.sh
