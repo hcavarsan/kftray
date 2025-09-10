@@ -1,0 +1,15 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@
+
+override_dh_auto_build:
+
+override_dh_auto_install:
+	mkdir -p debian/kftui/usr/bin
+	DEB_HOST_ARCH=$$(dpkg-architecture -qDEB_HOST_ARCH); \
+	if [ "$$DEB_HOST_ARCH" = "amd64" ]; then \
+		install -m755 kftui_linux_amd64 debian/kftui/usr/bin/kftui; \
+	elif [ "$$DEB_HOST_ARCH" = "arm64" ]; then \
+		install -m755 kftui_linux_arm64 debian/kftui/usr/bin/kftui; \
+	fi

@@ -1,0 +1,14 @@
+<services>
+  <service name="download_url">
+    <param name="protocol">https</param>
+    <param name="host">github.com</param>
+    <param name="path">hcavarsan/kftray/releases/download/v{{VERSION}}/kftray_{{VERSION}}_amd64.AppImage</param>
+    <param name="filename">kftray-{{VERSION}}-amd64.AppImage</param>
+  </service>
+  <service name="download_url">
+    <param name="protocol">https</param>
+    <param name="host">github.com</param>
+    <param name="path">hcavarsan/kftray/releases/download/v{{VERSION}}/kftray_{{VERSION}}_aarch64.AppImage</param>
+    <param name="filename">kftray-{{VERSION}}-aarch64.AppImage</param>
+  </service>
+</services>

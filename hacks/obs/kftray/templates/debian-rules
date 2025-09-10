@@ -1,0 +1,15 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@
+
+override_dh_auto_build:
+
+override_dh_auto_install:
+	mkdir -p debian/kftray/usr/bin
+	DEB_HOST_ARCH=$$(dpkg-architecture -qDEB_HOST_ARCH); \
+	if [ "$$DEB_HOST_ARCH" = "amd64" ]; then \
+		install -m755 kftray_{{VERSION}}_amd64.AppImage debian/kftray/usr/bin/kftray; \
+	elif [ "$$DEB_HOST_ARCH" = "arm64" ]; then \
+		install -m755 kftray_{{VERSION}}_arm64.AppImage debian/kftray/usr/bin/kftray; \
+	fi
