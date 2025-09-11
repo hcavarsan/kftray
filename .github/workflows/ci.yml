@@ -28,7 +28,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
-        uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
+        uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493
 
       - name: Install pnpm
         uses: pnpm/action-setup@f2b2b233b538f500472c7274c7012f57857d8ce0
@@ -39,7 +39,7 @@ jobs:
               args: [--frozen-lockfile]
 
       - name: Install Node.js
-        uses: actions/setup-node@7e24a656e1c7a0d6f3eaef8d8e84ae379a5b035b
+        uses: actions/setup-node@cd2651c46231bc0d6f48d6b34433b845331235fe
         with:
           node-version: "22"
           cache: "pnpm"
@@ -52,7 +52,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
-        uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
+        uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493
 
       - name: Install dependencies
         run: |
@@ -75,7 +75,7 @@ jobs:
               xdg-utils
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
         with:
           toolchain: nightly
 
@@ -105,7 +105,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
+        uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493
 
       - name: Install dependencies
         if: matrix.os_name == 'linux'
@@ -129,7 +129,7 @@ jobs:
               xdg-utils
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
         with:
           toolchain: nightly
 
@@ -139,7 +139,7 @@ jobs:
 
       - name: Set up Perl on Windows
         if: matrix.os == 'windows-latest'
-        uses: shogo82148/actions-setup-perl@2fde72b7b7b24c986737ffc0eb0cbba8622c9d78
+        uses: shogo82148/actions-setup-perl@93911f8534edb1203d55b9d0831594c79f96b437
         with:
           perl-version: "5.32"
           distribution: "strawberry"
@@ -168,7 +168,7 @@ jobs:
       statuses: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
+        uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493
 
       - name: Install dependencies
         run: |
@@ -191,7 +191,7 @@ jobs:
               xdg-utils
 
       - name: Install Rust nightly
-        uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9
         with:
           toolchain: nightly
 
@@ -199,17 +199,17 @@ jobs:
         run: rustup component add llvm-tools
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@2383334cf567d78771fc7d89b6b3802ef1412cf6
+        uses: taiki-e/install-action@62e6f802d595adab061270557af0854867ecb4b2
         with:
           tool: cargo-llvm-cov
 
       - name: Install nextest
-        uses: taiki-e/install-action@2383334cf567d78771fc7d89b6b3802ef1412cf6
+        uses: taiki-e/install-action@62e6f802d595adab061270557af0854867ecb4b2
         with:
           tool: cargo-nextest
 
       - name: Install rust-cache
-        uses: swatinem/rust-cache@7e1e2d0a10862b34e5df481373b2b0f295d1a2ef
+        uses: swatinem/rust-cache@94b28bf00e42c2b783e7dd289d30da129b46838b
 
       - name: Install cargo-insta
         run: cargo install cargo-insta
@@ -218,7 +218,7 @@ jobs:
         run: cargo build --bin kftray-helper --release && INSTA_UPDATE=1 cargo llvm-cov nextest --profile ci --config-file .cargo/nextest.toml --locked --workspace --all-features --lib --bins --examples --tests --lcov --output-path lcov.info
 
       - name: Upload coverage
-        uses: codecov/codecov-action@2db07e317924c76f654a414629d71c65876882e2
+        uses: codecov/codecov-action@5a1091511ad55cbe89839c7260b706298ca349f7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: lcov.info
@@ -239,7 +239,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
+        uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493
 
       - name: Install pnpm
         uses: pnpm/action-setup@f2b2b233b538f500472c7274c7012f57857d8ce0
@@ -250,7 +250,7 @@ jobs:
               args: [--frozen-lockfile]
 
       - name: Install Node.js
-        uses: actions/setup-node@7e24a656e1c7a0d6f3eaef8d8e84ae379a5b035b
+        uses: actions/setup-node@cd2651c46231bc0d6f48d6b34433b845331235fe
         with:
           node-version: "22"
           cache: "pnpm"
@@ -276,23 +276,23 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
-        uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
+        uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@05340d1c670183e7caabdb33ae9f1c80fae3b0c2
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435
+        uses: docker/setup-buildx-action@1583c0f09d26c58c59d25b0eef29792b7ce99d9a
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@3d100841f68d4548bf57e52eb27bd33ec5069f55
+        uses: docker/login-action@bdf14dc17331d6af6f3653e7ca655ee4a136baa5
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push Docker image
-        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83
+        uses: docker/build-push-action@cb8fc7586f9ad9441b20c33e0f6e8b1b58d8b4c6
         with:
           platforms: linux/amd64,linux/arm64
           context: ./crates/kftray-server
