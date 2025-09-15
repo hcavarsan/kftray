@@ -40,11 +40,11 @@ keyring = { version = "3.6", features = [
   "linux-native",
   "windows-native",
 ] }
-kftray-commons = { version = "0.23.7", path = "crates/kftray-commons" }
-kftray-helper = { version = "0.23.7", path = "crates/kftray-helper" }
-kftray-http-logs = { version = "0.23.7", path = "crates/kftray-http-logs" }
-kftray-network-monitor = { version = "0.23.7", path = "crates/kftray-network-monitor" }
-kftray-portforward = { version = "0.23.7", path = "crates/kftray-portforward" }
+kftray-commons = { version = "0.24.0", path = "crates/kftray-commons" }
+kftray-helper = { version = "0.24.0", path = "crates/kftray-helper" }
+kftray-http-logs = { version = "0.24.0", path = "crates/kftray-http-logs" }
+kftray-network-monitor = { version = "0.24.0", path = "crates/kftray-network-monitor" }
+kftray-portforward = { version = "0.24.0", path = "crates/kftray-portforward" }
 kube = { version = "2.0.1", features = [
   "client",
   "config",
@@ -70,11 +70,11 @@ pem = "3.0"
 portpicker = "0.1"
 rand = "0.9"
 ratatui = { version = "0.29", features = ["unstable-widget-ref"] }
+ratatui-explorer = "0.2"
 rcgen = "0.14"
+reqwest = "0.12.23"
 rustls = { version = "0.23", features = ["ring"] }
 rustls-native-certs = "0.8.1"
-ratatui-explorer = "0.2"
-reqwest = "0.12.23"
 secrecy = "0.10"
 serde = { version = "1.0.224", features = ["derive"] }
 serde_json = "1.0.145"

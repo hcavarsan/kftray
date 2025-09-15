@@ -1,6 +1,6 @@
 [package]
 name = "kftray-portforward"
-version = "0.23.7"
+version = "0.24.0"
 authors = ["Henrique Cavarsan <hencavarsan@gmail.com>"]
 edition = "2024"
 description = "KFtray library with port forwarding logic"
@@ -42,10 +42,10 @@ hyper = { workspace = true }
 hyper-openssl = { workspace = true }
 hyper-util = { workspace = true }
 k8s-openapi = { workspace = true }
+keyring = { workspace = true }
 kftray-commons = { workspace = true }
 kftray-helper = { workspace = true }
 kftray-http-logs = { workspace = true }
-keyring = { workspace = true }
 kube = { workspace = true }
 kube-runtime = { workspace = true }
 lazy_static = { workspace = true }
@@ -61,8 +61,8 @@ rustls = { workspace = true }
 rustls-native-certs = { workspace = true }
 secrecy = { workspace = true }
 serde = { workspace = true }
-sha1 = { workspace = true }
 serde_json = { workspace = true }
+sha1 = { workspace = true }
 socket2 = { workspace = true }
 thiserror = { workspace = true }
 time = { workspace = true }
@@ -74,6 +74,12 @@ tracing = { workspace = true }
 uuid = { workspace = true }
 whoami = { workspace = true }
 
+[dev-dependencies]
+http = { workspace = true }
+tempfile = { workspace = true }
+tower-test = { workspace = true }
+tracing-subscriber = { workspace = true }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = "3.4.0"
 core-foundation = "0.10.0"
@@ -81,16 +87,6 @@ core-foundation = "0.10.0"
 [target.'cfg(target_os = "windows")'.dependencies]
 schannel = "0.1"
 windows = { workspace = true }
-
-
-
-
-
-[dev-dependencies]
-http = { workspace = true }
-tempfile = { workspace = true }
-tower-test = { workspace = true }
-tracing-subscriber = { workspace = true }
 
 [features]
 default = ["http-proxy", "socks5"]
