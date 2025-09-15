@@ -299,7 +299,7 @@ async fn test_port_forward_tcp_success() -> Result<()> {
     };
 
     let port_forward_task = tokio::spawn(async move {
-        match port_forward.port_forward_tcp().await {
+        match port_forward.port_forward_tcp(None).await {
             Ok((port, handle)) => {
                 let key = "1_test-service".to_string();
                 {
@@ -553,7 +553,7 @@ async fn test_start_port_forward_mock_components() -> Result<()> {
         connection: Arc::new(tokio::sync::Mutex::new(None)),
     };
 
-    let port_forward_result = port_forward.port_forward_tcp().await;
+    let port_forward_result = port_forward.port_forward_tcp(None).await;
 
     match port_forward_result {
         Ok((port, handle)) => {

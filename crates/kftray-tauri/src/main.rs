@@ -43,6 +43,8 @@ fn main() {
 
     let _ = fix_path_env::fix();
 
+    kftray_portforward::ssl::ensure_crypto_provider_installed();
+
     // Tray will be created in setup function for Tauri v2
     let is_moving = Arc::new(Mutex::new(false));
     let is_plugin_moving = Arc::new(AtomicBool::new(false));
@@ -277,6 +279,19 @@ fn main() {
             commands::settings::set_setting_value,
             commands::settings::update_auto_update_enabled,
             commands::settings::get_auto_update_status,
+            commands::ssl::get_ssl_settings,
+            commands::ssl::set_ssl_settings,
+            commands::ssl::regenerate_certificate,
+            commands::ssl::get_certificate_info,
+            commands::ssl::list_certificates,
+            commands::ssl::remove_certificate,
+            commands::ssl::is_ssl_enabled,
+            commands::ssl::enable_ssl,
+            commands::ssl::disable_ssl,
+            commands::ssl::get_ssl_cert_validity,
+            commands::ssl::set_ssl_cert_validity,
+            commands::ssl::get_ssl_auto_regenerate,
+            commands::ssl::set_ssl_auto_regenerate,
             commands::updater::check_for_updates,
             commands::updater::check_for_updates_silent,
             commands::updater::get_version_info,

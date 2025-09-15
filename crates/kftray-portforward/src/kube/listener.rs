@@ -1,8 +1,16 @@
 use std::sync::Arc;
 
+use httparse::Request;
 use k8s_openapi::api::core::v1::Pod;
 use kube::Api;
-use tokio::net::TcpListener;
+use tokio::io::{
+    AsyncReadExt,
+    AsyncWriteExt,
+};
+use tokio::net::{
+    TcpListener,
+    TcpStream,
+};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use tracing::{
@@ -27,11 +35,23 @@ pub enum Protocol {
     Udp,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ListenerConfig {
     pub local_address: String,
     pub local_port: u16,
     pub protocol: Protocol,
+    pub tls_acceptor: Option<tokio_rustls::TlsAcceptor>,
+}
+
+impl std::fmt::Debug for ListenerConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ListenerConfig")
+            .field("local_address", &self.local_address)
+            .field("local_port", &self.local_port)
+            .field("protocol", &self.protocol)
+            .field("tls_acceptor", &self.tls_acceptor.is_some())
+            .finish()
+    }
 }
 
 impl Default for ListenerConfig {
@@ -40,6 +60,7 @@ impl Default for ListenerConfig {
             local_address: "127.0.0.1".to_owned(),
             local_port: 0,
             protocol: Protocol::Tcp,
+            tls_acceptor: None,
         }
     }
 }
@@ -289,7 +310,7 @@ impl PortForwarder {
 
     pub async fn handle_tcp_listener(
         self: Arc<Self>, listener: TcpListener, config_id: i64, workload_type: String, port: u16,
-        cancellation_token: CancellationToken,
+        cancellation_token: CancellationToken, tls_acceptor: Option<tokio_rustls::TlsAcceptor>,
     ) -> anyhow::Result<()> {
         let initial_logging_enabled =
             match kftray_commons::utils::http_logs_config::get_http_logs_config(config_id).await {
@@ -381,6 +402,8 @@ impl PortForwarder {
             let mut tcp_forwarder = tcp_forwarder.clone();
             let http_log_watcher_clone = Arc::new(self.http_log_watcher.clone());
             let cancel_token_clone = cancel_token.clone();
+            let tls_acceptor_clone = tls_acceptor.clone();
+
             tokio::spawn(async move {
                 let upstream_stream = match forwarder.get_stream().await {
                     Ok(stream) => stream,
@@ -390,18 +413,43 @@ impl PortForwarder {
                     }
                 };
 
-                if let Err(e) = tcp_forwarder
+                if let Some(acceptor) = tls_acceptor_clone {
+                    if is_http_request(&client_conn).await {
+                        if let Err(e) = handle_http_redirect(client_conn, port).await {
+                            debug!("Failed to redirect HTTP to HTTPS: {}", e);
+                        }
+                        return;
+                    }
+
+                    match acceptor.accept(client_conn).await {
+                        Ok(tls_stream) => {
+                            if let Err(e) = tcp_forwarder
+                                .forward_tls_streams(
+                                    tls_stream,
+                                    upstream_stream,
+                                    cancel_token_clone.clone(),
+                                )
+                                .await
+                            {
+                                debug!("TLS forwarding error for {}: {}", client_addr, e);
+                            }
+                        }
+                        Err(e) => {
+                            debug!("TLS handshake failed for {}: {}", client_addr, e);
+                        }
+                    }
+                } else if let Err(e) = tcp_forwarder
                     .forward_streams(
                         client_conn,
                         upstream_stream,
                         client_addr,
                         cancel_token_clone,
-                        http_log_watcher_clone,
+                        Arc::clone(&http_log_watcher_clone),
                         port,
                     )
                     .await
                 {
-                    error!("Forward failed for {}: {}", client_addr, e);
+                    debug!("TCP forwarding error for {}: {}", client_addr, e);
                 }
             });
         }
@@ -462,9 +510,17 @@ impl PortForwarder {
             .map_err(|e| anyhow::anyhow!("Failed to bind TCP listener to {}: {}", addr, e))?;
         let port = listener.local_addr()?.port();
 
+        let tls_acceptor = listener_config.tls_acceptor;
         let handle = tokio::spawn(async move {
-            self.handle_tcp_listener(listener, config_id, workload_type, port, cancellation_token)
-                .await
+            self.handle_tcp_listener(
+                listener,
+                config_id,
+                workload_type,
+                port,
+                cancellation_token,
+                tls_acceptor,
+            )
+            .await
         });
 
         Ok((port, handle))
@@ -555,17 +611,62 @@ impl PortForwarder {
             self.namespace.as_ref()
         );
 
-        // Cancel watchers first for graceful shutdown
         self.pod_watcher.shutdown();
         self.http_log_watcher.shutdown();
 
-        // Cleanup background tasks
         self.cleanup_background_tasks().await;
 
-        // Close port forwarder
         let mut next_pf = self.next_portforwarder.lock().await;
         if let Some(portforwarder) = next_pf.take() {
             drop(portforwarder);
         }
     }
+}
+
+async fn is_http_request(client_conn: &TcpStream) -> bool {
+    let mut peek_buf = [0u8; 64];
+
+    if client_conn.peek(&mut peek_buf).await.is_ok() {
+        let mut headers = [httparse::EMPTY_HEADER; 4];
+        let mut req = Request::new(&mut headers);
+
+        matches!(
+            req.parse(&peek_buf),
+            Ok(httparse::Status::Complete(_)) | Ok(httparse::Status::Partial)
+        )
+    } else {
+        false
+    }
+}
+
+async fn handle_http_redirect(mut stream: TcpStream, port: u16) -> anyhow::Result<()> {
+    let mut buffer = [0u8; 1024];
+    let n = stream.read(&mut buffer).await?;
+
+    let request = std::str::from_utf8(&buffer[..n])?;
+    let mut lines = request.lines();
+
+    let request_line = match lines.next() {
+        Some(line) => line,
+        None => return Ok(()),
+    };
+
+    let path = request_line.split_whitespace().nth(1).unwrap_or("/");
+
+    let host = lines
+        .find(|line| line.to_lowercase().starts_with("host:"))
+        .and_then(|line| line.split(':').nth(1))
+        .map(|h| h.trim())
+        .unwrap_or("localhost");
+
+    let response = format!(
+        "HTTP/1.1 301 Moved Permanently\r\n\
+        Location: https://{}:{}{}\r\n\
+        Content-Length: 0\r\n\
+        \r\n",
+        host, port, path
+    );
+
+    stream.write_all(response.as_bytes()).await?;
+    Ok(())
 }

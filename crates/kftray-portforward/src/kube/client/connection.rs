@@ -89,14 +89,12 @@ fn create_connection_strategies(config: &Config) -> Vec<Strategy<'_>> {
     let without_invalid_certs = config.clone_with_invalid_certs(false);
 
     vec![
-        // Try with original settings first
         create_rustls_strategy("Rustls (original settings)", original.clone()),
         create_openssl_strategy(
             "OpenSSL (original settings)",
             original.clone(),
             original.accept_invalid_certs,
         ),
-        // Try with explicit certificate verification
         create_openssl_strategy(
             "OpenSSL (with cert verification)",
             without_invalid_certs,
@@ -115,7 +113,6 @@ fn create_insecure_connection_strategies(config: &Config) -> Vec<Strategy<'_>> {
             with_invalid_certs.clone(),
             true,
         ),
-        // Try with original settings
         create_openssl_strategy(
             "OpenSSL (original settings)",
             original.clone(),

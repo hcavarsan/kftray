@@ -165,8 +165,10 @@ impl PortForward {
         Ok(())
     }
 
-    #[instrument(skip(self), fields(config_id = self.config_id))]
-    pub async fn port_forward_tcp(self) -> anyhow::Result<(u16, PortForwardProcess)> {
+    #[instrument(skip(self, tls_acceptor), fields(config_id = self.config_id))]
+    pub async fn port_forward_tcp(
+        self, tls_acceptor: Option<tokio_rustls::TlsAcceptor>,
+    ) -> anyhow::Result<(u16, PortForwardProcess)> {
         let local_addr = self
             .local_address
             .as_deref()
@@ -194,6 +196,7 @@ impl PortForward {
             local_address: local_addr,
             local_port: self.local_port(),
             protocol: Protocol::Tcp,
+            tls_acceptor,
         };
 
         let forwarder_clone = direct_forwarder.clone();
@@ -251,6 +254,7 @@ impl PortForward {
             local_address: local_addr,
             local_port: self.local_port(),
             protocol: Protocol::Udp,
+            tls_acceptor: None,
         };
 
         let forwarder_clone = direct_forwarder.clone();
@@ -682,7 +686,7 @@ mod tests {
         });
 
         info!("Calling port_forward_tcp");
-        let pf_result = pf_test.port_forward_tcp().await;
+        let pf_result = pf_test.port_forward_tcp(None).await;
         if pf_result.is_err() {
             info!(
                 "Port forward failed as expected in test environment: {:?}",

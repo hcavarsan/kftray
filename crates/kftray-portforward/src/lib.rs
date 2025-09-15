@@ -5,6 +5,7 @@ pub mod kube;
 pub mod network_utils;
 pub mod port_forward;
 pub mod port_forward_error;
+pub mod ssl;
 
 pub use kftray_http_logs::HttpLogger as Logger;
 pub use kube::client::*;

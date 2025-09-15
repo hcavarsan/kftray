@@ -10,6 +10,8 @@ use kftray_commons::config::{
     update_config,
 };
 use kftray_commons::models::config_model::Config;
+use kftray_commons::utils::settings::get_ssl_enabled;
+use kftray_portforward::ssl::cert_manager::CertificateManager;
 use log::{
     error,
     info,
@@ -26,28 +28,218 @@ fn validate_config(config: &Config) -> Result<(), String> {
     Ok(())
 }
 
+async fn regenerate_ssl_certificate_if_needed() -> Result<(), String> {
+    // Check if SSL is enabled
+    match get_ssl_enabled().await {
+        Ok(true) => {
+            info!("SSL is enabled, regenerating global certificate due to config changes");
+            match kftray_commons::utils::settings::get_app_settings().await {
+                Ok(settings) => {
+                    let cert_manager = CertificateManager::new(&settings)
+                        .map_err(|e| format!("Failed to create certificate manager: {}", e))?;
+
+                    if let Err(e) = cert_manager.regenerate_certificate_for_all_configs().await {
+                        warn!("Failed to regenerate SSL certificate: {}", e);
+                        // Don't fail the config operation if certificate
+                        // regeneration fails
+                    } else {
+                        info!("Successfully regenerated global SSL certificate");
+
+                        // Restart SSL proxies for all running configs to pick up new certificates
+                        info!(
+                            "Certificate regeneration successful, attempting to restart SSL proxies"
+                        );
+                        restart_ssl_proxies_with_retry().await;
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to get app settings for SSL certificate regeneration: {}",
+                        e
+                    );
+                }
+            }
+        }
+        Ok(false) => {
+            info!("SSL is disabled, skipping certificate regeneration");
+        }
+        Err(e) => {
+            warn!(
+                "Failed to check SSL status, skipping certificate regeneration: {}",
+                e
+            );
+        }
+    }
+    Ok(())
+}
+
+async fn restart_ssl_proxies_if_running() -> Result<(), String> {
+    use kftray_commons::utils::config_state::get_configs_state;
+    use kftray_portforward::kube::{
+        start_port_forward,
+        stop_port_forward,
+    };
+
+    info!("=== Starting SSL proxy restart process ===");
+
+    // Get all currently running configs
+    let config_states = get_configs_state()
+        .await
+        .map_err(|e| format!("Failed to get config states: {}", e))?;
+
+    info!("Found {} total config states", config_states.len());
+
+    let running_config_ids: Vec<i64> = config_states
+        .iter()
+        .filter(|state| state.is_running)
+        .map(|state| state.config_id)
+        .collect();
+
+    info!("Running config IDs: {:?}", running_config_ids);
+
+    if running_config_ids.is_empty() {
+        info!("No running configs found, no SSL proxies to restart");
+        return Ok(());
+    }
+
+    // Get all configs to filter for SSL-enabled ones
+    let all_configs = get_configs()
+        .await
+        .map_err(|e| format!("Failed to get configs: {}", e))?;
+
+    info!("Found {} total configs in database", all_configs.len());
+
+    let ssl_configs: Vec<Config> = all_configs
+        .into_iter()
+        .filter(|config| {
+            let is_running = config.id.is_some_and(|id| running_config_ids.contains(&id));
+            let is_ssl_enabled = config.domain_enabled.unwrap_or(false);
+            info!(
+                "Config {}: running={}, ssl_enabled={}, alias={:?}",
+                config.id.unwrap_or(-1),
+                is_running,
+                is_ssl_enabled,
+                config.alias
+            );
+            is_running && is_ssl_enabled
+        })
+        .collect();
+
+    info!(
+        "Filtered to {} SSL-enabled running configs",
+        ssl_configs.len()
+    );
+
+    if ssl_configs.is_empty() {
+        info!("No running SSL-enabled configs found, no SSL proxies to restart");
+        return Ok(());
+    }
+
+    info!("Found {} SSL-enabled configs to restart", ssl_configs.len());
+
+    // Stop and restart each SSL-enabled config
+    for config in &ssl_configs {
+        let config_id = config.id.unwrap().to_string();
+        info!(
+            "Restarting SSL proxy for config {} ({})",
+            config_id,
+            config.alias.as_deref().unwrap_or("unnamed")
+        );
+
+        // Stop the current port forward
+        if let Err(e) = stop_port_forward(config_id.clone()).await {
+            warn!(
+                "Failed to stop port forward for config {}: {}",
+                config_id, e
+            );
+            continue;
+        }
+
+        // Small delay to ensure clean shutdown
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // Restart with the same protocol (assuming TCP for SSL)
+        if let Err(e) = start_port_forward(vec![config.clone()], "tcp").await {
+            warn!(
+                "Failed to restart port forward for config {}: {}",
+                config_id, e
+            );
+        } else {
+            info!("Successfully restarted SSL proxy for config {}", config_id);
+        }
+    }
+
+    info!("Completed SSL proxy restart process");
+    Ok(())
+}
+
+async fn restart_ssl_proxies_with_retry() {
+    // Try multiple times with increasing delays to catch configs as they start up
+    let delays = [100, 500, 1000]; // milliseconds
+
+    for (attempt, delay) in delays.iter().enumerate() {
+        info!(
+            "SSL proxy restart attempt {} (after {}ms delay)",
+            attempt + 1,
+            delay
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(*delay)).await;
+
+        match restart_ssl_proxies_if_running().await {
+            Ok(()) => {
+                info!(
+                    "SSL proxy restart attempt {} completed successfully",
+                    attempt + 1
+                );
+                return;
+            }
+            Err(e) => {
+                warn!("SSL proxy restart attempt {} failed: {}", attempt + 1, e);
+            }
+        }
+    }
+
+    warn!("All SSL proxy restart attempts failed");
+}
+
 #[tauri::command]
 pub async fn delete_config_cmd(id: i64) -> Result<(), String> {
     info!("Deleting config with id: {id}");
-    delete_config(id).await
+    let result = delete_config(id).await;
+    if result.is_ok() {
+        let _ = regenerate_ssl_certificate_if_needed().await;
+    }
+    result
 }
 
 #[tauri::command]
 pub async fn delete_configs_cmd(ids: Vec<i64>) -> Result<(), String> {
     info!("Deleting configs with ids: {ids:?}");
-    delete_configs(ids).await
+    let result = delete_configs(ids).await;
+    if result.is_ok() {
+        let _ = regenerate_ssl_certificate_if_needed().await;
+    }
+    result
 }
 
 #[tauri::command]
 pub async fn delete_all_configs_cmd() -> Result<(), String> {
     info!("Deleting all configs");
-    delete_all_configs().await
+    let result = delete_all_configs().await;
+    if result.is_ok() {
+        let _ = regenerate_ssl_certificate_if_needed().await;
+    }
+    result
 }
 
 #[tauri::command]
 pub async fn insert_config_cmd(config: Config) -> Result<(), String> {
     validate_config(&config)?;
-    insert_config(config).await
+    let result = insert_config(config).await;
+    if result.is_ok() {
+        let _ = regenerate_ssl_certificate_if_needed().await;
+    }
+    result
 }
 
 #[tauri::command]
@@ -65,8 +257,16 @@ pub async fn get_config_cmd(id: i64) -> Result<Config, String> {
 
 #[tauri::command]
 pub async fn update_config_cmd(config: Config) -> Result<(), String> {
+    info!(
+        "=== UPDATE_CONFIG_CMD CALLED with id={:?}, alias={:?} ===",
+        config.id, config.alias
+    );
     validate_config(&config)?;
-    update_config(config).await
+    let result = update_config(config).await;
+    if result.is_ok() {
+        let _ = regenerate_ssl_certificate_if_needed().await;
+    }
+    result
 }
 
 #[tauri::command]
@@ -76,13 +276,19 @@ pub async fn export_configs_cmd() -> Result<String, String> {
 
 #[tauri::command]
 pub async fn import_configs_cmd(json: String) -> Result<(), String> {
-    if let Err(e) = import_configs(json).await {
-        error!(
-            "Error migrating configs: {e}. Please check if the configurations are valid and compatible with the current system/version."
-        );
-        return Err(format!("Error migrating configs: {e}"));
+    let result = import_configs(json).await;
+    match &result {
+        Ok(_) => {
+            let _ = regenerate_ssl_certificate_if_needed().await;
+        }
+        Err(e) => {
+            error!(
+                "Error migrating configs: {e}. Please check if the configurations are valid and compatible with the current system/version."
+            );
+            return Err(format!("Error migrating configs: {e}"));
+        }
     }
-    Ok(())
+    result
 }
 
 #[cfg(test)]
