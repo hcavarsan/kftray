@@ -351,7 +351,6 @@ fn configure_loopback_macos(addr: &str) -> Result<()> {
                 || stderr.contains("(-128)")
                 || output.status.code() == Some(1)
             {
-                // Common exit code for user cancellation
                 Err(anyhow!("User cancelled loopback address configuration"))
             } else {
                 Err(anyhow!("Failed to configure loopback address: {}", stderr))
@@ -426,13 +425,13 @@ mod tests {
 
     #[test]
     fn test_is_custom_loopback_address() {
-        assert!(!is_custom_loopback_address("127.0.0.1")); // Default loopback
-        assert!(is_custom_loopback_address("127.0.0.2")); // Custom loopback
-        assert!(is_custom_loopback_address("127.0.0.5")); // Custom loopback
-        assert!(is_custom_loopback_address("127.255.255.255")); // Custom loopback
-        assert!(!is_custom_loopback_address("192.168.1.1")); // Not loopback
-        assert!(!is_custom_loopback_address("10.0.0.1")); // Not loopback
-        assert!(!is_custom_loopback_address("invalid-ip")); // Invalid IP
+        assert!(!is_custom_loopback_address("127.0.0.1"));
+        assert!(is_custom_loopback_address("127.0.0.2"));
+        assert!(is_custom_loopback_address("127.0.0.5"));
+        assert!(is_custom_loopback_address("127.255.255.255"));
+        assert!(!is_custom_loopback_address("192.168.1.1"));
+        assert!(!is_custom_loopback_address("10.0.0.1"));
+        assert!(!is_custom_loopback_address("invalid-ip"));
     }
 
     #[tokio::test]

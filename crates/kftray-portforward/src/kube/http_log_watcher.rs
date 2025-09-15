@@ -60,7 +60,7 @@ impl Clone for HttpLogStateWatcher {
         Self {
             current_state: self.current_state.clone(),
             event_sender: self.event_sender.clone(),
-            _processor_task: tokio::spawn(async {}), // Dummy task for clone
+            _processor_task: tokio::spawn(async {}),
             cancellation_token: self.cancellation_token.clone(),
         }
     }

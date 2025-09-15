@@ -214,6 +214,28 @@ impl TcpForwarder {
         Ok(())
     }
 
+    pub async fn forward_tls_streams(
+        &mut self, client_stream: tokio_rustls::server::TlsStream<TcpStream>,
+        upstream_stream: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+    ) -> anyhow::Result<()> {
+        let mut client = client_stream;
+        let mut upstream = upstream_stream;
+
+        match tokio::io::copy_bidirectional(&mut client, &mut upstream).await {
+            Ok((to_upstream, to_client)) => {
+                debug!(
+                    "TLS connection closed: sent {} bytes, received {} bytes",
+                    to_upstream, to_client
+                );
+                Ok(())
+            }
+            Err(e) => {
+                error!("TLS connection closed with error: {}", e);
+                Err(e.into())
+            }
+        }
+    }
+
     async fn monitor_logging_state_simple(
         config_id: i64,
         mut log_subscriber: tokio::sync::broadcast::Receiver<

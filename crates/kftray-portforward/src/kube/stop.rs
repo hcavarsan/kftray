@@ -36,6 +36,7 @@ use tracing::{
 use crate::hostsfile::{
     remove_all_host_entries,
     remove_host_entry,
+    remove_ssl_host_entry,
 };
 use crate::kube::shared_client::{
     SHARED_CLIENT_MANAGER,
@@ -130,7 +131,6 @@ pub async fn stop_all_port_forward_with_mode(
         let processes = CHILD_PROCESSES.lock().await;
         if processes.is_empty() {
             debug!("No port forwarding processes to stop");
-            return Ok(Vec::new());
         }
         processes.keys().cloned().collect()
     };
@@ -158,7 +158,6 @@ pub async fn stop_all_port_forward_with_mode(
         }
     };
 
-    // Get configs using the appropriate database mode
     let configs = match mode {
         DatabaseMode::File => get_configs().await.unwrap_or_default(),
         DatabaseMode::Memory => read_configs_with_mode(mode).await.unwrap_or_default(),
@@ -220,6 +219,13 @@ pub async fn stop_all_port_forward_with_mode(
                     if let Err(e) = remove_host_entry(config_id_str) {
                         error!(
                             "Failed to remove host entry for ID {config_id_str}: {e}"
+                        );
+                    }
+
+
+                    if let Err(e) = remove_ssl_host_entry(config_id_str) {
+                        error!(
+                            "Failed to remove SSL host entry for ID {config_id_str}: {e}"
                         );
                     }
                 } else {
@@ -426,13 +432,11 @@ pub async fn stop_port_forward_with_mode(
     if let Some(composite_key) = composite_key {
         let config_id_parsed = config_id.parse::<i64>().unwrap_or_default();
 
-        // Get configs using the appropriate database mode
         let configs = match mode {
             DatabaseMode::File => get_configs().await.unwrap_or_default(),
             DatabaseMode::Memory => read_configs_with_mode(mode).await.unwrap_or_default(),
         };
 
-        // Handle loopback address cleanup
         if let Some(config) = configs.iter().find(|c| c.id == Some(config_id_parsed)) {
             info!(
                 "Found config {} during stop with local_address: {:?} and auto_loopback_address: {}",
@@ -468,7 +472,6 @@ pub async fn stop_port_forward_with_mode(
             .map(|(_, service)| service)
             .unwrap_or("");
 
-        // Handle host entry cleanup for domain-enabled configs
         if let Some(config) = configs.iter().find(|c| c.id == Some(config_id_parsed))
             && config.domain_enabled.unwrap_or_default()
         {
@@ -481,6 +484,10 @@ pub async fn stop_port_forward_with_mode(
                 }
                 return Err(e.to_string());
             }
+
+            if let Err(e) = remove_ssl_host_entry(&config_id) {
+                error!("Failed to remove SSL host entry for ID {config_id}: {e}");
+            }
         } else {
             warn!("Config with id '{config_id}' not found.");
         }
@@ -490,7 +497,6 @@ pub async fn stop_port_forward_with_mode(
             error!("Failed to update config state: {e}");
         }
 
-        // Invalidate the client for this specific config
         if let Some(config) = configs.iter().find(|c| c.id == Some(config_id_parsed)) {
             let client_key = ServiceClientKey::new(
                 config.context.clone(),
@@ -521,7 +527,6 @@ pub async fn stop_port_forward_with_mode(
             DatabaseMode::Memory => read_configs_with_mode(mode).await.unwrap_or_default(),
         };
 
-        // Check if config exists first
         let config = configs.iter().find(|c| c.id == Some(config_id_parsed));
 
         if config.is_none() {

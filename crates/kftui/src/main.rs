@@ -23,6 +23,8 @@ use crate::logging::{
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    kftray_portforward::ssl::ensure_crypto_provider_installed();
+
     let cli = Cli::parse();
 
     let mut config = if let Some(level_str) = cli.log_level.as_ref() {

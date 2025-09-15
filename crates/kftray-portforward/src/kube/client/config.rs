@@ -308,7 +308,7 @@ kind: Config
 clusters:
 - name: test-cluster
   cluster:
-    server: https://test.example.com:6443
+    server: https://test-server.com
     insecure-skip-tls-verify: true
 contexts:
 - name: test-context
@@ -345,7 +345,7 @@ kind: Config
 clusters:
 - name: test-cluster
   cluster:
-    server: https://test.example.com:6443
+    server: https://test-server.com
     insecure-skip-tls-verify: false
 contexts:
 - name: test-context
@@ -382,7 +382,7 @@ kind: Config
 clusters:
 - name: test-cluster
   cluster:
-    server: https://test.example.com:6443
+    server: https://test-server.com
 contexts:
 - name: test-context
   context:
@@ -418,11 +418,11 @@ kind: Config
 clusters:
 - name: secure-cluster
   cluster:
-    server: https://secure.example.com:6443
+    server: https://secure-server.com
     insecure-skip-tls-verify: false
 - name: insecure-cluster
   cluster:
-    server: https://insecure.example.com:6443
+    server: https://insecure-server.com
     insecure-skip-tls-verify: true
 contexts:
 - name: secure-context

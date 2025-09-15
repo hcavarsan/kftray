@@ -32,7 +32,6 @@ mod tests {
         ));
         assert!(!is_pkcs8_key(b"random data"));
 
-        // Test edge cases for buffer overflow protection
         assert!(!is_pkcs8_key(b""));
         assert!(!is_pkcs8_key(b"-----"));
         assert!(!is_pkcs8_key(b"-----BEGIN"));

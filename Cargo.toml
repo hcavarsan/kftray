@@ -10,7 +10,7 @@ bb8 = "0.9.0"
 brotli = "8.0.2"
 built = "0.8"
 bytes = "1.10"
-chrono = "0.4"
+chrono = "0.4.42"
 clap = { version = "4.5.46", features = ["derive"] }
 crossterm = { version = "0.28.1", optional = false }
 dashmap = "6.1"
@@ -23,8 +23,8 @@ git2 = { version = "0.20", features = ["ssh"] }
 http = "1.3"
 httparse = "1.10"
 hyper = { version = "1.7.0", features = ["client", "http1", "http2"] }
-hyper-openssl = "0.10"
-hyper-util = { version = "0.1", features = [
+hyper-openssl = { version = "0.10", features = ["client-legacy"] }
+hyper-util = { version = "0.1.17", features = [
   "client",
   "client-legacy",
   "client-proxy",
@@ -32,7 +32,7 @@ hyper-util = { version = "0.1", features = [
   "tokio",
 ] }
 insta = "1.43"
-k8s-openapi = { version = "0.25", default-features = false, features = [
+k8s-openapi = { version = "0.26.0", default-features = false, features = [
   "latest",
 ] }
 keyring = { version = "3.6", features = [
@@ -45,7 +45,7 @@ kftray-helper = { version = "0.23.7", path = "crates/kftray-helper" }
 kftray-http-logs = { version = "0.23.7", path = "crates/kftray-http-logs" }
 kftray-network-monitor = { version = "0.23.7", path = "crates/kftray-network-monitor" }
 kftray-portforward = { version = "0.23.7", path = "crates/kftray-portforward" }
-kube = { version = "1.1", features = [
+kube = { version = "2.0.1", features = [
   "client",
   "config",
   "http-proxy",
@@ -56,7 +56,7 @@ kube = { version = "1.1", features = [
   "ws",
 ] }
 kube-core = "2.0"
-kube-runtime = { version = "1.1", features = ["unstable-runtime"] }
+kube-runtime = { version = "2.0.1", features = ["unstable-runtime"] }
 lazy_static = "1.5"
 libc = "0.2.175"
 log = "0.4"
@@ -66,14 +66,19 @@ once_cell = "1.21"
 open = "5.3"
 openssl = { version = "0.10", features = ["vendored"] }
 openssl-sys = { version = "0.9", features = ["vendored"] }
+pem = "3.0"
 portpicker = "0.1"
 rand = "0.9"
 ratatui = { version = "0.29", features = ["unstable-widget-ref"] }
+rcgen = "0.14"
+rustls = { version = "0.23", features = ["ring"] }
+rustls-native-certs = "0.8.1"
 ratatui-explorer = "0.2"
 reqwest = "0.12.23"
 secrecy = "0.10"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0.143"
+serde = { version = "1.0.224", features = ["derive"] }
+serde_json = "1.0.145"
+sha1 = "0.10"
 socket2 = "0.6.0"
 sqlx = { version = "0.8", features = ["runtime-tokio-native-tls", "sqlite"] }
 sysinfo = "0.37.0"
@@ -96,9 +101,10 @@ tauri-plugin-positioner = { version = "2.3.0", features = ["tray-icon"] }
 tauri-plugin-process = "2.3.0"
 tauri-plugin-shell = "2.3.1"
 tauri-plugin-updater = "2.5.1"
-tempfile = "3.21.0"
+tempfile = "3.22.0"
 thiserror = "2.0.16"
 throbber-widgets-tui = "0.8.0"
+time = "0.3"
 tokio = { version = "1.47.1", features = [
   "fs",
   "io-util",
@@ -108,6 +114,7 @@ tokio = { version = "1.47.1", features = [
   "sync",
   "time",
 ] }
+tokio-rustls = "0.26"
 tokio-util = { version = "0.7.16", features = ["rt"] }
 tower = { version = "0.5", features = ["util"] }
 tower-test = "0.4"
@@ -121,6 +128,8 @@ windows = { version = "0.62", features = [
   "Win32_Foundation",
   "Win32_Security",
   "Win32_Security_Authorization",
+  "Win32_Security_Cryptography",
+  "Win32_Security_Cryptography_Certificates",
   "Win32_Storage_FileSystem",
   "Win32_System_Environment",
   "Win32_System_Pipes",
