@@ -224,6 +224,13 @@ impl CertificateManager {
             }
         }
 
+        if let Ok(store) = super::cert_store::CertificateStore::new()
+            && let Err(e) = Self::cleanup_keychain_entries(&store).await
+        {
+            warn!("Failed to cleanup keychain entries: {}", e);
+            cleanup_errors.push(format!("keychain entries: {}", e));
+        }
+
         if cleanup_errors.is_empty() {
             info!("Successfully cleaned up all SSL artifacts");
             Ok(())
@@ -235,6 +242,18 @@ impl CertificateManager {
 
             Ok(())
         }
+    }
+
+    async fn cleanup_keychain_entries(store: &super::cert_store::CertificateStore) -> Result<()> {
+        info!("Cleaning up SSL vault from keychain");
+
+        if let Err(e) = store.cleanup_ssl_vault().await {
+            warn!("Failed to cleanup SSL vault: {}", e);
+            return Err(e);
+        }
+
+        info!("Successfully cleaned up SSL vault from keychain");
+        Ok(())
     }
 
     async fn cleanup_system_ca_certificate() -> Result<()> {

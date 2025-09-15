@@ -1,9 +1,12 @@
+use std::collections::HashMap;
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 use anyhow::{
     Context,
     Result,
 };
+use keyring::Entry;
 use log::{
     info,
     warn,
@@ -23,11 +26,24 @@ use rustls::pki_types::{
     PrivateKeyDer,
     PrivatePkcs8KeyDer,
 };
+use serde::{
+    Deserialize,
+    Serialize,
+};
 use time::{
     Duration,
     OffsetDateTime,
 };
 use tokio::fs;
+
+const KFTRAY_SERVICE: &str = "kftray-ssl";
+const KFTRAY_SSL_VAULT: &str = "ssl-keys-vault";
+
+#[derive(Serialize, Deserialize, Default)]
+struct SslKeyVault {
+    ca_private_key: Option<String>,
+    certificate_keys: HashMap<String, String>,
+}
 
 #[derive(Debug)]
 pub struct CertificatePair {
@@ -40,7 +56,6 @@ pub struct CertificatePair {
 
 pub struct CertificateGenerator {
     ca_cert_path: PathBuf,
-    ca_key_path: PathBuf,
 }
 
 impl CertificateGenerator {
@@ -51,32 +66,21 @@ impl CertificateGenerator {
             .join("ssl-ca");
 
         let ca_cert_path = cert_dir.join("kftray-ca.crt");
-        let ca_key_path = cert_dir.join("kftray-ca.key");
 
-        Ok(Self {
-            ca_cert_path,
-            ca_key_path,
-        })
+        Ok(Self { ca_cert_path })
     }
 
-    pub fn with_paths(ca_cert_path: PathBuf, ca_key_path: PathBuf) -> Self {
-        Self {
-            ca_cert_path,
-            ca_key_path,
-        }
+    pub fn with_paths(ca_cert_path: PathBuf, _ca_key_path: PathBuf) -> Self {
+        Self { ca_cert_path }
     }
 
     pub fn for_testing(temp_dir: &std::path::Path) -> Self {
         let ca_cert_path = temp_dir.join("test-ca.crt");
-        let ca_key_path = temp_dir.join("test-ca.key");
-        Self {
-            ca_cert_path,
-            ca_key_path,
-        }
+        Self { ca_cert_path }
     }
 
     async fn get_or_create_ca(&self) -> Result<(Certificate, KeyPair)> {
-        if self.ca_cert_path.exists() && self.ca_key_path.exists() {
+        if self.ca_cert_path.exists() && self.ca_key_exists_in_vault().await {
             match self.load_existing_ca().await {
                 Ok(ca) => {
                     info!(
@@ -145,9 +149,10 @@ impl CertificateGenerator {
         let _cert_pem = fs::read_to_string(&self.ca_cert_path)
             .await
             .context("Failed to read CA certificate PEM file")?;
-        let key_pem = fs::read_to_string(&self.ca_key_path)
+        let key_pem = self
+            .retrieve_ca_private_key_from_vault()
             .await
-            .context("Failed to read CA private key PEM file")?;
+            .context("Failed to retrieve CA private key from keychain")?;
 
         let ca_key_pair =
             KeyPair::from_pem(&key_pem).context("Failed to create key pair from PEM")?;
@@ -157,7 +162,7 @@ impl CertificateGenerator {
             .self_signed(&ca_key_pair)
             .context("Failed to recreate CA certificate from existing key")?;
 
-        info!("Successfully loaded existing CA key and recreated certificate");
+        info!("Successfully loaded existing CA key from keychain and recreated certificate");
         Ok((ca_cert, ca_key_pair))
     }
 
@@ -174,13 +179,13 @@ impl CertificateGenerator {
             .context("Failed to write CA certificate PEM file")?;
 
         let key_pem = ca.1.serialize_pem();
-        fs::write(&self.ca_key_path, key_pem)
+        self.store_ca_private_key_in_vault(&key_pem)
             .await
-            .context("Failed to write CA private key PEM file")?;
+            .context("Failed to store CA private key in keychain")?;
 
         info!(
-            "CA certificate and key saved to: {}",
-            self.ca_cert_path.parent().unwrap().display()
+            "CA certificate saved to: {} and private key stored securely in keychain",
+            self.ca_cert_path.display()
         );
         Ok(())
     }
@@ -197,17 +202,25 @@ impl CertificateGenerator {
         let (ca_cert, ca_key_pair) = self.get_or_create_ca().await?;
 
         let (domain, local_domain) = if alias.contains('.') {
-            (alias.to_string(), format!("{}.local", alias))
+            if alias.ends_with(".local") {
+                (alias.to_string(), alias.to_string())
+            } else {
+                (alias.to_string(), format!("{}.local", alias))
+            }
         } else {
-            (format!("{}.local", alias), format!("{}.local", alias))
+            let local_domain = format!("{}.local", alias);
+            (local_domain.clone(), local_domain)
         };
 
-        let san_names = vec![
-            domain.clone(),
-            local_domain.clone(),
-            "localhost".to_string(),
-            "127.0.0.1".to_string(),
-        ];
+        let mut san_names = vec!["localhost".to_string(), "127.0.0.1".to_string()];
+        let mut seen_domains = HashSet::new();
+
+        if seen_domains.insert(domain.clone()) {
+            san_names.push(domain.clone());
+        }
+        if domain != local_domain && seen_domains.insert(local_domain.clone()) {
+            san_names.push(local_domain.clone());
+        }
 
         let mut cert_params = CertificateParams::new(vec![
             domain.clone(),
@@ -277,9 +290,14 @@ impl CertificateGenerator {
         let (ca_cert, ca_key_pair) = self.get_or_create_ca().await?;
 
         let primary_domain = domains.first().unwrap().clone();
-        let local_domain = format!("{}.local", primary_domain);
+        let local_domain = if primary_domain.ends_with(".local") {
+            primary_domain.clone()
+        } else {
+            format!("{}.local", primary_domain)
+        };
 
         let mut san_names = vec!["localhost".to_string(), "127.0.0.1".to_string()];
+        let mut seen_domains = std::collections::HashSet::new();
 
         let mut cert_params = CertificateParams::new(vec!["localhost".to_string()])
             .context("Failed to create certificate params")?;
@@ -291,17 +309,22 @@ impl CertificateGenerator {
             )));
 
         for domain in &domains {
-            cert_params.subject_alt_names.push(rcgen::SanType::DnsName(
-                domain.as_str().try_into().expect("Invalid domain"),
-            ));
-            cert_params.subject_alt_names.push(rcgen::SanType::DnsName(
-                format!("{}.local", domain)
-                    .as_str()
-                    .try_into()
-                    .expect("Invalid domain"),
-            ));
-            san_names.push(domain.clone());
-            san_names.push(format!("{}.local", domain));
+            if seen_domains.insert(domain.clone()) {
+                cert_params.subject_alt_names.push(rcgen::SanType::DnsName(
+                    domain.as_str().try_into().expect("Invalid domain"),
+                ));
+                san_names.push(domain.clone());
+
+                if !domain.ends_with(".local") {
+                    let local_domain = format!("{}.local", domain);
+                    if seen_domains.insert(local_domain.clone()) {
+                        cert_params.subject_alt_names.push(rcgen::SanType::DnsName(
+                            local_domain.as_str().try_into().expect("Invalid domain"),
+                        ));
+                        san_names.push(local_domain);
+                    }
+                }
+            }
         }
 
         cert_params
@@ -355,17 +378,28 @@ impl CertificateGenerator {
         let (ca_cert, ca_key_pair) = self.get_or_create_ca().await?;
 
         let wildcard_domain = format!("*.{}", base_domain);
-        let local_domain = format!("{}.local", base_domain);
-        let wildcard_local = format!("*.{}.local", base_domain);
+        let (local_domain, wildcard_local) = if base_domain.ends_with(".local") {
+            (base_domain.to_string(), format!("*.{}", base_domain))
+        } else {
+            (
+                format!("{}.local", base_domain),
+                format!("*.{}.local", base_domain),
+            )
+        };
 
-        let san_names = vec![
-            wildcard_domain.clone(),
-            base_domain.to_string(),
-            wildcard_local.clone(),
-            local_domain.clone(),
-            "localhost".to_string(),
-            "127.0.0.1".to_string(),
-        ];
+        let mut san_names = vec!["localhost".to_string(), "127.0.0.1".to_string()];
+        let mut seen_domains = HashSet::new();
+
+        for domain in [
+            &wildcard_domain,
+            &base_domain.to_string(),
+            &wildcard_local,
+            &local_domain,
+        ] {
+            if seen_domains.insert(domain.clone()) {
+                san_names.push(domain.clone());
+            }
+        }
 
         let mut cert_params = CertificateParams::new(vec![
             wildcard_domain.clone(),
@@ -426,7 +460,7 @@ impl CertificateGenerator {
     }
 
     pub async fn get_ca_info(&self) -> Result<Option<CaInfo>> {
-        if !self.ca_cert_path.exists() {
+        if !self.ca_cert_path.exists() || !self.ca_key_exists_in_vault().await {
             return Ok(None);
         }
 
@@ -449,6 +483,72 @@ impl CertificateGenerator {
             ),
             installed,
         }))
+    }
+
+    async fn store_ca_private_key_in_vault(&self, private_key_pem: &str) -> Result<()> {
+        let mut vault = self.load_ssl_vault().await?.unwrap_or_default();
+        vault.ca_private_key = Some(private_key_pem.to_string());
+        self.save_ssl_vault(&vault).await
+    }
+
+    async fn retrieve_ca_private_key_from_vault(&self) -> Result<String> {
+        let vault = self
+            .load_ssl_vault()
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("SSL vault not found"))?;
+
+        vault
+            .ca_private_key
+            .ok_or_else(|| anyhow::anyhow!("CA private key not found in SSL vault"))
+    }
+
+    async fn ca_key_exists_in_vault(&self) -> bool {
+        if let Ok(Some(vault)) = self.load_ssl_vault().await {
+            vault.ca_private_key.is_some()
+        } else {
+            false
+        }
+    }
+
+    pub async fn cleanup_ca_from_vault(&self) -> Result<()> {
+        let mut vault = self.load_ssl_vault().await?.unwrap_or_default();
+        vault.ca_private_key = None;
+        self.save_ssl_vault(&vault).await
+    }
+
+    async fn load_ssl_vault(&self) -> Result<Option<SslKeyVault>> {
+        if std::env::var("KFTRAY_TEST_MODE").is_ok() {
+            return Ok(None);
+        }
+
+        let entry = Entry::new(KFTRAY_SERVICE, KFTRAY_SSL_VAULT)
+            .context("Failed to create SSL vault keychain entry")?;
+
+        match entry.get_password() {
+            Ok(vault_json) => {
+                let vault: SslKeyVault =
+                    serde_json::from_str(&vault_json).context("Failed to deserialize SSL vault")?;
+                Ok(Some(vault))
+            }
+            Err(_) => Ok(None),
+        }
+    }
+
+    async fn save_ssl_vault(&self, vault: &SslKeyVault) -> Result<()> {
+        if std::env::var("KFTRAY_TEST_MODE").is_ok() {
+            return Ok(());
+        }
+
+        let entry = Entry::new(KFTRAY_SERVICE, KFTRAY_SSL_VAULT)
+            .context("Failed to create SSL vault keychain entry")?;
+
+        let vault_json = serde_json::to_string(vault).context("Failed to serialize SSL vault")?;
+
+        entry
+            .set_password(&vault_json)
+            .context("Failed to store SSL vault in keychain")?;
+
+        Ok(())
     }
 }
 

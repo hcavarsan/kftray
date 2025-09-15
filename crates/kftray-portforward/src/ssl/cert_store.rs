@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -6,14 +7,33 @@ use anyhow::{
     Result,
 };
 use base64::Engine;
+use keyring::Entry;
+use log::{
+    debug,
+    info,
+    warn,
+};
 use rustls::pki_types::{
     CertificateDer,
     PrivateKeyDer,
     PrivatePkcs8KeyDer,
 };
+use serde::{
+    Deserialize,
+    Serialize,
+};
 use tokio::fs as async_fs;
 
 use super::cert_generator::CertificatePair;
+
+const KFTRAY_SERVICE: &str = "kftray-ssl";
+const KFTRAY_SSL_VAULT: &str = "ssl-keys-vault";
+
+#[derive(Serialize, Deserialize, Default)]
+struct SslKeyVault {
+    ca_private_key: Option<String>,
+    certificate_keys: HashMap<String, String>,
+}
 
 pub struct CertificateStore {
     store_path: PathBuf,
@@ -37,8 +57,12 @@ impl CertificateStore {
     }
 
     pub async fn store(&self, alias: &str, cert_pair: &CertificatePair) -> Result<()> {
+        info!(
+            "Storing certificate for alias: {} (certificate on disk, private key in keychain)",
+            alias
+        );
+
         let cert_file = self.store_path.join(format!("{}.crt", alias));
-        let key_file = self.store_path.join(format!("{}.key", alias));
         let metadata_file = self.store_path.join(format!("{}.json", alias));
 
         let cert_pem = self.certificate_to_pem(&cert_pair.certificate)?;
@@ -48,9 +72,9 @@ impl CertificateStore {
             .await
             .context("Failed to write certificate file")?;
 
-        async_fs::write(key_file, key_pem)
+        self.store_private_key_in_keychain(alias, &key_pem)
             .await
-            .context("Failed to write private key file")?;
+            .context("Failed to store private key in keychain")?;
 
         let metadata = serde_json::json!({
             "domain": cert_pair.domain,
@@ -62,20 +86,29 @@ impl CertificateStore {
             .await
             .context("Failed to write certificate metadata")?;
 
+        info!(
+            "Successfully stored certificate and private key securely for alias: {}",
+            alias
+        );
         Ok(())
     }
 
     pub async fn load(&self, alias: &str) -> Result<CertificatePair> {
+        debug!(
+            "Loading certificate for alias: {} (certificate from disk, private key from keychain)",
+            alias
+        );
+
         let cert_file = self.store_path.join(format!("{}.crt", alias));
-        let key_file = self.store_path.join(format!("{}.key", alias));
         let metadata_file = self.store_path.join(format!("{}.json", alias));
 
         let cert_pem = async_fs::read_to_string(cert_file)
             .await
             .context("Failed to read certificate file")?;
-        let key_pem = async_fs::read_to_string(key_file)
+        let key_pem = self
+            .retrieve_private_key_from_keychain(alias)
             .await
-            .context("Failed to read private key file")?;
+            .context("Failed to retrieve private key from keychain")?;
 
         let certificate = self.pem_to_certificate(&cert_pem)?;
         let private_key = self.pem_to_private_key(&key_pem)?;
@@ -109,6 +142,11 @@ impl CertificateStore {
             (alias.to_string(), format!("{}.local", alias), vec![])
         };
 
+        debug!(
+            "Successfully loaded certificate and private key for alias: {}",
+            alias
+        );
+
         Ok(CertificatePair {
             certificate,
             private_key,
@@ -120,9 +158,9 @@ impl CertificateStore {
 
     pub async fn exists(&self, alias: &str) -> bool {
         let cert_file = self.store_path.join(format!("{}.crt", alias));
-        let key_file = self.store_path.join(format!("{}.key", alias));
+        let key_exists = self.private_key_exists_in_keychain(alias).await;
 
-        cert_file.exists() && key_file.exists()
+        cert_file.exists() && key_exists
     }
 
     pub async fn is_valid(&self, alias: &str) -> bool {
@@ -138,8 +176,9 @@ impl CertificateStore {
     }
 
     pub async fn remove(&self, alias: &str) -> Result<()> {
+        info!("Removing certificate and private key for alias: {}", alias);
+
         let cert_file = self.store_path.join(format!("{}.crt", alias));
-        let key_file = self.store_path.join(format!("{}.key", alias));
         let metadata_file = self.store_path.join(format!("{}.json", alias));
 
         if cert_file.exists() {
@@ -148,18 +187,20 @@ impl CertificateStore {
                 .context("Failed to remove certificate file")?;
         }
 
-        if key_file.exists() {
-            async_fs::remove_file(key_file)
-                .await
-                .context("Failed to remove private key file")?;
-        }
-
         if metadata_file.exists() {
             async_fs::remove_file(metadata_file)
                 .await
                 .context("Failed to remove certificate metadata")?;
         }
 
+        self.remove_private_key_from_keychain(alias)
+            .await
+            .context("Failed to remove private key from keychain")?;
+
+        info!(
+            "Successfully removed certificate and private key for alias: {}",
+            alias
+        );
         Ok(())
     }
 
@@ -243,6 +284,133 @@ impl CertificateStore {
         }
 
         Err(anyhow::anyhow!("No private key found in PEM data"))
+    }
+
+    async fn store_private_key_in_keychain(
+        &self, alias: &str, private_key_pem: &str,
+    ) -> Result<()> {
+        debug!("Storing private key in SSL vault for alias: {}", alias);
+
+        let mut vault = self.load_ssl_vault().await?.unwrap_or_default();
+        vault
+            .certificate_keys
+            .insert(alias.to_string(), private_key_pem.to_string());
+        self.save_ssl_vault(&vault).await
+    }
+
+    async fn retrieve_private_key_from_keychain(&self, alias: &str) -> Result<String> {
+        debug!("Retrieving private key from SSL vault for alias: {}", alias);
+
+        let vault = self
+            .load_ssl_vault()
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("SSL vault not found"))?;
+
+        vault
+            .certificate_keys
+            .get(alias)
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("Private key not found for alias: {}", alias))
+    }
+
+    async fn private_key_exists_in_keychain(&self, alias: &str) -> bool {
+        if let Ok(Some(vault)) = self.load_ssl_vault().await {
+            vault.certificate_keys.contains_key(alias)
+        } else {
+            false
+        }
+    }
+
+    pub async fn remove_private_key_from_keychain(&self, alias: &str) -> Result<()> {
+        debug!("Removing private key from SSL vault for alias: {}", alias);
+
+        let mut vault = self.load_ssl_vault().await?.unwrap_or_default();
+        vault.certificate_keys.remove(alias);
+        self.save_ssl_vault(&vault).await
+    }
+
+    pub async fn list_all_certificates(&self) -> Result<Vec<String>> {
+        let mut certificates = Vec::new();
+        let mut entries = tokio::fs::read_dir(&self.store_path)
+            .await
+            .context("Failed to read SSL certificates directory")?;
+
+        while let Some(entry) = entries
+            .next_entry()
+            .await
+            .context("Failed to read directory entry")?
+        {
+            let file_name = entry.file_name();
+            let file_name_str = file_name.to_string_lossy();
+
+            if file_name_str.ends_with(".crt") {
+                let alias = file_name_str.trim_end_matches(".crt");
+                if self.private_key_exists_in_keychain(alias).await {
+                    certificates.push(alias.to_string());
+                } else {
+                    warn!(
+                        "Found certificate file without corresponding keychain entry: {}",
+                        alias
+                    );
+                }
+            }
+        }
+
+        Ok(certificates)
+    }
+
+    async fn load_ssl_vault(&self) -> Result<Option<SslKeyVault>> {
+        if std::env::var("KFTRAY_TEST_MODE").is_ok() {
+            return Ok(None);
+        }
+
+        let entry = Entry::new(KFTRAY_SERVICE, KFTRAY_SSL_VAULT)
+            .context("Failed to create SSL vault keychain entry")?;
+
+        match entry.get_password() {
+            Ok(vault_json) => {
+                let vault: SslKeyVault =
+                    serde_json::from_str(&vault_json).context("Failed to deserialize SSL vault")?;
+                Ok(Some(vault))
+            }
+            Err(_) => Ok(None),
+        }
+    }
+
+    async fn save_ssl_vault(&self, vault: &SslKeyVault) -> Result<()> {
+        if std::env::var("KFTRAY_TEST_MODE").is_ok() {
+            return Ok(());
+        }
+
+        let entry = Entry::new(KFTRAY_SERVICE, KFTRAY_SSL_VAULT)
+            .context("Failed to create SSL vault keychain entry")?;
+
+        let vault_json = serde_json::to_string(vault).context("Failed to serialize SSL vault")?;
+
+        entry
+            .set_password(&vault_json)
+            .context("Failed to store SSL vault in keychain")?;
+
+        Ok(())
+    }
+
+    pub async fn cleanup_ssl_vault(&self) -> Result<()> {
+        info!("Cleaning up SSL vault from keychain");
+
+        if std::env::var("KFTRAY_TEST_MODE").is_ok() {
+            info!("Test mode enabled, skipping keychain cleanup operations");
+            return Ok(());
+        }
+
+        let entry = Entry::new(KFTRAY_SERVICE, KFTRAY_SSL_VAULT)
+            .context("Failed to create SSL vault keychain entry")?;
+
+        match entry.delete_credential() {
+            Ok(_) => info!("Successfully removed SSL vault from keychain"),
+            Err(_) => debug!("SSL vault not found in keychain (already removed)"),
+        }
+
+        Ok(())
     }
 }
 
