@@ -12,6 +12,7 @@ use sqlx::{
 };
 use tokio::sync::RwLock;
 
+use crate::models::settings_model::AppSettings;
 use crate::utils::db::get_db_pool;
 use crate::utils::db_mode::{
     DatabaseManager,
@@ -174,6 +175,82 @@ impl SettingsManager {
     pub async fn get_all_settings(&self) -> HashMap<String, String> {
         let cache = self.cache.read().await;
         cache.clone()
+    }
+
+    pub async fn get_app_settings(&self) -> AppSettings {
+        let settings = self.get_all_settings().await;
+        AppSettings::from_settings_manager(&settings)
+    }
+
+    pub async fn set_app_settings(
+        &self, app_settings: &AppSettings,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let settings_map = app_settings.to_settings_map();
+
+        for (key, value) in settings_map.iter() {
+            self.set_setting(key, value).await?;
+        }
+
+        Ok(())
+    }
+
+    pub async fn get_ssl_enabled(&self) -> bool {
+        if let Some(value) = self.get_setting("ssl_enabled").await {
+            value.parse::<bool>().unwrap_or(false)
+        } else {
+            false
+        }
+    }
+
+    pub async fn set_ssl_enabled(
+        &self, enabled: bool,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.set_setting("ssl_enabled", &enabled.to_string()).await
+    }
+
+    pub async fn get_ssl_cert_validity_days(&self) -> u16 {
+        if let Some(value) = self.get_setting("ssl_cert_validity_days").await {
+            value.parse::<u16>().unwrap_or(365)
+        } else {
+            365
+        }
+    }
+
+    pub async fn set_ssl_cert_validity_days(
+        &self, days: u16,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.set_setting("ssl_cert_validity_days", &days.to_string())
+            .await
+    }
+
+    pub async fn get_ssl_auto_regenerate(&self) -> bool {
+        if let Some(value) = self.get_setting("ssl_auto_regenerate").await {
+            value.parse::<bool>().unwrap_or(true)
+        } else {
+            true
+        }
+    }
+
+    pub async fn set_ssl_auto_regenerate(
+        &self, enabled: bool,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.set_setting("ssl_auto_regenerate", &enabled.to_string())
+            .await
+    }
+
+    pub async fn get_ssl_ca_auto_install(&self) -> bool {
+        if let Some(value) = self.get_setting("ssl_ca_auto_install").await {
+            value.parse::<bool>().unwrap_or(false)
+        } else {
+            false
+        }
+    }
+
+    pub async fn set_ssl_ca_auto_install(
+        &self, enabled: bool,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.set_setting("ssl_ca_auto_install", &enabled.to_string())
+            .await
     }
 }
 
@@ -368,6 +445,85 @@ pub async fn set_auto_update_enabled_with_mode(
     enabled: bool, mode: DatabaseMode,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     set_setting_with_mode("auto_update_enabled", &enabled.to_string(), mode).await
+}
+
+pub async fn get_app_settings() -> Result<AppSettings, Box<dyn std::error::Error + Send + Sync>> {
+    let pool = get_db_pool().await?;
+    let settings = load_all_settings(&pool).await?;
+
+    let settings_map: HashMap<String, String> =
+        settings.into_iter().map(|s| (s.key, s.value)).collect();
+
+    Ok(AppSettings::from_settings_manager(&settings_map))
+}
+
+pub async fn set_app_settings(
+    app_settings: &AppSettings,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    let pool = get_db_pool().await?;
+    let settings_map = app_settings.to_settings_map();
+
+    for (key, value) in settings_map.iter() {
+        upsert_setting(&pool, key, value).await?;
+    }
+
+    Ok(())
+}
+
+pub async fn get_ssl_enabled() -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+    if let Some(value) = get_setting("ssl_enabled").await? {
+        Ok(value.parse::<bool>().unwrap_or(false))
+    } else {
+        Ok(false)
+    }
+}
+
+pub async fn set_ssl_enabled(
+    enabled: bool,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    set_setting("ssl_enabled", &enabled.to_string()).await
+}
+
+pub async fn get_ssl_cert_validity_days() -> Result<u16, Box<dyn std::error::Error + Send + Sync>> {
+    if let Some(value) = get_setting("ssl_cert_validity_days").await? {
+        Ok(value.parse::<u16>().unwrap_or(365))
+    } else {
+        Ok(365)
+    }
+}
+
+pub async fn set_ssl_cert_validity_days(
+    days: u16,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    set_setting("ssl_cert_validity_days", &days.to_string()).await
+}
+
+pub async fn get_ssl_auto_regenerate() -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+    if let Some(value) = get_setting("ssl_auto_regenerate").await? {
+        Ok(value.parse::<bool>().unwrap_or(true))
+    } else {
+        Ok(true)
+    }
+}
+
+pub async fn set_ssl_auto_regenerate(
+    enabled: bool,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    set_setting("ssl_auto_regenerate", &enabled.to_string()).await
+}
+
+pub async fn get_ssl_ca_auto_install() -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+    if let Some(value) = get_setting("ssl_ca_auto_install").await? {
+        Ok(value.parse::<bool>().unwrap_or(false))
+    } else {
+        Ok(false)
+    }
+}
+
+pub async fn set_ssl_ca_auto_install(
+    enabled: bool,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    set_setting("ssl_ca_auto_install", &enabled.to_string()).await
 }
 
 #[cfg(test)]

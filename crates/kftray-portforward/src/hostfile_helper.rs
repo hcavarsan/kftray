@@ -165,7 +165,6 @@ impl HostfileHelperClient {
     pub fn list_host_entries(&self) -> Result<Vec<(String, HostEntry)>, HostfileHelperError> {
         debug!("Listing host entries via helper");
 
-        // Check availability first - don't try to install automatically
         if !self.is_available() {
             return Err(HostfileHelperError::Communication(
                 "Helper service is not available".to_string(),

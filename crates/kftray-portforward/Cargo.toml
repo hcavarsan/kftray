@@ -45,6 +45,7 @@ k8s-openapi = { workspace = true }
 kftray-commons = { workspace = true }
 kftray-helper = { workspace = true }
 kftray-http-logs = { workspace = true }
+keyring = { workspace = true }
 kube = { workspace = true }
 kube-runtime = { workspace = true }
 lazy_static = { workspace = true }
@@ -53,18 +54,37 @@ log = { workspace = true }
 once_cell = { workspace = true }
 openssl = { workspace = true }
 openssl-sys = { workspace = true }
+pem = { workspace = true }
 rand = { workspace = true }
+rcgen = { workspace = true }
+rustls = { workspace = true }
+rustls-native-certs = { workspace = true }
 secrecy = { workspace = true }
 serde = { workspace = true }
+sha1 = { workspace = true }
 serde_json = { workspace = true }
 socket2 = { workspace = true }
 thiserror = { workspace = true }
+time = { workspace = true }
 tokio = { workspace = true }
+tokio-rustls = { workspace = true }
 tokio-util = { workspace = true }
 tower = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
 whoami = { workspace = true }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+security-framework = "3.4.0"
+core-foundation = "0.10.0"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+schannel = "0.1"
+windows = { workspace = true }
+
+
+
+
 
 [dev-dependencies]
 http = { workspace = true }

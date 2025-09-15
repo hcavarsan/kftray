@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use anyhow::Result;
 use kftray_commons::{
     models::{
         config_model::Config,
@@ -10,6 +11,7 @@ use kftray_commons::{
     utils::{
         config_state::update_config_state_with_mode,
         db_mode::DatabaseMode,
+        settings::get_app_settings,
         timeout_manager::start_timeout_for_forward,
     },
 };
@@ -23,7 +25,10 @@ use once_cell::sync::Lazy;
 use tokio::sync::Mutex as TokioMutex;
 
 use crate::{
-    hostsfile::add_host_entry,
+    hostsfile::{
+        add_host_entry,
+        add_ssl_host_entry,
+    },
     kube::models::{
         Port,
         PortForward,
@@ -35,6 +40,40 @@ use crate::{
         PROCESS_MANAGEMENT_LOCK,
     },
 };
+
+async fn build_tls_acceptor(
+    _config: &Config, settings: &kftray_commons::models::settings_model::AppSettings,
+) -> Result<tokio_rustls::TlsAcceptor> {
+    crate::ssl::ensure_crypto_provider_installed();
+
+    let cert_manager = crate::ssl::CertificateManager::new(settings)?;
+    let cert_pair = cert_manager.load_global_certificate().await?;
+
+    let server_config = rustls::ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(
+            cert_pair.certificate.clone(),
+            cert_pair.private_key.clone_key(),
+        )
+        .map_err(|e| anyhow::anyhow!("Failed to create server config with certificate: {}", e))?;
+
+    Ok(tokio_rustls::TlsAcceptor::from(Arc::new(server_config)))
+}
+
+async fn update_hosts_with_ssl(config: &Config) -> Result<(), String> {
+    let alias = config
+        .alias
+        .as_ref()
+        .ok_or("Alias required for SSL hosts entry")?;
+
+    let config_id = &config.id.unwrap_or(-1).to_string();
+    let port = config.local_port.unwrap_or(8080);
+
+    add_ssl_host_entry(config_id, alias, port)
+        .map_err(|e| format!("Failed to add HTTPS hosts entries: {}", e))?;
+
+    Ok(())
+}
 
 fn workload_type_description(workload_type: Option<&str>) -> &'static str {
     match workload_type {
@@ -382,22 +421,48 @@ pub async fn start_port_forward_with_mode(
 
         let local_address_clone = Some(final_local_address);
 
+        let should_use_ssl = if let Ok(settings) = get_app_settings().await {
+            settings.ssl_enabled && config.alias.is_some()
+        } else {
+            false
+        };
+
+        let actual_config = config.clone();
+
         let port_forward_result: Result<PortForward, anyhow::Error> = PortForward::new(
             target,
-            config.local_port,
+            actual_config.local_port,
             local_address_clone,
             context_name.clone().flatten(),
             kubeconfig.flatten(),
-            config.id.unwrap_or_default(),
-            config.workload_type.clone().unwrap_or_default(),
+            actual_config.id.unwrap_or_default(),
+            actual_config.workload_type.clone().unwrap_or_default(),
         )
         .await;
 
         match port_forward_result {
             Ok(port_forward) => {
+                let tls_acceptor = if protocol == "tcp" && should_use_ssl {
+                    match get_app_settings().await {
+                        Ok(settings) => match build_tls_acceptor(&actual_config, &settings).await {
+                            Ok(acceptor) => Some(acceptor),
+                            Err(e) => {
+                                warn!("Failed to create TLS acceptor: {}", e);
+                                None
+                            }
+                        },
+                        Err(e) => {
+                            warn!("Failed to get app settings for SSL: {}", e);
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
+
                 let forward_result = match protocol {
                     "udp" => port_forward.clone().port_forward_udp().await,
-                    "tcp" => port_forward.clone().port_forward_tcp().await,
+                    "tcp" => port_forward.clone().port_forward_tcp(tls_acceptor).await,
                     _ => {
                         error!("Unsupported protocol: {protocol}");
                         Err(anyhow::anyhow!("Unsupported protocol: {}", protocol))
@@ -560,6 +625,13 @@ pub async fn start_port_forward_with_mode(
                             error!("Failed to start timeout for config {config_id}: {e}");
                         }
 
+                        if should_use_ssl
+                            && protocol == "tcp"
+                            && let Err(e) = update_hosts_with_ssl(config).await
+                        {
+                            warn!("Failed to update hosts file for SSL: {}", e);
+                        }
+
                         responses.push(CustomResponse {
                             id: config.id,
                             service: config.service.clone().unwrap(),
@@ -569,11 +641,20 @@ pub async fn start_port_forward_with_mode(
                             context: config.context.clone().unwrap_or_default(),
                             protocol: config.protocol.clone(),
                             stdout: format!(
-                                "{} forwarding from 127.0.0.1:{} -> {:?}:{}",
-                                protocol.to_uppercase(),
+                                "{} forwarding from 127.0.0.1:{} -> {:?}:{}{}",
+                                if should_use_ssl && protocol == "tcp" {
+                                    "HTTPS"
+                                } else {
+                                    &protocol.to_uppercase()
+                                },
                                 actual_local_port,
                                 config.remote_port.unwrap_or_default(),
-                                config.service.clone().unwrap()
+                                config.service.clone().unwrap(),
+                                if should_use_ssl && protocol == "tcp" {
+                                    " (HTTP redirects to HTTPS)"
+                                } else {
+                                    ""
+                                }
                             ),
                             stderr: String::new(),
                             status: 0,
@@ -835,7 +916,6 @@ mod tests {
         assert_eq!(config.local_address, Some("192.168.1.1".to_string()));
     }
 
-    // Mock function for testing address allocation
     async fn mock_allocate_local_address_for_config(config: &mut Config) -> String {
         if !config.auto_loopback_address {
             return config
@@ -844,7 +924,6 @@ mod tests {
                 .unwrap_or_else(|| "127.0.0.1".to_string());
         }
 
-        // Mock allocation - return predictable address based on service name
         let service_name = config
             .service
             .clone()
@@ -867,7 +946,6 @@ mod tests {
         assert_ne!(result, "127.0.0.1");
         assert_eq!(config.local_address, Some(result.clone()));
 
-        // Test deterministic behavior
         let mut config2 = setup_test_config();
         config2.auto_loopback_address = true;
         config2.local_address = None;

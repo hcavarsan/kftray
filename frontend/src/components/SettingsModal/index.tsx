@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { Download, RefreshCw, Settings } from 'lucide-react'
+import { Download, RefreshCw, Settings, Shield } from 'lucide-react'
 
 import { Box, Dialog, Flex, Input, Stack, Text } from '@chakra-ui/react'
 import { app } from '@tauri-apps/api'
@@ -15,6 +15,7 @@ interface SettingsModalProps {
   onClose: () => void
 }
 
+// eslint-disable-next-line complexity
 const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
   const [disconnectTimeout, setDisconnectTimeout] = useState<string>('0')
   const [networkMonitor, setNetworkMonitor] = useState<boolean>(true)
@@ -31,6 +32,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
   const [isSaving, setIsSaving] = useState(false)
   const [isCheckingUpdates, setIsCheckingUpdates] = useState(false)
   const [isUpdating, setIsUpdating] = useState(false)
+
+  const [sslEnabled, setSslEnabled] = useState<boolean>(false)
+  const [sslCertValidityDays, setSslCertValidityDays] = useState<string>('365')
 
   useEffect(() => {
     if (isOpen) {
@@ -59,6 +63,22 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
         )
       } else {
         setLastUpdateCheck('Never')
+      }
+
+      try {
+        const sslSettings = await invoke<{
+          ssl_enabled: boolean
+          ssl_cert_validity_days: number
+        }>('get_ssl_settings')
+
+        setSslEnabled(sslSettings.ssl_enabled || false)
+        setSslCertValidityDays(
+          String(sslSettings.ssl_cert_validity_days || 365),
+        )
+      } catch (sslError) {
+        console.error('Error loading SSL settings:', sslError)
+        setSslEnabled(false)
+        setSslCertValidityDays('365')
       }
     } catch (error) {
       console.error('Error loading settings:', error)
@@ -162,11 +182,26 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
     try {
       setIsSaving(true)
       const timeoutValue = parseInt(disconnectTimeout, 10)
+      const certValidityValue = parseInt(sslCertValidityDays, 10)
 
       if (isNaN(timeoutValue) || timeoutValue < 0) {
         toaster.error({
           title: 'Invalid Input',
-          description: 'Please enter a valid number (0 or greater)',
+          description: 'Please enter a valid number (0 or greater) for timeout',
+          duration: 3000,
+        })
+
+        return
+      }
+
+      if (
+        isNaN(certValidityValue) ||
+        certValidityValue < 1 ||
+        certValidityValue > 3650
+      ) {
+        toaster.error({
+          title: 'Invalid Input',
+          description: 'Certificate validity must be between 1 and 3650 days',
           duration: 3000,
         })
 
@@ -177,14 +212,51 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
       await invoke('update_network_monitor', { enabled: networkMonitor })
       await invoke('update_auto_update_enabled', { enabled: autoUpdateEnabled })
 
+      // Get current SSL state to detect if SSL is being enabled
+      const currentSslSettings = await invoke<{
+        ssl_enabled: boolean
+      }>('get_ssl_settings')
+      const wasDisabled = !currentSslSettings.ssl_enabled
+      const willBeEnabled = sslEnabled
+
+      try {
+        await invoke('set_ssl_settings', {
+          sslEnabled,
+          sslCertValidityDays: certValidityValue,
+          sslAutoRegenerate: true,
+          sslCaAutoInstall: true,
+        })
+
+        // Show special notification if SSL was just enabled
+        if (wasDisabled && willBeEnabled) {
+          toaster.success({
+            title: 'SSL/HTTPS Enabled Successfully',
+            description:
+              'SSL certificates have been generated and installed. You may need to restart your browser for SSL connections to work properly.',
+            duration: 8000,
+          })
+        }
+      } catch (sslError) {
+        console.error('Error saving SSL settings:', sslError)
+        toaster.error({
+          title: 'SSL Settings Error',
+          description:
+            'Failed to save SSL settings, but other settings were saved',
+          duration: 4000,
+        })
+      }
+
       // Reload settings to get updated status
       await loadSettings()
 
-      toaster.success({
-        title: 'Settings Saved',
-        description: 'All settings have been saved successfully',
-        duration: 3000,
-      })
+      // Show general success message if not SSL enablement
+      if (!(wasDisabled && willBeEnabled)) {
+        toaster.success({
+          title: 'Settings Saved',
+          description: 'All settings have been saved successfully',
+          duration: 3000,
+        })
+      }
 
       onClose()
     } catch (error) {
@@ -203,9 +275,16 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
     const value = e.target.value
 
     // Only allow numbers
-
     if (value === '' || /^\d+$/.test(value)) {
       setDisconnectTimeout(value)
+    }
+  }
+
+  const handleCertValidityChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value
+
+    if (value === '' || (/^\d+$/.test(value) && parseInt(value, 10) <= 3650)) {
+      setSslCertValidityDays(value)
     }
   }
 
@@ -252,8 +331,27 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
           </Flex>
         </Box>
 
-        {/* Content */}
-        <Box px={2} py={2} maxHeight='calc(85vh - 100px)'>
+        <Box
+          px={2}
+          py={2}
+          maxHeight='calc(85vh - 140px)'
+          overflowY='auto'
+          css={{
+            '&::-webkit-scrollbar': {
+              width: '6px',
+            },
+            '&::-webkit-scrollbar-track': {
+              background: 'transparent',
+            },
+            '&::-webkit-scrollbar-thumb': {
+              background: 'rgba(255, 255, 255, 0.2)',
+              borderRadius: '3px',
+            },
+            '&::-webkit-scrollbar-thumb:hover': {
+              background: 'rgba(255, 255, 255, 0.3)',
+            },
+          }}
+        >
           <Stack gap={2.5}>
             {/* Two Column Grid Layout */}
             <Box display='grid' gridTemplateColumns='1fr 1fr' gap={2.5}>
@@ -345,6 +443,105 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
                     onCheckedChange={e => setNetworkMonitor(e.checked === true)}
                     disabled={isLoading}
                     size='sm'
+                  />
+                </Flex>
+              </Box>
+
+              {/* Left Column - SSL Configuration */}
+              <Box
+                bg='#161616'
+                p={2}
+                borderRadius='md'
+                border='1px solid rgba(255, 255, 255, 0.08)'
+                display='flex'
+                flexDirection='column'
+                height='100%'
+              >
+                <Flex align='center' gap={1.5} mb={1}>
+                  <Box
+                    as={Shield}
+                    width='10px'
+                    height='10px'
+                    color='blue.400'
+                  />
+                  <Text fontSize='sm' fontWeight='500' color='white'>
+                    SSL/HTTPS
+                  </Text>
+                  <Box
+                    width='5px'
+                    height='5px'
+                    borderRadius='full'
+                    bg={sslEnabled ? 'green.400' : 'gray.500'}
+                    title={sslEnabled ? 'Enabled' : 'Disabled'}
+                  />
+                </Flex>
+                <Text
+                  fontSize='xs'
+                  color='whiteAlpha.600'
+                  lineHeight='1.3'
+                  mb={2}
+                  flex='1'
+                >
+                  Enable HTTPS for port forwards with domain aliases. Creates
+                  SSL certificates automatically.
+                </Text>
+                <Flex align='center' justify='flex-end' gap={2}>
+                  <Text fontSize='xs' color='whiteAlpha.500'>
+                    Enabled:
+                  </Text>
+                  <Checkbox
+                    checked={sslEnabled}
+                    onCheckedChange={e => setSslEnabled(e.checked === true)}
+                    disabled={isLoading}
+                    size='sm'
+                  />
+                </Flex>
+              </Box>
+
+              {/* Right Column - SSL Certificate Settings */}
+              <Box
+                bg='#161616'
+                p={2}
+                borderRadius='md'
+                border='1px solid rgba(255, 255, 255, 0.08)'
+                display='flex'
+                flexDirection='column'
+                height='100%'
+                opacity={sslEnabled ? 1 : 0.5}
+              >
+                <Text fontSize='sm' fontWeight='500' color='white' mb={1}>
+                  Certificate Validity
+                </Text>
+                <Text
+                  fontSize='xs'
+                  color='whiteAlpha.600'
+                  lineHeight='1.3'
+                  mb={2}
+                  flex='1'
+                >
+                  Configure SSL certificate validity period. Certificates will
+                  auto-regenerate and CA will be auto-installed.
+                </Text>
+                <Flex align='center' justify='flex-end' gap={2}>
+                  <Text fontSize='xs' color='whiteAlpha.500'>
+                    Validity (days):
+                  </Text>
+                  <Input
+                    value={sslCertValidityDays}
+                    onChange={handleCertValidityChange}
+                    placeholder='365'
+                    size='xs'
+                    width='55px'
+                    height='22px'
+                    bg='#111111'
+                    border='1px solid rgba(255, 255, 255, 0.08)'
+                    _hover={{ borderColor: 'rgba(255, 255, 255, 0.15)' }}
+                    _focus={{ borderColor: 'blue.400', boxShadow: 'none' }}
+                    color='white'
+                    _placeholder={{ color: 'whiteAlpha.500' }}
+                    disabled={isLoading || !sslEnabled}
+                    textAlign='center'
+                    fontSize='xs'
                   />
                 </Flex>
               </Box>

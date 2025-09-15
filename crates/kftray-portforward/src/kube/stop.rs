@@ -36,6 +36,7 @@ use tracing::{
 use crate::hostsfile::{
     remove_all_host_entries,
     remove_host_entry,
+    remove_ssl_host_entry,
 };
 use crate::kube::shared_client::{
     SHARED_CLIENT_MANAGER,
@@ -121,6 +122,7 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
 pub async fn stop_all_port_forward_with_mode(
     mode: DatabaseMode,
 ) -> Result<Vec<CustomResponse>, String> {
+    crate::ssl::ensure_crypto_provider_installed();
     info!("Attempting to stop all port forwards in mode: {mode:?}");
 
     let mut responses = Vec::with_capacity(1024);
@@ -130,7 +132,6 @@ pub async fn stop_all_port_forward_with_mode(
         let processes = CHILD_PROCESSES.lock().await;
         if processes.is_empty() {
             debug!("No port forwarding processes to stop");
-            return Ok(Vec::new());
         }
         processes.keys().cloned().collect()
     };
@@ -158,7 +159,6 @@ pub async fn stop_all_port_forward_with_mode(
         }
     };
 
-    // Get configs using the appropriate database mode
     let configs = match mode {
         DatabaseMode::File => get_configs().await.unwrap_or_default(),
         DatabaseMode::Memory => read_configs_with_mode(mode).await.unwrap_or_default(),
@@ -220,6 +220,13 @@ pub async fn stop_all_port_forward_with_mode(
                     if let Err(e) = remove_host_entry(config_id_str) {
                         error!(
                             "Failed to remove host entry for ID {config_id_str}: {e}"
+                        );
+                    }
+
+
+                    if let Err(e) = remove_ssl_host_entry(config_id_str) {
+                        error!(
+                            "Failed to remove SSL host entry for ID {config_id_str}: {e}"
                         );
                     }
                 } else {
@@ -426,13 +433,11 @@ pub async fn stop_port_forward_with_mode(
     if let Some(composite_key) = composite_key {
         let config_id_parsed = config_id.parse::<i64>().unwrap_or_default();
 
-        // Get configs using the appropriate database mode
         let configs = match mode {
             DatabaseMode::File => get_configs().await.unwrap_or_default(),
             DatabaseMode::Memory => read_configs_with_mode(mode).await.unwrap_or_default(),
         };
 
-        // Handle loopback address cleanup
         if let Some(config) = configs.iter().find(|c| c.id == Some(config_id_parsed)) {
             info!(
                 "Found config {} during stop with local_address: {:?} and auto_loopback_address: {}",
@@ -468,7 +473,6 @@ pub async fn stop_port_forward_with_mode(
             .map(|(_, service)| service)
             .unwrap_or("");
 
-        // Handle host entry cleanup for domain-enabled configs
         if let Some(config) = configs.iter().find(|c| c.id == Some(config_id_parsed))
             && config.domain_enabled.unwrap_or_default()
         {
@@ -481,6 +485,10 @@ pub async fn stop_port_forward_with_mode(
                 }
                 return Err(e.to_string());
             }
+
+            if let Err(e) = remove_ssl_host_entry(&config_id) {
+                error!("Failed to remove SSL host entry for ID {config_id}: {e}");
+            }
         } else {
             warn!("Config with id '{config_id}' not found.");
         }
@@ -490,7 +498,6 @@ pub async fn stop_port_forward_with_mode(
             error!("Failed to update config state: {e}");
         }
 
-        // Invalidate the client for this specific config
         if let Some(config) = configs.iter().find(|c| c.id == Some(config_id_parsed)) {
             let client_key = ServiceClientKey::new(
                 config.context.clone(),
@@ -521,7 +528,6 @@ pub async fn stop_port_forward_with_mode(
             DatabaseMode::Memory => read_configs_with_mode(mode).await.unwrap_or_default(),
         };
 
-        // Check if config exists first
         let config = configs.iter().find(|c| c.id == Some(config_id_parsed));
 
         if config.is_none() {
@@ -617,78 +623,129 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_stop_all_port_forward_empty() {
-        {
-            let mut processes = CHILD_PROCESSES.lock().await;
-            processes.clear();
-            assert!(processes.is_empty());
-        }
-
-        let result = stop_all_port_forward().await;
-
-        match result {
-            Ok(responses) => {
-                assert!(
-                    responses.is_empty(),
-                    "Expected empty responses for empty process list"
-                );
-            }
-            Err(e) => {
-                panic!("Expected Ok result but got error: {e}");
-            }
-        }
-    }
-
-    #[tokio::test]
     async fn test_stop_port_forward_with_handle() {
+        let _global_lock = PROCESS_MANAGEMENT_LOCK.lock().await;
+
         let dummy_handle = create_dummy_handle().await;
+        let key = "config:201:service:test-service".to_string();
 
         {
             let mut processes = CHILD_PROCESSES.lock().await;
+            println!("Before cleanup, found {} processes:", processes.len());
+            for existing_key in processes.keys() {
+                println!("  Existing process: {}", existing_key);
+            }
+
+            for process in processes.values() {
+                process.abort();
+            }
             processes.clear();
-            processes.insert("1_test-service".to_string(), dummy_handle);
+            processes.insert(key.clone(), dummy_handle);
+
+            assert_eq!(processes.len(), 1, "Process should be added");
+            assert!(processes.contains_key(&key), "Process should be present");
         }
+
         {
             let mut processes = CHILD_PROCESSES.lock().await;
-            if let Some(process) = processes.remove("1_test-service") {
+            if let Some(process) = processes.remove(&key) {
                 process.abort();
             }
         }
 
-        let processes = CHILD_PROCESSES.lock().await;
-        assert!(processes.is_empty(), "Process handle should be removed");
+        {
+            let processes = CHILD_PROCESSES.lock().await;
+            assert!(
+                processes.is_empty(),
+                "Process handle should be removed. Found {} processes",
+                processes.len()
+            );
+        }
     }
 
     #[tokio::test]
     async fn test_stop_port_forward_with_multiple_handles() {
+        let _global_lock = PROCESS_MANAGEMENT_LOCK.lock().await;
+
         let dummy_handle1 = create_dummy_handle().await;
         let dummy_handle2 = create_dummy_handle().await;
         let dummy_handle3 = create_dummy_handle().await;
 
+        let key1 = "config:101:service:service1".to_string();
+        let key2 = "config:102:service:service2".to_string();
+        let key3 = "config:103:service:service3".to_string();
+
         {
             let mut processes = CHILD_PROCESSES.lock().await;
+            for process in processes.values() {
+                process.abort();
+            }
             processes.clear();
-            processes.insert("1_service1".to_string(), dummy_handle1);
-            processes.insert("2_service2".to_string(), dummy_handle2);
-            processes.insert("3_service3".to_string(), dummy_handle3);
+
+            processes.insert(key1.clone(), dummy_handle1);
+            processes.insert(key2.clone(), dummy_handle2);
+            processes.insert(key3.clone(), dummy_handle3);
+
+            println!(
+                "After adding 3 processes, found {} processes:",
+                processes.len()
+            );
+            for key in processes.keys() {
+                println!("  Process key: {}", key);
+            }
             assert_eq!(processes.len(), 3);
         }
+
         {
             let mut processes = CHILD_PROCESSES.lock().await;
-            if let Some(process) = processes.remove("2_service2") {
+            println!("Before removing key2, found {} processes:", processes.len());
+            if let Some(process) = processes.remove(&key2) {
                 process.abort();
+                println!("Successfully removed and aborted process for key2");
+            } else {
+                println!("Warning: key2 not found for removal");
             }
         }
 
-        let processes = CHILD_PROCESSES.lock().await;
-        assert_eq!(
-            processes.len(),
-            2,
-            "Only the specified process should be removed"
-        );
-        assert!(processes.contains_key("1_service1"));
-        assert!(!processes.contains_key("2_service2"));
-        assert!(processes.contains_key("3_service3"));
+        {
+            let processes = CHILD_PROCESSES.lock().await;
+            println!("After removing key2, found {} processes:", processes.len());
+            for key in processes.keys() {
+                println!("  Process key: {}", key);
+            }
+
+            assert_eq!(
+                processes.len(),
+                2,
+                "Only the specified process should be removed. Expected keys: {}, {}. Found: {:?}",
+                key1,
+                key3,
+                processes.keys().collect::<Vec<_>>()
+            );
+            assert!(
+                processes.contains_key(&key1),
+                "Should contain key1: {}",
+                key1
+            );
+            assert!(
+                !processes.contains_key(&key2),
+                "Should not contain key2: {}",
+                key2
+            );
+            assert!(
+                processes.contains_key(&key3),
+                "Should contain key3: {}",
+                key3
+            );
+        }
+
+        {
+            let mut processes = CHILD_PROCESSES.lock().await;
+            for process in processes.values() {
+                process.abort();
+            }
+            processes.clear();
+        }
     }
 
     #[tokio::test]

@@ -1,4 +1,5 @@
 use std::net::IpAddr;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use std::process::Command;
 use std::str::FromStr;
 
@@ -351,7 +352,6 @@ fn configure_loopback_macos(addr: &str) -> Result<()> {
                 || stderr.contains("(-128)")
                 || output.status.code() == Some(1)
             {
-                // Common exit code for user cancellation
                 Err(anyhow!("User cancelled loopback address configuration"))
             } else {
                 Err(anyhow!("Failed to configure loopback address: {}", stderr))
@@ -396,7 +396,7 @@ fn configure_loopback_linux(addr: &str) -> Result<()> {
 }
 
 #[cfg(target_os = "windows")]
-fn configure_loopback_windows(addr: &str) -> Result<()> {
+fn configure_loopback_windows(_addr: &str) -> Result<()> {
     Ok(())
 }
 
@@ -426,13 +426,13 @@ mod tests {
 
     #[test]
     fn test_is_custom_loopback_address() {
-        assert!(!is_custom_loopback_address("127.0.0.1")); // Default loopback
-        assert!(is_custom_loopback_address("127.0.0.2")); // Custom loopback
-        assert!(is_custom_loopback_address("127.0.0.5")); // Custom loopback
-        assert!(is_custom_loopback_address("127.255.255.255")); // Custom loopback
-        assert!(!is_custom_loopback_address("192.168.1.1")); // Not loopback
-        assert!(!is_custom_loopback_address("10.0.0.1")); // Not loopback
-        assert!(!is_custom_loopback_address("invalid-ip")); // Invalid IP
+        assert!(!is_custom_loopback_address("127.0.0.1"));
+        assert!(is_custom_loopback_address("127.0.0.2"));
+        assert!(is_custom_loopback_address("127.0.0.5"));
+        assert!(is_custom_loopback_address("127.255.255.255"));
+        assert!(!is_custom_loopback_address("192.168.1.1"));
+        assert!(!is_custom_loopback_address("10.0.0.1"));
+        assert!(!is_custom_loopback_address("invalid-ip"));
     }
 
     #[tokio::test]

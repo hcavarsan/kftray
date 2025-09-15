@@ -62,7 +62,6 @@ impl HostfileManager {
     }
 
     pub fn remove_all_host_entries(&self) -> std::io::Result<()> {
-        // Try helper first
         if let Some(helper) = &self.helper_client
             && helper.is_available()
         {
@@ -97,6 +96,65 @@ pub fn remove_host_entry(id: &str) -> std::io::Result<()> {
 
 pub fn remove_all_host_entries() -> std::io::Result<()> {
     HOSTFILE_MANAGER.remove_all_host_entries()
+}
+
+pub fn add_ssl_host_entry(config_id: &str, alias: &str, _https_port: u16) -> std::io::Result<()> {
+    let https_entry = HostEntry {
+        ip: "127.0.0.1".parse().unwrap(),
+        hostname: alias.to_string(),
+    };
+    add_host_entry(format!("{}-https", config_id), https_entry)?;
+
+    let local_entry = HostEntry {
+        ip: "127.0.0.1".parse().unwrap(),
+        hostname: format!("{}.local", alias),
+    };
+    add_host_entry(format!("{}-https-local", config_id), local_entry)?;
+
+    Ok(())
+}
+
+pub fn remove_ssl_host_entry(config_id: &str) -> std::io::Result<()> {
+    let _ = remove_host_entry(&format!("{}-https", config_id));
+
+    let _ = remove_host_entry(&format!("{}-https-local", config_id));
+
+    Ok(())
+}
+
+pub fn update_hosts_with_ssl_from_config(
+    config: &kftray_commons::models::config_model::Config,
+) -> Result<(), String> {
+    let alias = config
+        .alias
+        .as_ref()
+        .ok_or("Alias required for SSL hosts entry")?;
+
+    let config_id = config.id.unwrap_or(-1).to_string();
+    let port = config.local_port.unwrap_or(8080);
+
+    add_ssl_host_entry(&config_id, alias, port)
+        .map_err(|e| format!("Failed to add HTTPS hosts entry: {}", e))?;
+
+    log::info!(
+        "Added HTTPS hosts entries: {} and {}.local -> 127.0.0.1:{}",
+        alias,
+        alias,
+        port
+    );
+    Ok(())
+}
+
+pub fn remove_ssl_host_entry_from_config(
+    config: &kftray_commons::models::config_model::Config,
+) -> Result<(), String> {
+    let config_id = config.id.unwrap_or(-1).to_string();
+
+    remove_ssl_host_entry(&config_id)
+        .map_err(|e| format!("Failed to remove HTTPS hosts entry: {}", e))?;
+
+    log::info!("Removed HTTPS hosts entry for config: {}", config_id);
+    Ok(())
 }
 
 #[cfg(test)]
