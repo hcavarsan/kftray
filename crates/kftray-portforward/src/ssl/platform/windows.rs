@@ -59,7 +59,7 @@ pub async fn install_ca_certificate(ca_cert_der: &[u8]) -> Result<()> {
         let result = CertAddCertificateContextToStore(
             Some(cert_store),
             cert_context,
-            CERT_STORE_ADD_REPLACE_EXISTING.0,
+            CERT_STORE_ADD_REPLACE_EXISTING,
             None,
         );
 

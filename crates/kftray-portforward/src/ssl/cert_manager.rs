@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use anyhow::{
     Context,
     Result,
@@ -200,8 +202,18 @@ impl CertificateManager {
             cleanup_errors.push(format!("system CA certificate: {}", e));
         }
 
-        if let Some(config_dir) = dirs::config_dir() {
-            let ssl_certs_dir = config_dir.join("kftray").join("ssl-certs");
+        let base_dir = if let Ok(config_dir) = std::env::var("KFTRAY_CONFIG") {
+            PathBuf::from(config_dir)
+        } else if let Some(config_dir) = dirs::config_dir() {
+            config_dir.join("kftray")
+        } else {
+            warn!("No config directory found for SSL cleanup");
+            cleanup_errors.push("No config directory found".to_string());
+            PathBuf::new()
+        };
+
+        if !base_dir.as_os_str().is_empty() {
+            let ssl_certs_dir = base_dir.join("ssl-certs");
             if ssl_certs_dir.exists() {
                 match tokio::fs::remove_dir_all(&ssl_certs_dir).await {
                     Ok(_) => info!("Removed SSL certificates directory: {:?}", ssl_certs_dir),
@@ -212,7 +224,7 @@ impl CertificateManager {
                 }
             }
 
-            let ssl_ca_dir = config_dir.join("kftray").join("ssl-ca");
+            let ssl_ca_dir = base_dir.join("ssl-ca");
             if ssl_ca_dir.exists() {
                 match tokio::fs::remove_dir_all(&ssl_ca_dir).await {
                     Ok(_) => info!("Removed SSL CA directory: {:?}", ssl_ca_dir),
@@ -262,11 +274,17 @@ impl CertificateManager {
             return Ok(());
         }
 
-        let ca_cert_path = dirs::config_dir()
-            .context("No config directory found")?
-            .join("kftray")
-            .join("ssl-ca")
-            .join("kftray-ca.crt");
+        let ca_cert_path = if let Ok(config_dir) = std::env::var("KFTRAY_CONFIG") {
+            PathBuf::from(config_dir)
+                .join("ssl-ca")
+                .join("kftray-ca.crt")
+        } else {
+            dirs::config_dir()
+                .context("No config directory found")?
+                .join("kftray")
+                .join("ssl-ca")
+                .join("kftray-ca.crt")
+        };
 
         if !ca_cert_path.exists() {
             info!("No CA certificate file found, skipping system trust store removal");
@@ -367,8 +385,14 @@ impl CertificateManager {
         let exists = self.store.exists(alias).await;
 
         if !exists {
+            let expected_domain = if alias.contains('.') {
+                alias.to_string()
+            } else {
+                format!("{}.local", alias)
+            };
+
             return Ok(CertificateInfo {
-                domain: alias.to_string(),
+                domain: expected_domain,
                 expires_at: None,
                 is_valid: false,
                 file_path: None,
@@ -378,7 +402,12 @@ impl CertificateManager {
         let domain = if let Ok(cert_pair) = self.store.load(alias).await {
             cert_pair.domain
         } else {
-            alias.to_string()
+            // Fallback to expected domain format
+            if alias.contains('.') {
+                alias.to_string()
+            } else {
+                format!("{}.local", alias)
+            }
         };
 
         Ok(CertificateInfo {
@@ -390,10 +419,14 @@ impl CertificateManager {
     }
 
     pub async fn list_all_certificates(&self) -> Result<Vec<CertificateInfo>> {
-        let store_path = dirs::config_dir()
-            .context("No config directory found")?
-            .join("kftray")
-            .join("ssl-certs");
+        let store_path = if let Ok(config_dir) = std::env::var("KFTRAY_CONFIG") {
+            PathBuf::from(config_dir).join("ssl-certs")
+        } else {
+            dirs::config_dir()
+                .context("No config directory found")?
+                .join("kftray")
+                .join("ssl-certs")
+        };
 
         if !store_path.exists() {
             return Ok(Vec::new());
@@ -459,11 +492,17 @@ impl CertificateManager {
         if let Ok(Some(_ca_info)) = self.generator.get_ca_info().await {
             info!("CA certificate file exists, verifying system installation status");
 
-            let ca_cert_path = dirs::config_dir()
-                .context("No config directory found")?
-                .join("kftray")
-                .join("ssl-ca")
-                .join("kftray-ca.crt");
+            let ca_cert_path = if let Ok(config_dir) = std::env::var("KFTRAY_CONFIG") {
+                PathBuf::from(config_dir)
+                    .join("ssl-ca")
+                    .join("kftray-ca.crt")
+            } else {
+                dirs::config_dir()
+                    .context("No config directory found")?
+                    .join("kftray")
+                    .join("ssl-ca")
+                    .join("kftray-ca.crt")
+            };
 
             if ca_cert_path.exists()
                 && let Ok(ca_pem) = tokio::fs::read_to_string(&ca_cert_path).await
@@ -518,11 +557,17 @@ impl CertificateManager {
                 .await?;
             let _ = self.store.remove("_ca_install_temp").await;
 
-            let ca_cert_path = dirs::config_dir()
-                .context("No config directory found")?
-                .join("kftray")
-                .join("ssl-ca")
-                .join("kftray-ca.crt");
+            let ca_cert_path = if let Ok(config_dir) = std::env::var("KFTRAY_CONFIG") {
+                PathBuf::from(config_dir)
+                    .join("ssl-ca")
+                    .join("kftray-ca.crt")
+            } else {
+                dirs::config_dir()
+                    .context("No config directory found")?
+                    .join("kftray")
+                    .join("ssl-ca")
+                    .join("kftray-ca.crt")
+            };
 
             if let Ok(ca_pem) = tokio::fs::read_to_string(&ca_cert_path).await {
                 if let Ok(ca_der_vec) = pem::parse(&ca_pem) {
@@ -729,11 +774,15 @@ mod tests {
     async fn create_test_manager() -> (CertificateManager, TempDir) {
         unsafe {
             std::env::set_var("KFTRAY_SKIP_CA_INSTALL", "1");
+            std::env::set_var("KFTRAY_TEST_MODE", "1");
         }
 
         let temp_dir = TempDir::new().unwrap();
 
-        let settings = kftray_commons::models::settings_model::AppSettings::default();
+        let settings = kftray_commons::models::settings_model::AppSettings {
+            ssl_enabled: true,
+            ..Default::default()
+        };
         let generator = CertificateGenerator::for_testing(temp_dir.path());
         let store = super::CertificateStore::with_path(temp_dir.path().to_path_buf()).unwrap();
 
@@ -781,6 +830,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_certificate_existence() {
+        use crate::ssl::cert_store::TEST_SSL_VAULT;
+        *TEST_SSL_VAULT.lock().unwrap() = Default::default();
+
         let (manager, _temp_dir) = create_test_manager().await;
 
         assert!(!manager.certificate_exists("test-service").await);
@@ -792,6 +844,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_remove_certificate() {
+        use crate::ssl::cert_store::TEST_SSL_VAULT;
+        *TEST_SSL_VAULT.lock().unwrap() = Default::default();
+
         let (manager, _temp_dir) = create_test_manager().await;
 
         manager.ensure_certificate("test-service").await.unwrap();
@@ -836,6 +891,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_load_global_certificate() {
+        use crate::ssl::cert_store::TEST_SSL_VAULT;
+        *TEST_SSL_VAULT.lock().unwrap() = Default::default();
+
         let (_manager, _temp_dir) = create_test_manager().await;
         let manager = &_manager;
 
@@ -873,6 +931,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_ensure_global_certificate_for_all_configs() {
+        use crate::ssl::cert_store::TEST_SSL_VAULT;
+        *TEST_SSL_VAULT.lock().unwrap() = Default::default();
+
         let (_manager, _temp_dir) = create_test_manager().await;
         let manager = &_manager;
 

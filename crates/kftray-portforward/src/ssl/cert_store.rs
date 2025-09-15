@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 use anyhow::{
     Context,
@@ -8,6 +9,7 @@ use anyhow::{
 };
 use base64::Engine;
 use keyring::Entry;
+use lazy_static::lazy_static;
 use log::{
     debug,
     info,
@@ -29,10 +31,14 @@ use super::cert_generator::CertificatePair;
 const KFTRAY_SERVICE: &str = "kftray-ssl";
 const KFTRAY_SSL_VAULT: &str = "ssl-keys-vault";
 
-#[derive(Serialize, Deserialize, Default)]
-struct SslKeyVault {
-    ca_private_key: Option<String>,
-    certificate_keys: HashMap<String, String>,
+lazy_static! {
+    pub static ref TEST_SSL_VAULT: Mutex<SslKeyVault> = Mutex::new(SslKeyVault::default());
+}
+
+#[derive(Serialize, Deserialize, Default, Clone)]
+pub struct SslKeyVault {
+    pub ca_private_key: Option<String>,
+    pub certificate_keys: HashMap<String, String>,
 }
 
 pub struct CertificateStore {
@@ -41,10 +47,14 @@ pub struct CertificateStore {
 
 impl CertificateStore {
     pub fn new() -> Result<Self> {
-        let store_path = dirs::config_dir()
-            .context("No config directory found")?
-            .join("kftray")
-            .join("ssl-certs");
+        let store_path = if let Ok(config_dir) = std::env::var("KFTRAY_CONFIG") {
+            PathBuf::from(config_dir).join("ssl-certs")
+        } else {
+            dirs::config_dir()
+                .context("No config directory found")?
+                .join("kftray")
+                .join("ssl-certs")
+        };
 
         fs::create_dir_all(&store_path).context("Failed to create SSL certificate directory")?;
 
@@ -68,7 +78,7 @@ impl CertificateStore {
         let cert_pem = self.certificate_to_pem(&cert_pair.certificate)?;
         let key_pem = self.private_key_to_pem(&cert_pair.private_key)?;
 
-        async_fs::write(cert_file, cert_pem)
+        async_fs::write(&cert_file, &cert_pem)
             .await
             .context("Failed to write certificate file")?;
 
@@ -82,9 +92,18 @@ impl CertificateStore {
             "subject_alt_names": cert_pair.subject_alt_names,
         });
 
-        async_fs::write(metadata_file, serde_json::to_string_pretty(&metadata)?)
+        async_fs::write(&metadata_file, serde_json::to_string_pretty(&metadata)?)
             .await
             .context("Failed to write certificate metadata")?;
+
+        #[cfg(test)]
+        {
+            debug!("Test mode: cert file exists: {}", cert_file.exists());
+            debug!(
+                "Test mode: private key stored: {}",
+                self.private_key_exists_in_keychain(alias).await
+            );
+        }
 
         info!(
             "Successfully stored certificate and private key securely for alias: {}",
@@ -295,6 +314,20 @@ impl CertificateStore {
         vault
             .certificate_keys
             .insert(alias.to_string(), private_key_pem.to_string());
+
+        #[cfg(test)]
+        {
+            debug!(
+                "Test mode: vault now has {} keys",
+                vault.certificate_keys.len()
+            );
+            debug!(
+                "Test mode: vault contains key for alias {}: {}",
+                alias,
+                vault.certificate_keys.contains_key(alias)
+            );
+        }
+
         self.save_ssl_vault(&vault).await
     }
 
@@ -315,8 +348,25 @@ impl CertificateStore {
 
     async fn private_key_exists_in_keychain(&self, alias: &str) -> bool {
         if let Ok(Some(vault)) = self.load_ssl_vault().await {
-            vault.certificate_keys.contains_key(alias)
+            let exists = vault.certificate_keys.contains_key(alias);
+            #[cfg(test)]
+            {
+                debug!(
+                    "Test mode: checking key for alias {}: exists = {}, vault has {} keys",
+                    alias,
+                    exists,
+                    vault.certificate_keys.len()
+                );
+            }
+            exists
         } else {
+            #[cfg(test)]
+            {
+                debug!(
+                    "Test mode: no vault found when checking key for alias {}",
+                    alias
+                );
+            }
             false
         }
     }
@@ -361,7 +411,20 @@ impl CertificateStore {
 
     async fn load_ssl_vault(&self) -> Result<Option<SslKeyVault>> {
         if std::env::var("KFTRAY_TEST_MODE").is_ok() {
-            return Ok(None);
+            let vault = TEST_SSL_VAULT.lock().unwrap().clone();
+            #[cfg(test)]
+            {
+                debug!(
+                    "Test mode: loading vault with {} keys, {} CA key",
+                    vault.certificate_keys.len(),
+                    if vault.ca_private_key.is_some() {
+                        "has"
+                    } else {
+                        "no"
+                    }
+                );
+            }
+            return Ok(Some(vault));
         }
 
         let entry = Entry::new(KFTRAY_SERVICE, KFTRAY_SSL_VAULT)
@@ -379,6 +442,7 @@ impl CertificateStore {
 
     async fn save_ssl_vault(&self, vault: &SslKeyVault) -> Result<()> {
         if std::env::var("KFTRAY_TEST_MODE").is_ok() {
+            *TEST_SSL_VAULT.lock().unwrap() = vault.clone();
             return Ok(());
         }
 
@@ -398,7 +462,8 @@ impl CertificateStore {
         info!("Cleaning up SSL vault from keychain");
 
         if std::env::var("KFTRAY_TEST_MODE").is_ok() {
-            info!("Test mode enabled, skipping keychain cleanup operations");
+            info!("Test mode enabled, clearing test vault");
+            *TEST_SSL_VAULT.lock().unwrap() = SslKeyVault::default();
             return Ok(());
         }
 
@@ -422,15 +487,19 @@ mod tests {
     use crate::ssl::cert_generator::CertificateGenerator;
 
     async fn create_test_store() -> (CertificateStore, TempDir) {
+        unsafe {
+            std::env::set_var("KFTRAY_TEST_MODE", "1");
+        }
+
         let temp_dir = TempDir::new().unwrap();
-        let store = CertificateStore {
-            store_path: temp_dir.path().to_path_buf(),
-        };
+        let store = CertificateStore::with_path(temp_dir.path().to_path_buf()).unwrap();
         (store, temp_dir)
     }
 
     #[tokio::test]
     async fn test_store_and_load_certificate() {
+        *TEST_SSL_VAULT.lock().unwrap() = Default::default();
+
         unsafe {
             std::env::set_var("KFTRAY_SKIP_CA_INSTALL", "1");
             std::env::set_var("KFTRAY_TEST_MODE", "1");
@@ -440,6 +509,15 @@ mod tests {
         let cert_pair = generator.generate_for_alias("test-service").await.unwrap();
 
         store.store("test-service", &cert_pair).await.unwrap();
+
+        let cert_file = store.store_path.join("test-service.crt");
+        let key_exists = store.private_key_exists_in_keychain("test-service").await;
+        println!(
+            "Debug - cert_file.exists(): {}, key_exists: {}",
+            cert_file.exists(),
+            key_exists
+        );
+
         assert!(store.exists("test-service").await);
 
         let loaded_cert = store.load("test-service").await.unwrap();
@@ -449,12 +527,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_certificate_not_exists() {
+        *TEST_SSL_VAULT.lock().unwrap() = Default::default();
+
         let (store, _temp_dir) = create_test_store().await;
         assert!(!store.exists("non-existent").await);
     }
 
     #[tokio::test]
     async fn test_remove_certificate() {
+        *TEST_SSL_VAULT.lock().unwrap() = Default::default();
+
         unsafe {
             std::env::set_var("KFTRAY_SKIP_CA_INSTALL", "1");
             std::env::set_var("KFTRAY_TEST_MODE", "1");

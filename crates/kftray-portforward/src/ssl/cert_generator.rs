@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use std::collections::HashSet;
 use std::path::PathBuf;
 
@@ -26,24 +25,19 @@ use rustls::pki_types::{
     PrivateKeyDer,
     PrivatePkcs8KeyDer,
 };
-use serde::{
-    Deserialize,
-    Serialize,
-};
 use time::{
     Duration,
     OffsetDateTime,
 };
 use tokio::fs;
 
+use super::cert_store::{
+    SslKeyVault,
+    TEST_SSL_VAULT,
+};
+
 const KFTRAY_SERVICE: &str = "kftray-ssl";
 const KFTRAY_SSL_VAULT: &str = "ssl-keys-vault";
-
-#[derive(Serialize, Deserialize, Default)]
-struct SslKeyVault {
-    ca_private_key: Option<String>,
-    certificate_keys: HashMap<String, String>,
-}
 
 #[derive(Debug)]
 pub struct CertificatePair {
@@ -60,10 +54,14 @@ pub struct CertificateGenerator {
 
 impl CertificateGenerator {
     pub fn new() -> Result<Self> {
-        let cert_dir = dirs::config_dir()
-            .context("No config directory found")?
-            .join("kftray")
-            .join("ssl-ca");
+        let cert_dir = if let Ok(config_dir) = std::env::var("KFTRAY_CONFIG") {
+            PathBuf::from(config_dir).join("ssl-ca")
+        } else {
+            dirs::config_dir()
+                .context("No config directory found")?
+                .join("kftray")
+                .join("ssl-ca")
+        };
 
         let ca_cert_path = cert_dir.join("kftray-ca.crt");
 
@@ -518,7 +516,8 @@ impl CertificateGenerator {
 
     async fn load_ssl_vault(&self) -> Result<Option<SslKeyVault>> {
         if std::env::var("KFTRAY_TEST_MODE").is_ok() {
-            return Ok(None);
+            let vault = TEST_SSL_VAULT.lock().unwrap().clone();
+            return Ok(Some(vault));
         }
 
         let entry = Entry::new(KFTRAY_SERVICE, KFTRAY_SSL_VAULT)
@@ -536,6 +535,7 @@ impl CertificateGenerator {
 
     async fn save_ssl_vault(&self, vault: &SslKeyVault) -> Result<()> {
         if std::env::var("KFTRAY_TEST_MODE").is_ok() {
+            *TEST_SSL_VAULT.lock().unwrap() = vault.clone();
             return Ok(());
         }
 

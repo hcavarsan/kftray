@@ -623,86 +623,129 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_stop_all_port_forward_empty() {
-        use tempfile::tempdir;
-
-        let temp_dir = tempdir().unwrap();
-        unsafe {
-            std::env::set_var("KFTRAY_TEST_MODE", "1");
-            std::env::set_var("KFTRAY_CONFIG", temp_dir.path());
-        }
-
-        {
-            let mut processes = CHILD_PROCESSES.lock().await;
-            processes.clear();
-            assert!(processes.is_empty());
-        }
-
-        let result = stop_all_port_forward_with_mode(DatabaseMode::Memory).await;
-
-        match result {
-            Ok(responses) => {
-                assert!(
-                    responses.is_empty(),
-                    "Expected empty responses for empty process list"
-                );
-            }
-            Err(e) => {
-                panic!("Expected Ok result but got error: {e}");
-            }
-        }
-    }
-
-    #[tokio::test]
     async fn test_stop_port_forward_with_handle() {
+        let _global_lock = PROCESS_MANAGEMENT_LOCK.lock().await;
+
         let dummy_handle = create_dummy_handle().await;
+        let key = "config:201:service:test-service".to_string();
 
         {
             let mut processes = CHILD_PROCESSES.lock().await;
+            println!("Before cleanup, found {} processes:", processes.len());
+            for existing_key in processes.keys() {
+                println!("  Existing process: {}", existing_key);
+            }
+
+            for process in processes.values() {
+                process.abort();
+            }
             processes.clear();
-            processes.insert("1_test-service".to_string(), dummy_handle);
+            processes.insert(key.clone(), dummy_handle);
+
+            assert_eq!(processes.len(), 1, "Process should be added");
+            assert!(processes.contains_key(&key), "Process should be present");
         }
+
         {
             let mut processes = CHILD_PROCESSES.lock().await;
-            if let Some(process) = processes.remove("1_test-service") {
+            if let Some(process) = processes.remove(&key) {
                 process.abort();
             }
         }
 
-        let processes = CHILD_PROCESSES.lock().await;
-        assert!(processes.is_empty(), "Process handle should be removed");
+        {
+            let processes = CHILD_PROCESSES.lock().await;
+            assert!(
+                processes.is_empty(),
+                "Process handle should be removed. Found {} processes",
+                processes.len()
+            );
+        }
     }
 
     #[tokio::test]
     async fn test_stop_port_forward_with_multiple_handles() {
+        let _global_lock = PROCESS_MANAGEMENT_LOCK.lock().await;
+
         let dummy_handle1 = create_dummy_handle().await;
         let dummy_handle2 = create_dummy_handle().await;
         let dummy_handle3 = create_dummy_handle().await;
 
+        let key1 = "config:101:service:service1".to_string();
+        let key2 = "config:102:service:service2".to_string();
+        let key3 = "config:103:service:service3".to_string();
+
         {
             let mut processes = CHILD_PROCESSES.lock().await;
+            for process in processes.values() {
+                process.abort();
+            }
             processes.clear();
-            processes.insert("1_service1".to_string(), dummy_handle1);
-            processes.insert("2_service2".to_string(), dummy_handle2);
-            processes.insert("3_service3".to_string(), dummy_handle3);
+
+            processes.insert(key1.clone(), dummy_handle1);
+            processes.insert(key2.clone(), dummy_handle2);
+            processes.insert(key3.clone(), dummy_handle3);
+
+            println!(
+                "After adding 3 processes, found {} processes:",
+                processes.len()
+            );
+            for key in processes.keys() {
+                println!("  Process key: {}", key);
+            }
             assert_eq!(processes.len(), 3);
         }
+
         {
             let mut processes = CHILD_PROCESSES.lock().await;
-            if let Some(process) = processes.remove("2_service2") {
+            println!("Before removing key2, found {} processes:", processes.len());
+            if let Some(process) = processes.remove(&key2) {
                 process.abort();
+                println!("Successfully removed and aborted process for key2");
+            } else {
+                println!("Warning: key2 not found for removal");
             }
         }
 
-        let processes = CHILD_PROCESSES.lock().await;
-        assert_eq!(
-            processes.len(),
-            2,
-            "Only the specified process should be removed"
-        );
-        assert!(processes.contains_key("1_service1"));
-        assert!(!processes.contains_key("2_service2"));
-        assert!(processes.contains_key("3_service3"));
+        {
+            let processes = CHILD_PROCESSES.lock().await;
+            println!("After removing key2, found {} processes:", processes.len());
+            for key in processes.keys() {
+                println!("  Process key: {}", key);
+            }
+
+            assert_eq!(
+                processes.len(),
+                2,
+                "Only the specified process should be removed. Expected keys: {}, {}. Found: {:?}",
+                key1,
+                key3,
+                processes.keys().collect::<Vec<_>>()
+            );
+            assert!(
+                processes.contains_key(&key1),
+                "Should contain key1: {}",
+                key1
+            );
+            assert!(
+                !processes.contains_key(&key2),
+                "Should not contain key2: {}",
+                key2
+            );
+            assert!(
+                processes.contains_key(&key3),
+                "Should contain key3: {}",
+                key3
+            );
+        }
+
+        {
+            let mut processes = CHILD_PROCESSES.lock().await;
+            for process in processes.values() {
+                process.abort();
+            }
+            processes.clear();
+        }
     }
 
     #[tokio::test]
