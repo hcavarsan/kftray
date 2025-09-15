@@ -624,13 +624,21 @@ mod tests {
 
     #[tokio::test]
     async fn test_stop_all_port_forward_empty() {
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
+        unsafe {
+            std::env::set_var("KFTRAY_TEST_MODE", "1");
+            std::env::set_var("KFTRAY_CONFIG", temp_dir.path());
+        }
+
         {
             let mut processes = CHILD_PROCESSES.lock().await;
             processes.clear();
             assert!(processes.is_empty());
         }
 
-        let result = stop_all_port_forward().await;
+        let result = stop_all_port_forward_with_mode(DatabaseMode::Memory).await;
 
         match result {
             Ok(responses) => {

@@ -433,6 +433,7 @@ mod tests {
     async fn test_store_and_load_certificate() {
         unsafe {
             std::env::set_var("KFTRAY_SKIP_CA_INSTALL", "1");
+            std::env::set_var("KFTRAY_TEST_MODE", "1");
         }
         let (store, temp_dir) = create_test_store().await;
         let generator = CertificateGenerator::for_testing(temp_dir.path());
@@ -456,6 +457,7 @@ mod tests {
     async fn test_remove_certificate() {
         unsafe {
             std::env::set_var("KFTRAY_SKIP_CA_INSTALL", "1");
+            std::env::set_var("KFTRAY_TEST_MODE", "1");
         }
         let (store, temp_dir) = create_test_store().await;
         let generator = CertificateGenerator::for_testing(temp_dir.path());

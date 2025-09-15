@@ -10,13 +10,8 @@ use log::{
 
 #[cfg(target_os = "windows")]
 pub async fn install_ca_certificate(ca_cert_der: &[u8]) -> Result<()> {
-    use windows::Win32::Foundation::*;
-    use windows::Win32::Security::Cryptography::Certificates::*;
     use windows::Win32::Security::Cryptography::*;
-    use windows::core::{
-        PCSTR,
-        w,
-    };
+    use windows::core::w;
 
     anyhow::ensure!(!ca_cert_der.is_empty(), "Empty certificate DER provided");
 
@@ -29,7 +24,7 @@ pub async fn install_ca_certificate(ca_cert_der: &[u8]) -> Result<()> {
             None,
             CERT_OPEN_STORE_FLAGS(
                 CERT_SYSTEM_STORE_LOCAL_MACHINE_ID << CERT_SYSTEM_STORE_LOCATION_SHIFT
-                    | CERT_STORE_OPEN_EXISTING_FLAG,
+                    | CERT_STORE_OPEN_EXISTING_FLAG.0,
             ),
             Some(store_name.as_ptr() as *const core::ffi::c_void),
         )
@@ -44,7 +39,7 @@ pub async fn install_ca_certificate(ca_cert_der: &[u8]) -> Result<()> {
                 None,
                 CERT_OPEN_STORE_FLAGS(
                     CERT_SYSTEM_STORE_CURRENT_USER_ID << CERT_SYSTEM_STORE_LOCATION_SHIFT
-                        | CERT_STORE_OPEN_EXISTING_FLAG,
+                        | CERT_STORE_OPEN_EXISTING_FLAG.0,
                 ),
                 Some(store_name.as_ptr() as *const core::ffi::c_void),
             )
@@ -52,20 +47,24 @@ pub async fn install_ca_certificate(ca_cert_der: &[u8]) -> Result<()> {
         .context("Failed to open Windows ROOT certificate store (LocalMachine/CurrentUser)")?;
 
         let cert_context = CertCreateCertificateContext(
-            CERT_QUERY_ENCODING_TYPE(X509_ASN_ENCODING | PKCS_7_ASN_ENCODING),
+            CERT_QUERY_ENCODING_TYPE(X509_ASN_ENCODING.0 | PKCS_7_ASN_ENCODING.0),
             ca_cert_der,
-        )
-        .context("Failed to create certificate context")?;
+        );
+
+        if cert_context.is_null() {
+            let _ = CertCloseStore(Some(cert_store), 0);
+            return Err(anyhow::anyhow!("Failed to create certificate context"));
+        }
 
         let result = CertAddCertificateContextToStore(
-            cert_store,
+            Some(cert_store),
             cert_context,
-            CERT_STORE_ADD_DISPOSITION(CERT_STORE_ADD_REPLACE_EXISTING),
+            CERT_STORE_ADD_REPLACE_EXISTING.0,
             None,
         );
 
-        CertFreeCertificateContext(cert_context);
-        let _ = CertCloseStore(cert_store, 0);
+        CertFreeCertificateContext(Some(cert_context));
+        let _ = CertCloseStore(Some(cert_store), 0);
 
         if result.is_ok() {
             info!("Successfully installed kftray CA certificate to Windows certificate store");
@@ -83,8 +82,6 @@ pub async fn install_ca_certificate(ca_cert_der: &[u8]) -> Result<()> {
 
 #[cfg(target_os = "windows")]
 pub async fn is_ca_installed(ca_cert_der: &[u8]) -> Result<bool> {
-    use windows::Win32::Foundation::*;
-    use windows::Win32::Security::Cryptography::Certificates::*;
     use windows::Win32::Security::Cryptography::*;
     use windows::core::w;
 
@@ -99,7 +96,7 @@ pub async fn is_ca_installed(ca_cert_der: &[u8]) -> Result<bool> {
             None,
             CERT_OPEN_STORE_FLAGS(
                 CERT_SYSTEM_STORE_LOCAL_MACHINE_ID << CERT_SYSTEM_STORE_LOCATION_SHIFT
-                    | CERT_STORE_OPEN_EXISTING_FLAG,
+                    | CERT_STORE_OPEN_EXISTING_FLAG.0,
             ),
             Some(store_name.as_ptr() as *const core::ffi::c_void),
         )
@@ -114,7 +111,7 @@ pub async fn is_ca_installed(ca_cert_der: &[u8]) -> Result<bool> {
                 None,
                 CERT_OPEN_STORE_FLAGS(
                     CERT_SYSTEM_STORE_CURRENT_USER_ID << CERT_SYSTEM_STORE_LOCATION_SHIFT
-                        | CERT_STORE_OPEN_EXISTING_FLAG,
+                        | CERT_STORE_OPEN_EXISTING_FLAG.0,
                 ),
                 Some(store_name.as_ptr() as *const core::ffi::c_void),
             )
@@ -122,25 +119,29 @@ pub async fn is_ca_installed(ca_cert_der: &[u8]) -> Result<bool> {
         .context("Failed to open Windows ROOT certificate store (LocalMachine/CurrentUser)")?;
 
         let cert_context = CertCreateCertificateContext(
-            CERT_QUERY_ENCODING_TYPE(X509_ASN_ENCODING | PKCS_7_ASN_ENCODING),
+            CERT_QUERY_ENCODING_TYPE(X509_ASN_ENCODING.0 | PKCS_7_ASN_ENCODING.0),
             ca_cert_der,
-        )
-        .context("Failed to create certificate context")?;
+        );
+
+        if cert_context.is_null() {
+            let _ = CertCloseStore(Some(cert_store), 0);
+            return Err(anyhow::anyhow!("Failed to create certificate context"));
+        }
 
         let found_cert = CertFindCertificateInStore(
             cert_store,
-            CERT_QUERY_ENCODING_TYPE(X509_ASN_ENCODING | PKCS_7_ASN_ENCODING),
+            CERT_QUERY_ENCODING_TYPE(X509_ASN_ENCODING.0 | PKCS_7_ASN_ENCODING.0),
             0,
-            CERT_FIND_TYPE(CERT_FIND_EXISTING),
-            Some(cert_context.as_ptr() as *const _),
+            CERT_FIND_EXISTING,
+            Some(cert_context as *const _),
             None,
         );
 
-        CertFreeCertificateContext(cert_context);
+        CertFreeCertificateContext(Some(cert_context));
         if !found_cert.is_null() {
-            CertFreeCertificateContext(found_cert);
+            CertFreeCertificateContext(Some(found_cert));
         }
-        let _ = CertCloseStore(cert_store, 0);
+        let _ = CertCloseStore(Some(cert_store), 0);
 
         Ok(!found_cert.is_null())
     }
@@ -148,8 +149,6 @@ pub async fn is_ca_installed(ca_cert_der: &[u8]) -> Result<bool> {
 
 #[cfg(target_os = "windows")]
 pub async fn remove_ca_certificate(ca_cert_der: &[u8]) -> Result<()> {
-    use windows::Win32::Foundation::*;
-    use windows::Win32::Security::Cryptography::Certificates::*;
     use windows::Win32::Security::Cryptography::*;
     use windows::core::w;
 
@@ -165,7 +164,7 @@ pub async fn remove_ca_certificate(ca_cert_der: &[u8]) -> Result<()> {
             None,
             CERT_OPEN_STORE_FLAGS(
                 CERT_SYSTEM_STORE_LOCAL_MACHINE_ID << CERT_SYSTEM_STORE_LOCATION_SHIFT
-                    | CERT_STORE_OPEN_EXISTING_FLAG,
+                    | CERT_STORE_OPEN_EXISTING_FLAG.0,
             ),
             Some(store_name.as_ptr() as *const core::ffi::c_void),
         )
@@ -180,7 +179,7 @@ pub async fn remove_ca_certificate(ca_cert_der: &[u8]) -> Result<()> {
                 None,
                 CERT_OPEN_STORE_FLAGS(
                     CERT_SYSTEM_STORE_CURRENT_USER_ID << CERT_SYSTEM_STORE_LOCATION_SHIFT
-                        | CERT_STORE_OPEN_EXISTING_FLAG,
+                        | CERT_STORE_OPEN_EXISTING_FLAG.0,
                 ),
                 Some(store_name.as_ptr() as *const core::ffi::c_void),
             )
@@ -188,30 +187,34 @@ pub async fn remove_ca_certificate(ca_cert_der: &[u8]) -> Result<()> {
         .context("Failed to open Windows ROOT certificate store (LocalMachine/CurrentUser)")?;
 
         let cert_context = CertCreateCertificateContext(
-            CERT_QUERY_ENCODING_TYPE(X509_ASN_ENCODING | PKCS_7_ASN_ENCODING),
+            CERT_QUERY_ENCODING_TYPE(X509_ASN_ENCODING.0 | PKCS_7_ASN_ENCODING.0),
             ca_cert_der,
-        )
-        .context("Failed to create certificate context")?;
+        );
+
+        if cert_context.is_null() {
+            let _ = CertCloseStore(Some(cert_store), 0);
+            return Err(anyhow::anyhow!("Failed to create certificate context"));
+        }
 
         let found_cert = CertFindCertificateInStore(
             cert_store,
-            CERT_QUERY_ENCODING_TYPE(X509_ASN_ENCODING | PKCS_7_ASN_ENCODING),
+            CERT_QUERY_ENCODING_TYPE(X509_ASN_ENCODING.0 | PKCS_7_ASN_ENCODING.0),
             0,
-            CERT_FIND_TYPE(CERT_FIND_EXISTING),
-            Some(cert_context.as_ptr() as *const _),
+            CERT_FIND_EXISTING,
+            Some(cert_context as *const _),
             None,
         );
 
-        CertFreeCertificateContext(cert_context);
+        CertFreeCertificateContext(Some(cert_context));
 
         if found_cert.is_null() {
-            let _ = CertCloseStore(cert_store, 0);
+            let _ = CertCloseStore(Some(cert_store), 0);
             info!("kftray CA certificate not found in Windows certificate store (already removed)");
             return Ok(());
         }
 
         let result = CertDeleteCertificateFromStore(found_cert);
-        let _ = CertCloseStore(cert_store, 0);
+        let _ = CertCloseStore(Some(cert_store), 0);
 
         if result.is_ok() {
             info!("Successfully removed kftray CA certificate from Windows certificate store");

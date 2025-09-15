@@ -307,7 +307,7 @@ mod tests {
         unsafe {
             std::env::set_var("KFTRAY_SKIP_CA_INSTALL", "1");
             std::env::set_var("KFTRAY_TEST_MODE", "1");
-            std::env::set_var("KFTRAY_CONFIG_DIR", temp_dir.path());
+            std::env::set_var("KFTRAY_CONFIG", temp_dir.path());
         }
 
         let result = disable_ssl().await;
@@ -323,7 +323,7 @@ mod tests {
         unsafe {
             std::env::set_var("KFTRAY_SKIP_CA_INSTALL", "1");
             std::env::set_var("KFTRAY_TEST_MODE", "1");
-            std::env::set_var("KFTRAY_CONFIG_DIR", temp_dir.path());
+            std::env::set_var("KFTRAY_CONFIG", temp_dir.path());
         }
 
         let result = set_ssl_settings(false, 365, false, false).await;
@@ -339,7 +339,7 @@ mod tests {
         unsafe {
             std::env::set_var("KFTRAY_SKIP_CA_INSTALL", "1");
             std::env::set_var("KFTRAY_TEST_MODE", "1");
-            std::env::set_var("KFTRAY_CONFIG_DIR", temp_dir.path());
+            std::env::set_var("KFTRAY_CONFIG", temp_dir.path());
         }
 
         let result = set_ssl_settings(true, 365, false, false).await;

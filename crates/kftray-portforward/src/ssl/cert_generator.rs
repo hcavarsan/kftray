@@ -565,6 +565,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_generate_certificate_for_alias() {
+        unsafe {
+            std::env::set_var("KFTRAY_TEST_MODE", "1");
+            std::env::set_var("KFTRAY_SKIP_CA_INSTALL", "1");
+        }
         let temp_dir = tempfile::tempdir().unwrap();
         let generator = CertificateGenerator::for_testing(temp_dir.path());
 
@@ -576,6 +580,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_generate_certificate_with_custom_validity() {
+        unsafe {
+            std::env::set_var("KFTRAY_TEST_MODE", "1");
+            std::env::set_var("KFTRAY_SKIP_CA_INSTALL", "1");
+        }
         let temp_dir = tempfile::tempdir().unwrap();
         let generator = CertificateGenerator::for_testing(temp_dir.path());
 
