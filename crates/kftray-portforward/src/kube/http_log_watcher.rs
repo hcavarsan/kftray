@@ -51,8 +51,9 @@ impl HttpLogStateEvent {
 pub struct HttpLogStateWatcher {
     current_state: Arc<RwLock<HashMap<i64, bool>>>,
     event_sender: broadcast::Sender<HttpLogStateEvent>,
-    _processor_task: JoinHandle<()>,
+    processor_task: Option<JoinHandle<()>>,
     cancellation_token: CancellationToken,
+    is_owner: bool,
 }
 
 impl Clone for HttpLogStateWatcher {
@@ -60,16 +61,21 @@ impl Clone for HttpLogStateWatcher {
         Self {
             current_state: self.current_state.clone(),
             event_sender: self.event_sender.clone(),
-            _processor_task: tokio::spawn(async {}),
+            processor_task: None,
             cancellation_token: self.cancellation_token.clone(),
+            is_owner: false,
         }
     }
 }
 
 impl Drop for HttpLogStateWatcher {
     fn drop(&mut self) {
-        self.cancellation_token.cancel();
-        self._processor_task.abort();
+        if self.is_owner {
+            self.cancellation_token.cancel();
+            if let Some(handle) = &self.processor_task {
+                handle.abort();
+            }
+        }
     }
 }
 
@@ -116,8 +122,9 @@ impl HttpLogStateWatcher {
         Self {
             current_state,
             event_sender,
-            _processor_task: processor_task,
+            processor_task: Some(processor_task),
             cancellation_token,
+            is_owner: true,
         }
     }
 

@@ -395,7 +395,7 @@ fn configure_loopback_linux(addr: &str) -> Result<()> {
 }
 
 #[cfg(target_os = "windows")]
-fn configure_loopback_windows(addr: &str) -> Result<()> {
+fn configure_loopback_windows(_addr: &str) -> Result<()> {
     Ok(())
 }
 

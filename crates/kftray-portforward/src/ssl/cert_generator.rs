@@ -153,12 +153,11 @@ impl CertificateGenerator {
             KeyPair::from_pem(&key_pem).context("Failed to create key pair from PEM")?;
 
         let ca_params = Self::build_ca_params()?;
-
         let ca_cert = ca_params
             .self_signed(&ca_key_pair)
             .context("Failed to recreate CA certificate from existing key")?;
 
-        info!("Successfully recreated CA certificate from existing key");
+        info!("Successfully loaded existing CA key and recreated certificate");
         Ok((ca_cert, ca_key_pair))
     }
 
@@ -269,6 +268,10 @@ impl CertificateGenerator {
     pub async fn generate_for_domains_with_validity(
         &self, domains: Vec<String>, validity_days: u16,
     ) -> Result<CertificatePair> {
+        if domains.is_empty() {
+            return Err(anyhow::anyhow!("At least one domain must be provided"));
+        }
+
         super::ensure_crypto_provider_installed();
 
         let (ca_cert, ca_key_pair) = self.get_or_create_ca().await?;

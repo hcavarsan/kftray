@@ -215,23 +215,28 @@ impl TcpForwarder {
     }
 
     pub async fn forward_tls_streams(
-        &mut self, client_stream: tokio_rustls::server::TlsStream<TcpStream>,
-        upstream_stream: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+        &self, mut client: tokio_rustls::server::TlsStream<TcpStream>,
+        mut upstream: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+        cancellation_token: tokio_util::sync::CancellationToken,
     ) -> anyhow::Result<()> {
-        let mut client = client_stream;
-        let mut upstream = upstream_stream;
-
-        match tokio::io::copy_bidirectional(&mut client, &mut upstream).await {
-            Ok((to_upstream, to_client)) => {
-                debug!(
-                    "TLS connection closed: sent {} bytes, received {} bytes",
-                    to_upstream, to_client
-                );
-                Ok(())
-            }
-            Err(e) => {
-                error!("TLS connection closed with error: {}", e);
-                Err(e.into())
+        let copy_fut = tokio::io::copy_bidirectional(&mut client, &mut upstream);
+        tokio::select! {
+            res = copy_fut => match res {
+                Ok((to_upstream, to_client)) => {
+                    debug!(
+                        "TLS connection closed: sent {} bytes, received {} bytes",
+                        to_upstream, to_client
+                    );
+                    Ok(())
+                }
+                Err(e) => {
+                    error!("TLS connection closed with error: {}", e);
+                    Err(e.into())
+                }
+            },
+            _ = cancellation_token.cancelled() => {
+                debug!("TLS connection canceled");
+                Err(anyhow::anyhow!("TLS connection canceled"))
             }
         }
     }

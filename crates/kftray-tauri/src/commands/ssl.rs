@@ -301,11 +301,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_disable_ssl_cleanup() {
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
         unsafe {
             std::env::set_var("KFTRAY_SKIP_CA_INSTALL", "1");
+            std::env::set_var("KFTRAY_TEST_MODE", "1");
+            std::env::set_var("KFTRAY_CONFIG_DIR", temp_dir.path());
         }
 
-        // Test disable_ssl command
         let result = disable_ssl().await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "SSL disabled successfully");
@@ -313,11 +317,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_set_ssl_settings_disable_cleanup() {
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
         unsafe {
             std::env::set_var("KFTRAY_SKIP_CA_INSTALL", "1");
+            std::env::set_var("KFTRAY_TEST_MODE", "1");
+            std::env::set_var("KFTRAY_CONFIG_DIR", temp_dir.path());
         }
 
-        // Test set_ssl_settings with SSL disabled
         let result = set_ssl_settings(false, 365, false, false).await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "SSL settings updated successfully");
@@ -325,11 +333,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_set_ssl_settings_enable_no_cleanup() {
+        use tempfile::tempdir;
+
+        let temp_dir = tempdir().unwrap();
         unsafe {
             std::env::set_var("KFTRAY_SKIP_CA_INSTALL", "1");
+            std::env::set_var("KFTRAY_TEST_MODE", "1");
+            std::env::set_var("KFTRAY_CONFIG_DIR", temp_dir.path());
         }
 
-        // Test set_ssl_settings with SSL enabled (should not trigger cleanup)
         let result = set_ssl_settings(true, 365, false, false).await;
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "SSL settings updated successfully");

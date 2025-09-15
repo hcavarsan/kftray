@@ -424,7 +424,11 @@ impl PortForwarder {
                     match acceptor.accept(client_conn).await {
                         Ok(tls_stream) => {
                             if let Err(e) = tcp_forwarder
-                                .forward_tls_streams(tls_stream, upstream_stream)
+                                .forward_tls_streams(
+                                    tls_stream,
+                                    upstream_stream,
+                                    cancel_token_clone.clone(),
+                                )
                                 .await
                             {
                                 debug!("TLS forwarding error for {}: {}", client_addr, e);

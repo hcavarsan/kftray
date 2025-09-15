@@ -1,6 +1,9 @@
 use anyhow::{Context, Result};
 use log::{debug, info, warn};
+
+#[cfg(target_os = "macos")]
 use security_framework::certificate::SecCertificate;
+#[cfg(target_os = "macos")]
 use security_framework::trust_settings::{Domain, TrustSettings, TrustSettingsForCertificate};
 
 
@@ -144,8 +147,8 @@ fn is_certificate_trusted(settings: &TrustSettingsForCertificate) -> bool {
             false
         }
         TrustSettingsForCertificate::Unspecified => {
-            debug!("Certificate trust unspecified (inherits system trust)");
-            true
+            debug!("Certificate trust unspecified (not explicitly trusted)");
+            false
         }
         _ => {
             debug!("Certificate has other trust settings");

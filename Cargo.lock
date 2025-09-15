@@ -2961,6 +2961,7 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "whoami",
+ "windows 0.62.0",
 ]
 
 [[package]]

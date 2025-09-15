@@ -188,6 +188,11 @@ impl CertificateManager {
     pub async fn cleanup_all_ssl_artifacts() -> Result<()> {
         info!("Cleaning up all SSL artifacts due to SSL being disabled");
 
+        if std::env::var("KFTRAY_TEST_MODE").is_ok() {
+            info!("Test mode enabled, skipping system cleanup operations");
+            return Ok(());
+        }
+
         let mut cleanup_errors = Vec::new();
 
         if let Err(e) = Self::cleanup_system_ca_certificate().await {
