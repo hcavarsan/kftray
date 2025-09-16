@@ -399,6 +399,10 @@ pub fn render_help_popup(f: &mut Frame, area: Rect) {
             "PageUp/PageDown: Scroll Page Up/Down",
             Style::default().fg(YELLOW),
         )),
+        Line::from(Span::styled(
+            "s: Settings (SSL/TLS Config)",
+            Style::default().fg(YELLOW),
+        )),
         Line::from(Span::styled("q: Show About", Style::default().fg(YELLOW))),
     ];
 
@@ -664,26 +668,18 @@ pub fn render_context_selection_popup(f: &mut Frame, app: &mut App, area: Rect) 
 }
 
 pub fn render_settings_popup(f: &mut Frame, app: &App, area: Rect) {
-    let (width_percent, height_percent) = if area.width < 60 {
-        (95, 75)
+    let (width_percent, height_percent) = if area.width < 50 {
+        (98, 95)
     } else if area.width < 80 {
-        (85, 65)
-    } else if area.width < 120 {
-        (65, 55)
+        (90, 85)
     } else {
-        (50, 45)
+        (80, 75)
     };
 
     let popup_area = centered_rect(width_percent, height_percent, area);
 
-    let title = if popup_area.width > 60 {
-        " Settings "
-    } else {
-        " Config "
-    };
-
     let popup_block = Block::default()
-        .title(title)
+        .title(" Settings ")
         .title_style(Style::default().fg(YELLOW).bold())
         .borders(Borders::ALL)
         .border_style(Style::default().fg(MAUVE))
@@ -697,96 +693,33 @@ pub fn render_settings_popup(f: &mut Frame, app: &App, area: Rect) {
         vertical: 1,
     });
 
-    let use_vertical_layout = false;
+    let main_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(2),
+            Constraint::Min(0),
+            Constraint::Length(2),
+        ])
+        .split(inner_area);
 
-    let chunks = if use_vertical_layout {
-        Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(0), Constraint::Length(2)])
-            .split(inner_area)
-    } else {
-        Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(2),
-                Constraint::Min(0),
-                Constraint::Length(2),
-            ])
-            .split(inner_area)
-    };
-
-    let (description_area, content_area, footer_area) = if use_vertical_layout {
-        (None, chunks[0], chunks[1])
-    } else {
-        (Some(chunks[0]), chunks[1], chunks[2])
-    };
-
-    if let Some(desc_area) = description_area {
-        let description_text = match app.settings_selected_option {
-            0 => "Enable timeout functionality",
-            1 => "Set timeout minutes",
-            2 => "Monitor network connectivity",
-            3 => "Reserved for future use",
-            _ => "Navigate with arrow keys",
-        };
-
-        let description_paragraph = Paragraph::new(description_text)
-            .style(Style::default().fg(SUBTEXT0).italic())
-            .alignment(Alignment::Center)
-            .wrap(ratatui::widgets::Wrap { trim: true });
-
-        f.render_widget(description_paragraph, desc_area);
-    }
-
-    let grid_areas = if use_vertical_layout {
-        let rows = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(4),
-                Constraint::Length(4),
-                Constraint::Length(4),
-                Constraint::Length(4),
-            ])
-            .split(content_area);
-        [rows[0], rows[1], rows[2], rows[3]]
-    } else {
-        let rows = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-            .split(content_area);
-
-        let top_columns = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-            .split(rows[0]);
-
-        let bottom_columns = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-            .split(rows[1]);
-
-        [
-            top_columns[0],
-            top_columns[1],
-            bottom_columns[0],
-            bottom_columns[1],
-        ]
-    };
+    let content_area = main_chunks[1];
+    let footer_area = main_chunks[2];
 
     let timeout_enabled =
         !(app.settings_timeout_input == "0" || app.settings_timeout_input.is_empty());
-    let grid_options = [
+
+    let settings_data = [
         (
-            0,
             "Timeout",
-            "",
-            (if timeout_enabled { "ON" } else { "OFF" }).to_string(),
+            "Enable timeout functionality",
+            if timeout_enabled { "ON" } else { "OFF" },
+            false,
+            0,
         ),
         (
-            1,
             "Minutes",
-            "",
-            if timeout_enabled {
+            "Set timeout minutes",
+            &if timeout_enabled {
                 format!(
                     "{}m{}",
                     app.settings_timeout_input,
@@ -799,113 +732,428 @@ pub fn render_settings_popup(f: &mut Frame, app: &App, area: Rect) {
             } else {
                 "OFF".to_string()
             },
+            !timeout_enabled,
+            1,
         ),
         (
-            2,
-            "Monitor",
-            "",
-            (if app.settings_network_monitor {
+            "Network Monitor",
+            "Monitor network connectivity",
+            if app.settings_network_monitor {
                 "ON"
             } else {
                 "OFF"
-            })
-            .to_string(),
+            },
+            false,
+            2,
         ),
-        (3, "Reserved", "", "N/A".to_string()),
+        (
+            "SSL/TLS",
+            "Enable SSL/TLS for port forwards",
+            if app.settings_ssl_enabled {
+                "ON"
+            } else {
+                "OFF"
+            },
+            false,
+            3,
+        ),
+        (
+            "SSL Validity",
+            "Certificate validity in days",
+            &if app.settings_ssl_enabled {
+                format!(
+                    "{}d{}",
+                    app.settings_ssl_cert_validity_input,
+                    if app.settings_editing && app.settings_selected_option == 4 {
+                        " [EDIT]"
+                    } else {
+                        ""
+                    }
+                )
+            } else {
+                "OFF".to_string()
+            },
+            !app.settings_ssl_enabled,
+            4,
+        ),
     ];
 
-    for (grid_index, (option_index, title, _description, value)) in grid_options.iter().enumerate()
-    {
-        let is_selected = app.settings_selected_option == *option_index;
-        let is_editing = app.settings_editing && is_selected;
-        let is_disabled = *option_index == 1 && !timeout_enabled;
-        let is_reserved = *option_index == 3;
+    let is_compact = content_area.width < 60;
+    let is_very_compact = content_area.width < 40;
 
-        let border_style = if is_reserved {
-            Style::default().fg(SURFACE2).dim()
-        } else if is_disabled {
-            Style::default().fg(SURFACE2)
-        } else if is_selected {
-            Style::default().fg(YELLOW).bold()
-        } else {
-            Style::default().fg(SURFACE2)
-        };
-
-        let bg_style = if is_reserved {
-            Style::default().bg(BASE).dim()
-        } else if is_disabled {
-            Style::default().bg(BASE)
-        } else if is_selected {
-            Style::default().bg(SURFACE0)
-        } else {
-            Style::default().bg(BASE)
-        };
-
-        let block = Block::default()
-            .title(*title)
-            .title_style(
-                Style::default()
-                    .fg(if is_reserved || is_disabled {
-                        SURFACE2
-                    } else if is_selected {
-                        YELLOW
-                    } else {
-                        TEXT
-                    })
-                    .bold(),
-            )
-            .borders(Borders::ALL)
-            .border_style(border_style)
-            .style(bg_style);
-
-        let content = vec![
-            Line::from(""),
-            Line::from(Span::styled(
-                value.clone(),
-                Style::default()
-                    .fg(if is_reserved || is_disabled {
-                        SURFACE2
-                    } else if is_editing {
-                        GREEN
-                    } else if is_selected {
-                        YELLOW
-                    } else {
-                        TEXT
-                    })
-                    .bold()
-                    .add_modifier(if is_selected && !is_disabled && !is_reserved {
-                        Modifier::UNDERLINED
-                    } else {
-                        Modifier::empty()
-                    }),
-            )),
-            Line::from(""),
-        ];
-
-        let paragraph = Paragraph::new(content)
-            .alignment(Alignment::Center)
-            .block(block)
-            .wrap(ratatui::widgets::Wrap { trim: true });
-
-        f.render_widget(paragraph, grid_areas[grid_index]);
+    if is_very_compact {
+        render_compact_settings(f, app, &settings_data, content_area);
+    } else if is_compact {
+        render_table_settings(f, app, &settings_data, content_area, true);
+    } else {
+        render_table_settings(f, app, &settings_data, content_area, false);
     }
 
     let instructions = if app.settings_editing {
-        "Type numbers | Backspace: delete | Enter: save | Esc: Cancel"
+        "Numbers/Backspace: Edit | Enter: Save | Esc: Cancel"
     } else {
-        "Arrow keys: Navigate | Enter: Toggle/Edit | Changes save automatically | Esc: Close"
+        "↑/↓: Navigate | Enter: Toggle/Edit | Esc: Close"
     };
 
-    let footer_block = Block::default()
-        .borders(Borders::TOP)
-        .border_style(Style::default().fg(SURFACE2));
-
-    let instruction_paragraph = Paragraph::new(instructions)
+    let footer_paragraph = Paragraph::new(instructions)
         .style(Style::default().fg(SUBTEXT0))
         .alignment(Alignment::Center)
-        .block(footer_block);
+        .block(
+            Block::default()
+                .borders(Borders::TOP)
+                .border_style(Style::default().fg(SURFACE2)),
+        );
 
-    f.render_widget(instruction_paragraph, footer_area);
+    f.render_widget(footer_paragraph, footer_area);
+}
+
+fn render_compact_settings(
+    f: &mut Frame, app: &App, settings_data: &[(&str, &str, &str, bool, usize)], area: Rect,
+) {
+    let layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(1), Constraint::Min(0)])
+        .split(area);
+
+    let content_area = layout[1];
+
+    let row_height = 3;
+    let available_rows = content_area.height as usize / row_height;
+    let visible_items = available_rows.min(settings_data.len());
+
+    let selected = app.settings_selected_option;
+    let start_idx = if selected < visible_items / 2 {
+        0
+    } else if selected >= settings_data.len() - visible_items / 2 {
+        settings_data.len().saturating_sub(visible_items)
+    } else {
+        selected.saturating_sub(visible_items / 2)
+    };
+
+    let end_idx = (start_idx + visible_items).min(settings_data.len());
+
+    for (i, item_idx) in (start_idx..end_idx).enumerate() {
+        let (title, _, value, _is_reserved, option_index) = settings_data[item_idx];
+        let is_selected = app.settings_selected_option == option_index;
+        let is_editing = app.settings_editing && is_selected;
+
+        let row_y = content_area.y + (i * row_height) as u16;
+        let row_area = Rect::new(content_area.x, row_y, content_area.width, row_height as u16);
+
+        if is_selected {
+            let bg_block = Block::default().style(Style::default().bg(SURFACE0));
+            f.render_widget(bg_block, row_area);
+        }
+
+        let item_area = row_area.inner(Margin {
+            horizontal: 1,
+            vertical: 0,
+        });
+
+        let item_layout = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Length(2),
+                Constraint::Length(4),
+                Constraint::Min(0),
+            ])
+            .split(item_area);
+
+        let selection_indicator = if is_selected { "►" } else { " " };
+        let sel_para = Paragraph::new(selection_indicator)
+            .style(Style::default().fg(YELLOW))
+            .alignment(Alignment::Center);
+        f.render_widget(sel_para, item_layout[0]);
+
+        let status_indicator = if value == "ON" {
+            "[●]"
+        } else if value == "OFF" {
+            "[○]"
+        } else if is_editing {
+            "[✎]"
+        } else {
+            "[≡]"
+        };
+
+        let status_style = Style::default().fg(if value == "ON" {
+            GREEN
+        } else if value == "OFF" {
+            RED
+        } else if is_editing {
+            YELLOW
+        } else {
+            BLUE
+        });
+
+        let status_para = Paragraph::new(status_indicator)
+            .style(status_style)
+            .alignment(Alignment::Center);
+        f.render_widget(status_para, item_layout[1]);
+
+        let title_style = Style::default()
+            .fg(if is_selected { YELLOW } else { TEXT })
+            .add_modifier(if is_selected {
+                Modifier::BOLD
+            } else {
+                Modifier::empty()
+            });
+
+        let title_para = Paragraph::new(title)
+            .style(title_style)
+            .alignment(Alignment::Left);
+        f.render_widget(title_para, item_layout[2]);
+
+        if i < end_idx - start_idx - 1 {
+            let sep_y = row_y + (row_height as u16) - 1;
+            let sep_area = Rect::new(
+                content_area.x + 6,
+                sep_y,
+                content_area.width.saturating_sub(12),
+                1,
+            );
+
+            let separator_text = "· ".repeat((sep_area.width / 2) as usize);
+            let sep_para = Paragraph::new(separator_text)
+                .style(Style::default().fg(SURFACE1))
+                .alignment(Alignment::Center);
+            f.render_widget(sep_para, sep_area);
+        }
+    }
+}
+
+fn render_table_settings(
+    f: &mut Frame, app: &App, settings_data: &[(&str, &str, &str, bool, usize)], area: Rect,
+    compact: bool,
+) {
+    let content_area = area;
+
+    let row_height = 3;
+    let total_rows = settings_data.len();
+    let available_height = content_area.height as usize;
+    let max_visible_rows = available_height / row_height;
+
+    let start_row = if total_rows <= max_visible_rows {
+        0
+    } else {
+        let selected = app.settings_selected_option;
+        if selected < max_visible_rows / 2 {
+            0
+        } else if selected >= total_rows - max_visible_rows / 2 {
+            total_rows.saturating_sub(max_visible_rows)
+        } else {
+            selected.saturating_sub(max_visible_rows / 2)
+        }
+    };
+
+    let end_row = (start_row + max_visible_rows).min(total_rows);
+
+    for (i, row_index) in (start_row..end_row).enumerate() {
+        if row_index >= settings_data.len() {
+            break;
+        }
+
+        let (title, description, value, is_reserved, option_index) = settings_data[row_index];
+        let is_selected = app.settings_selected_option == option_index;
+        let is_editing = app.settings_editing && is_selected;
+        let is_disabled = (app.settings_timeout_input.is_empty()
+            || app.settings_timeout_input == "0")
+            && option_index == 1
+            || (option_index == 4 && !app.settings_ssl_enabled);
+
+        let row_y = content_area.y + (i * row_height) as u16;
+        let row_area = Rect::new(content_area.x, row_y, content_area.width, row_height as u16);
+
+        if is_selected {
+            let bg_block = Block::default().style(Style::default().bg(SURFACE0));
+            f.render_widget(bg_block, row_area);
+        }
+
+        let row_content = row_area.inner(Margin {
+            horizontal: 2,
+            vertical: 0,
+        });
+
+        if compact {
+            render_compact_row(
+                f,
+                title,
+                value,
+                RowState {
+                    is_selected,
+                    is_editing,
+                    is_disabled,
+                    is_reserved,
+                },
+                row_content,
+            );
+        } else {
+            render_full_row(
+                f,
+                title,
+                description,
+                value,
+                RowState {
+                    is_selected,
+                    is_editing,
+                    is_disabled,
+                    is_reserved,
+                },
+                row_content,
+            );
+        }
+
+        if i < end_row - start_row - 1 {
+            let sep_y = row_y + (row_height as u16) - 1;
+            if sep_y < content_area.y + content_area.height {
+                let sep_area = Rect::new(
+                    content_area.x + 4,
+                    sep_y,
+                    content_area.width.saturating_sub(8),
+                    1,
+                );
+
+                let separator_text = "· ".repeat((sep_area.width / 2) as usize);
+                let sep_para = Paragraph::new(separator_text)
+                    .style(Style::default().fg(SURFACE1))
+                    .alignment(Alignment::Center);
+                f.render_widget(sep_para, sep_area);
+            }
+        }
+    }
+}
+
+struct RowState {
+    is_selected: bool,
+    is_editing: bool,
+    is_disabled: bool,
+    is_reserved: bool,
+}
+
+fn render_compact_row(f: &mut Frame, title: &str, value: &str, state: RowState, area: Rect) {
+    let layout = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Length(2),
+            Constraint::Length(20),
+            Constraint::Min(0),
+        ])
+        .split(area);
+
+    let indicator = if state.is_selected { "►" } else { " " };
+    let indicator_para = Paragraph::new(indicator).style(Style::default().fg(YELLOW));
+    f.render_widget(indicator_para, layout[0]);
+
+    let title_style = Style::default()
+        .fg(if state.is_reserved || state.is_disabled {
+            SURFACE2
+        } else if state.is_selected {
+            YELLOW
+        } else {
+            TEXT
+        })
+        .add_modifier(if state.is_selected {
+            Modifier::BOLD
+        } else {
+            Modifier::empty()
+        });
+
+    let title_para = Paragraph::new(title)
+        .style(title_style)
+        .alignment(Alignment::Left);
+    f.render_widget(title_para, layout[1]);
+
+    let value_style = Style::default()
+        .fg(if state.is_reserved || state.is_disabled {
+            SURFACE2
+        } else if state.is_editing || value == "ON" {
+            GREEN
+        } else if value == "OFF" {
+            RED
+        } else if state.is_selected {
+            YELLOW
+        } else {
+            TEXT
+        })
+        .add_modifier(if state.is_editing {
+            Modifier::UNDERLINED | Modifier::BOLD
+        } else if state.is_selected {
+            Modifier::BOLD
+        } else {
+            Modifier::empty()
+        });
+
+    let value_para = Paragraph::new(value)
+        .style(value_style)
+        .alignment(Alignment::Left);
+    f.render_widget(value_para, layout[2]);
+}
+
+fn render_full_row(
+    f: &mut Frame, title: &str, description: &str, value: &str, state: RowState, area: Rect,
+) {
+    let layout = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Length(2),
+            Constraint::Length(20),
+            Constraint::Min(20),
+            Constraint::Length(15),
+        ])
+        .split(area);
+
+    let indicator = if state.is_selected { "►" } else { " " };
+    let indicator_para = Paragraph::new(indicator).style(Style::default().fg(YELLOW));
+    f.render_widget(indicator_para, layout[0]);
+
+    let title_style = Style::default()
+        .fg(if state.is_reserved || state.is_disabled {
+            SURFACE2
+        } else if state.is_selected {
+            YELLOW
+        } else {
+            TEXT
+        })
+        .add_modifier(if state.is_selected {
+            Modifier::BOLD
+        } else {
+            Modifier::empty()
+        });
+
+    let title_para = Paragraph::new(title)
+        .style(title_style)
+        .alignment(Alignment::Left);
+    f.render_widget(title_para, layout[1]);
+
+    let desc_para = Paragraph::new(description)
+        .style(Style::default().fg(SUBTEXT0).italic())
+        .alignment(Alignment::Left)
+        .wrap(ratatui::widgets::Wrap { trim: true });
+    f.render_widget(desc_para, layout[2]);
+
+    let value_style = Style::default()
+        .fg(if state.is_reserved || state.is_disabled {
+            SURFACE2
+        } else if state.is_editing || value == "ON" {
+            GREEN
+        } else if value == "OFF" {
+            RED
+        } else if state.is_selected {
+            YELLOW
+        } else {
+            TEXT
+        })
+        .add_modifier(if state.is_editing {
+            Modifier::UNDERLINED | Modifier::BOLD
+        } else if state.is_selected {
+            Modifier::BOLD
+        } else {
+            Modifier::empty()
+        });
+
+    let value_para = Paragraph::new(value)
+        .style(value_style)
+        .alignment(Alignment::Left);
+    f.render_widget(value_para, layout[3]);
 }
 
 pub fn render_http_logs_viewer_popup(f: &mut Frame, app: &mut App, area: Rect) {
@@ -1056,7 +1304,6 @@ fn render_http_requests_list(f: &mut Frame, app: &mut App, area: Rect) {
 
 fn render_http_request_detail(f: &mut Frame, app: &mut App, area: Rect) {
     if let Some(entry) = &app.http_logs_selected_entry {
-        // Split the area into left (request) and right (response) columns
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
@@ -1065,10 +1312,8 @@ fn render_http_request_detail(f: &mut Frame, app: &mut App, area: Rect) {
         let request_area = chunks[0];
         let response_area = chunks[1];
 
-        // Render request side
         render_request_side(f, app, entry, request_area);
 
-        // Render response side
         render_response_side(f, app, entry, response_area);
     } else {
         let error_message = Paragraph::new("No request selected")
@@ -1083,7 +1328,6 @@ fn render_request_side(
 ) {
     let mut lines = vec![];
 
-    // Header information
     if entry.trace_id.starts_with("replay-") {
         lines.push(Line::from(Span::styled(
             "[ REPLAYED REQUEST ]",
@@ -1206,7 +1450,6 @@ fn render_response_side(
         )));
     }
 
-    // Show replay error if any
     if let Some(replay_error) = &app.http_logs_replay_result
         && (replay_error.starts_with("Request failed") || replay_error.starts_with("Failed to"))
     {
@@ -1248,22 +1491,18 @@ fn format_body_content(body: &str, headers: &[String]) -> String {
         return body.to_string();
     }
 
-    // Check if content is JSON by looking at headers or content structure
     let is_json = headers.iter().any(|h| {
         h.to_lowercase().contains("content-type") && h.to_lowercase().contains("application/json")
     }) || (body.trim_start().starts_with('{') && body.trim_end().ends_with('}'))
         || (body.trim_start().starts_with('[') && body.trim_end().ends_with(']'));
 
-    if is_json {
-        // Try to parse and format JSON if it's not already formatted
-        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(body.trim())
-            && let Ok(pretty) = serde_json::to_string_pretty(&parsed)
-        {
-            return pretty;
-        }
+    if is_json
+        && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(body.trim())
+        && let Ok(pretty) = serde_json::to_string_pretty(&parsed)
+    {
+        return pretty;
     }
 
-    // Return original content if not JSON or already formatted
     body.to_string()
 }
 
