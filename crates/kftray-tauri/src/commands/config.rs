@@ -587,7 +587,11 @@ mod tests {
         .to_string();
 
         let result = import_configs_cmd(test_config_json).await;
-        assert!(result.is_ok(), "Import configs command should succeed");
+        assert!(
+            result.is_ok(),
+            "Import configs command should succeed. Error: {:?}",
+            result.err()
+        );
 
         let configs = get_configs_cmd()
             .await
