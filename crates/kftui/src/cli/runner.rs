@@ -346,10 +346,10 @@ impl PortForwardRunner {
         let current_aliases: std::collections::HashSet<String> = {
             let mut aliases = std::collections::HashSet::new();
             for &config_id in config_ids {
-                if let Ok(config) = get_config_with_mode(config_id, mode).await {
-                    if let Some(alias) = config.alias {
-                        aliases.insert(alias);
-                    }
+                if let Ok(config) = get_config_with_mode(config_id, mode).await
+                    && let Some(alias) = config.alias
+                {
+                    aliases.insert(alias);
                 }
             }
             aliases
@@ -413,10 +413,10 @@ impl PortForwardRunner {
 
     async fn get_example_https_url(config_ids: &[i64], mode: DatabaseMode) -> String {
         for &config_id in config_ids {
-            if let Ok(config) = get_config_with_mode(config_id, mode).await {
-                if let (Some(alias), Some(local_port)) = (config.alias, config.local_port) {
-                    return format!("https://{}:{}", alias, local_port);
-                }
+            if let Ok(config) = get_config_with_mode(config_id, mode).await
+                && let (Some(alias), Some(local_port)) = (config.alias, config.local_port)
+            {
+                return format!("https://{}:{}", alias, local_port);
             }
         }
         "https://your-service:port".to_string()

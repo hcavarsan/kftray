@@ -8,20 +8,56 @@ fn deserialize_bool_from_anything<'de, D>(deserializer: D) -> Result<Option<bool
 where
     D: Deserializer<'de>,
 {
-    use serde::de::Error;
-    use serde_json::Value;
+    use std::fmt;
 
-    let value = Value::deserialize(deserializer)?;
-    match value {
-        Value::Bool(b) => Ok(Some(b)),
-        Value::String(s) => match s.as_str() {
-            "true" => Ok(Some(true)),
-            "false" => Ok(Some(false)),
-            _ => Err(D::Error::custom(format!("Invalid boolean string: {}", s))),
-        },
-        Value::Null => Ok(None),
-        _ => Err(D::Error::custom("Expected boolean, string, or null")),
+    use serde::de::{
+        self,
+        Visitor,
+    };
+
+    struct BoolOrStringVisitor;
+
+    impl<'de> Visitor<'de> for BoolOrStringVisitor {
+        type Value = Option<bool>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a boolean, string 'true'/'false', or null")
+        }
+
+        fn visit_bool<E>(self, value: bool) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(Some(value))
+        }
+
+        fn visit_str<E>(self, value: &str) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            match value {
+                "true" => Ok(Some(true)),
+                "false" => Ok(Some(false)),
+                _ => Err(E::custom(format!("Invalid boolean string: {}", value))),
+            }
+        }
+
+        fn visit_none<E>(self) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(None)
+        }
+
+        fn visit_unit<E>(self) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(None)
+        }
     }
+
+    deserializer.deserialize_any(BoolOrStringVisitor)
 }
 
 #[derive(Clone, Deserialize, PartialEq, Serialize, Debug)]
@@ -54,6 +90,7 @@ pub struct Config {
     pub auto_loopback_address: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub alias: Option<String>,
+    #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(deserialize_with = "deserialize_bool_from_anything")]
     pub domain_enabled: Option<bool>,
@@ -133,5 +170,57 @@ mod tests {
         assert_eq!(config.http_logs_max_file_size, Some(10 * 1024 * 1024));
         assert_eq!(config.http_logs_retention_days, Some(7));
         assert_eq!(config.http_logs_auto_cleanup, Some(true));
+    }
+
+    #[test]
+    fn test_deserialize_config_without_id() {
+        let test_json = r#"{
+            "service": "import-test-service",
+            "namespace": "import-test-namespace",
+            "local_port": 5000,
+            "workload_type": "service",
+            "protocol": "tcp",
+            "context": "test-context"
+        }"#;
+
+        let result = serde_json::from_str::<Config>(test_json);
+        println!("Deserialization result: {:?}", result);
+
+        match result {
+            Ok(config) => {
+                assert_eq!(config.id, None);
+                assert_eq!(config.service, Some("import-test-service".to_string()));
+                assert_eq!(config.namespace, "import-test-namespace".to_string());
+            }
+            Err(e) => {
+                panic!("Failed to deserialize config: {}", e);
+            }
+        }
+    }
+
+    #[test]
+    fn test_deserialize_config_array() {
+        let test_json = r#"[{
+            "service": "import-test-service",
+            "namespace": "import-test-namespace",
+            "local_port": 5000,
+            "workload_type": "service",
+            "protocol": "tcp",
+            "context": "test-context"
+        }]"#;
+
+        let result = serde_json::from_str::<Vec<Config>>(test_json);
+        println!("Array deserialization result: {:?}", result);
+
+        match result {
+            Ok(configs) => {
+                assert_eq!(configs.len(), 1);
+                assert_eq!(configs[0].id, None);
+                assert_eq!(configs[0].service, Some("import-test-service".to_string()));
+            }
+            Err(e) => {
+                panic!("Failed to deserialize config array: {}", e);
+            }
+        }
     }
 }
