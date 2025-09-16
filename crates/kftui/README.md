@@ -120,6 +120,7 @@ echo '[{"alias":"api",...}]' | kftui --stdin
 **`--flush`**: Clear existing configurations before importing new ones
 **`--auto-start`**: Start all port-forwards immediately after loading
 **`--non-interactive`**: Run without the interface for automation scripts
+**`--ssl`**: Enable SSL/TLS for port forwarding (overrides settings)
 
 ## Service Auto-Discovery
 

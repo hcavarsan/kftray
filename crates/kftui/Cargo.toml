@@ -1,6 +1,6 @@
 [package]
 name = "kftui"
-version = "0.24.1"
+version = "0.24.2"
 authors = [
   "Henrique Cavarsan <hencavarsan@gmail.com>",
 ]
@@ -15,6 +15,7 @@ build = "build.rs"
 ignored = ["built"]
 
 [dependencies]
+anyhow.workspace = true
 built = { workspace = true }
 chrono = { workspace = true }
 clap = { workspace = true }

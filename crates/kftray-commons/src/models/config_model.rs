@@ -1,7 +1,28 @@
 use serde::{
     Deserialize,
+    Deserializer,
     Serialize,
 };
+
+fn deserialize_bool_from_anything<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    use serde::de::Error;
+    use serde_json::Value;
+
+    let value = Value::deserialize(deserializer)?;
+    match value {
+        Value::Bool(b) => Ok(Some(b)),
+        Value::String(s) => match s.as_str() {
+            "true" => Ok(Some(true)),
+            "false" => Ok(Some(false)),
+            _ => Err(D::Error::custom(format!("Invalid boolean string: {}", s))),
+        },
+        Value::Null => Ok(None),
+        _ => Err(D::Error::custom("Expected boolean, string, or null")),
+    }
+}
 
 #[derive(Clone, Deserialize, PartialEq, Serialize, Debug)]
 pub struct Config {
@@ -34,6 +55,7 @@ pub struct Config {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub alias: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "deserialize_bool_from_anything")]
     pub domain_enabled: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub kubeconfig: Option<String>,
@@ -41,6 +63,7 @@ pub struct Config {
     pub target: Option<String>,
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "deserialize_bool_from_anything")]
     pub http_logs_enabled: Option<bool>,
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -50,6 +73,7 @@ pub struct Config {
     pub http_logs_retention_days: Option<u64>,
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "deserialize_bool_from_anything")]
     pub http_logs_auto_cleanup: Option<bool>,
 }
 

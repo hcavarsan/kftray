@@ -326,11 +326,11 @@ async fn save_allocated_address_to_db(config: &Config) -> Result<(), String> {
 pub async fn start_port_forward(
     configs: Vec<Config>, protocol: &str,
 ) -> Result<Vec<CustomResponse>, String> {
-    start_port_forward_with_mode(configs, protocol, DatabaseMode::File).await
+    start_port_forward_with_mode(configs, protocol, DatabaseMode::File, false).await
 }
 
 pub async fn start_port_forward_with_mode(
-    mut configs: Vec<Config>, protocol: &str, mode: DatabaseMode,
+    mut configs: Vec<Config>, protocol: &str, mode: DatabaseMode, ssl_override: bool,
 ) -> Result<Vec<CustomResponse>, String> {
     let mut responses = Vec::new();
     let mut errors = Vec::new();
@@ -422,9 +422,9 @@ pub async fn start_port_forward_with_mode(
         let local_address_clone = Some(final_local_address);
 
         let should_use_ssl = if let Ok(settings) = get_app_settings().await {
-            settings.ssl_enabled && config.alias.is_some()
+            (settings.ssl_enabled || ssl_override) && config.alias.is_some()
         } else {
-            false
+            ssl_override && config.alias.is_some()
         };
 
         let actual_config = config.clone();

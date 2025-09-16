@@ -27,13 +27,23 @@ use crate::tui::input::{
 };
 
 pub async fn start_port_forwarding(app: &mut App, config: Config, mode: DatabaseMode) {
+    start_port_forwarding_with_ssl(app, config, mode, false).await
+}
+
+pub async fn start_port_forwarding_with_ssl(
+    app: &mut App, config: Config, mode: DatabaseMode, ssl_override: bool,
+) {
     let _config_id = config.id.unwrap_or_default();
 
     let result = match config.workload_type.as_deref() {
-        Some("proxy") => deploy_and_forward_pod_with_mode(vec![config.clone()], mode).await,
+        Some("proxy") => {
+            deploy_and_forward_pod_with_mode(vec![config.clone()], mode, ssl_override).await
+        }
         Some("service") | Some("pod") => match config.protocol.as_str() {
-            "tcp" => kube_start_port_forward(vec![config.clone()], "tcp", mode).await,
-            "udp" => deploy_and_forward_pod_with_mode(vec![config.clone()], mode).await,
+            "tcp" => kube_start_port_forward(vec![config.clone()], "tcp", mode, ssl_override).await,
+            "udp" => {
+                deploy_and_forward_pod_with_mode(vec![config.clone()], mode, ssl_override).await
+            }
             _ => return,
         },
         _ => return,
@@ -106,20 +116,20 @@ pub async fn stop_all_port_forward_and_exit(app: &mut App, mode: DatabaseMode) {
 }
 
 pub async fn start_port_forward(
-    config_id: i64, mode: DatabaseMode,
+    config_id: i64, mode: DatabaseMode, ssl_override: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config = get_config_with_mode(config_id, mode).await?;
 
     match config.workload_type.as_deref() {
         Some("proxy") => {
-            deploy_and_forward_pod_with_mode(vec![config], mode).await?;
+            deploy_and_forward_pod_with_mode(vec![config], mode, ssl_override).await?;
         }
         Some("service") | Some("pod") => match config.protocol.as_str() {
             "tcp" => {
-                kube_start_port_forward(vec![config], "tcp", mode).await?;
+                kube_start_port_forward(vec![config], "tcp", mode, ssl_override).await?;
             }
             "udp" => {
-                deploy_and_forward_pod_with_mode(vec![config], mode).await?;
+                deploy_and_forward_pod_with_mode(vec![config], mode, ssl_override).await?;
             }
             _ => return Ok(()),
         },

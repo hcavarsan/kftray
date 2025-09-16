@@ -43,11 +43,11 @@ use crate::kube::shared_client::{
 };
 
 pub async fn deploy_and_forward_pod(configs: Vec<Config>) -> Result<Vec<CustomResponse>, String> {
-    deploy_and_forward_pod_with_mode(configs, DatabaseMode::File).await
+    deploy_and_forward_pod_with_mode(configs, DatabaseMode::File, false).await
 }
 
 pub async fn deploy_and_forward_pod_with_mode(
-    configs: Vec<Config>, mode: DatabaseMode,
+    configs: Vec<Config>, mode: DatabaseMode, ssl_override: bool,
 ) -> Result<Vec<CustomResponse>, String> {
     let mut responses: Vec<CustomResponse> = Vec::new();
 
@@ -149,6 +149,7 @@ pub async fn deploy_and_forward_pod_with_mode(
                             vec![config.clone()],
                             "udp",
                             mode,
+                            ssl_override,
                         )
                         .await
                     }
@@ -157,6 +158,7 @@ pub async fn deploy_and_forward_pod_with_mode(
                             vec![config.clone()],
                             "tcp",
                             mode,
+                            ssl_override,
                         )
                         .await
                     }
