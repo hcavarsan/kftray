@@ -40,11 +40,11 @@ keyring = { version = "3.6", features = [
   "linux-native",
   "windows-native",
 ] }
-kftray-commons = { version = "0.25.0", path = "crates/kftray-commons" }
-kftray-helper = { version = "0.25.0", path = "crates/kftray-helper" }
-kftray-http-logs = { version = "0.25.0", path = "crates/kftray-http-logs" }
-kftray-network-monitor = { version = "0.25.0", path = "crates/kftray-network-monitor" }
-kftray-portforward = { version = "0.25.0", path = "crates/kftray-portforward" }
+kftray-commons = { version = "0.25.1", path = "crates/kftray-commons" }
+kftray-helper = { version = "0.25.1", path = "crates/kftray-helper" }
+kftray-http-logs = { version = "0.25.1", path = "crates/kftray-http-logs" }
+kftray-network-monitor = { version = "0.25.1", path = "crates/kftray-network-monitor" }
+kftray-portforward = { version = "0.25.1", path = "crates/kftray-portforward" }
 kube = { version = "2.0.1", features = [
   "client",
   "config",
