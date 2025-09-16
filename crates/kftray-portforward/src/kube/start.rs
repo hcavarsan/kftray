@@ -471,9 +471,10 @@ pub async fn start_port_forward_with_mode(
 
                 match forward_result {
                     Ok((actual_local_port, handle)) => {
+                        let protocol_upper = protocol.to_uppercase();
                         info!(
                             "{} port forwarding is set up on local port: {:?} for {}: {:?}",
-                            protocol.to_uppercase(),
+                            protocol_upper,
                             actual_local_port,
                             workload_type_description(config.workload_type.as_deref()),
                             &config.service
@@ -640,30 +641,34 @@ pub async fn start_port_forward_with_mode(
                             remote_port: config.remote_port.unwrap_or_default(),
                             context: config.context.clone().unwrap_or_default(),
                             protocol: config.protocol.clone(),
-                            stdout: format!(
-                                "{} forwarding from 127.0.0.1:{} -> {:?}:{}{}",
-                                if should_use_ssl && protocol == "tcp" {
-                                    "HTTPS"
+                            stdout: {
+                                let protocol_display = if should_use_ssl && protocol == "tcp" {
+                                    "HTTPS".to_string()
                                 } else {
-                                    &protocol.to_uppercase()
-                                },
-                                actual_local_port,
-                                config.remote_port.unwrap_or_default(),
-                                config.service.clone().unwrap(),
-                                if should_use_ssl && protocol == "tcp" {
-                                    " (HTTP redirects to HTTPS)"
-                                } else {
-                                    ""
-                                }
-                            ),
+                                    protocol.to_uppercase()
+                                };
+                                format!(
+                                    "{} forwarding from 127.0.0.1:{} -> {:?}:{}{}",
+                                    protocol_display,
+                                    actual_local_port,
+                                    config.remote_port.unwrap_or_default(),
+                                    config.service.clone().unwrap(),
+                                    if should_use_ssl && protocol == "tcp" {
+                                        " (HTTP redirects to HTTPS)"
+                                    } else {
+                                        ""
+                                    }
+                                )
+                            },
                             stderr: String::new(),
                             status: 0,
                         });
                     }
                     Err(e) => {
+                        let protocol_upper = protocol.to_uppercase();
                         let error_message = format!(
                             "Failed to start {} port forwarding for {} {}: {}",
-                            protocol.to_uppercase(),
+                            protocol_upper,
                             workload_type_description(config.workload_type.as_deref()),
                             config.service.clone().unwrap_or_default(),
                             e

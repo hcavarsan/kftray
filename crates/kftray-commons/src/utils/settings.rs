@@ -526,6 +526,82 @@ pub async fn set_ssl_ca_auto_install(
     set_setting("ssl_ca_auto_install", &enabled.to_string()).await
 }
 
+pub async fn get_ssl_enabled_with_mode(
+    mode: DatabaseMode,
+) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+    if let Some(value) = get_setting_with_mode("ssl_enabled", mode).await? {
+        Ok(value.parse::<bool>().unwrap_or(false))
+    } else {
+        Ok(false)
+    }
+}
+
+pub async fn set_ssl_enabled_with_mode(
+    enabled: bool, mode: DatabaseMode,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    set_setting_with_mode("ssl_enabled", &enabled.to_string(), mode).await
+}
+
+pub async fn get_ssl_cert_validity_days_with_mode(
+    mode: DatabaseMode,
+) -> Result<u16, Box<dyn std::error::Error + Send + Sync>> {
+    if let Some(value) = get_setting_with_mode("ssl_cert_validity_days", mode).await? {
+        Ok(value.parse::<u16>().unwrap_or(365))
+    } else {
+        Ok(365)
+    }
+}
+
+pub async fn set_ssl_cert_validity_days_with_mode(
+    days: u16, mode: DatabaseMode,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    set_setting_with_mode("ssl_cert_validity_days", &days.to_string(), mode).await
+}
+
+pub async fn get_ssl_auto_regenerate_with_mode(
+    mode: DatabaseMode,
+) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+    if let Some(value) = get_setting_with_mode("ssl_auto_regenerate", mode).await? {
+        Ok(value.parse::<bool>().unwrap_or(true))
+    } else {
+        Ok(true)
+    }
+}
+
+pub async fn set_ssl_auto_regenerate_with_mode(
+    enabled: bool, mode: DatabaseMode,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    set_setting_with_mode("ssl_auto_regenerate", &enabled.to_string(), mode).await
+}
+
+pub async fn get_ssl_ca_auto_install_with_mode(
+    mode: DatabaseMode,
+) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+    if let Some(value) = get_setting_with_mode("ssl_ca_auto_install", mode).await? {
+        Ok(value.parse::<bool>().unwrap_or(false))
+    } else {
+        Ok(false)
+    }
+}
+
+pub async fn set_ssl_ca_auto_install_with_mode(
+    enabled: bool, mode: DatabaseMode,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    set_setting_with_mode("ssl_ca_auto_install", &enabled.to_string(), mode).await
+}
+
+pub async fn get_app_settings_with_mode(
+    mode: DatabaseMode,
+) -> Result<AppSettings, Box<dyn std::error::Error + Send + Sync>> {
+    let context = DatabaseManager::get_context(mode).await?;
+    let settings = load_all_settings(&context.pool).await?;
+
+    let settings_map: HashMap<String, String> =
+        settings.into_iter().map(|s| (s.key, s.value)).collect();
+
+    Ok(AppSettings::from_settings_manager(&settings_map))
+}
+
 #[cfg(test)]
 mod tests {
     use sqlx::SqlitePool;

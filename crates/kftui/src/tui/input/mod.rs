@@ -236,6 +236,8 @@ pub struct App {
     pub settings_editing: bool,
     pub settings_network_monitor: bool,
     pub settings_selected_option: usize,
+    pub settings_ssl_enabled: bool,
+    pub settings_ssl_cert_validity_input: String,
     pub http_logs_enabled: std::collections::HashMap<i64, bool>,
     pub active_pods: std::collections::HashMap<i64, Option<String>>,
     pub http_logs_config_id: Option<i64>,
@@ -315,6 +317,8 @@ impl App {
             settings_editing: false,
             settings_network_monitor: true,
             settings_selected_option: 0,
+            settings_ssl_enabled: false,
+            settings_ssl_cert_validity_input: String::new(),
             http_logs_enabled: std::collections::HashMap::new(),
             active_pods: std::collections::HashMap::new(),
             http_logs_config_id: None,
@@ -1035,6 +1039,17 @@ pub async fn handle_menu_input(app: &mut App, key: KeyCode, mode: DatabaseMode) 
                 {
                     app.settings_network_monitor = network_monitor;
                 }
+                if let Ok(ssl_enabled) =
+                    kftray_commons::utils::settings::get_ssl_enabled_with_mode(mode).await
+                {
+                    app.settings_ssl_enabled = ssl_enabled;
+                }
+                if let Ok(ssl_validity) =
+                    kftray_commons::utils::settings::get_ssl_cert_validity_days_with_mode(mode)
+                        .await
+                {
+                    app.settings_ssl_cert_validity_input = ssl_validity.to_string();
+                }
                 app.settings_editing = false;
                 app.settings_selected_option = 0;
             }
@@ -1236,6 +1251,16 @@ pub async fn handle_common_hotkeys(
                 kftray_commons::utils::settings::get_network_monitor_with_mode(mode).await
             {
                 app.settings_network_monitor = network_monitor;
+            }
+            if let Ok(ssl_enabled) =
+                kftray_commons::utils::settings::get_ssl_enabled_with_mode(mode).await
+            {
+                app.settings_ssl_enabled = ssl_enabled;
+            }
+            if let Ok(ssl_validity) =
+                kftray_commons::utils::settings::get_ssl_cert_validity_days_with_mode(mode).await
+            {
+                app.settings_ssl_cert_validity_input = ssl_validity.to_string();
             }
             app.settings_editing = false;
             app.settings_selected_option = 0;
@@ -1533,40 +1558,14 @@ pub async fn handle_settings_input(
             app.settings_editing = false;
         }
         KeyCode::Up => {
-            app.settings_selected_option = match app.settings_selected_option {
-                0 => 0,
-                1 => 1,
-                2 => 0,
-                3 => 1,
-                _ => 0,
-            };
+            if app.settings_selected_option > 0 {
+                app.settings_selected_option -= 1;
+            }
         }
         KeyCode::Down => {
-            app.settings_selected_option = match app.settings_selected_option {
-                0 => 2,
-                1 => 3,
-                2 => 2,
-                3 => 3,
-                _ => 0,
-            };
-        }
-        KeyCode::Left => {
-            app.settings_selected_option = match app.settings_selected_option {
-                0 => 0,
-                1 => 0,
-                2 => 2,
-                3 => 2,
-                _ => 0,
-            };
-        }
-        KeyCode::Right => {
-            app.settings_selected_option = match app.settings_selected_option {
-                0 => 1,
-                1 => 1,
-                2 => 3,
-                3 => 3,
-                _ => 0,
-            };
+            if app.settings_selected_option < 4 {
+                app.settings_selected_option += 1;
+            }
         }
         KeyCode::Enter => {
             match app.settings_selected_option {
@@ -1658,18 +1657,141 @@ pub async fn handle_settings_input(
                         }
                     }
                 }
-                3 => {}
+                3 => {
+                    app.settings_ssl_enabled = !app.settings_ssl_enabled;
+                    match kftray_commons::utils::settings::set_ssl_enabled_with_mode(
+                        app.settings_ssl_enabled,
+                        mode,
+                    )
+                    .await
+                    {
+                        Err(e) => {
+                            app.error_message = Some(format!("Failed to save SSL setting: {e}"));
+                            app.state = AppState::ShowErrorPopup;
+                        }
+                        _ => {
+                            if app.settings_ssl_enabled {
+                                if let Err(e) = kftray_commons::utils::settings::set_ssl_auto_regenerate_with_mode(true, mode).await {
+                                    app.error_message = Some(format!("Failed to enable SSL auto regenerate: {e}"));
+                                    app.state = AppState::ShowErrorPopup;
+                                    return Ok(());
+                                }
+                                if let Err(e) = kftray_commons::utils::settings::set_ssl_ca_auto_install_with_mode(true, mode).await {
+                                    app.error_message = Some(format!("Failed to enable SSL CA auto install: {e}"));
+                                    app.state = AppState::ShowErrorPopup;
+                                    return Ok(());
+                                }
+
+                                match kftray_commons::utils::settings::get_app_settings_with_mode(
+                                    mode,
+                                )
+                                .await
+                                {
+                                    Ok(settings) => {
+                                        match kftray_portforward::ssl::CertificateManager::new(
+                                            &settings,
+                                        ) {
+                                            Ok(cert_manager) => {
+                                                if let Err(e) = cert_manager
+                                                    .ensure_ca_installed_and_trusted()
+                                                    .await
+                                                {
+                                                    app.error_message = Some(format!(
+                                                        "Failed to install CA certificate: {e}"
+                                                    ));
+                                                    app.state = AppState::ShowErrorPopup;
+                                                    return Ok(());
+                                                }
+
+                                                if let Err(e) = cert_manager
+                                                    .regenerate_certificate_for_all_configs()
+                                                    .await
+                                                {
+                                                    app.error_message = Some(format!(
+                                                        "Failed to generate SSL certificates: {e}"
+                                                    ));
+                                                    app.state = AppState::ShowErrorPopup;
+                                                }
+                                            }
+                                            Err(e) => {
+                                                app.error_message = Some(format!(
+                                                    "Failed to create certificate manager: {e}"
+                                                ));
+                                                app.state = AppState::ShowErrorPopup;
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        app.error_message =
+                                            Some(format!("Failed to get app settings: {e}"));
+                                        app.state = AppState::ShowErrorPopup;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                4 => {
+                    let ssl_enabled = app.settings_ssl_enabled;
+                    if ssl_enabled {
+                        if app.settings_editing {
+                            if let Ok(validity_value) =
+                                app.settings_ssl_cert_validity_input.parse::<u16>()
+                            {
+                                if validity_value > 0 && validity_value <= 3650 {
+                                    if (kftray_commons::utils::settings::set_ssl_cert_validity_days_with_mode(
+                                        validity_value,
+                                        mode,
+                                    )
+                                    .await)
+                                        .is_err()
+                                    {
+                                        app.error_message =
+                                            Some("Failed to save SSL validity setting".to_string());
+                                        app.state = AppState::ShowErrorPopup;
+                                    } else {
+                                        app.settings_editing = false;
+                                    }
+                                } else {
+                                    app.error_message = Some(
+                                        "Validity must be between 1 and 3650 days".to_string(),
+                                    );
+                                    app.state = AppState::ShowErrorPopup;
+                                }
+                            } else {
+                                app.error_message = Some(
+                                    "Invalid validity value. Please enter a number.".to_string(),
+                                );
+                                app.state = AppState::ShowErrorPopup;
+                            }
+                        } else {
+                            app.settings_editing = true;
+                        }
+                    }
+                }
                 _ => {}
             }
         }
         KeyCode::Char(c) => {
-            if app.settings_editing && app.settings_selected_option == 1 && c.is_ascii_digit() {
-                app.settings_timeout_input.push(c);
+            if app.settings_editing && c.is_ascii_digit() {
+                match app.settings_selected_option {
+                    1 => app.settings_timeout_input.push(c),
+                    4 => app.settings_ssl_cert_validity_input.push(c),
+                    _ => {}
+                }
             }
         }
         KeyCode::Backspace => {
-            if app.settings_editing && app.settings_selected_option == 1 {
-                app.settings_timeout_input.pop();
+            if app.settings_editing {
+                match app.settings_selected_option {
+                    1 => {
+                        app.settings_timeout_input.pop();
+                    }
+                    4 => {
+                        app.settings_ssl_cert_validity_input.pop();
+                    }
+                    _ => {}
+                }
             }
         }
         _ => {}

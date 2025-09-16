@@ -1,6 +1,6 @@
 [package]
 name = "kftray-portforward"
-version = "0.24.0"
+version = "0.24.1"
 authors = ["Henrique Cavarsan <hencavarsan@gmail.com>"]
 edition = "2024"
 description = "KFtray library with port forwarding logic"
