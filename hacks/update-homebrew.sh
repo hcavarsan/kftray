@@ -76,29 +76,29 @@ update_kftui_formula() {
 
 	cp "$file" "$temp_file"
 
-	perl -pi -e "s|VERSION_PLACEHOLDER|$version|g" "$temp_file"
-	perl -pi -e "s|SHA256_PLACEHOLDER|$mac_hash|" "$temp_file"
+	# Update URLs with new version
+	perl -pi -e "s|https://github.com/hcavarsan/kftray/releases/download/v[0-9]+\.[0-9]+\.[0-9]+[^/]*/kftui_macos_universal|$mac_url|g" "$temp_file"
+	perl -pi -e "s|https://github.com/hcavarsan/kftray/releases/download/v[0-9]+\.[0-9]+\.[0-9]+[^/]*/kftui_linux_amd64|$linux_amd64_url|g" "$temp_file"
+	perl -pi -e "s|https://github.com/hcavarsan/kftray/releases/download/v[0-9]+\.[0-9]+\.[0-9]+[^/]*/kftui_linux_arm64|$linux_arm64_url|g" "$temp_file"
 
-	sed -i.bak "s|https://github.com/hcavarsan/kftray/releases/download/VERSION_PLACEHOLDER/kftui_macos_universal|$mac_url|g" "$temp_file"
-	sed -i.bak "s|https://github.com/hcavarsan/kftray/releases/download/VERSION_PLACEHOLDER/kftui_linux_amd64|$linux_amd64_url|g" "$temp_file"
-	sed -i.bak "s|https://github.com/hcavarsan/kftray/releases/download/VERSION_PLACEHOLDER/kftui_linux_arm64|$linux_arm64_url|g" "$temp_file"
-
-	local first_sha_done=false
-	local second_sha_done=false
-
-	while IFS= read -r line; do
-		if [[ "$line" == *"SHA256_PLACEHOLDER"* ]] && [[ "$first_sha_done" == false ]]; then
-			echo "${line/SHA256_PLACEHOLDER/$mac_hash}"
-			first_sha_done=true
-		elif [[ "$line" == *"SHA256_PLACEHOLDER"* ]] && [[ "$second_sha_done" == false ]]; then
-			echo "${line/SHA256_PLACEHOLDER/$linux_amd64_hash}"
-			second_sha_done=true
-		elif [[ "$line" == *"SHA256_PLACEHOLDER"* ]]; then
-			echo "${line/SHA256_PLACEHOLDER/$linux_arm64_hash}"
-		else
-			echo "$line"
-		fi
-	done < "$temp_file" > "${temp_file}.new"
+	# Update SHA256 hashes in order they appear in the formula
+	awk -v mac_hash="$mac_hash" -v amd64_hash="$linux_amd64_hash" -v arm64_hash="$linux_arm64_hash" '
+	BEGIN { sha_count = 0 }
+	/sha256/ {
+		sha_count++
+		if (sha_count == 1) {
+			# First sha256 - macOS universal
+			gsub(/sha256 "[^"]*"/, "sha256 \"" mac_hash "\"")
+		} else if (sha_count == 2) {
+			# Second sha256 - Linux AMD64
+			gsub(/sha256 "[^"]*"/, "sha256 \"" amd64_hash "\"")
+		} else if (sha_count == 3) {
+			# Third sha256 - Linux ARM64
+			gsub(/sha256 "[^"]*"/, "sha256 \"" arm64_hash "\"")
+		}
+	}
+	{ print }
+	' "$temp_file" > "${temp_file}.new"
 
 	mv "${temp_file}.new" "$temp_file"
 	rm -f "${temp_file}.bak"

@@ -56,6 +56,9 @@ pub struct Cli {
         help = "Save logs to file instead of showing in TUI logger widget"
     )]
     pub logs_to_file: bool,
+
+    #[arg(long, help = "Enable SSL/TLS for port forwarding (overrides settings)")]
+    pub ssl: bool,
 }
 
 impl Cli {
