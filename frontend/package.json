@@ -52,7 +52,7 @@
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^5.2.0",
     "eslint-plugin-simple-import-sort": "^12.1.1",
-    "jsdom": "^26.1.0",
+    "jsdom": "^27.0.0",
     "prettier": "^3.6.2",
     "react-refresh": "^0.17.0",
     "typescript": "5.9.2",
