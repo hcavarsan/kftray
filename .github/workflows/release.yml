@@ -506,7 +506,13 @@ jobs:
           else
             mv ./target/${{ matrix.rust_target }}/release/kftui ./target/release/kftui_${{ matrix.os_name }}_${{ matrix.arch }}
             chmod +x ./target/release/kftui_${{ matrix.os_name }}_${{ matrix.arch }}
+
+            cd ./target/release
+            tar -czf kftui_${{ matrix.os_name }}_${{ matrix.arch }}.tar.gz kftui_${{ matrix.os_name }}_${{ matrix.arch }}
+            cd ../..
+
             gh release upload ${{ github.ref_name }} ./target/release/kftui_${{ matrix.os_name }}_${{ matrix.arch }}
+            gh release upload ${{ github.ref_name }} ./target/release/kftui_${{ matrix.os_name }}_${{ matrix.arch }}.tar.gz
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
