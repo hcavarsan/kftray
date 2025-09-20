@@ -34,7 +34,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
+        uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493
 
       - name: Install dependencies
         run: |
@@ -57,7 +57,7 @@ jobs:
               xdg-utils
 
       - name: Install Rust nightly
-        uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b
+        uses: dtolnay/rust-toolchain@6d653acede28d24f02e3cd41383119e8b1b35921
         with:
           toolchain: nightly
 
@@ -65,17 +65,17 @@ jobs:
         run: rustup component add llvm-tools
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@2383334cf567d78771fc7d89b6b3802ef1412cf6
+        uses: taiki-e/install-action@26176d8d69a63a253d0afeccbbc05d9c8251c6e2
         with:
           tool: cargo-llvm-cov
 
       - name: Install nextest
-        uses: taiki-e/install-action@2383334cf567d78771fc7d89b6b3802ef1412cf6
+        uses: taiki-e/install-action@26176d8d69a63a253d0afeccbbc05d9c8251c6e2
         with:
           tool: cargo-nextest
 
       - name: Install rust-cache
-        uses: swatinem/rust-cache@7e1e2d0a10862b34e5df481373b2b0f295d1a2ef
+        uses: swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1
         with:
           key: rust-coverage
 
@@ -94,7 +94,7 @@ jobs:
           slug: hcavarsan/kftray
 
       - name: Upload coverage
-        uses: codecov/codecov-action@2db07e317924c76f654a414629d71c65876882e2
+        uses: codecov/codecov-action@5a1091511ad55cbe89839c7260b706298ca349f7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: lcov.info
@@ -111,7 +111,7 @@ jobs:
       release_id: ${{ steps.create_release.outputs.id }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
+        uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493
         with:
           fetch-depth: 0
 
@@ -135,7 +135,7 @@ jobs:
       - name: Create release draft
         id: create_release
         if: steps.check_release.outputs.release_exists != 'true'
-        uses: softprops/action-gh-release@72f2c25fcb47643c292f7107632f7a47c1df5cd8
+        uses: softprops/action-gh-release@97d42c1b50f585f357413698aa1b779307aa0d52
         with:
           tag_name: ${{ github.ref_name }}
           name: "KFtray - ${{ github.ref_name }}"
@@ -189,15 +189,15 @@ jobs:
     runs-on: ${{ matrix.runner || matrix.os }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
+        uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b
+        uses: dtolnay/rust-toolchain@6d653acede28d24f02e3cd41383119e8b1b35921
         with:
           toolchain: nightly
 
       - name: Cache Rust
-        uses: swatinem/rust-cache@7e1e2d0a10862b34e5df481373b2b0f295d1a2ef
+        uses: swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1
         with:
           key: kftray-tauri-${{ matrix.rust_target }}
 
@@ -211,14 +211,14 @@ jobs:
 
 
       - name: Install Node.js
-        uses: actions/setup-node@7e24a656e1c7a0d6f3eaef8d8e84ae379a5b035b
+        uses: actions/setup-node@89d709d423dc495668cd762a18dd4a070611be3f
         with:
           node-version: "22"
           cache: "pnpm"
 
 
       - name: Cache pnpm modules
-        uses: actions/cache@640a1c2554105b57832a23eea0b4672fc7a790d5
+        uses: actions/cache@638ed79f9dc94c1de1baef91bcab5edaa19451f4
         with:
           path: |
             $(pnpm store path --silent)
@@ -229,7 +229,7 @@ jobs:
 
       - name: Set up Visual Studio shell
         if: matrix.os == 'windows-latest' && matrix.arch == 'arm64'
-        uses: TheMrMilchmann/setup-msvc-dev@fb19abb8a41b3cf0340f5d1be17d420309232be6
+        uses: TheMrMilchmann/setup-msvc-dev@ff7e1bf0c526a0a6fff1a5b7f8969a424576a124
         with:
           arch: amd64_arm64
 
@@ -281,7 +281,7 @@ jobs:
 
       - name: Sign and notarize the helper binary
         if: matrix.os == 'macos-latest'
-        uses: toitlang/action-macos-sign-notarize@64b6d845b70ccd71bde584769280c612d48211db
+        uses: toitlang/action-macos-sign-notarize@3c86807a4dc5bfd91c90fd61bfc6632548c9f55a
         with:
           certificate: ${{ secrets.APPLE_CERTIFICATE }}
           certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -292,7 +292,7 @@ jobs:
           entitlements-path: crates/kftray-helper/macos-helper-entitlements.plist
 
       - name: Build kftray-tauri Desktop App
-        uses: tauri-apps/tauri-action@42e9df6c59070d114bf90dcd3943a1b8f138b113
+        uses: tauri-apps/tauri-action@61149c982cf3e1cd95f5c8839d017831a01403e9
         id: tauri_build
         continue-on-error: true
         env:
@@ -320,7 +320,7 @@ jobs:
 
       - name: Retry Build on Failure
         if: steps.tauri_build.outcome == 'failure'
-        uses: tauri-apps/tauri-action@42e9df6c59070d114bf90dcd3943a1b8f138b113
+        uses: tauri-apps/tauri-action@61149c982cf3e1cd95f5c8839d017831a01403e9
         env:
           RUSTFLAGS: ${{ matrix.os == 'macos-latest' && '-C link-arg=-s' || '-C target-cpu=native -C link-arg=-s' }}
           AWS_LC_SYS_CMAKE_CFLAGS: ${{ matrix.os == 'windows-latest' && '/std:c11' || '' }}
@@ -383,15 +383,15 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
+        uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b
+        uses: dtolnay/rust-toolchain@6d653acede28d24f02e3cd41383119e8b1b35921
         with:
           toolchain: nightly
 
       - name: Cache Rust
-        uses: swatinem/rust-cache@7e1e2d0a10862b34e5df481373b2b0f295d1a2ef
+        uses: swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1
         with:
           key: kftui-${{ matrix.rust_target }}
 
@@ -404,13 +404,13 @@ jobs:
              args: [--frozen-lockfile]
 
       - name: Install Node.js
-        uses: actions/setup-node@7e24a656e1c7a0d6f3eaef8d8e84ae379a5b035b
+        uses: actions/setup-node@89d709d423dc495668cd762a18dd4a070611be3f
         with:
           node-version: "22"
           cache: "pnpm"
 
       - name: Cache pnpm modules
-        uses: actions/cache@640a1c2554105b57832a23eea0b4672fc7a790d5
+        uses: actions/cache@638ed79f9dc94c1de1baef91bcab5edaa19451f4
         with:
           path: |
             $(pnpm store path --silent)
@@ -457,7 +457,7 @@ jobs:
 
       - name: Set up Perl on Windows
         if: matrix.os == 'windows-latest'
-        uses: shogo82148/actions-setup-perl@2fde72b7b7b24c986737ffc0eb0cbba8622c9d78
+        uses: shogo82148/actions-setup-perl@a2cd3883a2ef22d46c455b84bc81b8dfdb86ba9f
         with:
           perl-version: "5.32"
           distribution: "strawberry"
@@ -484,7 +484,7 @@ jobs:
 
       - name: Sign and notarize the release build
         if: matrix.os == 'macos-latest'
-        uses: toitlang/action-macos-sign-notarize@64b6d845b70ccd71bde584769280c612d48211db
+        uses: toitlang/action-macos-sign-notarize@3c86807a4dc5bfd91c90fd61bfc6632548c9f55a
         with:
           certificate: ${{ secrets.APPLE_CERTIFICATE }}
           certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -522,23 +522,23 @@ jobs:
     if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
+        uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@05340d1c670183e7caabdb33ae9f1c80fae3b0c2
+        uses: docker/setup-qemu-action@e77e8065d9f7ec6abdd9838668cd7b43924dd64d
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435
+        uses: docker/setup-buildx-action@1583c0f09d26c58c59d25b0eef29792b7ce99d9a
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@3d100841f68d4548bf57e52eb27bd33ec5069f55
+        uses: docker/login-action@5b7b28b1cc417bbd34cd8c225a957c9ce9adf7f2
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push Docker image
-        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83
+        uses: docker/build-push-action@cb8fc7586f9ad9441b20c33e0f6e8b1b58d8b4c6
         with:
           platforms: linux/amd64,linux/arm64
           context: ./crates/kftray-server
@@ -560,12 +560,12 @@ jobs:
       !contains(github.ref, '-alpha')
     steps:
       - name: Checkout
-        uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
+        uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493
         with:
           fetch-depth: 0
 
       - name: Generate changelog
-        uses: orhun/git-cliff-action@104a6cf3c9aa0fdfe4eab129f9c1900e1eb8f7fd
+        uses: orhun/git-cliff-action@82629b39d0895cc2b1318910d2ec047b352b2fb3
         id: git-cliff
         with:
           config: cliff.toml
@@ -574,7 +574,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Update release notes
-        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -623,15 +623,15 @@ jobs:
       !contains(github.ref, '-alpha')
     steps:
       - name: Checkout repository
-        uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
+        uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b
+        uses: dtolnay/rust-toolchain@6d653acede28d24f02e3cd41383119e8b1b35921
         with:
           toolchain: nightly
 
       - name: Cache Rust
-        uses: swatinem/rust-cache@7e1e2d0a10862b34e5df481373b2b0f295d1a2ef
+        uses: swatinem/rust-cache@f13886b937689c021905a6b90929199931d60db1
         with:
           key: publish-cargo-crates
 
@@ -728,7 +728,7 @@ jobs:
       !contains(github.ref, '-beta') &&
       !contains(github.ref, '-alpha')
     steps:
-      - uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
+      - uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493
       
       - name: Setup and publish to OBS
         env:
@@ -753,7 +753,7 @@ jobs:
       !contains(github.ref, '-alpha')
     steps:
       - name: Checkout main repository
-        uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
+        uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493
 
       - name: Update Homebrew formulas
         env:
