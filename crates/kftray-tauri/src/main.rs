@@ -3,10 +3,7 @@
     windows_subsystem = "windows"
 )]
 
-use std::sync::{
-    Arc,
-    Mutex,
-};
+use std::sync::Arc;
 
 use log::{
     error,
@@ -45,10 +42,8 @@ fn main() {
 
     kftray_portforward::ssl::ensure_crypto_provider_installed();
 
-    // Tray will be created in setup function for Tauri v2
-    let is_moving = Arc::new(Mutex::new(false));
-    let is_plugin_moving = Arc::new(AtomicBool::new(false));
-    let is_pinned = Arc::new(AtomicBool::new(false));
+    let positioning_active = Arc::new(AtomicBool::new(false));
+    let pinned = Arc::new(AtomicBool::new(false));
     let runtime = Arc::new(Runtime::new().expect("Failed to create a Tokio runtime"));
 
     // TODO: Remove this workaround when the tauri issue is resolved
@@ -69,9 +64,8 @@ fn main() {
         .manage(SaveDialogState::default())
         .manage(TrayPositionState::default())
         .manage(AppState {
-            is_moving: is_moving.clone(),
-            is_plugin_moving: is_plugin_moving.clone(),
-            is_pinned: is_pinned.clone(),
+            positioning_active: positioning_active.clone(),
+            pinned: pinned.clone(),
             runtime: runtime.clone(),
         })
         // HttpLogState removed - using direct database access
@@ -199,10 +193,10 @@ fn main() {
                 window.show().unwrap();
                 window.set_focus().unwrap();
                 window.set_always_on_top(true).unwrap();
-                is_pinned.store(true, Ordering::SeqCst);
+                pinned.store(true, Ordering::SeqCst);
             }
 
-            if is_pinned.load(Ordering::SeqCst) {
+            if pinned.load(Ordering::SeqCst) {
                 window.set_always_on_top(true).unwrap();
             }
 
@@ -305,27 +299,27 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::AtomicBool;
+    use std::sync::{
+        Mutex,
+        atomic::AtomicBool,
+    };
 
     use super::*;
 
     #[test]
     fn test_app_state_creation() {
-        let is_moving = Arc::new(Mutex::new(false));
-        let is_plugin_moving = Arc::new(AtomicBool::new(false));
-        let is_pinned = Arc::new(AtomicBool::new(false));
+        let positioning_active = Arc::new(AtomicBool::new(false));
+        let pinned = Arc::new(AtomicBool::new(false));
         let runtime = Arc::new(Runtime::new().expect("Failed to create a Tokio runtime"));
 
         let app_state = AppState {
-            is_moving: is_moving.clone(),
-            is_plugin_moving: is_plugin_moving.clone(),
-            is_pinned: is_pinned.clone(),
+            positioning_active: positioning_active.clone(),
+            pinned: pinned.clone(),
             runtime: runtime.clone(),
         };
 
-        assert!(!*app_state.is_moving.lock().unwrap());
-        assert!(!app_state.is_plugin_moving.load(Ordering::SeqCst));
-        assert!(!app_state.is_pinned.load(Ordering::SeqCst));
+        assert!(!app_state.positioning_active.load(Ordering::SeqCst));
+        assert!(!app_state.pinned.load(Ordering::SeqCst));
     }
 
     #[test]
@@ -336,11 +330,11 @@ mod tests {
 
     #[test]
     fn test_pin_state() {
-        let is_pinned = Arc::new(AtomicBool::new(false));
-        assert!(!is_pinned.load(Ordering::SeqCst));
+        let pinned = Arc::new(AtomicBool::new(false));
+        assert!(!pinned.load(Ordering::SeqCst));
 
-        is_pinned.store(true, Ordering::SeqCst);
-        assert!(is_pinned.load(Ordering::SeqCst));
+        pinned.store(true, Ordering::SeqCst);
+        assert!(pinned.load(Ordering::SeqCst));
     }
 
     #[test]

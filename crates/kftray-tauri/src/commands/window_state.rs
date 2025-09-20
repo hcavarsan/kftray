@@ -22,8 +22,8 @@ pub fn close_save_dialog(state: State<SaveDialogState>) {
 
 #[tauri::command]
 pub fn toggle_pin_state(app_state: tauri::State<AppState>, window: WebviewWindow<Wry>) {
-    let new_pin_state = !app_state.is_pinned.load(Ordering::SeqCst);
-    app_state.is_pinned.store(new_pin_state, Ordering::SeqCst);
+    let new_pin_state = !app_state.pinned.load(Ordering::SeqCst);
+    app_state.pinned.store(new_pin_state, Ordering::SeqCst);
 
     if new_pin_state && !window.is_visible().unwrap_or(true) {
         let _ = window.show();
@@ -65,9 +65,8 @@ mod tests {
 
     fn create_mock_app_state() -> AppState {
         AppState {
-            is_moving: Arc::new(std::sync::Mutex::new(false)),
-            is_plugin_moving: Arc::new(AtomicBool::new(false)),
-            is_pinned: Arc::new(AtomicBool::new(false)),
+            positioning_active: Arc::new(AtomicBool::new(false)),
+            pinned: Arc::new(AtomicBool::new(false)),
             runtime: Arc::new(Runtime::new().unwrap()),
         }
     }
@@ -136,23 +135,23 @@ mod tests {
         let app_state = create_mock_app_state();
 
         assert!(
-            !app_state.is_pinned.load(Ordering::SeqCst),
-            "AppState should initialize with is_pinned = false"
+            !app_state.pinned.load(Ordering::SeqCst),
+            "AppState should initialize with pinned = false"
         );
 
-        let initial_state = app_state.is_pinned.load(Ordering::SeqCst);
-        app_state.is_pinned.store(!initial_state, Ordering::SeqCst);
+        let initial_state = app_state.pinned.load(Ordering::SeqCst);
+        app_state.pinned.store(!initial_state, Ordering::SeqCst);
 
         assert!(
-            app_state.is_pinned.load(Ordering::SeqCst),
+            app_state.pinned.load(Ordering::SeqCst),
             "AppState should be pinned after toggle"
         );
 
-        let current_state = app_state.is_pinned.load(Ordering::SeqCst);
-        app_state.is_pinned.store(!current_state, Ordering::SeqCst);
+        let current_state = app_state.pinned.load(Ordering::SeqCst);
+        app_state.pinned.store(!current_state, Ordering::SeqCst);
 
         assert!(
-            !app_state.is_pinned.load(Ordering::SeqCst),
+            !app_state.pinned.load(Ordering::SeqCst),
             "AppState should be unpinned after second toggle"
         );
     }
@@ -171,18 +170,12 @@ mod tests {
         let app_state = create_mock_app_state();
 
         assert!(
-            !app_state.is_pinned.load(Ordering::SeqCst),
-            "AppState should initialize with is_pinned = false"
+            !app_state.pinned.load(Ordering::SeqCst),
+            "AppState should initialize with pinned = false"
         );
         assert!(
-            !app_state.is_plugin_moving.load(Ordering::SeqCst),
-            "AppState should initialize with is_plugin_moving = false"
-        );
-
-        let is_moving = *app_state.is_moving.lock().unwrap();
-        assert!(
-            !is_moving,
-            "AppState should initialize with is_moving = false"
+            !app_state.positioning_active.load(Ordering::SeqCst),
+            "AppState should initialize with positioning_active = false"
         );
     }
 
@@ -290,11 +283,11 @@ mod tests {
         let app_state = create_mock_app_state();
         let mut mock_window = MockWindow::new();
 
-        let initial_pin_state = app_state.is_pinned.load(Ordering::SeqCst);
+        let initial_pin_state = app_state.pinned.load(Ordering::SeqCst);
         assert!(!initial_pin_state, "Should start unpinned");
 
         let new_pin_state = !initial_pin_state;
-        app_state.is_pinned.store(new_pin_state, Ordering::SeqCst);
+        app_state.pinned.store(new_pin_state, Ordering::SeqCst);
 
         if new_pin_state && !mock_window.is_visible().unwrap_or(true) {
             let _ = mock_window.show();
@@ -319,7 +312,7 @@ mod tests {
         let _ = mock_window.emit("pin-state-changed", new_pin_state);
 
         assert!(
-            app_state.is_pinned.load(Ordering::SeqCst),
+            app_state.pinned.load(Ordering::SeqCst),
             "App state should be pinned after toggle"
         );
 
@@ -347,8 +340,8 @@ mod tests {
 
         mock_window.visible = false;
 
-        let new_pin_state = !app_state.is_pinned.load(Ordering::SeqCst);
-        app_state.is_pinned.store(new_pin_state, Ordering::SeqCst);
+        let new_pin_state = !app_state.pinned.load(Ordering::SeqCst);
+        app_state.pinned.store(new_pin_state, Ordering::SeqCst);
 
         if new_pin_state && !mock_window.is_visible().unwrap_or(true) {
             let _ = mock_window.show();
@@ -358,7 +351,7 @@ mod tests {
         let _ = mock_window.set_always_on_top(new_pin_state);
 
         assert!(
-            app_state.is_pinned.load(Ordering::SeqCst),
+            app_state.pinned.load(Ordering::SeqCst),
             "App state should be pinned after toggle"
         );
         assert!(mock_window.always_on_top, "Window should be always on top");
