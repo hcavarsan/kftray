@@ -1,8 +1,5 @@
+use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
-use std::sync::{
-    Arc,
-    Mutex,
-};
 
 use serde::{
     Deserialize,
@@ -29,9 +26,8 @@ pub struct WindowPosition {
 }
 
 pub struct AppState {
-    pub is_moving: Arc<Mutex<bool>>,
-    pub is_plugin_moving: Arc<AtomicBool>,
-    pub is_pinned: Arc<AtomicBool>,
+    pub positioning_active: Arc<AtomicBool>,
+    pub pinned: Arc<AtomicBool>,
     pub runtime: Arc<Runtime>,
 }
 

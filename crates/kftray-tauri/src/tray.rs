@@ -10,11 +10,12 @@ use kftray_commons::models::window::SaveDialogState;
 use log::{
     error,
     info,
+    warn,
 };
+use tauri::PhysicalPosition;
+use tauri::PhysicalSize;
 use tauri::{
     Manager,
-    PhysicalPosition,
-    PhysicalSize,
     RunEvent,
     WindowEvent,
     Wry,
@@ -44,10 +45,8 @@ pub struct TrayPositionState {
 use crate::commands::portforward::handle_exit_app;
 use crate::commands::window_state::toggle_pin_state;
 use crate::window::{
-    adjust_window_size_and_position,
     reset_window_position,
     save_window_position,
-    set_default_position,
     set_window_position,
     toggle_window_visibility,
 };
@@ -171,25 +170,47 @@ pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<tauri::tray::TrayIcon<W
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {
-            tauri_plugin_positioner::on_tray_event(tray.app_handle(), &event);
-
             match &event {
                 TrayIconEvent::Click { rect, .. }
                 | TrayIconEvent::Enter { rect, .. }
                 | TrayIconEvent::Leave { rect, .. }
                 | TrayIconEvent::Move { rect, .. } => {
-                    let scale_factor = tray
-                        .app_handle()
-                        .get_webview_window("main")
-                        .and_then(|w| w.current_monitor().ok()?)
-                        .map(|m| m.scale_factor())
-                        .unwrap_or(1.0);
-
-                    let size = rect.size.to_physical(scale_factor);
-                    let position = rect.position.to_physical(scale_factor);
-
                     if let Some(tray_state) = tray.app_handle().try_state::<TrayPositionState>() {
-                        *tray_state.position.lock().unwrap() = Some((position, size));
+                        let physical_position = match rect.position {
+                            tauri::Position::Physical(pos) => {
+                                PhysicalPosition::new(pos.x as f64, pos.y as f64)
+                            }
+                            tauri::Position::Logical(pos) => {
+                                let scale = tray
+                                    .app_handle()
+                                    .get_webview_window("main")
+                                    .and_then(|w| w.current_monitor().ok()?)
+                                    .map(|m| m.scale_factor())
+                                    .unwrap_or(1.0);
+                                pos.to_physical(scale)
+                            }
+                        };
+                        let physical_size = match rect.size {
+                            tauri::Size::Physical(size) => {
+                                PhysicalSize::new(size.width as f64, size.height as f64)
+                            }
+                            tauri::Size::Logical(size) => {
+                                let scale = tray
+                                    .app_handle()
+                                    .get_webview_window("main")
+                                    .and_then(|w| w.current_monitor().ok()?)
+                                    .map(|m| m.scale_factor())
+                                    .unwrap_or(1.0);
+                                size.to_physical(scale)
+                            }
+                        };
+
+                        info!(
+                            "Tray event captured - position: {:?}, size: {:?}",
+                            physical_position, physical_size
+                        );
+                        *tray_state.position.lock().unwrap() =
+                            Some((physical_position, physical_size));
                     }
                 }
                 _ => {}
@@ -239,37 +260,19 @@ pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
         }
     };
 
-    if let WindowEvent::ScaleFactorChanged {
-        scale_factor,
-        new_inner_size,
-        ..
-    } = event
-    {
-        adjust_window_size_and_position(&webview_window, *scale_factor, *new_inner_size);
-        let is_visible = webview_window.is_visible().unwrap_or(false);
-        let is_focused = webview_window.is_focused().unwrap_or(false);
-
-        if !is_visible || !is_focused {
-            set_default_position(&webview_window);
-            if let Err(e) = webview_window.show() {
-                error!("Failed to show window: {e}");
-            }
-            if let Err(e) = webview_window.set_focus() {
-                error!("Failed to focus window: {e}");
-            }
+    if let WindowEvent::ScaleFactorChanged { new_inner_size, .. } = event {
+        if let Err(e) = webview_window.set_size(tauri::Size::Physical(*new_inner_size)) {
+            warn!("Failed to set window size during scale change: {e}");
         }
-
         return;
     }
 
     info!("event: {:?}", event);
     let app_state = webview_window.state::<AppState>();
-    let is_moving = app_state.is_moving.lock().unwrap();
 
     if let WindowEvent::Focused(is_focused) = event
         && !is_focused
-        && !*is_moving
-        && !app_state.is_pinned.load(Ordering::SeqCst)
+        && !app_state.pinned.load(Ordering::SeqCst)
     {
         let app_handle = webview_window.app_handle();
 
@@ -301,6 +304,7 @@ pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
             unsafe {
                 // https://github.com/MicrosoftEdge/WebView2Feedback/issues/780#issuecomment-808306938
                 // https://docs.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/icorewebview2controller?view=webview2-1.0.774.44#notifyparentwindowpositionchanged
+
                 _webview
                     .controller()
                     .NotifyParentWindowPositionChanged()
@@ -311,27 +315,14 @@ pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
             {}
         });
 
-        if let Ok(mut moving_guard) = app_state.is_moving.try_lock()
-            && !*moving_guard
-            && !app_state.is_plugin_moving.load(Ordering::SeqCst)
-        {
-            info!(
-                "is_plugin_moving: {}",
-                app_state.is_plugin_moving.load(Ordering::SeqCst)
-            );
-            *moving_guard = true;
-
-            drop(moving_guard);
+        let app_state = webview_window.state::<AppState>();
+        if !app_state.positioning_active.load(Ordering::SeqCst) {
             save_window_position(&webview_window);
-
-            if let Ok(mut moving_guard) = app_state.is_moving.try_lock() {
-                *moving_guard = false;
-            }
         }
     }
 
     if let WindowEvent::CloseRequested { api, .. } = event
-        && !app_state.is_pinned.load(Ordering::SeqCst)
+        && !app_state.pinned.load(Ordering::SeqCst)
     {
         api.prevent_close();
         // Call the same exit logic as tray quit to handle active port forwards
@@ -366,44 +357,33 @@ mod tests {
     #[test]
     fn test_app_pin_state() {
         let app_state = AppState {
-            is_moving: Arc::new(std::sync::Mutex::new(false)),
-            is_plugin_moving: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-            is_pinned: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            positioning_active: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            pinned: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             runtime: Arc::new(Runtime::new().unwrap()),
         };
 
         assert!(
-            !app_state
-                .is_pinned
-                .load(std::sync::atomic::Ordering::SeqCst),
+            !app_state.pinned.load(std::sync::atomic::Ordering::SeqCst),
             "App should start unpinned"
         );
 
-        let initial_state = app_state
-            .is_pinned
-            .load(std::sync::atomic::Ordering::SeqCst);
+        let initial_state = app_state.pinned.load(std::sync::atomic::Ordering::SeqCst);
         app_state
-            .is_pinned
+            .pinned
             .store(!initial_state, std::sync::atomic::Ordering::SeqCst);
 
         assert!(
-            app_state
-                .is_pinned
-                .load(std::sync::atomic::Ordering::SeqCst),
+            app_state.pinned.load(std::sync::atomic::Ordering::SeqCst),
             "App should be pinned after toggle"
         );
 
-        let current_state = app_state
-            .is_pinned
-            .load(std::sync::atomic::Ordering::SeqCst);
+        let current_state = app_state.pinned.load(std::sync::atomic::Ordering::SeqCst);
         app_state
-            .is_pinned
+            .pinned
             .store(!current_state, std::sync::atomic::Ordering::SeqCst);
 
         assert!(
-            !app_state
-                .is_pinned
-                .load(std::sync::atomic::Ordering::SeqCst),
+            !app_state.pinned.load(std::sync::atomic::Ordering::SeqCst),
             "App should be unpinned after second toggle"
         );
     }
