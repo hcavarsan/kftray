@@ -40,6 +40,21 @@ pub async fn run_tui(
 
     let mut app = App::new(logger_state);
 
+    #[cfg(not(debug_assertions))]
+    {
+        match crate::updater::check_for_updates().await {
+            Ok(update_info) => {
+                if update_info.has_update {
+                    app.update_info = Some(update_info);
+                    app.state = crate::tui::input::AppState::ShowUpdateConfirmation;
+                }
+            }
+            Err(e) => {
+                error!("Failed to check for updates: {e}");
+            }
+        }
+    }
+
     // Start network monitor if enabled
     if let Ok(enabled) = kftray_commons::utils::settings::get_network_monitor_with_mode(mode).await
         && enabled

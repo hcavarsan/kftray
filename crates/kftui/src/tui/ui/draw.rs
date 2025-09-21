@@ -39,7 +39,10 @@ use crate::tui::ui::render_delete_confirmation_popup;
 use crate::tui::ui::render_details;
 use crate::tui::ui::render_http_logs_config_popup;
 use crate::tui::ui::render_http_logs_viewer_popup;
+use crate::tui::ui::render_restart_notification_popup;
 use crate::tui::ui::render_settings_popup;
+use crate::tui::ui::render_update_confirmation_popup;
+use crate::tui::ui::render_update_progress_popup;
 use crate::tui::ui::{
     BASE,
     TEXT,
@@ -158,9 +161,9 @@ pub fn draw_ui(f: &mut Frame, app: &mut App, config_states: &[ConfigState]) {
             render_help_popup(f, help_area);
         }
         AppState::ShowAbout => {
-            let about_area = centered_rect(30, 60, size);
+            let about_area = centered_rect(50, 50, size);
             render_background_overlay(f, size);
-            render_about_popup(f, about_area);
+            render_about_popup(f, app, about_area);
         }
         AppState::ImportFileExplorerOpen => {
             let popup_area = centered_rect(90, 90, size);
@@ -216,6 +219,28 @@ pub fn draw_ui(f: &mut Frame, app: &mut App, config_states: &[ConfigState]) {
         AppState::ShowHttpLogsViewer => {
             render_background_overlay(f, size);
             render_http_logs_viewer_popup(f, app, size);
+        }
+        AppState::ShowUpdateConfirmation => {
+            if let Some(update_info) = &app.update_info {
+                let update_area = centered_rect(50, 30, size);
+                render_background_overlay(f, size);
+                render_update_confirmation_popup(
+                    f,
+                    update_info,
+                    update_area,
+                    app.selected_update_button,
+                );
+            }
+        }
+        AppState::ShowUpdateProgress => {
+            let progress_area = centered_rect(50, 20, size);
+            render_background_overlay(f, size);
+            render_update_progress_popup(f, &app.update_progress_message, progress_area);
+        }
+        AppState::ShowRestartNotification => {
+            let restart_area = centered_rect(50, 20, size);
+            render_background_overlay(f, size);
+            render_restart_notification_popup(f, restart_area);
         }
         _ => {}
     }

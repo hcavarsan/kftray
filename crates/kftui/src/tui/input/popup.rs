@@ -12,25 +12,3 @@ pub async fn handle_confirmation_popup_input(app: &mut App, key: KeyCode) -> std
     }
     Ok(())
 }
-
-pub fn handle_help_input(app: &mut App, key: KeyCode) -> std::io::Result<()> {
-    if key == KeyCode::Esc || key == KeyCode::Enter || key == KeyCode::Char('h') {
-        app.state = AppState::Normal;
-    }
-    Ok(())
-}
-
-pub fn handle_about_input(app: &mut App, key: KeyCode) -> std::io::Result<()> {
-    if key == KeyCode::Esc || key == KeyCode::Enter || key == KeyCode::Char('q') {
-        app.state = AppState::Normal;
-    }
-    Ok(())
-}
-
-pub fn handle_error_popup_input(app: &mut App, key: KeyCode) -> std::io::Result<()> {
-    if key == KeyCode::Enter || key == KeyCode::Esc {
-        app.error_message = None;
-        app.state = AppState::Normal;
-    }
-    Ok(())
-}

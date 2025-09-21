@@ -1,6 +1,6 @@
 [package]
 name = "kftui"
-version = "0.25.3"
+version = "0.25.0"
 authors = [
   "Henrique Cavarsan <hencavarsan@gmail.com>",
 ]
@@ -21,6 +21,7 @@ chrono = { workspace = true }
 clap = { workspace = true }
 crossterm = { workspace = true }
 env_logger = { workspace = true }
+flate2 = { workspace = true }
 futures = { workspace = true }
 kftray-commons = { workspace = true }
 kftray-network-monitor = { workspace = true }
@@ -30,7 +31,10 @@ log = { workspace = true }
 ratatui = { workspace = true }
 ratatui-explorer = { workspace = true }
 reqwest = { workspace = true }
+self_update = { version = "0.42.0", features = ["archive-tar", "compression-flate2"] }
+semver = { workspace = true }
 serde_json = { workspace = true }
+tar = { workspace = true }
 tempfile = { workspace = true }
 throbber-widgets-tui = { workspace = true }
 tokio = { workspace = true }

@@ -4,6 +4,7 @@ mod core;
 mod logging;
 mod stdin;
 mod tui;
+mod updater;
 mod utils;
 
 use clap::Parser;

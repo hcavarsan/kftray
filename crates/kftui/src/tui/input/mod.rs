@@ -37,6 +37,17 @@ use crate::core::port_forward::stop_all_port_forward_and_exit;
 use crate::logging::LoggerState;
 use crate::tui::input::navigation::handle_auto_add_configs;
 use crate::tui::input::navigation::handle_context_selection;
+
+#[cfg(not(debug_assertions))]
+type UpdateInfo = crate::updater::UpdateInfo;
+
+#[cfg(debug_assertions)]
+#[derive(Debug, Clone)]
+pub struct UpdateInfo {
+    pub current_version: String,
+    pub latest_version: String,
+    pub has_update: bool,
+}
 #[derive(Debug, Clone)]
 pub struct HttpLogEntry {
     pub trace_id: String,
@@ -170,6 +181,12 @@ pub enum DeleteButton {
 }
 
 #[derive(PartialEq, Clone, Copy, Debug)]
+pub enum UpdateButton {
+    Update,
+    Cancel,
+}
+
+#[derive(PartialEq, Clone, Copy, Debug)]
 pub enum ActiveComponent {
     Menu,
     SearchBar,
@@ -200,6 +217,12 @@ pub enum AppState {
     ShowSettings,
     ShowHttpLogsConfig,
     ShowHttpLogsViewer,
+    #[cfg_attr(debug_assertions, allow(dead_code))]
+    ShowUpdateConfirmation,
+    #[cfg_attr(debug_assertions, allow(dead_code))]
+    ShowUpdateProgress,
+    #[cfg_attr(debug_assertions, allow(dead_code))]
+    ShowRestartNotification,
 }
 
 pub struct App {
@@ -267,6 +290,9 @@ pub struct App {
     pub search_focused: bool,
     pub filtered_stopped_configs: Vec<Config>,
     pub filtered_running_configs: Vec<Config>,
+    pub update_info: Option<UpdateInfo>,
+    pub selected_update_button: UpdateButton,
+    pub update_progress_message: Option<String>,
 }
 
 impl Default for App {
@@ -347,6 +373,9 @@ impl App {
             search_focused: false,
             filtered_stopped_configs: Vec::new(),
             filtered_running_configs: Vec::new(),
+            update_info: None,
+            selected_update_button: UpdateButton::Update,
+            update_progress_message: None,
         };
 
         if let Ok((_, height)) = size() {
@@ -815,6 +844,17 @@ pub async fn handle_input(app: &mut App, mode: DatabaseMode) -> io::Result<bool>
                     log::debug!("Handling ShowHttpLogsViewer state");
                     handle_http_logs_viewer_input(app, key.code).await?;
                 }
+                AppState::ShowUpdateConfirmation => {
+                    log::debug!("Handling ShowUpdateConfirmation state");
+                    handle_update_confirmation_input(app, key.code, mode).await?;
+                }
+                AppState::ShowUpdateProgress => {
+                    log::debug!("Handling ShowUpdateProgress state");
+                }
+                AppState::ShowRestartNotification => {
+                    log::debug!("Handling ShowRestartNotification state");
+                    handle_restart_notification_input(app, key.code)?;
+                }
                 AppState::Normal => {
                     log::debug!("Handling Normal state");
                     if app.active_component == ActiveComponent::SearchBar {
@@ -1053,7 +1093,15 @@ pub async fn handle_menu_input(app: &mut App, key: KeyCode, mode: DatabaseMode) 
                 app.settings_editing = false;
                 app.settings_selected_option = 0;
             }
-            5 => app.state = AppState::ShowAbout,
+            5 => {
+                #[cfg(not(debug_assertions))]
+                if app.update_info.is_none()
+                    && let Ok(update_info) = crate::updater::check_for_updates().await
+                {
+                    app.update_info = Some(update_info);
+                }
+                app.state = AppState::ShowAbout;
+            }
             6 => stop_all_port_forward_and_exit(app, mode).await,
             _ => {}
         },
@@ -1225,6 +1273,12 @@ pub async fn handle_common_hotkeys(
 ) -> io::Result<bool> {
     match key {
         KeyCode::Char('q') => {
+            #[cfg(not(debug_assertions))]
+            if app.update_info.is_none()
+                && let Ok(update_info) = crate::updater::check_for_updates().await
+            {
+                app.update_info = Some(update_info);
+            }
             app.state = AppState::ShowAbout;
             Ok(true)
         }
@@ -2420,6 +2474,117 @@ async fn handle_http_logs_viewer_input(app: &mut App, key: KeyCode) -> io::Resul
                 app.http_logs_replay_result = None;
                 app.http_logs_replay_in_progress = false;
             }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+pub async fn handle_update_confirmation_input(
+    app: &mut App, key: KeyCode, _mode: DatabaseMode,
+) -> io::Result<()> {
+    match key {
+        KeyCode::Left | KeyCode::Right => {
+            app.selected_update_button = match app.selected_update_button {
+                UpdateButton::Update => UpdateButton::Cancel,
+                UpdateButton::Cancel => UpdateButton::Update,
+            };
+        }
+        KeyCode::Enter => {
+            if app.selected_update_button == UpdateButton::Update {
+                #[cfg(debug_assertions)]
+                {
+                    app.state = AppState::ShowErrorPopup;
+                    app.error_message =
+                        Some("Updates are disabled in development mode".to_string());
+                    app.update_info = None;
+                }
+                #[cfg(not(debug_assertions))]
+                {
+                    app.state = AppState::ShowUpdateProgress;
+                    app.update_progress_message = Some("Downloading update...".to_string());
+
+                    match crate::updater::perform_update().await {
+                        Ok(_) => {
+                            app.state = AppState::ShowRestartNotification;
+                            app.update_progress_message = None;
+                        }
+                        Err(e) => {
+                            log::error!("Update failed: {}", e);
+                            app.state = AppState::ShowErrorPopup;
+                            app.error_message = Some(format!("Update failed: {}", e));
+                            app.update_info = None;
+                            app.update_progress_message = None;
+                        }
+                    }
+                }
+            } else {
+                app.state = AppState::Normal;
+                app.update_info = None;
+            }
+        }
+        KeyCode::Esc => {
+            app.state = AppState::Normal;
+            app.update_info = None;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+pub fn handle_restart_notification_input(app: &mut App, key: KeyCode) -> io::Result<()> {
+    match key {
+        KeyCode::Enter | KeyCode::Esc => {
+            app.state = AppState::Normal;
+            app.update_info = None;
+            app.update_progress_message = None;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+pub fn handle_help_input(app: &mut App, key: KeyCode) -> io::Result<()> {
+    match key {
+        KeyCode::Esc | KeyCode::Enter | KeyCode::Char('h') => {
+            app.state = AppState::Normal;
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+pub fn handle_about_input(app: &mut App, key: KeyCode) -> io::Result<()> {
+    match key {
+        KeyCode::Esc | KeyCode::Char('q') => {
+            app.state = AppState::Normal;
+        }
+        KeyCode::Enter => {
+            #[cfg(not(debug_assertions))]
+            if let Some(update_info) = &app.update_info
+                && update_info.has_update
+            {
+                app.state = AppState::ShowUpdateConfirmation;
+            }
+            #[cfg(not(debug_assertions))]
+            if app.update_info.is_none() || !app.update_info.as_ref().unwrap().has_update {
+                app.state = AppState::Normal;
+            }
+            #[cfg(debug_assertions)]
+            {
+                app.state = AppState::Normal;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+pub fn handle_error_popup_input(app: &mut App, key: KeyCode) -> io::Result<()> {
+    match key {
+        KeyCode::Esc | KeyCode::Enter => {
+            app.state = AppState::Normal;
+            app.error_message = None;
         }
         _ => {}
     }

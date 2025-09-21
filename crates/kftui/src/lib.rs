@@ -4,6 +4,8 @@ pub mod core;
 pub mod logging;
 pub mod stdin;
 pub mod tui;
+#[cfg(not(debug_assertions))]
+pub mod updater;
 pub mod utils;
 
 pub use tui::app::run_tui;

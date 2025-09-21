@@ -436,10 +436,11 @@ mod tests {
         assert_snapshot!("render_help_popup", terminal.backend());
 
         let mut terminal = setup_terminal();
+        let app = App::new(test_logger_state());
         terminal
             .draw(|frame| {
                 let area = frame.area();
-                render_about_popup(frame, area);
+                render_about_popup(frame, &app, area);
             })
             .unwrap();
         assert_snapshot!("render_about_popup", terminal.backend());
