@@ -374,6 +374,10 @@ jobs:
             rust_target: x86_64-pc-windows-msvc
             msvc_arch: x64
             os_name: windows
+          - os: windows-latest
+            arch: arm64
+            rust_target: aarch64-pc-windows-msvc
+            os_name: windows
 
     runs-on: ${{  matrix.runner || matrix.os }}
 
