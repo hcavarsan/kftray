@@ -59,6 +59,7 @@ export default defineConfig({
 
   build: {
     outDir: 'dist',
+	emptyOutDir: false,
     chunkSizeWarningLimit: 600,
     target: process.env.TAURI_PLATFORM === 'windows' ? 'chrome105' : 'safari13',
     minify: !process.env.TAURI_DEBUG ? 'terser' : false,
