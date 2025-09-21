@@ -94,8 +94,10 @@ check out our blog post at [kftray.app/blog/posts/13-kftray-manage-all-k8s-port-
 | **Custom kubeconfig** – Use any kubeconfig path | ✅ | ✅ |
 | **Port-forward timeouts** – Auto-close after time limit | ✅ | ✅ |
 | **Hosts file management** – Auto-update /etc/hosts entries | ✅ | ✅ |
+| **Auto SSL** – Automatic SSL certificate generation for port forwards | ✅ | ✅ |
 | **System tray integration** – Quick access from tray | ✅ | ❌ |
 | **Request replay** – Replay HTTP requests for debugging | ❌ | ✅ |
+
 <sub>Notes: (1) Hosts file updates may require admin privileges and vary by OS. (2) HTTP logs/replay can expose sensitive data—opt-in and sanitize where needed.</sub>
 
 </div>
