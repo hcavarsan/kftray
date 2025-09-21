@@ -40,11 +40,11 @@ keyring = { version = "3.6", features = [
   "linux-native",
   "windows-native",
 ] }
-kftray-commons = { version = "0.25.3", path = "crates/kftray-commons" }
-kftray-helper = { version = "0.25.3", path = "crates/kftray-helper" }
-kftray-http-logs = { version = "0.25.3", path = "crates/kftray-http-logs" }
-kftray-network-monitor = { version = "0.25.3", path = "crates/kftray-network-monitor" }
-kftray-portforward = { version = "0.25.3", path = "crates/kftray-portforward" }
+kftray-commons = { version = "0.25.4", path = "crates/kftray-commons" }
+kftray-helper = { version = "0.25.4", path = "crates/kftray-helper" }
+kftray-http-logs = { version = "0.25.4", path = "crates/kftray-http-logs" }
+kftray-network-monitor = { version = "0.25.4", path = "crates/kftray-network-monitor" }
+kftray-portforward = { version = "0.25.4", path = "crates/kftray-portforward" }
 kube = { version = "2.0.1", features = [
   "client",
   "config",
@@ -76,12 +76,14 @@ reqwest = "0.12.23"
 rustls = { version = "0.23", features = ["ring"] }
 rustls-native-certs = "0.8.1"
 secrecy = "0.10"
+semver = "1.0.27"
 serde = { version = "1.0.224", features = ["derive"] }
 serde_json = "1.0.145"
 sha1 = "0.10"
 socket2 = "0.6.0"
 sqlx = { version = "0.8", features = ["runtime-tokio-native-tls", "sqlite"] }
 sysinfo = "0.37.0"
+tar = "0.4.44"
 tauri = { version = "2.8.4", default-features = false, features = [
   "devtools",
   "image-ico",
@@ -105,8 +107,6 @@ tempfile = "3.22.0"
 thiserror = "2.0.16"
 throbber-widgets-tui = "0.8.0"
 time = "0.3"
-tar = "0.4.44"
-semver = "1.0.27"
 tokio = { version = "1.47.1", features = [
   "fs",
   "io-util",
