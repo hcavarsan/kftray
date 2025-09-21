@@ -498,11 +498,23 @@ jobs:
         run: |
           if [ "${{ matrix.os }}" == "macos-latest" ]; then
             mv ./target/release/kftui ./target/release/kftui_macos_universal
+
+            cd ./target/release
+            tar -czf kftui_macos_universal.tar.gz kftui_macos_universal
+            cd ../..
+
             gh release upload ${{ github.ref_name }} ./target/release/kftui_macos_universal --clobber
+            gh release upload ${{ github.ref_name }} ./target/release/kftui_macos_universal.tar.gz --clobber
           elif [ "${{ matrix.os }}" == "windows-latest" ]; then
             mv ./target/${{ matrix.rust_target }}/release/kftui.exe ./target/release/kftui_${{ matrix.os_name }}_${{ matrix.arch }}.exe
             chmod +x ./target/release/kftui_${{ matrix.os_name }}_${{ matrix.arch }}.exe
+
+            cd ./target/release
+            tar -czf kftui_${{ matrix.os_name }}_${{ matrix.arch }}.tar.gz kftui_${{ matrix.os_name }}_${{ matrix.arch }}.exe
+            cd ../..
+
             gh release upload ${{ github.ref_name }} ./target/release/kftui_${{ matrix.os_name }}_${{ matrix.arch }}.exe
+            gh release upload ${{ github.ref_name }} ./target/release/kftui_${{ matrix.os_name }}_${{ matrix.arch }}.tar.gz
           else
             mv ./target/${{ matrix.rust_target }}/release/kftui ./target/release/kftui_${{ matrix.os_name }}_${{ matrix.arch }}
             chmod +x ./target/release/kftui_${{ matrix.os_name }}_${{ matrix.arch }}
