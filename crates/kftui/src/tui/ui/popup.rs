@@ -22,20 +22,20 @@ use ratatui::widgets::{
 use crate::core::built_info;
 use crate::tui::input::App;
 use crate::tui::input::DeleteButton;
+#[cfg(debug_assertions)]
+use crate::tui::input::UpdateInfo;
 use crate::tui::ui::centered_rect;
-use crate::tui::ui::{
-    ASCII_LOGO,
-    resize_ascii_art,
-};
 use crate::tui::ui::{
     BASE,
     BLUE,
     GREEN,
     MAUVE,
     SUBTEXT0,
+    SUBTEXT1,
     SURFACE0,
     SURFACE1,
     SURFACE2,
+    TEAL,
     TEXT,
     YELLOW,
 };
@@ -45,8 +45,9 @@ use crate::tui::ui::{
     MANTLE,
     PINK,
     RED,
-    TEAL,
 };
+#[cfg(not(debug_assertions))]
+use crate::updater::UpdateInfo;
 fn create_common_popup_style(title: &str, title_color: Color) -> Block<'_> {
     Block::default()
         .borders(Borders::ALL)
@@ -420,44 +421,206 @@ pub fn render_help_popup(f: &mut Frame, area: Rect) {
     f.render_widget(help_paragraph, area);
 }
 
-pub fn render_about_popup(f: &mut Frame, area: Rect) {
-    let resized_logo = resize_ascii_art(ASCII_LOGO, 1.0);
+pub fn render_about_popup(f: &mut Frame, app: &crate::tui::input::App, area: Rect) {
+    let (width_percent, height_percent) = match (area.width, area.height) {
+        (w, h) if w < 40 || h < 10 => (90, 70),
+        (w, h) if w < 60 || h < 15 => (80, 60),
+        (w, h) if w < 80 || h < 20 => (70, 50),
+        (w, h) if w < 120 || h < 30 => (60, 45),
+        _ => (50, 40),
+    };
 
-    let about_message = vec![
-        Line::from(Span::styled(
-            format!("App Version: {}", built_info::PKG_VERSION),
-            Style::default().fg(YELLOW),
-        )),
-        Line::from(Span::styled(
-            format!("Author: {}", built_info::PKG_AUTHORS),
-            Style::default().fg(YELLOW),
-        )),
-        Line::from(Span::styled(
-            format!("License: {}", built_info::PKG_LICENSE),
-            Style::default().fg(YELLOW),
-        )),
-    ];
-
-    let mut combined_message = Vec::new();
-    for line in resized_logo {
-        combined_message.push(Line::from(Span::styled(line, Style::default().fg(TEAL))));
-    }
-    combined_message.push(Line::from(""));
-    combined_message.extend(about_message);
-
-    let about_paragraph = Paragraph::new(Text::from(combined_message))
-        .block(
-            Block::default()
-                .borders(Borders::ALL)
-                .title(Span::styled("About", Style::default().fg(MAUVE)))
-                .style(Style::default().bg(BASE).fg(TEXT)),
-        )
-        .alignment(Alignment::Center)
-        .wrap(ratatui::widgets::Wrap { trim: true });
-
-    let popup_area = centered_rect(80, 80, area);
+    let popup_area = centered_rect(width_percent, height_percent, area);
     f.render_widget(Clear, popup_area);
-    f.render_widget(about_paragraph, popup_area);
+
+    let main_block = Block::default()
+        .borders(Borders::ALL)
+        .title(Span::styled(
+            "▋ About",
+            Style::default().fg(LAVENDER).bold(),
+        ))
+        .title_alignment(Alignment::Left)
+        .style(Style::default().bg(BASE).fg(TEXT))
+        .border_style(Style::default().fg(LAVENDER));
+
+    let inner = main_block.inner(popup_area);
+    f.render_widget(main_block, popup_area);
+
+    let is_very_small = popup_area.width < 30 || popup_area.height < 8;
+    let is_small = popup_area.width < 50 || popup_area.height < 12;
+
+    if is_very_small {
+        let simple_content = vec![
+            Line::from(vec![
+                Span::styled("kftui ", Style::default().fg(TEAL).bold()),
+                Span::styled(built_info::PKG_VERSION, Style::default().fg(TEAL)),
+            ]),
+            Line::from(""),
+            Line::from(Span::styled(
+                "Press Esc to close",
+                Style::default().fg(SUBTEXT0),
+            )),
+        ];
+
+        let simple_para = Paragraph::new(Text::from(simple_content))
+            .alignment(Alignment::Center)
+            .wrap(ratatui::widgets::Wrap { trim: true });
+        f.render_widget(simple_para, inner);
+        return;
+    }
+
+    let has_update = app.update_info.as_ref().is_some_and(|info| info.has_update);
+
+    let main_constraints = if is_small {
+        vec![Constraint::Ratio(1, 3), Constraint::Ratio(2, 3)]
+    } else if has_update {
+        vec![Constraint::Ratio(1, 4), Constraint::Ratio(3, 4)]
+    } else {
+        vec![Constraint::Ratio(1, 3), Constraint::Ratio(2, 3)]
+    };
+
+    let main_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(main_constraints)
+        .margin(if is_small { 0 } else { 1 })
+        .split(inner);
+
+    if !is_small {
+        let header_block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(SURFACE1))
+            .style(Style::default().bg(MANTLE));
+        let header_inner = header_block.inner(main_layout[0]);
+        f.render_widget(header_block, main_layout[0]);
+
+        let header_layout = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(1),
+                Constraint::Length(1),
+                Constraint::Length(1),
+            ])
+            .split(header_inner);
+
+        let title_content = vec![Line::from(vec![
+            Span::styled("◈ ", Style::default().fg(TEAL)),
+            Span::styled("kftui", Style::default().fg(TEAL).bold()),
+            Span::raw("  "),
+            Span::styled(built_info::PKG_VERSION, Style::default().fg(TEAL)),
+        ])];
+        let title_para = Paragraph::new(Text::from(title_content)).alignment(Alignment::Center);
+        f.render_widget(title_para, header_layout[0]);
+
+        let desc_content = vec![Line::from(vec![Span::styled(
+            "Kubernetes Forward TUI",
+            Style::default().fg(SUBTEXT1),
+        )])];
+        let desc_para = Paragraph::new(Text::from(desc_content)).alignment(Alignment::Center);
+        f.render_widget(desc_para, header_layout[1]);
+
+        let license_content = vec![Line::from(vec![Span::styled(
+            built_info::PKG_LICENSE,
+            Style::default().fg(SUBTEXT0),
+        )])];
+        let license_para = Paragraph::new(Text::from(license_content)).alignment(Alignment::Center);
+        f.render_widget(license_para, header_layout[2]);
+    } else {
+        let header_content = vec![
+            Line::from(vec![
+                Span::styled("◈ ", Style::default().fg(TEAL)),
+                Span::styled("kftui ", Style::default().fg(TEAL).bold()),
+                Span::styled(built_info::PKG_VERSION, Style::default().fg(TEAL)),
+            ]),
+            Line::from(vec![Span::styled(
+                "Kubernetes Forward TUI",
+                Style::default().fg(SUBTEXT1),
+            )]),
+            Line::from(vec![Span::styled(
+                built_info::PKG_LICENSE,
+                Style::default().fg(SUBTEXT0),
+            )]),
+        ];
+        let header_para = Paragraph::new(Text::from(header_content))
+            .alignment(Alignment::Center)
+            .wrap(ratatui::widgets::Wrap { trim: true });
+        f.render_widget(header_para, main_layout[0]);
+    }
+
+    let content_area = main_layout[1];
+
+    if let Some(update_info) = &app.update_info {
+        if update_info.has_update {
+            let update_area_height = if is_small {
+                Constraint::Ratio(2, 3)
+            } else {
+                Constraint::Ratio(1, 2)
+            };
+
+            let update_layout = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([update_area_height, Constraint::Min(0)])
+                .split(content_area);
+
+            let update_block = Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(YELLOW))
+                .style(Style::default().bg(MANTLE));
+            let update_inner = update_block.inner(update_layout[0]);
+            f.render_widget(update_block, update_layout[0]);
+
+            let update_content = if is_small {
+                vec![
+                    Line::from(vec![
+                        Span::styled("Update: ", Style::default().fg(YELLOW)),
+                        Span::styled(
+                            &update_info.latest_version,
+                            Style::default().fg(TEAL).bold(),
+                        ),
+                    ]),
+                    Line::from(Span::styled(
+                        "Press Enter to update",
+                        Style::default().fg(YELLOW),
+                    )),
+                ]
+            } else {
+                vec![
+                    Line::from(vec![
+                        Span::styled("◆ ", Style::default().fg(YELLOW)),
+                        Span::styled("Update Available", Style::default().fg(YELLOW).bold()),
+                        Span::raw("  "),
+                        Span::styled(
+                            &update_info.latest_version,
+                            Style::default().fg(TEAL).bold(),
+                        ),
+                    ]),
+                    Line::from(vec![
+                        Span::styled("Press ", Style::default().fg(SUBTEXT0)),
+                        Span::styled("Enter", Style::default().fg(YELLOW).bold()),
+                        Span::styled(" to update", Style::default().fg(SUBTEXT0)),
+                    ]),
+                ]
+            };
+
+            let update_para = Paragraph::new(Text::from(update_content))
+                .alignment(Alignment::Center)
+                .wrap(ratatui::widgets::Wrap { trim: true });
+            f.render_widget(update_para, update_inner);
+        } else {
+            let status_layout = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Ratio(1, 3), Constraint::Min(0)])
+                .split(content_area);
+
+            let content_lines = vec![Line::from(vec![
+                Span::styled("● ", Style::default().fg(TEAL)),
+                Span::styled("Up to date", Style::default().fg(TEAL).bold()),
+            ])];
+            let info_para = Paragraph::new(Text::from(content_lines))
+                .alignment(Alignment::Center)
+                .wrap(ratatui::widgets::Wrap { trim: true });
+            f.render_widget(info_para, status_layout[0]);
+        }
+    }
 }
 
 pub fn render_error_popup(f: &mut Frame, error_message: &str, area: Rect, top_padding: usize) {
@@ -1536,4 +1699,83 @@ fn render_http_logs_footer(f: &mut Frame, app: &mut App, area: Rect) {
         .block(footer_block);
 
     f.render_widget(instruction_paragraph, area);
+}
+
+pub fn render_update_confirmation_popup(
+    f: &mut Frame, update_info: &UpdateInfo, area: Rect,
+    selected_button: crate::tui::input::UpdateButton,
+) {
+    let message_text = format!(
+        "A new version is available!\n\nCurrent version: {}\nLatest version: {}\n\nWould you like to update now?",
+        update_info.current_version, update_info.latest_version
+    );
+    let message_paragraph = Text::raw(message_text);
+    render_popup(
+        f,
+        area,
+        "Update Available",
+        GREEN,
+        message_paragraph,
+        Alignment::Center,
+    );
+
+    let update_button = create_button(
+        "<Update>",
+        selected_button == crate::tui::input::UpdateButton::Update,
+    );
+    let cancel_button = create_button(
+        "<Cancel>",
+        selected_button == crate::tui::input::UpdateButton::Cancel,
+    );
+
+    let update_button_area = Rect::new(
+        area.x + (area.width / 2) - 15,
+        area.y + area.height - 4,
+        10,
+        3,
+    );
+    let cancel_button_area = Rect::new(
+        area.x + (area.width / 2) + 5,
+        area.y + area.height - 4,
+        10,
+        3,
+    );
+
+    f.render_widget(update_button, update_button_area);
+    f.render_widget(cancel_button, cancel_button_area);
+}
+
+pub fn render_update_progress_popup(f: &mut Frame, message: &Option<String>, area: Rect) {
+    let message_text = message.as_deref().unwrap_or("Downloading update...");
+    let message_paragraph = Text::raw(message_text);
+    render_popup(
+        f,
+        area,
+        "Updating",
+        BLUE,
+        message_paragraph,
+        Alignment::Center,
+    );
+}
+
+pub fn render_restart_notification_popup(f: &mut Frame, area: Rect) {
+    let message_text = "Update completed successfully!\n\nPlease restart the application to apply the new version.";
+    let message_paragraph = Text::raw(message_text);
+    render_popup(
+        f,
+        area,
+        "Update Complete",
+        GREEN,
+        message_paragraph,
+        Alignment::Center,
+    );
+
+    let ok_button = create_button("<OK>", true);
+    let button_area = Rect::new(
+        area.x + (area.width / 2) - 5,
+        area.y + area.height - 4,
+        10,
+        3,
+    );
+    f.render_widget(ok_button, button_area);
 }

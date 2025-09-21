@@ -95,10 +95,11 @@ mod tests {
     fn test_render_about_popup() {
         let backend = TestBackend::new(100, 50);
         let mut terminal = Terminal::new(backend).unwrap();
+        let app = create_test_app();
         terminal
             .draw(|frame| {
                 let area = Rect::new(0, 0, 100, 50);
-                render_about_popup(frame, area);
+                render_about_popup(frame, &app, area);
             })
             .unwrap();
 
