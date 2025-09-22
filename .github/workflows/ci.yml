@@ -107,6 +107,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
 
+      - name: Setup Zig for GLIBC compatibility
+        if: matrix.os_name == 'linux'
+        uses: mlugg/setup-zig@8d6198c65fb0feaa111df26e6b467fea8345e46f
+        with:
+          version: 0.13.0
+
+      - name: Make Zig wrapper executable
+        if: matrix.os_name == 'linux'
+        run: chmod +x wrapper/zig-cc
+
       - name: Install dependencies
         if: matrix.os_name == 'linux'
         run: |
@@ -169,6 +179,14 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
+
+      - name: Setup Zig for GLIBC compatibility
+        uses: mlugg/setup-zig@8d6198c65fb0feaa111df26e6b467fea8345e46f
+        with:
+          version: 0.13.0
+
+      - name: Make Zig wrapper executable
+        run: chmod +x wrapper/zig-cc
 
       - name: Install dependencies
         run: |
