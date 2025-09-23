@@ -1,4 +1,4 @@
-use std::fs;
+use std::io::ErrorKind;
 use std::path::Path;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -31,18 +31,30 @@ pub fn save_window_position(window: &WebviewWindow<Wry>) {
         return;
     }
 
-    if let Ok(position) = window.outer_position()
-        && is_valid_position(window, position.x, position.y)
-    {
-        let position_data = WindowPosition {
-            x: position.x,
-            y: position.y,
-        };
-        let runtime = app_state.runtime.clone();
+    if let Ok(position) = window.outer_position() {
+        info!(
+            "Attempting to save position: ({}, {})",
+            position.x, position.y
+        );
 
-        runtime.spawn(async move {
-            save_position_async(position_data).await;
-        });
+        if is_valid_position(window, position.x, position.y) {
+            let position_data = WindowPosition {
+                x: position.x,
+                y: position.y,
+            };
+            let runtime = app_state.runtime.clone();
+
+            runtime.spawn(async move {
+                save_position_async(position_data).await;
+            });
+        } else {
+            warn!(
+                "Position ({}, {}) failed validation",
+                position.x, position.y
+            );
+        }
+    } else {
+        warn!("Failed to get window outer position");
     }
 }
 
@@ -64,49 +76,72 @@ async fn save_position_async(position_data: WindowPosition) {
                 return;
             }
 
-            if tokio::fs::write(&path, position_json).await.is_ok() {
-                info!("Window position saved: {position_data:?}");
-            } else {
-                warn!("Failed to save window position.");
+            let write_result = tokio::fs::write(&path, position_json).await;
+
+            match write_result {
+                Ok(()) => {
+                    info!("Window position saved: {position_data:?}");
+                }
+                Err(e) => {
+                    warn!("Failed to save window position to {path:?}: {e}");
+                }
             }
         }
         Err(err) => warn!("Failed to get window state path: {err}"),
     }
 }
 
-pub fn load_window_position() -> Option<WindowPosition> {
-    if let Ok(home_path) = get_window_state_path() {
-        if home_path.exists() {
-            match fs::read_to_string(&home_path) {
+pub async fn load_window_position() -> Option<WindowPosition> {
+    match get_window_state_path() {
+        Ok(home_path) => {
+            if !home_path.exists() {
+                info!("No window position file found at: {home_path:?}");
+                return None;
+            }
+
+            match tokio::fs::read_to_string(&home_path).await {
                 Ok(position_json) => match serde_json::from_str(&position_json) {
                     Ok(position) => {
-                        info!("Window position loaded from home directory: {home_path:?}");
+                        info!("Window position loaded from: {home_path:?}");
                         Some(position)
                     }
                     Err(e) => {
-                        handle_corrupted_file(&home_path, e);
+                        warn!("Failed to parse window position JSON from {home_path:?}: {e}");
+                        handle_corrupted_file(&home_path, e).await;
                         None
                     }
                 },
                 Err(e) => {
-                    handle_corrupted_file(&home_path, e);
+                    warn!("Failed to read window position file {home_path:?}: {e}");
+                    if e.kind() == ErrorKind::PermissionDenied {
+                        warn!(
+                            "Permission denied accessing window position file - check file permissions"
+                        );
+                    }
+                    handle_corrupted_file(&home_path, e).await;
                     None
                 }
             }
-        } else {
-            info!("No window position file found.");
+        }
+        Err(err) => {
+            warn!("Could not determine window state path: {err}");
             None
         }
-    } else {
-        info!("Could not determine window state path.");
-        None
     }
 }
 
-fn handle_corrupted_file(path: &Path, error: impl std::fmt::Display) {
-    warn!("Failed to parse window position JSON: {error}");
-    if let Err(delete_err) = fs::remove_file(path) {
-        warn!("Failed to delete corrupted window position file: {delete_err}");
+async fn handle_corrupted_file(path: &Path, error: impl std::fmt::Display) {
+    warn!("Handling corrupted window position file {path:?}: {error}");
+    match tokio::fs::remove_file(path).await {
+        Ok(()) => {
+            info!("Successfully removed corrupted window position file: {path:?}");
+        }
+        Err(delete_err) => {
+            warn!("Failed to delete corrupted window position file {path:?}: {delete_err}");
+            if delete_err.kind() == ErrorKind::PermissionDenied {
+                warn!("Permission denied deleting corrupted file - check file permissions");
+            }
+        }
     }
 }
 
@@ -121,36 +156,63 @@ pub fn toggle_window_visibility(window: &WebviewWindow<Wry>) {
             warn!("Failed to hide window: {e}");
         }
     } else {
-        set_position_before_show(window);
+        set_position_before_show(window.clone());
         if let Err(e) = window.show() {
             warn!("Failed to show window: {e}");
+        }
+        if let Err(e) = window.set_always_on_top(true) {
+            warn!("Failed to set window always on top: {e}");
         }
         if let Err(e) = window.set_focus() {
             warn!("Failed to focus window: {e}");
         }
+        if !app_state.pinned.load(Ordering::SeqCst)
+            && let Err(e) = window.set_always_on_top(false)
+        {
+            warn!("Failed to unset window always on top: {e}");
+        }
     }
 }
 
-pub fn set_position_before_show(window: &WebviewWindow<Wry>) {
-    let app_state = window.state::<AppState>();
-    app_state.positioning_active.store(true, Ordering::SeqCst);
+pub fn set_position_before_show(window: WebviewWindow<Wry>) {
+    // Get the state fields we need immediately
+    let (positioning_active, runtime) = {
+        let app_state = window.state::<AppState>();
+        app_state.positioning_active.store(true, Ordering::SeqCst);
+        (
+            app_state.positioning_active.clone(),
+            app_state.runtime.clone(),
+        )
+    };
 
-    match load_window_position() {
-        Some(position) if is_valid_position(window, position.x, position.y) => {
-            info!(
-                "Using saved window position: ({}, {})",
-                position.x, position.y
-            );
-            let _ = window.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(
-                position.x, position.y,
-            )));
-            reset_positioning_state_after_delay(&app_state);
+    // Now clone the window for the async task
+    let window_clone = window.clone();
+
+    runtime.spawn(async move {
+        match load_window_position().await {
+            Some(position) if is_valid_position(&window_clone, position.x, position.y) => {
+                info!(
+                    "Using saved window position: ({}, {})",
+                    position.x, position.y
+                );
+                let _ = window_clone.set_position(tauri::Position::Physical(
+                    tauri::PhysicalPosition::new(position.x, position.y),
+                ));
+                // Reset positioning state after delay in a separate task
+                tokio::spawn({
+                    let positioning_active = positioning_active.clone();
+                    async move {
+                        sleep(Duration::from_millis(150)).await;
+                        positioning_active.store(false, Ordering::SeqCst);
+                    }
+                });
+            }
+            _ => {
+                info!("No valid saved position, using tray positioning");
+                position_from_tray(&window_clone);
+            }
         }
-        _ => {
-            info!("No valid saved position, using tray positioning");
-            position_from_tray(window);
-        }
-    }
+    });
 }
 
 pub fn is_valid_position(window: &WebviewWindow<Wry>, x: i32, y: i32) -> bool {
@@ -164,40 +226,108 @@ pub fn is_valid_position(window: &WebviewWindow<Wry>, x: i32, y: i32) -> bool {
             let max_x = min_x + monitor_size.width as i32;
             let max_y = min_y + monitor_size.height as i32;
 
-            if x >= min_x && x < max_x && y >= min_y && y < max_y {
+            #[cfg(target_os = "linux")]
+            let tolerance = 100; // Allow 100px outside monitor bounds on Linux
+            #[cfg(not(target_os = "linux"))]
+            let tolerance = 0;
+
+            if x >= (min_x - tolerance)
+                && x < (max_x + tolerance)
+                && y >= (min_y - tolerance)
+                && y < (max_y + tolerance)
+            {
+                info!(
+                    "Position ({}, {}) is valid for monitor bounds: {}x{} at ({}, {})",
+                    x, y, monitor_size.width, monitor_size.height, min_x, min_y
+                );
                 return true;
             }
         }
+        warn!("Position ({}, {}) is outside all monitor bounds", x, y);
+        if let Ok(monitors) = window.available_monitors() {
+            for (i, monitor) in monitors.iter().enumerate() {
+                let pos = monitor.position();
+                let size = monitor.size();
+                warn!(
+                    "Monitor {}: {}x{} at ({}, {})",
+                    i, size.width, size.height, pos.x, pos.y
+                );
+            }
+        }
+    } else {
+        warn!("Failed to get available monitors for position validation");
     }
 
     false
 }
 
 fn use_saved_or_center(window: &WebviewWindow<Wry>) {
-    match load_window_position() {
-        Some(position) if is_valid_position(window, position.x, position.y) => {
-            info!(
-                "Using saved window position: ({}, {})",
-                position.x, position.y
-            );
-            match window.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(
-                position.x, position.y,
-            ))) {
-                Ok(()) => {}
-                Err(e) => {
-                    warn!("Failed to set saved position: {e}, centering on primary monitor");
-                    center_on_primary_monitor(window);
+    let window_clone = window.clone();
+
+    if let Ok(handle) = tokio::runtime::Handle::try_current() {
+        tokio::task::block_in_place(|| {
+            handle.block_on(async {
+                match load_window_position().await {
+                    Some(position) if is_valid_position(&window_clone, position.x, position.y) => {
+                        info!(
+                            "Using saved window position: ({}, {})",
+                            position.x, position.y
+                        );
+                        match window_clone.set_position(tauri::Position::Physical(
+                            tauri::PhysicalPosition::new(position.x, position.y),
+                        )) {
+                            Ok(()) => {}
+                            Err(e) => {
+                                warn!(
+                                    "Failed to set saved position: {e}, centering on primary monitor"
+                                );
+                                center_on_primary_monitor(&window_clone);
+                            }
+                        }
+                    }
+                    Some(_) => {
+                        info!("Saved position invalid, centering on primary monitor");
+                        center_on_primary_monitor(&window_clone);
+                    }
+                    None => {
+                        info!("No saved position, centering on primary monitor");
+                        center_on_primary_monitor(&window_clone);
+                    }
+                }
+            })
+        });
+    } else {
+        let app_state = window.state::<AppState>();
+        let runtime = app_state.runtime.clone();
+        runtime.spawn(async move {
+            match load_window_position().await {
+                Some(position) if is_valid_position(&window_clone, position.x, position.y) => {
+                    info!(
+                        "Using saved window position: ({}, {})",
+                        position.x, position.y
+                    );
+                    match window_clone.set_position(tauri::Position::Physical(
+                        tauri::PhysicalPosition::new(position.x, position.y),
+                    )) {
+                        Ok(()) => {}
+                        Err(e) => {
+                            warn!(
+                                "Failed to set saved position: {e}, centering on primary monitor"
+                            );
+                            center_on_primary_monitor(&window_clone);
+                        }
+                    }
+                }
+                Some(_) => {
+                    info!("Saved position invalid, centering on primary monitor");
+                    center_on_primary_monitor(&window_clone);
+                }
+                None => {
+                    info!("No saved position, centering on primary monitor");
+                    center_on_primary_monitor(&window_clone);
                 }
             }
-        }
-        Some(_) => {
-            info!("Saved position invalid, centering on primary monitor");
-            center_on_primary_monitor(window);
-        }
-        None => {
-            info!("No saved position, centering on primary monitor");
-            center_on_primary_monitor(window);
-        }
+        });
     }
 }
 
@@ -463,28 +593,54 @@ fn center_on_primary_monitor(window: &WebviewWindow<Wry>) {
     center_on_specific_monitor(window, &monitor);
 }
 
-pub fn reset_window_position(window: &WebviewWindow<Wry>) {
-    let app_state = window.state::<AppState>();
-    app_state.positioning_active.store(true, Ordering::SeqCst);
+pub fn reset_window_position(window: WebviewWindow<Wry>) {
+    // Get the state fields we need immediately
+    let (positioning_active, runtime) = {
+        let app_state = window.state::<AppState>();
+        app_state.positioning_active.store(true, Ordering::SeqCst);
+        (
+            app_state.positioning_active.clone(),
+            app_state.runtime.clone(),
+        )
+    };
 
-    remove_position_file();
-    position_from_tray(window);
-    reset_positioning_state_after_delay(&app_state);
+    // Now clone the window for the async task
+    let window_clone = window.clone();
+
+    runtime.spawn(async move {
+        remove_position_file().await;
+        position_from_tray(&window_clone);
+        // Reset positioning state after delay
+        sleep(Duration::from_millis(150)).await;
+        positioning_active.store(false, Ordering::SeqCst);
+    });
 }
 
-fn remove_position_file() {
-    if let Ok(path) = get_window_state_path() {
-        if path.exists() {
-            if let Err(e) = fs::remove_file(&path) {
-                warn!("Failed to delete window position file: {e}");
-            } else {
-                info!("Window position file deleted successfully.");
+async fn remove_position_file() {
+    match get_window_state_path() {
+        Ok(path) => {
+            if !path.exists() {
+                info!("No window position file found to delete at: {path:?}");
+                return;
             }
-        } else {
-            info!("No window position file found to delete.");
+
+            match tokio::fs::remove_file(&path).await {
+                Ok(()) => {
+                    info!("Window position file deleted successfully: {path:?}");
+                }
+                Err(e) => {
+                    warn!("Failed to delete window position file {path:?}: {e}");
+                    if e.kind() == ErrorKind::PermissionDenied {
+                        warn!(
+                            "Permission denied deleting window position file - check file permissions"
+                        );
+                    }
+                }
+            }
         }
-    } else {
-        info!("Could not determine window state path.");
+        Err(err) => {
+            warn!("Could not determine window state path for deletion: {err}");
+        }
     }
 }
 
@@ -494,16 +650,10 @@ pub fn set_window_position(window: &WebviewWindow<Wry>, position: Position) {
     }
 }
 
-fn reset_positioning_state_after_delay(app_state: &AppState) {
-    let positioning_active = app_state.positioning_active.clone();
-    app_state.runtime.spawn(async move {
-        sleep(Duration::from_millis(150)).await;
-        positioning_active.store(false, Ordering::SeqCst);
-    });
-}
-
 #[cfg(test)]
 mod tests {
+    use std::fs;
+
     use tempfile::TempDir;
 
     use super::*;
@@ -516,7 +666,9 @@ mod tests {
         fs::write(&test_file, "corrupted data").unwrap();
         assert!(test_file.exists());
 
-        handle_corrupted_file(&test_file, "Test error");
+        tokio::runtime::Runtime::new().unwrap().block_on(async {
+            handle_corrupted_file(&test_file, "Test error").await;
+        });
 
         assert!(!test_file.exists());
     }

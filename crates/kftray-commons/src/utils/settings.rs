@@ -252,6 +252,20 @@ impl SettingsManager {
         self.set_setting("ssl_ca_auto_install", &enabled.to_string())
             .await
     }
+
+    pub async fn get_global_shortcut(&self) -> String {
+        if let Some(value) = self.get_setting("global_shortcut").await {
+            value
+        } else {
+            "Ctrl+Shift+F1".to_string()
+        }
+    }
+
+    pub async fn set_global_shortcut(
+        &self, shortcut: &str,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.set_setting("global_shortcut", shortcut).await
+    }
 }
 
 impl Default for SettingsManager {
@@ -524,6 +538,20 @@ pub async fn set_ssl_ca_auto_install(
     enabled: bool,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     set_setting("ssl_ca_auto_install", &enabled.to_string()).await
+}
+
+pub async fn get_global_shortcut() -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    if let Some(value) = get_setting("global_shortcut").await? {
+        Ok(value)
+    } else {
+        Ok("Ctrl+Shift+F1".to_string())
+    }
+}
+
+pub async fn set_global_shortcut(
+    shortcut: &str,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    set_setting("global_shortcut", shortcut).await
 }
 
 pub async fn get_ssl_enabled_with_mode(

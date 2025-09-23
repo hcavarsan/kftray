@@ -37,6 +37,9 @@ pub struct AppSettings {
 
     #[serde(default)]
     pub ssl_ca_auto_install: bool,
+
+    #[serde(default = "default_global_shortcut")]
+    pub global_shortcut: String,
 }
 
 fn default_network_monitor() -> bool {
@@ -63,6 +66,13 @@ fn default_ssl_auto_regenerate() -> bool {
     true
 }
 
+fn default_global_shortcut() -> String {
+    #[cfg(target_os = "macos")]
+    return "Cmd+Shift+F1".to_string();
+    #[cfg(not(target_os = "macos"))]
+    return "Ctrl+Shift+F1".to_string();
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
@@ -77,6 +87,7 @@ impl Default for AppSettings {
             ssl_cert_validity_days: default_cert_validity(),
             ssl_auto_regenerate: default_ssl_auto_regenerate(),
             ssl_ca_auto_install: false,
+            global_shortcut: default_global_shortcut(),
         }
     }
 }
@@ -129,6 +140,10 @@ impl AppSettings {
             app_settings.ssl_ca_auto_install = value.parse().unwrap_or(false);
         }
 
+        if let Some(value) = settings.get("global_shortcut") {
+            app_settings.global_shortcut = value.clone();
+        }
+
         app_settings
     }
 
@@ -177,6 +192,7 @@ impl AppSettings {
             "ssl_ca_auto_install".to_string(),
             self.ssl_ca_auto_install.to_string(),
         );
+        settings.insert("global_shortcut".to_string(), self.global_shortcut.clone());
 
         settings
     }

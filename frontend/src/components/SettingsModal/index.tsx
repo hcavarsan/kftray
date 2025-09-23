@@ -1,14 +1,22 @@
 import React, { useEffect, useState } from 'react'
-import { Download, RefreshCw, Settings, Shield } from 'lucide-react'
+import {
+  AlertTriangle,
+  Download,
+  RefreshCw,
+  Settings,
+  Shield,
+} from 'lucide-react'
 
 import { Box, Dialog, Flex, Input, Stack, Text } from '@chakra-ui/react'
 import { app } from '@tauri-apps/api'
 import { invoke } from '@tauri-apps/api/core'
 
+import ShortcutCapture from '@/components/ShortcutCapture'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { DialogCloseTrigger, DialogContent } from '@/components/ui/dialog'
 import { toaster } from '@/components/ui/toaster'
+import { useGlobalShortcuts } from '@/hooks/useGlobalShortcuts'
 
 interface SettingsModalProps {
   isOpen: boolean
@@ -35,6 +43,16 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
 
   const [sslEnabled, setSslEnabled] = useState<boolean>(false)
   const [sslCertValidityDays, setSslCertValidityDays] = useState<string>('365')
+  const [globalShortcut, setGlobalShortcut] = useState<string>('')
+
+  const {
+    hasLinuxPermissions,
+    isLinux,
+    registerShortcut,
+    testShortcutFormat,
+    refreshShortcuts,
+    tryFixLinuxPermissions,
+  } = useGlobalShortcuts()
 
   useEffect(() => {
     if (isOpen) {
@@ -42,6 +60,12 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
       loadVersionInfo()
     }
   }, [isOpen])
+
+  useEffect(() => {
+    if (isOpen) {
+      refreshShortcuts()
+    }
+  }, [isOpen, refreshShortcuts])
 
   const loadSettings = async () => {
     try {
@@ -79,6 +103,26 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
         console.error('Error loading SSL settings:', sslError)
         setSslEnabled(false)
         setSslCertValidityDays('365')
+      }
+
+      try {
+        const shortcut = await invoke<string>('get_global_shortcut_cmd')
+
+        // Convert shortcut to display format (capitalize first letter of each part)
+        const displayFormat = shortcut
+          ? shortcut
+              .split('+')
+              .map(
+                part =>
+                  part.charAt(0).toUpperCase() + part.slice(1).toLowerCase(),
+              )
+              .join('+')
+          : 'Ctrl+Shift+K' // Use consistent default with DEFAULT_SHORTCUTS
+
+        setGlobalShortcut(displayFormat)
+      } catch (shortcutError) {
+        console.error('Error loading global shortcut:', shortcutError)
+        setGlobalShortcut('Ctrl+Shift+K') // Use consistent default
       }
     } catch (error) {
       console.error('Error loading settings:', error)
@@ -211,6 +255,45 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
       await invoke('update_disconnect_timeout', { minutes: timeoutValue })
       await invoke('update_network_monitor', { enabled: networkMonitor })
       await invoke('update_auto_update_enabled', { enabled: autoUpdateEnabled })
+
+      // Handle shortcut registration with new system
+      if (globalShortcut && globalShortcut.trim()) {
+        const isValidFormat = await testShortcutFormat(globalShortcut)
+
+        if (!isValidFormat) {
+          toaster.error({
+            title: 'Invalid Shortcut',
+            description:
+              'Please enter a valid shortcut format (e.g., Ctrl+Shift+K)',
+            duration: 3000,
+          })
+
+          return
+        }
+
+        // Register the new shortcut
+        const registered = await registerShortcut(
+          'toggle_window',
+          globalShortcut,
+          'toggle_window',
+        )
+
+        if (!registered) {
+          toaster.error({
+            title: 'Shortcut Registration Failed',
+            description:
+              isLinux && !hasLinuxPermissions
+                ? 'Linux permissions required. Run: sudo usermod -a -G input $USER && logout/login'
+                : 'Failed to register shortcut. It may be in use by another application.',
+            duration: 5000,
+          })
+
+          return
+        }
+      }
+
+      // Also save to old system for compatibility
+      await invoke('set_global_shortcut_cmd', { shortcut: globalShortcut })
 
       // Get current SSL state to detect if SSL is being enabled
       const currentSslSettings = await invoke<{
@@ -641,6 +724,112 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
                 </Flex>
               </Box>
             </Box>
+
+            {/* Global Shortcut Configuration */}
+            <Box
+              bg='#161616'
+              p={2}
+              borderRadius='md'
+              border='1px solid rgba(255, 255, 255, 0.08)'
+              gridColumn='1 / -1'
+            >
+              <Flex align='center' justify='space-between' mb={2}>
+                <Box>
+                  <Text fontSize='sm' fontWeight='500' color='white' mb={1}>
+                    Global Show/Hide Shortcut
+                  </Text>
+                  <Text fontSize='xs' color='whiteAlpha.600' lineHeight='1.3'>
+                    Set a custom keyboard shortcut to show/hide the application
+                    from anywhere.
+                  </Text>
+                </Box>
+                <Box minW='200px'>
+                  <ShortcutCapture
+                    value={globalShortcut}
+                    onChange={setGlobalShortcut}
+                    disabled={isLoading}
+                  />
+                </Box>
+              </Flex>
+            </Box>
+
+            {/* Linux Permission Warning */}
+            {isLinux && !hasLinuxPermissions && (
+              <Box
+                bg='#1a1a1a'
+                p={3}
+                borderRadius='md'
+                border='1px solid rgba(255, 165, 0, 0.3)'
+                gridColumn='1 / -1'
+              >
+                <Flex align='center' gap={2} mb={2}>
+                  <Box
+                    as={AlertTriangle}
+                    width='14px'
+                    height='14px'
+                    color='orange.400'
+                  />
+                  <Text fontSize='sm' fontWeight='500' color='orange.400'>
+                    Linux Permissions Required
+                  </Text>
+                </Flex>
+                <Text
+                  fontSize='xs'
+                  color='whiteAlpha.700'
+                  lineHeight='1.4'
+                  mb={2}
+                >
+                  Global shortcuts require your user to be in the
+                  &apos;input&apos; group on Linux. Without these permissions,
+                  shortcuts will not work properly.
+                </Text>
+                <Flex gap={2} align='center'>
+                  <Button
+                    size='xs'
+                    onClick={async () => {
+                      const fixed = await tryFixLinuxPermissions()
+
+                      if (fixed) {
+                        toaster.success({
+                          title: 'Permissions Fixed',
+                          description:
+                            'User added to input group. Please logout and login again.',
+                          duration: 5000,
+                        })
+                      } else {
+                        toaster.error({
+                          title: 'Auto-fix Failed',
+                          description:
+                            'Please run the command manually in terminal.',
+                          duration: 3000,
+                        })
+                      }
+                    }}
+                    bg='orange.500'
+                    color='white'
+                    _hover={{ bg: 'orange.600' }}
+                    height='24px'
+                    fontSize='xs'
+                  >
+                    Try Auto-fix
+                  </Button>
+                  <Text fontSize='xs' color='whiteAlpha.600'>
+                    or run manually:
+                  </Text>
+                </Flex>
+                <Box
+                  bg='#0a0a0a'
+                  p={2}
+                  borderRadius='sm'
+                  border='1px solid rgba(255, 255, 255, 0.08)'
+                  mt={2}
+                >
+                  <Text fontSize='xs' fontFamily='mono' color='orange.300'>
+                    sudo usermod -a -G input $USER && logout
+                  </Text>
+                </Box>
+              </Box>
+            )}
 
             {/* Update Status Indicator - Always Visible */}
             <Box
