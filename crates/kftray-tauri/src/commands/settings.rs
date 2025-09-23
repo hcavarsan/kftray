@@ -3,19 +3,28 @@ use std::collections::HashMap;
 use kftray_commons::utils::settings::{
     get_auto_update_enabled,
     get_disconnect_timeout,
+    get_global_shortcut,
     get_last_update_check,
     get_network_monitor,
     get_setting,
     set_auto_update_enabled,
     set_disconnect_timeout,
+    set_global_shortcut,
     set_network_monitor,
     set_setting,
 };
+#[cfg(target_os = "linux")]
+use log::warn;
 use log::{
     error,
     info,
 };
+#[cfg(target_os = "linux")]
+use tauri::Manager;
 use tauri::command;
+
+#[cfg(not(target_os = "linux"))]
+use super::super::shortcut::parse_shortcut_string;
 
 #[command]
 pub async fn get_settings() -> Result<HashMap<String, String>, String> {
@@ -47,7 +56,6 @@ pub async fn get_settings() -> Result<HashMap<String, String>, String> {
         }
     }
 
-    // Add network monitor status
     let is_running = kftray_network_monitor::is_running().await;
     settings.insert("network_monitor_status".to_string(), is_running.to_string());
 
@@ -116,13 +124,11 @@ pub async fn set_setting_value(key: String, value: String) -> Result<(), String>
 pub async fn update_network_monitor(enabled: bool) -> Result<(), String> {
     info!("Updating network monitor to {enabled}");
 
-    // Save setting to database
     set_network_monitor(enabled).await.map_err(|e| {
         error!("Failed to update network monitor setting: {e}");
         format!("Failed to update network monitor setting: {e}")
     })?;
 
-    // Control network monitor at runtime
     if enabled {
         if let Err(e) = kftray_network_monitor::restart().await {
             error!("Failed to start network monitor: {e}");
@@ -178,4 +184,88 @@ pub async fn get_auto_update_status() -> Result<HashMap<String, String>, String>
     }
 
     Ok(status)
+}
+
+#[command]
+pub async fn get_global_shortcut_cmd() -> Result<String, String> {
+    get_global_shortcut().await.map_err(|e| {
+        error!("Failed to get global shortcut: {e}");
+        format!("Failed to get global shortcut: {e}")
+    })
+}
+
+#[command]
+pub async fn set_global_shortcut_cmd(
+    app_handle: tauri::AppHandle, shortcut: String,
+) -> Result<(), String> {
+    info!("Setting global shortcut to {shortcut}");
+
+    update_global_shortcut(app_handle, shortcut.clone()).await?;
+
+    set_global_shortcut(&shortcut).await.map_err(|e| {
+        error!("Failed to persist global shortcut: {e}");
+        format!("Failed to persist global shortcut: {e}")
+    })?;
+
+    info!("Successfully set global shortcut to {shortcut}");
+    Ok(())
+}
+
+#[command]
+pub async fn update_global_shortcut(
+    app_handle: tauri::AppHandle, shortcut: String,
+) -> Result<(), String> {
+    #[cfg(not(target_os = "linux"))]
+    {
+        use tauri_plugin_global_shortcut::GlobalShortcutExt;
+
+        app_handle.global_shortcut().unregister_all().map_err(|e| {
+            error!("Failed to unregister shortcuts: {e}");
+            format!("Failed to unregister shortcuts: {e}")
+        })?;
+
+        if let Some(parsed_shortcut) = parse_shortcut_string(&shortcut) {
+            app_handle
+                .global_shortcut()
+                .register(parsed_shortcut)
+                .map_err(|e| {
+                    error!("Failed to register new shortcut: {e}");
+                    format!("Failed to register new shortcut: {e}")
+                })?;
+            info!("Successfully updated global shortcut to: {shortcut}");
+        } else {
+            return Err(format!("Invalid shortcut format: {shortcut}"));
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        use crate::shortcut_manager::ShortcutManagerState;
+
+        let state = app_handle.state::<ShortcutManagerState>();
+
+        if let Err(e) = state.unregister_shortcut("toggle_window") {
+            warn!("Failed to unregister existing shortcut: {}", e);
+        }
+
+        let app_handle_clone = app_handle.clone();
+        state
+            .register_shortcut("toggle_window".to_string(), shortcut.clone(), move || {
+                if let Some(window) = app_handle_clone.get_webview_window("main") {
+                    crate::window::toggle_window_visibility(&window);
+                }
+                info!(
+                    "Global shortcut triggered: {} -> {}",
+                    "toggle_window", "toggle_window"
+                );
+            })
+            .map_err(|e| {
+                error!("Failed to register Linux shortcut: {}", e);
+                format!("Failed to register Linux shortcut: {}", e)
+            })?;
+
+        info!("Successfully updated Linux global shortcut to: {shortcut}");
+    }
+
+    Ok(())
 }

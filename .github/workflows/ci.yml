@@ -25,7 +25,7 @@ env:
 jobs:
   eslint-format:
     name: ESLint
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
@@ -49,7 +49,7 @@ jobs:
 
   rust-format:
     name: rustfmt
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
@@ -66,12 +66,8 @@ jobs:
               libssl-dev \
               libayatana-appindicator3-dev \
               librsvg2-dev \
-              libwebkit2gtk-4.1-0=2.44.0-2 \
-              libwebkit2gtk-4.1-dev=2.44.0-2 \
-              libjavascriptcoregtk-4.1-0=2.44.0-2 \
-              libjavascriptcoregtk-4.1-dev=2.44.0-2 \
-              gir1.2-javascriptcoregtk-4.1=2.44.0-2 \
-              gir1.2-webkit2-4.1=2.44.0-2 \
+              libwebkit2gtk-4.1-dev \
+              patchelf \
               xdg-utils
 
       - name: Install Rust stable
@@ -93,7 +89,7 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: ubuntu-24.04
+          - os: ubuntu-22.04
             os_name: linux
             rust_target: x86_64-unknown-linux-gnu
           - os: macos-latest
@@ -106,16 +102,6 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
-
-      - name: Setup Zig for GLIBC compatibility
-        if: matrix.os_name == 'linux'
-        uses: mlugg/setup-zig@8d6198c65fb0feaa111df26e6b467fea8345e46f
-        with:
-          version: 0.13.0
-
-      - name: Make Zig wrapper executable
-        if: matrix.os_name == 'linux'
-        run: chmod +x wrapper/zig-cc
 
       - name: Install dependencies
         if: matrix.os_name == 'linux'
@@ -130,12 +116,8 @@ jobs:
               libssl-dev \
               libayatana-appindicator3-dev \
               librsvg2-dev \
-              libwebkit2gtk-4.1-0=2.44.0-2 \
-              libwebkit2gtk-4.1-dev=2.44.0-2 \
-              libjavascriptcoregtk-4.1-0=2.44.0-2 \
-              libjavascriptcoregtk-4.1-dev=2.44.0-2 \
-              gir1.2-javascriptcoregtk-4.1=2.44.0-2 \
-              gir1.2-webkit2-4.1=2.44.0-2 \
+              libwebkit2gtk-4.1-dev \
+              patchelf \
               xdg-utils
 
       - name: Install Rust stable
@@ -172,7 +154,7 @@ jobs:
 
   rust-coverage:
     name: Code Coverage
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     permissions:
       contents: write
       statuses: write
@@ -180,13 +162,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
 
-      - name: Setup Zig for GLIBC compatibility
-        uses: mlugg/setup-zig@8d6198c65fb0feaa111df26e6b467fea8345e46f
-        with:
-          version: 0.13.0
-
-      - name: Make Zig wrapper executable
-        run: chmod +x wrapper/zig-cc
 
       - name: Install dependencies
         run: |
@@ -200,12 +175,8 @@ jobs:
               libssl-dev \
               libayatana-appindicator3-dev \
               librsvg2-dev \
-              libwebkit2gtk-4.1-0=2.44.0-2 \
-              libwebkit2gtk-4.1-dev=2.44.0-2 \
-              libjavascriptcoregtk-4.1-0=2.44.0-2 \
-              libjavascriptcoregtk-4.1-dev=2.44.0-2 \
-              gir1.2-javascriptcoregtk-4.1=2.44.0-2 \
-              gir1.2-webkit2-4.1=2.44.0-2 \
+              libwebkit2gtk-4.1-dev \
+              patchelf \
               xdg-utils
 
       - name: Install Rust nightly
@@ -252,7 +223,7 @@ jobs:
 
   frontend-bundle-analysis:
     name: Bundle Analysis
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     permissions:
       contents: read
     steps:
@@ -291,7 +262,7 @@ jobs:
     permissions:
       contents: write
       packages: write
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
