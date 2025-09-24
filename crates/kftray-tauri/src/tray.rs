@@ -73,6 +73,7 @@ pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<tauri::tray::TrayIcon<W
     let set_traycenter_position =
         MenuItemBuilder::with_id("set_traycenter_position", "System Tray Center").build(app)?;
 
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
     let mut position_menu_items = vec![
         &set_center_position,
         &set_top_right_position,
@@ -83,6 +84,15 @@ pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<tauri::tray::TrayIcon<W
 
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     position_menu_items.push(&set_traycenter_position);
+
+    #[cfg(not(any(target_os = "windows", target_os = "macos")))]
+    let position_menu_items = vec![
+        &set_center_position,
+        &set_top_right_position,
+        &set_bottom_right_position,
+        &set_bottom_left_position,
+        &set_top_left_position,
+    ];
 
     let reset_position = MenuItemBuilder::with_id("reset_position", "Reset Position").build(app)?;
 
@@ -128,7 +138,7 @@ pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<tauri::tray::TrayIcon<W
             },
             "reset_position" => {
                 if let Some(window) = app.get_webview_window("main") {
-                    reset_window_position(&window);
+                    reset_window_position(window);
                 }
             }
             "set_center_position" => {
@@ -251,7 +261,6 @@ pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<tauri::tray::TrayIcon<W
 }
 
 pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
-    // Get the webview window for window management operations
     let webview_window = match window.app_handle().get_webview_window(window.label()) {
         Some(webview_window) => webview_window,
         _ => {
@@ -302,8 +311,6 @@ pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
 
             #[cfg(windows)]
             unsafe {
-                // https://github.com/MicrosoftEdge/WebView2Feedback/issues/780#issuecomment-808306938
-                // https://docs.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/icorewebview2controller?view=webview2-1.0.774.44#notifyparentwindowpositionchanged
 
                 _webview
                     .controller()
@@ -316,8 +323,19 @@ pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
         });
 
         let app_state = webview_window.state::<AppState>();
+
+        #[cfg(target_os = "linux")]
+        {
+            app_state.positioning_active.store(false, Ordering::SeqCst);
+        }
+
         if !app_state.positioning_active.load(Ordering::SeqCst) {
-            save_window_position(&webview_window);
+            let webview_window_clone = webview_window.clone();
+            let runtime = app_state.runtime.clone();
+            runtime.spawn(async move {
+                sleep(Duration::from_millis(500)).await;
+                save_window_position(&webview_window_clone);
+            });
         }
     }
 
@@ -325,7 +343,6 @@ pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
         && !app_state.pinned.load(Ordering::SeqCst)
     {
         api.prevent_close();
-        // Call the same exit logic as tray quit to handle active port forwards
         let app_handle = webview_window.app_handle();
         tauri::async_runtime::block_on(handle_exit_app(app_handle.clone()));
     }

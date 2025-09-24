@@ -60,7 +60,6 @@
       "app",
       "dmg",
       "appimage",
-      "deb",
       "msi",
       "nsis"
     ],

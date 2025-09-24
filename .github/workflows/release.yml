@@ -18,7 +18,7 @@ env:
 
 jobs:
   validate-version:
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     steps:
       - name: Validate version format
         run: |
@@ -29,7 +29,7 @@ jobs:
 
   rust-coverage:
     name: Code Coverage
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     permissions:
       contents: read
     steps:
@@ -48,12 +48,8 @@ jobs:
               libssl-dev \
               libayatana-appindicator3-dev \
               librsvg2-dev \
-              libwebkit2gtk-4.1-0=2.44.0-2 \
-              libwebkit2gtk-4.1-dev=2.44.0-2 \
-              libjavascriptcoregtk-4.1-0=2.44.0-2 \
-              libjavascriptcoregtk-4.1-dev=2.44.0-2 \
-              gir1.2-javascriptcoregtk-4.1=2.44.0-2 \
-              gir1.2-webkit2-4.1=2.44.0-2 \
+              libwebkit2gtk-4.1-dev \
+              patchelf \
               xdg-utils
 
       - name: Install Rust nightly
@@ -106,7 +102,7 @@ jobs:
     - validate-version
     permissions:
       contents: write
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     outputs:
       release_id: ${{ steps.create_release.outputs.id }}
     steps:
@@ -158,12 +154,12 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: ubuntu-24.04
+          - os: ubuntu-22.04
             arch: arm64
-            runner: ubicloud-standard-4-arm-ubuntu-2404
+            runner: ubicloud-standard-4-arm-ubuntu-2204
             rust_target: aarch64-unknown-linux-gnu
             tauri_args: "--target aarch64-unknown-linux-gnu --bundles appimage,updater --verbose"
-          - os: ubuntu-24.04
+          - os: ubuntu-22.04
             arch: amd64
             rust_target: x86_64-unknown-linux-gnu
             tauri_args: "--target x86_64-unknown-linux-gnu --bundles appimage,updater --verbose"
@@ -233,18 +229,9 @@ jobs:
         with:
           arch: amd64_arm64
 
-      - name: Setup Zig for GLIBC compatibility
-        if: matrix.os == 'ubuntu-24.04'
-        uses: mlugg/setup-zig@8d6198c65fb0feaa111df26e6b467fea8345e46f
-        with:
-          version: 0.13.0
-
-      - name: Make Zig wrapper executable
-        if: matrix.os == 'ubuntu-24.04'
-        run: chmod +x wrapper/zig-cc
 
       - name: Setup platform-specific dependencies
-        if: matrix.os == 'ubuntu-24.04'
+        if: matrix.os == 'ubuntu-22.04'
         run: |
           sudo apt-get update
           sudo apt install -y \
@@ -256,12 +243,8 @@ jobs:
               libssl-dev \
               libayatana-appindicator3-dev \
               librsvg2-dev \
-              libwebkit2gtk-4.1-0=2.44.0-2 \
-              libwebkit2gtk-4.1-dev=2.44.0-2 \
-              libjavascriptcoregtk-4.1-0=2.44.0-2 \
-              libjavascriptcoregtk-4.1-dev=2.44.0-2 \
-              gir1.2-javascriptcoregtk-4.1=2.44.0-2 \
-              gir1.2-webkit2-4.1=2.44.0-2 \
+              libwebkit2gtk-4.1-dev \
+              patchelf \
               xdg-utils
 
       - name: Reconfigure Rust targets
@@ -361,12 +344,12 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: ubuntu-24.04
+          - os: ubuntu-22.04
             runner: ubicloud-standard-4-arm-ubuntu-2404
             arch: arm64
             rust_target: aarch64-unknown-linux-gnu
             os_name: linux
-          - os: ubuntu-24.04
+          - os: ubuntu-22.04
             arch: amd64
             rust_target: x86_64-unknown-linux-gnu
             os_name: linux
@@ -433,18 +416,8 @@ jobs:
           restore-keys: |
             ${{ runner.OS }}-pnpm-${{ runner.ARCH }}-
 
-      - name: Setup Zig for GLIBC compatibility
-        if: matrix.os == 'ubuntu-24.04'
-        uses: mlugg/setup-zig@8d6198c65fb0feaa111df26e6b467fea8345e46f
-        with:
-          version: 0.13.0
-
-      - name: Make Zig wrapper executable
-        if: matrix.os == 'ubuntu-24.04'
-        run: chmod +x wrapper/zig-cc
-
       - name: Setup platform-specific dependencies
-        if: matrix.os == 'ubuntu-24.04'
+        if: matrix.os == 'ubuntu-22.04'
         run: |
           sudo apt-get update
           sudo apt install -y \
@@ -456,12 +429,8 @@ jobs:
               libssl-dev \
               libayatana-appindicator3-dev \
               librsvg2-dev \
-              libwebkit2gtk-4.1-0=2.44.0-2 \
-              libwebkit2gtk-4.1-dev=2.44.0-2 \
-              libjavascriptcoregtk-4.1-0=2.44.0-2 \
-              libjavascriptcoregtk-4.1-dev=2.44.0-2 \
-              gir1.2-javascriptcoregtk-4.1=2.44.0-2 \
-              gir1.2-webkit2-4.1=2.44.0-2 \
+              libwebkit2gtk-4.1-dev \
+              patchelf \
               xdg-utils
 
       - name: Reconfigure Rust targets
@@ -560,7 +529,7 @@ jobs:
     permissions:
       contents: write
       packages: write
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
     steps:
       - name: Checkout repository
@@ -595,7 +564,7 @@ jobs:
     needs: [kftray-tauri, kftui, kftray-server, create-release-draft]
     permissions:
       contents: write
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     if: |
       startsWith(github.ref, 'refs/tags/v') &&
       !contains(github.ref, '-beta') &&
@@ -658,7 +627,7 @@ jobs:
     needs: [kftui]
     permissions:
       contents: read
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-22.04
     if: |
       startsWith(github.ref, 'refs/tags/v') &&
       !contains(github.ref, '-beta') &&
@@ -667,13 +636,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
 
-      - name: Setup Zig for GLIBC compatibility
-        uses: mlugg/setup-zig@8d6198c65fb0feaa111df26e6b467fea8345e46f
-        with:
-          version: 0.13.0
-
-      - name: Make Zig wrapper executable
-        run: chmod +x wrapper/zig-cc
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b
@@ -697,14 +659,9 @@ jobs:
               libssl-dev \
               libayatana-appindicator3-dev \
               librsvg2-dev \
-              libwebkit2gtk-4.1-0=2.44.0-2 \
-              libwebkit2gtk-4.1-dev=2.44.0-2 \
-              libjavascriptcoregtk-4.1-0=2.44.0-2 \
-              libjavascriptcoregtk-4.1-dev=2.44.0-2 \
-              gir1.2-javascriptcoregtk-4.1=2.44.0-2 \
-              gir1.2-webkit2-4.1=2.44.0-2 \
+              libwebkit2gtk-4.1-dev \
+              patchelf \
               xdg-utils
-
 
       - name: Publish crates to crates.io
         env:
@@ -779,7 +736,7 @@ jobs:
       !contains(github.ref, '-alpha')
     steps:
       - uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
-      
+
       - name: Setup and publish to OBS
         env:
           OBS_USER: ${{ secrets.OBS_USER }}
@@ -787,7 +744,7 @@ jobs:
         run: |
           VERSION=${GITHUB_REF_NAME#v}
           export VERSION
-          
+
           chmod +x ./hacks/obs/*.sh
           ./hacks/obs/setup.sh
           ./hacks/obs/publish.sh
