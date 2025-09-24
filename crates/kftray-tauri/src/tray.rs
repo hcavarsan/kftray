@@ -311,7 +311,6 @@ pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
 
             #[cfg(windows)]
             unsafe {
-
                 _webview
                     .controller()
                     .NotifyParentWindowPositionChanged()
