@@ -1,6 +1,6 @@
 [package]
 name = "kftray-shortcuts"
-version = "0.25.6"
+version = "0.26.0"
 authors = ["Henrique Cavarsan <hencavarsan@gmail.com>"]
 edition = "2024"
 description = "Cross-platform global shortcut management for KFTray"
@@ -12,14 +12,13 @@ license = "GPL-3.0"
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 chrono = { workspace = true }
+global-hotkey = "0.7.0"
 log = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sqlx = { workspace = true }
-tokio = { workspace = true, features = ["sync"] }
 thiserror = { workspace = true }
-
-global-hotkey = "0.7.0"
+tokio = { workspace = true, features = ["sync"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 evdev = "0.12"
