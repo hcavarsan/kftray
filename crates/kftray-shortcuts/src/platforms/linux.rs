@@ -199,7 +199,8 @@ impl LinuxPlatform {
 
                     if let Some(id) = shortcut_id {
                         let context = ActionContext::new(id);
-                        if let Err(e) = self.registry.execute_by_id(id, &context).await {
+                        if let Err(e) = self.registry.lock().await.execute_by_id(id, &context).await
+                        {
                             error!("Linux shortcut execution failed: {}", e);
                         }
                     }
@@ -235,7 +236,7 @@ impl LinuxPlatform {
         let mut last_trigger = Instant::now();
 
         loop {
-            for device in &devices {
+            for device in &mut devices {
                 if let Ok(events) = device.fetch_events() {
                     for event in events {
                         if event.event_type() == EventType::KEY {
@@ -433,10 +434,10 @@ impl PlatformManager for LinuxPlatform {
         let mut shortcuts = self.shortcuts.lock().await;
         shortcuts.insert(id, shortcut.shortcut_key.clone());
 
+        let hotkey = self.parse_shortcut(&shortcut.shortcut_key)?;
+
         match &mut self.implementation {
             LinuxImpl::GlobalHotKey(manager, hotkeys) => {
-                let hotkey = self.parse_shortcut(&shortcut.shortcut_key)?;
-
                 manager.register(hotkey).map_err(|e| {
                     crate::models::ShortcutError::PlatformError(format!("Register failed: {}", e))
                 })?;

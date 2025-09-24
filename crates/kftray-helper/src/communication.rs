@@ -228,14 +228,14 @@ pub fn get_default_socket_path() -> Result<PathBuf, HelperError> {
             if let Ok(user) = std::env::var("USER")
                 && user != "root"
                 && let Ok(home) = std::env::var("HOME")
+                && !home.is_empty()
+                && (home.starts_with("/home/") || home.starts_with("/Users/"))
             {
-                if !home.is_empty() && (home.starts_with("/home/") || home.starts_with("/Users/")) {
-                    info!("Using home directory for user '{}': {}", user, home);
-                    let mut path = PathBuf::from(home);
-                    path.push(".kftray");
-                    path.push(SOCKET_FILENAME);
-                    return path;
-                }
+                info!("Using home directory for user '{}': {}", user, home);
+                let mut path = PathBuf::from(home);
+                path.push(".kftray");
+                path.push(SOCKET_FILENAME);
+                return path;
             }
 
             if is_running_as_root()
