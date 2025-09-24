@@ -1,6 +1,6 @@
 [package]
 name = "kftray-tauri"
-version = "0.25.6"
+version = "0.26.0"
 authors = ["Henrique Cavarsan <hencavarsan@gmail.com>"]
 edition = "2024"
 description = "A cross-platform system tray app for Kubernetes port-forward management"
@@ -71,4 +71,3 @@ custom-protocol = ["tauri/custom-protocol"]
 # by default Tauri runs in production mode
 # when `tauri dev` runs it is executed with `cargo run --no-default-features` if `devPath` is an URL
 default = ["custom-protocol"]
-

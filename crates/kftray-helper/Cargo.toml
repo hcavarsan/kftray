@@ -1,6 +1,6 @@
 [package]
 name = "kftray-helper"
-version = "0.25.6"
+version = "0.26.0"
 authors = ["KFTray Contributors"]
 edition = "2024"
 description = "Privileged helper binary for KFTray"
@@ -9,6 +9,7 @@ license = "GPL-3.0"
 [dependencies]
 clap = { workspace = true }
 dirs = { workspace = true }
+env_logger = { workspace = true }
 kftray-commons = { workspace = true }
 libc = { workspace = true }
 log = { workspace = true }
@@ -18,7 +19,6 @@ thiserror = { workspace = true }
 tokio = { workspace = true }
 uuid = { workspace = true }
 windows-service = { workspace = true }
-env_logger = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true }
