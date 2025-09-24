@@ -16,7 +16,11 @@ use log::{
     info,
     warn,
 };
-use tokio::sync::Mutex;
+use tokio::sync::{
+    Mutex,
+    mpsc,
+    oneshot,
+};
 
 use super::{
     PlatformManager,
@@ -28,8 +32,20 @@ use crate::models::{
     ShortcutDefinition,
 };
 
+#[derive(Debug)]
+enum HotkeyCommand {
+    Register {
+        hotkey: HotKey,
+        response: oneshot::Sender<Result<(), String>>,
+    },
+    Unregister {
+        hotkey: HotKey,
+        response: oneshot::Sender<Result<(), String>>,
+    },
+}
+
 pub struct WindowsPlatform {
-    manager: GlobalHotKeyManager,
+    command_sender: mpsc::UnboundedSender<HotkeyCommand>,
     shortcuts: Arc<Mutex<HashMap<i64, HotKey>>>,
     registry: Arc<Mutex<ActionRegistry>>,
     event_loop_started: Arc<Mutex<bool>>,
@@ -37,15 +53,37 @@ pub struct WindowsPlatform {
 
 impl WindowsPlatform {
     pub fn new(registry: Arc<Mutex<ActionRegistry>>) -> ShortcutResult<Self> {
-        let manager = GlobalHotKeyManager::new().map_err(|e| {
-            crate::models::ShortcutError::PlatformError(format!(
-                "Windows hotkey init failed: {}",
-                e
-            ))
-        })?;
+        let (command_sender, mut command_receiver) = mpsc::unbounded_channel::<HotkeyCommand>();
+
+        // Spawn a dedicated thread for GlobalHotKeyManager operations
+        std::thread::spawn(move || {
+            let rt = tokio::runtime::Runtime::new().unwrap();
+            rt.block_on(async {
+                let mut manager = match GlobalHotKeyManager::new() {
+                    Ok(m) => m,
+                    Err(e) => {
+                        error!("Failed to create GlobalHotKeyManager: {}", e);
+                        return;
+                    }
+                };
+
+                while let Some(command) = command_receiver.recv().await {
+                    match command {
+                        HotkeyCommand::Register { hotkey, response } => {
+                            let result = manager.register(hotkey).map_err(|e| e.to_string());
+                            let _ = response.send(result);
+                        }
+                        HotkeyCommand::Unregister { hotkey, response } => {
+                            let result = manager.unregister(hotkey).map_err(|e| e.to_string());
+                            let _ = response.send(result);
+                        }
+                    }
+                }
+            });
+        });
 
         Ok(Self {
-            manager,
+            command_sender,
             shortcuts: Arc::new(Mutex::new(HashMap::new())),
             registry,
             event_loop_started: Arc::new(Mutex::new(false)),
@@ -160,7 +198,27 @@ impl PlatformManager for WindowsPlatform {
 
         let hotkey = self.parse_shortcut(&shortcut.shortcut_key)?;
 
-        self.manager.register(hotkey).map_err(|e| {
+        // Send register command through channel
+        let (response_tx, response_rx) = oneshot::channel();
+        self.command_sender
+            .send(HotkeyCommand::Register {
+                hotkey,
+                response: response_tx,
+            })
+            .map_err(|_| {
+                crate::models::ShortcutError::PlatformError(
+                    "Failed to send register command".to_string(),
+                )
+            })?;
+
+        // Wait for response
+        let result = response_rx.await.map_err(|_| {
+            crate::models::ShortcutError::PlatformError(
+                "Failed to receive register response".to_string(),
+            )
+        })?;
+
+        result.map_err(|e| {
             crate::models::ShortcutError::PlatformError(format!("Register failed: {}", e))
         })?;
 
@@ -215,9 +273,30 @@ impl PlatformManager for WindowsPlatform {
     async fn unregister_shortcut(&mut self, shortcut_id: i64) -> ShortcutResult<()> {
         let mut shortcuts = self.shortcuts.lock().await;
         if let Some(hotkey) = shortcuts.remove(&shortcut_id) {
-            self.manager.unregister(hotkey).map_err(|e| {
+            // Send unregister command through channel
+            let (response_tx, response_rx) = oneshot::channel();
+            self.command_sender
+                .send(HotkeyCommand::Unregister {
+                    hotkey,
+                    response: response_tx,
+                })
+                .map_err(|_| {
+                    crate::models::ShortcutError::PlatformError(
+                        "Failed to send unregister command".to_string(),
+                    )
+                })?;
+
+            // Wait for response
+            let result = response_rx.await.map_err(|_| {
+                crate::models::ShortcutError::PlatformError(
+                    "Failed to receive unregister response".to_string(),
+                )
+            })?;
+
+            result.map_err(|e| {
                 crate::models::ShortcutError::PlatformError(format!("Unregister failed: {}", e))
             })?;
+
             info!("Windows shortcut unregistered: {}", shortcut_id);
         } else {
             warn!("Windows shortcut not found: {}", shortcut_id);
