@@ -9,7 +9,6 @@ use kftray_commons::utils::settings::{
     set_network_monitor,
     set_setting,
 };
-#[cfg(not(target_os = "linux"))]
 use kftray_commons::utils::settings::{
     get_disconnect_timeout,
     get_network_monitor,
@@ -19,7 +18,6 @@ use log::{
     info,
 };
 
-#[cfg(not(target_os = "linux"))]
 #[tauri::command]
 pub async fn get_settings() -> Result<HashMap<String, String>, String> {
     let mut settings = HashMap::new();
