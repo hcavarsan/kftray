@@ -50,6 +50,11 @@ tauri-plugin-updater = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+evdev = "0.12"
+mio = { version = "0.8", features = ["os-ext"] }
+inotify = "0.10"
+
 [dev-dependencies]
 async-trait = { workspace = true }
 mockall = { workspace = true }
