@@ -105,10 +105,8 @@ pub fn install_helper(helper_path: &Path) -> Result<(), HelperError> {
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
 
-            if std::env::var("RUST_LOG").is_ok() {
-                if !stdout.is_empty() {
-                    println!("Helper output:\n{}", stdout);
-                }
+            if std::env::var("RUST_LOG").is_ok() && !stdout.is_empty() {
+                println!("Helper output:\n{}", stdout);
             }
 
             if !output.status.success() {
