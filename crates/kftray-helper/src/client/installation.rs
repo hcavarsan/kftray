@@ -42,13 +42,50 @@ pub fn install_helper(helper_path: &Path) -> Result<(), HelperError> {
 
     #[cfg(target_os = "linux")]
     {
-        let output = Command::new("pkexec")
-            .args([helper_path.to_string_lossy().as_ref(), "install"])
+        let helper_path_str = helper_path.to_string_lossy();
+        let final_helper_path = if helper_path_str.contains("/tmp/.mount_") {
+            let temp_dir = std::env::temp_dir();
+            let extracted_helper = temp_dir.join("kftray-helper-install");
+
+            std::fs::copy(helper_path, &extracted_helper).map_err(|e| {
+                HelperError::PlatformService(format!("Failed to copy helper from AppImage: {}", e))
+            })?;
+
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let mut perms = std::fs::metadata(&extracted_helper)
+                    .map_err(|e| {
+                        HelperError::PlatformService(format!(
+                            "Failed to get helper permissions: {}",
+                            e
+                        ))
+                    })?
+                    .permissions();
+                perms.set_mode(0o755);
+                std::fs::set_permissions(&extracted_helper, perms).map_err(|e| {
+                    HelperError::PlatformService(format!("Failed to set helper permissions: {}", e))
+                })?;
+            }
+
+            extracted_helper
+        } else {
+            helper_path.to_path_buf()
+        };
+
+        if std::env::var("RUST_LOG").is_ok() {
+            println!("Installing helper via pkexec...");
+        }
+        let output = Command::new("/usr/bin/pkexec")
+            .args([final_helper_path.to_string_lossy().as_ref(), "install"])
             .output();
 
-        if let Err(_) = output {
+        if output.is_err() {
+            if std::env::var("RUST_LOG").is_ok() {
+                println!("pkexec failed, trying sudo...");
+            }
             let output = Command::new("sudo")
-                .args([helper_path.to_string_lossy().as_ref(), "install"])
+                .args([final_helper_path.to_string_lossy().as_ref(), "install"])
                 .output()
                 .map_err(|e| {
                     HelperError::PlatformService(format!(
@@ -65,13 +102,28 @@ pub fn install_helper(helper_path: &Path) -> Result<(), HelperError> {
                 )));
             }
         } else if let Ok(output) = output {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let stderr = String::from_utf8_lossy(&output.stderr);
+
+            if std::env::var("RUST_LOG").is_ok() {
+                if !stdout.is_empty() {
+                    println!("Helper output:\n{}", stdout);
+                }
+            }
+
             if !output.status.success() {
-                let error = String::from_utf8_lossy(&output.stderr);
+                if std::env::var("RUST_LOG").is_ok() && !stderr.is_empty() {
+                    println!("Helper error:\n{}", stderr);
+                }
                 return Err(HelperError::PlatformService(format!(
                     "Failed to install helper with pkexec: {}",
-                    error
+                    stderr
                 )));
             }
+        }
+
+        if helper_path_str.contains("/tmp/.mount_") {
+            let _ = std::fs::remove_file(std::env::temp_dir().join("kftray-helper-install"));
         }
     }
 

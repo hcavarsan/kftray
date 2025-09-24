@@ -48,6 +48,8 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
       borderTop='none'
       borderBottomRadius='lg'
       border='1px solid rgba(255, 255, 255, 0.08)'
+      position='relative'
+      zIndex={10}
       borderTopColor='rgba(255, 255, 255, 0.04)'
       mt='-1px'
     >

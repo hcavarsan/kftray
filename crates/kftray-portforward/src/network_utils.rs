@@ -375,11 +375,11 @@ fn configure_loopback_linux(addr: &str) -> Result<()> {
             Ok(())
         })
     } else {
-        execute_command("pkexec", &["ip", "addr", "add", addr, "dev", "lo"])
+        execute_command("/usr/bin/pkexec", &["ip", "addr", "add", addr, "dev", "lo"])
             .or_else(|_| execute_command("sudo", &["ip", "addr", "add", addr, "dev", "lo"]))?;
 
         execute_command(
-            "pkexec",
+            "/usr/bin/pkexec",
             &["ip", "route", "add", &format!("{}/32", addr), "dev", "lo"],
         )
         .or_else(|_| {

@@ -9,14 +9,12 @@ use log::{
     error,
     info,
 };
-use tauri_plugin_global_shortcut::GlobalShortcutExt;
 
 use crate::validation::alert_multiple_configs;
 mod commands;
 mod init_check;
 mod logging;
-pub mod shortcut;
-pub mod shortcut_manager;
+mod shortcuts;
 mod tray;
 mod validation;
 mod window;
@@ -26,16 +24,11 @@ use std::sync::atomic::Ordering;
 use kftray_commons::models::window::AppState;
 use kftray_commons::models::window::SaveDialogState;
 use tauri::Manager;
-use tauri_plugin_global_shortcut::{
-    Code,
-    Modifiers,
-    Shortcut,
-};
 use tokio::runtime::Runtime;
 
 use crate::commands::portforward::check_and_emit_changes;
 use crate::init_check::RealPortOperations;
-use crate::shortcut::parse_shortcut_string;
+use crate::shortcuts::setup_shortcut_integration;
 use crate::tray::{
     TrayPositionState,
     create_tray_icon,
@@ -77,9 +70,13 @@ fn main() {
             runtime: runtime.clone(),
         })
         .setup(move |app| {
-            if let Err(e) = shortcut_manager::setup_shortcut_manager(app) {
-                error!("Failed to setup shortcut manager: {}", e);
-            }
+            let app_handle = app.app_handle().clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = setup_shortcut_integration(app_handle).await {
+                    error!("Failed to setup shortcut integration: {}", e);
+                }
+            });
+
             #[cfg(target_os = "macos")]
             {
                 app.set_activation_policy(tauri::ActivationPolicy::Accessory);
@@ -210,98 +207,7 @@ fn main() {
                 window.set_always_on_top(true).unwrap();
             }
 
-            #[cfg(not(target_os = "linux"))]
-            {
-                let app_handle_for_shortcut = app_handle.clone();
-                tauri::async_runtime::spawn(async move {
-                    match kftray_commons::utils::settings::get_global_shortcut().await {
-                        Ok(shortcut_str) => {
-                            if let Some(shortcut) = parse_shortcut_string(&shortcut_str) {
-                                if let Err(e) =
-                                    app_handle_for_shortcut.global_shortcut().register(shortcut)
-                                {
-                                    error!(
-                                        "Failed to register global shortcut {shortcut_str}: {e:?}"
-                                    );
-                                } else {
-                                    info!("Registered global shortcut: {shortcut_str}");
-                                }
-                            } else {
-                                error!("Failed to parse global shortcut: {shortcut_str}");
-                            }
-                        }
-                        Err(e) => {
-                            error!("Failed to load global shortcut setting: {e}");
-                            let default_shortcut = Shortcut::new(
-                                Some(Modifiers::CONTROL | Modifiers::SHIFT),
-                                Code::F1,
-                            );
-                            if let Err(e) = app_handle_for_shortcut
-                                .global_shortcut()
-                                .register(default_shortcut)
-                            {
-                                error!("Failed to register default global shortcut: {e:?}");
-                            }
-                        }
-                    }
-                });
-            }
-
-            #[cfg(target_os = "linux")]
-            {
-                let app_handle_for_linux_shortcut = app_handle.clone();
-                tauri::async_runtime::spawn(async move {
-                    use crate::shortcut_manager::ShortcutManagerState;
-
-                    let state = app_handle_for_linux_shortcut.state::<ShortcutManagerState>();
-
-                    match kftray_commons::utils::settings::get_global_shortcut().await {
-                        Ok(shortcut_str) => {
-                            let app_handle_clone = app_handle_for_linux_shortcut.clone();
-                            let result = state.register_shortcut(
-                                "toggle_window".to_string(),
-                                shortcut_str.clone(),
-                                move || {
-                                    if let Some(window) = app_handle_clone.get_webview_window("main") {
-                                        crate::window::toggle_window_visibility(&window);
-                                    }
-                                }
-                            );
-
-                            match result {
-                                Ok(_) => {
-                                    info!("Linux global shortcut initialized from database: {}", shortcut_str);
-                                }
-                                Err(e) => {
-                                    error!("Failed to initialize Linux global shortcut '{}': {}", shortcut_str, e);
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            error!("Failed to load Linux global shortcut setting: {}", e);
-                            let app_handle_clone = app_handle_for_linux_shortcut.clone();
-                            let result = state.register_shortcut(
-                                "toggle_window".to_string(),
-                                "ctrl+shift+k".to_string(),
-                                move || {
-                                    if let Some(window) = app_handle_clone.get_webview_window("main") {
-                                        crate::window::toggle_window_visibility(&window);
-                                    }
-                                }
-                            );
-
-                            match result {
-                                Ok(_) => {
-                                    info!("Linux global shortcut initialized with default: ctrl+shift+k");
-                                }
-                                Err(e) => {
-                                    error!("Failed to initialize default Linux global shortcut: {}", e);
-                                }
-                            }
-                        }
-                    }
-                });
-            }
+            info!("Shortcut initialization is now handled by the new shortcuts integration");
 
             if let Err(e) = create_tray_icon(app) {
                 error!("Failed to create tray icon: {e}");
@@ -313,22 +219,8 @@ fn main() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_http::init());
-
-    #[cfg(not(target_os = "linux"))]
-    let app = app.plugin(
-        tauri_plugin_global_shortcut::Builder::new()
-            .with_handler(|app_handle, _shortcut, event| {
-                use tauri_plugin_global_shortcut::ShortcutState;
-
-                if event.state() == ShortcutState::Pressed
-                    && let Some(window) = app_handle.get_webview_window("main")
-                {
-                    crate::window::toggle_window_visibility(&window);
-                }
-            })
-            .build(),
-    );
+        .plugin(tauri_plugin_http::init())
+        .plugin(tauri_plugin_notification::init());
 
     let app = app
         .plugin(tauri_plugin_os::init())
@@ -403,15 +295,19 @@ fn main() {
             commands::updater::check_for_updates_silent,
             commands::updater::get_version_info,
             commands::updater::install_update_silent,
-            commands::settings::get_global_shortcut_cmd,
-            commands::settings::set_global_shortcut_cmd,
-            commands::settings::update_global_shortcut,
-            shortcut_manager::register_global_shortcut,
-            shortcut_manager::unregister_global_shortcut,
-            shortcut_manager::get_registered_shortcuts,
-            shortcut_manager::test_shortcut_format,
-            shortcut_manager::check_linux_permissions,
-            shortcut_manager::try_fix_linux_permissions,
+            commands::shortcuts::create_shortcut,
+            commands::shortcuts::get_shortcuts,
+            commands::shortcuts::update_shortcut,
+            commands::shortcuts::delete_shortcut,
+            commands::shortcuts::validate_shortcut_key,
+            commands::shortcuts::get_available_actions,
+            commands::shortcuts::create_config_shortcut,
+            commands::shortcuts::get_shortcuts_by_config,
+            commands::shortcuts::test_shortcut_format_v2,
+            commands::shortcuts::normalize_shortcut_key,
+            commands::shortcuts::check_shortcut_conflicts,
+            commands::shortcuts::get_platform_status,
+            commands::shortcuts::try_fix_platform_permissions,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,5 +1,5 @@
 import React, { useCallback, useState } from 'react'
-import { Menu as MenuIcon } from 'lucide-react'
+import { Keyboard, Menu as MenuIcon } from 'lucide-react'
 import { FaGithub } from 'react-icons/fa'
 import {
   MdAdd,
@@ -13,7 +13,6 @@ import { RiInstallLine, RiUninstallLine } from 'react-icons/ri'
 import { Box, Group } from '@chakra-ui/react'
 import { invoke } from '@tauri-apps/api/core'
 
-import AutoImportModal from '@/components/AutoImportModal'
 import BulkDeleteButton from '@/components/Footer/BulkDeleteButton'
 import SyncConfigsButton from '@/components/Footer/SyncConfigsButton'
 import { Button } from '@/components/ui/button'
@@ -50,12 +49,13 @@ const Footer: React.FC<FooterProps> = ({
   configs,
   syncStatus,
   onSyncComplete,
+  openShortcutModal,
+  setIsAutoImportModalOpen,
 }) => {
   const [logState, setLogState] = useState({
     size: 0,
     fetchError: false,
   })
-  const [isAutoImportModalOpen, setIsAutoImportModalOpen] = useState(false)
 
   const handleSyncFailure = useCallback((error: Error) => {
     console.error('Sync failed:', error)
@@ -333,6 +333,31 @@ const Footer: React.FC<FooterProps> = ({
         {/* Right Section */}
         <Group display='flex' alignItems='center' gap={2}>
           <Tooltip
+            content='Manage Global Shortcuts'
+            portalled
+            positioning={{
+              strategy: 'absolute',
+              placement: 'top-end',
+              offset: { mainAxis: 8, crossAxis: 0 },
+            }}
+          >
+            <Button
+              size='sm'
+              variant='ghost'
+              onClick={openShortcutModal}
+              height='32px'
+              minWidth='32px'
+              bg='whiteAlpha.50'
+              px={1.5}
+              borderRadius='md'
+              border='1px solid rgba(255, 255, 255, 0.08)'
+              _hover={{ bg: 'whiteAlpha.100' }}
+            >
+              <Box as={Keyboard} width='14px' height='14px' />
+            </Button>
+          </Tooltip>
+
+          <Tooltip
             content='Configure Git Sync'
             portalled
             positioning={{
@@ -372,11 +397,6 @@ const Footer: React.FC<FooterProps> = ({
             onSyncComplete={onSyncComplete}
           />
         </Group>
-
-        <AutoImportModal
-          isOpen={isAutoImportModalOpen}
-          onClose={() => setIsAutoImportModalOpen(false)}
-        />
       </Box>
     </>
   )

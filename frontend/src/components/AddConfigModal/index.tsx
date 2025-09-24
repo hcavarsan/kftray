@@ -464,13 +464,13 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
           onClick={e => e.stopPropagation()}
           maxWidth='600px'
           width='90vw'
-          maxHeight='95vh'
+          height='96vh'
           bg='#111111'
           borderRadius='lg'
           border='1px solid rgba(255, 255, 255, 0.08)'
           overflow='hidden'
           position='absolute'
-          mt={1}
+          my={2}
         >
           {/* Compact Header */}
           <Dialog.Header

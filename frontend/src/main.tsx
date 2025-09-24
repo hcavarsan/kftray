@@ -7,6 +7,8 @@ import { Provider } from './components/ui/provider'
 import { Toaster } from './components/ui/toaster'
 import App from './App'
 
+import './index.css'
+
 const queryClient = new QueryClient()
 
 const rootElement = document.getElementById('root')

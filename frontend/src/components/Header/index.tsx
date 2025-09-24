@@ -10,18 +10,20 @@ import { listen } from '@tauri-apps/api/event'
 import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 
 import logo from '@/assets/logo.webp'
-import SettingsModal from '@/components/SettingsModal'
 import { Button } from '@/components/ui/button'
 import { Tooltip } from '@/components/ui/tooltip'
 import { HeaderProps } from '@/types'
 
 const appWindow = getCurrentWebviewWindow()
 
-const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
+const Header: React.FC<HeaderProps> = ({
+  search,
+  setSearch,
+  openSettingsModal,
+}) => {
   const [version, setVersion] = useState('')
   const [tooltipOpen, setTooltipOpen] = useState(false)
   const [isPinned, setIsPinned] = useState(false)
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false)
   const dragHandleRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
@@ -98,6 +100,8 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
       py={3}
       borderBottom='none'
       border='1px solid rgba(255, 255, 255, 0.08)'
+      position='relative'
+      zIndex={10}
     >
       {/* Left Section */}
       <Box display='flex' alignItems='center' gap={3}>
@@ -141,7 +145,7 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
           <Box
             as={Search}
             position='absolute'
-            zIndex={100}
+            zIndex={1}
             left={2}
             top='50%'
             transform='translateY(-50%)'
@@ -181,7 +185,7 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
           <Button
             variant='ghost'
             size='sm'
-            onClick={() => setIsSettingsOpen(true)}
+            onClick={openSettingsModal}
             height='28px'
             width='28px'
             minWidth='28px'
@@ -240,12 +244,6 @@ const Header: React.FC<HeaderProps> = ({ search, setSearch }) => {
           </Button>
         </Tooltip>
       </Box>
-
-      {/* Settings Modal */}
-      <SettingsModal
-        isOpen={isSettingsOpen}
-        onClose={() => setIsSettingsOpen(false)}
-      />
     </Box>
   )
 }

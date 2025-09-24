@@ -135,7 +135,7 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
             bg='#111111'
             borderRadius='lg'
             border='1px solid rgba(255, 255, 255, 0.08)'
-            mt={3}
+            my={2}
           >
             <Dialog.Header
               p={1.5}

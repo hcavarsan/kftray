@@ -228,7 +228,7 @@ const ShortcutCapture: React.FC<ShortcutCaptureProps> = ({
           py={1}
           borderRadius='sm'
           whiteSpace='nowrap'
-          zIndex={10}
+          zIndex={5}
         >
           Hold modifiers (Ctrl/Cmd/Alt/Shift) + press any key
         </Text>
