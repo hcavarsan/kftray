@@ -332,7 +332,7 @@ impl ShortcutManager {
             use crate::platforms::linux::LinuxPlatform;
 
             let is_wayland = std::env::var("WAYLAND_DISPLAY").is_ok()
-                || std::env::var("XDG_SESSION_TYPE").map_or(false, |t| t == "wayland");
+                || std::env::var("XDG_SESSION_TYPE").is_ok_and(|t| t == "wayland");
             let needs_fix = LinuxPlatform::needs_permission_fix();
             let has_permissions = !needs_fix || !is_wayland;
 
@@ -395,7 +395,7 @@ impl ShortcutManager {
         #[cfg(target_os = "linux")]
         {
             use crate::platforms::linux::LinuxPlatform;
-            LinuxPlatform::try_fix_permissions().map_err(|e| ShortcutError::PlatformError(e))
+            LinuxPlatform::try_fix_permissions().map_err(ShortcutError::PlatformError)
         }
 
         #[cfg(not(target_os = "linux"))]

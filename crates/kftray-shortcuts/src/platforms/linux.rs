@@ -104,7 +104,7 @@ impl LinuxPlatform {
 
     fn is_wayland() -> bool {
         std::env::var("WAYLAND_DISPLAY").is_ok()
-            || std::env::var("XDG_SESSION_TYPE").map_or(false, |t| t == "wayland")
+            || std::env::var("XDG_SESSION_TYPE").is_ok_and(|t| t == "wayland")
     }
 
     fn can_use_evdev() -> bool {
@@ -188,7 +188,7 @@ impl LinuxPlatform {
         // Try to add user to input group
         // First try with /usr/sbin/usermod (most common location)
         let output = std::process::Command::new("/usr/bin/pkexec")
-            .args(&["/usr/sbin/usermod", "-a", "-G", "input", &user])
+            .args(["/usr/sbin/usermod", "-a", "-G", "input", &user])
             .output();
 
         let output = match output {
@@ -196,7 +196,7 @@ impl LinuxPlatform {
             Err(_) => {
                 // Fallback: try /bin/usermod (some systems have it here)
                 std::process::Command::new("/usr/bin/pkexec")
-                    .args(&["/bin/usermod", "-a", "-G", "input", &user])
+                    .args(["/bin/usermod", "-a", "-G", "input", &user])
                     .output()
                     .map_err(|e| format!("Failed to execute usermod command: {}", e))?
             }
