@@ -15,6 +15,7 @@ use log::{
     error,
     info,
 };
+use tauri::command;
 
 #[cfg(not(target_os = "linux"))]
 #[command]
