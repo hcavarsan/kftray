@@ -221,7 +221,7 @@ impl LinuxPlatform {
     fn evdev_monitoring_loop(
         shortcuts: Arc<Mutex<HashMap<i64, String>>>, registry: Arc<Mutex<ActionRegistry>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let devices = Self::discover_keyboard_devices()?;
+        let mut devices = Self::discover_keyboard_devices()?;
         if devices.is_empty() {
             return Err("No keyboard devices found for evdev monitoring".into());
         }
