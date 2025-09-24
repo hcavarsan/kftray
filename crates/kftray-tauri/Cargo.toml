@@ -27,6 +27,7 @@ kftray-commons = { workspace = true }
 kftray-helper = { workspace = true }
 kftray-network-monitor = { workspace = true }
 kftray-portforward = { workspace = true }
+kftray-shortcuts = { workspace = true }
 kube = { workspace = true }
 lazy_static = { workspace = true }
 log = { workspace = true }
@@ -42,6 +43,7 @@ tauri-plugin-dialog = { workspace = true }
 tauri-plugin-fs = { workspace = true }
 tauri-plugin-global-shortcut = { workspace = true }
 tauri-plugin-http = { workspace = true }
+tauri-plugin-notification = { workspace = true }
 tauri-plugin-os = { workspace = true }
 tauri-plugin-positioner = { workspace = true }
 tauri-plugin-process = { workspace = true }
@@ -60,8 +62,6 @@ kftray-helper = { workspace = true }
 tauri-build = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-evdev = "0.12"
-mio = { version = "0.8", features = ["os-ext"] }
 inotify = "0.10"
 
 [features]
@@ -71,3 +71,4 @@ custom-protocol = ["tauri/custom-protocol"]
 # by default Tauri runs in production mode
 # when `tauri dev` runs it is executed with `cargo run --no-default-features` if `devPath` is an URL
 default = ["custom-protocol"]
+

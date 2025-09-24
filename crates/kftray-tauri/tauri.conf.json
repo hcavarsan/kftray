@@ -7,7 +7,7 @@
     "windows": [
       {
         "decorations": false,
-        "focus": false,
+        "focus": true,
         "fullscreen": false,
         "height": 500,
         "hiddenTitle": true,

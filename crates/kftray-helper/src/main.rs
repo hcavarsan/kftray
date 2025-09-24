@@ -41,6 +41,8 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    env_logger::init();
+
     let cli = Cli::parse();
 
     match &cli.command {
@@ -49,17 +51,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .clone()
                 .unwrap_or_else(|| "kftray.helper".to_string());
             install_platform_service(&service)?;
-            info!("Service installed successfully");
+            if std::env::var("RUST_LOG").is_ok() {
+                println!("Service installed successfully");
+            }
         }
         Commands::Uninstall { service_name } => {
             let service = service_name
                 .clone()
                 .unwrap_or_else(|| "kftray.helper".to_string());
             uninstall_platform_service(&service)?;
-            info!("Service uninstalled successfully");
+            if std::env::var("RUST_LOG").is_ok() {
+                println!("Service uninstalled successfully");
+            }
         }
         Commands::Service => {
-            info!("Starting platform service...");
+            println!("Starting platform service...");
             run_platform_service()?;
         }
         Commands::Status => {

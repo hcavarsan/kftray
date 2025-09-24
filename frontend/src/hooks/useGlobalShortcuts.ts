@@ -3,93 +3,149 @@ import { useCallback, useEffect, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 
-interface ShortcutAction {
-  id: string
+interface Shortcut {
+  id: number
   name: string
-  description: string
-  defaultShortcut: string
-  action: string
+  shortcut_key: string
+  action_type: string
+  action_data?: string
+  config_id?: number
+  enabled: boolean
+}
+
+interface PlatformStatus {
+  platform: string
+  is_wayland: boolean
+  has_input_permissions: boolean
+  needs_permission_fix: boolean
+  current_implementation: string
+  can_fix_permissions: boolean
 }
 
 interface GlobalShortcutHook {
-  shortcuts: Record<string, string>
-  hasLinuxPermissions: boolean
-  isLinux: boolean
-  registerShortcut: (
-    id: string,
-    shortcut: string,
-    action: string,
+  shortcuts: Shortcut[]
+  platformStatus: PlatformStatus | null
+  isFixingPermissions: boolean
+  createShortcut: (
+    name: string,
+    shortcutKey: string,
+    actionType: string,
+  ) => Promise<number | null>
+  updateShortcut: (
+    id: number,
+    name: string,
+    shortcutKey: string,
+    actionType: string,
   ) => Promise<boolean>
-  unregisterShortcut: (id: string) => Promise<boolean>
-  testShortcutFormat: (shortcut: string) => Promise<boolean>
+  deleteShortcut: (id: number) => Promise<boolean>
+  validateShortcut: (shortcutKey: string) => Promise<boolean>
+  normalizeShortcut: (shortcutKey: string) => Promise<string | null>
   refreshShortcuts: () => Promise<void>
-  tryFixLinuxPermissions: () => Promise<boolean>
+  checkPlatformStatus: () => Promise<void>
+  tryFixPermissions: () => Promise<boolean>
 }
 
-const DEFAULT_SHORTCUTS: ShortcutAction[] = [
-  {
-    id: 'toggle_window',
-    name: 'Toggle Window',
-    description: 'Show/hide the main application window',
-    defaultShortcut: 'ctrl+shift+k',
-    action: 'toggle_window',
-  },
-]
-
 export const useGlobalShortcuts = (): GlobalShortcutHook => {
-  const [shortcuts, setShortcuts] = useState<Record<string, string>>({})
-  const [hasLinuxPermissions, setHasLinuxPermissions] = useState(true)
-  const [isLinux, setIsLinux] = useState(false)
-
-  useEffect(() => {
-    const checkPlatformAndPermissions = async () => {
-      try {
-        const [isLinux, hasPermissions] = await invoke<[boolean, boolean]>(
-          'check_linux_permissions',
-        )
-
-        console.log(
-          `Backend detection - isLinux: ${isLinux}, hasPermissions: ${hasPermissions}`,
-        )
-
-        setIsLinux(isLinux)
-        setHasLinuxPermissions(hasPermissions)
-      } catch (error) {
-        console.error('Error checking platform/permissions:', error)
-        setIsLinux(false)
-        setHasLinuxPermissions(true)
-      }
-    }
-
-    checkPlatformAndPermissions()
-  }, [])
+  const [shortcuts, setShortcuts] = useState<Shortcut[]>([])
+  const [platformStatus, setPlatformStatus] = useState<PlatformStatus | null>(
+    null,
+  )
+  const [isFixingPermissions, setIsFixingPermissions] = useState(false)
 
   const refreshShortcuts = useCallback(async () => {
     try {
-      const registered = await invoke<Record<string, string>>(
-        'get_registered_shortcuts',
-      )
+      const allShortcuts = await invoke<Shortcut[]>('get_shortcuts')
 
-      setShortcuts(registered)
+      setShortcuts(allShortcuts)
     } catch (error) {
       console.error('Failed to load shortcuts:', error)
-      setShortcuts({})
+      setShortcuts([])
     }
   }, [])
 
-  const registerShortcut = useCallback(
-    async (id: string, shortcut: string, action: string): Promise<boolean> => {
+  const checkPlatformStatus = useCallback(async () => {
+    try {
+      const status = await invoke<PlatformStatus>('get_platform_status')
+
+      setPlatformStatus(status)
+    } catch (error) {
+      console.error('Failed to check platform status:', error)
+      setPlatformStatus(null)
+    }
+  }, [])
+
+  const tryFixPermissions = useCallback(async (): Promise<boolean> => {
+    try {
+      setIsFixingPermissions(true)
+      const result = await invoke<string>('try_fix_platform_permissions')
+
+      console.log('Permission fix result:', result)
+
+      // Re-check platform status after fix attempt
+      setTimeout(() => {
+        checkPlatformStatus()
+      }, 1000)
+
+      return true
+    } catch (error) {
+      console.error('Failed to fix permissions:', error)
+
+      return false
+    } finally {
+      setIsFixingPermissions(false)
+    }
+  }, [checkPlatformStatus])
+
+  const createShortcut = useCallback(
+    async (
+      name: string,
+      shortcutKey: string,
+      actionType: string,
+    ): Promise<number | null> => {
       try {
-        await invoke('register_global_shortcut', {
-          shortcutId: id,
-          shortcutStr: shortcut,
-          action,
+        const id = await invoke<number>('create_shortcut', {
+          request: {
+            name,
+            shortcut_key: shortcutKey,
+            action_type: actionType,
+            enabled: true,
+          },
+        })
+
+        await refreshShortcuts()
+
+        return id
+      } catch (error) {
+        console.error(`Failed to create shortcut ${name}:`, error)
+
+        return null
+      }
+    },
+    [refreshShortcuts],
+  )
+
+  const updateShortcut = useCallback(
+    async (
+      id: number,
+      name: string,
+      shortcutKey: string,
+      actionType: string,
+    ): Promise<boolean> => {
+      try {
+        await invoke('update_shortcut', {
+          id,
+          request: {
+            name,
+            shortcut_key: shortcutKey,
+            action_type: actionType,
+            enabled: true,
+          },
         })
         await refreshShortcuts()
 
         return true
       } catch (error) {
-        console.error(`Failed to register shortcut ${id}:`, error)
+        console.error(`Failed to update shortcut ${id}:`, error)
 
         return false
       }
@@ -97,15 +153,15 @@ export const useGlobalShortcuts = (): GlobalShortcutHook => {
     [refreshShortcuts],
   )
 
-  const unregisterShortcut = useCallback(
-    async (id: string): Promise<boolean> => {
+  const deleteShortcut = useCallback(
+    async (id: number): Promise<boolean> => {
       try {
-        await invoke('unregister_global_shortcut', { shortcutId: id })
+        await invoke('delete_shortcut', { id })
         await refreshShortcuts()
 
         return true
       } catch (error) {
-        console.error(`Failed to unregister shortcut ${id}:`, error)
+        console.error(`Failed to delete shortcut ${id}:`, error)
 
         return false
       }
@@ -113,14 +169,14 @@ export const useGlobalShortcuts = (): GlobalShortcutHook => {
     [refreshShortcuts],
   )
 
-  const testShortcutFormat = useCallback(
-    async (shortcut: string): Promise<boolean> => {
+  const validateShortcut = useCallback(
+    async (shortcutKey: string): Promise<boolean> => {
       try {
-        return await invoke<boolean>('test_shortcut_format', {
-          shortcutStr: shortcut,
+        return await invoke<boolean>('validate_shortcut_key', {
+          shortcutKey,
         })
       } catch (error) {
-        console.error('Failed to test shortcut format:', error)
+        console.error('Failed to validate shortcut:', error)
 
         return false
       }
@@ -128,77 +184,96 @@ export const useGlobalShortcuts = (): GlobalShortcutHook => {
     [],
   )
 
+  const normalizeShortcut = useCallback(
+    async (shortcutKey: string): Promise<string | null> => {
+      try {
+        return await invoke<string>('normalize_shortcut_key', {
+          shortcutStr: shortcutKey,
+        })
+      } catch (error) {
+        console.error('Failed to normalize shortcut:', error)
+
+        return null
+      }
+    },
+    [],
+  )
+
   useEffect(() => {
     const setupEventListeners = async () => {
-      const unlisten = await listen('shortcut-triggered', event => {
-        const [shortcutId, action] = (event.payload as string).split(':')
-
-        console.log(`Global shortcut triggered: ${shortcutId} -> ${action}`)
-        handleShortcutAction(action)
-      })
-
-      const toggleWindowUnlisten = await listen(
-        'shortcut-triggered:toggle_window',
+      // Listen for platform status updates
+      const unlistenPlatformStatus = await listen<PlatformStatus>(
+        'platform-status-update',
         event => {
-          const action = event.payload as string
+          console.log('Platform status update:', event.payload)
+          setPlatformStatus(event.payload)
+        },
+      )
 
-          console.log(`Toggle window shortcut triggered with action: ${action}`)
-          handleShortcutAction(action)
+      // Listen for permission fix success
+      const unlistenFixSuccess = await listen<string>(
+        'permission-fix-success',
+        event => {
+          console.log('Permission fix successful:', event.payload)
+          // Show user notification about needing to logout/login
+          if (typeof window !== 'undefined') {
+            // You can integrate with your toast/notification system here
+            alert(
+              `Success: ${event.payload}\n\nPlease logout and login again for changes to take effect.`,
+            )
+          }
+        },
+      )
+
+      // Listen for permission fix errors
+      const unlistenFixError = await listen<string>(
+        'permission-fix-error',
+        event => {
+          console.error('Permission fix failed:', event.payload)
+          // Show user notification about failure
+          if (typeof window !== 'undefined') {
+            alert(`Permission fix failed: ${event.payload}`)
+          }
+        },
+      )
+
+      // Listen for permission fix attempts
+      const unlistenFixAttempt = await listen(
+        'permission-fix-attempted',
+        event => {
+          console.log('Permission fix attempted:', event.payload)
         },
       )
 
       return () => {
-        unlisten()
-        toggleWindowUnlisten()
+        unlistenPlatformStatus()
+        unlistenFixSuccess()
+        unlistenFixError()
+        unlistenFixAttempt()
       }
     }
 
     setupEventListeners()
   }, [])
 
-  const handleShortcutAction = (action: string) => {
-    if (action === 'toggle_window') {
-      console.log('Toggle window action triggered')
-    } else {
-      console.log(`Unknown shortcut action: ${action}`)
-    }
-  }
-
-  const tryFixLinuxPermissions = useCallback(async (): Promise<boolean> => {
-    try {
-      const result = await invoke<boolean>('try_fix_linux_permissions')
-
-      if (result) {
-        const [, hasPermissions] = await invoke<[boolean, boolean]>(
-          'check_linux_permissions',
-        )
-
-        setHasLinuxPermissions(hasPermissions)
-      }
-
-      return result
-    } catch (error) {
-      console.error('Failed to fix Linux permissions:', error)
-
-      return false
-    }
-  }, [])
-
   useEffect(() => {
     refreshShortcuts()
-  }, [refreshShortcuts])
+    checkPlatformStatus()
+  }, [refreshShortcuts, checkPlatformStatus])
 
   return {
     shortcuts,
-    hasLinuxPermissions,
-    isLinux,
-    registerShortcut,
-    unregisterShortcut,
-    testShortcutFormat,
+    platformStatus,
+    isFixingPermissions,
+    createShortcut,
+    updateShortcut,
+    deleteShortcut,
+    validateShortcut,
+    normalizeShortcut,
     refreshShortcuts,
-    tryFixLinuxPermissions,
+    checkPlatformStatus,
+    tryFixPermissions,
   }
 }
 
-export { DEFAULT_SHORTCUTS }
-export type { ShortcutAction }
+export type { PlatformStatus, Shortcut }

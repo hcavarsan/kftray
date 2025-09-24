@@ -11,6 +11,8 @@ import AutoImportModal from '@/components/AutoImportModal'
 import Footer from '@/components/Footer'
 import GitSyncModal from '@/components/GitSyncModal'
 import PortForwardTable from '@/components/PortForwardTable'
+import SettingsModal from '@/components/SettingsModal'
+import ShortcutModal from '@/components/ShortcutModal'
 import { toaster } from '@/components/ui/toaster'
 import { useSyncManager } from '@/hooks/useSyncManager'
 import { Config } from '@/types'
@@ -51,6 +53,8 @@ const KFTray = () => {
   const [isAlertOpen, setIsAlertOpen] = useState(false)
   const [configToDelete, setConfigToDelete] = useState<number | undefined>()
   const [isAutoImportModalOpen, setIsAutoImportModalOpen] = useState(false)
+  const [isShortcutModalOpen, setIsShortcutModalOpen] = useState(false)
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false)
   const fetchConfigsWithState = useCallback(async () => {
     try {
       const configsResponse = await invoke<Config[]>('get_configs_cmd')
@@ -165,6 +169,22 @@ const KFTray = () => {
 
   const openGitSyncModal = () => {
     setIsGitSyncModalOpen(true)
+  }
+
+  const openShortcutModal = () => {
+    setIsShortcutModalOpen(true)
+  }
+
+  const closeShortcutModal = () => {
+    setIsShortcutModalOpen(false)
+  }
+
+  const openSettingsModal = () => {
+    setIsSettingsModalOpen(true)
+  }
+
+  const closeSettingsModal = () => {
+    setIsSettingsModalOpen(false)
   }
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -631,6 +651,7 @@ const KFTray = () => {
               setIsAlertOpen={setIsAlertOpen}
               selectedConfigs={selectedConfigs}
               setSelectedConfigs={setSelectedConfigs}
+              openSettingsModal={openSettingsModal}
             />
           </Box>
 
@@ -642,7 +663,7 @@ const KFTray = () => {
             bottom={0}
             overflow='hidden'
             padding='5px'
-            zIndex={10}
+            zIndex={1}
           >
             <Footer
               openModal={openModal}
@@ -659,6 +680,8 @@ const KFTray = () => {
               configs={configs}
               syncStatus={syncStatus}
               onSyncComplete={handleSyncComplete}
+              openShortcutModal={openShortcutModal}
+              setIsAutoImportModalOpen={setIsAutoImportModalOpen}
             />
           </Box>
         </Box>
@@ -688,6 +711,16 @@ const KFTray = () => {
         <AutoImportModal
           isOpen={isAutoImportModalOpen}
           onClose={() => setIsAutoImportModalOpen(false)}
+        />
+
+        <ShortcutModal
+          isOpen={isShortcutModalOpen}
+          onClose={closeShortcutModal}
+        />
+
+        <SettingsModal
+          isOpen={isSettingsModalOpen}
+          onClose={closeSettingsModal}
         />
       </VStack>
     </Box>
