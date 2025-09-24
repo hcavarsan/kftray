@@ -3,11 +3,12 @@ use std::{
     sync::Arc,
 };
 
+#[cfg(target_os = "macos")]
+use log::warn;
 use log::{
     debug,
     error,
     info,
-    warn,
 };
 use tokio::sync::Mutex;
 

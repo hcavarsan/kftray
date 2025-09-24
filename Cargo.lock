@@ -3102,6 +3102,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "kftray-shortcuts"
+version = "0.25.6"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "evdev",
+ "global-hotkey",
+ "log",
+ "mio 0.8.11",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 2.0.16",
+ "tokio",
+]
+
+[[package]]
 name = "kftray-tauri"
 version = "0.25.6"
 dependencies = [

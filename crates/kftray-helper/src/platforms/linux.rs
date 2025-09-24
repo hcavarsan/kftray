@@ -7,15 +7,7 @@ use std::{
 
 use kftray_commons::utils::config_dir;
 
-use crate::{
-    address_pool::AddressPoolManager,
-    communication::{
-        get_default_socket_path,
-        start_communication_server,
-    },
-    error::HelperError,
-    network::NetworkConfigManager,
-};
+use crate::error::HelperError;
 
 const SYSTEMD_SERVICE_TEMPLATE: &str = r#"[Unit]
 Description=KFTray privileged helper service
@@ -167,11 +159,11 @@ pub fn uninstall_service(service_name: &str) -> Result<(), HelperError> {
 
     if let Err(e) = output {
         eprintln!("Warning: Failed to disable systemd service: {}", e);
-    } else if let Ok(output) = output {
-        if !output.status.success() {
-            let error = String::from_utf8_lossy(&output.stderr);
-            eprintln!("Warning: Failed to disable systemd service: {}", error);
-        }
+    } else if let Ok(output) = output
+        && !output.status.success()
+    {
+        let error = String::from_utf8_lossy(&output.stderr);
+        eprintln!("Warning: Failed to disable systemd service: {}", error);
     }
 
     let service_path = get_systemd_service_path(service_name)?;
