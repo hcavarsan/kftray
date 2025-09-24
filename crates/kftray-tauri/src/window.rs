@@ -160,16 +160,63 @@ pub fn toggle_window_visibility(window: &WebviewWindow<Wry>) {
         if let Err(e) = window.show() {
             warn!("Failed to show window: {e}");
         }
-        if let Err(e) = window.set_always_on_top(true) {
-            warn!("Failed to set window always on top: {e}");
-        }
-        if let Err(e) = window.set_focus() {
-            warn!("Failed to focus window: {e}");
-        }
-        if !app_state.pinned.load(Ordering::SeqCst)
-            && let Err(e) = window.set_always_on_top(false)
+
+        // On Linux, we need a more aggressive approach to ensure the window gets focus
+        #[cfg(target_os = "linux")]
         {
-            warn!("Failed to unset window always on top: {e}");
+            // First, set always on top to bring it to front
+            if let Err(e) = window.set_always_on_top(true) {
+                warn!("Failed to set window always on top: {e}");
+            }
+
+            // Immediately request focus
+            if let Err(e) = window.set_focus() {
+                warn!("Failed to focus window (first attempt): {e}");
+            }
+
+            // On Linux, also try to unminimize the window in case it's minimized
+            if let Err(e) = window.unminimize() {
+                warn!("Failed to unminimize window: {e}");
+            }
+
+            // Use a non-blocking approach to avoid blocking the UI thread
+            let window_clone = window.clone();
+            let pinned = app_state.pinned.load(Ordering::SeqCst);
+            std::thread::spawn(move || {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+
+                // Second focus attempt with unminimize
+                if let Err(e) = window_clone.unminimize() {
+                    warn!("Failed to unminimize window (second attempt): {e}");
+                }
+                if let Err(e) = window_clone.set_focus() {
+                    warn!("Failed to focus window (second attempt): {e}");
+                }
+
+                // Remove always on top if not pinned
+                if !pinned {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    if let Err(e) = window_clone.set_always_on_top(false) {
+                        warn!("Failed to unset window always on top: {e}");
+                    }
+                }
+            });
+        }
+
+        // For other platforms, use the original approach
+        #[cfg(not(target_os = "linux"))]
+        {
+            if let Err(e) = window.set_always_on_top(true) {
+                warn!("Failed to set window always on top: {e}");
+            }
+            if let Err(e) = window.set_focus() {
+                warn!("Failed to focus window: {e}");
+            }
+            if !app_state.pinned.load(Ordering::SeqCst)
+                && let Err(e) = window.set_always_on_top(false)
+            {
+                warn!("Failed to unset window always on top: {e}");
+            }
         }
     }
 }

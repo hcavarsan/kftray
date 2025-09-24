@@ -151,32 +151,34 @@ pub fn get_default_socket_path() -> Result<PathBuf, HelperError> {
             }
         };
 
-        if let Some(parent) = socket_path.parent() {
-            if !parent.exists() {
-                info!("Creating socket parent directory: {parent:?}");
-                if let Err(e) = fs::create_dir_all(parent) {
-                    error!("Failed to create socket directory: {e}");
-                    return Err(HelperError::Communication(format!(
-                        "Failed to create socket directory: {parent:?}, error: {e}"
-                    )));
-                }
-
-                #[cfg(unix)]
-                if is_running_as_root()
-                    && let (Ok(user_id), Ok(group_id)) =
-                        (std::env::var("SUDO_UID"), std::env::var("SUDO_GID"))
-                {
-                    info!("Fixing directory ownership for socket directory");
-                    if let Err(e) = std::process::Command::new("chown")
-                        .arg(format!("{user_id}:{group_id}"))
-                        .arg(parent.as_os_str())
-                        .status()
-                    {
-                        warn!("Failed to fix directory ownership: {e}");
-                    }
-                }
+        if let Some(parent) = socket_path.parent()
+            && !parent.exists()
+        {
+            info!("Creating socket parent directory: {parent:?}");
+            if let Err(e) = fs::create_dir_all(parent) {
+                error!("Failed to create socket directory: {e}");
+                return Err(HelperError::Communication(format!(
+                    "Failed to create socket directory: {parent:?}, error: {e}"
+                )));
             }
 
+            #[cfg(unix)]
+            if is_running_as_root()
+                && let (Ok(user_id), Ok(group_id)) =
+                    (std::env::var("SUDO_UID"), std::env::var("SUDO_GID"))
+            {
+                info!("Fixing directory ownership for socket directory");
+                if let Err(e) = std::process::Command::new("chown")
+                    .arg(format!("{user_id}:{group_id}"))
+                    .arg(parent.as_os_str())
+                    .status()
+                {
+                    warn!("Failed to fix directory ownership: {e}");
+                }
+            }
+        }
+
+        if let Some(parent) = socket_path.parent() {
             match parent.metadata() {
                 Ok(_) => {
                     info!("Socket parent directory exists at: {}", parent.display());
@@ -223,43 +225,41 @@ pub fn get_default_socket_path() -> Result<PathBuf, HelperError> {
         };
 
         fn find_linux_socket_path() -> PathBuf {
-            if let Ok(user) = std::env::var("USER") {
-                if user != "root" {
-                    if let Ok(home) = std::env::var("HOME") {
-                        if !home.is_empty()
-                            && (home.starts_with("/home/") || home.starts_with("/Users/"))
-                        {
-                            info!("Using home directory for user '{}': {}", user, home);
-                            let mut path = PathBuf::from(home);
-                            path.push(".kftray");
-                            path.push(SOCKET_FILENAME);
-                            return path;
-                        }
-                    }
-                }
+            if let Ok(user) = std::env::var("USER")
+                && user != "root"
+                && let Ok(home) = std::env::var("HOME")
+                && !home.is_empty()
+                && (home.starts_with("/home/") || home.starts_with("/Users/"))
+            {
+                info!("Using home directory for user '{}': {}", user, home);
+                let mut path = PathBuf::from(home);
+                path.push(".kftray");
+                path.push(SOCKET_FILENAME);
+                return path;
             }
 
-            if is_running_as_root() {
-                if let Ok(sudo_user) = std::env::var("SUDO_USER") {
-                    if !sudo_user.is_empty() && sudo_user != "root" {
-                        info!("Using SUDO_USER's home directory for: {}", sudo_user);
-                        let user_home = format!("/home/{}", sudo_user);
-                        let mut path = PathBuf::from(user_home);
-                        path.push(".kftray");
-                        path.push(SOCKET_FILENAME);
-                        return path;
-                    }
-                }
+            if is_running_as_root()
+                && let Ok(sudo_user) = std::env::var("SUDO_USER")
+                && !sudo_user.is_empty()
+                && sudo_user != "root"
+            {
+                info!("Using SUDO_USER's home directory for: {}", sudo_user);
+                let user_home = format!("/home/{}", sudo_user);
+                let mut path = PathBuf::from(user_home);
+                path.push(".kftray");
+                path.push(SOCKET_FILENAME);
+                return path;
             }
 
-            if let Ok(home) = std::env::var("HOME") {
-                if !home.is_empty() && (home.starts_with("/home/") || home.starts_with("/Users/")) {
-                    info!("Using home directory: {}", home);
-                    let mut path = PathBuf::from(home);
-                    path.push(".kftray");
-                    path.push(SOCKET_FILENAME);
-                    return path;
-                }
+            if let Ok(home) = std::env::var("HOME")
+                && !home.is_empty()
+                && (home.starts_with("/home/") || home.starts_with("/Users/"))
+            {
+                info!("Using home directory: {}", home);
+                let mut path = PathBuf::from(home);
+                path.push(".kftray");
+                path.push(SOCKET_FILENAME);
+                return path;
             }
 
             match config_dir::get_config_dir() {
@@ -271,30 +271,29 @@ pub fn get_default_socket_path() -> Result<PathBuf, HelperError> {
             }
         }
 
-        if let Some(parent) = socket_path.parent() {
-            if !parent.exists() {
-                info!("Creating socket parent directory: {:?}", parent);
-                if let Err(e) = fs::create_dir_all(parent) {
-                    error!("Failed to create socket directory: {}", e);
-                    return Err(HelperError::Communication(format!(
-                        "Failed to create socket directory: {:?}, error: {}",
-                        parent, e
-                    )));
-                }
+        if let Some(parent) = socket_path.parent()
+            && !parent.exists()
+        {
+            info!("Creating socket parent directory: {:?}", parent);
+            if let Err(e) = fs::create_dir_all(parent) {
+                error!("Failed to create socket directory: {}", e);
+                return Err(HelperError::Communication(format!(
+                    "Failed to create socket directory: {:?}, error: {}",
+                    parent, e
+                )));
+            }
 
-                if is_running_as_root() {
-                    if let (Ok(user_id), Ok(group_id)) =
-                        (std::env::var("SUDO_UID"), std::env::var("SUDO_GID"))
-                    {
-                        info!("Fixing directory ownership for socket directory");
-                        if let Err(e) = std::process::Command::new("chown")
-                            .arg(format!("{}:{}", user_id, group_id))
-                            .arg(parent.as_os_str())
-                            .status()
-                        {
-                            warn!("Failed to fix directory ownership: {}", e);
-                        }
-                    }
+            if is_running_as_root()
+                && let (Ok(user_id), Ok(group_id)) =
+                    (std::env::var("SUDO_UID"), std::env::var("SUDO_GID"))
+            {
+                info!("Fixing directory ownership for socket directory");
+                if let Err(e) = std::process::Command::new("chown")
+                    .arg(format!("{}:{}", user_id, group_id))
+                    .arg(parent.as_os_str())
+                    .status()
+                {
+                    warn!("Failed to fix directory ownership: {}", e);
                 }
             }
         }
@@ -1121,7 +1120,19 @@ async fn process_request(
             }
             ServiceCommand::Stop => {
                 debug!("Processing Stop request");
-                Ok(HelperResponse::success(request_id))
+                info!("Received stop command, shutting down helper service");
+
+                // Send success response before shutting down
+                let response = HelperResponse::success(request_id);
+
+                // Schedule shutdown after a short delay to allow response to be sent
+                tokio::spawn(async {
+                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                    info!("Shutting down helper service");
+                    std::process::exit(0);
+                });
+
+                Ok(response)
             }
             ServiceCommand::Restart => {
                 debug!("Processing Restart request");

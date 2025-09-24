@@ -29,7 +29,7 @@ const DeleteDialog = ({
       left={0}
       right={0}
       bottom={0}
-      zIndex={9999}
+      zIndex={30}
       display='flex'
       alignItems='center'
       justifyContent='center'
@@ -51,7 +51,7 @@ const DeleteDialog = ({
         bg='#111111'
         borderRadius='lg'
         border='1px solid rgba(255, 255, 255, 0.08)'
-        zIndex={10000}
+        zIndex={31}
       >
         <Box
           p={1.5}

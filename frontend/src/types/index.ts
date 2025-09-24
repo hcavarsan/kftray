@@ -83,6 +83,7 @@ export interface TableProps {
   selectedConfigs: Config[]
   setSelectedConfigs: React.Dispatch<React.SetStateAction<Config[]>>
   setIsInitiating: React.Dispatch<React.SetStateAction<boolean>>
+  openSettingsModal: () => void
 }
 
 export interface PortForwardRowProps {
@@ -122,6 +123,8 @@ export interface FooterProps {
   configs: Config[]
   syncStatus: SyncStatus
   onSyncComplete: () => void
+  openShortcutModal: () => void
+  setIsAutoImportModalOpen: (open: boolean) => void
 }
 
 export interface SyncConfigsButtonProps {
@@ -181,6 +184,7 @@ export interface ConfigsByContext {
 export interface HeaderProps {
   search: string
   setSearch: React.Dispatch<React.SetStateAction<string>>
+  openSettingsModal: () => void
 }
 
 export interface HeaderMenuProps {

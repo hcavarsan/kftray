@@ -156,6 +156,8 @@ async fn migrate_schema(pool: &SqlitePool) -> Result<(), String> {
 
     migrate_http_logs_config_table(&mut conn).await?;
 
+    migrate_shortcuts_table(&mut conn).await?;
+
     Ok(())
 }
 
@@ -228,6 +230,134 @@ async fn migrate_http_logs_config_table(conn: &mut sqlx::SqliteConnection) -> Re
         info!("Successfully populated http_logs_config for existing configs");
     } else {
         info!("http_logs_config table already exists, skipping migration");
+    }
+
+    Ok(())
+}
+
+async fn migrate_shortcuts_table(conn: &mut sqlx::SqliteConnection) -> Result<(), String> {
+    info!("Running shortcuts table migration");
+
+    let table_exists = sqlx::query(
+        "SELECT COUNT(*) as count FROM sqlite_master WHERE type='table' AND name='shortcuts'",
+    )
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(|e| {
+        error!("Failed to check shortcuts table existence: {e}");
+        e.to_string()
+    })?
+    .get::<i64, _>("count")
+        > 0;
+
+    if !table_exists {
+        info!("Creating shortcuts table");
+        sqlx::query(
+            "CREATE TABLE shortcuts (
+                id INTEGER PRIMARY KEY,
+                name TEXT NOT NULL UNIQUE,
+                shortcut_key TEXT NOT NULL,
+                action_type TEXT NOT NULL,
+                action_data TEXT,
+                config_id INTEGER,
+                enabled BOOLEAN NOT NULL DEFAULT true,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(config_id) REFERENCES configs(id) ON DELETE SET NULL
+            )",
+        )
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| {
+            error!("Failed to create shortcuts table: {e}");
+            e.to_string()
+        })?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_shortcuts_config_id ON shortcuts(config_id)")
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| {
+                error!("Failed to create shortcuts config_id index: {e}");
+                e.to_string()
+            })?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_shortcuts_shortcut_key ON shortcuts(shortcut_key)",
+        )
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| {
+            error!("Failed to create shortcuts shortcut_key index: {e}");
+            e.to_string()
+        })?;
+
+        sqlx::query("CREATE INDEX IF NOT EXISTS idx_shortcuts_enabled ON shortcuts(enabled)")
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| {
+                error!("Failed to create shortcuts enabled index: {e}");
+                e.to_string()
+            })?;
+
+        sqlx::query(
+            "CREATE TRIGGER IF NOT EXISTS after_update_shortcuts
+             AFTER UPDATE ON shortcuts
+             FOR EACH ROW
+             BEGIN
+                 UPDATE shortcuts SET updated_at = CURRENT_TIMESTAMP WHERE id = NEW.id;
+             END;",
+        )
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| {
+            error!("Failed to create shortcuts update trigger: {e}");
+            e.to_string()
+        })?;
+
+        info!("Migrating existing global shortcut setting to shortcuts table");
+        let existing_shortcut =
+            sqlx::query("SELECT value FROM settings WHERE key = 'global_shortcut'")
+                .fetch_optional(&mut *conn)
+                .await
+                .map_err(|e| {
+                    error!("Failed to fetch existing global shortcut: {e}");
+                    e.to_string()
+                })?;
+
+        if let Some(row) = existing_shortcut {
+            let shortcut_key: String = row.get("value");
+            info!("Migrating existing global shortcut: {}", shortcut_key);
+
+            sqlx::query(
+                "INSERT INTO shortcuts (name, shortcut_key, action_type, enabled)
+                 VALUES ('Toggle Window', ?, 'toggle_window', true)",
+            )
+            .bind(&shortcut_key)
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| {
+                error!("Failed to migrate existing shortcut: {e}");
+                e.to_string()
+            })?;
+
+            info!("Successfully migrated existing global shortcut to shortcuts table");
+        } else {
+            info!("Creating default toggle window shortcut");
+            sqlx::query(
+                "INSERT INTO shortcuts (name, shortcut_key, action_type, enabled)
+                 VALUES ('Toggle Window', 'Ctrl+Shift+F1', 'toggle_window', true)",
+            )
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| {
+                error!("Failed to create default shortcut: {e}");
+                e.to_string()
+            })?;
+        }
+
+        info!("Successfully created shortcuts table and migrated data");
+    } else {
+        info!("shortcuts table already exists, skipping migration");
     }
 
     Ok(())
