@@ -205,7 +205,6 @@ pub async fn try_fix_linux_permissions() -> Result<bool, String> {
     {
         use std::process::Command;
 
-        // Try pkexec first (fail fast)
         let current_user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
 
         info!(
@@ -222,7 +221,6 @@ pub async fn try_fix_linux_permissions() -> Result<bool, String> {
                 if output.status.success() {
                     info!("Successfully added user to input group via pkexec");
 
-                    // Verify the change worked by checking /etc/group
                     match std::fs::read_to_string("/etc/group") {
                         Ok(group_file) => {
                             if let Some(input_line) =

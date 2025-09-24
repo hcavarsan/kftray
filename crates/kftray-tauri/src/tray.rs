@@ -261,7 +261,6 @@ pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<tauri::tray::TrayIcon<W
 }
 
 pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
-    // Get the webview window for window management operations
     let webview_window = match window.app_handle().get_webview_window(window.label()) {
         Some(webview_window) => webview_window,
         _ => {
@@ -312,8 +311,6 @@ pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
 
             #[cfg(windows)]
             unsafe {
-                // https://github.com/MicrosoftEdge/WebView2Feedback/issues/780#issuecomment-808306938
-                // https://docs.microsoft.com/en-us/microsoft-edge/webview2/reference/win32/icorewebview2controller?view=webview2-1.0.774.44#notifyparentwindowpositionchanged
 
                 _webview
                     .controller()
@@ -327,18 +324,15 @@ pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
 
         let app_state = webview_window.state::<AppState>();
 
-        // On Linux, reset positioning_active to ensure position saving works
         #[cfg(target_os = "linux")]
         {
             app_state.positioning_active.store(false, Ordering::SeqCst);
         }
 
         if !app_state.positioning_active.load(Ordering::SeqCst) {
-            // Add debouncing to prevent excessive saves during dragging
             let webview_window_clone = webview_window.clone();
             let runtime = app_state.runtime.clone();
             runtime.spawn(async move {
-                // Wait for dragging to finish
                 sleep(Duration::from_millis(500)).await;
                 save_window_position(&webview_window_clone);
             });
@@ -349,7 +343,6 @@ pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
         && !app_state.pinned.load(Ordering::SeqCst)
     {
         api.prevent_close();
-        // Call the same exit logic as tray quit to handle active port forwards
         let app_handle = webview_window.app_handle();
         tauri::async_runtime::block_on(handle_exit_app(app_handle.clone()));
     }
