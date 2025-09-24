@@ -2,23 +2,25 @@ use std::collections::HashMap;
 
 use kftray_commons::utils::settings::{
     get_auto_update_enabled,
-    get_disconnect_timeout,
     get_last_update_check,
-    get_network_monitor,
     get_setting,
     set_auto_update_enabled,
     set_disconnect_timeout,
     set_network_monitor,
     set_setting,
 };
+#[cfg(not(target_os = "linux"))]
+use kftray_commons::utils::settings::{
+    get_disconnect_timeout,
+    get_network_monitor,
+};
 use log::{
     error,
     info,
 };
-use tauri::command;
 
 #[cfg(not(target_os = "linux"))]
-#[command]
+#[tauri::command]
 pub async fn get_settings() -> Result<HashMap<String, String>, String> {
     let mut settings = HashMap::new();
 
