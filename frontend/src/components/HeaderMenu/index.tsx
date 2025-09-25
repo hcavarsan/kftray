@@ -5,6 +5,7 @@ import { Box, Group } from '@chakra-ui/react'
 
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
+import { Tooltip } from '@/components/ui/tooltip'
 import { HeaderMenuProps } from '@/types'
 
 const HeaderMenu: React.FC<HeaderMenuProps> = ({
@@ -80,126 +81,175 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
 
         {/* Action Buttons */}
         <Group display='flex' alignItems='center' gap={2}>
-          <Button
-            size='xs'
-            variant='ghost'
-            disabled={
-              isInitiating ||
-              (selectedConfigs.length > 0
-                ? selectedConfigs.every(selected => {
-                    const currentConfig = configs.find(
-                      c => c.id === selected.id,
-                    )
-
-                    return currentConfig && currentConfig.is_running
-                  })
-                : configs.every(config => config.is_running))
-            }
-            loading={isInitiating}
-            loadingText='Starting...'
-            onClick={
-              selectedConfigs.length > 0
-                ? startSelectedPortForwarding
-                : () =>
-                    initiatePortForwarding(
-                      configs.filter(config => !config.is_running),
-                    )
-            }
-            _hover={{ bg: 'whiteAlpha.100' }}
-            height='26px'
-            minWidth='90px'
-            bg='whiteAlpha.50'
-            px={2}
-            borderRadius='md'
-            border='1px solid rgba(255, 255, 255, 0.08)'
-          >
-            <Box as={RefreshCw} width='12px' height='12px' marginRight={1.5} />
-            <span style={{ fontSize: '11px' }}>
-              {selectedConfigs.length > 0 &&
+          <Tooltip
+            content={
+              selectedConfigs.length > 0 &&
               selectedConfigs.some(selected => {
                 const currentConfig = configs.find(c => c.id === selected.id)
 
-                return currentConfig && !currentConfig.is_running
+
+                
+return currentConfig && !currentConfig.is_running
               })
-                ? 'Start Selected'
-                : 'Start All'}
-            </span>
-          </Button>
-
-          <Button
-            size='xs'
-            variant='ghost'
-            disabled={
-              isStopping ||
-              (selectedConfigs.length > 0
-                ? selectedConfigs.every(selected => {
-                    const currentConfig = configs.find(
-                      c => c.id === selected.id,
-                    )
-
-                    return currentConfig && !currentConfig.is_running
-                  })
-                : configs.every(config => !config.is_running))
+                ? 'Start selected port forwards'
+                : 'Start all port forwards'
             }
-            loading={isStopping}
-            loadingText='Stopping...'
-            onClick={
-              selectedConfigs.length > 0
-                ? stopSelectedPortForwarding
-                : stopAllPortForwarding
-            }
-            _hover={{ bg: 'whiteAlpha.100' }}
-            height='26px'
-            minWidth='90px'
-            bg='whiteAlpha.50'
-            px={2}
-            borderRadius='md'
-            border='1px solid rgba(255, 255, 255, 0.08)'
+            portalled={true}
+            contentProps={{ zIndex: 100 }}
           >
-            <Box as={X} width='12px' height='12px' marginRight={1.5} />
-            <span style={{ fontSize: '11px' }}>
-              {selectedConfigs.length > 0 &&
+            <Button
+              size='xs'
+              variant='ghost'
+              disabled={
+                isInitiating ||
+                (selectedConfigs.length > 0
+                  ? selectedConfigs.every(selected => {
+                      const currentConfig = configs.find(
+                        c => c.id === selected.id,
+                      )
+
+                      return currentConfig && currentConfig.is_running
+                    })
+                  : configs.every(config => config.is_running))
+              }
+              loading={isInitiating}
+              loadingText='Starting...'
+              onClick={
+                selectedConfigs.length > 0
+                  ? startSelectedPortForwarding
+                  : () =>
+                      initiatePortForwarding(
+                        configs.filter(config => !config.is_running),
+                      )
+              }
+              _hover={{ bg: 'whiteAlpha.100' }}
+              height='26px'
+              minWidth='90px'
+              bg='whiteAlpha.50'
+              px={2}
+              borderRadius='md'
+              border='1px solid rgba(255, 255, 255, 0.08)'
+            >
+              <Box
+                as={RefreshCw}
+                width='12px'
+                height='12px'
+                marginRight={1.5}
+              />
+              <span style={{ fontSize: '11px' }}>
+                {selectedConfigs.length > 0 &&
+                selectedConfigs.some(selected => {
+                  const currentConfig = configs.find(c => c.id === selected.id)
+
+                  return currentConfig && !currentConfig.is_running
+                })
+                  ? 'Start Selected'
+                  : 'Start All'}
+              </span>
+            </Button>
+          </Tooltip>
+
+          <Tooltip
+            content={
+              selectedConfigs.length > 0 &&
               selectedConfigs.some(selected => {
                 const currentConfig = configs.find(c => c.id === selected.id)
 
-                return currentConfig && currentConfig.is_running
+
+                
+return currentConfig && currentConfig.is_running
               })
-                ? 'Stop Selected'
-                : 'Stop All'}
-            </span>
-          </Button>
+                ? 'Stop selected port forwards'
+                : 'Stop all port forwards'
+            }
+            portalled={true}
+            contentProps={{ zIndex: 100 }}
+          >
+            <Button
+              size='xs'
+              variant='ghost'
+              disabled={
+                isStopping ||
+                (selectedConfigs.length > 0
+                  ? selectedConfigs.every(selected => {
+                      const currentConfig = configs.find(
+                        c => c.id === selected.id,
+                      )
+
+                      return currentConfig && !currentConfig.is_running
+                    })
+                  : configs.every(config => !config.is_running))
+              }
+              loading={isStopping}
+              loadingText='Stopping...'
+              onClick={
+                selectedConfigs.length > 0
+                  ? stopSelectedPortForwarding
+                  : stopAllPortForwarding
+              }
+              _hover={{ bg: 'whiteAlpha.100' }}
+              height='26px'
+              minWidth='90px'
+              bg='whiteAlpha.50'
+              px={2}
+              borderRadius='md'
+              border='1px solid rgba(255, 255, 255, 0.08)'
+            >
+              <Box as={X} width='12px' height='12px' marginRight={1.5} />
+              <span style={{ fontSize: '11px' }}>
+                {selectedConfigs.length > 0 &&
+                selectedConfigs.some(selected => {
+                  const currentConfig = configs.find(c => c.id === selected.id)
+
+                  return currentConfig && currentConfig.is_running
+                })
+                  ? 'Stop Selected'
+                  : 'Stop All'}
+              </span>
+            </Button>
+          </Tooltip>
         </Group>
       </Group>
 
       {/* Expand/Collapse Button */}
-      <Button
-        size='xs'
-        variant='ghost'
-        onClick={toggleExpandAll}
-        _hover={{ bg: 'whiteAlpha.100' }}
-        height='26px'
-        minWidth='90px'
-        bg='whiteAlpha.50'
-        px={2}
-        borderRadius='md'
-        border='1px solid rgba(255, 255, 255, 0.08)'
+      <Tooltip
+        content={
+          expandedIndices.length === Object.keys(configsByContext).length
+            ? 'Collapse all contexts'
+            : 'Expand all contexts'
+        }
+        portalled={true}
+        contentProps={{ zIndex: 100 }}
       >
-        <span style={{ fontSize: '11px' }}>
-          {expandedIndices.length === Object.keys(configsByContext).length
-            ? 'Collapse All'
-            : 'Expand All'}
-        </span>
-        <Box
-          as={
-            expandedIndices.length === Object.keys(configsByContext).length
-              ? ChevronUp
-              : ChevronDown
-          }
-          width='12px'
-          height='12px'
-          marginLeft={1.5}
-        />
-      </Button>
+        <Button
+          size='xs'
+          variant='ghost'
+          onClick={toggleExpandAll}
+          _hover={{ bg: 'whiteAlpha.100' }}
+          height='26px'
+          minWidth='90px'
+          bg='whiteAlpha.50'
+          px={2}
+          borderRadius='md'
+          border='1px solid rgba(255, 255, 255, 0.08)'
+        >
+          <span style={{ fontSize: '11px' }}>
+            {expandedIndices.length === Object.keys(configsByContext).length
+              ? 'Collapse All'
+              : 'Expand All'}
+          </span>
+          <Box
+            as={
+              expandedIndices.length === Object.keys(configsByContext).length
+                ? ChevronUp
+                : ChevronDown
+            }
+            width='12px'
+            height='12px'
+            marginLeft={1.5}
+          />
+        </Button>
+      </Tooltip>
     </Box>
   )
 }
