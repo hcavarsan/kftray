@@ -89,29 +89,16 @@ update_kftray_linux_formula() {
 
 	perl -pi -e "s|version \".*\"|version \"$version\"|g" "$temp_file"
 
-	perl -pi -e "s|https://github.com/[^/]+/kftray/releases/download/[^/]+/kftray_[^/]+_newer-glibc_amd64\\.AppImage|$newer_glibc_amd64_url|g" "$temp_file"
-	perl -pi -e "s|https://github.com/[^/]+/kftray/releases/download/[^/]+/kftray_[^/]+_newer-glibc_aarch64\\.AppImage|$newer_glibc_arm64_url|g" "$temp_file"
-	perl -pi -e "s|https://github.com/[^/]+/kftray/releases/download/[^/]+/kftray_[0-9.]+_aarch64\\.AppImage|$legacy_arm64_url|g" "$temp_file"
-	perl -pi -e "s|https://github.com/[^/]+/kftray/releases/download/[^/]+/kftray_[0-9.]+_amd64\\.AppImage|$legacy_amd64_url|g" "$temp_file"
+	sed -i.bak "s|NEWER_GLIBC_AMD64_URL = \"https://[^\"]*\"|NEWER_GLIBC_AMD64_URL = \"$newer_glibc_amd64_url\"|g" "$temp_file"
+	sed -i.bak "s|NEWER_GLIBC_AMD64_SHA = \"[^\"]*\"|NEWER_GLIBC_AMD64_SHA = \"$newer_glibc_amd64_hash\"|g" "$temp_file"
+	sed -i.bak "s|NEWER_GLIBC_ARM64_URL = \"https://[^\"]*\"|NEWER_GLIBC_ARM64_URL = \"$newer_glibc_arm64_url\"|g" "$temp_file"
+	sed -i.bak "s|NEWER_GLIBC_ARM64_SHA = \"[^\"]*\"|NEWER_GLIBC_ARM64_SHA = \"$newer_glibc_arm64_hash\"|g" "$temp_file"
+	sed -i.bak "s|LEGACY_AMD64_URL = \"https://[^\"]*\"|LEGACY_AMD64_URL = \"$legacy_amd64_url\"|g" "$temp_file"
+	sed -i.bak "s|LEGACY_AMD64_SHA = \"[^\"]*\"|LEGACY_AMD64_SHA = \"$legacy_amd64_hash\"|g" "$temp_file"
+	sed -i.bak "s|LEGACY_ARM64_URL = \"https://[^\"]*\"|LEGACY_ARM64_URL = \"$legacy_arm64_url\"|g" "$temp_file"
+	sed -i.bak "s|LEGACY_ARM64_SHA = \"[^\"]*\"|LEGACY_ARM64_SHA = \"$legacy_arm64_hash\"|g" "$temp_file"
+	rm -f "${temp_file}.bak"
 
-	awk -v newer_amd64="$newer_glibc_amd64_hash" -v newer_arm64="$newer_glibc_arm64_hash" -v legacy_arm64="$legacy_arm64_hash" -v legacy_amd64="$legacy_amd64_hash" '
-	BEGIN { sha_count = 0 }
-	/sha256/ {
-		sha_count++
-		if (sha_count == 1) {
-			gsub(/sha256 "[^"]*"/, "sha256 \"" newer_amd64 "\"")
-		} else if (sha_count == 2) {
-			gsub(/sha256 "[^"]*"/, "sha256 \"" newer_arm64 "\"")
-		} else if (sha_count == 3) {
-			gsub(/sha256 "[^"]*"/, "sha256 \"" legacy_arm64 "\"")
-		} else if (sha_count == 4) {
-			gsub(/sha256 "[^"]*"/, "sha256 \"" legacy_amd64 "\"")
-		}
-	}
-	{ print }
-	' "$temp_file" >"${temp_file}.new"
-
-	mv "${temp_file}.new" "$temp_file"
 	mv "$temp_file" "$file"
 }
 
