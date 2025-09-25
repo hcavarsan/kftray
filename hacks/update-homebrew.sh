@@ -11,15 +11,19 @@ VERSION_NO_V="${VERSION#v}"
 TEMP_DIR="homebrew-tap-test"
 
 MAC_FILE="kftray_universal.app.tar.gz"
-LINUX_LEGACY_FILE="kftray_${VERSION_NO_V}_amd64.AppImage"
-LINUX_NEWER_GLIBC_FILE="kftray_${VERSION_NO_V}_newer-glibc_amd64.AppImage"
+LINUX_LEGACY_AMD64_FILE="kftray_${VERSION_NO_V}_amd64.AppImage"
+LINUX_LEGACY_ARM64_FILE="kftray_${VERSION_NO_V}_aarch64.AppImage"
+LINUX_NEWER_GLIBC_AMD64_FILE="kftray_${VERSION_NO_V}_newer-glibc_amd64.AppImage"
+LINUX_NEWER_GLIBC_ARM64_FILE="kftray_${VERSION_NO_V}_newer-glibc_aarch64.AppImage"
 KFTUI_MAC_FILE="kftui_macos_universal"
 KFTUI_LINUX_AMD64_FILE="kftui_linux_amd64"
 KFTUI_LINUX_ARM64_FILE="kftui_linux_arm64"
 
 MAC_URL="https://github.com/${REPO}/releases/download/${VERSION}/kftray_universal.app.tar.gz"
-LINUX_LEGACY_URL="https://github.com/${REPO}/releases/download/${VERSION}/kftray_${VERSION_NO_V}_amd64.AppImage"
-LINUX_NEWER_GLIBC_URL="https://github.com/${REPO}/releases/download/${VERSION}/kftray_${VERSION_NO_V}_newer-glibc_amd64.AppImage"
+LINUX_LEGACY_AMD64_URL="https://github.com/${REPO}/releases/download/${VERSION}/kftray_${VERSION_NO_V}_amd64.AppImage"
+LINUX_LEGACY_ARM64_URL="https://github.com/${REPO}/releases/download/${VERSION}/kftray_${VERSION_NO_V}_aarch64.AppImage"
+LINUX_NEWER_GLIBC_AMD64_URL="https://github.com/${REPO}/releases/download/${VERSION}/kftray_${VERSION_NO_V}_newer-glibc_amd64.AppImage"
+LINUX_NEWER_GLIBC_ARM64_URL="https://github.com/${REPO}/releases/download/${VERSION}/kftray_${VERSION_NO_V}_newer-glibc_aarch64.AppImage"
 KFTUI_MAC_URL="https://github.com/${REPO}/releases/download/${VERSION}/kftui_macos_universal"
 KFTUI_LINUX_AMD64_URL="https://github.com/${REPO}/releases/download/${VERSION}/kftui_linux_amd64"
 KFTUI_LINUX_ARM64_URL="https://github.com/${REPO}/releases/download/${VERSION}/kftui_linux_arm64"
@@ -29,8 +33,10 @@ cleanup() {
 	echo "Cleaning up..."
 	cd "$INITIAL_DIR" || return
 	if [ -f "$MAC_FILE" ]; then rm -f "$MAC_FILE"; fi
-	if [ -f "$LINUX_LEGACY_FILE" ]; then rm -f "$LINUX_LEGACY_FILE"; fi
-	if [ -f "$LINUX_NEWER_GLIBC_FILE" ]; then rm -f "$LINUX_NEWER_GLIBC_FILE"; fi
+	if [ -f "$LINUX_LEGACY_AMD64_FILE" ]; then rm -f "$LINUX_LEGACY_AMD64_FILE"; fi
+	if [ -f "$LINUX_LEGACY_ARM64_FILE" ]; then rm -f "$LINUX_LEGACY_ARM64_FILE"; fi
+	if [ -f "$LINUX_NEWER_GLIBC_AMD64_FILE" ]; then rm -f "$LINUX_NEWER_GLIBC_AMD64_FILE"; fi
+	if [ -f "$LINUX_NEWER_GLIBC_ARM64_FILE" ]; then rm -f "$LINUX_NEWER_GLIBC_ARM64_FILE"; fi
 	if [ -f "$KFTUI_MAC_FILE" ]; then rm -f "$KFTUI_MAC_FILE"; fi
 	if [ -f "$KFTUI_LINUX_AMD64_FILE" ]; then rm -f "$KFTUI_LINUX_AMD64_FILE"; fi
 	if [ -f "$KFTUI_LINUX_ARM64_FILE" ]; then rm -f "$KFTUI_LINUX_ARM64_FILE"; fi
@@ -69,31 +75,41 @@ update_formula() {
 update_kftray_linux_formula() {
 	local file="$1"
 	local version="$2"
-	local legacy_url="$3"
-	local legacy_hash="$4"
-	local newer_glibc_url="$5"
-	local newer_glibc_hash="$6"
+	local legacy_amd64_url="$3"
+	local legacy_amd64_hash="$4"
+	local legacy_arm64_url="$5"
+	local legacy_arm64_hash="$6"
+	local newer_glibc_amd64_url="$7"
+	local newer_glibc_amd64_hash="$8"
+	local newer_glibc_arm64_url="$9"
+	local newer_glibc_arm64_hash="${10}"
 	local temp_file="${file}.tmp"
 
 	cp "$file" "$temp_file"
 
 	perl -pi -e "s|version \".*\"|version \"$version\"|g" "$temp_file"
 
-	perl -pi -e "s|https://github.com/[^/]+/kftray/releases/download/[^/]+/kftray_[^/]+_newer-glibc_amd64\\.AppImage|$newer_glibc_url|g" "$temp_file"
-	perl -pi -e "s|https://github.com/[^/]+/kftray/releases/download/[^/]+/kftray_[^/]+_amd64\\.AppImage|$legacy_url|g" "$temp_file"
+	perl -pi -e "s|https://github.com/[^/]+/kftray/releases/download/[^/]+/kftray_[^/]+_newer-glibc_amd64\\.AppImage|$newer_glibc_amd64_url|g" "$temp_file"
+	perl -pi -e "s|https://github.com/[^/]+/kftray/releases/download/[^/]+/kftray_[^/]+_newer-glibc_aarch64\\.AppImage|$newer_glibc_arm64_url|g" "$temp_file"
+	perl -pi -e "s|https://github.com/[^/]+/kftray/releases/download/[^/]+/kftray_[^/]+_aarch64\\.AppImage|$legacy_arm64_url|g" "$temp_file"
+	perl -pi -e "s|https://github.com/[^/]+/kftray/releases/download/[^/]+/kftray_[^/]+_amd64\\.AppImage|$legacy_amd64_url|g" "$temp_file"
 
-	awk -v legacy_hash="$legacy_hash" -v newer_hash="$newer_glibc_hash" '
+	awk -v newer_amd64="$newer_glibc_amd64_hash" -v newer_arm64="$newer_glibc_arm64_hash" -v legacy_arm64="$legacy_arm64_hash" -v legacy_amd64="$legacy_amd64_hash" '
 	BEGIN { sha_count = 0 }
 	/sha256/ {
 		sha_count++
 		if (sha_count == 1) {
-			gsub(/sha256 "[^"]*"/, "sha256 \"" newer_hash "\"")
+			gsub(/sha256 "[^"]*"/, "sha256 \"" newer_amd64 "\"")
 		} else if (sha_count == 2) {
-			gsub(/sha256 "[^"]*"/, "sha256 \"" legacy_hash "\"")
+			gsub(/sha256 "[^"]*"/, "sha256 \"" newer_arm64 "\"")
+		} else if (sha_count == 3) {
+			gsub(/sha256 "[^"]*"/, "sha256 \"" legacy_arm64 "\"")
+		} else if (sha_count == 4) {
+			gsub(/sha256 "[^"]*"/, "sha256 \"" legacy_amd64 "\"")
 		}
 	}
 	{ print }
-	' "$temp_file" > "${temp_file}.new"
+	' "$temp_file" >"${temp_file}.new"
 
 	mv "${temp_file}.new" "$temp_file"
 	mv "$temp_file" "$file"
@@ -134,7 +150,7 @@ update_kftui_formula() {
 		}
 	}
 	{ print }
-	' "$temp_file" > "${temp_file}.new"
+	' "$temp_file" >"${temp_file}.new"
 
 	mv "${temp_file}.new" "$temp_file"
 	rm -f "${temp_file}.bak"
@@ -147,10 +163,12 @@ main() {
 	cd "$TEMP_DIR" || exit 1
 
 	echo "Calculating hashes for kftray..."
-	local mac_hash linux_legacy_hash linux_newer_glibc_hash
+	local mac_hash linux_legacy_amd64_hash linux_legacy_arm64_hash linux_newer_glibc_amd64_hash linux_newer_glibc_arm64_hash
 	mac_hash=$(download_and_hash "$MAC_URL" "../$MAC_FILE")
-	linux_legacy_hash=$(download_and_hash "$LINUX_LEGACY_URL" "../$LINUX_LEGACY_FILE")
-	linux_newer_glibc_hash=$(download_and_hash "$LINUX_NEWER_GLIBC_URL" "../$LINUX_NEWER_GLIBC_FILE")
+	linux_legacy_amd64_hash=$(download_and_hash "$LINUX_LEGACY_AMD64_URL" "../$LINUX_LEGACY_AMD64_FILE")
+	linux_legacy_arm64_hash=$(download_and_hash "$LINUX_LEGACY_ARM64_URL" "../$LINUX_LEGACY_ARM64_FILE")
+	linux_newer_glibc_amd64_hash=$(download_and_hash "$LINUX_NEWER_GLIBC_AMD64_URL" "../$LINUX_NEWER_GLIBC_AMD64_FILE")
+	linux_newer_glibc_arm64_hash=$(download_and_hash "$LINUX_NEWER_GLIBC_ARM64_URL" "../$LINUX_NEWER_GLIBC_ARM64_FILE")
 
 	echo "Calculating hashes for kftui..."
 	local kftui_mac_hash kftui_linux_amd64_hash kftui_linux_arm64_hash
@@ -160,15 +178,21 @@ main() {
 
 	echo "Hashes calculated:"
 	echo "kftray macOS: $mac_hash"
-	echo "kftray Linux legacy: $linux_legacy_hash"
-	echo "kftray Linux newer-glibc: $linux_newer_glibc_hash"
+	echo "kftray Linux legacy AMD64: $linux_legacy_amd64_hash"
+	echo "kftray Linux legacy ARM64: $linux_legacy_arm64_hash"
+	echo "kftray Linux newer-glibc AMD64: $linux_newer_glibc_amd64_hash"
+	echo "kftray Linux newer-glibc ARM64: $linux_newer_glibc_arm64_hash"
 	echo "kftui macOS: $kftui_mac_hash"
 	echo "kftui Linux AMD64: $kftui_linux_amd64_hash"
 	echo "kftui Linux ARM64: $kftui_linux_arm64_hash"
 
 	echo "Updating formulas..."
 	update_formula "Casks/kftray.rb" "$VERSION_NO_V" "$MAC_URL" "$mac_hash"
-	update_kftray_linux_formula "Formula/kftray-linux.rb" "$VERSION_NO_V" "$LINUX_LEGACY_URL" "$linux_legacy_hash" "$LINUX_NEWER_GLIBC_URL" "$linux_newer_glibc_hash"
+	update_kftray_linux_formula "Formula/kftray-linux.rb" "$VERSION_NO_V" \
+		"$LINUX_LEGACY_AMD64_URL" "$linux_legacy_amd64_hash" \
+		"$LINUX_LEGACY_ARM64_URL" "$linux_legacy_arm64_hash" \
+		"$LINUX_NEWER_GLIBC_AMD64_URL" "$linux_newer_glibc_amd64_hash" \
+		"$LINUX_NEWER_GLIBC_ARM64_URL" "$linux_newer_glibc_arm64_hash"
 	update_kftui_formula "Formula/kftui.rb" "$VERSION" "$KFTUI_MAC_URL" "$kftui_mac_hash" "$KFTUI_LINUX_AMD64_URL" "$kftui_linux_amd64_hash" "$KFTUI_LINUX_ARM64_URL" "$kftui_linux_arm64_hash"
 
 	git config user.name "github-actions[bot]"
