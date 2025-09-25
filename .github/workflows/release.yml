@@ -163,6 +163,17 @@ jobs:
             arch: amd64
             rust_target: x86_64-unknown-linux-gnu
             tauri_args: "--target x86_64-unknown-linux-gnu --bundles appimage,updater --verbose"
+          - os: ubuntu-24.04
+            arch: arm64
+            runner: ubicloud-standard-4-arm-ubuntu-2404
+            rust_target: aarch64-unknown-linux-gnu
+            tauri_args: "--target aarch64-unknown-linux-gnu --bundles appimage,updater --verbose"
+            asset_name_pattern: "kftray_*_newer-glibc_aarch64.AppImage*"
+          - os: ubuntu-24.04
+            arch: amd64
+            rust_target: x86_64-unknown-linux-gnu
+            tauri_args: "--target x86_64-unknown-linux-gnu --bundles appimage,updater --verbose"
+            asset_name_pattern: "kftray_*_newer-glibc_amd64.AppImage*"
           - os: macos-latest
             arch: universal
             rust_target: universal-apple-darwin
@@ -256,6 +267,28 @@ jobs:
           fi
         shell: bash
 
+      - name: Setup platform-specific dependencies (Ubuntu 24.04)
+        if: matrix.os == 'ubuntu-24.04'
+        run: |
+          sudo apt-get update
+          sudo apt install -y \
+              build-essential \
+              curl \
+              wget \
+              file \
+              libxdo-dev \
+              libssl-dev \
+              libayatana-appindicator3-dev \
+              librsvg2-dev \
+              libwebkit2gtk-4.1-0=2.44.0-2 \
+              libwebkit2gtk-4.1-dev=2.44.0-2 \
+              libjavascriptcoregtk-4.1-0=2.44.0-2 \
+              libjavascriptcoregtk-4.1-dev=2.44.0-2 \
+              gir1.2-javascriptcoregtk-4.1=2.44.0-2 \
+              gir1.2-webkit2-4.1=2.44.0-2 \
+              patchelf \
+              xdg-utils
+
       - name: Install NASM on Windows
         if: matrix.os == 'windows-latest'
         run: choco install nasm
@@ -285,7 +318,7 @@ jobs:
           entitlements-path: crates/kftray-helper/macos-helper-entitlements.plist
 
       - name: Build kftray-tauri Desktop App
-        uses: tauri-apps/tauri-action@42e9df6c59070d114bf90dcd3943a1b8f138b113
+        uses: tauri-apps/tauri-action@e834788a94591d81e3ae0bd9ec06366f5afb8994
         id: tauri_build
         continue-on-error: true
         env:
@@ -309,11 +342,12 @@ jobs:
           releaseDraft: true
           prerelease: false
           updaterJsonKeepUniversal: true
+          assetNamePattern: ${{ matrix.asset_name_pattern || '' }}
           args: ${{ matrix.tauri_args }}
 
       - name: Retry Build on Failure
         if: steps.tauri_build.outcome == 'failure'
-        uses: tauri-apps/tauri-action@42e9df6c59070d114bf90dcd3943a1b8f138b113
+        uses: tauri-apps/tauri-action@e834788a94591d81e3ae0bd9ec06366f5afb8994
         env:
           RUSTFLAGS: ${{ matrix.os == 'macos-latest' && '-C link-arg=-s' || '-C target-cpu=native -C link-arg=-s' }}
           AWS_LC_SYS_CMAKE_CFLAGS: ${{ matrix.os == 'windows-latest' && '/std:c11' || '' }}
@@ -335,6 +369,7 @@ jobs:
           releaseDraft: true
           prerelease: false
           updaterJsonKeepUniversal: true
+          assetNamePattern: ${{ matrix.asset_name_pattern || '' }}
           args: ${{ matrix.tauri_args }}
 
   kftui:

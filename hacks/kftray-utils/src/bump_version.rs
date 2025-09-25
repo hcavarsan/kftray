@@ -288,9 +288,18 @@ fn update_markdown_version(content: &str, new_version: &str) -> io::Result<Strin
     let version_regex = Regex::new(r"kftray_\d+\.\d+\.\d+")
         .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
 
-    Ok(version_regex
-        .replace_all(content, format!("kftray_{}", new_version))
-        .into_owned())
+    let newer_glibc_version_regex = Regex::new(r"kftray_\d+\.\d+\.\d+_newer-glibc")
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+
+    let mut updated_content = newer_glibc_version_regex
+        .replace_all(content, format!("kftray_{}_newer-glibc", new_version))
+        .into_owned();
+
+    updated_content = version_regex
+        .replace_all(&updated_content, format!("kftray_{}", new_version))
+        .into_owned();
+
+    Ok(updated_content)
 }
 
 fn update_json_version(content: &str, new_version: &str) -> io::Result<String> {
