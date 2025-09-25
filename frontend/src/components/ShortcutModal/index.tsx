@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react'
-import { Edit2, Plus, Trash2 } from 'lucide-react'
+import { AlertTriangle, Edit2, Plus, Trash2, Wrench } from 'lucide-react'
 
 import {
   Box,
@@ -77,7 +77,14 @@ const ShortcutModal: React.FC<ShortcutModalProps> = ({ isOpen, onClose }) => {
   const [editingShortcut, setEditingShortcut] = useState<Shortcut | null>(null)
   const [isFormModalOpen, setIsFormModalOpen] = useState(false)
 
-  const { shortcuts, deleteShortcut, refreshShortcuts } = useGlobalShortcuts()
+  const {
+    shortcuts,
+    deleteShortcut,
+    refreshShortcuts,
+    platformStatus,
+    tryFixPermissions,
+    isFixingPermissions,
+  } = useGlobalShortcuts()
 
   useEffect(() => {
     if (isOpen) {
@@ -136,6 +143,28 @@ const ShortcutModal: React.FC<ShortcutModalProps> = ({ isOpen, onClose }) => {
   const handleAddShortcut = () => {
     setEditingShortcut(null)
     setIsFormModalOpen(true)
+  }
+
+  const handleTryFixPermissions = async () => {
+    try {
+      const success = await tryFixPermissions()
+
+      if (success) {
+        toaster.success({
+          title: 'Permission Fix Started',
+          description:
+            'Please logout and login again for changes to take effect',
+          duration: 5000,
+        })
+      }
+    } catch (error) {
+      console.error('Error fixing permissions:', error)
+      toaster.error({
+        title: 'Permission Fix Failed',
+        description: 'Failed to fix input group permissions',
+        duration: 3000,
+      })
+    }
   }
 
   const getShortcutDisplayInfo = useCallback(
@@ -206,6 +235,59 @@ const ShortcutModal: React.FC<ShortcutModalProps> = ({ isOpen, onClose }) => {
           </Dialog.Header>
 
           <Dialog.Body p={3} flex={1} overflowY='auto' overflowX='hidden'>
+            {platformStatus?.platform === 'linux' &&
+              platformStatus?.needs_permission_fix && (
+                <Box
+                  bg='#161616'
+                  p={3}
+                  borderRadius='md'
+                  border='1px solid rgba(255, 165, 0, 0.3)'
+                  mb={3}
+                >
+                  <Flex align='center' gap={2} mb={2}>
+                    <AlertTriangle size={14} color='orange' />
+                    <Text
+                      fontSize='xs'
+                      fontWeight='medium'
+                      color='orange.300'
+                      letterSpacing='0.025em'
+                    >
+                      Linux Permission Issue
+                    </Text>
+                  </Flex>
+                  <Text fontSize='xs' color='gray.300' lineHeight='1.4' mb={2}>
+                    Missing input group permissions. Shortcuts won&apos;t work
+                    when app window is hidden.
+                  </Text>
+                  <Text fontSize='xs' color='gray.400' lineHeight='1.4' mb={3}>
+                    Current: {platformStatus?.current_implementation}
+                  </Text>
+                  {platformStatus?.can_fix_permissions && (
+                    <Button
+                      size='2xs'
+                      variant='outline'
+                      onClick={handleTryFixPermissions}
+                      loading={isFixingPermissions}
+                      loadingText='Fixing...'
+                      borderColor='orange.400'
+                      color='orange.300'
+                      _hover={{
+                        borderColor: 'orange.300',
+                        bg: 'orange.900',
+                        color: 'orange.200',
+                      }}
+                      height='24px'
+                      fontSize='xs'
+                      px={3}
+                    >
+                      <Wrench size={10} />
+                      <Text ml={1.5} fontSize='xs'>
+                        Try Fix Permissions
+                      </Text>
+                    </Button>
+                  )}
+                </Box>
+              )}
             <Stack gap={2.5}>
               {shortcuts.length === 0 ? (
                 <Box

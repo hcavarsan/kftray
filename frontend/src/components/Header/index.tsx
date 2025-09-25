@@ -115,7 +115,12 @@ const Header: React.FC<HeaderProps> = ({
             _hover={{ color: 'whiteAlpha.700' }}
             mb={0.5}
           >
-            <Tooltip content='Move Window Position' open={tooltipOpen}>
+            <Tooltip
+              content='Move Window Position'
+              open={tooltipOpen}
+              portalled={true}
+              contentProps={{ zIndex: 100 }}
+            >
               <Box
                 as={GripVertical}
                 width='22px'
@@ -126,7 +131,11 @@ const Header: React.FC<HeaderProps> = ({
             </Tooltip>
           </Box>
 
-          <Tooltip content={`Kftray v${version}`}>
+          <Tooltip
+            content={`Kftray v${version}`}
+            portalled={true}
+            contentProps={{ zIndex: 100 }}
+          >
             <Image
               src={logo}
               alt='Kftray Logo'
@@ -181,7 +190,11 @@ const Header: React.FC<HeaderProps> = ({
 
       {/* Right Section - Window Controls */}
       <Box display='flex' alignItems='center' gap={1} ml={4}>
-        <Tooltip content='Settings'>
+        <Tooltip
+          content='Settings'
+          portalled={true}
+          contentProps={{ zIndex: 100 }}
+        >
           <Button
             variant='ghost'
             size='sm'
@@ -202,7 +215,11 @@ const Header: React.FC<HeaderProps> = ({
           </Button>
         </Tooltip>
 
-        <Tooltip content={isPinned ? 'Unpin Window' : 'Pin Window'}>
+        <Tooltip
+          content={isPinned ? 'Unpin Window' : 'Pin Window'}
+          portalled={true}
+          contentProps={{ zIndex: 100 }}
+        >
           <Button
             variant='ghost'
             size='sm'
@@ -223,7 +240,11 @@ const Header: React.FC<HeaderProps> = ({
           </Button>
         </Tooltip>
 
-        <Tooltip content='Close Window'>
+        <Tooltip
+          content='Close Window'
+          portalled={true}
+          contentProps={{ zIndex: 100 }}
+        >
           <Button
             variant='ghost'
             size='sm'
