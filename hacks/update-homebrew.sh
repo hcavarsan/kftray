@@ -91,8 +91,8 @@ update_kftray_linux_formula() {
 
 	perl -pi -e "s|https://github.com/[^/]+/kftray/releases/download/[^/]+/kftray_[^/]+_newer-glibc_amd64\\.AppImage|$newer_glibc_amd64_url|g" "$temp_file"
 	perl -pi -e "s|https://github.com/[^/]+/kftray/releases/download/[^/]+/kftray_[^/]+_newer-glibc_aarch64\\.AppImage|$newer_glibc_arm64_url|g" "$temp_file"
-	perl -pi -e "s|https://github.com/[^/]+/kftray/releases/download/[^/]+/kftray_[^/]+_aarch64\\.AppImage|$legacy_arm64_url|g" "$temp_file"
-	perl -pi -e "s|https://github.com/[^/]+/kftray/releases/download/[^/]+/kftray_[^/]+_amd64\\.AppImage|$legacy_amd64_url|g" "$temp_file"
+	perl -pi -e "s|https://github.com/[^/]+/kftray/releases/download/[^/]+/kftray_[0-9.]+_aarch64\\.AppImage|$legacy_arm64_url|g" "$temp_file"
+	perl -pi -e "s|https://github.com/[^/]+/kftray/releases/download/[^/]+/kftray_[0-9.]+_amd64\\.AppImage|$legacy_amd64_url|g" "$temp_file"
 
 	awk -v newer_amd64="$newer_glibc_amd64_hash" -v newer_arm64="$newer_glibc_arm64_hash" -v legacy_arm64="$legacy_arm64_hash" -v legacy_amd64="$legacy_amd64_hash" '
 	BEGIN { sha_count = 0 }
