@@ -820,12 +820,20 @@ jobs:
       - name: Checkout main repository
         uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
 
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests
       - name: Update Homebrew formulas
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
-          chmod +x ./hacks/update-homebrew.sh
-          ./hacks/update-homebrew.sh \
+          chmod +x ./hacks/update_homebrew.py
+          python3 ./hacks/update_homebrew.py \
             "${{ github.repository }}" \
             "${{ github.ref_name }}" \
             "hcavarsan/homebrew-kftray" \
