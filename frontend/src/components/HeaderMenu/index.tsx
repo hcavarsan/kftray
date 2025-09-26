@@ -87,9 +87,7 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
               selectedConfigs.some(selected => {
                 const currentConfig = configs.find(c => c.id === selected.id)
 
-
-                
-return currentConfig && !currentConfig.is_running
+                return currentConfig && !currentConfig.is_running
               })
                 ? 'Start selected port forwards'
                 : 'Start all port forwards'
@@ -155,9 +153,7 @@ return currentConfig && !currentConfig.is_running
               selectedConfigs.some(selected => {
                 const currentConfig = configs.find(c => c.id === selected.id)
 
-
-                
-return currentConfig && currentConfig.is_running
+                return currentConfig && currentConfig.is_running
               })
                 ? 'Stop selected port forwards'
                 : 'Stop all port forwards'
