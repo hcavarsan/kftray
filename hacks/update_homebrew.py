@@ -74,47 +74,52 @@ class HomebrewUpdater:
         # Update version
         content = re.sub(r'version\s+"[^"]+"', f'version "{self.version}"', content)
 
-        # Update Intel (AMD64) section
-        amd64_url = f"{self.base_url}kftray_{self.version}_amd64.AppImage"
-        content = re.sub(
-            r'(on_intel\s+do.*?url\s+")[^"]+',
-            f'\\1{amd64_url}',
-            content,
-            flags=re.DOTALL
-        )
-        content = re.sub(
-            r'(on_intel\s+do.*?sha256\s+")[^"]+',
-            f'\\1{amd64_hash}',
-            content,
-            flags=re.DOTALL
-        )
+        # Remove existing NEWER_GLIBC constants if they exist
+        content = re.sub(r'\s*NEWER_GLIBC_AMD64_SHA\s*=\s*"[^"]*"\s*\n', '', content)
+        content = re.sub(r'\s*NEWER_GLIBC_ARM64_SHA\s*=\s*"[^"]*"\s*\n', '', content)
 
-        # Update ARM section
-        arm64_url = f"{self.base_url}kftray_{self.version}_aarch64.AppImage"
-        content = re.sub(
-            r'(on_arm\s+do.*?url\s+")[^"]+',
-            f'\\1{arm64_url}',
-            content,
-            flags=re.DOTALL
-        )
-        content = re.sub(
-            r'(on_arm\s+do.*?sha256\s+")[^"]+',
-            f'\\1{arm64_hash}',
-            content,
-            flags=re.DOTALL
-        )
-
-        # Add newer glibc SHA256 constants at the top of the class (after version line)
+        # Add newer glibc SHA256 constants after version line
+        version_line_pattern = r'(\s+version\s+"[^"]+"\s*\n)'
         sha_constants = f'''
   NEWER_GLIBC_AMD64_SHA = "{newer_amd64_hash}"
   NEWER_GLIBC_ARM64_SHA = "{newer_arm64_hash}"
 '''
 
-        # Insert after version line - fix the regex group reference
+        if re.search(version_line_pattern, content):
+            content = re.sub(version_line_pattern, lambda m: m.group(1) + sha_constants, content)
+
+        # Update Intel (AMD64) section URLs
+        amd64_url = f"{self.base_url}kftray_{self.version}_amd64.AppImage"
         content = re.sub(
-            r'(\s+version\s+"[^"]+"\n)',
-            r'\1' + sha_constants,
-            content
+            r'(on_intel\s+do\s*\n\s*url\s+")[^"]+(")',
+            f'\\g<1>{amd64_url}\\g<2>',
+            content,
+            flags=re.MULTILINE
+        )
+
+        # Update Intel (AMD64) section SHA256
+        content = re.sub(
+            r'(on_intel\s+do.*?\n\s*url\s+"[^"]+"\s*\n\s*sha256\s+")[^"]+(")',
+            f'\\g<1>{amd64_hash}\\g<2>',
+            content,
+            flags=re.DOTALL
+        )
+
+        # Update ARM section URLs
+        arm64_url = f"{self.base_url}kftray_{self.version}_aarch64.AppImage"
+        content = re.sub(
+            r'(on_arm\s+do\s*\n\s*url\s+")[^"]+(")',
+            f'\\g<1>{arm64_url}\\g<2>',
+            content,
+            flags=re.MULTILINE
+        )
+
+        # Update ARM section SHA256
+        content = re.sub(
+            r'(on_arm\s+do.*?\n\s*url\s+"[^"]+"\s*\n\s*sha256\s+")[^"]+(")',
+            f'\\g<1>{arm64_hash}\\g<2>',
+            content,
+            flags=re.DOTALL
         )
 
         with open(file_path, 'w') as f:
