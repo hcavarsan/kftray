@@ -22,7 +22,7 @@ tokio = { workspace = true, features = ["sync"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 evdev = "0.12"
-mio = { version = "0.8", features = ["os-ext"] }
+mio = { version = "1.0", features = ["os-ext"] }
 
 [features]
 default = []
