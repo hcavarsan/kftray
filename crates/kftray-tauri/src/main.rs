@@ -12,6 +12,7 @@ use log::{
 
 use crate::validation::alert_multiple_configs;
 mod commands;
+mod glibc_detector;
 mod init_check;
 mod logging;
 mod shortcuts;
@@ -27,6 +28,7 @@ use tauri::Manager;
 use tokio::runtime::Runtime;
 
 use crate::commands::portforward::check_and_emit_changes;
+use crate::glibc_detector::get_updater_target_platform;
 use crate::init_check::RealPortOperations;
 use crate::shortcuts::setup_shortcut_integration;
 use crate::tray::{
@@ -226,7 +228,21 @@ fn main() {
         .plugin(tauri_plugin_os::init())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_clipboard_manager::init())
-        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin({
+            #[cfg(target_os = "linux")]
+            {
+                let custom_target = get_updater_target_platform();
+                info!("Using custom updater target: {}", custom_target);
+                tauri_plugin_updater::Builder::new()
+                    .target(custom_target)
+                    .build()
+            }
+
+            #[cfg(not(target_os = "linux"))]
+            {
+                tauri_plugin_updater::Builder::new().build()
+            }
+        })
         .on_window_event(handle_window_event)
         .invoke_handler(tauri::generate_handler![
             commands::portforward::start_port_forward_tcp_cmd,

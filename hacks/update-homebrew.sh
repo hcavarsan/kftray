@@ -87,18 +87,57 @@ update_kftray_linux_formula() {
 
 	cp "$file" "$temp_file"
 
-	perl -pi -e "s|version \".*\"|version \"$version\"|g" "$temp_file"
+	awk -v version="$version" \
+	    -v legacy_amd64_url="$legacy_amd64_url" -v legacy_amd64_hash="$legacy_amd64_hash" \
+	    -v legacy_arm64_url="$legacy_arm64_url" -v legacy_arm64_hash="$legacy_arm64_hash" \
+	    -v newer_amd64_url="$newer_glibc_amd64_url" -v newer_amd64_hash="$newer_glibc_amd64_hash" \
+	    -v newer_arm64_url="$newer_glibc_arm64_url" -v newer_arm64_hash="$newer_glibc_arm64_hash" '
+	BEGIN {
+		in_class = 0
+		hashes_added = 0
+		in_intel = 0
+		in_arm = 0
+	}
+	/^class KftrayLinux/ { in_class = 1 }
+	/version "/ && in_class {
+		gsub(/version "[^"]*"/, "version \"" version "\"")
+		print
+		if (!hashes_added) {
+			print ""
+			print "  NEWER_GLIBC_AMD64_URL = \"" newer_amd64_url "\""
+			print "  NEWER_GLIBC_AMD64_SHA = \"" newer_amd64_hash "\""
+			print "  NEWER_GLIBC_ARM64_URL = \"" newer_arm64_url "\""
+			print "  NEWER_GLIBC_ARM64_SHA = \"" newer_arm64_hash "\""
+			hashes_added = 1
+		}
+		next
+	}
+	/NEWER_GLIBC_AMD64_URL =/ { gsub(/"[^"]*"/, "\"" newer_amd64_url "\"") }
+	/NEWER_GLIBC_AMD64_SHA =/ { gsub(/"[^"]*"/, "\"" newer_amd64_hash "\"") }
+	/NEWER_GLIBC_ARM64_URL =/ { gsub(/"[^"]*"/, "\"" newer_arm64_url "\"") }
+	/NEWER_GLIBC_ARM64_SHA =/ { gsub(/"[^"]*"/, "\"" newer_arm64_hash "\"") }
+	/on_intel do/ { in_intel = 1 }
+	/on_arm do/ { in_arm = 1 }
+	/^[[:space:]]*end/ && (in_intel || in_arm) { in_intel = 0; in_arm = 0 }
+	/url "/ {
+		if (in_intel) gsub(/url "[^"]*"/, "url \"" legacy_amd64_url "\"")
+		else if (in_arm) gsub(/url "[^"]*"/, "url \"" legacy_arm64_url "\"")
+	}
+	/sha256 "/ {
+		if (in_intel) gsub(/sha256 "[^"]*"/, "sha256 \"" legacy_amd64_hash "\"")
+		else if (in_arm) gsub(/sha256 "[^"]*"/, "sha256 \"" legacy_arm64_hash "\"")
+	}
+	/selected_url = "https:.*newer-glibc.*aarch64/ {
+		gsub(/selected_url = "[^"]*"/, "selected_url = NEWER_GLIBC_ARM64_URL")
+	}
+	/selected_url = "https:.*newer-glibc.*amd64/ {
+		gsub(/selected_url = "[^"]*"/, "selected_url = NEWER_GLIBC_AMD64_URL")
+	}
+	{ print }
+	' "$temp_file" > "${temp_file}.new"
 
-	sed -i.bak "s|NEWER_GLIBC_AMD64_URL = \"https://[^\"]*\"|NEWER_GLIBC_AMD64_URL = \"$newer_glibc_amd64_url\"|g" "$temp_file"
-	sed -i.bak "s|NEWER_GLIBC_AMD64_SHA = \"[^\"]*\"|NEWER_GLIBC_AMD64_SHA = \"$newer_glibc_amd64_hash\"|g" "$temp_file"
-	sed -i.bak "s|NEWER_GLIBC_ARM64_URL = \"https://[^\"]*\"|NEWER_GLIBC_ARM64_URL = \"$newer_glibc_arm64_url\"|g" "$temp_file"
-	sed -i.bak "s|NEWER_GLIBC_ARM64_SHA = \"[^\"]*\"|NEWER_GLIBC_ARM64_SHA = \"$newer_glibc_arm64_hash\"|g" "$temp_file"
-	sed -i.bak "s|LEGACY_AMD64_URL = \"https://[^\"]*\"|LEGACY_AMD64_URL = \"$legacy_amd64_url\"|g" "$temp_file"
-	sed -i.bak "s|LEGACY_AMD64_SHA = \"[^\"]*\"|LEGACY_AMD64_SHA = \"$legacy_amd64_hash\"|g" "$temp_file"
-	sed -i.bak "s|LEGACY_ARM64_URL = \"https://[^\"]*\"|LEGACY_ARM64_URL = \"$legacy_arm64_url\"|g" "$temp_file"
-	sed -i.bak "s|LEGACY_ARM64_SHA = \"[^\"]*\"|LEGACY_ARM64_SHA = \"$legacy_arm64_hash\"|g" "$temp_file"
+	mv "${temp_file}.new" "$temp_file"
 	rm -f "${temp_file}.bak"
-
 	mv "$temp_file" "$file"
 }
 
