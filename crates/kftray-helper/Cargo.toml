@@ -1,6 +1,6 @@
 [package]
 name = "kftray-helper"
-version = "0.26.4"
+version = "0.26.5"
 authors = ["KFTray Contributors"]
 edition = "2024"
 description = "Privileged helper binary for KFTray"

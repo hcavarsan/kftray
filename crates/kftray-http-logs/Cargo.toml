@@ -1,6 +1,6 @@
 [package]
 name = "kftray-http-logs"
-version = "0.26.4"
+version = "0.26.5"
 authors = ["Henrique Cavarsan <hencavarsan@gmail.com>"]
 edition = "2024"
 description = "HTTP logging library for KFtray"

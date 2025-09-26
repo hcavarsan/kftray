@@ -103,11 +103,7 @@ pub async fn perform_update() -> Result<String, Box<dyn Error>> {
 
             let file_bytes = std::fs::read(&tmp_archive_path)?;
             if file_bytes.len() < 2 || file_bytes[0] != 0x1f || file_bytes[1] != 0x8b {
-                return Err(format!(
-                    "Downloaded file is not a valid gzip file. First few bytes: {:?}",
-                    &file_bytes[..std::cmp::min(20, file_bytes.len())]
-                )
-                .into());
+                return Err("Downloaded file is not a valid gzip file".into());
             }
 
             let extract_dir = tmp_dir.path().join("extract");
