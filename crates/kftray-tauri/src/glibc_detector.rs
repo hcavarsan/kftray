@@ -201,7 +201,7 @@ pub fn get_updater_target_platform() -> String {
         );
 
         let arch = std::env::consts::ARCH;
-        let cutoff_version = GlibcVersion::new(2, 35, 0);
+        let cutoff_version = GlibcVersion::new(2, 39, 0);
 
         if version.is_older_than(&cutoff_version) {
             debug!("Using older glibc target");
@@ -231,7 +231,7 @@ pub fn get_updater_target_suffix() -> String {
             version.major, version.minor, version.patch
         );
 
-        let cutoff_version = GlibcVersion::new(2, 35, 0);
+        let cutoff_version = GlibcVersion::new(2, 39, 0);
 
         if version.is_older_than(&cutoff_version) {
             debug!("Using older glibc target");
@@ -259,10 +259,12 @@ mod tests {
     #[test]
     fn test_glibc_version_comparison() {
         let older = GlibcVersion::new(2, 31, 0);
+        let middle = GlibcVersion::new(2, 36, 0);
         let newer = GlibcVersion::new(2, 39, 0);
-        let cutoff = GlibcVersion::new(2, 35, 0);
+        let cutoff = GlibcVersion::new(2, 39, 0);
 
         assert!(older.is_older_than(&cutoff));
+        assert!(middle.is_older_than(&cutoff));
         assert!(!newer.is_older_than(&cutoff));
         assert!(older.is_older_than(&newer));
     }

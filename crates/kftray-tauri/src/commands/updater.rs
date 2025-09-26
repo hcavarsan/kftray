@@ -66,14 +66,7 @@ pub async fn check_for_updates(app: AppHandle) -> Result<String, String> {
 
                 match update
                     .download_and_install(
-                        |chunk_size, total_size| {
-                            let progress = if let Some(total) = total_size {
-                                format!("Downloaded {} / {} bytes", chunk_size, total)
-                            } else {
-                                format!("Downloaded {} bytes", chunk_size)
-                            };
-                            info!("{}", progress);
-                        },
+                        |_chunk_size, _total_size| {},
                         || {
                             info!("Download finished, installing...");
                         },
@@ -198,14 +191,7 @@ pub async fn install_update_silent(app: AppHandle) -> Result<String, String> {
 
             match update
                 .download_and_install(
-                    |chunk_size, total_size| {
-                        let progress = if let Some(total) = total_size {
-                            format!("Downloaded {} / {} bytes", chunk_size, total)
-                        } else {
-                            format!("Downloaded {} bytes", chunk_size)
-                        };
-                        info!("{}", progress);
-                    },
+                    |_chunk_size, _total_size| {},
                     || {
                         info!("Download finished, installing...");
                     },
