@@ -8,6 +8,7 @@ use log::{
 };
 
 #[derive(Debug, Clone, PartialEq)]
+#[allow(dead_code)]
 pub struct GlibcVersion {
     pub major: u32,
     pub minor: u32,
@@ -15,6 +16,7 @@ pub struct GlibcVersion {
 }
 
 impl GlibcVersion {
+    #[allow(dead_code)]
     pub fn new(major: u32, minor: u32, patch: u32) -> Self {
         Self {
             major,
@@ -23,6 +25,7 @@ impl GlibcVersion {
         }
     }
 
+    #[allow(dead_code)]
     pub fn is_older_than(&self, other: &GlibcVersion) -> bool {
         if self.major != other.major {
             return self.major < other.major;
@@ -67,6 +70,7 @@ pub fn detect_glibc_version() -> Option<GlibcVersion> {
 }
 
 #[cfg(not(target_os = "linux"))]
+#[allow(dead_code)]
 pub fn detect_glibc_version() -> Option<GlibcVersion> {
     None
 }
@@ -101,7 +105,7 @@ fn parse_glibc_version_from_ldd_output(output: &str) -> Option<GlibcVersion> {
 fn detect_via_gnu_libc_version() -> Option<GlibcVersion> {
     use std::ffi::CStr;
 
-    extern "C" {
+    unsafe extern "C" {
         fn gnu_get_libc_version() -> *const std::os::raw::c_char;
     }
 
@@ -214,6 +218,7 @@ pub fn get_updater_target_platform() -> String {
 }
 
 #[cfg(not(target_os = "linux"))]
+#[allow(dead_code)]
 pub fn get_updater_target_platform() -> String {
     "default".to_string()
 }
@@ -242,6 +247,7 @@ pub fn get_updater_target_suffix() -> String {
 }
 
 #[cfg(not(target_os = "linux"))]
+#[allow(dead_code)]
 pub fn get_updater_target_suffix() -> String {
     "".to_string()
 }
@@ -261,6 +267,7 @@ mod tests {
         assert!(older.is_older_than(&newer));
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn test_version_parsing() {
         assert_eq!(
@@ -274,6 +281,7 @@ mod tests {
         assert_eq!(parse_version_string("invalid"), None);
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn test_ldd_output_parsing() {
         let output = "ldd (Ubuntu GLIBC 2.31-0ubuntu9.12) 2.31";
@@ -283,12 +291,14 @@ mod tests {
         );
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn test_target_suffix() {
         let suffix = get_updater_target_suffix();
         assert!(suffix == "-glibc231" || suffix == "-glibc239");
     }
 
+    #[cfg(target_os = "linux")]
     #[test]
     fn test_target_platform() {
         let platform = get_updater_target_platform();
@@ -297,5 +307,12 @@ mod tests {
             platform == format!("linux-{}-glibc231", arch)
                 || platform == format!("linux-{}-glibc239", arch)
         );
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn test_non_linux_functions() {
+        assert_eq!(get_updater_target_platform(), "default");
+        assert_eq!(get_updater_target_suffix(), "");
     }
 }
