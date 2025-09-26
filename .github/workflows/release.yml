@@ -373,7 +373,7 @@ jobs:
           args: ${{ matrix.tauri_args }}
 
   merge-linux-updater-json:
-    needs: [kftray-tauri]
+    needs: [update-release]
     permissions:
       contents: write
     runs-on: ubuntu-22.04
