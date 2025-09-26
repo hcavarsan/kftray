@@ -113,9 +113,9 @@ def main():
 
         print(f"\nUploading fixed JSON to release {tag}")
         run_command(f"gh release upload {tag} latest_fixed.json --clobber")
-        run_command(f"gh release download {tag} -p 'latest_fixed.json' -O latest.json")
+        run_command(f"rm -f latest.json")
+        run_command(f"mv latest_fixed.json latest.json")
         run_command(f"gh release upload {tag} latest.json --clobber")
-        run_command(f"gh release delete-asset {tag} latest_fixed.json")
 
         print("Successfully updated latest.json in release!")
 
