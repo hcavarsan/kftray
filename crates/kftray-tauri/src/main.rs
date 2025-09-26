@@ -28,6 +28,7 @@ use tauri::Manager;
 use tokio::runtime::Runtime;
 
 use crate::commands::portforward::check_and_emit_changes;
+#[cfg(target_os = "linux")]
 use crate::glibc_detector::get_updater_target_platform;
 use crate::init_check::RealPortOperations;
 use crate::shortcuts::setup_shortcut_integration;
