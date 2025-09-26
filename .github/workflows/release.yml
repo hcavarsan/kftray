@@ -18,7 +18,7 @@ env:
 
 jobs:
   validate-version:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - name: Validate version format
         run: |
@@ -29,7 +29,7 @@ jobs:
 
   rust-coverage:
     name: Code Coverage
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
@@ -102,7 +102,7 @@ jobs:
     - validate-version
     permissions:
       contents: write
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     outputs:
       release_id: ${{ steps.create_release.outputs.id }}
     steps:
@@ -376,14 +376,14 @@ jobs:
     needs: [update-release]
     permissions:
       contents: write
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
       - name: Checkout repository
         uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
 
       - name: Setup Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v6
         with:
           python-version: '3.x'
 
@@ -586,7 +586,7 @@ jobs:
     permissions:
       contents: write
       packages: write
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     continue-on-error: true
     if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
     steps:
@@ -622,7 +622,7 @@ jobs:
     needs: [kftray-tauri, kftui, kftray-server, create-release-draft]
     permissions:
       contents: write
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     if: |
       startsWith(github.ref, 'refs/tags/v') &&
       !contains(github.ref, '-beta') &&
@@ -685,7 +685,7 @@ jobs:
     needs: [kftui]
     permissions:
       contents: read
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     if: |
       startsWith(github.ref, 'refs/tags/v') &&
       !contains(github.ref, '-beta') &&
@@ -787,7 +787,7 @@ jobs:
 
   publish-linux-packages:
     needs: [kftui, update-release]
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     if: |
       startsWith(github.ref, 'refs/tags/v') &&
       !contains(github.ref, '-beta') &&
@@ -821,7 +821,7 @@ jobs:
         uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
 
       - name: Setup Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
       - name: Install Python dependencies

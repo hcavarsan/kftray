@@ -12,10 +12,10 @@ jobs:
     permissions:
       issues: write # for actions/stale to close stale issues
       pull-requests: write # for actions/stale to close stale PRs
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     if: github.repository == 'hcavarsan/kftray'
     steps:
-      - uses: actions/stale@v9
+      - uses: actions/stale@v10
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           days-before-issue-stale: 60
