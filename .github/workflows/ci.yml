@@ -25,7 +25,7 @@ env:
 jobs:
   eslint-format:
     name: ESLint
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
@@ -49,7 +49,7 @@ jobs:
 
   rust-format:
     name: rustfmt
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
@@ -154,7 +154,7 @@ jobs:
 
   rust-coverage:
     name: Code Coverage
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     permissions:
       contents: write
       statuses: write
@@ -223,7 +223,7 @@ jobs:
 
   frontend-bundle-analysis:
     name: Bundle Analysis
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     steps:
@@ -262,7 +262,7 @@ jobs:
     permissions:
       contents: write
       packages: write
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     steps:
       - name: Checkout repository
         uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
