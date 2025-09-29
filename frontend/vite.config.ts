@@ -1,4 +1,5 @@
 import path from 'node:path'
+import { visualizer } from 'rollup-plugin-visualizer'
 import { defineConfig, type Plugin, type UserConfig } from 'vite'
 import tsconfigPaths from 'vite-tsconfig-paths'
 
@@ -20,14 +21,50 @@ const terserConfig = {
 }
 
 const createManualChunks = (id: string) => {
-  if (id.includes('node_modules')) {
-    const chunks = id.toString().split('node_modules/')[1].split('/')
-
-
-    if (chunks.length > 1 && chunks[0] !== '') {
-      return chunks[0]
-    }
+  if (!id.includes('node_modules')) {
+return
+}
+  if (
+    id.includes('@chakra-ui') ||
+    id.includes('@emotion') ||
+    id.includes('@ark-ui') ||
+    id.includes('@zag-js') ||
+    id.includes('framer-motion')
+  ) {
+    return 'chakra-ui'
   }
+
+  if (id.includes('lucide-react')) {
+    return 'icons'
+  }
+
+  if (id.includes('@tanstack/react-query')) {
+    return 'react-query'
+  }
+
+  if (id.includes('react-select') || id.includes('next-themes')) {
+    return 'utils'
+  }
+
+  if (
+    id.includes('/react/') ||
+    id.includes('/react-dom/') ||
+    id.includes('/scheduler/') ||
+    id.match(/\/react\/index\.js/) ||
+    id.match(/\/react-dom\/index\.js/)
+  ) {
+    return 'react-vendor'
+  }
+
+  if (id.includes('@tauri-apps')) {
+    return 'tauri'
+  }
+
+  if (id.includes('lodash')) {
+    return 'utils'
+  }
+
+  return 'vendor'
 }
 
 export default defineConfig({
@@ -44,7 +81,15 @@ export default defineConfig({
       bundleName: 'kftray',
       uploadToken: process.env.CODECOV_TOKEN,
       gitService: 'github',
-    })
+    }),
+    ...(process.env.ANALYZE ? [
+      visualizer({
+        open: true,
+        gzipSize: true,
+        brotliSize: true,
+        filename: 'dist/stats.html'
+      })
+    ] : [])
   ],
 
   clearScreen: false,
@@ -60,12 +105,22 @@ export default defineConfig({
   build: {
     outDir: 'dist',
 	emptyOutDir: false,
-    chunkSizeWarningLimit: 600,
+    chunkSizeWarningLimit: 500,
     target: process.env.TAURI_PLATFORM === 'windows' ? 'chrome105' : 'safari13',
     minify: !process.env.TAURI_DEBUG ? 'terser' : false,
     sourcemap: !!process.env.TAURI_DEBUG,
     rollupOptions: {
-      output: { manualChunks: createManualChunks }
+      output: {
+        manualChunks: createManualChunks,
+        chunkFileNames: 'assets/[name]-[hash].js',
+        entryFileNames: 'assets/[name]-[hash].js',
+        assetFileNames: 'assets/[name]-[hash].[ext]'
+      },
+      treeshake: {
+        moduleSideEffects: 'no-external',
+        propertyReadSideEffects: false,
+        tryCatchDeoptimization: false
+      }
     }
   }
 } as UserConfig)

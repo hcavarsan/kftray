@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "build": "pnpm --filter @kftray/ui run build",
+    "build:analyze": "pnpm --filter @kftray/ui run build:analyze",
     "bump:patch": "cd hacks/kftray-utils && cargo run --bin bump_version patch",
     "bump:minor": "cd hacks/kftray-utils && cargo run --bin bump_version minor",
     "bump:major": "cd hacks/kftray-utils && cargo run --bin bump_version major",
@@ -21,7 +22,8 @@
     "precommit": "pnpm run format && pnpm run lint && pnpm run test:back",
     "release:minor": "cargo run --bin bump_version minor && git add . && git commit -m 'chore: release new version'",
     "release:patch": "cargo run --bin bump_version patch && git add . && git commit -m 'chore: release new version'",
-    "tauri": "cargo build --bin kftray-helper --release && tauri"
+    "tauri": "cargo build --bin kftray-helper --release && tauri",
+    "knip": "pnpm --filter @kftray/ui run knip"
   },
   "devDependencies": {
     "@codecov/vite-plugin": "1.9.1",

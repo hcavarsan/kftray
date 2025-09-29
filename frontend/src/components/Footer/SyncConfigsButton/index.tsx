@@ -11,7 +11,7 @@ import { SyncConfigsButtonProps } from '@/types'
 const SYNC_DEBOUNCE_MS = 1000
 const MAX_RETRIES = 3
 
-export const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
+const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
   onSyncFailure,
   onSyncComplete,
 }) => {
@@ -103,4 +103,5 @@ export const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
     </Tooltip>
   )
 }
+
 export default SyncConfigsButton

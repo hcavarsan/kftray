@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use evdev::{
     Device,
     EventType,
-    Key as EvdevKey,
+    KeyCode as EvdevKey,
 };
 use global_hotkey::{
     GlobalHotKeyEvent,

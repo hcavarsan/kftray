@@ -28,18 +28,15 @@ mod tests {
 
         let result = export_configs_to_file(file_path_str, DatabaseMode::File).await;
 
-        if result.is_ok() {
+        if let Err(e) = result {
+            println!("Export configs test skipped validation: {}", e);
+        } else {
             let metadata = fs::metadata(&file_path);
             assert!(
                 metadata.is_ok(),
                 "File should exist after successful export"
             );
             assert!(metadata.unwrap().is_file(), "Created path should be a file");
-        } else {
-            println!(
-                "Export configs test skipped validation: {}",
-                result.unwrap_err()
-            );
         }
     }
 

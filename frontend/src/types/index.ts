@@ -17,24 +17,7 @@ export interface Config {
   is_running: boolean
 }
 
-export interface Response {
-  id: number
-  service: string
-  context: string
-  local_port: number
-  status: number
-  namespace: string
-  remote_port: number
-  alias: string
-  workload_type: string
-  target: string
-  protocol: string
-  remote_address: string
-  stdout: string
-  stderr: string
-}
-
-export type AuthMethod = 'none' | 'system' | 'token'
+type AuthMethod = 'none' | 'system' | 'token'
 
 export interface GitConfig {
   repoUrl: string
@@ -44,17 +27,6 @@ export interface GitConfig {
   isPrivate?: boolean
   pollingInterval: number
   flush?: boolean
-}
-
-export interface ConfigProps {
-  isModalOpen: boolean
-  closeModal: () => void
-  newConfig: Config
-  handleInputChange: (event: React.ChangeEvent<HTMLInputElement>) => void
-  handleSaveConfig: (config: Config) => Promise<void>
-  handleEditSubmit: (e: React.FormEvent) => Promise<void>
-  cancelRef: React.RefObject<HTMLElement>
-  isEdit: boolean
 }
 
 export interface GitSyncModalProps {
@@ -140,41 +112,22 @@ export interface SyncConfigsButtonProps {
   onSyncComplete?: () => void
 }
 
-export interface Namespace {
-  namespace: string
-  name: string
-}
-
-export interface Context {
-  value: string
-  label: string
-}
-
 export interface KubeContext {
   name: string
   cluster?: string
   user?: string
 }
 
-export interface Service {
-  name: string
-  service: string
-}
-
-export interface Port {
-  remote_port: number
-  name?: string
-  port?: number
-}
-
-export interface CustomConfigProps extends ConfigProps {
+export interface CustomConfigProps {
+  isModalOpen: boolean
+  closeModal: () => void
+  newConfig: Config
+  handleInputChange: (event: React.ChangeEvent<HTMLInputElement>) => void
+  handleSaveConfig: (config: Config) => Promise<void>
+  handleEditSubmit: (e: React.FormEvent) => Promise<void>
+  isEdit: boolean
+  cancelRef: React.RefObject<HTMLElement>
   setNewConfig: React.Dispatch<React.SetStateAction<Config>>
-}
-
-export interface Option {
-  name?: string
-  value: string | number
-  label: string
 }
 
 export interface ConfigsByContext {
