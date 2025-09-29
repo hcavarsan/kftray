@@ -62,7 +62,7 @@ kftray-helper = { workspace = true }
 tauri-build = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-inotify = "0.10"
+inotify = "0.11.0"
 
 [features]
 # this feature is used used for production builds where `devPath` points to the filesystem

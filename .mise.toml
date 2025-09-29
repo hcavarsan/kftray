@@ -2,4 +2,4 @@
 cargo = "latest"
 node = "24"
 pnpm = "latest"
-rust = "latest"
+"rust" = { version = "nightly", components = "rust-src,llvm-tools" }

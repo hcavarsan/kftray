@@ -1,7 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { GripVertical, Search, Settings } from 'lucide-react'
-import { MdClose } from 'react-icons/md'
-import { TiPin, TiPinOutline } from 'react-icons/ti'
+import { GripVertical, Pin, PinOff, Search, Settings, X } from 'lucide-react'
 
 import { Box, Image, Input } from '@chakra-ui/react'
 import { app } from '@tauri-apps/api'
@@ -232,7 +230,7 @@ const Header: React.FC<HeaderProps> = ({
             _active={{ bg: 'whiteAlpha.200' }}
           >
             <Box
-              as={isPinned ? TiPin : TiPinOutline}
+              as={isPinned ? Pin : PinOff}
               width='16px'
               height='16px'
               color='whiteAlpha.700'
@@ -256,12 +254,7 @@ const Header: React.FC<HeaderProps> = ({
             _hover={{ bg: 'whiteAlpha.100' }}
             _active={{ bg: 'whiteAlpha.200' }}
           >
-            <Box
-              as={MdClose}
-              width='16px'
-              height='16px'
-              color='whiteAlpha.700'
-            />
+            <Box as={X} width='16px' height='16px' color='whiteAlpha.700' />
           </Button>
         </Tooltip>
       </Box>

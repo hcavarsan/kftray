@@ -135,7 +135,7 @@ mod tests {
                 draw_configs_table(
                     frame,
                     area,
-                    &vec![config],
+                    &[config],
                     &[config_state],
                     &mut table_state,
                     "Test Table",

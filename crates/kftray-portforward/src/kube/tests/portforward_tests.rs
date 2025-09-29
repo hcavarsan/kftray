@@ -282,7 +282,7 @@ async fn test_port_forward_tcp_success() -> Result<()> {
     });
 
     let config = setup_test_config();
-    let _configs = vec![config];
+    let _configs = [config];
 
     let port_forward = PortForward {
         target,

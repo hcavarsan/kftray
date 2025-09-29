@@ -276,4 +276,4 @@ export const useGlobalShortcuts = (): GlobalShortcutHook => {
   }
 }
 
-export type { PlatformStatus, Shortcut }
+export type { Shortcut }

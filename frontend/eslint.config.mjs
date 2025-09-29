@@ -39,7 +39,6 @@ export default [{
     "plugin:react/recommended",
     "plugin:@typescript-eslint/recommended",
     "plugin:import/typescript",
-    "prettier",
 )), {
     plugins: {
         react: fixupPluginRules(react),

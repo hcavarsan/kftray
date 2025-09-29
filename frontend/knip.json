@@ -1,0 +1,11 @@
+{
+  "$schema": "https://unpkg.com/knip@5/schema.json",
+  "entry": ["src/main.tsx!"],
+  "project": ["src/**/*.{ts,tsx}!"],
+  "ignore": [
+    "**/dist/**",
+    "**/node_modules/**"
+  ],
+  "ignoreBinaries": ["taze"],
+  "ignoreDependencies": ["@codecov/vite-plugin", "@eslint/js", "@eslint/eslintrc"]
+}

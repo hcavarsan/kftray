@@ -81,11 +81,11 @@ tower-test = { workspace = true }
 tracing-subscriber = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-security-framework = "3.4.0"
-core-foundation = "0.10.0"
+security-framework = "3.5.1"
+core-foundation = "0.10.1"
 
 [target.'cfg(target_os = "windows")'.dependencies]
-schannel = "0.1"
+schannel = "0.1.28"
 windows = { workspace = true }
 
 [features]

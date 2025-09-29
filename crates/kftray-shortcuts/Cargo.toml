@@ -21,8 +21,8 @@ thiserror = { workspace = true }
 tokio = { workspace = true, features = ["sync"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-evdev = "0.12"
-mio = { version = "0.8", features = ["os-ext"] }
+evdev = "0.13.2"
+mio = { version = "1.0.4", features = ["os-ext"] }
 
 [features]
 default = []

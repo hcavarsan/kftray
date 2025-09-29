@@ -1,4 +1,11 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react'
 
 import { Box, VStack } from '@chakra-ui/react'
 import { invoke } from '@tauri-apps/api/core'
@@ -6,16 +13,17 @@ import { listen } from '@tauri-apps/api/event'
 import { open, save } from '@tauri-apps/plugin-dialog'
 import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs'
 
-import AddConfigModal from '@/components/AddConfigModal'
-import AutoImportModal from '@/components/AutoImportModal'
 import Footer from '@/components/Footer'
-import GitSyncModal from '@/components/GitSyncModal'
 import PortForwardTable from '@/components/PortForwardTable'
-import SettingsModal from '@/components/SettingsModal'
-import ShortcutModal from '@/components/ShortcutModal'
 import { toaster } from '@/components/ui/toaster'
 import { useSyncManager } from '@/hooks/useSyncManager'
 import { Config } from '@/types'
+
+const AddConfigModal = lazy(() => import('@/components/AddConfigModal'))
+const AutoImportModal = lazy(() => import('@/components/AutoImportModal'))
+const GitSyncModal = lazy(() => import('@/components/GitSyncModal'))
+const SettingsModal = lazy(() => import('@/components/SettingsModal'))
+const ShortcutModal = lazy(() => import('@/components/ShortcutModal'))
 
 const initialRemotePort = 0
 const initialLocalPort = 0
@@ -686,42 +694,53 @@ const KFTray = () => {
           </Box>
         </Box>
 
-        {/* Modals */}
-        <GitSyncModal
-          isGitSyncModalOpen={isGitSyncModalOpen}
-          closeGitSyncModal={closeGitSyncModal}
-          setCredentialsSaved={handleSetCredentialsSaved}
-          credentialsSaved={credentialsSaved}
-          setPollingInterval={handleSetPollingInterval}
-          pollingInterval={pollingInterval}
-        />
+        <Suspense fallback={null}>
+          {isGitSyncModalOpen && (
+            <GitSyncModal
+              isGitSyncModalOpen={isGitSyncModalOpen}
+              closeGitSyncModal={closeGitSyncModal}
+              setCredentialsSaved={handleSetCredentialsSaved}
+              credentialsSaved={credentialsSaved}
+              setPollingInterval={handleSetPollingInterval}
+              pollingInterval={pollingInterval}
+            />
+          )}
 
-        <AddConfigModal
-          isModalOpen={isModalOpen}
-          closeModal={closeModal}
-          newConfig={newConfig}
-          handleInputChange={handleInputChange}
-          handleSaveConfig={handleSaveConfig}
-          isEdit={isEdit}
-          handleEditSubmit={handleEditSubmit}
-          cancelRef={cancelRef as React.RefObject<HTMLElement>}
-          setNewConfig={setNewConfig}
-        />
+          {isModalOpen && (
+            <AddConfigModal
+              isModalOpen={isModalOpen}
+              closeModal={closeModal}
+              newConfig={newConfig}
+              handleInputChange={handleInputChange}
+              handleSaveConfig={handleSaveConfig}
+              isEdit={isEdit}
+              handleEditSubmit={handleEditSubmit}
+              cancelRef={cancelRef as React.RefObject<HTMLElement>}
+              setNewConfig={setNewConfig}
+            />
+          )}
 
-        <AutoImportModal
-          isOpen={isAutoImportModalOpen}
-          onClose={() => setIsAutoImportModalOpen(false)}
-        />
+          {isAutoImportModalOpen && (
+            <AutoImportModal
+              isOpen={isAutoImportModalOpen}
+              onClose={() => setIsAutoImportModalOpen(false)}
+            />
+          )}
 
-        <ShortcutModal
-          isOpen={isShortcutModalOpen}
-          onClose={closeShortcutModal}
-        />
+          {isShortcutModalOpen && (
+            <ShortcutModal
+              isOpen={isShortcutModalOpen}
+              onClose={closeShortcutModal}
+            />
+          )}
 
-        <SettingsModal
-          isOpen={isSettingsModalOpen}
-          onClose={closeSettingsModal}
-        />
+          {isSettingsModalOpen && (
+            <SettingsModal
+              isOpen={isSettingsModalOpen}
+              onClose={closeSettingsModal}
+            />
+          )}
+        </Suspense>
       </VStack>
     </Box>
   )

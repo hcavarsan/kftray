@@ -1,14 +1,14 @@
 import React, { useCallback, useState } from 'react'
-import { Keyboard, Menu as MenuIcon } from 'lucide-react'
-import { FaGithub } from 'react-icons/fa'
 import {
-  MdAdd,
-  MdBuild,
-  MdFileDownload,
-  MdFileUpload,
-  MdSettings,
-} from 'react-icons/md'
-import { RiInstallLine, RiUninstallLine } from 'react-icons/ri'
+  Download,
+  Github,
+  Keyboard,
+  Menu as MenuIcon,
+  Plus,
+  Settings,
+  Upload,
+  Wrench,
+} from 'lucide-react'
 
 import { Box, Group } from '@chakra-ui/react'
 import { invoke } from '@tauri-apps/api/core'
@@ -138,7 +138,7 @@ const Footer: React.FC<FooterProps> = ({
   const renderMenuItems = () => (
     <>
       <MenuItem value='export' onClick={handleExportConfigs}>
-        <Box as={MdFileUpload} width='12px' height='12px' />
+        <Box as={Upload} width='12px' height='12px' />
         <Box fontSize='11px'>Export Local File</Box>
       </MenuItem>
 
@@ -147,7 +147,7 @@ const Footer: React.FC<FooterProps> = ({
         onClick={handleImportConfigs}
         disabled={credentialsSaved}
       >
-        <Box as={MdFileDownload} width='12px' height='12px' />
+        <Box as={Download} width='12px' height='12px' />
         <Box fontSize='11px'>Import Local File</Box>
       </MenuItem>
 
@@ -156,7 +156,7 @@ const Footer: React.FC<FooterProps> = ({
         onClick={handleClearLogs}
         disabled={logState.size === 0 || logState.fetchError}
       >
-        <Box as={MdSettings} width='12px' height='12px' />
+        <Box as={Settings} width='12px' height='12px' />
         <Box fontSize='11px'>
           Prune Logs ({(logState.size / (1024 * 1024)).toFixed(2)} MB)
         </Box>
@@ -166,25 +166,23 @@ const Footer: React.FC<FooterProps> = ({
         value='auto-import'
         onClick={() => setIsAutoImportModalOpen(true)}
       >
-        <Box as={MdSettings} width='12px' height='12px' />
+        <Box as={Settings} width='12px' height='12px' />
         <Box fontSize='11px'>Auto Import</Box>
       </MenuItem>
 
       <MenuRoot>
-        <MenuTriggerItem
-          value='helper-submenu'
-          startIcon={<Box as={MdBuild} width='12px' height='12px' />}
-        >
+        <MenuTriggerItem>
+          <Box as={Wrench} width='12px' height='12px' />
           <Box fontSize='11px'>Helper</Box>
         </MenuTriggerItem>
         <MenuContent>
           <MenuItem value='install-helper' onClick={handleInstallHelper}>
-            <Box as={RiInstallLine} width='12px' height='12px' />
+            <Box as={Download} width='12px' height='12px' />
             <Box fontSize='11px'>Install kftray-helper</Box>
           </MenuItem>
 
           <MenuItem value='uninstall-helper' onClick={handleUninstallHelper}>
-            <Box as={RiUninstallLine} width='12px' height='12px' />
+            <Box as={Download} width='12px' height='12px' />
             <Box fontSize='11px'>Uninstall kftray-helper</Box>
           </MenuItem>
         </MenuContent>
@@ -319,7 +317,7 @@ const Footer: React.FC<FooterProps> = ({
               border='1px solid rgba(255, 255, 255, 0.08)'
               _hover={{ bg: 'whiteAlpha.100' }}
             >
-              <Box as={MdAdd} width='12px' height='12px' />
+              <Box as={Plus} width='12px' height='12px' />
             </Button>
           </Tooltip>
 
@@ -379,8 +377,8 @@ const Footer: React.FC<FooterProps> = ({
               _hover={{ bg: 'whiteAlpha.100' }}
             >
               <Box display='flex' alignItems='center' gap={1}>
-                <Box as={FaGithub} width='14px' height='14px' />
-                <Box as={MdSettings} width='14px' height='14px' />
+                <Box as={Github} width='14px' height='14px' />
+                <Box as={Settings} width='14px' height='14px' />
               </Box>
             </Button>
           </Tooltip>

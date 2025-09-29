@@ -2,7 +2,7 @@ import { forwardRef } from 'react'
 
 import { RadioGroup as ChakraRadioGroup } from '@chakra-ui/react'
 
-export interface RadioProps extends ChakraRadioGroup.ItemProps {
+interface RadioProps extends ChakraRadioGroup.ItemProps {
   rootRef?: React.Ref<HTMLDivElement>
   inputProps?: React.InputHTMLAttributes<HTMLInputElement>
 }
