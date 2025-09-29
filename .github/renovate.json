@@ -40,6 +40,11 @@
 			"groupSlug": "github-actions"
 		},
 		{
+			"matchManagers": ["github-actions"],
+			"matchPackagePatterns": ["ubuntu"],
+			"enabled": false
+		},
+		{
 			"matchPackageNames": [
 				"kube",
 				"k8s-openapi",
