@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef } from 'react'
 import debounce from 'lodash/debounce'
-import { MdClose } from 'react-icons/md'
+import { X } from 'lucide-react'
 
 import {
   createToaster,
@@ -182,7 +182,7 @@ export const Toaster = () => {
               ml='1.5'
               fontSize='sm'
             >
-              <MdClose size={14} />
+              <X size={14} />
             </Toast.CloseTrigger>
           </Toast.Root>
         )}

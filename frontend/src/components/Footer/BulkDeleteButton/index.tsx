@@ -1,6 +1,6 @@
 import React, { useState } from 'react'
+import { Trash2 } from 'lucide-react'
 import { createPortal } from 'react-dom'
-import { MdDelete } from 'react-icons/md'
 
 import { Box, Button, HStack, Text } from '@chakra-ui/react'
 import { invoke } from '@tauri-apps/api/core'
@@ -178,7 +178,7 @@ const BulkDeleteButton: React.FC<BulkDeleteButtonProps> = ({
           border='1px solid rgba(255, 255, 255, 0.08)'
           _hover={{ bg: 'red.600' }}
         >
-          <Box as={MdDelete} width='12px' height='12px' />
+          <Box as={Trash2} width='12px' height='12px' />
         </Button>
       </Tooltip>
 

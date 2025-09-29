@@ -3,7 +3,11 @@ import {
   ClipboardIcon,
   ExternalLinkIcon,
   FileIcon,
+  Info,
+  Menu,
+  Pencil,
   SettingsIcon,
+  Trash2,
 } from 'lucide-react'
 
 import {
@@ -18,13 +22,6 @@ import {
   Table,
   Text,
 } from '@chakra-ui/react'
-import {
-  faBars,
-  faInfoCircle,
-  faPen,
-  faTrash,
-} from '@fortawesome/free-solid-svg-icons'
-import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { open as openShell } from '@tauri-apps/plugin-shell'
@@ -389,7 +386,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
                   className='icon-button'
                   style={{ color: getStatusInfo().color }}
                 >
-                  <FontAwesomeIcon icon={faInfoCircle} size='xs' />
+                  <Box as={Info} width='12px' height='12px' />
                 </IconButton>
 
                 <Text className='text-normal' truncate maxWidth='100px'>
@@ -480,7 +477,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
                 aria-label='Actions'
                 className='icon-button'
               >
-                <FontAwesomeIcon icon={faBars} size='xs' />
+                <Box as={Menu} width='12px' height='12px' />
               </IconButton>
             </MenuTrigger>
             <MenuContent className='menu-content'>
@@ -489,7 +486,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
                 value='edit'
                 onClick={() => handleEditConfig(config.id)}
               >
-                <FontAwesomeIcon icon={faPen} size='xs' />
+                <Box as={Pencil} width='12px' height='12px' />
                 <Text ml={2} fontSize='xs'>
                   Edit
                 </Text>
@@ -499,7 +496,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
                 value='delete'
                 onClick={handleOpenDeleteDialog}
               >
-                <FontAwesomeIcon icon={faTrash} size='xs' />
+                <Box as={Trash2} width='12px' height='12px' />
                 <Text ml={2} fontSize='xs'>
                   Delete
                 </Text>
