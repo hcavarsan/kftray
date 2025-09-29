@@ -383,7 +383,7 @@ jobs:
         uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
 
       - name: Setup Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c
         with:
           python-version: '3.x'
 
@@ -821,7 +821,7 @@ jobs:
         uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
 
       - name: Setup Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c
         with:
           python-version: '3.11'
       - name: Install Python dependencies
