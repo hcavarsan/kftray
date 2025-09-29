@@ -773,7 +773,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_running_configs_filter() {
-        let configs = vec![
+        let configs = [
             create_test_config(),
             create_udp_config(),
             create_proxy_config(),
@@ -796,7 +796,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_extract_config_with_id() {
-        let configs = vec![
+        let configs = [
             create_test_config(),
             create_udp_config(),
             create_proxy_config(),

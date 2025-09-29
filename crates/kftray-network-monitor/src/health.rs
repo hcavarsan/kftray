@@ -103,9 +103,9 @@ impl HealthChecker {
 
         let mut futs: FuturesUnordered<_> = configs
             .iter()
-            .cloned()
             .map(|config_clone| {
                 let checker = self.clone();
+                let config_clone = config_clone.clone();
                 async move {
                     let is_healthy = checker.check_single_port_forward(&config_clone).await;
                     HealthCheckResult {
@@ -143,9 +143,9 @@ impl HealthChecker {
 
         let mut futs: FuturesUnordered<_> = configs
             .iter()
-            .cloned()
             .map(|config_clone| {
                 let checker = self.clone();
+                let config_clone = config_clone.clone();
                 async move {
                     let is_healthy = checker.check_single_port_forward_fast(&config_clone).await;
                     HealthCheckResult {
