@@ -1,3 +1,5 @@
+cargo-features = ["profile-rustflags", "trim-paths"]
+
 [workspace]
 resolver = "2"
 members = ["crates/*"]
@@ -143,9 +145,15 @@ windows = { version = "0.62", features = [
 windows-core = "0.62"
 windows-service = "0.8"
 
+[profile.dev]
+incremental = true
+rustflags = ["-Zthreads=8"]
+
 [profile.release]
-opt-level = "z"
+opt-level = "s"
 strip = true
 lto = true
 panic = "abort"
 codegen-units = 1
+trim-paths = "all"
+rustflags = ["-Cdebuginfo=0", "-Zthreads=4"]
