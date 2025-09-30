@@ -15,6 +15,7 @@ export interface Config {
   protocol: string
   kubeconfig: string
   is_running: boolean
+  http_logs_enabled?: boolean
 }
 
 type AuthMethod = 'none' | 'system' | 'token'
@@ -50,6 +51,7 @@ export interface TableProps {
   confirmDeleteConfig: () => void
   handleDeleteConfig: (id: number) => void
   handleEditConfig: (id: number) => void
+  handleDuplicateConfig: (id: number) => void
   isAlertOpen: boolean
   setIsAlertOpen: (open: boolean) => void
   selectedConfigs: Config[]
@@ -63,6 +65,7 @@ export interface PortForwardRowProps {
   confirmDeleteConfig: () => void
   handleDeleteConfig: (id: number) => void
   handleEditConfig: (id: number) => void
+  handleDuplicateConfig: (id: number) => void
   isAlertOpen: boolean
   setIsAlertOpen: (open: boolean) => void
   showContext?: boolean
@@ -170,6 +173,7 @@ export interface ContextsAccordionProps {
   handleDeleteConfig: (id: number) => void
   confirmDeleteConfig: () => void
   handleEditConfig: (id: number) => void
+  handleDuplicateConfig: (id: number) => void
   isAlertOpen: boolean
   setIsAlertOpen: (open: boolean) => void
   handleSelectionChange: (config: Config, isSelected: boolean) => void

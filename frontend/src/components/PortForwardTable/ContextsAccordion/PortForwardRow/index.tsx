@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import {
   ClipboardIcon,
+  Copy,
   ExternalLinkIcon,
   FileIcon,
   Info,
@@ -46,6 +47,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   confirmDeleteConfig,
   handleDeleteConfig,
   handleEditConfig,
+  handleDuplicateConfig,
   selected,
   onSelectionChange,
   _isInitiating,
@@ -497,6 +499,16 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
                 <Box as={Pencil} width='12px' height='12px' />
                 <Text ml={2} fontSize='xs'>
                   Edit
+                </Text>
+              </MenuItem>
+              <MenuItem
+                className='menu-item'
+                value='duplicate'
+                onClick={() => handleDuplicateConfig(config.id)}
+              >
+                <Box as={Copy} width='12px' height='12px' />
+                <Text ml={2} fontSize='xs'>
+                  Duplicate
                 </Text>
               </MenuItem>
               <MenuItem

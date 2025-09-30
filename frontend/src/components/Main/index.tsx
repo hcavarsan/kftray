@@ -29,6 +29,7 @@ const initialRemotePort = 0
 const initialLocalPort = 0
 const initialId = 0
 
+// eslint-disable-next-line max-statements
 const KFTray = () => {
   const [pollingInterval, setPollingInterval] = useState(0)
   const [configs, setConfigs] = useState<Config[]>([])
@@ -290,6 +291,26 @@ const KFTray = () => {
     } catch (error) {
       console.error(
         `Failed to fetch the config for editing with id ${id}:`,
+        error,
+      )
+    }
+  }
+
+  const handleDuplicateConfig = async (id: number) => {
+    try {
+      const configToDuplicate = await invoke<Config>('get_config_cmd', { id })
+
+      setNewConfig({
+        ...configToDuplicate,
+        id: 0,
+        alias: `${configToDuplicate.alias}-copy`,
+        is_running: false,
+      })
+      setIsEdit(false)
+      setIsModalOpen(true)
+    } catch (error) {
+      console.error(
+        `Failed to fetch the config for duplication with id ${id}:`,
         error,
       )
     }
@@ -651,6 +672,7 @@ const KFTray = () => {
               setIsInitiating={setIsInitiating}
               isStopping={isStopping}
               handleEditConfig={handleEditConfig}
+              handleDuplicateConfig={handleDuplicateConfig}
               stopSelectedPortForwarding={stopSelectedPortForwarding}
               stopAllPortForwarding={stopAllPortForwarding}
               handleDeleteConfig={handleDeleteConfig}
