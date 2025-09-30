@@ -103,7 +103,7 @@ export const GitSyncProvider: React.FC<{ children: React.ReactNode }> = ({
         repoUrl: credentials.repoUrl,
         configPath: credentials.configPath,
         useSystemCredentials: credentials.authMethod === 'system',
-        flush: credentials.flushBeforeSync ?? false,
+        flush: credentials.flush ?? false,
         githubToken:
           credentials.authMethod === 'token' ? credentials.token : null,
       })

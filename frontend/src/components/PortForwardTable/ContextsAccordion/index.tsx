@@ -33,6 +33,7 @@ const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
   handleDeleteConfig,
   confirmDeleteConfig,
   handleEditConfig,
+  handleDuplicateConfig,
   isAlertOpen,
   setIsAlertOpen,
 }) => {
@@ -152,6 +153,7 @@ const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
                   handleDeleteConfig={handleDeleteConfig}
                   confirmDeleteConfig={confirmDeleteConfig}
                   handleEditConfig={handleEditConfig}
+                  handleDuplicateConfig={handleDuplicateConfig}
                   isAlertOpen={isAlertOpen}
                   selected={selectedConfigs.some(
                     selectedConfig => selectedConfig.id === config.id,

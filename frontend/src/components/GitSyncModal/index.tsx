@@ -40,7 +40,7 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
     authMethod: (credentials?.authMethod || 'none') as AuthMethod,
     gitToken: credentials?.token || '',
     pollingInterval: syncStatus.pollingInterval || 60,
-    flushBeforeSync: credentials?.flushBeforeSync ?? false,
+    flushBeforeSync: credentials?.flush ?? false,
   }))
 
   useEffect(() => {
@@ -51,7 +51,7 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
         configPath: credentials.configPath,
         authMethod: credentials.authMethod,
         gitToken: credentials.token || '',
-        flushBeforeSync: credentials.flushBeforeSync ?? false,
+        flushBeforeSync: credentials.flush ?? false,
       }))
     }
   }, [isGitSyncModalOpen, credentials])
@@ -65,8 +65,12 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
 
     try {
       const newCredentials = {
-        ...formState,
+        repoUrl: formState.repoUrl,
+        configPath: formState.configPath,
+        authMethod: formState.authMethod,
         token: formState.authMethod === 'token' ? formState.gitToken : '',
+        pollingInterval: formState.pollingInterval,
+        flush: formState.flushBeforeSync,
       }
 
       await gitService.importConfigs(newCredentials)
