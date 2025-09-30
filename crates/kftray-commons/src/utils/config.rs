@@ -1,19 +1,10 @@
-use std::collections::BTreeMap;
-
 use futures::stream::StreamExt;
 use log::{
     error,
     info,
 };
 use portpicker::pick_unused_port;
-use serde_json::{
-    self,
-    Value,
-};
-use serde_json::{
-    Value as JsonValue,
-    json,
-};
+use serde_json::json;
 use sqlx::{
     Row,
     SqlitePool,
@@ -115,11 +106,15 @@ pub async fn insert_config_with_pool(config: Config, pool: &SqlitePool) -> Resul
     }
 
     let data = json!(config).to_string();
-    sqlx::query("INSERT INTO configs (data) VALUES (?1)")
+    let result = sqlx::query("INSERT INTO configs (data) VALUES (?1)")
         .bind(data)
         .execute(&mut *conn)
         .await
         .map_err(|e| e.to_string())?;
+
+    let inserted_id = result.last_insert_rowid();
+    sync_http_logs_config_from_config(&config, inserted_id, pool).await?;
+
     Ok(())
 }
 
@@ -141,6 +136,8 @@ pub(crate) async fn insert_config_with_pool_and_mode(
                 .execute(&mut *conn)
                 .await
                 .map_err(|e| e.to_string())?;
+
+            sync_http_logs_config_from_config(&config, next_id, pool).await?;
             Ok(())
         }
         DatabaseMode::File => insert_config_with_pool(config, pool).await,
@@ -306,6 +303,11 @@ pub(crate) async fn update_config_with_pool(
         .execute(&mut *conn)
         .await
         .map_err(|e| e.to_string())?;
+
+    if let Some(config_id) = config.id {
+        sync_http_logs_config_from_config(&config, config_id, pool).await?;
+    }
+
     Ok(())
 }
 
@@ -315,26 +317,14 @@ pub async fn update_config(config: Config) -> Result<(), String> {
 }
 
 pub(crate) async fn export_configs_with_pool(pool: &SqlitePool) -> Result<String, String> {
-    let mut configs = read_configs_with_pool(pool)
+    let configs: Vec<Config> = read_configs_with_pool(pool)
         .await
-        .map_err(|e| e.to_string())?;
-    for config in &mut configs {
-        config.id = None;
-        if config.namespace == "default-namespace" {
-            config.namespace = "".to_string();
-        }
-    }
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .map(|c| c.prepare_for_export())
+        .collect();
 
-    let mut json_config = serde_json::to_value(configs).map_err(|e| e.to_string())?;
-    let default_config = serde_json::to_value(Config::default()).map_err(|e| e.to_string())?;
-    remove_blank_or_default_fields(&mut json_config, &default_config);
-
-    let sorted_configs: Vec<BTreeMap<String, Value>> =
-        serde_json::from_value(json_config).map_err(|e| e.to_string())?;
-
-    let json = serde_json::to_string_pretty(&sorted_configs).map_err(|e| e.to_string())?;
-
-    Ok(json)
+    serde_json::to_string_pretty(&configs).map_err(|e| e.to_string())
 }
 
 pub async fn export_configs() -> Result<String, String> {
@@ -397,16 +387,86 @@ fn validate_imported_config(config: &Config) -> Result<(), String> {
     Ok(())
 }
 
+fn configs_match_identity(existing: &Config, incoming: &Config) -> bool {
+    if existing.context != incoming.context
+        || existing.namespace != incoming.namespace
+        || existing.workload_type != incoming.workload_type
+        || existing.protocol != incoming.protocol
+    {
+        return false;
+    }
+
+    match existing.workload_type.as_deref() {
+        Some("service") => existing.service == incoming.service,
+        Some("pod") => existing.target == incoming.target,
+        Some("proxy") => existing.remote_address == incoming.remote_address,
+        _ => {
+            existing.service == incoming.service
+                && existing.target == incoming.target
+                && existing.remote_address == incoming.remote_address
+        }
+    }
+}
+
+fn configs_are_identical(existing: &Config, incoming: &Config) -> bool {
+    let mut existing_clone = existing.clone();
+    let mut incoming_clone = incoming.clone();
+
+    existing_clone.id = None;
+    incoming_clone.id = None;
+
+    existing_clone == incoming_clone
+}
+
+async fn merge_config_with_existing(
+    config: Config, existing_configs: &[Config], pool: &SqlitePool,
+) -> Result<(), String> {
+    if let Some(existing) = existing_configs
+        .iter()
+        .find(|c| configs_match_identity(c, &config))
+    {
+        info!(
+            "Found matching config ID={}, checking if update needed",
+            existing.id.unwrap_or(-1)
+        );
+        if configs_are_identical(existing, &config) {
+            info!("Config is identical, skipping");
+            return Ok(());
+        }
+
+        info!("Config has changes, updating");
+        let mut updated_config = config;
+        updated_config.id = existing.id;
+
+        if updated_config.alias.is_none() || updated_config.alias.as_deref() == Some("") {
+            updated_config.alias = existing.alias.clone();
+        }
+
+        if updated_config.local_port.is_none() || updated_config.local_port == Some(0) {
+            updated_config.local_port = existing.local_port;
+        }
+
+        update_config_with_pool(updated_config, pool).await?;
+    } else {
+        info!("No matching config found, inserting new config");
+        insert_config_with_pool(config, pool).await?;
+    }
+
+    Ok(())
+}
+
 pub(crate) async fn import_configs_with_pool(
     json: String, pool: &SqlitePool,
 ) -> Result<(), String> {
     let configs = parse_config_json(&json)?;
 
+    let existing_configs = read_configs_with_pool(pool).await?;
+
     for config in configs {
         validate_imported_config(&config).map_err(|e| format!("Invalid config: {e}"))?;
-        insert_config_with_pool(config, pool)
+        merge_config_with_existing(config, &existing_configs, pool)
             .await
-            .map_err(|e| format!("Failed to insert config: {e}"))?;
+            .map_err(|e| format!("Failed to merge config: {e}"))?;
     }
 
     if let Err(e) = migrate_configs(Some(pool)).await {
@@ -428,16 +488,55 @@ fn parse_config_json(json: &str) -> Result<Vec<Config>, String> {
     }
 }
 
+async fn merge_config_with_existing_and_mode(
+    config: Config, existing_configs: &[Config], pool: &SqlitePool, mode: DatabaseMode,
+) -> Result<(), String> {
+    if let Some(existing) = existing_configs
+        .iter()
+        .find(|c| configs_match_identity(c, &config))
+    {
+        info!(
+            "Found matching config ID={}, checking if update needed",
+            existing.id.unwrap_or(-1)
+        );
+        if configs_are_identical(existing, &config) {
+            info!("Config is identical, skipping");
+            return Ok(());
+        }
+
+        info!("Config has changes, updating");
+        let mut updated_config = config;
+        updated_config.id = existing.id;
+
+        if updated_config.alias.is_none() || updated_config.alias.as_deref() == Some("") {
+            updated_config.alias = existing.alias.clone();
+        }
+
+        if updated_config.local_port.is_none() || updated_config.local_port == Some(0) {
+            updated_config.local_port = existing.local_port;
+        }
+
+        update_config_with_pool(updated_config, pool).await?;
+    } else {
+        info!("No matching config found, inserting new config");
+        insert_config_with_pool_and_mode(config, pool, mode).await?;
+    }
+
+    Ok(())
+}
+
 pub(crate) async fn import_configs_with_pool_and_mode(
     json: String, pool: &SqlitePool, mode: DatabaseMode,
 ) -> Result<(), String> {
     let configs = parse_config_json(&json)?;
 
+    let existing_configs = read_configs_with_pool(pool).await?;
+
     for config in configs {
         validate_imported_config(&config).map_err(|e| format!("Invalid config: {e}"))?;
-        insert_config_with_pool_and_mode(config, pool, mode)
+        merge_config_with_existing_and_mode(config, &existing_configs, pool, mode)
             .await
-            .map_err(|e| format!("Failed to insert config: {e}"))?;
+            .map_err(|e| format!("Failed to merge config: {e}"))?;
     }
 
     if let Err(e) = migrate_configs(Some(pool)).await {
@@ -512,53 +611,6 @@ pub async fn clean_all_custom_hosts_entries_with_mode(mode: DatabaseMode) -> Res
     clean_all_custom_hosts_entries_with_pool(&context.pool).await
 }
 
-fn is_value_default(value: &serde_json::Value, default_config: &serde_json::Value) -> bool {
-    *value == *default_config
-}
-
-fn is_value_blank(value: &JsonValue) -> bool {
-    match value {
-        JsonValue::String(s) => s.trim().is_empty(),
-        _ => false,
-    }
-}
-
-fn remove_blank_or_default_fields(value: &mut JsonValue, default_config: &JsonValue) {
-    match value {
-        JsonValue::Object(map) => {
-            let keys_to_remove: Vec<String> = map
-                .iter()
-                .filter(|(k, v)| {
-                    let default_v = default_config.get(k);
-                    match default_v {
-                        Some(def_v) => is_value_blank(v) || is_value_default(v, def_v),
-                        None => is_value_blank(v),
-                    }
-                })
-                .map(|(k, _)| k.clone())
-                .collect();
-
-            for key in keys_to_remove {
-                map.remove(&key);
-            }
-
-            for (key, value) in map.iter_mut() {
-                if let Some(sub_default) = default_config.get(key) {
-                    remove_blank_or_default_fields(value, sub_default);
-                } else {
-                    remove_blank_or_default_fields(value, &JsonValue::Null);
-                }
-            }
-        }
-        JsonValue::Array(arr) => {
-            for value in arr {
-                remove_blank_or_default_fields(value, &JsonValue::Null);
-            }
-        }
-        _ => (),
-    }
-}
-
 fn prepare_config(mut config: Config) -> Config {
     if let Some(ref mut alias) = config.alias {
         *alias = alias.trim().to_string();
@@ -608,11 +660,32 @@ fn prepare_config(mut config: Config) -> Config {
     config
 }
 
+async fn sync_http_logs_config_from_config(
+    config: &Config, config_id: i64, pool: &SqlitePool,
+) -> Result<(), String> {
+    use crate::models::http_logs_config_model::HttpLogsConfig;
+    use crate::utils::http_logs_config::update_http_logs_config_with_pool;
+
+    let http_config = HttpLogsConfig {
+        config_id,
+        enabled: config.http_logs_enabled.unwrap_or(false),
+        max_file_size: config.http_logs_max_file_size.unwrap_or(10 * 1024 * 1024),
+        retention_days: config.http_logs_retention_days.unwrap_or(7),
+        auto_cleanup: config.http_logs_auto_cleanup.unwrap_or(true),
+    };
+
+    update_http_logs_config_with_pool(&http_config, pool).await
+}
+
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
 
     use lazy_static::lazy_static;
-    use serde_json::json;
+    use serde_json::{
+        Value,
+        json,
+    };
     use sqlx::SqlitePool;
     use tokio::sync::Mutex;
 
@@ -620,83 +693,6 @@ mod tests {
 
     lazy_static! {
         static ref IO_TEST_MUTEX: Mutex<()> = Mutex::new(());
-    }
-
-    #[test]
-    fn test_is_value_blank_string() {
-        assert!(is_value_blank(&json!("")));
-        assert!(is_value_blank(&json!("  ")));
-        assert!(!is_value_blank(&json!("not blank")));
-    }
-
-    #[test]
-    fn test_is_value_blank_non_string() {
-        assert!(!is_value_blank(&json!(123)));
-        assert!(!is_value_blank(&json!(null)));
-        assert!(!is_value_blank(&json!(true)));
-        assert!(!is_value_blank(&json!([])));
-        assert!(!is_value_blank(&json!({})));
-    }
-
-    #[test]
-    fn test_is_value_default() {
-        let default_val = json!({ "key": "default" });
-        assert!(is_value_default(&json!({ "key": "default" }), &default_val));
-        assert!(!is_value_default(
-            &json!({ "key": "not default" }),
-            &default_val
-        ));
-        assert!(!is_value_default(&json!(123), &default_val));
-    }
-
-    #[test]
-    fn test_remove_blank_or_default_fields_simple() {
-        let mut obj = json!({ "a": "", "b": "  ", "c": "value", "d": 123, "e": null });
-        let default = json!({ "a": "default", "b": "default", "c": "default", "d": 0, "e": null });
-        remove_blank_or_default_fields(&mut obj, &default);
-        assert_eq!(obj, json!({ "c": "value", "d": 123 }));
-    }
-
-    #[test]
-    fn test_remove_blank_or_default_fields_nested() {
-        let mut obj = json!({
-            "level1": {
-                "a": "",
-                "b": "default_b",
-                "c": [1, 2, ""],
-                "d": { "e": "", "f": "default_f" }
-            },
-            "g": "default_g"
-        });
-        let default = json!({
-            "level1": {
-                "a": "default_a",
-                "b": "default_b",
-                "c": [],
-                "d": { "e": "default_e", "f": "default_f" }
-            },
-            "g": "default_g"
-        });
-        remove_blank_or_default_fields(&mut obj, &default);
-        assert_eq!(
-            obj,
-            json!({
-                "level1": {
-                     "c": [1, 2, ""],
-                     "d": {}
-                }
-            })
-        );
-    }
-
-    #[test]
-    fn test_remove_blank_or_default_fields_array() {
-        let mut arr = json!([{"a": "", "b": "val"}, {"a": "default_a", "b": ""}]);
-        let default = json!({ "a": "default_a", "b": "default_b"});
-        remove_blank_or_default_fields(&mut arr, &default);
-        assert_eq!(arr[0], json!({ "b": "val"}));
-        assert_eq!(arr[1], json!({ "a": "default_a"}));
-        assert_eq!(arr[1], json!({ "a": "default_a"}));
     }
 
     #[test]
@@ -781,6 +777,9 @@ mod tests {
         create_db_table(&pool)
             .await
             .expect("Failed to create tables");
+        crate::migration::migrate_configs(Some(&pool))
+            .await
+            .expect("Failed to run migrations");
         pool
     }
 
@@ -1411,6 +1410,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_config_with_mode_memory() {
+        use crate::utils::db_mode::DatabaseManager;
+        DatabaseManager::cleanup_memory_pools();
+
         let config = Config {
             service: Some("memory-test".to_string()),
             ..Config::default()
@@ -1440,6 +1442,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_config_operations_with_mode_memory() {
+        use crate::utils::db_mode::DatabaseManager;
+        DatabaseManager::cleanup_memory_pools();
+
         let config1 = Config {
             service: Some("memory-test-1".to_string()),
             ..Config::default()

@@ -88,9 +88,9 @@ const AutoImportModal: React.FC<AutoImportModalProps> = ({
         kubeconfigPath: state.kubeConfig,
       })
 
-      for (const config of configs) {
-        await invoke('insert_config_cmd', { config })
-      }
+      const configsJson = JSON.stringify(configs)
+
+      await invoke('import_configs_cmd', { json: configsJson })
 
       toaster.success({
         title: 'Success',

@@ -177,6 +177,9 @@ mod tests {
         create_db_table(&pool)
             .await
             .expect("Failed to create tables");
+        crate::utils::migration::migrate_configs(Some(&pool))
+            .await
+            .expect("Failed to run migrations");
         pool
     }
 
@@ -530,6 +533,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_config_state_with_mode_memory() {
+        use crate::utils::db_mode::DatabaseManager;
+        DatabaseManager::cleanup_memory_pools();
+
         let config_data = Config {
             service: Some("memory-state-test".to_string()),
             ..Config::default()
@@ -571,6 +577,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_configs_state_with_mode_memory() {
+        use crate::utils::db_mode::DatabaseManager;
+        DatabaseManager::cleanup_memory_pools();
+
         let config_data = Config {
             service: Some("get-state-memory-test".to_string()),
             ..Config::default()

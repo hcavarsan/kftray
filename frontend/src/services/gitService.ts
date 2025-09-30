@@ -43,7 +43,7 @@ export const gitService = {
       repoUrl: credentials.repoUrl,
       configPath: credentials.configPath,
       useSystemCredentials: credentials.authMethod === 'system',
-      flush: true,
+      flush: credentials.flushBeforeSync ?? false,
       githubToken:
         credentials.authMethod === 'token' ? credentials.token : null,
     })
