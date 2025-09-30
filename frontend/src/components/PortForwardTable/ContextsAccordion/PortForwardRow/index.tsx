@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import {
   ClipboardIcon,
   ExternalLinkIcon,
@@ -54,28 +54,27 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   const [httpLogsEnabled, setHttpLogsEnabled] = useState<{
     [key: string]: boolean
   }>({})
-  const prevConfigIdRef = useRef<number | null>(null)
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false)
   const [isHttpLogsConfigOpen, setIsHttpLogsConfigOpen] = useState(false)
   const [activePod, setActivePod] = useState<string | null>(null)
   const [localInitiating, setLocalInitiating] = useState(false)
 
-  const fetchHttpLogState = useCallback(async () => {
-    try {
-      const enabled = await invoke('get_http_logs_cmd', { configId: config.id })
-
-      setHttpLogsEnabled(prev => ({ ...prev, [config.id]: enabled }))
-    } catch (error) {
-      console.error('Error fetching HTTP log state:', error)
-    }
-  }, [config.id])
-
   useEffect(() => {
-    if (prevConfigIdRef.current !== config.id) {
-      prevConfigIdRef.current = config.id
-      fetchHttpLogState()
+    const fetchHttpLogState = async () => {
+      try {
+        const enabled = await invoke<boolean>('get_http_logs_cmd', {
+          configId: config.id,
+        })
+
+        setHttpLogsEnabled(prev => ({ ...prev, [config.id]: enabled }))
+      } catch (error) {
+        console.error('Error fetching HTTP log state:', error)
+        setHttpLogsEnabled(prev => ({ ...prev, [config.id]: false }))
+      }
     }
-  }, [config.id, fetchHttpLogState])
+
+    fetchHttpLogState()
+  }, [config.id, config.http_logs_enabled])
 
   useEffect(() => {
     if (!config.is_running && !localInitiating) {
@@ -160,8 +159,17 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
     setIsHttpLogsConfigOpen(false)
   }
 
-  const handleHttpLogsConfigSave = () => {
-    fetchHttpLogState()
+  const handleHttpLogsConfigSave = async () => {
+    try {
+      const enabled = await invoke<boolean>('get_http_logs_cmd', {
+        configId: config.id,
+      })
+
+      setHttpLogsEnabled(prev => ({ ...prev, [config.id]: enabled }))
+    } catch (error) {
+      console.error('Error fetching HTTP log state:', error)
+      setHttpLogsEnabled(prev => ({ ...prev, [config.id]: false }))
+    }
   }
 
   const handleOpenLocalURL = () => {
@@ -510,11 +518,13 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
                   >
                     <FileIcon size={12} />
                     <Text ml={2} fontSize='xs'>
-                      {httpLogsEnabled[config.id] ? 'Disable' : 'Enable'} HTTP
-                      Logs
+                      {httpLogsEnabled[config.id] === true
+                        ? 'Disable'
+                        : 'Enable'}{' '}
+                      HTTP Logs
                     </Text>
                   </MenuItem>
-                  {httpLogsEnabled[config.id] && (
+                  {httpLogsEnabled[config.id] === true && (
                     <MenuItem
                       className='menu-item'
                       value='open-http-logs'

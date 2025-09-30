@@ -8,10 +8,10 @@ use log::{
 use sqlx::SqlitePool;
 
 use crate::db::get_db_pool;
-use crate::models::config_model::Config;
-use crate::utils::config::import_configs_with_mode;
-use crate::utils::db_mode::DatabaseMode;
-use crate::utils::migration::migrate_configs;
+use crate::utils::db_mode::{
+    DatabaseManager,
+    DatabaseMode,
+};
 
 pub struct GitHubConfig {
     pub repo_url: String,
@@ -174,31 +174,25 @@ impl GitHubRepository {
     async fn process_config_content(
         config_content: &str, flush_existing: bool, mode: DatabaseMode,
     ) -> GitHubResult<()> {
-        let configs: Vec<Config> = serde_json::from_str(config_content)
-            .map_err(|e| format!("Failed to parse config JSON: {e}"))?;
-
         if flush_existing && mode == DatabaseMode::File {
-            info!("Clearing existing configurations");
+            info!("Flushing existing configurations before import");
             clear_existing_configs_with_mode(mode).await?;
         }
 
-        info!("Importing {} new configurations", configs.len());
-        for config in configs {
-            let config_json = serde_json::to_string(&config)
-                .map_err(|e| format!("Failed to serialize config: {e}"))?;
-            import_configs_with_mode(config_json, mode).await?;
-        }
+        let context = DatabaseManager::get_context(mode).await?;
 
-        match migrate_configs(None).await {
-            Ok(_) => {
-                info!("Configuration import completed successfully");
-                Ok(())
-            }
-            Err(e) => {
-                error!("Error migrating configs: {e}");
-                Err(format!("Config migration failed: {e}"))
-            }
-        }
+        info!("Importing configurations using incremental merge");
+
+        crate::utils::config::import_configs_with_pool_and_mode(
+            config_content.to_string(),
+            &context.pool,
+            mode,
+        )
+        .await
+        .map_err(|e| format!("Failed to import configs: {e}"))?;
+
+        info!("Configuration import completed successfully");
+        Ok(())
     }
 }
 
@@ -274,6 +268,9 @@ mod tests {
         create_db_table(&pool)
             .await
             .expect("Failed to create tables");
+        crate::utils::migration::migrate_configs(Some(&pool))
+            .await
+            .expect("Failed to run migrations");
         pool
     }
 

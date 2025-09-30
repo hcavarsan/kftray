@@ -90,6 +90,32 @@ pub(crate) async fn update_http_logs_config_with_pool(
         e.to_string()
     })?;
 
+    sqlx::query(
+        "UPDATE configs SET
+            data = json_set(
+                json_set(
+                    json_set(
+                        json_set(data, '$.http_logs_enabled', json(?2)),
+                        '$.http_logs_max_file_size', ?3
+                    ),
+                    '$.http_logs_retention_days', ?4
+                ),
+                '$.http_logs_auto_cleanup', json(?5)
+            )
+         WHERE json_extract(data, '$.id') = ?1",
+    )
+    .bind(config.config_id)
+    .bind(if config.enabled { "true" } else { "false" })
+    .bind(config.max_file_size as i64)
+    .bind(config.retention_days as i64)
+    .bind(if config.auto_cleanup { "true" } else { "false" })
+    .execute(&mut *conn)
+    .await
+    .map_err(|e| {
+        error!("Failed to update config with http_logs settings: {e}");
+        e.to_string()
+    })?;
+
     Ok(())
 }
 

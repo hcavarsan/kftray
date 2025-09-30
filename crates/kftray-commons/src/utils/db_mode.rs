@@ -54,6 +54,9 @@ impl DatabaseManager {
                         .map_err(|e| e.to_string())?,
                 );
                 create_db_table(&pool).await.map_err(|e| e.to_string())?;
+                crate::utils::migration::migrate_configs(Some(&pool))
+                    .await
+                    .map_err(|e| e.to_string())?;
 
                 {
                     let mut pool_guard = MEMORY_DB_POOL.lock().unwrap();
