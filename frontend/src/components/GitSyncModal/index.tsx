@@ -12,6 +12,7 @@ import {
   Text,
 } from '@chakra-ui/react'
 
+import { Checkbox } from '@/components/ui/checkbox'
 import { Radio, RadioGroup } from '@/components/ui/radio'
 import { toaster } from '@/components/ui/toaster'
 import { useGitSync } from '@/contexts/GitSyncContext'
@@ -39,9 +40,8 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
     authMethod: (credentials?.authMethod || 'none') as AuthMethod,
     gitToken: credentials?.token || '',
     pollingInterval: syncStatus.pollingInterval || 60,
+    flushBeforeSync: credentials?.flush ?? false,
   }))
-
-  const [isImportAlertOpen, setIsImportAlertOpen] = useState(false)
 
   useEffect(() => {
     if (isGitSyncModalOpen && credentials) {
@@ -51,6 +51,7 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
         configPath: credentials.configPath,
         authMethod: credentials.authMethod,
         gitToken: credentials.token || '',
+        flushBeforeSync: credentials.flush ?? false,
       }))
     }
   }, [isGitSyncModalOpen, credentials])
@@ -61,15 +62,15 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
   }
   const handleSaveSettings = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault()
-    setIsImportAlertOpen(true)
-  }
 
-  const onConfirmImport = async () => {
-    setIsImportAlertOpen(false)
     try {
       const newCredentials = {
-        ...formState,
+        repoUrl: formState.repoUrl,
+        configPath: formState.configPath,
+        authMethod: formState.authMethod,
         token: formState.authMethod === 'token' ? formState.gitToken : '',
+        pollingInterval: formState.pollingInterval,
+        flush: formState.flushBeforeSync,
       }
 
       await gitService.importConfigs(newCredentials)
@@ -136,19 +137,41 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
             borderRadius='lg'
             border='1px solid rgba(255, 255, 255, 0.08)'
             my={2}
+            display='flex'
+            flexDirection='column'
           >
             <Dialog.Header
               p={1.5}
               bg='#161616'
               borderBottom='1px solid rgba(255, 255, 255, 0.05)'
+              flexShrink={0}
             >
               <Text fontSize='sm' fontWeight='medium' color='gray.100'>
                 Configure Github Sync
               </Text>
             </Dialog.Header>
 
-            <Dialog.Body p={3} position='relative' height='calc(100% - 50px)'>
-              <form onSubmit={handleSaveSettings}>
+            <Box
+              flex='1'
+              overflowY='auto'
+              p={3}
+              css={{
+                '&::-webkit-scrollbar': {
+                  width: '6px',
+                },
+                '&::-webkit-scrollbar-track': {
+                  background: 'transparent',
+                },
+                '&::-webkit-scrollbar-thumb': {
+                  background: 'rgba(255, 255, 255, 0.2)',
+                  borderRadius: '3px',
+                },
+                '&::-webkit-scrollbar-thumb:hover': {
+                  background: 'rgba(255, 255, 255, 0.3)',
+                },
+              }}
+            >
+              <form onSubmit={handleSaveSettings} id='git-sync-form'>
                 <Stack gap={4}>
                   {/* Repository URL */}
                   <Stack gap={2}>
@@ -268,6 +291,32 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
                     )}
                   </Stack>
 
+                  <Stack gap={1}>
+                    <Checkbox
+                      checked={formState.flushBeforeSync}
+                      onCheckedChange={e =>
+                        setFormState(prev => ({
+                          ...prev,
+                          flushBeforeSync: e.checked === true,
+                        }))
+                      }
+                      size='xs'
+                    >
+                      <Text fontSize='xs' color='gray.400'>
+                        Flush existing configs before sync
+                      </Text>
+                    </Checkbox>
+                    <Text
+                      fontSize='10px'
+                      color='gray.500'
+                      ml={5}
+                      lineHeight='1.3'
+                    >
+                      When enabled, all local configs will be deleted before
+                      importing from GitHub
+                    </Text>
+                  </Stack>
+
                   <Stack gap={2} mt={2}>
                     <Flex justify='space-between' align='center'>
                       <Text fontSize='xs' color='gray.400'>
@@ -319,135 +368,60 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
                       </Text>
                     </Flex>
                   </Stack>
-
-                  {/* Footer */}
-
-                  <Dialog.Footer
-                    position='absolute'
-                    bottom={0}
-                    right={0}
-                    left={0}
-                    p={3}
-                    borderTop='1px solid rgba(255, 255, 255, 0.05)'
-                    bg='#111111'
-                  >
-                    <Flex justify='space-between' width='100%'>
-                      <Box>
-                        {credentials && (
-                          <Button
-                            size='xs'
-                            variant='ghost'
-                            onClick={handleDeleteConfig}
-                            color='red.300'
-                            _hover={{ bg: 'whiteAlpha.50' }}
-                            height='28px'
-                            disabled={isLoading}
-                          >
-                            Disable Git Sync
-                          </Button>
-                        )}
-                      </Box>
-                      <HStack justify='flex-end' gap={2}>
-                        <Button
-                          size='xs'
-                          variant='ghost'
-                          onClick={closeGitSyncModal}
-                          _hover={{ bg: 'whiteAlpha.50' }}
-                          height='28px'
-                        >
-                          Cancel
-                        </Button>
-                        <Button
-                          type='submit'
-                          size='xs'
-                          bg='blue.500'
-                          _hover={{ bg: 'blue.600' }}
-                          disabled={
-                            isLoading ||
-                            !formState.repoUrl ||
-                            !formState.configPath ||
-                            (formState.authMethod === 'token' &&
-                              !formState.gitToken)
-                          }
-                          height='28px'
-                        >
-                          Save Settings
-                        </Button>
-                      </HStack>
-                    </Flex>
-                  </Dialog.Footer>
                 </Stack>
               </form>
-            </Dialog.Body>
-          </Dialog.Content>
-        </Dialog.Positioner>
-      </Dialog.Root>
-
-      {/* Import Alert Dialog */}
-      <Dialog.Root
-        open={isImportAlertOpen}
-        onOpenChange={() => setIsImportAlertOpen(false)}
-        role='alertdialog'
-      >
-        <Dialog.Backdrop
-          bg='transparent'
-          backdropFilter='blur(4px)'
-          borderRadius='lg'
-          height='100vh'
-        />
-        <Dialog.Positioner overflow='hidden'>
-          <Dialog.Content
-            onClick={e => e.stopPropagation()}
-            maxWidth='400px'
-            width='90vw'
-            bg='#111111'
-            borderRadius='lg'
-            border='1px solid rgba(255, 255, 255, 0.08)'
-            overflow='hidden'
-            mt={150}
-          >
-            <Dialog.Header
-              p={1.5}
-              bg='#161616'
-              borderBottom='1px solid rgba(255, 255, 255, 0.05)'
-            >
-              <Text fontSize='sm' fontWeight='medium' color='gray.100'>
-                Enable Git Sync
-              </Text>
-            </Dialog.Header>
-
-            <Dialog.Body p={3}>
-              <Text fontSize='xs' color='gray.400'>
-                Enabling Git Sync will replace all current configurations with
-                those from the git repository. Do you want to continue?
-              </Text>
-            </Dialog.Body>
+            </Box>
 
             <Dialog.Footer
               p={3}
               borderTop='1px solid rgba(255, 255, 255, 0.05)'
               bg='#111111'
+              flexShrink={0}
             >
-              <HStack justify='flex-end' gap={2}>
-                <Button
-                  size='xs'
-                  variant='ghost'
-                  onClick={() => setIsImportAlertOpen(false)}
-                  _hover={{ bg: 'whiteAlpha.50' }}
-                  height='28px'
-                >
-                  Cancel
-                </Button>
-                <Button
-                  size='xs'
-                  bg='blue.500'
-                  _hover={{ bg: 'blue.600' }}
-                  onClick={onConfirmImport}
-                  height='28px'
-                >
-                  Import
-                </Button>
-              </HStack>
+              <Flex justify='space-between' width='100%'>
+                <Box>
+                  {credentials && (
+                    <Button
+                      size='xs'
+                      variant='ghost'
+                      onClick={handleDeleteConfig}
+                      color='red.300'
+                      _hover={{ bg: 'whiteAlpha.50' }}
+                      height='28px'
+                      disabled={isLoading}
+                    >
+                      Disable Git Sync
+                    </Button>
+                  )}
+                </Box>
+                <HStack justify='flex-end' gap={2}>
+                  <Button
+                    size='xs'
+                    variant='ghost'
+                    onClick={closeGitSyncModal}
+                    _hover={{ bg: 'whiteAlpha.50' }}
+                    height='28px'
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    type='submit'
+                    form='git-sync-form'
+                    size='xs'
+                    bg='blue.500'
+                    _hover={{ bg: 'blue.600' }}
+                    disabled={
+                      isLoading ||
+                      !formState.repoUrl ||
+                      !formState.configPath ||
+                      (formState.authMethod === 'token' && !formState.gitToken)
+                    }
+                    height='28px'
+                  >
+                    Save Settings
+                  </Button>
+                </HStack>
+              </Flex>
             </Dialog.Footer>
           </Dialog.Content>
         </Dialog.Positioner>

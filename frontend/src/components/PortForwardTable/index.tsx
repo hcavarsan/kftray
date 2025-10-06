@@ -19,6 +19,7 @@ const PortForwardTable: React.FC<TableProps> = ({
   stopSelectedPortForwarding,
   stopAllPortForwarding,
   handleEditConfig,
+  handleDuplicateConfig,
   handleDeleteConfig,
   confirmDeleteConfig,
   isAlertOpen,
@@ -218,6 +219,7 @@ const PortForwardTable: React.FC<TableProps> = ({
               handleDeleteConfig={handleDeleteConfig}
               confirmDeleteConfig={confirmDeleteConfig}
               handleEditConfig={handleEditConfig}
+              handleDuplicateConfig={handleDuplicateConfig}
               isAlertOpen={isAlertOpen}
               setIsAlertOpen={setIsAlertOpen}
               handleSelectionChange={handleSelectionChange}

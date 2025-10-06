@@ -459,8 +459,11 @@ pub fn merge_json_values(default: JsonValue, custom: JsonValue) -> JsonValue {
     match (default, custom) {
         (JsonValue::Object(mut default_map), JsonValue::Object(custom_map)) => {
             for (key, custom_value) in custom_map {
-                let default_value = default_map.entry(key.clone()).or_insert(JsonValue::Null);
-                *default_value = merge_json_values(default_value.take(), custom_value);
+                if let Some(default_value) = default_map.get_mut(&key) {
+                    *default_value = merge_json_values(default_value.take(), custom_value);
+                } else {
+                    default_map.insert(key, custom_value);
+                }
             }
             JsonValue::Object(default_map)
         }
@@ -489,6 +492,9 @@ mod tests {
         create_db_table(&pool)
             .await
             .expect("Failed to create tables");
+        migrate_configs(Some(&pool))
+            .await
+            .expect("Failed to run migrations");
         pool
     }
 
@@ -593,7 +599,11 @@ mod tests {
         assert_eq!(merged["service"], "old-service");
         assert_eq!(merged["namespace"], "old-namespace");
 
-        assert_eq!(merged["auto_loopback_address"], false);
+        // Deserialize to verify default values are applied correctly
+        let merged_config: Config = serde_json::from_value(merged).unwrap();
+        assert_eq!(merged_config.service, Some("old-service".to_string()));
+        assert_eq!(merged_config.namespace, "old-namespace");
+        assert!(!merged_config.auto_loopback_address);
     }
 
     #[tokio::test]

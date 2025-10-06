@@ -292,7 +292,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
   }
 
   useEffect(() => {
-    if (isEdit && isModalOpen) {
+    if (isModalOpen && (isEdit || newConfig.context)) {
       setFormState(prev => ({
         ...prev,
         selectedWorkloadType: newConfig.workload_type

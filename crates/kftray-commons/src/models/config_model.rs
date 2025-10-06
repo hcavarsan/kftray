@@ -60,6 +60,14 @@ where
     deserializer.deserialize_any(BoolOrStringVisitor)
 }
 
+fn is_false(value: &bool) -> bool {
+    !value
+}
+
+fn is_empty_string(value: &str) -> bool {
+    value.is_empty()
+}
+
 #[derive(Clone, Deserialize, PartialEq, Serialize, Debug)]
 pub struct Config {
     #[serde(default)]
@@ -68,6 +76,7 @@ pub struct Config {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub service: Option<String>,
     #[serde(default)]
+    #[serde(skip_serializing_if = "is_empty_string")]
     pub namespace: String,
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -81,12 +90,14 @@ pub struct Config {
     #[serde(default)]
     pub workload_type: Option<String>,
     #[serde(default)]
+    #[serde(skip_serializing_if = "is_empty_string")]
     pub protocol: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub remote_address: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub local_address: Option<String>,
     #[serde(default)]
+    #[serde(skip_serializing_if = "is_false")]
     pub auto_loopback_address: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub alias: Option<String>,
@@ -133,10 +144,108 @@ impl Default for Config {
             kubeconfig: Some("default".to_string()),
             target: Some("default-target".to_string()),
             http_logs_enabled: Some(false),
-            http_logs_max_file_size: Some(10 * 1024 * 1024), // 10MB
+            http_logs_max_file_size: Some(10 * 1024 * 1024),
             http_logs_retention_days: Some(7),
             http_logs_auto_cleanup: Some(true),
         }
+    }
+}
+
+impl Config {
+    pub fn prepare_for_export(mut self) -> Self {
+        self.id = None;
+
+        if self.service.as_deref().is_some_and(Self::is_placeholder) {
+            self.service = None;
+        }
+
+        if Self::is_placeholder(&self.namespace) {
+            self.namespace = String::new();
+        }
+
+        if Self::is_placeholder(&self.protocol) {
+            self.protocol = String::new();
+        }
+
+        if self.target.as_deref().is_some_and(Self::is_placeholder) {
+            self.target = None;
+        }
+
+        if self
+            .remote_address
+            .as_deref()
+            .is_some_and(Self::is_placeholder)
+        {
+            self.remote_address = None;
+        }
+
+        if self.alias.as_deref().is_some_and(Self::is_placeholder) {
+            self.alias = None;
+        }
+
+        if self.local_address.as_deref() == Some("127.0.0.1") {
+            self.local_address = None;
+        }
+
+        if self.kubeconfig.as_deref() == Some("default") {
+            self.kubeconfig = None;
+        }
+
+        if self.domain_enabled == Some(false) {
+            self.domain_enabled = None;
+        }
+
+        if self.http_logs_enabled == Some(true) {
+            if self.http_logs_max_file_size == Some(10 * 1024 * 1024) {
+                self.http_logs_max_file_size = None;
+            }
+
+            if self.http_logs_retention_days == Some(7) {
+                self.http_logs_retention_days = None;
+            }
+
+            if self.http_logs_auto_cleanup == Some(true) {
+                self.http_logs_auto_cleanup = None;
+            }
+        } else {
+            self.http_logs_enabled = None;
+            self.http_logs_max_file_size = None;
+            self.http_logs_retention_days = None;
+            self.http_logs_auto_cleanup = None;
+        }
+
+        match self.workload_type.as_deref() {
+            Some("service") => {
+                self.target = None;
+                self.remote_address = None;
+            }
+            Some("pod") => {
+                self.service = None;
+                self.remote_address = None;
+            }
+            Some("proxy") => {
+                self.service = None;
+                self.target = None;
+            }
+            _ => {}
+        }
+
+        self
+    }
+
+    fn is_placeholder(s: &str) -> bool {
+        matches!(
+            s,
+            "default-service"
+                | "default-namespace"
+                | "default-target"
+                | "default-remote-address"
+                | "default-alias"
+                | "default-workload"
+                | "current-context"
+                | "protocol"
+                | ""
+        )
     }
 }
 
