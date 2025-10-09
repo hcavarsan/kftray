@@ -44,7 +44,7 @@
     "eslint": "^9.36.0",
     "eslint-plugin-import": "^2.32.0",
     "eslint-plugin-react": "^7.37.5",
-    "eslint-plugin-react-hooks": "^6.0.0",
+    "eslint-plugin-react-hooks": "^7.0.0",
     "eslint-plugin-simple-import-sort": "^12.1.1",
     "knip": "^5.64.1",
     "prettier": "^3.6.2",
