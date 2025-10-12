@@ -180,43 +180,26 @@ mod tests {
     fn test_render_legend() {
         let backend = TestBackend::new(100, 50);
         let mut terminal = Terminal::new(backend).unwrap();
-        terminal
-            .draw(|frame| {
-                let area = Rect::new(0, 0, 100, 5);
-                render_legend(frame, area, ActiveComponent::Menu);
-            })
-            .unwrap();
 
-        let buffer = terminal.backend().buffer();
-        assert!(!buffer.content.is_empty());
+        let components = [
+            ActiveComponent::Menu,
+            ActiveComponent::SearchBar,
+            ActiveComponent::StoppedTable,
+            ActiveComponent::RunningTable,
+            ActiveComponent::Details,
+            ActiveComponent::Logs,
+        ];
 
-        terminal
-            .draw(|frame| {
-                let area = Rect::new(0, 0, 100, 5);
-                render_legend(frame, area, ActiveComponent::StoppedTable);
-            })
-            .unwrap();
-
-        terminal
-            .draw(|frame| {
-                let area = Rect::new(0, 0, 100, 5);
-                render_legend(frame, area, ActiveComponent::RunningTable);
-            })
-            .unwrap();
-
-        terminal
-            .draw(|frame| {
-                let area = Rect::new(0, 0, 100, 5);
-                render_legend(frame, area, ActiveComponent::Details);
-            })
-            .unwrap();
-
-        terminal
-            .draw(|frame| {
-                let area = Rect::new(0, 0, 100, 5);
-                render_legend(frame, area, ActiveComponent::Logs);
-            })
-            .unwrap();
+        for width in 5..60 {
+            for component in components {
+                let area = Rect::new(0, 0, width, 3);
+                terminal
+                    .draw(|frame| {
+                        render_legend(frame, area, component);
+                    })
+                    .unwrap();
+            }
+        }
     }
 
     #[test]
