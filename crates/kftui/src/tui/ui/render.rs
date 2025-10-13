@@ -61,7 +61,12 @@ pub fn render_legend(f: &mut Frame, area: Rect, active_component: ActiveComponen
     let available_width = area.width as usize - 2;
 
     let truncated_legend_message = if legend_message.len() > available_width {
-        format!("{}...", &legend_message[..available_width - 3])
+        let end_index = legend_message
+            .char_indices()
+            .map(|(i, _)| i)
+            .nth(available_width.saturating_sub(3))
+            .unwrap_or(0);
+        format!("{}...", &legend_message[0..end_index])
     } else {
         legend_message
     };
