@@ -777,6 +777,19 @@ pub fn create_button(label: &str, is_selected: bool) -> Paragraph<'_> {
 }
 
 pub fn render_context_selection_popup(f: &mut Frame, app: &mut App, area: Rect) {
+    let main_chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Fill(1),
+            Constraint::Length(2),
+            Constraint::Fill(1),
+        ])
+        .split(area);
+
+    let contexts_area = main_chunks[0];
+    let settings_area = main_chunks[1];
+    let explanation_area = main_chunks[2];
+
     let contexts: Vec<ListItem> = app
         .contexts
         .iter()
@@ -794,7 +807,7 @@ pub fn render_context_selection_popup(f: &mut Frame, app: &mut App, area: Rect) 
         .highlight_symbol(">> ");
 
     f.render_widget(Clear, area);
-    f.render_stateful_widget(context_list, area, &mut app.context_list_state);
+    f.render_stateful_widget(context_list, contexts_area, &mut app.context_list_state);
 
     let explanation_text = vec![
         Line::from(""),
@@ -825,8 +838,35 @@ pub fn render_context_selection_popup(f: &mut Frame, app: &mut App, area: Rect) 
         .alignment(Alignment::Left)
         .wrap(ratatui::widgets::Wrap { trim: true });
 
-    let explanation_area = Rect::new(area.x, area.y + area.height - 9, area.width, 9);
+    let alias_as_domain = if app.auto_import_alias_as_domain {
+        "[x]"
+    } else {
+        "[ ]"
+    };
+    let auto_loopback = if app.auto_import_auto_loopback {
+        "[x]"
+    } else {
+        "[ ]"
+    };
+    let auto_import_settings = vec![
+        Line::from(format!(
+            "{alias_as_domain} Enable alias as domain for all configurations (toggle: 'a')"
+        )),
+        Line::from(format!(
+            "{auto_loopback} Auto select address for all configurations (toggle: 'd')"
+        )),
+    ];
+    let auto_import_settings_paragraph = Paragraph::new(Text::from(auto_import_settings))
+        .block(
+            Block::default()
+                .borders(Borders::RIGHT | Borders::LEFT)
+                .style(Style::default().bg(BASE).fg(TEXT)),
+        )
+        .alignment(Alignment::Left)
+        .wrap(ratatui::widgets::Wrap { trim: true });
 
+
+    f.render_widget(auto_import_settings_paragraph, settings_area);
     f.render_widget(explanation_paragraph, explanation_area);
 }
 
