@@ -1,8 +1,8 @@
 [tools]
+"rust" = { version = "nightly", components = "rust-src,llvm-tools" }
 cargo = "latest"
 node = "24"
 pnpm = "latest"
-"rust" = { version = "nightly", components = "rust-src,llvm-tools" }
 
 "cargo:cargo-llvm-cov" = "latest"
 "cargo:cargo-nextest" = "latest"
@@ -90,10 +90,10 @@ description = "Run pre-commit checks (format, lint, test)"
 run = ["mise run format", "mise run lint", "mise run test:back"]
 
 [tasks."precommit:hook"]
-description = "Run git pre-commit hook (format, lint, git add)"
+description = "Run git pre-commit hook (format, check, git add)"
 run = [
   "mise run format",
-  "mise run lint",
+  "cargo check --workspace --all-targets --all-features",
   "git add -u"
 ]
 

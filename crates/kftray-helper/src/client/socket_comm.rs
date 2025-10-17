@@ -1,7 +1,4 @@
-use std::io::{
-    Read,
-    Write,
-};
+use std::io;
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;
 use std::path::Path;
@@ -99,23 +96,6 @@ fn is_directory_writable(path: &Path) -> bool {
     write_result.is_ok()
 }
 
-#[cfg(windows)]
-
-fn try_connect_pipe(socket_path: &Path) -> bool {
-    let pipe_name = socket_path.to_string_lossy();
-    debug!("Checking if Windows pipe is available: {}", pipe_name);
-    match ClientOptions::new().open(pipe_name.as_ref()) {
-        Ok(_) => {
-            debug!("Successfully connected to Windows pipe");
-            true
-        }
-        Err(e) => {
-            debug!("Failed to connect to Windows pipe: {}", e);
-            false
-        }
-    }
-}
-
 pub fn send_request(
     socket_path: &Path, app_id: &str, command: RequestCommand,
 ) -> Result<HelperResponse, HelperError> {
@@ -146,7 +126,7 @@ pub fn send_request(
         }
 
         debug!("Sending request ({} bytes)", request_bytes.len());
-        match stream.write_all(&request_bytes) {
+        match io::Write::write_all(&mut stream, &request_bytes) {
             Ok(_) => debug!("Request sent successfully"),
             Err(e) => {
                 return Err(HelperError::Communication(format!(
@@ -155,7 +135,7 @@ pub fn send_request(
             }
         }
 
-        match stream.flush() {
+        match io::Write::flush(&mut stream) {
             Ok(_) => debug!("Socket flushed successfully"),
             Err(e) => {
                 return Err(HelperError::Communication(format!(
@@ -181,7 +161,7 @@ pub fn send_request(
                 HelperError::Communication(format!("Failed to create tokio runtime: {}", e))
             })?;
 
-        let result = rt.block_on(async {
+        rt.block_on(async {
             let mut pipe = ClientOptions::new().open(pipe_name.as_ref()).map_err(|e| {
                 HelperError::Communication(format!("Failed to connect to Windows pipe: {}", e))
             })?;
@@ -210,9 +190,7 @@ pub fn send_request(
             tokio::time::sleep(Duration::from_millis(200)).await;
 
             read_windows_response(&mut pipe).await
-        });
-
-        return result;
+        })
     }
 }
 
@@ -237,7 +215,7 @@ fn read_unix_response(mut stream: UnixStream) -> Result<HelperResponse, HelperEr
             )));
         }
 
-        match stream.read(&mut tmp_buf) {
+        match io::Read::read(&mut stream, &mut tmp_buf) {
             Ok(0) => {
                 debug!("End of stream reached (0 bytes read)");
                 if buffer.is_empty() {
