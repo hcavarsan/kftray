@@ -3,3 +3,109 @@ cargo = "latest"
 node = "24"
 pnpm = "latest"
 "rust" = { version = "nightly", components = "rust-src,llvm-tools" }
+
+"cargo:cargo-llvm-cov" = "latest"
+"cargo:cargo-nextest" = "latest"
+"cargo:cargo-insta" = "latest"
+"cargo:tauri-cli" = "latest"
+
+[tasks.dev]
+description = "Start Tauri development mode (tauri dev)"
+run = "cargo build --bin kftray-helper --release && pnpm tauri dev"
+
+[tasks.build]
+description = "Build Tauri application for production (tauri build)"
+run = "cargo build --bin kftray-helper --release && pnpm tauri build"
+
+[tasks."build:ui"]
+description = "Build only the frontend UI"
+run = "pnpm --filter @kftray/ui run build"
+
+[tasks."build:analyze"]
+description = "Build frontend with bundle analysis"
+run = "pnpm --filter @kftray/ui run build:analyze"
+
+[tasks.tauri]
+description = "Run tauri CLI directly"
+run = "cargo build --bin kftray-helper --release && tauri"
+
+[tasks."test:server"]
+description = "Run Docker proxy tests"
+run = "bash hacks/test_proxy.sh"
+
+[tasks."test:back"]
+description = "Run Rust backend tests with coverage"
+run = "INSTA_UPDATE=1 RUST_BACKTRACE=1 cargo llvm-cov nextest --profile ci --config-file .cargo/nextest.toml --locked --workspace --all-features --lib --bins --examples --tests"
+
+[tasks.check]
+description = "Run frontend type checking"
+run = "pnpm --filter @kftray/ui run check"
+
+[tasks."lint:front"]
+description = "Lint frontend code with ESLint (with auto-fix)"
+run = "pnpm --filter @kftray/ui run lint"
+
+[tasks."lint:back"]
+description = "Lint backend code with Clippy (with auto-fix)"
+run = "cargo clippy --workspace --all-targets --all-features --fix --allow-dirty --allow-staged -- -D warnings"
+
+[tasks.lint]
+description = "Lint both frontend and backend (with auto-fix)"
+depends = ["lint:front", "lint:back"]
+
+[tasks."format:front"]
+description = "Format frontend code with Prettier"
+run = "pnpm --filter @kftray/ui run format"
+
+[tasks."format:back"]
+description = "Format backend code with rustfmt"
+run = "rustup run nightly cargo fmt"
+
+[tasks.format]
+description = "Format both frontend and backend code"
+depends = ["format:front", "format:back"]
+
+[tasks."bump:patch"]
+description = "Bump patch version"
+run = "cd hacks/kftray-utils && cargo run --bin bump_version patch"
+
+[tasks."bump:minor"]
+description = "Bump minor version"
+run = "cd hacks/kftray-utils && cargo run --bin bump_version minor"
+
+[tasks."bump:major"]
+description = "Bump major version"
+run = "cd hacks/kftray-utils && cargo run --bin bump_version major"
+
+[tasks."release:patch"]
+description = "Release patch version"
+run = "cargo run --bin bump_version patch && git add . && git commit -m 'chore: release new version'"
+
+[tasks."release:minor"]
+description = "Release minor version"
+run = "cargo run --bin bump_version minor && git add . && git commit -m 'chore: release new version'"
+
+[tasks.precommit]
+description = "Run pre-commit checks (format, lint, test)"
+run = ["mise run format", "mise run lint", "mise run test:back"]
+
+[tasks."precommit:hook"]
+description = "Run git pre-commit hook (format, lint, git add)"
+run = [
+  "mise run format",
+  "mise run lint",
+  "git add -u"
+]
+
+[tasks."generate-icons"]
+description = "Generate application icons"
+run = "cargo run --bin generate_icons"
+
+[tasks.knip]
+description = "Detect unused exports in frontend"
+run = "pnpm --filter @kftray/ui run knip"
+
+# Setup Task
+[tasks.setup]
+description = "Setup development environment for all platforms"
+run = "bash hacks/setup.sh"

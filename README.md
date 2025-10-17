@@ -167,6 +167,32 @@ For UDP or when you need to reach external services, we deploy a small relay pod
 
 Check the [releases page](https://github.com/hcavarsan/kftray/releases) for the full changelog.
 
+## Development
+
+Want to contribute or build from source? We use [mise](https://mise.jdx.dev) to manage the development environment.
+
+**Quick start:**
+```bash
+# Install mise
+curl https://mise.run | sh
+
+# Clone and setup
+git clone https://github.com/hcavarsan/kftray.git
+cd kftray
+mise install        # Install all tools
+mise run setup      # Setup dependencies
+mise run dev        # Start development
+```
+
+**Available commands:**
+- `mise run dev` - Start development mode
+- `mise run build` - Build production app
+- `mise run format` - Format code
+- `mise run lint` - Lint with auto-fix
+- `mise run test:back` - Run tests
+
+See [DEVELOPMENT.md](DEVELOPMENT.md) for the complete development guide.
+
 ## Contributing
 
 We're always looking for contributions. Whether it's bug fixes, new features, or just ideas, we'd love to hear from you.
