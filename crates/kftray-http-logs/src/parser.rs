@@ -1416,10 +1416,6 @@ mod tests {
             .unwrap();
         assert_eq!(result, b"Hello World");
 
-        let mut headers = [EMPTY_HEADER; 1];
-        headers[0].name = "Content-Encoding";
-        headers[0].value = b"gzip";
-
         let headers: [Header; 0] = [];
         let body = b"Hello World";
         let result = BodyParser::process_response_body(body, &headers)
