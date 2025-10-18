@@ -83,6 +83,7 @@ fn load_config() -> Result<ProxyConfig, ProxyError> {
     let proxy_type = match proxy_type_lower.as_str() {
         "tcp" => ProxyType::Tcp,
         "udp" => ProxyType::Udp,
+        "reverse_http" => ProxyType::ReverseHttp,
         invalid_type => {
             println!("Invalid proxy type encountered: '{invalid_type}'");
             return Err(ProxyError::Configuration(format!(
@@ -93,12 +94,28 @@ fn load_config() -> Result<ProxyConfig, ProxyError> {
 
     println!("Selected proxy type: {proxy_type:?}");
 
+    let (http_port, websocket_port) = if matches!(proxy_type, ProxyType::ReverseHttp) {
+        let http = env::var("HTTP_PORT")
+            .unwrap_or_else(|_| "8080".to_string())
+            .parse()
+            .map_err(|_| ProxyError::Configuration("Invalid HTTP_PORT".into()))?;
+        let ws = env::var("WEBSOCKET_PORT")
+            .unwrap_or_else(|_| "9999".to_string())
+            .parse()
+            .map_err(|_| ProxyError::Configuration("Invalid WEBSOCKET_PORT".into()))?;
+        (Some(http), Some(ws))
+    } else {
+        (None, None)
+    };
+
     let config = ProxyConfig::builder()
         .target_host(original_host)
         .resolved_ip(resolved_ip)
         .target_port(target_port)
         .proxy_port(proxy_port)
         .proxy_type(proxy_type)
+        .http_port(http_port)
+        .websocket_port(websocket_port)
         .build()?;
 
     println!("Final config proxy type: {:?}", config.proxy_type);
@@ -223,6 +240,7 @@ mod tests {
         match config.proxy_type {
             ProxyType::Tcp => {}
             ProxyType::Udp => panic!("Expected TCP proxy type, got UDP"),
+            ProxyType::ReverseHttp => panic!("Expected TCP proxy type, got ReverseHttp"),
         }
     }
 
@@ -246,6 +264,7 @@ mod tests {
         match config.proxy_type {
             ProxyType::Udp => {}
             ProxyType::Tcp => panic!("Expected UDP proxy type, got TCP"),
+            ProxyType::ReverseHttp => panic!("Expected UDP proxy type, got ReverseHttp"),
         }
     }
 
@@ -269,6 +288,7 @@ mod tests {
         match config.proxy_type {
             ProxyType::Tcp => {}
             ProxyType::Udp => panic!("Expected TCP proxy type, got UDP"),
+            ProxyType::ReverseHttp => panic!("Expected TCP proxy type, got ReverseHttp"),
         }
     }
 

@@ -16,6 +16,12 @@ export interface Config {
   kubeconfig: string
   is_running: boolean
   http_logs_enabled?: boolean
+  exposure_type?: string
+  cert_manager_enabled?: boolean
+  cert_issuer?: string
+  cert_issuer_kind?: string
+  ingress_class?: string
+  ingress_annotations?: string
 }
 
 type AuthMethod = 'none' | 'system' | 'token'

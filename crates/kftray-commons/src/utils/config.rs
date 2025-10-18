@@ -356,9 +356,27 @@ fn validate_imported_config(config: &Config) -> Result<(), String> {
                 return Err("Remote address is required for proxy workload type".to_string());
             }
         }
+        Some("expose") => {
+            if config.alias.is_none() || config.alias.as_ref().unwrap().is_empty() {
+                return Err("Alias/Domain is required for expose workload type".to_string());
+            }
+            if config.local_port.is_none() {
+                return Err("Local port is required for expose workload type".to_string());
+            }
+            // Validate cert-manager requirements if enabled
+            if config.exposure_type.as_deref() == Some("public")
+                && config.cert_manager_enabled.unwrap_or(false)
+            {
+                if config.cert_issuer.is_none() || config.cert_issuer.as_ref().unwrap().is_empty() {
+                    return Err(
+                        "Certificate issuer is required when cert-manager is enabled".to_string(),
+                    );
+                }
+            }
+        }
         Some(workload_type) => {
             return Err(format!(
-                "Invalid workload type: {workload_type}. Must be 'service', 'pod', or 'proxy'"
+                "Invalid workload type: {workload_type}. Must be 'service', 'pod', 'proxy', or 'expose'"
             ));
         }
         None => {
