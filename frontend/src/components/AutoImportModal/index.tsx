@@ -16,6 +16,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { open } from '@tauri-apps/plugin-dialog'
 
 import { fetchKubeContexts } from '@/components/AddConfigModal/utils'
+import { Checkbox } from '@/components/ui/checkbox'
 import { toaster } from '@/components/ui/toaster'
 import {
   AutoImportModalProps,
@@ -33,6 +34,8 @@ const AutoImportModal: React.FC<AutoImportModalProps> = ({
   const [state, setState] = useState({
     selectedContext: null as SingleValue<StringOption>,
     kubeConfig: 'default',
+    aliasAsDomain: false,
+    enableAutoLoopback: false,
     isImporting: false,
   })
 
@@ -41,6 +44,19 @@ const AutoImportModal: React.FC<AutoImportModalProps> = ({
     queryFn: () => fetchKubeContexts(state.kubeConfig),
     enabled: isOpen,
   })
+
+  const handleCheckboxChange = (
+    checkbox: string,
+    e: { checked: boolean | 'indeterminate' },
+  ) => {
+    const isCheckedBoolean = e.checked === 'indeterminate' ? false : e.checked
+
+    if (checkbox === 'alias_as_domain') {
+      setState(prev => ({ ...prev, aliasAsDomain: isCheckedBoolean }))
+    } else if (checkbox === 'enable_auto_loopback') {
+      setState(prev => ({ ...prev, enableAutoLoopback: isCheckedBoolean }))
+    }
+  }
 
   const handleSetKubeConfig = async () => {
     try {
@@ -87,6 +103,15 @@ const AutoImportModal: React.FC<AutoImportModalProps> = ({
         contextName: state.selectedContext.value,
         kubeconfigPath: state.kubeConfig,
       })
+
+      for (const config of configs) {
+        if (state.aliasAsDomain) {
+          config.domain_enabled = true
+        }
+        if (state.enableAutoLoopback) {
+          config.auto_loopback_address = true
+        }
+      }
 
       const configsJson = JSON.stringify(configs)
 
@@ -292,6 +317,31 @@ const AutoImportModal: React.FC<AutoImportModalProps> = ({
                     Please select a valid kubeconfig file
                   </Text>
                 )}
+              </Stack>
+              <Stack>
+                <Checkbox
+                  size='xs'
+                  checked={state.aliasAsDomain}
+                  onCheckedChange={e =>
+                    handleCheckboxChange('alias_as_domain', e)
+                  }
+                >
+                  <Text fontSize='xs' color='gray.400'>
+                    Enable alias as domain for all configurations
+                  </Text>
+                </Checkbox>
+
+                <Checkbox
+                  size='xs'
+                  checked={state.enableAutoLoopback}
+                  onCheckedChange={e =>
+                    handleCheckboxChange('enable_auto_loopback', e)
+                  }
+                >
+                  <Text fontSize='xs' color='gray.400'>
+                    Auto select address for all configurations
+                  </Text>
+                </Checkbox>
               </Stack>
 
               <VStack align='start' gap={2.5} mt={2}>
