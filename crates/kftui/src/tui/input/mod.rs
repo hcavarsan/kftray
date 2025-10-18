@@ -251,6 +251,8 @@ pub struct App {
     pub table_state_stopped: TableState,
     pub table_state_running: TableState,
     pub contexts: Vec<String>,
+    pub auto_import_alias_as_domain: bool,
+    pub auto_import_auto_loopback: bool,
     pub selected_context_index: usize,
     pub context_list_state: ListState,
     pub tui_logger_state: TuiWidgetState,
@@ -324,6 +326,8 @@ impl App {
             input_buffer: String::new(),
             selected_file_path: None,
             file_content: None,
+            auto_import_alias_as_domain: false,
+            auto_import_auto_loopback: false,
             stopped_configs: Vec::new(),
             running_configs: Vec::new(),
             error_message: None,
@@ -1593,6 +1597,12 @@ pub async fn handle_context_selection_input(
             app.context_list_state
                 .select(Some(app.selected_context_index));
         }
+    } else if let KeyCode::Esc = key {
+        app.state = AppState::Normal;
+    } else if let KeyCode::Char('a') = key {
+        app.auto_import_alias_as_domain = !app.auto_import_alias_as_domain;
+    } else if let KeyCode::Char('d') = key {
+        app.auto_import_auto_loopback = !app.auto_import_auto_loopback;
     } else if let KeyCode::Down = key
         && app.selected_context_index < app.contexts.len() - 1
     {

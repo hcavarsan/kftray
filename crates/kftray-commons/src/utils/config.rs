@@ -577,6 +577,31 @@ pub async fn insert_config_with_mode(config: Config, mode: DatabaseMode) -> Resu
     insert_config_with_pool_and_mode(config, &context.pool, mode).await
 }
 
+pub async fn upsert_configs_with_mode(
+    configs: Vec<Config>, mode: DatabaseMode,
+) -> Result<(), String> {
+    let context = DatabaseManager::get_context(mode).await?;
+    upsert_configs_with_pool_and_mode(configs, &context.pool, mode).await
+}
+
+pub async fn upsert_configs_with_pool_and_mode(
+    configs: Vec<Config>, pool: &SqlitePool, mode: DatabaseMode,
+) -> Result<(), String> {
+    let existing_configs = read_configs_with_pool(pool).await?;
+
+    for config in configs {
+        merge_config_with_existing_and_mode(config, &existing_configs, pool, mode)
+            .await
+            .map_err(|e| format!("Failed to merge config: {e}"))?;
+    }
+
+    if let Err(e) = migrate_configs(Some(pool)).await {
+        return Err(format!("Error migrating configs: {e}"));
+    }
+
+    Ok(())
+}
+
 pub async fn read_configs_with_mode(mode: DatabaseMode) -> Result<Vec<Config>, String> {
     let context = DatabaseManager::get_context(mode).await?;
     read_configs_with_pool(&context.pool).await
@@ -1476,5 +1501,105 @@ mod tests {
 
         let configs_after_delete = read_configs_with_mode(DatabaseMode::Memory).await.unwrap();
         assert_eq!(configs_after_delete.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_upserting_config_update() {
+        use crate::utils::db_mode::DatabaseManager;
+        DatabaseManager::cleanup_memory_pools();
+
+        let config1 = Config {
+            service: Some("memory-test-1".to_string()),
+            ..Config::default()
+        };
+
+        insert_config_with_mode(config1, DatabaseMode::Memory)
+            .await
+            .unwrap();
+
+        let new_config = Config {
+            service: Some("memory-test-1".to_string()),
+            local_port: Some(9090),
+            ..Config::default()
+        };
+
+        upsert_configs_with_mode(vec![new_config], DatabaseMode::Memory)
+            .await
+            .unwrap();
+
+        let configs = read_configs_with_mode(DatabaseMode::Memory).await.unwrap();
+
+        assert_eq!(configs.len(), 1);
+        assert_eq!(configs[0].service, Some("memory-test-1".to_string()));
+        assert_eq!(configs[0].local_port, Some(9090));
+    }
+
+    #[tokio::test]
+    async fn test_upserting_config_inserting() {
+        use crate::utils::db_mode::DatabaseManager;
+        DatabaseManager::cleanup_memory_pools();
+
+        let config1 = Config {
+            service: Some("insert-test-1".to_string()),
+            ..Config::default()
+        };
+
+        upsert_configs_with_mode(vec![config1], DatabaseMode::Memory)
+            .await
+            .unwrap();
+
+        let configs = read_configs_with_mode(DatabaseMode::Memory).await.unwrap();
+
+        assert_eq!(configs.len(), 1);
+
+        let config2 = Config {
+            service: Some("insert-test-2".to_string()),
+            ..Config::default()
+        };
+
+        upsert_configs_with_mode(vec![config2], DatabaseMode::Memory)
+            .await
+            .unwrap();
+
+        let configs = read_configs_with_mode(DatabaseMode::Memory).await.unwrap();
+
+        assert_eq!(configs.len(), 2);
+        assert_eq!(configs[0].service, Some("insert-test-1".to_string()));
+        assert_eq!(configs[1].service, Some("insert-test-2".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_upserting_config_different_namespace() {
+        use crate::utils::db_mode::DatabaseManager;
+        DatabaseManager::cleanup_memory_pools();
+
+        let config1 = Config {
+            service: Some("same-service-test-1".to_string()),
+            ..Config::default()
+        };
+
+        upsert_configs_with_mode(vec![config1], DatabaseMode::Memory)
+            .await
+            .unwrap();
+
+        let configs = read_configs_with_mode(DatabaseMode::Memory).await.unwrap();
+
+        assert_eq!(configs.len(), 1);
+
+        let config2 = Config {
+            service: Some("same-service-test-1".to_string()),
+            namespace: "different-namespace".to_string(),
+            ..Config::default()
+        };
+
+        upsert_configs_with_mode(vec![config2], DatabaseMode::Memory)
+            .await
+            .unwrap();
+
+        let configs = read_configs_with_mode(DatabaseMode::Memory).await.unwrap();
+
+        assert_eq!(configs.len(), 2);
+        assert_eq!(configs[0].service, Some("same-service-test-1".to_string()));
+        assert_eq!(configs[1].service, Some("same-service-test-1".to_string()));
     }
 }

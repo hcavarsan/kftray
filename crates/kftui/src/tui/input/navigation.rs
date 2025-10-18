@@ -1,4 +1,4 @@
-use kftray_commons::utils::config::insert_config_with_mode;
+use kftray_commons::utils::config::upsert_configs_with_mode;
 use kftray_commons::utils::db_mode::DatabaseMode;
 use kftray_portforward::kube::operations::list_kube_contexts;
 use kftray_portforward::kube::retrieve_service_configs;
@@ -25,7 +25,7 @@ pub async fn handle_auto_add_configs(app: &mut App) {
 }
 
 pub async fn handle_context_selection(app: &mut App, context: &str, mode: DatabaseMode) {
-    let configs = match retrieve_service_configs(context, None).await {
+    let mut configs = match retrieve_service_configs(context, None).await {
         Ok(configs) => configs,
         Err(e) => {
             app.error_message = Some(format!(
@@ -36,12 +36,15 @@ pub async fn handle_context_selection(app: &mut App, context: &str, mode: Databa
         }
     };
 
-    for config in configs {
-        if let Err(e) = insert_config_with_mode(config, mode).await {
-            app.error_message = Some(format!("Failed to save configuration to database: {e}"));
-            app.state = AppState::ShowErrorPopup;
-            return;
-        }
+    for config in &mut configs {
+        config.domain_enabled = Some(app.auto_import_alias_as_domain);
+        config.auto_loopback_address = app.auto_import_auto_loopback;
+    }
+
+    if let Err(e) = upsert_configs_with_mode(configs, mode).await {
+        app.error_message = Some(format!("Failed to save configuration to database: {e}"));
+        app.state = AppState::ShowErrorPopup;
+        return;
     }
 
     app.state = AppState::Normal;
