@@ -34,7 +34,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
+        uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493
 
       - name: Install dependencies
         run: |
@@ -53,7 +53,7 @@ jobs:
               xdg-utils
 
       - name: Install Rust nightly
-        uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b
+        uses: dtolnay/rust-toolchain@6d653acede28d24f02e3cd41383119e8b1b35921
         with:
           toolchain: nightly
 
@@ -61,17 +61,17 @@ jobs:
         run: rustup component add llvm-tools
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@2383334cf567d78771fc7d89b6b3802ef1412cf6
+        uses: taiki-e/install-action@e43a5023a747770bfcb71ae048541a681714b951
         with:
           tool: cargo-llvm-cov
 
       - name: Install nextest
-        uses: taiki-e/install-action@2383334cf567d78771fc7d89b6b3802ef1412cf6
+        uses: taiki-e/install-action@e43a5023a747770bfcb71ae048541a681714b951
         with:
           tool: cargo-nextest
 
       - name: Install rust-cache
-        uses: swatinem/rust-cache@7e1e2d0a10862b34e5df481373b2b0f295d1a2ef
+        uses: swatinem/rust-cache@94162284cf9c7d6640f58b132f82f114d78d8ab0
         with:
           key: rust-coverage
 
@@ -90,7 +90,7 @@ jobs:
           slug: hcavarsan/kftray
 
       - name: Upload coverage
-        uses: codecov/codecov-action@2db07e317924c76f654a414629d71c65876882e2
+        uses: codecov/codecov-action@5a1091511ad55cbe89839c7260b706298ca349f7
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: lcov.info
@@ -107,7 +107,7 @@ jobs:
       release_id: ${{ steps.create_release.outputs.id }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
+        uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493
         with:
           fetch-depth: 0
 
@@ -131,7 +131,7 @@ jobs:
       - name: Create release draft
         id: create_release
         if: steps.check_release.outputs.release_exists != 'true'
-        uses: softprops/action-gh-release@72f2c25fcb47643c292f7107632f7a47c1df5cd8
+        uses: softprops/action-gh-release@5434409c2b6457c050f109d68b2547fcbf1db07b
         with:
           tag_name: ${{ github.ref_name }}
           name: "KFtray - ${{ github.ref_name }}"
@@ -196,20 +196,20 @@ jobs:
     runs-on: ${{ matrix.runner || matrix.os }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
+        uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b
+        uses: dtolnay/rust-toolchain@6d653acede28d24f02e3cd41383119e8b1b35921
         with:
           toolchain: nightly
 
       - name: Cache Rust
-        uses: swatinem/rust-cache@7e1e2d0a10862b34e5df481373b2b0f295d1a2ef
+        uses: swatinem/rust-cache@94162284cf9c7d6640f58b132f82f114d78d8ab0
         with:
           key: kftray-tauri-${{ matrix.rust_target }}
 
       - name: Install pnpm
-        uses: pnpm/action-setup@f2b2b233b538f500472c7274c7012f57857d8ce0
+        uses: pnpm/action-setup@41ff72655975bd51cab0327fa583b6e92b6d3061
         with:
           version: 10
           run_install: |
@@ -218,14 +218,14 @@ jobs:
 
 
       - name: Install Node.js
-        uses: actions/setup-node@7e24a656e1c7a0d6f3eaef8d8e84ae379a5b035b
+        uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903
         with:
           node-version: "22"
           cache: "pnpm"
 
 
       - name: Cache pnpm modules
-        uses: actions/cache@640a1c2554105b57832a23eea0b4672fc7a790d5
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: |
             $(pnpm store path --silent)
@@ -236,7 +236,7 @@ jobs:
 
       - name: Set up Visual Studio shell
         if: matrix.os == 'windows-latest' && matrix.arch == 'arm64'
-        uses: TheMrMilchmann/setup-msvc-dev@fb19abb8a41b3cf0340f5d1be17d420309232be6
+        uses: TheMrMilchmann/setup-msvc-dev@a06d18830da78190f6dd6be6211dd502bc63f6a9
         with:
           arch: amd64_arm64
 
@@ -307,7 +307,7 @@ jobs:
 
       - name: Sign and notarize the helper binary
         if: matrix.os == 'macos-latest'
-        uses: toitlang/action-macos-sign-notarize@64b6d845b70ccd71bde584769280c612d48211db
+        uses: toitlang/action-macos-sign-notarize@3c86807a4dc5bfd91c90fd61bfc6632548c9f55a
         with:
           certificate: ${{ secrets.APPLE_CERTIFICATE }}
           certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -318,7 +318,7 @@ jobs:
           entitlements-path: crates/kftray-helper/macos-helper-entitlements.plist
 
       - name: Build kftray-tauri Desktop App
-        uses: tauri-apps/tauri-action@e834788a94591d81e3ae0bd9ec06366f5afb8994
+        uses: tauri-apps/tauri-action@5908eebf61039b52ce95c3a7ac2ad858eaeb3a08
         id: tauri_build
         continue-on-error: true
         env:
@@ -347,7 +347,7 @@ jobs:
 
       - name: Retry Build on Failure
         if: steps.tauri_build.outcome == 'failure'
-        uses: tauri-apps/tauri-action@e834788a94591d81e3ae0bd9ec06366f5afb8994
+        uses: tauri-apps/tauri-action@5908eebf61039b52ce95c3a7ac2ad858eaeb3a08
         env:
           RUSTFLAGS: ${{ matrix.os == 'macos-latest' && '-C link-arg=-s' || '-C target-cpu=native -C link-arg=-s' }}
           AWS_LC_SYS_CMAKE_CFLAGS: ${{ matrix.os == 'windows-latest' && '/std:c11' || '' }}
@@ -380,10 +380,10 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
       - name: Checkout repository
-        uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
+        uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493
 
       - name: Setup Python
-        uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c
+        uses: actions/setup-python@18566f86b301499665bd3eb1a2247e0849c64fa5
         with:
           python-version: '3.x'
 
@@ -437,20 +437,20 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
+        uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b
+        uses: dtolnay/rust-toolchain@6d653acede28d24f02e3cd41383119e8b1b35921
         with:
           toolchain: nightly
 
       - name: Cache Rust
-        uses: swatinem/rust-cache@7e1e2d0a10862b34e5df481373b2b0f295d1a2ef
+        uses: swatinem/rust-cache@94162284cf9c7d6640f58b132f82f114d78d8ab0
         with:
           key: kftui-${{ matrix.rust_target }}
 
       - name: Install pnpm
-        uses: pnpm/action-setup@f2b2b233b538f500472c7274c7012f57857d8ce0
+        uses: pnpm/action-setup@41ff72655975bd51cab0327fa583b6e92b6d3061
         with:
           version: 10
           run_install: |
@@ -458,13 +458,13 @@ jobs:
              args: [--frozen-lockfile]
 
       - name: Install Node.js
-        uses: actions/setup-node@7e24a656e1c7a0d6f3eaef8d8e84ae379a5b035b
+        uses: actions/setup-node@2028fbc5c25fe9cf00d9f06a71cc4710d4507903
         with:
           node-version: "22"
           cache: "pnpm"
 
       - name: Cache pnpm modules
-        uses: actions/cache@640a1c2554105b57832a23eea0b4672fc7a790d5
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
         with:
           path: |
             $(pnpm store path --silent)
@@ -507,7 +507,7 @@ jobs:
 
       - name: Set up Perl on Windows
         if: matrix.os == 'windows-latest'
-        uses: shogo82148/actions-setup-perl@2fde72b7b7b24c986737ffc0eb0cbba8622c9d78
+        uses: shogo82148/actions-setup-perl@2369ad1b87f8a8c3ec3dfc3f410239a5b3980492
         with:
           perl-version: "5.32"
           distribution: "strawberry"
@@ -534,7 +534,7 @@ jobs:
 
       - name: Sign and notarize the release build
         if: matrix.os == 'macos-latest'
-        uses: toitlang/action-macos-sign-notarize@64b6d845b70ccd71bde584769280c612d48211db
+        uses: toitlang/action-macos-sign-notarize@3c86807a4dc5bfd91c90fd61bfc6632548c9f55a
         with:
           certificate: ${{ secrets.APPLE_CERTIFICATE }}
           certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -591,23 +591,23 @@ jobs:
     if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
+        uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@05340d1c670183e7caabdb33ae9f1c80fae3b0c2
+        uses: docker/setup-qemu-action@e77e8065d9f7ec6abdd9838668cd7b43924dd64d
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@e468171a9de216ec08956ac3ada2f0791b6bd435
+        uses: docker/setup-buildx-action@1583c0f09d26c58c59d25b0eef29792b7ce99d9a
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@3d100841f68d4548bf57e52eb27bd33ec5069f55
+        uses: docker/login-action@28fdb31ff34708d19615a74d67103ddc2ea9725c
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push Docker image
-        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83
+        uses: docker/build-push-action@9e436ba9f2d7bcd1d038c8e55d039d37896ddc5d
         with:
           platforms: linux/amd64,linux/arm64
           context: ./crates/kftray-server
@@ -629,12 +629,12 @@ jobs:
       !contains(github.ref, '-alpha')
     steps:
       - name: Checkout
-        uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
+        uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493
         with:
           fetch-depth: 0
 
       - name: Generate changelog
-        uses: orhun/git-cliff-action@104a6cf3c9aa0fdfe4eab129f9c1900e1eb8f7fd
+        uses: orhun/git-cliff-action@d77b37db2e3f7398432d34b72a12aa3e2ba87e51
         id: git-cliff
         with:
           config: cliff.toml
@@ -643,7 +643,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Update release notes
-        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -692,16 +692,16 @@ jobs:
       !contains(github.ref, '-alpha')
     steps:
       - name: Checkout repository
-        uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
+        uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493
 
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@b3b07ba8b418998c39fb20f53e8b695cdcc8de1b
+        uses: dtolnay/rust-toolchain@6d653acede28d24f02e3cd41383119e8b1b35921
         with:
           toolchain: nightly
 
       - name: Cache Rust
-        uses: swatinem/rust-cache@7e1e2d0a10862b34e5df481373b2b0f295d1a2ef
+        uses: swatinem/rust-cache@94162284cf9c7d6640f58b132f82f114d78d8ab0
         with:
           key: publish-cargo-crates
 
@@ -793,7 +793,7 @@ jobs:
       !contains(github.ref, '-beta') &&
       !contains(github.ref, '-alpha')
     steps:
-      - uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
+      - uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493
 
       - name: Setup and publish to OBS
         env:
@@ -818,12 +818,12 @@ jobs:
       !contains(github.ref, '-alpha')
     steps:
       - name: Checkout main repository
-        uses: actions/checkout@09d2acae674a48949e3602304ab46fd20ae0c42f
+        uses: actions/checkout@ff7abcd0c3c05ccf6adc123a8cd1fd4fb30fb493
 
       - name: Setup Python
-        uses: actions/setup-python@e797f83bcb11b83ae66e0230d6156d7c80228e7c
+        uses: actions/setup-python@18566f86b301499665bd3eb1a2247e0849c64fa5
         with:
-          python-version: '3.11'
+          python-version: '3.14'
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
