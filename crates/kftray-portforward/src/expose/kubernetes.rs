@@ -304,7 +304,7 @@ async fn create_ingress(
         .await
         .map_err(|e| format!("Failed to create ingress: {}", e))?;
 
-    info!("Created ingress: {}", ingress_name);
+    info!("Created ingress");
     Ok(())
 }
 
