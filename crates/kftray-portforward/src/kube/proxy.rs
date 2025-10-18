@@ -8,15 +8,22 @@ use std::{
     },
 };
 
-use k8s_openapi::api::core::v1::Pod;
+use k8s_openapi::api::{
+    apps::v1::Deployment,
+    core::v1::Pod,
+};
 use kftray_commons::{
     models::{
         config_model::Config,
         response::CustomResponse,
     },
     utils::{
-        config_dir::get_pod_manifest_path,
+        config_dir::{
+            get_pod_manifest_path,
+            get_proxy_deployment_manifest_path,
+        },
         db_mode::DatabaseMode,
+        manifests::proxy_deployment_manifest_exists,
     },
 };
 use kube::Client;
@@ -99,7 +106,7 @@ pub async fn deploy_and_forward_pod_with_mode(
 
         let mut values: HashMap<&str, String> = HashMap::new();
         values.insert("hashed_name", hashed_name.clone());
-        values.insert("config_id", config_id_str);
+        values.insert("config_id", config_id_str.clone());
         values.insert("service_name", config.service.as_ref().unwrap().clone());
         values.insert(
             "remote_address",
@@ -113,75 +120,172 @@ pub async fn deploy_and_forward_pod_with_mode(
         values.insert("local_port", local_port_value);
         values.insert("protocol", protocol.clone());
 
-        let manifest_path = get_pod_manifest_path().map_err(|e| e.to_string())?;
-        let mut file = File::open(manifest_path).map_err(|e| e.to_string())?;
-        let mut contents = String::new();
-        file.read_to_string(&mut contents)
-            .map_err(|e| e.to_string())?;
+        let use_deployment = should_use_deployment_manifest();
 
-        let rendered_json = render_json_template(&contents, &values);
-        let pod: Pod = serde_json::from_str(&rendered_json).map_err(|e| e.to_string())?;
+        if use_deployment {
+            // Use new Deployment manifest
+            let manifest_path = get_proxy_deployment_manifest_path().map_err(|e| e.to_string())?;
+            let mut file = File::open(manifest_path).map_err(|e| e.to_string())?;
+            let mut contents = String::new();
+            file.read_to_string(&mut contents)
+                .map_err(|e| e.to_string())?;
 
-        let pods: Api<Pod> = Api::namespaced(client.clone(), &config.namespace);
+            let rendered_json = render_json_template(&contents, &values);
+            let deployment: Deployment =
+                serde_json::from_str(&rendered_json).map_err(|e| e.to_string())?;
 
-        match pods.create(&PostParams::default(), &pod).await {
-            Ok(_) => {
-                if let Err(e) = kube_runtime::wait::await_condition(
-                    pods.clone(),
-                    &hashed_name,
-                    conditions::is_pod_running(),
-                )
+            let deployments: Api<Deployment> = Api::namespaced(client.clone(), &config.namespace);
+
+            match deployments
+                .create(&PostParams::default(), &deployment)
                 .await
-                {
-                    let dp = DeleteParams {
-                        grace_period_seconds: Some(0),
-                        ..DeleteParams::default()
+            {
+                Ok(_) => {
+                    let pods: Api<Pod> = Api::namespaced(client.clone(), &config.namespace);
+                    let label_selector = format!("app={},config_id={}", hashed_name, config_id_str);
+                    let lp = ListParams::default().labels(&label_selector);
+
+                    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+
+                    let pod_list = pods.list(&lp).await.map_err(|e| e.to_string())?;
+                    let pod = pod_list
+                        .items
+                        .first()
+                        .ok_or("No pod found for deployment")?;
+                    let pod_name = pod.metadata.name.clone().ok_or("Pod has no name")?;
+
+                    if let Err(e) = kube_runtime::wait::await_condition(
+                        pods.clone(),
+                        &pod_name,
+                        conditions::is_pod_running(),
+                    )
+                    .await
+                    {
+                        let dp = DeleteParams {
+                            grace_period_seconds: Some(0),
+                            ..DeleteParams::default()
+                        };
+                        let _ = deployments.delete(&hashed_name, &dp).await;
+                        return Err(e.to_string());
+                    }
+
+                    config.service = Some(hashed_name.clone());
+
+                    let start_response = match protocol.as_str() {
+                        "udp" => {
+                            super::start::start_port_forward_with_mode(
+                                vec![config.clone()],
+                                "udp",
+                                mode,
+                                ssl_override,
+                            )
+                            .await
+                        }
+                        "tcp" => {
+                            super::start::start_port_forward_with_mode(
+                                vec![config.clone()],
+                                "tcp",
+                                mode,
+                                ssl_override,
+                            )
+                            .await
+                        }
+                        _ => {
+                            let _ = deployments
+                                .delete(&hashed_name, &DeleteParams::default())
+                                .await;
+                            return Err("Unsupported proxy type".to_string());
+                        }
                     };
-                    let _ = pods.delete(&hashed_name, &dp).await;
-                    return Err(e.to_string());
-                }
 
-                config.service = Some(hashed_name.clone());
-
-                let start_response = match protocol.as_str() {
-                    "udp" => {
-                        super::start::start_port_forward_with_mode(
-                            vec![config.clone()],
-                            "udp",
-                            mode,
-                            ssl_override,
-                        )
-                        .await
-                    }
-                    "tcp" => {
-                        super::start::start_port_forward_with_mode(
-                            vec![config.clone()],
-                            "tcp",
-                            mode,
-                            ssl_override,
-                        )
-                        .await
-                    }
-                    _ => {
-                        let _ = pods.delete(&hashed_name, &DeleteParams::default()).await;
-                        return Err("Unsupported proxy type".to_string());
-                    }
-                };
-
-                match start_response {
-                    Ok(mut port_forward_responses) => {
-                        let response = port_forward_responses
-                            .pop()
-                            .ok_or("No response received from port forwarding")?;
-                        responses.push(response);
-                    }
-                    Err(e) => {
-                        let _ = pods.delete(&hashed_name, &DeleteParams::default()).await;
-                        return Err(format!("Failed to start port forwarding {e}"));
+                    match start_response {
+                        Ok(mut port_forward_responses) => {
+                            let response = port_forward_responses
+                                .pop()
+                                .ok_or("No response received from port forwarding")?;
+                            responses.push(response);
+                        }
+                        Err(e) => {
+                            let _ = deployments
+                                .delete(&hashed_name, &DeleteParams::default())
+                                .await;
+                            return Err(format!("Failed to start port forwarding {e}"));
+                        }
                     }
                 }
+                Err(e) => return Err(e.to_string()),
             }
-            Err(e) => return Err(e.to_string()),
+        } else {
+            let manifest_path = get_pod_manifest_path().map_err(|e| e.to_string())?;
+            let mut file = File::open(manifest_path).map_err(|e| e.to_string())?;
+            let mut contents = String::new();
+            file.read_to_string(&mut contents)
+                .map_err(|e| e.to_string())?;
+
+            let rendered_json = render_json_template(&contents, &values);
+            let pod: Pod = serde_json::from_str(&rendered_json).map_err(|e| e.to_string())?;
+
+            let pods: Api<Pod> = Api::namespaced(client.clone(), &config.namespace);
+
+            match pods.create(&PostParams::default(), &pod).await {
+                Ok(_) => {
+                    if let Err(e) = kube_runtime::wait::await_condition(
+                        pods.clone(),
+                        &hashed_name,
+                        conditions::is_pod_running(),
+                    )
+                    .await
+                    {
+                        let dp = DeleteParams {
+                            grace_period_seconds: Some(0),
+                            ..DeleteParams::default()
+                        };
+                        let _ = pods.delete(&hashed_name, &dp).await;
+                        return Err(e.to_string());
+                    }
+
+                    config.service = Some(hashed_name.clone());
+
+                    let start_response = match protocol.as_str() {
+                        "udp" => {
+                            super::start::start_port_forward_with_mode(
+                                vec![config.clone()],
+                                "udp",
+                                mode,
+                                ssl_override,
+                            )
+                            .await
+                        }
+                        "tcp" => {
+                            super::start::start_port_forward_with_mode(
+                                vec![config.clone()],
+                                "tcp",
+                                mode,
+                                ssl_override,
+                            )
+                            .await
+                        }
+                        _ => {
+                            let _ = pods.delete(&hashed_name, &DeleteParams::default()).await;
+                            return Err("Unsupported proxy type".to_string());
+                        }
+                    };
+
+                    match start_response {
+                        Ok(mut port_forward_responses) => {
+                            let response = port_forward_responses
+                                .pop()
+                                .ok_or("No response received from port forwarding")?;
+                            responses.push(response);
+                        }
+                        Err(e) => {
+                            let _ = pods.delete(&hashed_name, &DeleteParams::default()).await;
+                            return Err(format!("Failed to start port forwarding {e}"));
+                        }
+                    }
+                }
+                Err(e) => return Err(e.to_string()),
+            }
         }
     }
 
@@ -354,6 +458,47 @@ pub async fn stop_proxy_forward(
     Ok(stop_result)
 }
 
+fn is_custom_pod_manifest() -> bool {
+    match get_pod_manifest_path() {
+        Ok(path) if path.exists() => {
+            // Read the current manifest
+            if let Ok(mut file) = File::open(&path) {
+                let mut contents = String::new();
+                if file.read_to_string(&mut contents).is_ok() {
+                    let size = contents.len();
+                    if !(520..=780).contains(&size) {
+                        debug!("Pod manifest appears customized (size: {} bytes)", size);
+                        return true;
+                    }
+                    if contents.contains("# Custom") || contents.contains("# Modified") {
+                        debug!("Pod manifest contains custom markers");
+                        return true;
+                    }
+                    debug!("Pod manifest appears to be default template");
+                    return false;
+                }
+            }
+            true
+        }
+        _ => false,
+    }
+}
+
+fn should_use_deployment_manifest() -> bool {
+    if is_custom_pod_manifest() {
+        info!("Using legacy Pod manifest (custom detected)");
+        return false;
+    }
+
+    if proxy_deployment_manifest_exists() {
+        info!("Using new Deployment manifest");
+        return true;
+    }
+
+    info!("Using legacy Pod manifest (Deployment not available)");
+    false
+}
+
 fn render_json_template(template: &str, values: &HashMap<&str, String>) -> String {
     let mut rendered_template = template.to_string();
 
@@ -498,6 +643,12 @@ mod tests {
             http_logs_max_file_size: Some(10 * 1024 * 1024),
             http_logs_retention_days: Some(7),
             http_logs_auto_cleanup: Some(true),
+            exposure_type: None,
+            cert_manager_enabled: None,
+            cert_issuer: None,
+            cert_issuer_kind: None,
+            ingress_class: None,
+            ingress_annotations: None,
         };
 
         let result = deploy_and_forward_pod(vec![config]).await;

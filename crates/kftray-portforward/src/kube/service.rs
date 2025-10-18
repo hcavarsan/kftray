@@ -158,6 +158,12 @@ fn parse_configs(
                 http_logs_max_file_size: None,
                 http_logs_retention_days: None,
                 http_logs_auto_cleanup: None,
+                exposure_type: None,
+                cert_manager_enabled: None,
+                cert_issuer: None,
+                cert_issuer_kind: None,
+                ingress_class: None,
+                ingress_annotations: None,
             })
         })
         .collect()
@@ -189,6 +195,12 @@ fn create_default_configs(
             http_logs_max_file_size: None,
             http_logs_retention_days: None,
             http_logs_auto_cleanup: None,
+            exposure_type: None,
+            cert_manager_enabled: None,
+            cert_issuer: None,
+            cert_issuer_kind: None,
+            ingress_class: None,
+            ingress_annotations: None,
         })
         .collect()
 }

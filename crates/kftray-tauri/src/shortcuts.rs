@@ -537,9 +537,10 @@ impl ActionHandler for StopPortForwardAction {
         let configs_count = configs_to_stop.len();
 
         for config in configs_to_stop {
-            let result = if (config.workload_type.as_deref() == Some("service")
-                || config.workload_type.as_deref() == Some("pod"))
-                && config.protocol == "tcp"
+            let result = if config.workload_type.as_deref() == Some("expose")
+                || ((config.workload_type.as_deref() == Some("service")
+                    || config.workload_type.as_deref() == Some("pod"))
+                    && config.protocol == "tcp")
             {
                 stop_port_forward_cmd(config.id.unwrap_or(0).to_string(), self.app_handle.clone())
                     .await
@@ -685,9 +686,10 @@ impl ActionHandler for TogglePortForwardAction {
             let is_running = running_config_ids.contains(&config.id.unwrap_or(0));
 
             if is_running {
-                let result = if (config.workload_type.as_deref() == Some("service")
-                    || config.workload_type.as_deref() == Some("pod"))
-                    && config.protocol == "tcp"
+                let result = if config.workload_type.as_deref() == Some("expose")
+                    || ((config.workload_type.as_deref() == Some("service")
+                        || config.workload_type.as_deref() == Some("pod"))
+                        && config.protocol == "tcp")
                 {
                     stop_port_forward_cmd(
                         config.id.unwrap_or(0).to_string(),
@@ -723,7 +725,9 @@ impl ActionHandler for TogglePortForwardAction {
                     stopped_count += 1;
                 }
             } else {
-                let result = if config.workload_type.as_deref() == Some("service")
+                let result = if config.workload_type.as_deref() == Some("expose") {
+                    start_port_forward_tcp_cmd(vec![config.clone()], self.app_handle.clone()).await
+                } else if config.workload_type.as_deref() == Some("service")
                     || config.workload_type.as_deref() == Some("pod")
                 {
                     if config.protocol == "tcp" {

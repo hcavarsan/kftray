@@ -175,6 +175,27 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   }
 
   const handleOpenLocalURL = () => {
+    // For expose workload
+    if (config.workload_type === 'expose') {
+      // Public exposure: use ingress URL
+      if (config.exposure_type === 'public') {
+        const protocol = config.cert_manager_enabled ? 'https' : 'http'
+        const url = `${protocol}://${config.alias}`
+
+        openShell(url).catch(console.error)
+
+        return
+      }
+
+      // Cluster-only exposure: use full FQDN
+      const clusterDns = `http://${config.alias}.${config.namespace}.svc.cluster.local:${config.local_port}`
+
+      openShell(clusterDns).catch(console.error)
+
+      return
+    }
+
+    // For other workloads, use local address with port
     const baseUrl = config.domain_enabled
       ? config.alias
       : config.local_address || 'localhost'
@@ -201,7 +222,9 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
 
   const startPortForwarding = async () => {
     try {
-      if (
+      if (config.workload_type === 'expose') {
+        await invoke('start_port_forward_tcp_cmd', { configs: [config] })
+      } else if (
         (config.workload_type === 'service' ||
           config.workload_type === 'pod') &&
         config.protocol === 'tcp'
@@ -229,9 +252,10 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   const stopPortForwarding = async () => {
     try {
       if (
-        (config.workload_type === 'service' ||
+        config.workload_type === 'expose' ||
+        ((config.workload_type === 'service' ||
           config.workload_type === 'pod') &&
-        config.protocol === 'tcp'
+          config.protocol === 'tcp')
       ) {
         await invoke('stop_port_forward_cmd', {
           serviceName: config.service,
@@ -292,6 +316,58 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
     }
   }
 
+  const handleCopyConfigDetails = async () => {
+    try {
+      let details = `Status: ${getStatusInfo().status}\n`
+
+      details += `Alias: ${config.alias}\n`
+      details += `Workload: ${config.workload_type}\n`
+
+      if (config.workload_type === 'expose') {
+        details += `Exposure: ${config.exposure_type === 'public' ? 'Public (Internet)' : 'Cluster Only'}\n`
+
+        if (config.exposure_type === 'public') {
+          const protocol = config.cert_manager_enabled ? 'https' : 'http'
+
+          details += `URL: ${protocol}://${config.alias}\n`
+          details += `TLS/SSL: ${config.cert_manager_enabled ? 'Enabled' : 'Disabled'}\n`
+          if (config.cert_manager_enabled) {
+            details += `Cert Issuer: ${config.cert_issuer || 'default'}\n`
+          }
+        } else {
+          details += `URL: http://${config.alias}.${config.namespace}.svc.cluster.local:${config.local_port}\n`
+          details += `Service Name: ${config.alias}\n`
+        }
+        details += `Local Port: ${config.local_port}\n`
+      } else {
+        details += `Service: ${config.service}\n`
+        details += `Target Port: ${config.remote_port}\n`
+        details += `Protocol: ${config.protocol}\n`
+      }
+
+      details += `Context: ${config.context}\n`
+      details += `Namespace: ${config.namespace}\n`
+
+      if (activePod) {
+        details += `Active Pod: ${activePod}\n`
+      }
+
+      await navigator.clipboard.writeText(details)
+      toaster.success({
+        title: 'Config details copied',
+        description: 'All configuration details copied to clipboard',
+        duration: 1000,
+      })
+    } catch (error) {
+      console.error('Failed to copy config details:', error)
+      toaster.error({
+        title: 'Copy failed',
+        description: 'Failed to copy config details to clipboard',
+        duration: 1000,
+      })
+    }
+  }
+
   const getStatusInfo = () => {
     // Follow same logic as checkbox: config.is_running
     if (config.is_running) {
@@ -301,6 +377,29 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
           color: 'rgba(161, 98, 7, 0.7)',
           status: 'Rollout',
           description: 'Pod rollout in progress',
+        }
+      }
+
+      // For expose workload, if is_running is true, it's running
+      if (config.workload_type === 'expose') {
+        const status = localInitiating
+          ? config.is_running
+            ? 'Stopping'
+            : 'Starting'
+          : 'Running'
+
+        const description = localInitiating
+          ? config.is_running
+            ? 'Expose tunnel is stopping...'
+            : 'Expose tunnel is starting...'
+          : activePod
+            ? `Tunnel active via ${activePod}`
+            : 'Expose tunnel is active'
+
+        return {
+          color: 'rgba(59, 130, 246, 0.8)',
+          status,
+          description,
         }
       }
 
@@ -359,20 +458,74 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
                     <Text fontSize='xs'>
                       <strong>Workload:</strong> {config.workload_type}
                     </Text>
-                    <Text fontSize='xs'>
-                      <strong>Service:</strong> {config.service}
-                    </Text>
+                    {config.workload_type === 'expose' && (
+                      <>
+                        <Text fontSize='xs'>
+                          <strong>Exposure:</strong>{' '}
+                          {config.exposure_type === 'public'
+                            ? 'Public (Internet)'
+                            : 'Cluster Only'}
+                        </Text>
+                        {config.exposure_type === 'public' ? (
+                          <>
+                            <Text fontSize='xs'>
+                              <strong>URL:</strong>{' '}
+                              {config.cert_manager_enabled ? 'https' : 'http'}
+                              ://
+                              {config.alias}
+                            </Text>
+                            <Text fontSize='xs'>
+                              <strong>TLS/SSL:</strong>{' '}
+                              {config.cert_manager_enabled
+                                ? 'Enabled'
+                                : 'Disabled'}
+                            </Text>
+                            {config.cert_manager_enabled && (
+                              <Text fontSize='xs'>
+                                <strong>Cert Issuer:</strong>{' '}
+                                {config.cert_issuer || 'default'}
+                              </Text>
+                            )}
+                          </>
+                        ) : (
+                          <>
+                            <Text fontSize='xs'>
+                              <strong>URL:</strong> http://
+                              {config.alias}.{config.namespace}
+                              .svc.cluster.local:
+                              {config.local_port}
+                            </Text>
+                            <Text fontSize='xs'>
+                              <strong>Service Name:</strong> {config.alias}
+                            </Text>
+                            <Text fontSize='xs'>
+                              <strong>Namespace:</strong> {config.namespace}
+                            </Text>
+                          </>
+                        )}
+                        <Text fontSize='xs'>
+                          <strong>Local Port:</strong> {config.local_port}
+                        </Text>
+                      </>
+                    )}
+                    {config.workload_type !== 'expose' && (
+                      <>
+                        <Text fontSize='xs'>
+                          <strong>Service:</strong> {config.service}
+                        </Text>
+                        <Text fontSize='xs'>
+                          <strong>Target Port:</strong> {config.remote_port}
+                        </Text>
+                        <Text fontSize='xs'>
+                          <strong>Protocol:</strong> {config.protocol}
+                        </Text>
+                      </>
+                    )}
                     <Text fontSize='xs'>
                       <strong>Context:</strong> {config.context}
                     </Text>
                     <Text fontSize='xs'>
                       <strong>Namespace:</strong> {config.namespace}
-                    </Text>
-                    <Text fontSize='xs'>
-                      <strong>Target Port:</strong> {config.remote_port}
-                    </Text>
-                    <Text fontSize='xs'>
-                      <strong>Protocol:</strong> {config.protocol}
                     </Text>
                   </Box>
                 </Box>
@@ -393,6 +546,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
                   size='xs'
                   variant='ghost'
                   aria-label='Info'
+                  onClick={handleCopyConfigDetails}
                   className='icon-button'
                   style={{ color: getStatusInfo().color }}
                 >

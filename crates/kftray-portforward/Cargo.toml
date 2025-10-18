@@ -32,6 +32,7 @@ async-trait = { workspace = true }
 base64 = { workspace = true }
 bytes = { workspace = true }
 dashmap = { workspace = true }
+http-body-util = { workspace = true }
 dirs = { workspace = true }
 env_logger = { workspace = true }
 flate2 = { workspace = true }
@@ -68,9 +69,11 @@ thiserror = { workspace = true }
 time = { workspace = true }
 tokio = { workspace = true }
 tokio-rustls = { workspace = true }
+tokio-tungstenite = { workspace = true }
 tokio-util = { workspace = true }
 tower = { workspace = true }
 tracing = { workspace = true }
+tungstenite = { workspace = true }
 uuid = { workspace = true }
 whoami = { workspace = true }
 

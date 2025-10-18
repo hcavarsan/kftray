@@ -1,9 +1,16 @@
 use std::{
     env,
+    fs,
     path::PathBuf,
 };
 
 use anyhow::Result;
+
+pub fn create_config_dir() -> Result<(), Box<dyn std::error::Error>> {
+    let config_dir = get_config_dir()?;
+    fs::create_dir_all(config_dir)?;
+    Ok(())
+}
 
 pub fn get_config_dir() -> Result<PathBuf, String> {
     if let Ok(config_dir) = env::var("KFTRAY_CONFIG") {
@@ -40,6 +47,30 @@ pub fn get_db_file_path() -> Result<PathBuf, String> {
 pub fn get_pod_manifest_path() -> Result<PathBuf, String> {
     let mut config_path = get_config_dir()?;
     config_path.push("proxy_manifest.json");
+    Ok(config_path)
+}
+
+pub fn get_proxy_deployment_manifest_path() -> Result<PathBuf, String> {
+    let mut config_path = get_config_dir()?;
+    config_path.push("proxy_deployment.json");
+    Ok(config_path)
+}
+
+pub fn get_expose_deployment_manifest_path() -> Result<PathBuf, String> {
+    let mut config_path = get_config_dir()?;
+    config_path.push("expose_deployment.json");
+    Ok(config_path)
+}
+
+pub fn get_expose_service_manifest_path() -> Result<PathBuf, String> {
+    let mut config_path = get_config_dir()?;
+    config_path.push("expose_service.json");
+    Ok(config_path)
+}
+
+pub fn get_expose_ingress_manifest_path() -> Result<PathBuf, String> {
+    let mut config_path = get_config_dir()?;
+    config_path.push("expose_ingress.json");
     Ok(config_path)
 }
 

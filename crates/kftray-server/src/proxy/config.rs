@@ -12,6 +12,10 @@ pub struct ProxyConfig {
     pub proxy_port: u16,
     /// Type of proxy protocol (TCP or UDP)
     pub proxy_type: ProxyType,
+    /// Port for HTTP server (used in ReverseHttp mode)
+    pub http_port: Option<u16>,
+    /// Port for WebSocket server (used in ReverseHttp mode)
+    pub websocket_port: Option<u16>,
 }
 
 /// Builder pattern implementation for creating ProxyConfig instances
@@ -22,6 +26,8 @@ pub struct ProxyConfigBuilder {
     target_port: Option<u16>,
     proxy_port: Option<u16>,
     proxy_type: Option<ProxyType>,
+    http_port: Option<u16>,
+    websocket_port: Option<u16>,
 }
 
 impl ProxyConfigBuilder {
@@ -54,6 +60,16 @@ impl ProxyConfigBuilder {
         self
     }
 
+    pub fn http_port(mut self, port: Option<u16>) -> Self {
+        self.http_port = port;
+        self
+    }
+
+    pub fn websocket_port(mut self, port: Option<u16>) -> Self {
+        self.websocket_port = port;
+        self
+    }
+
     pub fn build(self) -> Result<ProxyConfig, String> {
         let target_host = self
             .target_host
@@ -74,6 +90,8 @@ impl ProxyConfigBuilder {
             target_port,
             proxy_port,
             proxy_type,
+            http_port: self.http_port,
+            websocket_port: self.websocket_port,
         })
     }
 }
@@ -91,6 +109,8 @@ pub enum ProxyType {
     Tcp,
     /// UDP proxy mode
     Udp,
+    /// Reverse HTTP proxy mode (WebSocket tunnel)
+    ReverseHttp,
 }
 
 #[cfg(test)]

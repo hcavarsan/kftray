@@ -421,6 +421,21 @@ pub async fn stop_port_forward(config_id: String) -> Result<CustomResponse, Stri
 pub async fn stop_port_forward_with_mode(
     config_id: String, mode: DatabaseMode,
 ) -> Result<CustomResponse, String> {
+    let config_id_parsed = config_id
+        .parse::<i64>()
+        .map_err(|_| "Invalid config ID".to_string())?;
+
+    let configs = match mode {
+        DatabaseMode::File => get_configs().await.unwrap_or_default(),
+        DatabaseMode::Memory => read_configs_with_mode(mode).await.unwrap_or_default(),
+    };
+
+    if let Some(config) = configs.iter().find(|c| c.id == Some(config_id_parsed))
+        && config.workload_type.as_deref() == Some("expose")
+    {
+        return crate::expose::stop_expose(config_id_parsed, &config.namespace, mode).await;
+    }
+
     let composite_key = {
         let _global_lock = PROCESS_MANAGEMENT_LOCK.lock().await;
         let child_processes = CHILD_PROCESSES.lock().await;
@@ -594,6 +609,12 @@ mod tests {
             http_logs_max_file_size: Some(10 * 1024 * 1024),
             http_logs_retention_days: Some(7),
             http_logs_auto_cleanup: Some(true),
+            exposure_type: None,
+            cert_manager_enabled: None,
+            cert_issuer: None,
+            cert_issuer_kind: None,
+            ingress_class: None,
+            ingress_annotations: None,
         }
     }
 
