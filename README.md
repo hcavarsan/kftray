@@ -232,6 +232,7 @@ Thanks goes to these wonderful people ([emoji key](https://allcontributors.org/d
       <td align="center" valign="top" width="14.28%"><a href="https://speakerdeck.com/eltociear"><img src="https://avatars.githubusercontent.com/u/22633385?v=4?s=100" width="100px;" alt="Ikko Eltociear Ashimine"/><br /><sub><b>Ikko Eltociear Ashimine</b></sub></a><br /><a href="https://github.com/hcavarsan/kftray/commits?author=eltociear" title="Code">💻</a></td>
       <td align="center" valign="top" width="14.28%"><a href="https://github.com/honsunrise"><img src="https://avatars.githubusercontent.com/u/3882656?v=4?s=100" width="100px;" alt="Honsun Zhu"/><br /><sub><b>Honsun Zhu</b></sub></a><br /><a href="https://github.com/hcavarsan/kftray/commits?author=honsunrise" title="Code">💻</a></td>
       <td align="center" valign="top" width="14.28%"><a href="https://www.linkedin.com/in/peter-hansson-07939a231"><img src="https://avatars.githubusercontent.com/u/9850798?v=4?s=100" width="100px;" alt="Peter Hansson"/><br /><sub><b>Peter Hansson</b></sub></a><br /><a href="https://github.com/hcavarsan/kftray/commits?author=Lunkentuss" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/FabijanZulj"><img src="https://avatars.githubusercontent.com/u/38249221?v=4?s=100" width="100px;" alt="FabijanZulj"/><br /><sub><b>FabijanZulj</b></sub></a><br /><a href="https://github.com/hcavarsan/kftray/commits?author=FabijanZulj" title="Code">💻</a></td>
     </tr>
   </tbody>
 </table>
