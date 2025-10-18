@@ -25,8 +25,6 @@ fn main() {
     let target_filename = format!("kftray-helper-{target_triple}{extension}");
     let target_path = bin_dir.join(&target_filename);
 
-    println!("cargo:rerun-if-changed={}", target_path.display());
-
     let workspace_root = find_workspace_root(Path::new(&manifest_dir)).unwrap_or_else(|| {
         println!(
             "cargo:warning=Could not determine workspace root, using manifest dir parent's parent"
@@ -50,24 +48,41 @@ fn main() {
     );
 
     if helper_bin.exists() {
-        println!(
-            "cargo:warning=Copying helper binary from: {}",
-            helper_bin.display()
-        );
-        match fs::copy(&helper_bin, &target_path) {
-            Ok(_) => {
-                println!(
-                    "cargo:warning=Helper binary copied to: {}",
-                    target_path.display()
-                );
-
-                #[cfg(not(target_os = "windows"))]
-                {
-                    println!("cargo:warning=Using default file permissions for binary");
+        let should_copy = if !target_path.exists() {
+            true
+        } else {
+            match (fs::metadata(&helper_bin), fs::metadata(&target_path)) {
+                (Ok(src), Ok(dst)) => {
+                    if let (Ok(src_time), Ok(dst_time)) = (src.modified(), dst.modified()) {
+                        src_time > dst_time
+                    } else {
+                        src.len() != dst.len()
+                    }
                 }
+                _ => true,
             }
-            Err(e) => {
-                println!("cargo:warning=Failed to copy helper binary: {e}");
+        };
+
+        if should_copy {
+            println!(
+                "cargo:warning=Copying helper binary from: {}",
+                helper_bin.display()
+            );
+            match fs::copy(&helper_bin, &target_path) {
+                Ok(_) => {
+                    println!(
+                        "cargo:warning=Helper binary copied to: {}",
+                        target_path.display()
+                    );
+
+                    #[cfg(not(target_os = "windows"))]
+                    {
+                        println!("cargo:warning=Using default file permissions for binary");
+                    }
+                }
+                Err(e) => {
+                    println!("cargo:warning=Failed to copy helper binary: {e}");
+                }
             }
         }
     } else {
@@ -78,6 +93,7 @@ fn main() {
     }
 
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed={}", helper_bin.display());
     tauri_build::build();
 }
 

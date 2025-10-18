@@ -20,13 +20,46 @@
 
 - Fork the repository and create your branch from `main`.
 - If you've added code that should be tested, add some tests.
-- Ensure your code lints (e.g., using `pnpm run lint`).
+- Ensure your code is formatted and linted (pre-commit hook handles this automatically).
 - Write clear, descriptive commit messages.
 - Open a new pull request with a clear title and description.
 
-### Setting Up Your Environment
+### Setting Up Your Development Environment
 
-Before you can start contributing to KFtray, you'll need to set up your development environment. Please follow the [Installation](https://github.com/hcavarsan/kftray#-installation) instructions in the README.
+KFtray uses [mise](https://mise.jdx.dev) to manage the development environment. This ensures all contributors use the same tool versions.
+
+1. **Install mise:**
+   ```bash
+   curl https://mise.run | sh
+   ```
+
+2. **Clone and setup:**
+   ```bash
+   git clone https://github.com/hcavarsan/kftray.git
+   cd kftray
+   mise install        # Install all required tools
+   mise run setup      # Setup system dependencies
+   ```
+
+3. **Start developing:**
+   ```bash
+   mise run dev        # Launch development mode
+   ```
+
+The project has an automatic Git pre-commit hook that runs formatting and linting on every commit. Your code will be automatically formatted and checked before committing.
+
+### Available Development Commands
+
+- `mise run dev` - Start development mode
+- `mise run build` - Build production app
+- `mise run format` - Format all code
+- `mise run lint` - Lint with auto-fix
+- `mise run test:back` - Run backend tests
+- `mise run precommit` - Run all checks (format, lint, test)
+
+Run `mise tasks` to see all available commands.
+
+For detailed build instructions, see [Building from Source](docs/kftray/BUILD.md).
 
 ## Code of Conduct
 
