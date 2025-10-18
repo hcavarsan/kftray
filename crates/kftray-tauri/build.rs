@@ -48,13 +48,20 @@ fn main() {
     );
 
     if helper_bin.exists() {
-        let should_copy = !target_path.exists()
-            || fs::metadata(&helper_bin)
-                .ok()
-                .and_then(|s| s.modified().ok())
-                != fs::metadata(&target_path)
-                    .ok()
-                    .and_then(|t| t.modified().ok());
+        let should_copy = if !target_path.exists() {
+            true
+        } else {
+            match (fs::metadata(&helper_bin), fs::metadata(&target_path)) {
+                (Ok(src), Ok(dst)) => {
+                    if let (Ok(src_time), Ok(dst_time)) = (src.modified(), dst.modified()) {
+                        src_time > dst_time
+                    } else {
+                        src.len() != dst.len()
+                    }
+                }
+                _ => true,
+            }
+        };
 
         if should_copy {
             println!(
@@ -86,6 +93,7 @@ fn main() {
     }
 
     println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed={}", helper_bin.display());
     tauri_build::build();
 }
 
