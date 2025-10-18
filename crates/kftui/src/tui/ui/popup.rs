@@ -865,7 +865,6 @@ pub fn render_context_selection_popup(f: &mut Frame, app: &mut App, area: Rect) 
         .alignment(Alignment::Left)
         .wrap(ratatui::widgets::Wrap { trim: true });
 
-
     f.render_widget(auto_import_settings_paragraph, settings_area);
     f.render_widget(explanation_paragraph, explanation_area);
 }
