@@ -1,6 +1,6 @@
 [package]
 name = "kftray-server"
-version = "0.26.8"
+version = "0.27.0"
 authors = ["Henrique Cavarsan <hencavarsan@gmail.com>"]
 edition = "2024"
 description = "KFtray Server is a Rust application that relays UDP/TCP traffic to an upstream server"
@@ -10,21 +10,21 @@ license = "GPL-3.0"
 
 [dependencies]
 async-trait = "0.1.89"
+bytes = "1.9"
 env_logger = "0.11.8"
-log = "0.4.28"
-tokio = { version = "1.47.1", features = ["full", "macros", "rt-multi-thread"] }
-url = "2.5.7"
-tokio-tungstenite = { version = "0.28.0", features = ["native-tls"] }
-tungstenite = "0.28.0"
+futures = "0.3"
+http = "1.2"
+http-body-util = "0.1"
 hyper = { version = "1.7.0", features = ["full"] }
 hyper-util = { version = "0.1", features = ["full"] }
-http-body-util = "0.1"
-http = "1.2"
+log = "0.4.28"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+tokio = { version = "1.47.1", features = ["full", "macros", "rt-multi-thread"] }
+tokio-tungstenite = { version = "0.28.0", features = ["native-tls"] }
+tungstenite = "0.28.0"
+url = "2.5.7"
 uuid = { version = "1.0", features = ["v4"] }
-futures = "0.3"
-bytes = "1.9"
 
 [dev-dependencies]
 lazy_static = "1.5.0"

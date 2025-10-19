@@ -1,6 +1,6 @@
 [package]
 name = "kftray-portforward"
-version = "0.26.8"
+version = "0.27.0"
 authors = ["Henrique Cavarsan <hencavarsan@gmail.com>"]
 edition = "2024"
 description = "KFtray library with port forwarding logic"
@@ -32,12 +32,12 @@ async-trait = { workspace = true }
 base64 = { workspace = true }
 bytes = { workspace = true }
 dashmap = { workspace = true }
-http-body-util = { workspace = true }
 dirs = { workspace = true }
 env_logger = { workspace = true }
 flate2 = { workspace = true }
 futures = { workspace = true }
 http = { workspace = true }
+http-body-util = { workspace = true }
 httparse = { workspace = true }
 hyper = { workspace = true }
 hyper-openssl = { workspace = true }
