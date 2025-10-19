@@ -258,7 +258,7 @@ impl Config {
                 self.target = None;
                 self.remote_address = None;
                 self.remote_port = None;
-                if self.exposure_type.as_deref() == Some("internal") {
+                if self.exposure_type.as_deref() == Some("cluster") {
                     self.cert_manager_enabled = None;
                     self.cert_issuer = None;
                     self.cert_issuer_kind = None;

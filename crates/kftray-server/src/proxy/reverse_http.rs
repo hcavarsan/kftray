@@ -17,6 +17,7 @@ use hyper::{
     StatusCode,
 };
 use hyper_util::rt::TokioIo;
+use kftray_commons::models::tunnel_protocol::TunnelMessage;
 use log::{
     error,
     info,
@@ -24,7 +25,6 @@ use log::{
 use tokio::net::TcpListener;
 use uuid::Uuid;
 
-use super::websocket_protocol::TunnelMessage;
 use super::websocket_server::WebSocketTunnelServer;
 
 pub struct ReverseHttpProxy {
@@ -51,10 +51,13 @@ impl ReverseHttpProxy {
         info!("HTTP reverse proxy listening on {}", addr);
 
         loop {
-            let (stream, _) = listener
-                .accept()
-                .await
-                .map_err(|e| format!("Failed to accept connection: {}", e))?;
+            let (stream, _) = match listener.accept().await {
+                Ok(v) => v,
+                Err(e) => {
+                    error!("Failed to accept connection: {}", e);
+                    continue;
+                }
+            };
 
             let io = TokioIo::new(stream);
             let tunnel = tunnel_server.clone();

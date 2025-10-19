@@ -338,9 +338,18 @@ pub async fn start_port_forward_with_mode(
 
     for config in configs.iter_mut() {
         if config.workload_type.as_deref() == Some("expose") {
-            // Route to kftray-expose
-            let response = crate::expose::start_expose(vec![config.clone()], mode).await?;
-            responses.extend(response);
+            match crate::expose::start_expose(vec![config.clone()], mode).await {
+                Ok(response) => responses.extend(response),
+                Err(e) => {
+                    let error_message = format!(
+                        "Failed to start expose for config {}: {}",
+                        config.id.unwrap_or_default(),
+                        e
+                    );
+                    error!("{}", &error_message);
+                    errors.push(error_message);
+                }
+            }
             continue;
         }
 

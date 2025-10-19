@@ -55,8 +55,7 @@ pub async fn create_expose_resources(
             "Resources already exist for config {}: {:?}. Cleaning up before recreating",
             config_id_str, resources
         );
-        let _ = delete_expose_resources(client.clone(), &config.namespace, config.id.unwrap_or(0))
-            .await;
+        let _ = delete_expose_resources(client.clone(), &config.namespace, &config_id_str).await;
 
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
     }
@@ -189,7 +188,7 @@ async fn create_deployment(
         .await
         .map_err(|e| format!("Failed to create deployment: {}", e))?;
 
-    info!("Created deployment: {}", deployment_name);
+    info!("Deployment created successfully");
     Ok(())
 }
 
@@ -252,7 +251,7 @@ async fn create_service(
         .await
         .map_err(|e| format!("Failed to create service: {}", e))?;
 
-    info!("Created service: {}", service_name);
+    info!("Service created successfully");
     Ok(())
 }
 
@@ -334,21 +333,23 @@ async fn check_existing_resources(
 }
 
 pub async fn delete_expose_resources(
-    client: Client, namespace: &str, config_id: i64,
+    client: Client, namespace: &str, config_id_label: &str,
 ) -> Result<(), String> {
-    let config_id_str = config_id.to_string();
-    let label_selector = format!("app=kftray-expose,config_id={}", config_id_str);
+    let label_selector = format!("app=kftray-expose,config_id={}", config_id_label);
     let lp = ListParams::default().labels(&label_selector);
 
-    info!("Deleting expose resources for config {}", config_id);
+    info!(
+        "Deleting expose resources for config_id label '{}'",
+        config_id_label
+    );
 
     delete_ingresses(&client, namespace, &lp).await?;
     delete_services(&client, namespace, &lp).await?;
     delete_deployments(&client, namespace, &lp).await?;
 
     info!(
-        "Successfully deleted expose resources for config {}",
-        config_id
+        "Successfully deleted expose resources for config_id label '{}'",
+        config_id_label
     );
     Ok(())
 }

@@ -1,7 +1,6 @@
 pub mod kubernetes;
 pub mod models;
 pub mod templates;
-pub mod tunnel_protocol;
 pub mod websocket_client;
 
 use kftray_commons::models::{
@@ -183,7 +182,7 @@ pub async fn stop_expose(
         .map_err(|e| format!("Failed to get K8s client: {}", e))?;
     let client = (*client).clone();
 
-    delete_expose_resources(client, namespace, config_id).await?;
+    delete_expose_resources(client, namespace, &config_id.to_string()).await?;
 
     let config_state = ConfigState {
         id: None,

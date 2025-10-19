@@ -366,12 +366,11 @@ fn validate_imported_config(config: &Config) -> Result<(), String> {
             // Validate cert-manager requirements if enabled
             if config.exposure_type.as_deref() == Some("public")
                 && config.cert_manager_enabled.unwrap_or(false)
+                && (config.cert_issuer.is_none() || config.cert_issuer.as_ref().unwrap().is_empty())
             {
-                if config.cert_issuer.is_none() || config.cert_issuer.as_ref().unwrap().is_empty() {
-                    return Err(
-                        "Certificate issuer is required when cert-manager is enabled".to_string(),
-                    );
-                }
+                return Err(
+                    "Certificate issuer is required when cert-manager is enabled".to_string(),
+                );
             }
         }
         Some(workload_type) => {

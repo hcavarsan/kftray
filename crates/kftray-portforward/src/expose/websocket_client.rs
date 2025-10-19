@@ -17,6 +17,7 @@ use hyper::{
 use hyper_util::client::legacy::Client as LegacyClient;
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::TokioExecutor;
+use kftray_commons::models::tunnel_protocol::TunnelMessage;
 use log::{
     debug,
     error,
@@ -27,8 +28,6 @@ use tokio_tungstenite::{
     connect_async,
     tungstenite::Message,
 };
-
-use super::tunnel_protocol::TunnelMessage;
 
 pub struct WebSocketTunnelClient {
     websocket_port: u16,

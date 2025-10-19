@@ -187,10 +187,11 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
         return
       }
 
-      // Cluster-only exposure: use full FQDN
-      const clusterDns = `http://${config.alias}.${config.namespace}.svc.cluster.local:${config.local_port}`
+      // Cluster-only exposure: open local service
+      const host = config.local_address || '127.0.0.1'
+      const localUrl = `http://${host}:${config.local_port}`
 
-      openShell(clusterDns).catch(console.error)
+      openShell(localUrl).catch(console.error)
 
       return
     }
