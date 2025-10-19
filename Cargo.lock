@@ -3228,7 +3228,6 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
- "kftray-commons",
  "lazy_static",
  "log",
  "serde",

@@ -6,7 +6,6 @@ use futures::{
     SinkExt,
     StreamExt,
 };
-use kftray_commons::models::tunnel_protocol::TunnelMessage;
 use log::{
     debug,
     error,
@@ -27,6 +26,8 @@ use tokio_tungstenite::{
     accept_async,
     tungstenite::Message,
 };
+
+use crate::models::tunnel_protocol::TunnelMessage;
 
 pub struct WebSocketTunnelServer {
     tunnel: Arc<RwLock<Option<TunnelConnection>>>,

@@ -17,7 +17,6 @@ use hyper::{
     StatusCode,
 };
 use hyper_util::rt::TokioIo;
-use kftray_commons::models::tunnel_protocol::TunnelMessage;
 use log::{
     error,
     info,
@@ -26,6 +25,7 @@ use tokio::net::TcpListener;
 use uuid::Uuid;
 
 use super::websocket_server::WebSocketTunnelServer;
+use crate::models::tunnel_protocol::TunnelMessage;
 
 pub struct ReverseHttpProxy {
     tunnel_server: Arc<WebSocketTunnelServer>,

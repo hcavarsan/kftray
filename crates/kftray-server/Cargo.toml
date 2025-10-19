@@ -25,7 +25,6 @@ serde_json = "1.0"
 uuid = { version = "1.0", features = ["v4"] }
 futures = "0.3"
 bytes = "1.9"
-kftray-commons = { path = "../kftray-commons" }
 
 [dev-dependencies]
 lazy_static = "1.5.0"

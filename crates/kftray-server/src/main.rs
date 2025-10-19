@@ -1,5 +1,6 @@
 #![allow(clippy::literal_string_with_formatting_args)]
 
+mod models;
 mod proxy;
 
 use std::env;
