@@ -1,6 +1,7 @@
 /* eslint-disable complexity */
 
 import React, { useEffect, useMemo, useState } from 'react'
+import { Info } from 'lucide-react'
 import Select, { ActionMeta, MultiValue, SingleValue } from 'react-select'
 
 import {
@@ -10,10 +11,8 @@ import {
   Grid,
   HStack,
   Input,
-  Separator,
   Stack,
   Text,
-  Tooltip,
 } from '@chakra-ui/react'
 import { useQuery } from '@tanstack/react-query'
 import { invoke } from '@tauri-apps/api/core'
@@ -21,6 +20,7 @@ import { open } from '@tauri-apps/plugin-dialog'
 
 import { Checkbox } from '@/components/ui/checkbox'
 import { toaster } from '@/components/ui/toaster'
+import { Tooltip } from '@/components/ui/tooltip'
 import {
   Config,
   CustomConfigProps,
@@ -32,6 +32,7 @@ import {
 import { selectStyles } from './styles'
 import { trimConfigValues, validateFormFields } from './utils'
 
+// eslint-disable-next-line max-lines-per-function
 const AddConfigModal: React.FC<CustomConfigProps> = ({
   isModalOpen,
   closeModal,
@@ -45,6 +46,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     { value: 'service', label: 'Service' },
     { value: 'pod', label: 'Pod' },
     { value: 'proxy', label: 'Proxy' },
+    { value: 'expose', label: 'Expose' },
   ]
 
   const CUSTOM_PORT = {
@@ -83,21 +85,46 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
   }
 
   useEffect(() => {
-    const requiredFields = [
-      formState.selectedContext?.value ?? null,
-      formState.selectedNamespace?.value ?? null,
-      formState.selectedServiceOrTarget?.value ??
-        newConfig.remote_address ??
-        null,
-      formState.selectedPort?.value ?? newConfig.remote_port ?? null,
-      formState.selectedWorkloadType?.value ?? null,
-      formState.selectedProtocol?.value ?? null,
-    ]
+    if (formState.selectedWorkloadType?.value === 'expose') {
+      const exposeRequiredFields = [
+        formState.selectedContext?.value ?? null,
+        formState.selectedNamespace?.value ?? null,
+        newConfig.exposure_type ?? null,
+        newConfig.local_port ?? null,
+        newConfig.alias ?? null,
+      ]
 
-    setUiState(prev => ({
-      ...prev,
-      isFormValid: validateFormFields(requiredFields),
-    }))
+      if (
+        newConfig.exposure_type === 'public' &&
+        newConfig.cert_manager_enabled
+      ) {
+        exposeRequiredFields.push(
+          newConfig.cert_issuer_kind || 'ClusterIssuer',
+          newConfig.cert_issuer ?? null,
+        )
+      }
+
+      setUiState(prev => ({
+        ...prev,
+        isFormValid: validateFormFields(exposeRequiredFields),
+      }))
+    } else {
+      const requiredFields = [
+        formState.selectedContext?.value ?? null,
+        formState.selectedNamespace?.value ?? null,
+        formState.selectedServiceOrTarget?.value ??
+          newConfig.remote_address ??
+          null,
+        formState.selectedPort?.value ?? newConfig.remote_port ?? null,
+        formState.selectedWorkloadType?.value ?? null,
+        formState.selectedProtocol?.value ?? null,
+      ]
+
+      setUiState(prev => ({
+        ...prev,
+        isFormValid: validateFormFields(requiredFields),
+      }))
+    }
   }, [formState, newConfig])
 
   const handleCheckboxChange = (
@@ -115,7 +142,6 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
       setNewConfig(prev => ({
         ...prev,
         auto_loopback_address: isCheckedBoolean,
-        // Clear local_address when auto-selection is enabled, restore default when disabled
         local_address: isCheckedBoolean ? '' : '127.0.0.1',
       }))
     }
@@ -161,7 +187,6 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
       (uiState.isContextDropdownFocused || uiState.kubeConfig !== 'default'),
   })
 
-  // Handle context query errors
   useEffect(() => {
     if (contextQuery.error) {
       handleError(contextQuery.error, 'Error fetching contexts')
@@ -178,7 +203,6 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     enabled: isModalOpen && !!newConfig.context,
   })
 
-  // Handle namespace query errors
   useEffect(() => {
     if (namespaceQuery.error) {
       handleError(namespaceQuery.error, 'Error fetching namespaces')
@@ -200,7 +224,6 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
       newConfig.workload_type === 'service',
   })
 
-  // Handle service query errors
   useEffect(() => {
     if (serviceQuery.error) {
       handleError(serviceQuery.error, 'Error fetching services')
@@ -222,7 +245,6 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
       newConfig.workload_type === 'pod',
   })
 
-  // Handle pods query errors
   useEffect(() => {
     if (podsQuery.error) {
       handleError(podsQuery.error, 'Error fetching pods')
@@ -398,12 +420,22 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
           ...prev,
           selectedWorkloadType: option,
         }))
+        if (option?.value === 'expose') {
+          setNewConfig(prev => ({
+            ...prev,
+            exposure_type: prev.exposure_type || 'cluster',
+            protocol: 'tcp',
+          }))
+        }
         break
       case 'protocol':
         setFormState(prev => ({
           ...prev,
           selectedProtocol: option,
         }))
+        break
+      case 'exposure_type':
+      case 'cert_issuer_kind':
         break
     }
 
@@ -488,44 +520,85 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                 <Text fontSize='2xs' color='gray.400'>
                   Kubeconfig:
                 </Text>
-                <Tooltip.Root>
-                  <Tooltip.Trigger asChild>
-                    <Button
-                      size='xs'
-                      variant='ghost'
-                      onClick={handleSetKubeConfig}
-                      bg='whiteAlpha.50'
-                      _hover={{ bg: 'whiteAlpha.200' }}
-                      height='20px'
-                      px={2}
-                    >
-                      <Text fontSize='2xs' maxW='120px' truncate>
-                        {uiState.kubeConfig}
-                      </Text>
-                    </Button>
-                  </Tooltip.Trigger>
-                  <Tooltip.Positioner>
-                    <Tooltip.Content bg='#ffffff'>
-                      <Text fontSize='2xs'>{uiState.kubeConfig}</Text>
-                    </Tooltip.Content>
-                  </Tooltip.Positioner>
-                </Tooltip.Root>
+                <Tooltip content={uiState.kubeConfig} portalled>
+                  <Button
+                    size='xs'
+                    variant='ghost'
+                    onClick={handleSetKubeConfig}
+                    bg='whiteAlpha.50'
+                    _hover={{ bg: 'whiteAlpha.200' }}
+                    height='20px'
+                    px={2}
+                  >
+                    <Text fontSize='2xs' maxW='120px' truncate>
+                      {uiState.kubeConfig}
+                    </Text>
+                  </Button>
+                </Tooltip>
               </HStack>
             </Flex>
           </Dialog.Header>
 
-          <Dialog.Body p={3}>
-            <form onSubmit={handleSave}>
+          <form onSubmit={handleSave} style={{ display: 'contents' }}>
+            <Dialog.Body
+              p={3}
+              overflowY='auto'
+              css={{
+                '&::-webkit-scrollbar': {
+                  width: '6px',
+                },
+                '&::-webkit-scrollbar-track': {
+                  background: 'transparent',
+                },
+                '&::-webkit-scrollbar-thumb': {
+                  background: 'rgba(255, 255, 255, 0.2)',
+                  borderRadius: '3px',
+                },
+                '&::-webkit-scrollbar-thumb:hover': {
+                  background: 'rgba(255, 255, 255, 0.3)',
+                },
+              }}
+            >
               <Stack gap={2}>
                 <Grid templateColumns='repeat(2, 1fr)' gap={3}>
                   <Stack gap={1.5}>
-                    <Text fontSize='xs' color='gray.400'>
-                      Alias
-                    </Text>
+                    <Flex align='center' gap={1}>
+                      <Text fontSize='xs' color='gray.400'>
+                        {newConfig.workload_type === 'expose'
+                          ? 'Domain *'
+                          : 'Alias'}
+                      </Text>
+                      {newConfig.workload_type === 'expose' && (
+                        <Tooltip
+                          content={
+                            newConfig.exposure_type === 'public'
+                              ? 'Full domain for public access (e.g., myapp.example.com). The Kubernetes service will be named using the first part before the dot (e.g., "myapp").'
+                              : `Service name in cluster (accessible as ${newConfig.alias || 'name'}.${newConfig.namespace || 'namespace'}.svc.cluster.local)`
+                          }
+                          portalled
+                        >
+                          <span
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                            }}
+                          >
+                            <Info size={10} color='#6B7280' />
+                          </span>
+                        </Tooltip>
+                      )}
+                    </Flex>
                     <Input
                       value={newConfig.alias || ''}
                       name='alias'
                       onChange={handleInputChange}
+                      placeholder={
+                        newConfig.workload_type === 'expose'
+                          ? newConfig.exposure_type === 'public'
+                            ? 'myapp.example.com'
+                            : 'my-service'
+                          : ''
+                      }
                       bg='#161616'
                       border='1px solid rgba(255, 255, 255, 0.08)'
                       _hover={{ borderColor: 'rgba(255, 255, 255, 0.15)' }}
@@ -533,17 +606,19 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                       height='28px'
                       fontSize='13px'
                     />
-                    <Checkbox
-                      size='xs'
-                      checked={newConfig.domain_enabled}
-                      onCheckedChange={e =>
-                        handleCheckboxChange('domain_enabled', e)
-                      }
-                    >
-                      <Text fontSize='xs' color='gray.400'>
-                        Enable alias as domain
-                      </Text>
-                    </Checkbox>
+                    {newConfig.workload_type !== 'expose' && (
+                      <Checkbox
+                        size='xs'
+                        checked={newConfig.domain_enabled}
+                        onCheckedChange={e =>
+                          handleCheckboxChange('domain_enabled', e)
+                        }
+                      >
+                        <Text fontSize='xs' color='gray.400'>
+                          Enable alias as domain
+                        </Text>
+                      </Checkbox>
+                    )}
                   </Stack>
 
                   <Stack gap={1.5}>
@@ -617,6 +692,321 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                     )}
                   </Stack>
                 </Grid>
+
+                {/* Expose-specific options */}
+                {newConfig.workload_type === 'expose' && (
+                  <Stack gap={3}>
+                    {/* Exposure Type */}
+                    <Stack gap={1.5}>
+                      <Flex align='center' gap={1}>
+                        <Text fontSize='xs' color='gray.400'>
+                          Exposure Type *
+                        </Text>
+                        <Tooltip
+                          content='Cluster Only: Accessible within cluster via DNS. Public: Exposed to internet via Ingress.'
+                          portalled
+                        >
+                          <span
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                            }}
+                          >
+                            <Info size={10} color='#6B7280' />
+                          </span>
+                        </Tooltip>
+                      </Flex>
+                      <Select
+                        name='exposure_type'
+                        value={
+                          newConfig.exposure_type
+                            ? {
+                                value: newConfig.exposure_type,
+                                label:
+                                  newConfig.exposure_type === 'cluster'
+                                    ? 'Cluster Only (Internal)'
+                                    : 'Public (Internet)',
+                              }
+                            : {
+                                value: 'cluster',
+                                label: 'Cluster Only (Internal)',
+                              }
+                        }
+                        onChange={handleSelectChange}
+                        options={[
+                          {
+                            value: 'cluster',
+                            label: 'Cluster Only (Internal)',
+                          },
+                          { value: 'public', label: 'Public (Internet)' },
+                        ]}
+                        styles={selectStyles}
+                      />
+                    </Stack>
+
+                    {/* Local Port */}
+                    <Stack gap={1.5}>
+                      <Flex align='center' gap={1}>
+                        <Text fontSize='xs' color='gray.400'>
+                          Local Port *
+                        </Text>
+                        <Tooltip
+                          content='Port of your local development server'
+                          portalled
+                        >
+                          <span
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                            }}
+                          >
+                            <Info size={10} color='#6B7280' />
+                          </span>
+                        </Tooltip>
+                      </Flex>
+                      <Input
+                        type='number'
+                        name='local_port'
+                        value={newConfig.local_port || ''}
+                        onChange={handleInputChange}
+                        placeholder='3000'
+                        bg='#161616'
+                        border='1px solid rgba(255, 255, 255, 0.08)'
+                        _hover={{ borderColor: 'rgba(255, 255, 255, 0.15)' }}
+                        _focus={{ borderColor: 'blue.400', boxShadow: 'none' }}
+                        height='28px'
+                        fontSize='13px'
+                      />
+                    </Stack>
+
+                    {/* Local Address */}
+                    <Stack gap={1.5}>
+                      <Flex align='center' gap={1}>
+                        <Text fontSize='xs' color='gray.400'>
+                          Local Address
+                        </Text>
+                        <Tooltip
+                          content='Address where your local service is running (default: 127.0.0.1)'
+                          portalled
+                        >
+                          <span
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                            }}
+                          >
+                            <Info size={10} color='#6B7280' />
+                          </span>
+                        </Tooltip>
+                      </Flex>
+                      <Input
+                        name='local_address'
+                        value={newConfig.local_address || '127.0.0.1'}
+                        onChange={handleInputChange}
+                        placeholder='127.0.0.1'
+                        bg='#161616'
+                        border='1px solid rgba(255, 255, 255, 0.08)'
+                        _hover={{ borderColor: 'rgba(255, 255, 255, 0.15)' }}
+                        _focus={{ borderColor: 'blue.400', boxShadow: 'none' }}
+                        height='28px'
+                        fontSize='13px'
+                      />
+                    </Stack>
+
+                    {/* cert-manager - Only for public */}
+                    {newConfig.exposure_type === 'public' && (
+                      <>
+                        <Flex align='center' gap={1}>
+                          <Checkbox
+                            size='xs'
+                            checked={newConfig.cert_manager_enabled || false}
+                            onCheckedChange={e => {
+                              const isChecked =
+                                e.checked === 'indeterminate'
+                                  ? false
+                                  : e.checked
+
+                              setNewConfig({
+                                ...newConfig,
+                                cert_manager_enabled: isChecked,
+                                domain_enabled: isChecked,
+                                // Set defaults when enabling cert-manager
+                                cert_issuer_kind: isChecked
+                                  ? newConfig.cert_issuer_kind ||
+                                    'ClusterIssuer'
+                                  : newConfig.cert_issuer_kind,
+                              })
+                            }}
+                          >
+                            <Text fontSize='xs' color='gray.400'>
+                              Enable HTTPS (cert-manager)
+                            </Text>
+                          </Checkbox>
+                          <Tooltip
+                            content='Automatically provision TLS certificate using cert-manager'
+                            portalled
+                          >
+                            <span
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                              }}
+                            >
+                              <Info size={10} color='#6B7280' />
+                            </span>
+                          </Tooltip>
+                        </Flex>
+
+                        {newConfig.cert_manager_enabled && (
+                          <>
+                            <Stack gap={1.5}>
+                              <Text fontSize='xs' color='gray.400'>
+                                Issuer Kind *
+                              </Text>
+                              <Select
+                                name='cert_issuer_kind'
+                                value={
+                                  newConfig.cert_issuer_kind
+                                    ? {
+                                        value: newConfig.cert_issuer_kind,
+                                        label: newConfig.cert_issuer_kind,
+                                      }
+                                    : {
+                                        value: 'ClusterIssuer',
+                                        label: 'ClusterIssuer',
+                                      }
+                                }
+                                onChange={handleSelectChange}
+                                options={[
+                                  {
+                                    value: 'ClusterIssuer',
+                                    label: 'ClusterIssuer',
+                                  },
+                                  { value: 'Issuer', label: 'Issuer' },
+                                ]}
+                                styles={selectStyles}
+                              />
+                            </Stack>
+
+                            <Stack gap={1.5}>
+                              <Flex align='center' gap={1}>
+                                <Text fontSize='xs' color='gray.400'>
+                                  Issuer Name *
+                                </Text>
+                                <Tooltip
+                                  content='Name of your cert-manager issuer (e.g., letsencrypt-prod)'
+                                  portalled
+                                >
+                                  <span
+                                    style={{
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                    }}
+                                  >
+                                    <Info size={10} color='#6B7280' />
+                                  </span>
+                                </Tooltip>
+                              </Flex>
+                              <Input
+                                name='cert_issuer'
+                                value={newConfig.cert_issuer || ''}
+                                onChange={handleInputChange}
+                                placeholder='letsencrypt-prod'
+                                bg='#161616'
+                                border='1px solid rgba(255, 255, 255, 0.08)'
+                                _hover={{
+                                  borderColor: 'rgba(255, 255, 255, 0.15)',
+                                }}
+                                _focus={{
+                                  borderColor: 'blue.400',
+                                  boxShadow: 'none',
+                                }}
+                                height='28px'
+                                fontSize='13px'
+                              />
+                            </Stack>
+                          </>
+                        )}
+
+                        <Stack gap={1.5}>
+                          <Flex align='center' gap={1}>
+                            <Text fontSize='xs' color='gray.400'>
+                              Ingress Class (Optional)
+                            </Text>
+                            <Tooltip
+                              content='Leave empty to use default ingress class (e.g., nginx, traefik)'
+                              portalled
+                            >
+                              <span
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                }}
+                              >
+                                <Info size={10} color='#6B7280' />
+                              </span>
+                            </Tooltip>
+                          </Flex>
+                          <Input
+                            name='ingress_class'
+                            value={newConfig.ingress_class || ''}
+                            onChange={handleInputChange}
+                            placeholder='nginx'
+                            bg='#161616'
+                            border='1px solid rgba(255, 255, 255, 0.08)'
+                            _hover={{
+                              borderColor: 'rgba(255, 255, 255, 0.15)',
+                            }}
+                            _focus={{
+                              borderColor: 'blue.400',
+                              boxShadow: 'none',
+                            }}
+                            height='28px'
+                            fontSize='13px'
+                          />
+                        </Stack>
+
+                        <Stack gap={1.5}>
+                          <Flex align='center' gap={1}>
+                            <Text fontSize='xs' color='gray.400'>
+                              Additional Annotations (Optional)
+                            </Text>
+                            <Tooltip
+                              content='JSON format: {"key": "value"}. Example: nginx.ingress.kubernetes.io/rewrite-target'
+                              portalled
+                            >
+                              <span
+                                style={{
+                                  display: 'inline-flex',
+                                  alignItems: 'center',
+                                }}
+                              >
+                                <Info size={10} color='#6B7280' />
+                              </span>
+                            </Tooltip>
+                          </Flex>
+                          <Input
+                            name='ingress_annotations'
+                            value={newConfig.ingress_annotations || ''}
+                            onChange={handleInputChange}
+                            placeholder='{"key1": "value1", "key2": "value2"}'
+                            bg='#161616'
+                            border='1px solid rgba(255, 255, 255, 0.08)'
+                            _hover={{
+                              borderColor: 'rgba(255, 255, 255, 0.15)',
+                            }}
+                            _focus={{
+                              borderColor: 'blue.400',
+                              boxShadow: 'none',
+                            }}
+                            height='28px'
+                            fontSize='13px'
+                          />
+                        </Stack>
+                      </>
+                    )}
+                  </Stack>
+                )}
 
                 {newConfig.workload_type === 'proxy' ? (
                   <>
@@ -743,7 +1133,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                       </Stack>
                     </Grid>
                   </>
-                ) : (
+                ) : newConfig.workload_type !== 'expose' ? (
                   <>
                     <Grid templateColumns='repeat(2, 1fr)' gap={3}>
                       <Stack gap={1.5}>
@@ -935,34 +1325,38 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                       </Stack>
                     </Grid>
                   </>
-                )}
-
-                <Separator mt={1} />
-
-                <HStack justify='flex-end' gap={2}>
-                  <Button
-                    size='xs'
-                    variant='ghost'
-                    onClick={handleCancel}
-                    _hover={{ bg: 'whiteAlpha.50' }}
-                    height='28px'
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    size='xs'
-                    bg='blue.500'
-                    _hover={{ bg: 'blue.600' }}
-                    type='submit'
-                    disabled={!uiState.isFormValid}
-                    height='28px'
-                  >
-                    {isEdit ? 'Save Changes' : 'Add Config'}
-                  </Button>
-                </HStack>
+                ) : null}
               </Stack>
-            </form>
-          </Dialog.Body>
+            </Dialog.Body>
+
+            <Dialog.Footer
+              p={2}
+              bg='#161616'
+              borderTop='1px solid rgba(255, 255, 255, 0.05)'
+            >
+              <Flex justify='flex-end' gap={2} width='100%'>
+                <Button
+                  size='xs'
+                  variant='ghost'
+                  onClick={handleCancel}
+                  _hover={{ bg: 'whiteAlpha.50' }}
+                  height='28px'
+                >
+                  Cancel
+                </Button>
+                <Button
+                  size='xs'
+                  bg='blue.500'
+                  _hover={{ bg: 'blue.600' }}
+                  type='submit'
+                  disabled={!uiState.isFormValid}
+                  height='28px'
+                >
+                  {isEdit ? 'Save Changes' : 'Add Config'}
+                </Button>
+              </Flex>
+            </Dialog.Footer>
+          </form>
         </Dialog.Content>
       </Dialog.Positioner>
     </Dialog.Root>

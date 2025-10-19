@@ -1,3 +1,4 @@
+pub mod expose;
 pub mod hostfile_direct;
 pub mod hostfile_helper;
 pub mod hostsfile;
@@ -7,6 +8,10 @@ pub mod port_forward;
 pub mod port_forward_error;
 pub mod ssl;
 
+pub use expose::{
+    start_expose,
+    stop_expose,
+};
 pub use kftray_http_logs::HttpLogger as Logger;
 pub use kube::client::*;
 pub use kube::models::{

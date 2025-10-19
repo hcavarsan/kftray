@@ -379,8 +379,9 @@ const KFTray = () => {
 
   const stopPortForwardingForConfig = async (config: Config) => {
     if (
-      (config.workload_type === 'service' || config.workload_type === 'pod') &&
-      config.protocol === 'tcp'
+      config.workload_type === 'expose' ||
+      ((config.workload_type === 'service' || config.workload_type === 'pod') &&
+        config.protocol === 'tcp')
     ) {
       await invoke('stop_port_forward_cmd', {
         serviceName: config.service,
@@ -405,7 +406,9 @@ const KFTray = () => {
   }
 
   const startPortForwardingForConfig = async (config: Config) => {
-    if (
+    if (config.workload_type === 'expose') {
+      await invoke('start_port_forward_tcp_cmd', { configs: [config] })
+    } else if (
       (config.workload_type === 'service' || config.workload_type === 'pod') &&
       config.protocol === 'tcp'
     ) {
@@ -458,6 +461,11 @@ const KFTray = () => {
   }
   const handlePortForwarding = async (config: Config) => {
     switch (config.workload_type) {
+      case 'expose':
+        await invoke<Response>('start_port_forward_tcp_cmd', {
+          configs: [config],
+        })
+        break
       case 'service':
       case 'pod':
         if (config.protocol === 'tcp') {

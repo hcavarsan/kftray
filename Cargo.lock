@@ -2464,6 +2464,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6dbf3de79e51f3d586ab4cb9d5c3e2c14aa28ed23d180cf89b4df0454a69cc87"
 
 [[package]]
+name = "httpdate"
+version = "1.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
+
+[[package]]
 name = "hyper"
 version = "1.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2477,6 +2483,7 @@ dependencies = [
  "http",
  "http-body",
  "httparse",
+ "httpdate",
  "itoa",
  "pin-project-lite",
  "pin-utils",
@@ -3162,6 +3169,7 @@ dependencies = [
  "flate2",
  "futures",
  "http",
+ "http-body-util",
  "httparse",
  "hyper",
  "hyper-openssl",
@@ -3196,11 +3204,13 @@ dependencies = [
  "time",
  "tokio",
  "tokio-rustls",
+ "tokio-tungstenite 0.28.0",
  "tokio-util",
  "tower",
  "tower-test",
  "tracing",
  "tracing-subscriber",
+ "tungstenite 0.28.0",
  "uuid",
  "whoami",
  "windows 0.62.2",
@@ -3211,11 +3221,22 @@ name = "kftray-server"
 version = "0.26.8"
 dependencies = [
  "async-trait",
+ "bytes",
  "env_logger",
+ "futures",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
  "lazy_static",
  "log",
+ "serde",
+ "serde_json",
  "tokio",
+ "tokio-tungstenite 0.28.0",
+ "tungstenite 0.28.0",
  "url",
+ "uuid",
 ]
 
 [[package]]
@@ -3356,7 +3377,7 @@ dependencies = [
  "tame-oauth",
  "thiserror 2.0.17",
  "tokio",
- "tokio-tungstenite",
+ "tokio-tungstenite 0.27.0",
  "tokio-util",
  "tower",
  "tower-http",
@@ -7352,7 +7373,21 @@ dependencies = [
  "futures-util",
  "log",
  "tokio",
- "tungstenite",
+ "tungstenite 0.27.0",
+]
+
+[[package]]
+name = "tokio-tungstenite"
+version = "0.28.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d25a406cddcc431a75d3d9afc6a7c0f7428d4891dd973e4d54c56b46127bf857"
+dependencies = [
+ "futures-util",
+ "log",
+ "native-tls",
+ "tokio",
+ "tokio-native-tls",
+ "tungstenite 0.28.0",
 ]
 
 [[package]]
@@ -7658,6 +7693,24 @@ dependencies = [
  "http",
  "httparse",
  "log",
+ "rand 0.9.2",
+ "sha1",
+ "thiserror 2.0.17",
+ "utf-8",
+]
+
+[[package]]
+name = "tungstenite"
+version = "0.28.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8628dcc84e5a09eb3d8423d6cb682965dea9133204e8fb3efee74c2a0c259442"
+dependencies = [
+ "bytes",
+ "data-encoding",
+ "http",
+ "httparse",
+ "log",
+ "native-tls",
  "rand 0.9.2",
  "sha1",
  "thiserror 2.0.17",

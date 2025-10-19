@@ -337,6 +337,22 @@ pub async fn start_port_forward_with_mode(
     let mut failed_handles = Vec::new();
 
     for config in configs.iter_mut() {
+        if config.workload_type.as_deref() == Some("expose") {
+            match crate::expose::start_expose(vec![config.clone()], mode).await {
+                Ok(response) => responses.extend(response),
+                Err(e) => {
+                    let error_message = format!(
+                        "Failed to start expose for config {}: {}",
+                        config.id.unwrap_or_default(),
+                        e
+                    );
+                    error!("{}", &error_message);
+                    errors.push(error_message);
+                }
+            }
+            continue;
+        }
+
         let selector = match (config.workload_type.as_deref(), config.protocol.as_str()) {
             (Some("pod"), "tcp") => {
                 TargetSelector::PodLabel(config.target.clone().unwrap_or_default())
@@ -775,6 +791,12 @@ mod tests {
             http_logs_max_file_size: Some(10 * 1024 * 1024),
             http_logs_retention_days: Some(7),
             http_logs_auto_cleanup: Some(true),
+            exposure_type: None,
+            cert_manager_enabled: None,
+            cert_issuer: None,
+            cert_issuer_kind: None,
+            ingress_class: None,
+            ingress_annotations: None,
         }
     }
 
