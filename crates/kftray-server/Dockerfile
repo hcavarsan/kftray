@@ -4,9 +4,9 @@ RUN apk add --no-cache musl-dev openssl-dev openssl-libs-static pkgconfig
 
 WORKDIR /workspace
 
-# Copy workspace Cargo.toml and .cargo directory if it exists
+# Copy workspace files
 COPY Cargo.toml ./
-COPY .cargo ./.cargo 2>/dev/null || true
+COPY .cargo ./.cargo
 
 # Copy the crates needed for kftray-server
 COPY crates/kftray-commons ./crates/kftray-commons
