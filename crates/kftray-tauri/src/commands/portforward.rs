@@ -183,7 +183,7 @@ pub async fn get_active_pod_cmd(config_id: String) -> Result<Option<String>, Str
     let processes = CHILD_PROCESSES.lock().await;
 
     for (key, process) in processes.iter() {
-        if key.starts_with(&handle_key)
+        if (key.starts_with(&handle_key) || key == &config_id)
             && let Some(pod_name) = process.get_current_active_pod().await
         {
             return Ok(Some(pod_name));

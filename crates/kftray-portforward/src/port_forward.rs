@@ -28,6 +28,7 @@ pub struct PortForwardProcess {
     pub direct_forwarder: Option<Arc<PortForwarder>>,
     pub cancellation_token: CancellationToken,
     pub config_id: String,
+    pub ws_client_handle: Option<JoinHandle<()>>,
 }
 
 impl PortForwardProcess {
@@ -37,6 +38,7 @@ impl PortForwardProcess {
             direct_forwarder: None,
             cancellation_token: CancellationToken::new(),
             config_id,
+            ws_client_handle: None,
         }
     }
 
@@ -49,6 +51,7 @@ impl PortForwardProcess {
             direct_forwarder: None,
             cancellation_token,
             config_id,
+            ws_client_handle: None,
         }
     }
 
@@ -60,6 +63,7 @@ impl PortForwardProcess {
             direct_forwarder: Some(forwarder),
             cancellation_token: CancellationToken::new(),
             config_id,
+            ws_client_handle: None,
         }
     }
 
@@ -72,7 +76,12 @@ impl PortForwardProcess {
             direct_forwarder: Some(forwarder),
             cancellation_token,
             config_id,
+            ws_client_handle: None,
         }
+    }
+
+    pub fn set_ws_client_handle(&mut self, ws_handle: JoinHandle<()>) {
+        self.ws_client_handle = Some(ws_handle);
     }
 
     pub async fn cleanup_and_abort(self) {
@@ -88,6 +97,15 @@ impl PortForwardProcess {
                 self.config_id
             );
             forwarder.shutdown().await;
+        }
+
+        // Abort the WebSocket client task if it exists
+        if let Some(ws_handle) = self.ws_client_handle {
+            tracing::info!(
+                "Aborting WebSocket client task for config: {}",
+                self.config_id
+            );
+            ws_handle.abort();
         }
 
         self.handle.abort();

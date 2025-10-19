@@ -7,6 +7,7 @@ pub mod error;
 pub mod github;
 pub mod hostsfile;
 pub mod http_logs_config;
+pub mod manifests;
 pub mod migration;
 pub mod settings;
 pub mod timeout_manager;

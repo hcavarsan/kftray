@@ -20,6 +20,16 @@ use crate::config_dir::{
     get_db_file_path,
     get_pod_manifest_path,
 };
+use crate::utils::manifests::{
+    create_expose_deployment_manifest,
+    create_expose_ingress_manifest,
+    create_expose_service_manifest,
+    create_proxy_deployment_manifest,
+    expose_deployment_manifest_exists,
+    expose_ingress_manifest_exists,
+    expose_service_manifest_exists,
+    proxy_deployment_manifest_exists,
+};
 
 lazy_static! {
     static ref ENV_TEST_MUTEX: Mutex<()> = Mutex::new(());
@@ -32,6 +42,26 @@ pub async fn init() -> Result<(), Box<dyn std::error::Error>> {
 
     if !pod_manifest_file_exists() {
         create_server_config_manifest()?;
+    }
+
+    if !proxy_deployment_manifest_exists() {
+        info!("Creating proxy deployment manifest");
+        create_proxy_deployment_manifest()?;
+    }
+
+    if !expose_deployment_manifest_exists() {
+        info!("Creating expose deployment manifest");
+        create_expose_deployment_manifest()?;
+    }
+
+    if !expose_service_manifest_exists() {
+        info!("Creating expose service manifest");
+        create_expose_service_manifest()?;
+    }
+
+    if !expose_ingress_manifest_exists() {
+        info!("Creating expose ingress manifest");
+        create_expose_ingress_manifest()?;
     }
 
     let pool = get_db_pool().await.map_err(|e| e.to_string())?;

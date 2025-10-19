@@ -123,6 +123,26 @@ pub struct Config {
     #[serde(skip_serializing_if = "Option::is_none")]
     #[serde(deserialize_with = "deserialize_bool_from_anything")]
     pub http_logs_auto_cleanup: Option<bool>,
+    // Expose-specific fields
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exposure_type: Option<String>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(deserialize_with = "deserialize_bool_from_anything")]
+    pub cert_manager_enabled: Option<bool>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cert_issuer: Option<String>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cert_issuer_kind: Option<String>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ingress_class: Option<String>,
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ingress_annotations: Option<String>,
 }
 
 impl Default for Config {
@@ -147,6 +167,12 @@ impl Default for Config {
             http_logs_max_file_size: Some(10 * 1024 * 1024),
             http_logs_retention_days: Some(7),
             http_logs_auto_cleanup: Some(true),
+            exposure_type: None,
+            cert_manager_enabled: None,
+            cert_issuer: None,
+            cert_issuer_kind: None,
+            ingress_class: None,
+            ingress_annotations: None,
         }
     }
 }
@@ -226,6 +252,19 @@ impl Config {
             Some("proxy") => {
                 self.service = None;
                 self.target = None;
+            }
+            Some("expose") => {
+                self.service = None;
+                self.target = None;
+                self.remote_address = None;
+                self.remote_port = None;
+                if self.exposure_type.as_deref() == Some("cluster") {
+                    self.cert_manager_enabled = None;
+                    self.cert_issuer = None;
+                    self.cert_issuer_kind = None;
+                    self.ingress_class = None;
+                    self.ingress_annotations = None;
+                }
             }
             _ => {}
         }
