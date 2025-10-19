@@ -1,0 +1,12 @@
+[
+  {
+    "alias": "external-db",
+    "remote_address": "postgresql.external.example.com",
+    "namespace": "default",
+    "local_port": 5432,
+    "remote_port": 5432,
+    "context": "my-k8s-cluster",
+    "workload_type": "proxy",
+    "protocol": "tcp"
+  }
+]

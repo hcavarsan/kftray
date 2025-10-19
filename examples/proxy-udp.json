@@ -1,0 +1,12 @@
+[
+  {
+    "alias": "dns-proxy",
+    "remote_address": "8.8.8.8",
+    "namespace": "default",
+    "local_port": 5353,
+    "remote_port": 53,
+    "context": "my-k8s-cluster",
+    "workload_type": "proxy",
+    "protocol": "udp"
+  }
+]

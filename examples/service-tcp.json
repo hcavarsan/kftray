@@ -1,0 +1,12 @@
+[
+  {
+    "alias": "my-api",
+    "service": "api-service",
+    "namespace": "production",
+    "local_port": 8080,
+    "remote_port": 80,
+    "context": "my-k8s-cluster",
+    "workload_type": "service",
+    "protocol": "tcp"
+  }
+]

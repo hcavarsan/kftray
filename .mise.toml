@@ -105,6 +105,10 @@ run = "cargo run --bin generate_icons"
 description = "Detect unused exports in frontend"
 run = "pnpm --filter @kftray/ui run knip"
 
+[tasks.kftui]
+description = "Run kftui CLI"
+run = "cargo run -p kftui -- --log-level info --logs-to-file"
+
 # Setup Task
 [tasks.setup]
 description = "Setup development environment for all platforms"

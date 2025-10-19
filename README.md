@@ -95,6 +95,7 @@ check out our blog post at [kftray.app/blog/posts/13-kftray-manage-all-k8s-port-
 | **Port-forward timeouts** – Auto-close after time limit | ✅ | ✅ |
 | **Hosts file management** – Auto-update /etc/hosts entries | ✅ | ✅ |
 | **Auto SSL** – Automatic SSL certificate generation for port forwards | ✅ | ✅ |
+| **Expose local services** – Reverse tunnel local apps to cluster/internet (like ngrok) | ✅ | ✅ |
 | **System tray integration** – Quick access from tray | ✅ | ❌ |
 | **Request replay** – Replay HTTP requests for debugging | ❌ | ✅ |
 
@@ -150,6 +151,59 @@ You can import configs from:
 - GitHub repositories (public or private)
 - Direct from your cluster using service annotations
 - Command line (kftui supports `--json` and `--stdin`)
+
+### Workload Types
+
+kftray supports multiple workload types for different use cases:
+
+- **service** - Forward to a Kubernetes service (TCP/UDP)
+- **pod** - Forward directly to pods using label selectors (TCP/UDP)
+- **proxy** - Tunnel to external resources via the cluster (TCP/UDP)
+- **expose** - Reverse tunnel your local services to the cluster or internet
+
+### Expose: Reverse Tunneling
+
+The **expose** workload type lets you share your local development server with your team or expose it to the internet through your Kubernetes cluster. This is useful for:
+
+- Testing webhooks locally with external services
+- Sharing work-in-progress features with teammates
+- Running local services that need to be accessible from the cluster
+
+**Example: Expose local service to the internet**
+```json
+{
+  "alias": "myapp.example.com",
+  "namespace": "production",
+  "local_port": 3000,
+  "local_address": "localhost",
+  "context": "my-k8s-cluster",
+  "workload_type": "expose",
+  "protocol": "tcp",
+  "domain_enabled": true,
+  "exposure_type": "public",
+  "cert_manager_enabled": true,
+  "cert_issuer": "letsencrypt-prod",
+  "cert_issuer_kind": "ClusterIssuer",
+  "ingress_class": "nginx"
+}
+```
+
+**Example: Expose to cluster internal network only**
+```json
+{
+  "alias": "internal-api",
+  "namespace": "development",
+  "local_port": 8080,
+  "local_address": "localhost",
+  "context": "my-k8s-cluster",
+  "workload_type": "expose",
+  "protocol": "tcp",
+  "domain_enabled": true,
+  "exposure_type": "internal"
+}
+```
+
+For more examples, see the [examples directory](./examples/).
 
 ## Under the hood
 

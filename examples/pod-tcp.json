@@ -1,0 +1,12 @@
+[
+  {
+    "alias": "app-pod",
+    "target": "app=nginx,tier=frontend",
+    "namespace": "default",
+    "local_port": 8080,
+    "remote_port": 80,
+    "context": "my-k8s-cluster",
+    "workload_type": "pod",
+    "protocol": "tcp"
+  }
+]
