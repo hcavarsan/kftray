@@ -1,0 +1,16 @@
+[
+  {
+    "alias": "api-debug",
+    "target": "app=backend,version=v2",
+    "namespace": "staging",
+    "local_port": 3000,
+    "remote_port": 8080,
+    "context": "my-k8s-cluster",
+    "workload_type": "pod",
+    "protocol": "tcp",
+    "http_logs_enabled": true,
+    "http_logs_max_file_size": 20971520,
+    "http_logs_retention_days": 14,
+    "http_logs_auto_cleanup": true
+  }
+]

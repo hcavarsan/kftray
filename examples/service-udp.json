@@ -1,0 +1,12 @@
+[
+  {
+    "alias": "dns-server",
+    "service": "coredns",
+    "namespace": "kube-system",
+    "local_port": 5353,
+    "remote_port": 53,
+    "context": "my-k8s-cluster",
+    "workload_type": "service",
+    "protocol": "udp"
+  }
+]

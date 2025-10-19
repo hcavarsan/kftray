@@ -1,0 +1,18 @@
+[
+  {
+    "alias": "myapp.example.com",
+    "namespace": "production",
+    "local_port": 3000,
+    "local_address": "localhost",
+    "context": "my-k8s-cluster",
+    "workload_type": "expose",
+    "protocol": "tcp",
+    "domain_enabled": true,
+    "exposure_type": "public",
+    "cert_manager_enabled": true,
+    "cert_issuer": "letsencrypt-prod",
+    "cert_issuer_kind": "ClusterIssuer",
+    "ingress_class": "nginx",
+    "ingress_annotations": "{\"nginx.ingress.kubernetes.io/ssl-redirect\":\"true\"}"
+  }
+]
