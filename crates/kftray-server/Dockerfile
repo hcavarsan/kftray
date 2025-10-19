@@ -4,19 +4,17 @@ RUN apk add --no-cache musl-dev openssl-dev openssl-libs-static pkgconfig
 
 WORKDIR /build
 
-# Copy the crates needed for kftray-server
-COPY crates/kftray-commons ./kftray-commons
-COPY crates/kftray-server ./kftray-server
+# Copy kftray-server
+COPY crates/kftray-server ./
 
 # Build kftray-server
-WORKDIR /build/kftray-server
 RUN cargo build --release
 
 FROM alpine:3.22
 
 RUN apk add --no-cache ca-certificates libgcc openssl
 
-COPY --from=builder /build/kftray-server/target/release/kftray-server /kftray-server
+COPY --from=builder /build/target/release/kftray-server /kftray-server
 
 ENV REMOTE_ADDRESS=127.0.0.1
 ENV REMOTE_PORT=8080
