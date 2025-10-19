@@ -250,14 +250,6 @@ jobs:
         run: cd frontend && pnpm build
 
   build-and-push-docker:
-    needs:
-      [
-        eslint-format,
-        rust-format,
-        rust-lint,
-        rust-coverage,
-        frontend-bundle-analysis,
-      ]
     if: ${{ contains(github.event.pull_request.title, '[docker]') }}
     permissions:
       contents: write
@@ -284,7 +276,7 @@ jobs:
         uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83
         with:
           platforms: linux/amd64,linux/arm64
-          context: ./crates/kftray-server
+          context: .
           file: ./crates/kftray-server/Dockerfile
           push: true
           tags: |

@@ -2,12 +2,18 @@ FROM rust:1.90.0-alpine3.20 AS builder
 
 RUN apk add --no-cache musl-dev openssl-dev openssl-libs-static pkgconfig
 
+WORKDIR /workspace
 
-RUN USER=root cargo new --bin kftray-server
-WORKDIR /kftray-server
+# Copy workspace Cargo.toml and .cargo directory if it exists
+COPY Cargo.toml ./
+COPY .cargo ./.cargo 2>/dev/null || true
 
-COPY . .
+# Copy the crates needed for kftray-server
+COPY crates/kftray-commons ./crates/kftray-commons
+COPY crates/kftray-server ./crates/kftray-server
 
+# Build kftray-server
+WORKDIR /workspace/crates/kftray-server
 RUN cargo build --release
 RUN cargo install --path .
 
