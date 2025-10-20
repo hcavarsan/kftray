@@ -793,6 +793,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_ensure_certificate_generation() {
+        use crate::ssl::cert_store::{
+            SSL_TEST_MUTEX,
+            TEST_SSL_VAULT,
+        };
+        let _lock = SSL_TEST_MUTEX.lock().await;
+        *TEST_SSL_VAULT.lock().unwrap() = Default::default();
+
         let (manager, _temp_dir) = create_test_manager().await;
 
         let cert_pair = manager.ensure_certificate("test-service").await.unwrap();
@@ -802,6 +809,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_regenerate_certificate() {
+        use crate::ssl::cert_store::{
+            SSL_TEST_MUTEX,
+            TEST_SSL_VAULT,
+        };
+        let _lock = SSL_TEST_MUTEX.lock().await;
+        *TEST_SSL_VAULT.lock().unwrap() = Default::default();
+
         let (manager, _temp_dir) = create_test_manager().await;
 
         let cert_pair1 = manager.ensure_certificate("test-service").await.unwrap();
@@ -817,6 +831,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_certificate_info() {
+        use crate::ssl::cert_store::{
+            SSL_TEST_MUTEX,
+            TEST_SSL_VAULT,
+        };
+        let _lock = SSL_TEST_MUTEX.lock().await;
+        *TEST_SSL_VAULT.lock().unwrap() = Default::default();
+
         let (manager, _temp_dir) = create_test_manager().await;
 
         let info = manager.get_certificate_info("non-existent").await.unwrap();
@@ -830,7 +851,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_certificate_existence() {
-        use crate::ssl::cert_store::TEST_SSL_VAULT;
+        use crate::ssl::cert_store::{
+            SSL_TEST_MUTEX,
+            TEST_SSL_VAULT,
+        };
+        let _lock = SSL_TEST_MUTEX.lock().await;
         *TEST_SSL_VAULT.lock().unwrap() = Default::default();
 
         let (manager, _temp_dir) = create_test_manager().await;
@@ -844,7 +869,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_remove_certificate() {
-        use crate::ssl::cert_store::TEST_SSL_VAULT;
+        use crate::ssl::cert_store::{
+            SSL_TEST_MUTEX,
+            TEST_SSL_VAULT,
+        };
+        let _lock = SSL_TEST_MUTEX.lock().await;
         *TEST_SSL_VAULT.lock().unwrap() = Default::default();
 
         let (manager, _temp_dir) = create_test_manager().await;
@@ -858,6 +887,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_cleanup_ssl_artifacts() {
+        use crate::ssl::cert_store::{
+            SSL_TEST_MUTEX,
+            TEST_SSL_VAULT,
+        };
+        let _lock = SSL_TEST_MUTEX.lock().await;
+        *TEST_SSL_VAULT.lock().unwrap() = Default::default();
+
         unsafe {
             std::env::set_var("KFTRAY_SKIP_CA_INSTALL", "1");
         }
@@ -871,6 +907,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_domains_change_detection() {
+        use crate::ssl::cert_store::{
+            SSL_TEST_MUTEX,
+            TEST_SSL_VAULT,
+        };
+        let _lock = SSL_TEST_MUTEX.lock().await;
+        *TEST_SSL_VAULT.lock().unwrap() = Default::default();
+
         let (_manager, _temp_dir) = create_test_manager().await;
         let manager = &_manager;
 
@@ -891,7 +934,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_load_global_certificate() {
-        use crate::ssl::cert_store::TEST_SSL_VAULT;
+        use crate::ssl::cert_store::{
+            SSL_TEST_MUTEX,
+            TEST_SSL_VAULT,
+        };
+        let _lock = SSL_TEST_MUTEX.lock().await;
         *TEST_SSL_VAULT.lock().unwrap() = Default::default();
 
         let (_manager, _temp_dir) = create_test_manager().await;
@@ -931,7 +978,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_ensure_global_certificate_for_all_configs() {
-        use crate::ssl::cert_store::TEST_SSL_VAULT;
+        use crate::ssl::cert_store::{
+            SSL_TEST_MUTEX,
+            TEST_SSL_VAULT,
+        };
+        let _lock = SSL_TEST_MUTEX.lock().await;
         *TEST_SSL_VAULT.lock().unwrap() = Default::default();
 
         let (_manager, _temp_dir) = create_test_manager().await;

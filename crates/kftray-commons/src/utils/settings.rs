@@ -706,6 +706,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_settings_with_mode_memory() {
+        let _lock = crate::test_utils::MEMORY_MODE_TEST_MUTEX.lock().await;
         set_setting_with_mode("memory_test", "test_value", DatabaseMode::Memory)
             .await
             .unwrap();
@@ -734,6 +735,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_settings_isolation_between_modes() {
+        let _lock = crate::test_utils::MEMORY_MODE_TEST_MUTEX.lock().await;
         let memory_context = DatabaseManager::get_context(DatabaseMode::Memory)
             .await
             .unwrap();

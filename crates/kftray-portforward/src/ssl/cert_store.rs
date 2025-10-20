@@ -35,6 +35,11 @@ lazy_static! {
     pub static ref TEST_SSL_VAULT: Mutex<SslKeyVault> = Mutex::new(SslKeyVault::default());
 }
 
+#[cfg(test)]
+lazy_static! {
+    pub static ref SSL_TEST_MUTEX: tokio::sync::Mutex<()> = tokio::sync::Mutex::new(());
+}
+
 #[derive(Serialize, Deserialize, Default, Clone)]
 pub struct SslKeyVault {
     pub ca_private_key: Option<String>,
@@ -498,6 +503,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_store_and_load_certificate() {
+        let _lock = SSL_TEST_MUTEX.lock().await;
         *TEST_SSL_VAULT.lock().unwrap() = Default::default();
 
         unsafe {
@@ -527,6 +533,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_certificate_not_exists() {
+        let _lock = SSL_TEST_MUTEX.lock().await;
         *TEST_SSL_VAULT.lock().unwrap() = Default::default();
 
         let (store, _temp_dir) = create_test_store().await;
@@ -535,6 +542,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remove_certificate() {
+        let _lock = SSL_TEST_MUTEX.lock().await;
         *TEST_SSL_VAULT.lock().unwrap() = Default::default();
 
         unsafe {

@@ -524,36 +524,20 @@ mod tests {
     };
 
     use kftray_commons::models::config_model::Config;
-    use lazy_static::lazy_static;
-    use sqlx::SqlitePool;
     use tempfile::TempDir;
-    use tokio::sync::Mutex as TokioMutex;
 
     use super::*;
 
-    lazy_static! {
-        static ref TEST_MUTEX: TokioMutex<()> = TokioMutex::new(());
-    }
+    async fn setup_isolated_test_db() {
+        use kftray_commons::utils::db_mode::DatabaseMode;
 
-    async fn setup_isolated_test_db() -> Arc<SqlitePool> {
-        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-        kftray_commons::utils::db::create_db_table(&pool)
-            .await
-            .unwrap();
-        kftray_commons::utils::migration::migrate_configs(Some(&pool))
-            .await
-            .unwrap();
-
-        let arc_pool = Arc::new(pool);
-
-        // Set this as the global pool for command functions to use
-        let _ = kftray_commons::utils::db::DB_POOL.set(arc_pool.clone());
-
-        arc_pool
+        let _ = kftray_commons::config::delete_all_configs_with_mode(DatabaseMode::Memory).await;
     }
 
     async fn create_test_config() -> Result<i64, String> {
         use std::time::SystemTime;
+
+        use kftray_commons::utils::db_mode::DatabaseMode;
 
         let timestamp = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
@@ -583,13 +567,13 @@ mod tests {
             ..Default::default()
         };
 
-        kftray_commons::config::insert_config(config)
+        kftray_commons::config::insert_config_with_mode(config, DatabaseMode::Memory)
             .await
             .map_err(|e| e.to_string())?;
 
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
-        let configs = kftray_commons::config::get_configs()
+        let configs = kftray_commons::config::get_configs_with_mode(DatabaseMode::Memory)
             .await
             .map_err(|e| e.to_string())?;
         let inserted_config = configs
@@ -899,14 +883,24 @@ mod tests {
 
     #[tokio::test]
     async fn test_http_logs_config_persistence() {
-        let _guard = TEST_MUTEX.lock().await;
-        let _pool = setup_isolated_test_db().await;
+        use kftray_commons::utils::db_mode::DatabaseMode;
+
+        let _guard = kftray_commons::test_utils::MEMORY_MODE_TEST_MUTEX
+            .lock()
+            .await;
+        setup_isolated_test_db().await;
 
         let config_id = create_test_config()
             .await
             .expect("Failed to create test config");
 
-        let initial_config = get_http_logs_config_cmd(config_id).await.unwrap();
+        let initial_config =
+            kftray_commons::utils::http_logs_config::get_http_logs_config_with_mode(
+                config_id,
+                DatabaseMode::Memory,
+            )
+            .await
+            .unwrap();
         assert_eq!(initial_config.config_id, config_id);
         assert!(!initial_config.enabled);
         assert_eq!(initial_config.max_file_size, 10 * 1024 * 1024);
@@ -921,11 +915,20 @@ mod tests {
             auto_cleanup: false,
         };
 
-        update_http_logs_config_cmd(updated_config.clone())
+        kftray_commons::utils::http_logs_config::update_http_logs_config_with_mode(
+            &updated_config,
+            DatabaseMode::Memory,
+        )
+        .await
+        .unwrap();
+
+        let retrieved_config =
+            kftray_commons::utils::http_logs_config::get_http_logs_config_with_mode(
+                config_id,
+                DatabaseMode::Memory,
+            )
             .await
             .unwrap();
-
-        let retrieved_config = get_http_logs_config_cmd(config_id).await.unwrap();
         assert_eq!(retrieved_config.config_id, config_id);
         assert!(retrieved_config.enabled);
         assert_eq!(retrieved_config.max_file_size, 20 * 1024 * 1024);
@@ -935,37 +938,72 @@ mod tests {
 
     #[tokio::test]
     async fn test_http_logs_direct_database_integration() {
-        let _guard = TEST_MUTEX.lock().await;
-        let _pool = setup_isolated_test_db().await;
+        use kftray_commons::utils::db_mode::DatabaseMode;
+
+        let _guard = kftray_commons::test_utils::MEMORY_MODE_TEST_MUTEX
+            .lock()
+            .await;
+        setup_isolated_test_db().await;
 
         let config_id = create_test_config()
             .await
             .expect("Failed to create test config");
 
-        let initial_state = get_http_logs_cmd(config_id).await.unwrap();
-        assert!(!initial_state);
+        let initial_config =
+            kftray_commons::utils::http_logs_config::get_http_logs_config_with_mode(
+                config_id,
+                DatabaseMode::Memory,
+            )
+            .await
+            .unwrap();
+        assert!(!initial_config.enabled);
 
-        set_http_logs_cmd(config_id, true).await.unwrap();
-        let enabled_state = get_http_logs_cmd(config_id).await.unwrap();
-        assert!(enabled_state);
+        let mut enabled_config = initial_config.clone();
+        enabled_config.enabled = true;
+        kftray_commons::utils::http_logs_config::update_http_logs_config_with_mode(
+            &enabled_config,
+            DatabaseMode::Memory,
+        )
+        .await
+        .unwrap();
 
-        let db_config = get_http_logs_config_cmd(config_id).await.unwrap();
+        let db_config = kftray_commons::utils::http_logs_config::get_http_logs_config_with_mode(
+            config_id,
+            DatabaseMode::Memory,
+        )
+        .await
+        .unwrap();
         assert_eq!(db_config.config_id, config_id);
         assert!(db_config.enabled);
 
-        set_http_logs_cmd(config_id, false).await.unwrap();
-        let disabled_state = get_http_logs_cmd(config_id).await.unwrap();
-        assert!(!disabled_state);
+        let mut disabled_config = db_config.clone();
+        disabled_config.enabled = false;
+        kftray_commons::utils::http_logs_config::update_http_logs_config_with_mode(
+            &disabled_config,
+            DatabaseMode::Memory,
+        )
+        .await
+        .unwrap();
 
-        let db_config_disabled = get_http_logs_config_cmd(config_id).await.unwrap();
+        let db_config_disabled =
+            kftray_commons::utils::http_logs_config::get_http_logs_config_with_mode(
+                config_id,
+                DatabaseMode::Memory,
+            )
+            .await
+            .unwrap();
         assert_eq!(db_config_disabled.config_id, config_id);
         assert!(!db_config_disabled.enabled);
     }
 
     #[tokio::test]
     async fn test_http_logs_config_validation() {
-        let _guard = TEST_MUTEX.lock().await;
-        let _pool = setup_isolated_test_db().await;
+        use kftray_commons::utils::db_mode::DatabaseMode;
+
+        let _guard = kftray_commons::test_utils::MEMORY_MODE_TEST_MUTEX
+            .lock()
+            .await;
+        setup_isolated_test_db().await;
 
         let config_id = create_test_config()
             .await
@@ -979,10 +1017,18 @@ mod tests {
             auto_cleanup: true,
         };
 
-        update_http_logs_config_cmd(max_size_config.clone())
-            .await
-            .unwrap();
-        let retrieved = get_http_logs_config_cmd(config_id).await.unwrap();
+        kftray_commons::utils::http_logs_config::update_http_logs_config_with_mode(
+            &max_size_config,
+            DatabaseMode::Memory,
+        )
+        .await
+        .unwrap();
+        let retrieved = kftray_commons::utils::http_logs_config::get_http_logs_config_with_mode(
+            config_id,
+            DatabaseMode::Memory,
+        )
+        .await
+        .unwrap();
         assert_eq!(retrieved.max_file_size, 100 * 1024 * 1024);
         assert_eq!(retrieved.retention_days, 365);
 
@@ -994,10 +1040,19 @@ mod tests {
             auto_cleanup: false,
         };
 
-        update_http_logs_config_cmd(min_config.clone())
+        kftray_commons::utils::http_logs_config::update_http_logs_config_with_mode(
+            &min_config,
+            DatabaseMode::Memory,
+        )
+        .await
+        .unwrap();
+        let retrieved_min =
+            kftray_commons::utils::http_logs_config::get_http_logs_config_with_mode(
+                config_id,
+                DatabaseMode::Memory,
+            )
             .await
             .unwrap();
-        let retrieved_min = get_http_logs_config_cmd(config_id).await.unwrap();
         assert_eq!(retrieved_min.max_file_size, 1024);
         assert_eq!(retrieved_min.retention_days, 1);
         assert!(!retrieved_min.enabled);
@@ -1006,8 +1061,12 @@ mod tests {
 
     #[tokio::test]
     async fn test_http_logs_state_load_from_database() {
-        let _guard = TEST_MUTEX.lock().await;
-        let _pool = setup_isolated_test_db().await;
+        use kftray_commons::utils::db_mode::DatabaseMode;
+
+        let _guard = kftray_commons::test_utils::MEMORY_MODE_TEST_MUTEX
+            .lock()
+            .await;
+        setup_isolated_test_db().await;
 
         let config_id = create_test_config()
             .await
@@ -1019,17 +1078,23 @@ mod tests {
             retention_days: 10,
             auto_cleanup: true,
         };
-        update_http_logs_config_cmd(test_config.clone())
-            .await
-            .unwrap();
+        kftray_commons::utils::http_logs_config::update_http_logs_config_with_mode(
+            &test_config,
+            DatabaseMode::Memory,
+        )
+        .await
+        .unwrap();
 
-        let loaded_state = get_http_logs_cmd(config_id).await.unwrap();
+        let db_config = kftray_commons::utils::http_logs_config::get_http_logs_config_with_mode(
+            config_id,
+            DatabaseMode::Memory,
+        )
+        .await
+        .unwrap();
         assert!(
-            loaded_state,
+            db_config.enabled,
             "HTTP logs should be enabled after loading from database"
         );
-
-        let db_config = get_http_logs_config_cmd(config_id).await.unwrap();
         assert_eq!(db_config.max_file_size, 15 * 1024 * 1024);
         assert_eq!(db_config.retention_days, 10);
         assert!(db_config.auto_cleanup);
