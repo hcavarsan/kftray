@@ -10,7 +10,7 @@ importers:
     devDependencies:
       '@codecov/vite-plugin':
         specifier: 1.9.1
-        version: 1.9.1(vite@7.1.9(@types/node@24.8.1)(jiti@2.6.1)(terser@5.44.0))
+        version: 1.9.1(vite@7.1.11(@types/node@24.8.1)(jiti@2.6.1)(terser@5.44.0))
       '@eslint/eslintrc':
         specifier: ^3.3.1
         version: 3.3.1
@@ -34,7 +34,7 @@ importers:
         version: 4.17.20
       '@vitejs/plugin-react-swc':
         specifier: ^4.1.0
-        version: 4.1.0(@swc/helpers@0.5.17)(vite@7.1.9(@types/node@24.8.1)(jiti@2.6.1)(terser@5.44.0))
+        version: 4.1.0(@swc/helpers@0.5.17)(vite@7.1.11(@types/node@24.8.1)(jiti@2.6.1)(terser@5.44.0))
       lodash:
         specifier: ^4.17.21
         version: 4.17.21
@@ -121,11 +121,11 @@ importers:
         specifier: 5.9.3
         version: 5.9.3
       vite:
-        specifier: 7.1.9
-        version: 7.1.9(@types/node@24.8.1)(jiti@2.6.1)(terser@5.44.0)
+        specifier: 7.1.11
+        version: 7.1.11(@types/node@24.8.1)(jiti@2.6.1)(terser@5.44.0)
       vite-tsconfig-paths:
         specifier: ^5.1.4
-        version: 5.1.4(typescript@5.9.3)(vite@7.1.9(@types/node@24.8.1)(jiti@2.6.1)(terser@5.44.0))
+        version: 5.1.4(typescript@5.9.3)(vite@7.1.11(@types/node@24.8.1)(jiti@2.6.1)(terser@5.44.0))
 
 packages:
 
@@ -2649,8 +2649,8 @@ packages:
       vite:
         optional: true
 
-  vite@7.1.9:
-    resolution: {integrity: sha512-4nVGliEpxmhCL8DslSAUdxlB6+SMrhB0a1v5ijlh1xB1nEPuy1mxaHxysVucLHuWryAxLWg6a5ei+U4TLn/rFg==}
+  vite@7.1.11:
+    resolution: {integrity: sha512-uzcxnSDVjAopEUjljkWh8EIrg6tlzrjFUfMcR1EVsRDGwf/ccef0qQPRyOrROwhrTDaApueq+ja+KLPlzR/zdg==}
     engines: {node: ^20.19.0 || >=22.12.0}
     hasBin: true
     peerDependencies:
@@ -2982,11 +2982,11 @@ snapshots:
       unplugin: 1.16.1
       zod: 3.25.76
 
-  '@codecov/vite-plugin@1.9.1(vite@7.1.9(@types/node@24.8.1)(jiti@2.6.1)(terser@5.44.0))':
+  '@codecov/vite-plugin@1.9.1(vite@7.1.11(@types/node@24.8.1)(jiti@2.6.1)(terser@5.44.0))':
     dependencies:
       '@codecov/bundler-plugin-core': 1.9.1
       unplugin: 1.16.1
-      vite: 7.1.9(@types/node@24.8.1)(jiti@2.6.1)(terser@5.44.0)
+      vite: 7.1.11(@types/node@24.8.1)(jiti@2.6.1)(terser@5.44.0)
 
   '@emnapi/core@1.5.0':
     dependencies:
@@ -3772,11 +3772,11 @@ snapshots:
       '@typescript-eslint/types': 8.46.1
       eslint-visitor-keys: 4.2.1
 
-  '@vitejs/plugin-react-swc@4.1.0(@swc/helpers@0.5.17)(vite@7.1.9(@types/node@24.8.1)(jiti@2.6.1)(terser@5.44.0))':
+  '@vitejs/plugin-react-swc@4.1.0(@swc/helpers@0.5.17)(vite@7.1.11(@types/node@24.8.1)(jiti@2.6.1)(terser@5.44.0))':
     dependencies:
       '@rolldown/pluginutils': 1.0.0-beta.35
       '@swc/core': 1.13.5(@swc/helpers@0.5.17)
-      vite: 7.1.9(@types/node@24.8.1)(jiti@2.6.1)(terser@5.44.0)
+      vite: 7.1.11(@types/node@24.8.1)(jiti@2.6.1)(terser@5.44.0)
     transitivePeerDependencies:
       - '@swc/helpers'
 
@@ -5816,18 +5816,18 @@ snapshots:
     optionalDependencies:
       '@types/react': 19.2.2
 
-  vite-tsconfig-paths@5.1.4(typescript@5.9.3)(vite@7.1.9(@types/node@24.8.1)(jiti@2.6.1)(terser@5.44.0)):
+  vite-tsconfig-paths@5.1.4(typescript@5.9.3)(vite@7.1.11(@types/node@24.8.1)(jiti@2.6.1)(terser@5.44.0)):
     dependencies:
       debug: 4.4.3
       globrex: 0.1.2
       tsconfck: 3.1.6(typescript@5.9.3)
     optionalDependencies:
-      vite: 7.1.9(@types/node@24.8.1)(jiti@2.6.1)(terser@5.44.0)
+      vite: 7.1.11(@types/node@24.8.1)(jiti@2.6.1)(terser@5.44.0)
     transitivePeerDependencies:
       - supports-color
       - typescript
 
-  vite@7.1.9(@types/node@24.8.1)(jiti@2.6.1)(terser@5.44.0):
+  vite@7.1.11(@types/node@24.8.1)(jiti@2.6.1)(terser@5.44.0):
     dependencies:
       esbuild: 0.25.10
       fdir: 6.5.0(picomatch@4.0.3)
