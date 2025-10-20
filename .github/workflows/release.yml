@@ -73,7 +73,14 @@ jobs:
       - name: Install rust-cache
         uses: swatinem/rust-cache@7e1e2d0a10862b34e5df481373b2b0f295d1a2ef
         with:
-          key: rust-coverage
+          key: rust-coverage-${{ runner.os }}
+          shared-key: deps-coverage
+          cache-directories: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          cache-on-failure: false
 
       - name: Run tests
         env:
@@ -206,7 +213,12 @@ jobs:
       - name: Cache Rust
         uses: swatinem/rust-cache@7e1e2d0a10862b34e5df481373b2b0f295d1a2ef
         with:
-          key: kftray-tauri-${{ matrix.rust_target }}
+          key: kftray-tauri-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.rust_target }}
+          shared-key: deps-tauri-${{ matrix.rust_target }}
+          workspaces: |
+            .
+            crates/kftray-tauri
+          cache-on-failure: false
 
       - name: Install pnpm
         uses: pnpm/action-setup@f2b2b233b538f500472c7274c7012f57857d8ce0
@@ -228,11 +240,13 @@ jobs:
         uses: actions/cache@640a1c2554105b57832a23eea0b4672fc7a790d5
         with:
           path: |
-            $(pnpm store path --silent)
-            **/node_modules
-          key: ${{ runner.OS }}-pnpm-${{ matrix.arch }}-${{ hashFiles('**/pnpm-lock.yaml', '**/package.json') }}
+            ~/.pnpm-store
+            node_modules
+            frontend/node_modules
+          key: pnpm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/pnpm-lock.yaml') }}
           restore-keys: |
-            ${{ runner.OS }}-pnpm-${{ matrix.arch }}-
+            pnpm-${{ runner.os }}-${{ runner.arch }}-
+            pnpm-${{ runner.os }}-
 
       - name: Set up Visual Studio shell
         if: matrix.os == 'windows-latest' && matrix.arch == 'arm64'
@@ -447,7 +461,13 @@ jobs:
       - name: Cache Rust
         uses: swatinem/rust-cache@7e1e2d0a10862b34e5df481373b2b0f295d1a2ef
         with:
-          key: kftui-${{ matrix.rust_target }}
+          key: kftui-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.rust_target }}
+          shared-key: deps-kftui-${{ matrix.rust_target }}
+          workspaces: |
+            .
+            crates/kftui
+            crates/kftray-commons
+          cache-on-failure: false
 
       - name: Install pnpm
         uses: pnpm/action-setup@f2b2b233b538f500472c7274c7012f57857d8ce0
@@ -467,11 +487,13 @@ jobs:
         uses: actions/cache@640a1c2554105b57832a23eea0b4672fc7a790d5
         with:
           path: |
-            $(pnpm store path --silent)
-            **/node_modules
-          key: ${{ runner.OS }}-pnpm-${{ runner.ARCH }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+            ~/.pnpm-store
+            node_modules
+            frontend/node_modules
+          key: pnpm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/pnpm-lock.yaml') }}
           restore-keys: |
-            ${{ runner.OS }}-pnpm-${{ runner.ARCH }}-
+            pnpm-${{ runner.os }}-${{ runner.arch }}-
+            pnpm-${{ runner.os }}-
 
       - name: Setup platform-specific dependencies
         if: matrix.os == 'ubuntu-22.04'
@@ -703,7 +725,17 @@ jobs:
       - name: Cache Rust
         uses: swatinem/rust-cache@7e1e2d0a10862b34e5df481373b2b0f295d1a2ef
         with:
-          key: publish-cargo-crates
+          key: publish-cargo-crates-${{ runner.os }}
+          shared-key: deps-publish
+          workspaces: |
+            .
+            crates/kftray-commons
+            crates/kftray-helper
+            crates/kftray-http-logs
+            crates/kftray-portforward
+            crates/kftray-network-monitor
+            crates/kftui
+          cache-on-failure: false
 
       - name: Install dependencies
         run: |

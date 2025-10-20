@@ -44,6 +44,18 @@ jobs:
           node-version: "22"
           cache: "pnpm"
 
+      - name: Cache pnpm modules
+        uses: actions/cache@640a1c2554105b57832a23eea0b4672fc7a790d5
+        with:
+          path: |
+            ~/.pnpm-store
+            node_modules
+            frontend/node_modules
+          key: pnpm-eslint-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-eslint-${{ runner.os }}-
+            pnpm-${{ runner.os }}-
+
       - name: Perform linting
         run: pnpm lint:front
 
@@ -80,6 +92,13 @@ jobs:
 
       - name: Install rustfmt for nightly
         run: rustup component add --toolchain nightly rustfmt
+
+      - name: Cache Rust
+        uses: swatinem/rust-cache@7e1e2d0a10862b34e5df481373b2b0f295d1a2ef
+        with:
+          key: rust-format-${{ runner.os }}
+          shared-key: deps-format
+          cache-on-failure: false
 
       - name: Run rustfmt
         run: cargo +nightly fmt --all -- --check
@@ -146,6 +165,16 @@ jobs:
         run: rustup target add ${{ matrix.rust_target }}
         shell: bash
 
+      - name: Cache Rust
+        uses: swatinem/rust-cache@7e1e2d0a10862b34e5df481373b2b0f295d1a2ef
+        with:
+          key: rust-lint-${{ matrix.os }}-${{ matrix.rust_target }}
+          shared-key: deps-lint-${{ matrix.rust_target }}
+          workspaces: |
+            .
+            crates/kftray-helper
+          cache-on-failure: false
+
       - name: build kftray-helper
         run: cargo build --bin kftray-helper --release
 
@@ -197,8 +226,17 @@ jobs:
         with:
           tool: cargo-nextest
 
-      - name: Install rust-cache
+      - name: Cache Rust
         uses: swatinem/rust-cache@7e1e2d0a10862b34e5df481373b2b0f295d1a2ef
+        with:
+          key: rust-coverage-ci-${{ runner.os }}
+          shared-key: deps-coverage-ci
+          cache-directories: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          cache-on-failure: false
 
       - name: Install cargo-insta
         run: cargo install cargo-insta
@@ -243,6 +281,18 @@ jobs:
         with:
           node-version: "22"
           cache: "pnpm"
+
+      - name: Cache pnpm modules
+        uses: actions/cache@640a1c2554105b57832a23eea0b4672fc7a790d5
+        with:
+          path: |
+            ~/.pnpm-store
+            node_modules
+            frontend/node_modules
+          key: pnpm-bundle-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+          restore-keys: |
+            pnpm-bundle-${{ runner.os }}-
+            pnpm-${{ runner.os }}-
 
       - name: Build frontend with bundle analysis
         env:
