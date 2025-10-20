@@ -1711,4 +1711,162 @@ mod tests {
         assert_eq!(configs[0].service, Some("same-service-test-1".to_string()));
         assert_eq!(configs[1].service, Some("same-service-test-1".to_string()));
     }
+
+    #[tokio::test]
+    async fn test_kftui_incremental_import_multiple_ports() {
+        let _lock = crate::test_utils::MEMORY_MODE_TEST_MUTEX.lock().await;
+
+        let _ = delete_all_configs_with_mode(DatabaseMode::Memory).await;
+
+        let configs = vec![
+            Config {
+                service: Some("my-service".to_string()),
+                alias: Some("nomad".to_string()),
+                workload_type: Some("service".to_string()),
+                protocol: "tcp".to_string(),
+                context: Some("test-context".to_string()),
+                namespace: "default".to_string(),
+                local_port: Some(10148),
+                remote_port: Some(4646),
+                ..Config::default()
+            },
+            Config {
+                service: Some("my-service".to_string()),
+                alias: Some("consul".to_string()),
+                workload_type: Some("service".to_string()),
+                protocol: "tcp".to_string(),
+                context: Some("test-context".to_string()),
+                namespace: "default".to_string(),
+                local_port: Some(20148),
+                remote_port: Some(8500),
+                ..Config::default()
+            },
+            Config {
+                service: Some("my-service".to_string()),
+                alias: Some("postgres".to_string()),
+                workload_type: Some("service".to_string()),
+                protocol: "tcp".to_string(),
+                context: Some("test-context".to_string()),
+                namespace: "default".to_string(),
+                local_port: Some(30148),
+                remote_port: Some(5432),
+                ..Config::default()
+            },
+        ];
+
+        upsert_configs_with_mode(configs.clone(), DatabaseMode::Memory)
+            .await
+            .unwrap();
+
+        let configs_after_first_import =
+            read_configs_with_mode(DatabaseMode::Memory).await.unwrap();
+        assert_eq!(
+            configs_after_first_import.len(),
+            3,
+            "First import should create 3 configs"
+        );
+
+        let nomad_config = configs_after_first_import
+            .iter()
+            .find(|c| c.alias.as_deref() == Some("nomad"))
+            .expect("nomad config should exist");
+        assert_eq!(nomad_config.local_port, Some(10148));
+        assert_eq!(nomad_config.remote_port, Some(4646));
+        assert_eq!(nomad_config.service, Some("my-service".to_string()));
+
+        let consul_config = configs_after_first_import
+            .iter()
+            .find(|c| c.alias.as_deref() == Some("consul"))
+            .expect("consul config should exist");
+        assert_eq!(consul_config.local_port, Some(20148));
+        assert_eq!(consul_config.remote_port, Some(8500));
+        assert_eq!(consul_config.service, Some("my-service".to_string()));
+
+        let postgres_config = configs_after_first_import
+            .iter()
+            .find(|c| c.alias.as_deref() == Some("postgres"))
+            .expect("postgres config should exist");
+        assert_eq!(postgres_config.local_port, Some(30148));
+        assert_eq!(postgres_config.remote_port, Some(5432));
+        assert_eq!(postgres_config.service, Some("my-service".to_string()));
+
+        upsert_configs_with_mode(configs, DatabaseMode::Memory)
+            .await
+            .unwrap();
+
+        let configs_after_second_import =
+            read_configs_with_mode(DatabaseMode::Memory).await.unwrap();
+        assert_eq!(
+            configs_after_second_import.len(),
+            3,
+            "Second import should still have 3 configs, not more"
+        );
+
+        let nomad_config_after = configs_after_second_import
+            .iter()
+            .find(|c| c.alias.as_deref() == Some("nomad"))
+            .expect("nomad config should still exist after second import");
+        assert_eq!(
+            nomad_config_after.local_port,
+            Some(10148),
+            "nomad local_port should not be overridden"
+        );
+        assert_eq!(
+            nomad_config_after.remote_port,
+            Some(4646),
+            "nomad remote_port should not be overridden"
+        );
+        assert_eq!(
+            nomad_config_after.service,
+            Some("my-service".to_string()),
+            "nomad service should remain my-service"
+        );
+
+        let consul_config_after = configs_after_second_import
+            .iter()
+            .find(|c| c.alias.as_deref() == Some("consul"))
+            .expect("consul config should still exist after second import");
+        assert_eq!(
+            consul_config_after.local_port,
+            Some(20148),
+            "consul local_port should not be overridden"
+        );
+        assert_eq!(
+            consul_config_after.remote_port,
+            Some(8500),
+            "consul remote_port should not be overridden"
+        );
+        assert_eq!(
+            consul_config_after.service,
+            Some("my-service".to_string()),
+            "consul service should remain my-service"
+        );
+
+        let postgres_config_after = configs_after_second_import
+            .iter()
+            .find(|c| c.alias.as_deref() == Some("postgres"))
+            .expect("postgres config should still exist after second import");
+        assert_eq!(
+            postgres_config_after.local_port,
+            Some(30148),
+            "postgres local_port should not be overridden"
+        );
+        assert_eq!(
+            postgres_config_after.remote_port,
+            Some(5432),
+            "postgres remote_port should not be overridden"
+        );
+        assert_eq!(
+            postgres_config_after.service,
+            Some("my-service".to_string()),
+            "postgres service should remain my-service"
+        );
+
+        assert!(
+            configs_after_second_import
+                .iter()
+                .all(|c| c.service == Some("my-service".to_string())),
+            "All configs should have the same service name"
+        );
+    }
 }
