@@ -533,8 +533,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_config_state_with_mode_memory() {
-        use crate::utils::db_mode::DatabaseManager;
-        DatabaseManager::cleanup_memory_pools();
+        let _lock = crate::test_utils::MEMORY_MODE_TEST_MUTEX.lock().await;
+
+        let _ = config::delete_all_configs_with_mode(DatabaseMode::Memory).await;
 
         let config_data = Config {
             service: Some("memory-state-test".to_string()),
@@ -577,8 +578,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_configs_state_with_mode_memory() {
-        use crate::utils::db_mode::DatabaseManager;
-        DatabaseManager::cleanup_memory_pools();
+        let _lock = crate::test_utils::MEMORY_MODE_TEST_MUTEX.lock().await;
+
+        let _ = config::delete_all_configs_with_mode(DatabaseMode::Memory).await;
 
         let config_data = Config {
             service: Some("get-state-memory-test".to_string()),

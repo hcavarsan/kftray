@@ -414,7 +414,22 @@ fn configs_match_identity(existing: &Config, incoming: &Config) -> bool {
     }
 
     match existing.workload_type.as_deref() {
-        Some("service") => existing.service == incoming.service,
+        Some("service") => {
+            let service_matches = existing.service == incoming.service;
+
+            let has_explicit_ports = existing.local_port.is_some()
+                && incoming.local_port.is_some()
+                && existing.local_port != Some(0)
+                && incoming.local_port != Some(0);
+
+            if has_explicit_ports {
+                service_matches
+                    && existing.local_port == incoming.local_port
+                    && existing.remote_port == incoming.remote_port
+            } else {
+                service_matches
+            }
+        }
         Some("pod") => existing.target == incoming.target,
         Some("proxy") => existing.remote_address == incoming.remote_address,
         _ => {
@@ -1157,6 +1172,78 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_import_multiple_configs_same_service_different_ports() {
+        let pool = setup_test_db().await;
+
+        let configs_json = json!([
+            {
+                "service": "multi-port-service",
+                "alias": "nomad",
+                "workload_type": "service",
+                "protocol": "tcp",
+                "context": "test-context",
+                "namespace": "default",
+                "local_port": 10148,
+                "remote_port": 4646
+            },
+            {
+                "service": "multi-port-service",
+                "alias": "consul",
+                "workload_type": "service",
+                "protocol": "tcp",
+                "context": "test-context",
+                "namespace": "default",
+                "local_port": 20148,
+                "remote_port": 8500
+            },
+            {
+                "service": "multi-port-service",
+                "alias": "postgres",
+                "workload_type": "service",
+                "protocol": "tcp",
+                "context": "test-context",
+                "namespace": "default",
+                "local_port": 30148,
+                "remote_port": 5432
+            }
+        ])
+        .to_string();
+
+        import_configs_with_pool(configs_json.clone(), &pool)
+            .await
+            .unwrap();
+
+        let configs = read_configs_with_pool(&pool).await.unwrap();
+        assert_eq!(configs.len(), 3);
+
+        assert!(
+            configs
+                .iter()
+                .any(|c| c.local_port == Some(10148) && c.remote_port == Some(4646))
+        );
+        assert!(
+            configs
+                .iter()
+                .any(|c| c.local_port == Some(20148) && c.remote_port == Some(8500))
+        );
+        assert!(
+            configs
+                .iter()
+                .any(|c| c.local_port == Some(30148) && c.remote_port == Some(5432))
+        );
+
+        import_configs_with_pool(configs_json, &pool).await.unwrap();
+
+        let configs_after = read_configs_with_pool(&pool).await.unwrap();
+        assert_eq!(configs_after.len(), 3);
+        assert!(
+            configs_after
+                .iter()
+                .any(|c| c.local_port == Some(10148) && c.remote_port == Some(4646))
+        );
+    }
+
+    #[tokio::test]
     async fn test_clean_all_custom_hosts_entries() {
         let _lock = IO_TEST_MUTEX.lock().await;
         let pool = setup_test_db().await;
@@ -1452,8 +1539,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_config_with_mode_memory() {
-        use crate::utils::db_mode::DatabaseManager;
-        DatabaseManager::cleanup_memory_pools();
+        let _lock = crate::test_utils::MEMORY_MODE_TEST_MUTEX.lock().await;
+
+        let _ = delete_all_configs_with_mode(DatabaseMode::Memory).await;
 
         let config = Config {
             service: Some("memory-test".to_string()),
@@ -1484,8 +1572,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_config_operations_with_mode_memory() {
-        use crate::utils::db_mode::DatabaseManager;
-        DatabaseManager::cleanup_memory_pools();
+        let _lock = crate::test_utils::MEMORY_MODE_TEST_MUTEX.lock().await;
+
+        let _ = delete_all_configs_with_mode(DatabaseMode::Memory).await;
 
         let config1 = Config {
             service: Some("memory-test-1".to_string()),
@@ -1522,8 +1611,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_upserting_config_update() {
-        use crate::utils::db_mode::DatabaseManager;
-        DatabaseManager::cleanup_memory_pools();
+        let _lock = crate::test_utils::MEMORY_MODE_TEST_MUTEX.lock().await;
+
+        let _ = delete_all_configs_with_mode(DatabaseMode::Memory).await;
 
         let config1 = Config {
             service: Some("memory-test-1".to_string()),
@@ -1553,8 +1643,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_upserting_config_inserting() {
-        use crate::utils::db_mode::DatabaseManager;
-        DatabaseManager::cleanup_memory_pools();
+        let _lock = crate::test_utils::MEMORY_MODE_TEST_MUTEX.lock().await;
+
+        let _ = delete_all_configs_with_mode(DatabaseMode::Memory).await;
 
         let config1 = Config {
             service: Some("insert-test-1".to_string()),
@@ -1587,8 +1678,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_upserting_config_different_namespace() {
-        use crate::utils::db_mode::DatabaseManager;
-        DatabaseManager::cleanup_memory_pools();
+        let _lock = crate::test_utils::MEMORY_MODE_TEST_MUTEX.lock().await;
+
+        let _ = delete_all_configs_with_mode(DatabaseMode::Memory).await;
 
         let config1 = Config {
             service: Some("same-service-test-1".to_string()),

@@ -67,23 +67,16 @@ depends = ["format:front", "format:back"]
 
 [tasks."bump:patch"]
 description = "Bump patch version"
-run = "cd hacks/kftray-utils && cargo run --bin bump_version patch"
+run = "cd hacks/kftray-utils && cargo run --bin bump_version patch && cd ../.. && cargo update --workspace && git add . && git commit -m 'chore: bump version'"
 
 [tasks."bump:minor"]
 description = "Bump minor version"
-run = "cd hacks/kftray-utils && cargo run --bin bump_version minor"
+run = "cd hacks/kftray-utils && cargo run --bin bump_version minor && cd ../.. && cargo update --workspace && git add . && git commit -m 'chore: bump version'"
 
 [tasks."bump:major"]
 description = "Bump major version"
-run = "cd hacks/kftray-utils && cargo run --bin bump_version major"
+run = "cd hacks/kftray-utils && cargo run --bin bump_version major && cd ../.. && cargo update --workspace && git add . && git commit -m 'chore: bump version'"
 
-[tasks."release:patch"]
-description = "Release patch version"
-run = "cargo run --bin bump_version patch && git add . && git commit -m 'chore: release new version'"
-
-[tasks."release:minor"]
-description = "Release minor version"
-run = "cargo run --bin bump_version minor && git add . && git commit -m 'chore: release new version'"
 
 [tasks.precommit]
 description = "Run pre-commit checks (format, lint, test)"

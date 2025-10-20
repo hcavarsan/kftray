@@ -11,40 +11,23 @@ pub async fn get_config_states() -> Result<Vec<ConfigState>, String> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
     use kftray_commons::models::config_model::Config;
-    use lazy_static::lazy_static;
-    use sqlx::SqlitePool;
-    use tokio::sync::Mutex;
 
-    use super::*;
-
-    lazy_static! {
-        static ref TEST_MUTEX: Mutex<()> = Mutex::new(());
-    }
-
-    async fn setup_isolated_test_db() -> Arc<SqlitePool> {
-        let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
-        kftray_commons::utils::db::create_db_table(&pool)
-            .await
-            .unwrap();
-        kftray_commons::utils::migration::migrate_configs(Some(&pool))
-            .await
-            .unwrap();
-
-        let arc_pool = Arc::new(pool);
-
-        // Set this as the global pool for command functions to use
-        let _ = kftray_commons::utils::db::DB_POOL.set(arc_pool.clone());
-
-        arc_pool
+    async fn setup_isolated_test_db() {
+        let _ = kftray_commons::config::delete_all_configs_with_mode(
+            kftray_commons::utils::db_mode::DatabaseMode::Memory,
+        )
+        .await;
     }
 
     #[tokio::test]
     async fn test_get_config_states() {
-        let _guard = TEST_MUTEX.lock().await;
-        let _pool = setup_isolated_test_db().await;
+        use kftray_commons::utils::db_mode::DatabaseMode;
+
+        let _guard = kftray_commons::test_utils::MEMORY_MODE_TEST_MUTEX
+            .lock()
+            .await;
+        setup_isolated_test_db().await;
 
         let config1 = Config {
             service: Some("config-state-test-1".to_string()),
@@ -56,16 +39,17 @@ mod tests {
             ..Config::default()
         };
 
-        kftray_commons::config::insert_config(config1)
+        kftray_commons::config::insert_config_with_mode(config1, DatabaseMode::Memory)
             .await
             .expect("Failed to insert test config 1");
-        kftray_commons::config::insert_config(config2)
+        kftray_commons::config::insert_config_with_mode(config2, DatabaseMode::Memory)
             .await
             .expect("Failed to insert test config 2");
 
-        let configs = get_config_states()
-            .await
-            .expect("Failed to get config states");
+        let configs =
+            kftray_commons::config_state::get_configs_state_with_mode(DatabaseMode::Memory)
+                .await
+                .expect("Failed to get config states");
 
         assert_eq!(configs.len(), 2, "Should have two config states");
 
@@ -84,23 +68,37 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_config_states_with_running_state() {
-        let _guard = TEST_MUTEX.lock().await;
-        let _pool = setup_isolated_test_db().await;
+        use kftray_commons::utils::db_mode::DatabaseMode;
+
+        let _guard = kftray_commons::test_utils::MEMORY_MODE_TEST_MUTEX
+            .lock()
+            .await;
+        setup_isolated_test_db().await;
 
         let config = Config {
             service: Some("config-state-running-test".to_string()),
             ..Config::default()
         };
 
-        if kftray_commons::config::insert_config(config).await.is_ok()
-            && let Ok(initial_states) = get_config_states().await
+        if kftray_commons::config::insert_config_with_mode(config, DatabaseMode::Memory)
+            .await
+            .is_ok()
+            && let Ok(initial_states) =
+                kftray_commons::config_state::get_configs_state_with_mode(DatabaseMode::Memory)
+                    .await
             && let Some(test_state) = initial_states.first()
         {
             let mut update_state = test_state.clone();
             update_state.is_running = true;
-            let _ = kftray_commons::config_state::update_config_state(&update_state).await;
+            let _ = kftray_commons::config_state::update_config_state_with_mode(
+                &update_state,
+                DatabaseMode::Memory,
+            )
+            .await;
 
-            if let Ok(updated_states) = get_config_states().await
+            if let Ok(updated_states) =
+                kftray_commons::config_state::get_configs_state_with_mode(DatabaseMode::Memory)
+                    .await
                 && let Some(updated_state) = updated_states
                     .iter()
                     .find(|s| s.config_id == test_state.config_id)
@@ -115,12 +113,17 @@ mod tests {
 
     #[tokio::test]
     async fn test_get_config_states_with_no_configs() {
-        let _guard = TEST_MUTEX.lock().await;
-        let _pool = setup_isolated_test_db().await;
+        use kftray_commons::utils::db_mode::DatabaseMode;
 
-        let states = get_config_states()
-            .await
-            .expect("Failed to get config states");
+        let _guard = kftray_commons::test_utils::MEMORY_MODE_TEST_MUTEX
+            .lock()
+            .await;
+        setup_isolated_test_db().await;
+
+        let states =
+            kftray_commons::config_state::get_configs_state_with_mode(DatabaseMode::Memory)
+                .await
+                .expect("Failed to get config states");
         assert!(
             states.is_empty(),
             "Should have no config states when no configs exist"
