@@ -232,7 +232,7 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@7e24a656e1c7a0d6f3eaef8d8e84ae379a5b035b
         with:
-          node-version: "22"
+          node-version: "24"
           cache: "pnpm"
 
 
@@ -480,7 +480,7 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@7e24a656e1c7a0d6f3eaef8d8e84ae379a5b035b
         with:
-          node-version: "22"
+          node-version: "24"
           cache: "pnpm"
 
       - name: Cache pnpm modules
