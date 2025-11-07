@@ -376,8 +376,8 @@ jobs:
         id: tauri_build
         continue-on-error: true
         env:
-          RUSTFLAGS: ${{ matrix.os == 'macos-latest' && '-C link-arg=-s' || matrix.rust_target == 'i686-pc-windows-msvc' && '-C link-arg=-s' || '-C target-cpu=native -C link-arg=-s' }}
-          AWS_LC_SYS_CMAKE_CFLAGS: ${{ matrix.os == 'windows-latest' && '/std:c11' || '' }}
+          RUSTFLAGS: "-C link-arg=-s"
+          AWS_LC_SYS_CMAKE_CFLAGS: ${{ matrix.os == 'windows-latest' && '/std:c17' || '' }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -403,8 +403,8 @@ jobs:
         if: steps.tauri_build.outcome == 'failure'
         uses: tauri-apps/tauri-action@e834788a94591d81e3ae0bd9ec06366f5afb8994
         env:
-          RUSTFLAGS: ${{ matrix.os == 'macos-latest' && '-C link-arg=-s' || matrix.rust_target == 'i686-pc-windows-msvc' && '-C link-arg=-s' || '-C target-cpu=native -C link-arg=-s' }}
-          AWS_LC_SYS_CMAKE_CFLAGS: ${{ matrix.os == 'windows-latest' && '/std:c11' || '' }}
+          RUSTFLAGS: "-C link-arg=-s"
+          AWS_LC_SYS_CMAKE_CFLAGS: ${{ matrix.os == 'windows-latest' && '/std:c17' || '' }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -577,8 +577,8 @@ jobs:
 
       - name: Build kftui
         env:
-          RUSTFLAGS: ${{ matrix.os == 'macos-latest' && '-C link-arg=-s' || '-C target-cpu=native -C link-arg=-s' }}
-          AWS_LC_SYS_CMAKE_CFLAGS: ${{ matrix.os == 'windows-latest' && '/std:c11' || '' }}
+          RUSTFLAGS: "-C link-arg=-s"
+          AWS_LC_SYS_CMAKE_CFLAGS: ${{ matrix.os == 'windows-latest' && '/std:c17' || '' }}
         run: |
           if [ "${{ matrix.os }}" == "macos-latest" ]; then
             cargo build --release --bin kftui --target aarch64-apple-darwin
