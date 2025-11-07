@@ -45,7 +45,10 @@ pub fn get_kubeconfig_paths_from_option(kubeconfig: Option<String>) -> Result<Ve
         }
         Some(path) => {
             info!("Using provided kubeconfig paths: {path}");
-            Ok(path.split(':').map(PathBuf::from).collect())
+            Ok(path
+                .split(if cfg!(windows) { ';' } else { ':' })
+                .map(PathBuf::from)
+                .collect())
         }
         None => {
             info!("No kubeconfig path provided, using default paths.");
@@ -148,11 +151,22 @@ mod tests {
 
         let temp_dir = TempDir::new().unwrap();
 
-        let explicit_paths =
-            get_kubeconfig_paths_from_option(Some("/path1:/path2".to_string())).unwrap();
+        // Test platform-specific path separator (';' on Windows, ':' on Unix)
+        let separator = if cfg!(windows) { ';' } else { ':' };
+        let test_paths = if cfg!(windows) {
+            format!("C:\\path1{separator}D:\\path2")
+        } else {
+            format!("/path1{separator}/path2")
+        };
+        let explicit_paths = get_kubeconfig_paths_from_option(Some(test_paths.clone())).unwrap();
         assert_eq!(explicit_paths.len(), 2);
-        assert_eq!(explicit_paths[0], std::path::Path::new("/path1"));
-        assert_eq!(explicit_paths[1], std::path::Path::new("/path2"));
+        if cfg!(windows) {
+            assert_eq!(explicit_paths[0], std::path::Path::new("C:\\path1"));
+            assert_eq!(explicit_paths[1], std::path::Path::new("D:\\path2"));
+        } else {
+            assert_eq!(explicit_paths[0], std::path::Path::new("/path1"));
+            assert_eq!(explicit_paths[1], std::path::Path::new("/path2"));
+        }
 
         let mock_kubeconfig_path = temp_dir.path().join("mock_kubeconfig");
         fs::write(&mock_kubeconfig_path, "mock kubeconfig content").unwrap();
