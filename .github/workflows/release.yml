@@ -377,8 +377,7 @@ jobs:
         continue-on-error: true
         env:
           RUSTFLAGS: "-C link-arg=-s"
-          AWS_LC_SYS_C_STD: ${{ matrix.os == 'windows-latest' && '17' || '' }}
-          AWS_LC_SYS_NO_ASM: ${{ matrix.os == 'windows-latest' && '1' || '' }}
+          AWS_LC_SYS_PREBUILT_NASM: ${{ matrix.os == 'windows-latest' && '1' || '' }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -405,8 +404,7 @@ jobs:
         uses: tauri-apps/tauri-action@e834788a94591d81e3ae0bd9ec06366f5afb8994
         env:
           RUSTFLAGS: "-C link-arg=-s"
-          AWS_LC_SYS_C_STD: ${{ matrix.os == 'windows-latest' && '17' || '' }}
-          AWS_LC_SYS_NO_ASM: ${{ matrix.os == 'windows-latest' && '1' || '' }}
+          AWS_LC_SYS_PREBUILT_NASM: ${{ matrix.os == 'windows-latest' && '1' || '' }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -580,8 +578,7 @@ jobs:
       - name: Build kftui
         env:
           RUSTFLAGS: "-C link-arg=-s"
-          AWS_LC_SYS_C_STD: ${{ matrix.os == 'windows-latest' && '17' || '' }}
-          AWS_LC_SYS_NO_ASM: ${{ matrix.os == 'windows-latest' && '1' || '' }}
+          AWS_LC_SYS_PREBUILT_NASM: ${{ matrix.os == 'windows-latest' && '1' || '' }}
         run: |
           if [ "${{ matrix.os }}" == "macos-latest" ]; then
             cargo build --release --bin kftui --target aarch64-apple-darwin
