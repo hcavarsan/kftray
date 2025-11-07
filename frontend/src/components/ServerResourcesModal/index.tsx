@@ -126,23 +126,6 @@ const ServerResourcesModal: React.FC<ServerResourcesModalProps> = ({
     }),
   }
 
-  useEffect(() => {
-    if (isOpen) {
-      loadContexts()
-      setSelectedContext(null)
-      setNamespaceGroups([])
-      setHasLoadedOnce(false)
-    }
-  }, [isOpen])
-
-  useEffect(() => {
-    if (selectedContext && hasLoadedOnce) {
-      loadResources()
-    } else if (!selectedContext) {
-      setNamespaceGroups([])
-    }
-  }, [selectedContext, hasLoadedOnce, loadResources])
-
   const loadContexts = async () => {
     try {
       const configs = await invoke<any[]>('get_configs_cmd')
@@ -176,8 +159,8 @@ const ServerResourcesModal: React.FC<ServerResourcesModalProps> = ({
 
   const loadResources = useCallback(async () => {
     if (!selectedContext) {
-return
-}
+      return
+    }
 
     try {
       setIsLoading(true)
@@ -207,7 +190,6 @@ return
               },
             )
 
-
             if (resources.length > 0) {
               allResources.push({ context: contextName, groups: resources })
             }
@@ -220,7 +202,6 @@ return
         }
 
         const flattenedGroups: NamespaceGroup[] = []
-
 
         allResources.forEach(({ context, groups }) => {
           groups.forEach(group => {
@@ -254,6 +235,23 @@ return
       setIsLoading(false)
     }
   }, [selectedContext, kubeconfig])
+
+  useEffect(() => {
+    if (isOpen) {
+      loadContexts()
+      setSelectedContext(null)
+      setNamespaceGroups([])
+      setHasLoadedOnce(false)
+    }
+  }, [isOpen])
+
+  useEffect(() => {
+    if (selectedContext && hasLoadedOnce) {
+      loadResources()
+    } else if (!selectedContext) {
+      setNamespaceGroups([])
+    }
+  }, [selectedContext, hasLoadedOnce, loadResources])
 
   const handleDeleteResource = async (resource: ServerResource) => {
     const resourceKey = `${resource.namespace}-${resource.resource_type}-${resource.name}`
@@ -291,8 +289,8 @@ return
 
   const handleCleanupAll = async () => {
     if (!selectedContext) {
-return
-}
+      return
+    }
 
     try {
       setIsCleaningAll(true)
@@ -309,7 +307,6 @@ return
 
         let totalDeleted = 0
 
-
         for (const contextName of uniqueContexts) {
           try {
             const result = await invoke<string>(
@@ -320,7 +317,6 @@ return
               },
             )
             const matches = result.match(/(\d+)/)
-
 
             if (matches) {
               totalDeleted += parseInt(matches[1], 10)

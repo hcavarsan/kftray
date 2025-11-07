@@ -423,39 +423,40 @@ pub async fn delete_kftray_resource(
     );
 
     if let Some(ref config_id_str) = config_id
-        && let Ok(id) = config_id_str.parse::<i64>() {
-            let config_result = kftray_commons::config::get_config(id).await;
+        && let Ok(id) = config_id_str.parse::<i64>()
+    {
+        let config_result = kftray_commons::config::get_config(id).await;
 
-            if let Ok(config) = config_result {
-                info!("Config found, stopping port-forward before deleting resource");
+        if let Ok(config) = config_result {
+            info!("Config found, stopping port-forward before deleting resource");
 
-                let workload_type = config.workload_type.as_deref().unwrap_or("");
+            let workload_type = config.workload_type.as_deref().unwrap_or("");
 
-                match workload_type {
-                    "proxy" => {
-                        let _ = kftray_portforward::stop_proxy_forward(
-                            id,
-                            namespace,
-                            resource_name.to_string(),
-                        )
-                        .await;
-                    }
-                    "expose" => {
-                        let _ = kftray_portforward::stop_expose(id, namespace, DatabaseMode::File)
-                            .await;
-                    }
-                    _ => {
-                        let _ = kftray_portforward::stop_port_forward_with_mode(
-                            config_id_str.clone(),
-                            DatabaseMode::File,
-                        )
-                        .await;
-                    }
+            match workload_type {
+                "proxy" => {
+                    let _ = kftray_portforward::stop_proxy_forward(
+                        id,
+                        namespace,
+                        resource_name.to_string(),
+                    )
+                    .await;
                 }
-
-                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                "expose" => {
+                    let _ =
+                        kftray_portforward::stop_expose(id, namespace, DatabaseMode::File).await;
+                }
+                _ => {
+                    let _ = kftray_portforward::stop_port_forward_with_mode(
+                        config_id_str.clone(),
+                        DatabaseMode::File,
+                    )
+                    .await;
+                }
             }
+
+            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
         }
+    }
 
     let (client, _, _) = create_client_with_specific_context(kubeconfig, Some(context_name))
         .await
