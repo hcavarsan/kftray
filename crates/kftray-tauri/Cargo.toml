@@ -1,6 +1,6 @@
 [package]
 name = "kftray-tauri"
-version = "0.27.3"
+version = "0.27.4"
 authors = ["Henrique Cavarsan <hencavarsan@gmail.com>"]
 edition = "2024"
 description = "A cross-platform system tray app for Kubernetes port-forward management"
@@ -51,6 +51,7 @@ tauri-plugin-shell = { workspace = true }
 tauri-plugin-updater = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true }
+whoami = { workspace = true }
 
 [dev-dependencies]
 async-trait = { workspace = true }

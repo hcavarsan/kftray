@@ -22,6 +22,9 @@ import { Config } from '@/types'
 const AddConfigModal = lazy(() => import('@/components/AddConfigModal'))
 const AutoImportModal = lazy(() => import('@/components/AutoImportModal'))
 const GitSyncModal = lazy(() => import('@/components/GitSyncModal'))
+const ServerResourcesModal = lazy(
+  () => import('@/components/ServerResourcesModal'),
+)
 const SettingsModal = lazy(() => import('@/components/SettingsModal'))
 const ShortcutModal = lazy(() => import('@/components/ShortcutModal'))
 
@@ -63,6 +66,8 @@ const KFTray = () => {
   const [configToDelete, setConfigToDelete] = useState<number | undefined>()
   const [isAutoImportModalOpen, setIsAutoImportModalOpen] = useState(false)
   const [isShortcutModalOpen, setIsShortcutModalOpen] = useState(false)
+  const [isServerResourcesModalOpen, setIsServerResourcesModalOpen] =
+    useState(false)
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false)
   const fetchConfigsWithState = useCallback(async () => {
     try {
@@ -186,6 +191,14 @@ const KFTray = () => {
 
   const closeShortcutModal = () => {
     setIsShortcutModalOpen(false)
+  }
+
+  const openServerResourcesModal = () => {
+    setIsServerResourcesModalOpen(true)
+  }
+
+  const closeServerResourcesModal = () => {
+    setIsServerResourcesModalOpen(false)
   }
 
   const openSettingsModal = () => {
@@ -690,6 +703,7 @@ const KFTray = () => {
               selectedConfigs={selectedConfigs}
               setSelectedConfigs={setSelectedConfigs}
               openSettingsModal={openSettingsModal}
+              openServerResourcesModal={openServerResourcesModal}
             />
           </Box>
 
@@ -761,6 +775,13 @@ const KFTray = () => {
             <ShortcutModal
               isOpen={isShortcutModalOpen}
               onClose={closeShortcutModal}
+            />
+          )}
+
+          {isServerResourcesModalOpen && (
+            <ServerResourcesModal
+              isOpen={isServerResourcesModalOpen}
+              onClose={closeServerResourcesModal}
             />
           )}
 

@@ -5,6 +5,7 @@ pub mod helper;
 pub mod httplogs;
 pub mod kubecontext;
 pub mod portforward;
+pub mod server_resources;
 pub mod settings;
 pub mod shortcuts;
 pub mod ssl;

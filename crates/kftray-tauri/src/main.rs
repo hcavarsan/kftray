@@ -325,6 +325,9 @@ fn main() {
             commands::shortcuts::check_shortcut_conflicts,
             commands::shortcuts::get_platform_status,
             commands::shortcuts::try_fix_platform_permissions,
+            commands::server_resources::list_all_kftray_resources,
+            commands::server_resources::delete_kftray_resource,
+            commands::server_resources::cleanup_all_kftray_resources,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");

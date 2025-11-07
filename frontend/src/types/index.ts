@@ -64,6 +64,7 @@ export interface TableProps {
   setSelectedConfigs: React.Dispatch<React.SetStateAction<Config[]>>
   setIsInitiating: React.Dispatch<React.SetStateAction<boolean>>
   openSettingsModal: () => void
+  openServerResourcesModal: () => void
 }
 
 export interface PortForwardRowProps {
@@ -147,6 +148,7 @@ export interface HeaderProps {
   search: string
   setSearch: React.Dispatch<React.SetStateAction<string>>
   openSettingsModal: () => void
+  openServerResourcesModal: () => void
 }
 
 export interface HeaderMenuProps {
@@ -208,4 +210,19 @@ export interface StringOption {
 export interface PortOption {
   label: string
   value: number
+}
+
+export interface ServerResource {
+  resource_type: string
+  name: string
+  namespace: string
+  config_id: string | null
+  is_orphaned: boolean
+  age: string
+  status: string
+}
+
+export interface NamespaceGroup {
+  namespace: string
+  resources: ServerResource[]
 }

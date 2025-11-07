@@ -1,5 +1,13 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { GripVertical, Pin, PinOff, Search, Settings, X } from 'lucide-react'
+import {
+  GripVertical,
+  Pin,
+  PinOff,
+  Search,
+  Server,
+  Settings,
+  X,
+} from 'lucide-react'
 
 import { Box, Image, Input } from '@chakra-ui/react'
 import { app } from '@tauri-apps/api'
@@ -18,6 +26,7 @@ const Header: React.FC<HeaderProps> = ({
   search,
   setSearch,
   openSettingsModal,
+  openServerResourcesModal,
 }) => {
   const [version, setVersion] = useState('')
   const [tooltipOpen, setTooltipOpen] = useState(false)
@@ -187,7 +196,32 @@ const Header: React.FC<HeaderProps> = ({
       </Box>
 
       {/* Right Section - Window Controls */}
-      <Box display='flex' alignItems='center' gap={1} ml={4}>
+      <Box display='flex' alignItems='center' gap={1} ml={4} mr={-1}>
+        <Tooltip
+          content='Manage Server Resources'
+          portalled={true}
+          contentProps={{ zIndex: 100 }}
+        >
+          <Button
+            variant='ghost'
+            size='sm'
+            onClick={openServerResourcesModal}
+            height='28px'
+            width='28px'
+            minWidth='28px'
+            p={0}
+            _hover={{ bg: 'whiteAlpha.100' }}
+            _active={{ bg: 'whiteAlpha.200' }}
+          >
+            <Box
+              as={Server}
+              width='16px'
+              height='16px'
+              color='whiteAlpha.700'
+            />
+          </Button>
+        </Tooltip>
+
         <Tooltip
           content='Settings'
           portalled={true}
@@ -251,10 +285,11 @@ const Header: React.FC<HeaderProps> = ({
             width='28px'
             minWidth='28px'
             p={0}
+            ml={-1.5}
             _hover={{ bg: 'whiteAlpha.100' }}
             _active={{ bg: 'whiteAlpha.200' }}
           >
-            <Box as={X} width='16px' height='16px' color='whiteAlpha.700' />
+            <Box as={X} width='15px' height='15px' color='whiteAlpha.700' />
           </Button>
         </Tooltip>
       </Box>
