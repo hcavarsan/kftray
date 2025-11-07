@@ -298,15 +298,6 @@ jobs:
               patchelf \
               xdg-utils
 
-      - name: Install NASM on Windows
-        if: matrix.os == 'windows-latest'
-        run: choco install nasm
-
-      - name: Add NASM to PATH
-        if: matrix.os == 'windows-latest'
-        run: echo "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-        shell: pwsh
-
       - name: Reduce environment size for Windows
         if: matrix.os == 'windows-latest'
         shell: pwsh
