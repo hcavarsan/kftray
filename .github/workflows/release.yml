@@ -186,11 +186,6 @@ jobs:
             rust_target: universal-apple-darwin
             tauri_args: "--target universal-apple-darwin --bundles dmg,app,updater --verbose"
           - os: windows-latest
-            arch: x86
-            rust_target: i686-pc-windows-msvc
-            tauri_args: "--target i686-pc-windows-msvc --bundles nsis,updater --verbose"
-            msvc_arch: x86
-          - os: windows-latest
             arch: x86_64
             rust_target: x86_64-pc-windows-msvc
             tauri_args: "--target x86_64-pc-windows-msvc --bundles nsis,updater --verbose"
@@ -307,6 +302,11 @@ jobs:
         if: matrix.os == 'windows-latest'
         run: choco install nasm
 
+      - name: Add NASM to PATH
+        if: matrix.os == 'windows-latest'
+        run: echo "C:\Program Files\NASM" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+        shell: pwsh
+
       - name: Reduce environment size for Windows
         if: matrix.os == 'windows-latest'
         shell: pwsh
@@ -330,6 +330,22 @@ jobs:
           }
           $newPath = ($essentialPaths -join ';')
           "PATH=$newPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Build kftray-helper (Windows x86_64)
+        if: matrix.os == 'windows-latest' && matrix.arch == 'x86_64'
+        run: |
+          cargo build --bin kftray-helper --release --target x86_64-pc-windows-msvc
+          New-Item -ItemType Directory -Force -Path crates\kftray-tauri\bin
+          Copy-Item target\x86_64-pc-windows-msvc\release\kftray-helper.exe crates\kftray-tauri\bin\kftray-helper-x86_64-pc-windows-msvc.exe
+        shell: pwsh
+
+      - name: Build kftray-helper (Windows ARM64)
+        if: matrix.os == 'windows-latest' && matrix.arch == 'arm64'
+        run: |
+          cargo build --bin kftray-helper --release --target aarch64-pc-windows-msvc
+          New-Item -ItemType Directory -Force -Path crates\kftray-tauri\bin
+          Copy-Item target\aarch64-pc-windows-msvc\release\kftray-helper.exe crates\kftray-tauri\bin\kftray-helper-aarch64-pc-windows-msvc.exe
+        shell: pwsh
 
       - name: Build kftray-helper for multiple architectures (macOS)
         if: matrix.os == 'macos-latest'
@@ -452,11 +468,6 @@ jobs:
             arch: universal
             rust_target: universal-apple-darwin
             os_name: macos
-          - os: windows-latest
-            arch: x86
-            rust_target: i686-pc-windows-msvc
-            msvc_arch: x86
-            os_name: windows
           - os: windows-latest
             arch: x86_64
             rust_target: x86_64-pc-windows-msvc
