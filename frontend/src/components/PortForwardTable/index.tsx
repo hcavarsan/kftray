@@ -27,6 +27,7 @@ const PortForwardTable: React.FC<TableProps> = ({
   selectedConfigs,
   setSelectedConfigs,
   openSettingsModal,
+  openServerResourcesModal,
 }) => {
   const [search, setSearch] = useState<string>('')
   const [expandedIndices, setExpandedIndices] = useState<string[]>([])
@@ -172,6 +173,7 @@ const PortForwardTable: React.FC<TableProps> = ({
             search={search}
             setSearch={setSearch}
             openSettingsModal={openSettingsModal}
+            openServerResourcesModal={openServerResourcesModal}
           />
           <HeaderMenu
             isSelectAllChecked={isSelectAllChecked}
