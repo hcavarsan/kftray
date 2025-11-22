@@ -64,7 +64,7 @@ kube-runtime = { version = "2.0.1", features = ["unstable-runtime"] }
 lazy_static = "1.5"
 libc = "0.2.175"
 log = "0.4"
-mockall = "0.13"
+mockall = "0.14"
 netstat2 = { git = "https://github.com/hcavarsan/netstat2-rs" }
 once_cell = "1.21"
 open = "5.3"
