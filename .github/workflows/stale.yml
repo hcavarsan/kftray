@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-22.04
     if: github.repository == 'hcavarsan/kftray'
     steps:
-      - uses: actions/stale@3a9db7e6a41a89f618792c92c0e97cc736e1b13f
+      - uses: actions/stale@5611b9defa6b7799a950489b00163db69f7a3ece
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
           days-before-issue-stale: 60
