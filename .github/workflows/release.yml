@@ -289,9 +289,9 @@ jobs:
               patchelf \
               xdg-utils
 
-      - name: Install NASM and Ninja on Windows
+      - name: Install NASM on Windows
         if: matrix.os == 'windows-latest'
-        run: choco install nasm ninja
+        run: choco install nasm
 
       - name: Build kftray-helper for multiple architectures (macOS)
         if: matrix.os == 'macos-latest'
@@ -317,54 +317,13 @@ jobs:
           app-path: crates/kftray-tauri/bin/kftray-helper-universal-apple-darwin
           entitlements-path: crates/kftray-helper/macos-helper-entitlements.plist
 
-      - name: Clean up PATH on Windows
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: |
-          # Get current PATH entries
-          $currentPath = $env:PATH -split ';'
-          $originalCount = $currentPath.Count
-
-          # Keep only essential paths (Windows, Rust, Node, CMake, NASM, Git, MSVC, Ninja)
-          $keepPatterns = @(
-            'Windows',
-            'system32',
-            'PowerShell',
-            'rustup',
-            'cargo',
-            'node',
-            'npm',
-            'pnpm',
-            'CMake',
-            'NASM',
-            'Git',
-            'OpenSSL',
-            'MSVC',
-            'Microsoft Visual Studio',
-            'VC\\Tools',
-            'chocolatey',
-            'ninja'
-          )
-
-          $filteredPath = $currentPath | Where-Object {
-            $path = $_
-            foreach ($pattern in $keepPatterns) {
-              if ($path -match $pattern) { return $true }
-            }
-            return $false
-          }
-
-          $newPath = $filteredPath -join ';'
-          echo "PATH=$newPath" >> $env:GITHUB_ENV
-          Write-Host "Reduced PATH from $originalCount to $($filteredPath.Count) entries"
-
       - name: Build kftray-tauri Desktop App
         uses: tauri-apps/tauri-action@9ce1dcc1a78395184050946b71457a6c242beab6
         id: tauri_build
         continue-on-error: true
         env:
           RUSTFLAGS: ${{ (matrix.os == 'macos-latest' || matrix.os == 'windows-latest') && '-C link-arg=-s' || '-C target-cpu=native -C link-arg=-s' }}
-          CMAKE_GENERATOR: ${{ matrix.os == 'windows-latest' && 'Ninja' || '' }}
+          AWS_LC_SYS_NO_ASM: ${{ matrix.os == 'windows-latest' && '1' || '' }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -390,7 +349,7 @@ jobs:
         uses: tauri-apps/tauri-action@9ce1dcc1a78395184050946b71457a6c242beab6
         env:
           RUSTFLAGS: ${{ (matrix.os == 'macos-latest' || matrix.os == 'windows-latest') && '-C link-arg=-s' || '-C target-cpu=native -C link-arg=-s' }}
-          CMAKE_GENERATOR: ${{ matrix.os == 'windows-latest' && 'Ninja' || '' }}
+          AWS_LC_SYS_NO_ASM: ${{ matrix.os == 'windows-latest' && '1' || '' }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -544,10 +503,10 @@ jobs:
         with:
           arch: amd64_arm64
 
-      - name: Install OpenSSL, NASM and Ninja on Windows
+      - name: Install OpenSSL and NASM on Windows
         if: matrix.os == 'windows-latest'
         run: |
-          choco install openssl nasm ninja
+          choco install openssl nasm
 
       - name: Set up Perl on Windows
         if: matrix.os == 'windows-latest'
@@ -562,53 +521,10 @@ jobs:
           echo "PERL=$((where.exe perl)[0])" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           echo "OPENSSL_SRC_PERL=$((where.exe perl)[0])" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
-      - name: Clean up PATH on Windows
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: |
-          # Get current PATH entries
-          $currentPath = $env:PATH -split ';'
-          $originalCount = $currentPath.Count
-
-          # Keep only essential paths (Windows, Rust, Node, CMake, NASM, Git, Perl, MSVC, Ninja)
-          $keepPatterns = @(
-            'Windows',
-            'system32',
-            'PowerShell',
-            'rustup',
-            'cargo',
-            'node',
-            'npm',
-            'pnpm',
-            'CMake',
-            'NASM',
-            'Git',
-            'OpenSSL',
-            'Strawberry',
-            'perl',
-            'MSVC',
-            'Microsoft Visual Studio',
-            'VC\\Tools',
-            'chocolatey',
-            'ninja'
-          )
-
-          $filteredPath = $currentPath | Where-Object {
-            $path = $_
-            foreach ($pattern in $keepPatterns) {
-              if ($path -match $pattern) { return $true }
-            }
-            return $false
-          }
-
-          $newPath = $filteredPath -join ';'
-          echo "PATH=$newPath" >> $env:GITHUB_ENV
-          Write-Host "Reduced PATH from $originalCount to $($filteredPath.Count) entries"
-
       - name: Build kftui
         env:
           RUSTFLAGS: ${{ (matrix.os == 'macos-latest' || matrix.os == 'windows-latest') && '-C link-arg=-s' || '-C target-cpu=native -C link-arg=-s' }}
-          CMAKE_GENERATOR: ${{ matrix.os == 'windows-latest' && 'Ninja' || '' }}
+          AWS_LC_SYS_NO_ASM: ${{ matrix.os == 'windows-latest' && '1' || '' }}
         run: |
           if [ "${{ matrix.os }}" == "macos-latest" ]; then
             cargo build --release --bin kftui --target aarch64-apple-darwin
