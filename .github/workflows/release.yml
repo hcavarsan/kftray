@@ -317,13 +317,17 @@ jobs:
           app-path: crates/kftray-tauri/bin/kftray-helper-universal-apple-darwin
           entitlements-path: crates/kftray-helper/macos-helper-entitlements.plist
 
+      - name: Set CMAKE_GENERATOR for x86/x64 Windows
+        if: matrix.os == 'windows-latest' && matrix.arch != 'arm64'
+        shell: bash
+        run: echo "CMAKE_GENERATOR=Ninja" >> $GITHUB_ENV
+
       - name: Build kftray-tauri Desktop App
         uses: tauri-apps/tauri-action@9ce1dcc1a78395184050946b71457a6c242beab6
         id: tauri_build
         continue-on-error: true
         env:
           RUSTFLAGS: ${{ (matrix.os == 'macos-latest' || matrix.os == 'windows-latest') && '-C link-arg=-s' || '-C target-cpu=native -C link-arg=-s' }}
-          CMAKE_GENERATOR: ${{ matrix.os == 'windows-latest' && matrix.arch != 'arm64' && 'Ninja' || '' }}
           AWS_LC_SYS_PREBUILT_NASM: ${{ matrix.os == 'windows-latest' && '1' || '' }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
@@ -350,7 +354,6 @@ jobs:
         uses: tauri-apps/tauri-action@9ce1dcc1a78395184050946b71457a6c242beab6
         env:
           RUSTFLAGS: ${{ (matrix.os == 'macos-latest' || matrix.os == 'windows-latest') && '-C link-arg=-s' || '-C target-cpu=native -C link-arg=-s' }}
-          CMAKE_GENERATOR: ${{ matrix.os == 'windows-latest' && matrix.arch != 'arm64' && 'Ninja' || '' }}
           AWS_LC_SYS_PREBUILT_NASM: ${{ matrix.os == 'windows-latest' && '1' || '' }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
@@ -523,10 +526,14 @@ jobs:
           echo "PERL=$((where.exe perl)[0])" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           echo "OPENSSL_SRC_PERL=$((where.exe perl)[0])" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
+      - name: Set CMAKE_GENERATOR for x86/x64 Windows
+        if: matrix.os == 'windows-latest' && matrix.arch != 'arm64'
+        shell: bash
+        run: echo "CMAKE_GENERATOR=Ninja" >> $GITHUB_ENV
+
       - name: Build kftui
         env:
           RUSTFLAGS: ${{ (matrix.os == 'macos-latest' || matrix.os == 'windows-latest') && '-C link-arg=-s' || '-C target-cpu=native -C link-arg=-s' }}
-          CMAKE_GENERATOR: ${{ matrix.os == 'windows-latest' && matrix.arch != 'arm64' && 'Ninja' || '' }}
           AWS_LC_SYS_PREBUILT_NASM: ${{ matrix.os == 'windows-latest' && '1' || '' }}
         run: |
           if [ "${{ matrix.os }}" == "macos-latest" ]; then
