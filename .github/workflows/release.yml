@@ -236,7 +236,7 @@ jobs:
 
       - name: Set up Visual Studio shell
         if: matrix.os == 'windows-latest' && matrix.arch == 'arm64'
-        uses: TheMrMilchmann/setup-msvc-dev@3462509a550bd581ef073d5daa110e2fa2738b38
+        uses: TheMrMilchmann/setup-msvc-dev@ced9887c29958f18f71b18c99d9eb0837859434c
         with:
           arch: amd64_arm64
 
@@ -340,9 +340,8 @@ jobs:
           releaseName: "KFtray - ${{ github.ref_name }}"
           releaseBody: "See the assets to download this version and install."
           releaseDraft: true
+          releaseAssetNamePattern: ${{ matrix.asset_name_pattern || '' }}
           prerelease: false
-          updaterJsonKeepUniversal: true
-          assetNamePattern: ${{ matrix.asset_name_pattern || '' }}
           args: ${{ matrix.tauri_args }}
 
       - name: Retry Build on Failure
@@ -368,8 +367,7 @@ jobs:
           releaseBody: "See the assets to download this version and install."
           releaseDraft: true
           prerelease: false
-          updaterJsonKeepUniversal: true
-          assetNamePattern: ${{ matrix.asset_name_pattern || '' }}
+          releaseAssetNamePattern: ${{ matrix.asset_name_pattern || '' }}
           args: ${{ matrix.tauri_args }}
 
   merge-linux-updater-json:
