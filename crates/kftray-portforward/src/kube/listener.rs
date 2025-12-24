@@ -96,7 +96,7 @@ impl PortForwarder {
             pod_api: Api::namespaced((*client).clone(), namespace),
             target_port: None,
             next_portforwarder: Arc::new(tokio::sync::Mutex::new(None)),
-            portforward_semaphore: Arc::new(tokio::sync::Semaphore::new(10)),
+            portforward_semaphore: Arc::new(tokio::sync::Semaphore::new(50)),
             http_log_watcher: HttpLogStateWatcher::new(),
             initialization_lock: Arc::new(tokio::sync::Mutex::new(false)),
             background_tasks: Arc::new(tokio::sync::Mutex::new(Vec::new())),
@@ -245,7 +245,7 @@ impl PortForwarder {
                             "Portforward attempt {} failed with 404, retrying in 2s",
                             attempt
                         );
-                        tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+                        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
                         continue;
                     }
                     return Err(anyhow::anyhow!("Failed to create portforwarder: {}", e));
@@ -325,7 +325,7 @@ impl PortForwarder {
         let http_log_watcher_clone = self.http_log_watcher.clone();
         let sync_cancel_token = cancellation_token.clone();
         let sync_task = tokio::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_millis(200));
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(1));
             loop {
                 tokio::select! {
                     _ = interval.tick() => {
