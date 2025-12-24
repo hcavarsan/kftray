@@ -73,7 +73,15 @@ jobs:
       - name: Install rust-cache
         uses: swatinem/rust-cache@5e4a76743357a1c3c57315bc1896d2c7f89d6861
         with:
-          key: rust-coverage
+          key: rust-coverage-${{ runner.os }}
+          shared-key: rust-coverage
+          workspaces: |
+            .
+            crates/kftray-helper
+            crates/kftray-http-logs
+            crates/kftray-portforward
+            crates/kftray-network-monitor
+            crates/kftui
 
       - name: Run tests
         env:
@@ -206,7 +214,11 @@ jobs:
       - name: Cache Rust
         uses: swatinem/rust-cache@5e4a76743357a1c3c57315bc1896d2c7f89d6861
         with:
-          key: kftray-tauri-${{ matrix.rust_target }}
+          key: kftray-tauri-${{ matrix.rust_target }}-${{ matrix.os }}
+          shared-key: kftray-tauri-${{ matrix.rust_target }}
+          workspaces: |
+            .
+            crates/kftray-tauri
 
       - name: Install pnpm
         uses: pnpm/action-setup@1e1c8eafbd745f64b1ef30a7d7ed7965034c486c
@@ -455,7 +467,12 @@ jobs:
       - name: Cache Rust
         uses: swatinem/rust-cache@5e4a76743357a1c3c57315bc1896d2c7f89d6861
         with:
-          key: kftui-${{ matrix.rust_target }}
+          key: kftui-${{ matrix.rust_target }}-${{ matrix.os }}
+          shared-key: kftui-${{ matrix.rust_target }}
+          workspaces: |
+            .
+            crates/kftui
+
 
       - name: Install pnpm
         uses: pnpm/action-setup@1e1c8eafbd745f64b1ef30a7d7ed7965034c486c
@@ -727,6 +744,15 @@ jobs:
         uses: swatinem/rust-cache@5e4a76743357a1c3c57315bc1896d2c7f89d6861
         with:
           key: publish-cargo-crates
+          shared-key: publish-cargo-crates
+          workspaces: |
+            .
+            crates/kftray-commons
+            crates/kftray-helper
+            crates/kftray-http-logs
+            crates/kftray-portforward
+            crates/kftray-network-monitor
+            crates/kftui
 
       - name: Install dependencies
         run: |
