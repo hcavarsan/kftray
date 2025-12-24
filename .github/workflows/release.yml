@@ -323,7 +323,7 @@ jobs:
         continue-on-error: true
         env:
           RUSTFLAGS: ${{ (matrix.os == 'macos-latest' || matrix.os == 'windows-latest') && '-C link-arg=-s' || '-C target-cpu=native -C link-arg=-s' }}
-          CMAKE_GENERATOR: ${{ matrix.os == 'windows-latest' && 'Ninja' || '' }}
+          CMAKE_GENERATOR: ${{ matrix.os == 'windows-latest' && matrix.arch != 'arm64' && 'Ninja' || '' }}
           AWS_LC_SYS_PREBUILT_NASM: ${{ matrix.os == 'windows-latest' && '1' || '' }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
@@ -350,7 +350,7 @@ jobs:
         uses: tauri-apps/tauri-action@9ce1dcc1a78395184050946b71457a6c242beab6
         env:
           RUSTFLAGS: ${{ (matrix.os == 'macos-latest' || matrix.os == 'windows-latest') && '-C link-arg=-s' || '-C target-cpu=native -C link-arg=-s' }}
-          CMAKE_GENERATOR: ${{ matrix.os == 'windows-latest' && 'Ninja' || '' }}
+          CMAKE_GENERATOR: ${{ matrix.os == 'windows-latest' && matrix.arch != 'arm64' && 'Ninja' || '' }}
           AWS_LC_SYS_PREBUILT_NASM: ${{ matrix.os == 'windows-latest' && '1' || '' }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
@@ -526,7 +526,7 @@ jobs:
       - name: Build kftui
         env:
           RUSTFLAGS: ${{ (matrix.os == 'macos-latest' || matrix.os == 'windows-latest') && '-C link-arg=-s' || '-C target-cpu=native -C link-arg=-s' }}
-          CMAKE_GENERATOR: ${{ matrix.os == 'windows-latest' && 'Ninja' || '' }}
+          CMAKE_GENERATOR: ${{ matrix.os == 'windows-latest' && matrix.arch != 'arm64' && 'Ninja' || '' }}
           AWS_LC_SYS_PREBUILT_NASM: ${{ matrix.os == 'windows-latest' && '1' || '' }}
         run: |
           if [ "${{ matrix.os }}" == "macos-latest" ]; then
