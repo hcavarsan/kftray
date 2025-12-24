@@ -150,7 +150,6 @@ windows-service = "0.8"
 
 [profile.dev]
 incremental = true
-rustflags = ["-Zthreads=8"]
 
 [profile.release]
 opt-level = "s"
@@ -158,5 +157,3 @@ strip = true
 lto = true
 panic = "abort"
 codegen-units = 1
-trim-paths = "all"
-rustflags = ["-Cdebuginfo=0", "-Zthreads=4"]
