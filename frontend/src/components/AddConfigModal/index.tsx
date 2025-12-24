@@ -3,6 +3,7 @@
 import React, { useEffect, useMemo, useState } from 'react'
 import { Info } from 'lucide-react'
 import Select, { ActionMeta, MultiValue, SingleValue } from 'react-select'
+import CreatableSelect from 'react-select/creatable'
 
 import {
   Button,
@@ -674,7 +675,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                     <Text fontSize='xs' color='gray.400'>
                       Namespace *
                     </Text>
-                    <Select
+                    <CreatableSelect
                       name='namespace'
                       value={formState.selectedNamespace}
                       onChange={handleSelectChange}
@@ -684,6 +685,12 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                       }))}
                       isLoading={namespaceQuery.isLoading}
                       styles={selectStyles}
+                      formatCreateLabel={(inputValue) => `Use "${inputValue}"`}
+                      noOptionsMessage={() =>
+                        namespaceQuery.isError
+                          ? 'Type namespace name manually'
+                          : 'No namespaces found'
+                      }
                     />
                     {namespaceQuery.isError && (
                       <Text color='red.300' fontSize='xs'>
@@ -1142,7 +1149,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                             ? 'Pod Label'
                             : 'Service'}
                         </Text>
-                        <Select
+                        <CreatableSelect
                           name={
                             newConfig.workload_type === 'pod'
                               ? 'target'
@@ -1167,6 +1174,16 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                               : serviceQuery.isLoading
                           }
                           styles={selectStyles}
+                          formatCreateLabel={(inputValue) => `Use "${inputValue}"`}
+                          noOptionsMessage={() => {
+                            const hasError =
+                              newConfig.workload_type === 'pod'
+                                ? podsQuery.isError
+                                : serviceQuery.isError
+                            return hasError
+                              ? 'Type name manually'
+                              : 'No results found'
+                          }}
                         />
                         {newConfig.workload_type === 'pod' &&
                           podsQuery.isError && (
