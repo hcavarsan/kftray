@@ -134,6 +134,7 @@ export const Toaster = () => {
         toaster={toaster}
         insetInline={{ mdDown: '2' }}
         insetBlock={{ mdDown: '2' }}
+        css={{ pointerEvents: 'none' }}
       >
         {toast => (
           <Toast.Root
@@ -148,6 +149,7 @@ export const Toaster = () => {
             border='1px solid'
             borderColor='gray.800'
             onClick={e => e.stopPropagation()}
+            css={{ pointerEvents: 'auto' }}
           >
             {toast.type === 'loading' ? (
               <Spinner size='xs' color='gray.500' />
