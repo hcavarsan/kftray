@@ -73,14 +73,7 @@ jobs:
       - name: Install rust-cache
         uses: swatinem/rust-cache@5e4a76743357a1c3c57315bc1896d2c7f89d6861
         with:
-          key: rust-coverage-${{ runner.os }}
-          shared-key: deps-coverage
-          cache-directories: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target
-          cache-on-failure: false
+          key: rust-coverage
 
       - name: Run tests
         env:
@@ -186,6 +179,11 @@ jobs:
             rust_target: universal-apple-darwin
             tauri_args: "--target universal-apple-darwin --bundles dmg,app,updater --verbose"
           - os: windows-latest
+            arch: x86
+            rust_target: i686-pc-windows-msvc
+            tauri_args: "--target i686-pc-windows-msvc --bundles nsis,updater --verbose"
+            msvc_arch: x86
+          - os: windows-latest
             arch: x86_64
             rust_target: x86_64-pc-windows-msvc
             tauri_args: "--target x86_64-pc-windows-msvc --bundles nsis,updater --verbose"
@@ -208,12 +206,7 @@ jobs:
       - name: Cache Rust
         uses: swatinem/rust-cache@5e4a76743357a1c3c57315bc1896d2c7f89d6861
         with:
-          key: kftray-tauri-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.rust_target }}
-          shared-key: deps-tauri-${{ matrix.rust_target }}
-          workspaces: |
-            .
-            crates/kftray-tauri
-          cache-on-failure: false
+          key: kftray-tauri-${{ matrix.rust_target }}
 
       - name: Install pnpm
         uses: pnpm/action-setup@1e1c8eafbd745f64b1ef30a7d7ed7965034c486c
@@ -227,7 +220,7 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@65d868f8d4d85d7d4abb7de0875cde3fcc8798f5
         with:
-          node-version: "24"
+          node-version: "22"
           cache: "pnpm"
 
 
@@ -235,13 +228,11 @@ jobs:
         uses: actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb
         with:
           path: |
-            ~/.pnpm-store
-            node_modules
-            frontend/node_modules
-          key: pnpm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+            $(pnpm store path --silent)
+            **/node_modules
+          key: ${{ runner.OS }}-pnpm-${{ matrix.arch }}-${{ hashFiles('**/pnpm-lock.yaml', '**/package.json') }}
           restore-keys: |
-            pnpm-${{ runner.os }}-${{ runner.arch }}-
-            pnpm-${{ runner.os }}-
+            ${{ runner.OS }}-pnpm-${{ matrix.arch }}-
 
       - name: Set up Visual Studio shell
         if: matrix.os == 'windows-latest' && matrix.arch == 'arm64'
@@ -298,45 +289,9 @@ jobs:
               patchelf \
               xdg-utils
 
-      - name: Reduce environment size for Windows
+      - name: Install NASM on Windows
         if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: |
-          $currentPath = $env:PATH -split ';'
-          $essentialPaths = $currentPath | Where-Object {
-            $_ -match '\\Windows\\' -or
-            $_ -match 'node' -or
-            $_ -match 'pnpm' -or
-            $_ -match 'rustup' -or
-            $_ -match 'cargo' -or
-            $_ -match 'Visual Studio' -or
-            $_ -match 'VC\\Tools' -or
-            $_ -match 'Windows Kits' -or
-            $_ -match 'CMake' -or
-            $_ -match 'NASM' -or
-            $_ -match 'nasm' -or
-            $_ -match 'Git\\cmd' -or
-            $_ -match 'Git\\mingw' -or
-            $_ -match 'Git\\usr\\bin'
-          }
-          $newPath = ($essentialPaths -join ';')
-          "PATH=$newPath" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-
-      - name: Build kftray-helper (Windows x86_64)
-        if: matrix.os == 'windows-latest' && matrix.arch == 'x86_64'
-        run: |
-          cargo build --bin kftray-helper --release --target x86_64-pc-windows-msvc
-          New-Item -ItemType Directory -Force -Path crates\kftray-tauri\bin
-          Copy-Item target\x86_64-pc-windows-msvc\release\kftray-helper.exe crates\kftray-tauri\bin\kftray-helper-x86_64-pc-windows-msvc.exe
-        shell: pwsh
-
-      - name: Build kftray-helper (Windows ARM64)
-        if: matrix.os == 'windows-latest' && matrix.arch == 'arm64'
-        run: |
-          cargo build --bin kftray-helper --release --target aarch64-pc-windows-msvc
-          New-Item -ItemType Directory -Force -Path crates\kftray-tauri\bin
-          Copy-Item target\aarch64-pc-windows-msvc\release\kftray-helper.exe crates\kftray-tauri\bin\kftray-helper-aarch64-pc-windows-msvc.exe
-        shell: pwsh
+        run: choco install nasm
 
       - name: Build kftray-helper for multiple architectures (macOS)
         if: matrix.os == 'macos-latest'
@@ -367,9 +322,8 @@ jobs:
         id: tauri_build
         continue-on-error: true
         env:
-          RUSTFLAGS: "-C link-arg=-s"
-          AWS_LC_SYS_PREBUILT_NASM: ${{ matrix.os == 'windows-latest' && '1' || '' }}
-          CMAKE_ASM_NASM_COMPILER: ${{ matrix.os == 'windows-latest' && 'CMAKE_ASM_NASM_COMPILER-NOTFOUND' || '' }}
+          RUSTFLAGS: ${{ matrix.os == 'macos-latest' && '-C link-arg=-s' || '-C target-cpu=native -C link-arg=-s' }}
+          AWS_LC_SYS_CMAKE_CFLAGS: ${{ matrix.os == 'windows-latest' && '/std:c11' || '' }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -395,9 +349,8 @@ jobs:
         if: steps.tauri_build.outcome == 'failure'
         uses: tauri-apps/tauri-action@9ce1dcc1a78395184050946b71457a6c242beab6
         env:
-          RUSTFLAGS: "-C link-arg=-s"
-          AWS_LC_SYS_PREBUILT_NASM: ${{ matrix.os == 'windows-latest' && '1' || '' }}
-          CMAKE_ASM_NASM_COMPILER: ${{ matrix.os == 'windows-latest' && 'CMAKE_ASM_NASM_COMPILER-NOTFOUND' || '' }}
+          RUSTFLAGS: ${{ matrix.os == 'macos-latest' && '-C link-arg=-s' || '-C target-cpu=native -C link-arg=-s' }}
+          AWS_LC_SYS_CMAKE_CFLAGS: ${{ matrix.os == 'windows-latest' && '/std:c11' || '' }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -462,6 +415,11 @@ jobs:
             rust_target: universal-apple-darwin
             os_name: macos
           - os: windows-latest
+            arch: x86
+            rust_target: i686-pc-windows-msvc
+            msvc_arch: x86
+            os_name: windows
+          - os: windows-latest
             arch: x86_64
             rust_target: x86_64-pc-windows-msvc
             msvc_arch: x64
@@ -489,13 +447,7 @@ jobs:
       - name: Cache Rust
         uses: swatinem/rust-cache@5e4a76743357a1c3c57315bc1896d2c7f89d6861
         with:
-          key: kftui-${{ matrix.os }}-${{ matrix.arch }}-${{ matrix.rust_target }}
-          shared-key: deps-kftui-${{ matrix.rust_target }}
-          workspaces: |
-            .
-            crates/kftui
-            crates/kftray-commons
-          cache-on-failure: false
+          key: kftui-${{ matrix.rust_target }}
 
       - name: Install pnpm
         uses: pnpm/action-setup@1e1c8eafbd745f64b1ef30a7d7ed7965034c486c
@@ -508,20 +460,18 @@ jobs:
       - name: Install Node.js
         uses: actions/setup-node@65d868f8d4d85d7d4abb7de0875cde3fcc8798f5
         with:
-          node-version: "24"
+          node-version: "22"
           cache: "pnpm"
 
       - name: Cache pnpm modules
         uses: actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb
         with:
           path: |
-            ~/.pnpm-store
-            node_modules
-            frontend/node_modules
-          key: pnpm-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+            $(pnpm store path --silent)
+            **/node_modules
+          key: ${{ runner.OS }}-pnpm-${{ runner.ARCH }}-${{ hashFiles('**/pnpm-lock.yaml') }}
           restore-keys: |
-            pnpm-${{ runner.os }}-${{ runner.arch }}-
-            pnpm-${{ runner.os }}-
+            ${{ runner.OS }}-pnpm-${{ runner.ARCH }}-
 
       - name: Setup platform-specific dependencies
         if: matrix.os == 'ubuntu-22.04'
@@ -562,12 +512,6 @@ jobs:
           perl-version: "5.32"
           distribution: "strawberry"
 
-      - name: Install Perl modules for OpenSSL
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: |
-          cpan -i Locale::Maketext::Simple
-
       - name: Set Perl environment variables
         if: matrix.os == 'windows-latest'
         run: |
@@ -576,9 +520,8 @@ jobs:
 
       - name: Build kftui
         env:
-          RUSTFLAGS: "-C link-arg=-s"
-          AWS_LC_SYS_PREBUILT_NASM: ${{ matrix.os == 'windows-latest' && '1' || '' }}
-          CMAKE_ASM_NASM_COMPILER: ${{ matrix.os == 'windows-latest' && 'CMAKE_ASM_NASM_COMPILER-NOTFOUND' || '' }}
+          RUSTFLAGS: ${{ matrix.os == 'macos-latest' && '-C link-arg=-s' || '-C target-cpu=native -C link-arg=-s' }}
+          AWS_LC_SYS_CMAKE_CFLAGS: ${{ matrix.os == 'windows-latest' && '/std:c11' || '' }}
         run: |
           if [ "${{ matrix.os }}" == "macos-latest" ]; then
             cargo build --release --bin kftui --target aarch64-apple-darwin
@@ -760,17 +703,7 @@ jobs:
       - name: Cache Rust
         uses: swatinem/rust-cache@5e4a76743357a1c3c57315bc1896d2c7f89d6861
         with:
-          key: publish-cargo-crates-${{ runner.os }}
-          shared-key: deps-publish
-          workspaces: |
-            .
-            crates/kftray-commons
-            crates/kftray-helper
-            crates/kftray-http-logs
-            crates/kftray-portforward
-            crates/kftray-network-monitor
-            crates/kftui
-          cache-on-failure: false
+          key: publish-cargo-crates
 
       - name: Install dependencies
         run: |
@@ -905,4 +838,3 @@ jobs:
             "${{ github.ref_name }}" \
             "hcavarsan/homebrew-kftray" \
             "${{ secrets.GH_PAT }}"
-
