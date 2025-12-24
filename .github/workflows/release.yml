@@ -80,22 +80,21 @@ jobs:
           RUSTFLAGS: "-C target-cpu=native -C link-arg=-s"
         run: cargo build --bin kftray-helper --release && INSTA_UPDATE=1 cargo llvm-cov nextest --profile ci --config-file .cargo/nextest.toml --locked --workspace --all-features --lib --bins --examples --tests --lcov --output-path lcov.info
 
-      - name: Upload test results
-        uses: codecov/test-results-action@0fa95f0e1eeaafde2c782583b36b28ad0d8c77d3
-        if: ${{ !cancelled() }}
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: target/nextest/ci/junit.xml
-          disable_search: true
-          slug: hcavarsan/kftray
-
       - name: Upload coverage
         uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: lcov.info
-          disable_search: true
           slug: hcavarsan/kftray
+
+      - name: Upload test results
+        uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de
+        if: ${{ !cancelled() }}
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: target/nextest/ci/junit.xml
+          slug: hcavarsan/kftray
+          report_type: test_results
 
   create-release-draft:
     needs:
@@ -323,7 +322,7 @@ jobs:
         continue-on-error: true
         env:
           RUSTFLAGS: ${{ (matrix.os == 'macos-latest' || matrix.os == 'windows-latest') && '-C link-arg=-s' || '-C target-cpu=native -C link-arg=-s' }}
-          AWS_LC_SYS_NO_ASM: ${{ matrix.os == 'windows-latest' && '1' || '' }}
+          AWS_LC_SYS_PREBUILT_NASM: ${{ matrix.os == 'windows-latest' && '1' || '' }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -349,7 +348,7 @@ jobs:
         uses: tauri-apps/tauri-action@9ce1dcc1a78395184050946b71457a6c242beab6
         env:
           RUSTFLAGS: ${{ (matrix.os == 'macos-latest' || matrix.os == 'windows-latest') && '-C link-arg=-s' || '-C target-cpu=native -C link-arg=-s' }}
-          AWS_LC_SYS_NO_ASM: ${{ matrix.os == 'windows-latest' && '1' || '' }}
+          AWS_LC_SYS_PREBUILT_NASM: ${{ matrix.os == 'windows-latest' && '1' || '' }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -524,7 +523,7 @@ jobs:
       - name: Build kftui
         env:
           RUSTFLAGS: ${{ (matrix.os == 'macos-latest' || matrix.os == 'windows-latest') && '-C link-arg=-s' || '-C target-cpu=native -C link-arg=-s' }}
-          AWS_LC_SYS_NO_ASM: ${{ matrix.os == 'windows-latest' && '1' || '' }}
+          AWS_LC_SYS_PREBUILT_NASM: ${{ matrix.os == 'windows-latest' && '1' || '' }}
         run: |
           if [ "${{ matrix.os }}" == "macos-latest" ]; then
             cargo build --release --bin kftui --target aarch64-apple-darwin
