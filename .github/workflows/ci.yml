@@ -252,12 +252,13 @@ jobs:
           slug: hcavarsan/kftray
 
       - name: Upload test results
-        uses: codecov/test-results-action@0fa95f0e1eeaafde2c782583b36b28ad0d8c77d3
+        uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de
         if: ${{ !cancelled() }}
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: target/nextest/ci/junit.xml
           slug: hcavarsan/kftray
+          report_type: test_results
 
   frontend-bundle-analysis:
     name: Bundle Analysis
