@@ -549,6 +549,8 @@ const KFTray = () => {
     }
   }
 
+  const STOP_TIMEOUT_MS = 30000 // 30 seconds max for stop operations
+
   const stopSelectedPortForwarding = async () => {
     const configsToStop = selectedConfigs
       .map(selected => configs.find(c => c.id === selected.id))
@@ -563,7 +565,16 @@ const KFTray = () => {
           stopPortForwardingForConfig(config),
         )
 
-        await Promise.all(stopPromises)
+        // Race against timeout to prevent UI from hanging indefinitely
+        await Promise.race([
+          Promise.allSettled(stopPromises),
+          new Promise((_, reject) =>
+            setTimeout(
+              () => reject(new Error('Stop operation timed out')),
+              STOP_TIMEOUT_MS,
+            ),
+          ),
+        ])
         toaster.success({
           title: 'Success',
           description: 'Selected port forwards stopped successfully.',
@@ -571,13 +582,21 @@ const KFTray = () => {
         })
       } catch (error) {
         console.error('Error stopping selected port forwards:', error)
-        toaster.error({
-          title: 'Error',
-          description: 'Failed to stop selected port forwards.',
-          duration: 1000,
+        const isTimeout =
+          error instanceof Error && error.message.includes('timed out')
+
+
+        toaster.warning({
+          title: isTimeout ? 'Partial Stop' : 'Error',
+          description: isTimeout
+            ? 'Some port forwards may not have stopped cleanly.'
+            : 'Failed to stop selected port forwards.',
+          duration: 2000,
         })
       } finally {
         setIsStopping(false)
+        // Refresh state from backend to get actual status
+        await updateConfigsWithState()
       }
     }
   }
@@ -592,7 +611,16 @@ const KFTray = () => {
           stopPortForwardingForConfig(config),
         )
 
-        await Promise.all(stopPromises)
+        // Race against timeout to prevent UI from hanging indefinitely
+        await Promise.race([
+          Promise.allSettled(stopPromises),
+          new Promise((_, reject) =>
+            setTimeout(
+              () => reject(new Error('Stop operation timed out')),
+              STOP_TIMEOUT_MS,
+            ),
+          ),
+        ])
         toaster.success({
           title: 'Success',
           description:
@@ -604,13 +632,21 @@ const KFTray = () => {
           'An error occurred while stopping port forwarding:',
           error,
         )
-        toaster.error({
-          title: 'Error',
-          description: `An error occurred while stopping port forwarding: ${error}`,
-          duration: 1000,
+        const isTimeout =
+          error instanceof Error && error.message.includes('timed out')
+
+
+        toaster.warning({
+          title: isTimeout ? 'Partial Stop' : 'Error',
+          description: isTimeout
+            ? 'Some port forwards may not have stopped cleanly.'
+            : `An error occurred while stopping port forwarding: ${error}`,
+          duration: 2000,
         })
       } finally {
         setIsStopping(false)
+        // Refresh state from backend to get actual status
+        await updateConfigsWithState()
       }
     }
   }
