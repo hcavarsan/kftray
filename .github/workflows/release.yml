@@ -322,6 +322,11 @@ jobs:
         shell: bash
         run: echo "CMAKE_GENERATOR=Ninja" >> $GITHUB_ENV
 
+      - name: Disable strip for Windows builds
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: echo "CARGO_PROFILE_RELEASE_STRIP=false" >> $GITHUB_ENV
+
       - name: Build kftray-tauri Desktop App
         uses: tauri-apps/tauri-action@9ce1dcc1a78395184050946b71457a6c242beab6
         id: tauri_build
@@ -329,7 +334,6 @@ jobs:
         env:
           RUSTFLAGS: ${{ matrix.os == 'macos-latest' && '-C link-arg=-s' || (matrix.os == 'windows-latest' && '' || '-C target-cpu=native -C link-arg=-s') }}
           AWS_LC_SYS_PREBUILT_NASM: ${{ matrix.os == 'windows-latest' && '1' || '' }}
-          CARGO_PROFILE_RELEASE_STRIP: ${{ matrix.os == 'windows-latest' && 'false' || '' }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -356,7 +360,6 @@ jobs:
         env:
           RUSTFLAGS: ${{ matrix.os == 'macos-latest' && '-C link-arg=-s' || (matrix.os == 'windows-latest' && '' || '-C target-cpu=native -C link-arg=-s') }}
           AWS_LC_SYS_PREBUILT_NASM: ${{ matrix.os == 'windows-latest' && '1' || '' }}
-          CARGO_PROFILE_RELEASE_STRIP: ${{ matrix.os == 'windows-latest' && 'false' || '' }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -533,11 +536,15 @@ jobs:
         shell: bash
         run: echo "CMAKE_GENERATOR=Ninja" >> $GITHUB_ENV
 
+      - name: Disable strip for Windows builds
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: echo "CARGO_PROFILE_RELEASE_STRIP=false" >> $GITHUB_ENV
+
       - name: Build kftui
         env:
           RUSTFLAGS: ${{ matrix.os == 'macos-latest' && '-C link-arg=-s' || (matrix.os == 'windows-latest' && '' || '-C target-cpu=native -C link-arg=-s') }}
           AWS_LC_SYS_PREBUILT_NASM: ${{ matrix.os == 'windows-latest' && '1' || '' }}
-          CARGO_PROFILE_RELEASE_STRIP: ${{ matrix.os == 'windows-latest' && 'false' || '' }}
         run: |
           if [ "${{ matrix.os }}" == "macos-latest" ]; then
             cargo build --release --bin kftui --target aarch64-apple-darwin
