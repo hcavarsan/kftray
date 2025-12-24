@@ -289,9 +289,9 @@ jobs:
               patchelf \
               xdg-utils
 
-      - name: Install NASM on Windows
+      - name: Install NASM and Ninja on Windows
         if: matrix.os == 'windows-latest'
-        run: choco install nasm
+        run: choco install nasm ninja
 
       - name: Build kftray-helper for multiple architectures (macOS)
         if: matrix.os == 'macos-latest'
@@ -325,7 +325,7 @@ jobs:
           $currentPath = $env:PATH -split ';'
           $originalCount = $currentPath.Count
 
-          # Keep only essential paths (Windows, Rust, Node, CMake, NASM, Git)
+          # Keep only essential paths (Windows, Rust, Node, CMake, NASM, Git, MSVC)
           $keepPatterns = @(
             'Windows',
             'system32',
@@ -338,7 +338,10 @@ jobs:
             'CMake',
             'NASM',
             'Git',
-            'OpenSSL'
+            'OpenSSL',
+            'MSVC',
+            'Microsoft Visual Studio',
+            'VC\\Tools'
           )
 
           $filteredPath = $currentPath | Where-Object {
@@ -359,7 +362,7 @@ jobs:
         continue-on-error: true
         env:
           RUSTFLAGS: ${{ (matrix.os == 'macos-latest' || matrix.os == 'windows-latest') && '-C link-arg=-s' || '-C target-cpu=native -C link-arg=-s' }}
-          AWS_LC_SYS_CMAKE_CFLAGS: ${{ matrix.os == 'windows-latest' && '/std:c11' || '' }}
+          CMAKE_GENERATOR: ${{ matrix.os == 'windows-latest' && 'Ninja' || '' }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -385,7 +388,7 @@ jobs:
         uses: tauri-apps/tauri-action@9ce1dcc1a78395184050946b71457a6c242beab6
         env:
           RUSTFLAGS: ${{ (matrix.os == 'macos-latest' || matrix.os == 'windows-latest') && '-C link-arg=-s' || '-C target-cpu=native -C link-arg=-s' }}
-          AWS_LC_SYS_CMAKE_CFLAGS: ${{ matrix.os == 'windows-latest' && '/std:c11' || '' }}
+          CMAKE_GENERATOR: ${{ matrix.os == 'windows-latest' && 'Ninja' || '' }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -533,11 +536,16 @@ jobs:
           fi
         shell: bash
 
-      - name: Install OpenSSL and NASM on Windows
+      - name: Set up Visual Studio shell
+        if: matrix.os == 'windows-latest' && matrix.arch == 'arm64'
+        uses: TheMrMilchmann/setup-msvc-dev@ced9887c29958f18f71b18c99d9eb0837859434c
+        with:
+          arch: amd64_arm64
+
+      - name: Install OpenSSL, NASM and Ninja on Windows
         if: matrix.os == 'windows-latest'
         run: |
-          choco install openssl
-          choco install nasm
+          choco install openssl nasm ninja
 
       - name: Set up Perl on Windows
         if: matrix.os == 'windows-latest'
@@ -560,7 +568,7 @@ jobs:
           $currentPath = $env:PATH -split ';'
           $originalCount = $currentPath.Count
 
-          # Keep only essential paths (Windows, Rust, Node, CMake, NASM, Git, Perl)
+          # Keep only essential paths (Windows, Rust, Node, CMake, NASM, Git, Perl, MSVC)
           $keepPatterns = @(
             'Windows',
             'system32',
@@ -575,7 +583,10 @@ jobs:
             'Git',
             'OpenSSL',
             'Strawberry',
-            'perl'
+            'perl',
+            'MSVC',
+            'Microsoft Visual Studio',
+            'VC\\Tools'
           )
 
           $filteredPath = $currentPath | Where-Object {
@@ -593,7 +604,7 @@ jobs:
       - name: Build kftui
         env:
           RUSTFLAGS: ${{ (matrix.os == 'macos-latest' || matrix.os == 'windows-latest') && '-C link-arg=-s' || '-C target-cpu=native -C link-arg=-s' }}
-          AWS_LC_SYS_CMAKE_CFLAGS: ${{ matrix.os == 'windows-latest' && '/std:c11' || '' }}
+          CMAKE_GENERATOR: ${{ matrix.os == 'windows-latest' && 'Ninja' || '' }}
         run: |
           if [ "${{ matrix.os }}" == "macos-latest" ]; then
             cargo build --release --bin kftui --target aarch64-apple-darwin
