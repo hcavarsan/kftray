@@ -2,12 +2,14 @@
 //!
 //! This module handles calling XInitThreads() before any X11 operations
 //! to prevent crashes with the error:
-//! "[xcb] Most likely this is a multi-threaded client and XInitThreads has not been called"
+//! "[xcb] Most likely this is a multi-threaded client and XInitThreads has not
+//! been called"
 
 /// Initializes X11 for multi-threaded use on Linux X11 systems.
 ///
 /// This function must be called at the very start of main(), before any
-/// other code that might interact with X11 (including Tauri/wry initialization).
+/// other code that might interact with X11 (including Tauri/wry
+/// initialization).
 ///
 /// On Wayland or non-Linux systems, this function does nothing.
 /// If libX11 is not available, this function continues gracefully.
@@ -22,17 +24,11 @@ pub fn init_x11_threads() {
     // This avoids requiring libX11-dev at compile time and handles
     // systems where X11 is not installed
     unsafe {
-        let lib = libc::dlopen(
-            c"libX11.so.6".as_ptr(),
-            libc::RTLD_LAZY,
-        );
+        let lib = libc::dlopen(c"libX11.so.6".as_ptr(), libc::RTLD_LAZY);
 
         let lib = if lib.is_null() {
             // Try without version suffix
-            let lib_fallback = libc::dlopen(
-                c"libX11.so".as_ptr(),
-                libc::RTLD_LAZY,
-            );
+            let lib_fallback = libc::dlopen(c"libX11.so".as_ptr(), libc::RTLD_LAZY);
             if lib_fallback.is_null() {
                 return;
             }
