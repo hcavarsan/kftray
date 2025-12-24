@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::time::Duration;
 
 use futures::stream::{
     FuturesUnordered,
@@ -26,6 +27,8 @@ use kube::api::{
     DeleteParams,
     ListParams,
 };
+use tokio::task::spawn_blocking;
+use tokio::time::timeout;
 use tracing::{
     debug,
     error,
@@ -49,7 +52,9 @@ use crate::port_forward::{
     PROCESS_MANAGEMENT_LOCK,
 };
 
-async fn try_release_address(address: &str) -> Result<(), String> {
+/// Synchronous helper function to release address via helper service.
+/// Must be called from spawn_blocking to avoid blocking the tokio runtime.
+fn try_release_address_sync(address: &str) -> Result<(), String> {
     let app_id = "com.kftray.app".to_string();
 
     let socket_path =
@@ -75,42 +80,46 @@ async fn try_release_address(address: &str) -> Result<(), String> {
     }
 }
 
-async fn try_fallback_release_address(address: &str) {
-    match crate::network_utils::remove_loopback_address(address).await {
-        Ok(_) => {
-            debug!(
-                "Successfully removed loopback address via fallback: {}",
-                address
-            );
-        }
-        Err(e) => {
-            let error_msg = e.to_string();
-            if error_msg.contains("cancelled") || error_msg.contains("canceled") {
-                warn!(
-                    "User cancelled loopback address removal for {}, but continuing stop process",
-                    address
-                );
-            } else {
-                warn!(
-                    "Failed to remove loopback address {} via fallback: {}",
-                    address, error_msg
-                );
-            }
-        }
-    }
-}
-
+/// Release address with timeout. Skips osascript fallback to avoid blocking on
+/// user interaction. Address cleanup is not critical - addresses will be freed
+/// on system restart.
 async fn release_address_with_fallback(address: &str) {
-    match try_release_address(address).await {
-        Ok(_) => {
+    const ADDRESS_RELEASE_TIMEOUT: Duration = Duration::from_secs(3);
+
+    let address_owned = address.to_string();
+
+    // Wrap blocking helper service call in spawn_blocking with timeout
+    let result = timeout(ADDRESS_RELEASE_TIMEOUT, async {
+        let addr = address_owned.clone();
+        spawn_blocking(move || try_release_address_sync(&addr)).await
+    })
+    .await;
+
+    match result {
+        Ok(Ok(Ok(_))) => {
             info!("Successfully released address via helper: {}", address);
         }
-        Err(e) => {
+        Ok(Ok(Err(e))) => {
+            // Helper service returned an error - skip fallback (osascript blocks for user
+            // input)
             warn!(
-                "Failed to release address {} via helper: {}. Trying fallback",
+                "Failed to release address {} via helper: {}. Skipping fallback to avoid blocking.",
                 address, e
             );
-            try_fallback_release_address(address).await;
+        }
+        Ok(Err(e)) => {
+            // spawn_blocking panicked
+            warn!(
+                "Address release task panicked for {}: {}. Skipping.",
+                address, e
+            );
+        }
+        Err(_) => {
+            // Timeout elapsed
+            warn!(
+                "Address release timed out for {} after {:?}. Skipping.",
+                address, ADDRESS_RELEASE_TIMEOUT
+            );
         }
     }
 }

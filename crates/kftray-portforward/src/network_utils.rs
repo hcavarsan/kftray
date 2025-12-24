@@ -190,6 +190,9 @@ async fn remove_loopback_with_helper(addr: &str) -> Result<()> {
     }
 }
 
+/// Remove loopback address. Only uses helper service - skips osascript fallback
+/// to avoid blocking on user interaction during stop operations.
+/// Address cleanup is not critical - addresses will be freed on system restart.
 pub async fn remove_loopback_address(addr: &str) -> Result<()> {
     if !is_loopback_address(addr) {
         return Ok(());
@@ -201,85 +204,25 @@ pub async fn remove_loopback_address(addr: &str) -> Result<()> {
 
     debug!("Removing loopback address: {}", addr);
 
+    // Try helper service first (non-blocking)
     let helper_result = remove_loopback_with_helper(addr).await;
 
     if helper_result.is_ok() {
         debug!("Successfully removed loopback address via helper: {}", addr);
         return Ok(());
-    } else if let Err(e) = helper_result {
+    } else if let Err(e) = &helper_result {
         warn!("Failed to remove loopback address with helper: {}", e);
     }
 
-    debug!("Falling back to traditional methods for removing loopback address");
-
+    // Skip osascript fallback on macOS - it blocks waiting for user interaction
+    // which can hang stop operations indefinitely. Address cleanup is not critical.
     #[cfg(target_os = "macos")]
     {
-        info!("Using macOS-specific method for loopback removal");
-
-        let check_output = Command::new("ifconfig")
-            .args(["lo0"])
-            .output()
-            .map_err(|e| anyhow!("Failed to check loopback interface: {}", e))?;
-
-        let output_str = String::from_utf8_lossy(&check_output.stdout);
-        if !output_str.contains(addr) {
-            debug!(
-                "Loopback address {} is not configured on lo0, no removal needed",
-                addr
-            );
-            return Ok(());
-        }
-
-        debug!("Trying to remove loopback address alias with osascript");
-        let script = format!(
-            r#"do shell script "ifconfig lo0 -alias {addr}" with administrator privileges"#
+        warn!(
+            "Could not remove loopback address {} via helper. Skipping osascript fallback to avoid blocking. Address will be freed on restart.",
+            addr
         );
-
-        let result = Command::new("osascript").args(["-e", &script]).output();
-
-        match result {
-            Ok(output) if output.status.success() => {
-                debug!(
-                    "Successfully removed loopback address using osascript with admin privileges"
-                );
-                Ok(())
-            }
-            Ok(output) => {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                debug!(
-                    "osascript command failed - stdout: {}, stderr: {}",
-                    stdout, stderr
-                );
-
-                if stderr.contains("Can't assign requested address")
-                    || stderr.contains("SIOCDIFADDR")
-                {
-                    warn!(
-                        "Loopback address {} might already be removed or not exist",
-                        addr
-                    );
-                    return Ok(());
-                }
-
-                if stderr.contains("User cancelled")
-                    || stderr.contains("user cancelled")
-                    || stderr.contains("cancelled")
-                    || stderr.contains("User canceled")
-                    || stderr.contains("canceled")
-                    || stderr.contains("(-128)")
-                    || output.status.code() == Some(1)
-                {
-                    Err(anyhow!("User cancelled loopback address removal"))
-                } else {
-                    Err(anyhow!("Failed to remove loopback address: {}", stderr))
-                }
-            }
-            Err(e) => {
-                debug!("Failed to execute osascript command: {}", e);
-                Err(anyhow!("Failed to execute osascript: {}", e))
-            }
-        }
+        return Ok(());
     }
 
     #[cfg(target_os = "linux")]

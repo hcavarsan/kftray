@@ -1,11 +1,13 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use kube::Client;
 use kube::api::Api;
 use lazy_static::lazy_static;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
+use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 use tracing::instrument;
 
@@ -84,19 +86,35 @@ impl PortForwardProcess {
         self.ws_client_handle = Some(ws_handle);
     }
 
+    /// Cleanup and abort the port forward process.
+    /// Uses timeouts to prevent blocking on shutdown operations.
     pub async fn cleanup_and_abort(self) {
+        const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
+        const CANCEL_PROPAGATION_DELAY: Duration = Duration::from_millis(100);
+
         tracing::info!("Cancelling port forward for config: {}", self.config_id);
 
+        // Signal cancellation
         self.cancellation_token.cancel();
 
-        tokio::time::sleep(tokio::time::Duration::from_millis(1500)).await;
+        // Brief delay for cancellation to propagate (reduced from 1500ms)
+        tokio::time::sleep(CANCEL_PROPAGATION_DELAY).await;
 
+        // Shutdown forwarder with timeout to prevent blocking
         if let Some(forwarder) = &self.direct_forwarder {
             tracing::info!(
                 "Cleaning up forwarder resources for config: {}",
                 self.config_id
             );
-            forwarder.shutdown().await;
+            if timeout(SHUTDOWN_TIMEOUT, forwarder.shutdown())
+                .await
+                .is_err()
+            {
+                tracing::warn!(
+                    "Forwarder shutdown timed out for config: {}, forcing abort",
+                    self.config_id
+                );
+            }
         }
 
         // Abort the WebSocket client task if it exists
