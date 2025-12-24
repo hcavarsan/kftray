@@ -200,7 +200,7 @@ jobs:
 
       - name: Clean up PATH on Windows
         if: matrix.os == 'windows-latest'
-        uses: egor-tensin/cleanup-path@v4
+        uses: egor-tensin/cleanup-path@64ef0b5036b30ce7845058a1d7a8d0830db39b94
         with:
           dirs: 'C:\Program Files\CMake\bin;C:\Program Files\NASM'
 
@@ -445,7 +445,7 @@ jobs:
 
       - name: Clean up PATH on Windows
         if: matrix.os == 'windows-latest'
-        uses: egor-tensin/cleanup-path@v4
+        uses: egor-tensin/cleanup-path@64ef0b5036b30ce7845058a1d7a8d0830db39b94
         with:
           dirs: 'C:\Program Files\CMake\bin;C:\Program Files\NASM'
 
