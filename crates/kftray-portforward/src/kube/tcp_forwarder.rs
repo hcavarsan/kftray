@@ -60,6 +60,18 @@ impl TcpForwarder {
         if let Err(e) = sock_ref.set_send_buffer_size(BUFFER_SIZE) {
             tracing::debug!("Failed to set send buffer size: {}", e);
         }
+
+        // Enable TCP keep-alive for early detection of broken connections
+        let keepalive = socket2::TcpKeepalive::new()
+            .with_time(Duration::from_secs(60))
+            .with_interval(Duration::from_secs(10));
+
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        let keepalive = keepalive.with_retries(3);
+
+        if let Err(e) = sock_ref.set_tcp_keepalive(&keepalive) {
+            tracing::debug!("Failed to set TCP keepalive: {}", e);
+        }
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -184,15 +196,8 @@ impl TcpForwarder {
         } else {
             let mut client_conn_guard = client_conn.lock().await;
 
-            let config_id = self.config_id;
-            let log_subscriber = http_log_watcher.create_filtered_subscriber(config_id);
             let copy_future =
                 tokio::io::copy_bidirectional(&mut *client_conn_guard, &mut upstream_conn);
-            let state_monitor = Self::monitor_logging_state_simple(
-                config_id,
-                log_subscriber,
-                cancellation_token.clone(),
-            );
 
             tokio::select! {
                 result = copy_future => {
@@ -204,9 +209,8 @@ impl TcpForwarder {
                         }
                     }
                 }
-                _ = state_monitor => {
-                    debug!("Connection interrupted for logging state change");
-                    return Err(anyhow::anyhow!("Connection needs restart for HTTP logging"));
+                _ = cancellation_token.cancelled() => {
+                    debug!("Connection cancelled");
                 }
             }
         }
