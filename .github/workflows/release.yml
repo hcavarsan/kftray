@@ -329,7 +329,7 @@ jobs:
         env:
           RUSTFLAGS: ${{ matrix.os == 'macos-latest' && '-C link-arg=-s' || (matrix.os == 'windows-latest' && '' || '-C target-cpu=native -C link-arg=-s') }}
           AWS_LC_SYS_PREBUILT_NASM: ${{ matrix.os == 'windows-latest' && '1' || '' }}
-          CARGO_PROFILE_RELEASE_STRIP: ${{ matrix.os == 'windows-latest' && 'false' || '' }}
+          CARGO_PROFILE_RELEASE_STRIP: ${{ matrix.os == 'windows-latest' && 'none' || 'symbols' }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -356,7 +356,7 @@ jobs:
         env:
           RUSTFLAGS: ${{ matrix.os == 'macos-latest' && '-C link-arg=-s' || (matrix.os == 'windows-latest' && '' || '-C target-cpu=native -C link-arg=-s') }}
           AWS_LC_SYS_PREBUILT_NASM: ${{ matrix.os == 'windows-latest' && '1' || '' }}
-          CARGO_PROFILE_RELEASE_STRIP: ${{ matrix.os == 'windows-latest' && 'false' || '' }}
+          CARGO_PROFILE_RELEASE_STRIP: ${{ matrix.os == 'windows-latest' && 'none' || 'symbols' }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -537,7 +537,7 @@ jobs:
         env:
           RUSTFLAGS: ${{ matrix.os == 'macos-latest' && '-C link-arg=-s' || (matrix.os == 'windows-latest' && '' || '-C target-cpu=native -C link-arg=-s') }}
           AWS_LC_SYS_PREBUILT_NASM: ${{ matrix.os == 'windows-latest' && '1' || '' }}
-          CARGO_PROFILE_RELEASE_STRIP: ${{ matrix.os == 'windows-latest' && 'false' || '' }}
+          CARGO_PROFILE_RELEASE_STRIP: ${{ matrix.os == 'windows-latest' && 'none' || 'symbols' }}
         run: |
           if [ "${{ matrix.os }}" == "macos-latest" ]; then
             cargo build --release --bin kftui --target aarch64-apple-darwin
