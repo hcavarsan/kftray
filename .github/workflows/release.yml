@@ -325,7 +325,7 @@ jobs:
           $currentPath = $env:PATH -split ';'
           $originalCount = $currentPath.Count
 
-          # Keep only essential paths (Windows, Rust, Node, CMake, NASM, Git, MSVC)
+          # Keep only essential paths (Windows, Rust, Node, CMake, NASM, Git, MSVC, Ninja)
           $keepPatterns = @(
             'Windows',
             'system32',
@@ -341,7 +341,9 @@ jobs:
             'OpenSSL',
             'MSVC',
             'Microsoft Visual Studio',
-            'VC\\Tools'
+            'VC\\Tools',
+            'chocolatey',
+            'ninja'
           )
 
           $filteredPath = $currentPath | Where-Object {
@@ -568,7 +570,7 @@ jobs:
           $currentPath = $env:PATH -split ';'
           $originalCount = $currentPath.Count
 
-          # Keep only essential paths (Windows, Rust, Node, CMake, NASM, Git, Perl, MSVC)
+          # Keep only essential paths (Windows, Rust, Node, CMake, NASM, Git, Perl, MSVC, Ninja)
           $keepPatterns = @(
             'Windows',
             'system32',
@@ -586,7 +588,9 @@ jobs:
             'perl',
             'MSVC',
             'Microsoft Visual Studio',
-            'VC\\Tools'
+            'VC\\Tools',
+            'chocolatey',
+            'ninja'
           )
 
           $filteredPath = $currentPath | Where-Object {
