@@ -19,6 +19,7 @@ mod shortcuts;
 mod tray;
 mod validation;
 mod window;
+mod x11_init;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;
 
@@ -40,6 +41,11 @@ use crate::tray::{
 };
 
 fn main() {
+    // CRITICAL: Must be called before ANY other code that might touch X11.
+    // This prevents crashes with "[xcb] Most likely this is a multi-threaded
+    // client and XInitThreads has not been called" on Linux X11 systems.
+    x11_init::init_x11_threads();
+
     let _ = logging::setup_logging();
 
     let _ = fix_path_env::fix();

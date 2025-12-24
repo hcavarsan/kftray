@@ -3296,6 +3296,7 @@ dependencies = [
  "kftray-shortcuts",
  "kube",
  "lazy_static",
+ "libc",
  "log",
  "mockall",
  "netstat2",
