@@ -50,11 +50,6 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     { value: 'expose', label: 'Expose' },
   ]
 
-  const CUSTOM_PORT = {
-    value: -1,
-    label: 'Custom Port...',
-  } as const
-
   const protocolOptions: StringOption[] = [
     { value: 'tcp', label: 'TCP' },
     { value: 'udp', label: 'UDP' },
@@ -377,20 +372,19 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
   ) => {
     if (actionMeta.name === 'remote_port') {
       const portOption = newValue as PortOption | null
+      const portValue =
+        typeof portOption?.value === 'string'
+          ? parseInt(portOption.value, 10)
+          : portOption?.value
+      const normalizedOption = portOption
+        ? { value: portValue, label: portOption.label }
+        : null
 
-      if (portOption?.value === -1) {
-        setFormState(prev => ({
-          ...prev,
-          selectedPort: portOption,
-        }))
-        setNewConfig(prev => ({ ...prev, remote_port: undefined }))
-      } else {
-        setFormState(prev => ({
-          ...prev,
-          selectedPort: portOption,
-        }))
-        setNewConfig(prev => ({ ...prev, remote_port: portOption?.value }))
-      }
+      setFormState(prev => ({
+        ...prev,
+        selectedPort: normalizedOption as PortOption | null,
+      }))
+      setNewConfig(prev => ({ ...prev, remote_port: portValue }))
 
       return
     }
@@ -1180,7 +1174,10 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                               newConfig.workload_type === 'pod'
                                 ? podsQuery.isError
                                 : serviceQuery.isError
-                            return hasError
+
+
+								
+return hasError
                               ? 'Type name manually'
                               : 'No results found'
                           }}
@@ -1218,61 +1215,25 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
                         <Text fontSize='xs' color='gray.400'>
                           Target Port *
                         </Text>
-                        {formState.selectedPort?.value === CUSTOM_PORT.value ||
-                        (newConfig.remote_port &&
-                          !portOptions.find(
-                            p => p.value === newConfig.remote_port,
-                          )) ? (
-                          <Input
-                            type='number'
-                            name='remote_port'
-                            value={newConfig.remote_port || ''}
-                            onChange={e => {
-                              const value = parseInt(e.target.value, 10)
-
-                              if (!isNaN(value)) {
-                                setFormState(prev => ({
-                                  ...prev,
-                                  selectedPort: CUSTOM_PORT,
-                                }))
-                                const syntheticEvent = {
-                                  ...e,
-                                  target: {
-                                    ...e.target,
-                                    name: 'remote_port',
-                                    value: value.toString(),
-                                  },
-                                }
-
-                                handleInputChange(syntheticEvent)
-                              }
-                            }}
-                            bg='#161616'
-                            border='1px solid rgba(255, 255, 255, 0.08)'
-                            _hover={{
-                              borderColor: 'rgba(255, 255, 255, 0.15)',
-                            }}
-                            _focus={{
-                              borderColor: 'blue.400',
-                              boxShadow: 'none',
-                            }}
-                            height='28px'
-                            fontSize='13px'
-                            placeholder='Enter port number'
-                          />
-                        ) : (
-                          <Select
-                            name='remote_port'
-                            value={formState.selectedPort}
-                            onChange={handleSelectChange}
-                            options={[CUSTOM_PORT, ...portOptions]}
-                            placeholder='Select port'
-                            isDisabled={
-                              !newConfig.context || !newConfig.namespace
-                            }
-                            styles={selectStyles}
-                          />
-                        )}
+                        <CreatableSelect
+                          name='remote_port'
+                          value={formState.selectedPort}
+                          onChange={handleSelectChange}
+                          options={portOptions}
+                          placeholder='Select or type port'
+                          isDisabled={
+                            !newConfig.context || !newConfig.namespace
+                          }
+                          styles={selectStyles}
+                          formatCreateLabel={(inputValue) =>
+                            `Use port ${inputValue}`
+                          }
+                          noOptionsMessage={() =>
+                            portQuery.isError
+                              ? 'Type port number manually'
+                              : 'No ports found'
+                          }
+                        />
                         {portQuery.isError && (
                           <Text color='red.300' fontSize='xs'>
                             Error fetching ports
