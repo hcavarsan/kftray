@@ -198,6 +198,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
 
+      - name: Clean up PATH on Windows
+        if: matrix.os == 'windows-latest'
+        uses: egor-tensin/cleanup-path@64ef0b5036b30ce7845058a1d7a8d0830db39b94
+        with:
+          dirs: 'C:\Program Files\CMake\bin;C:\Program Files\NASM'
+
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561
         with:
@@ -436,6 +442,12 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
+
+      - name: Clean up PATH on Windows
+        if: matrix.os == 'windows-latest'
+        uses: egor-tensin/cleanup-path@64ef0b5036b30ce7845058a1d7a8d0830db39b94
+        with:
+          dirs: 'C:\Program Files\CMake\bin;C:\Program Files\NASM'
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561
