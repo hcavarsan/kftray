@@ -225,16 +225,14 @@ jobs:
         with:
           version: 10
           run_install: |
-           - recursive: true
-             args: [--frozen-lockfile]
-
+            - recursive: true
+              args: [--frozen-lockfile]
 
       - name: Install Node.js
         uses: actions/setup-node@65d868f8d4d85d7d4abb7de0875cde3fcc8798f5
         with:
           node-version: "22"
           cache: "pnpm"
-
 
       - name: Cache pnpm modules
         uses: actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb
@@ -251,7 +249,6 @@ jobs:
         uses: TheMrMilchmann/setup-msvc-dev@ced9887c29958f18f71b18c99d9eb0837859434c
         with:
           arch: amd64_arm64
-
 
       - name: Setup platform-specific dependencies
         if: matrix.os == 'ubuntu-22.04'
@@ -405,7 +402,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548
         with:
-          python-version: '3.x'
+          python-version: "3.x"
 
       - name: Fix updater JSON for multi-glibc support
         env:
@@ -473,14 +470,13 @@ jobs:
             .
             crates/kftui
 
-
       - name: Install pnpm
         uses: pnpm/action-setup@1e1c8eafbd745f64b1ef30a7d7ed7965034c486c
         with:
           version: 10
           run_install: |
-           - recursive: true
-             args: [--frozen-lockfile]
+            - recursive: true
+              args: [--frozen-lockfile]
 
       - name: Install Node.js
         uses: actions/setup-node@65d868f8d4d85d7d4abb7de0875cde3fcc8798f5
@@ -558,10 +554,16 @@ jobs:
         shell: bash
         run: echo "CARGO_PROFILE_RELEASE_STRIP=false" >> $GITHUB_ENV
 
-      - name: Build kftui
+      - name: Build kftui (Windows)
+        if: matrix.os == 'windows-latest'
         env:
-          RUSTFLAGS: ${{ matrix.os == 'macos-latest' && '-C link-arg=-s' || (matrix.os == 'windows-latest' && '' || '-C target-cpu=native -C link-arg=-s') }}
-          AWS_LC_SYS_PREBUILT_NASM: ${{ matrix.os == 'windows-latest' && '1' || '' }}
+          AWS_LC_SYS_PREBUILT_NASM: "1"
+        run: cargo build --release --bin kftui --target ${{ matrix.rust_target }}
+
+      - name: Build kftui
+        if: matrix.os != 'windows-latest'
+        env:
+          RUSTFLAGS: ${{ matrix.os == 'macos-latest' && '-C link-arg=-s' || '-C target-cpu=native -C link-arg=-s' }}
         run: |
           if [ "${{ matrix.os }}" == "macos-latest" ]; then
             cargo build --release --bin kftui --target aarch64-apple-darwin
@@ -872,7 +874,7 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@83679a892e2d95755f2dac6acb0bfd1e9ac5d548
         with:
-          python-version: '3.14'
+          python-version: "3.14"
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
