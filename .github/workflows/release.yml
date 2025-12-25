@@ -73,8 +73,8 @@ jobs:
       - name: Install rust-cache
         uses: swatinem/rust-cache@5e4a76743357a1c3c57315bc1896d2c7f89d6861
         with:
-          key: rust-coverage-${{ runner.os }}-1
-          shared-key: rust-coverage-1
+          key: rust-coverage-${{ runner.os }}
+          shared-key: rust-coverage
           workspaces: |
             .
             crates/kftray-helper
@@ -214,8 +214,8 @@ jobs:
       - name: Cache Rust
         uses: swatinem/rust-cache@5e4a76743357a1c3c57315bc1896d2c7f89d6861
         with:
-          key: kftray-tauri-${{ matrix.rust_target }}-${{ matrix.os }}-1
-          shared-key: kftray-tauri-${{ matrix.rust_target }}-1
+          key: kftray-tauri-${{ matrix.rust_target }}-${{ matrix.os }}
+          shared-key: kftray-tauri-${{ matrix.rust_target }}
           workspaces: |
             .
             crates/kftray-tauri
@@ -350,6 +350,7 @@ jobs:
           security set-keychain-settings -t 3600 -u build.keychain
           security import certificate.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
+          security list-keychains -d user -s build.keychain login.keychain-db
 
       - name: Extract Signing Identity
         if: matrix.os == 'macos-latest'
@@ -370,13 +371,10 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NODE_OPTIONS: --max-old-space-size=6000
-          ENABLE_CODE_SIGNING: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}cur
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "KFtray - ${{ github.ref_name }}"
@@ -396,13 +394,10 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           NODE_OPTIONS: --max-old-space-size=6000
-          ENABLE_CODE_SIGNING: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "KFtray - ${{ github.ref_name }}"
