@@ -14,7 +14,7 @@ name = "generate_icons"
 path = "src/generate_icons.rs"
 
 [dependencies]
-ico = "0.4"
+ico = "0.5"
 image = "0.25"
 regex = "1"
 serde_json = "1"
