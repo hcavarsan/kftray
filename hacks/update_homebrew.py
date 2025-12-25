@@ -11,13 +11,14 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 
 class HomebrewUpdater:
-    def __init__(self, repo, version, tap_repo, gh_token, dry_run=False):
+    def __init__(self, repo, version, tap_repo, gh_token, dry_run=False, no_gpg_sign=False):
         self.repo = repo
         self.version = version.lstrip('v')
         self.full_version = version if version.startswith('v') else f'v{version}'
         self.tap_repo = tap_repo
         self.gh_token = gh_token
         self.dry_run = dry_run
+        self.no_gpg_sign = no_gpg_sign
         self.base_url = f"https://github.com/{repo}/releases/download/{self.full_version}/"
 
     def download_and_hash(self, filename):
@@ -372,7 +373,7 @@ end'''
         # Download all files in parallel
         print("Downloading and calculating hashes for all assets...")
         all_files = [
-            "kftray_universal.app.tar.gz",
+            f"kftray_{self.version}_universal.app.tar.gz",
             f"kftray_{self.version}_amd64.AppImage",
             f"kftray_{self.version}_aarch64.AppImage",
             f"kftray_{self.version}_newer-glibc_amd64.AppImage",
@@ -385,7 +386,7 @@ end'''
         hashes = self.download_files_parallel(all_files)
 
         # Extract individual hashes
-        kftray_mac_hash = hashes["kftray_universal.app.tar.gz"]
+        kftray_mac_hash = hashes[f"kftray_{self.version}_universal.app.tar.gz"]
         kftray_amd64_hash = hashes[f"kftray_{self.version}_amd64.AppImage"]
         kftray_arm64_hash = hashes[f"kftray_{self.version}_aarch64.AppImage"]
         kftray_newer_amd64_hash = hashes[f"kftray_{self.version}_newer-glibc_amd64.AppImage"]
@@ -419,7 +420,7 @@ end'''
             print("Updating formulas...")
 
             # Update macOS cask (simple)
-            kftray_mac_url = f"{self.base_url}kftray_universal.app.tar.gz"
+            kftray_mac_url = f"{self.base_url}kftray_{self.version}_universal.app.tar.gz"
             cask_file = tap_dir / "Casks" / "kftray.rb"
             self.update_file_simple(
                 cask_file,
@@ -472,10 +473,13 @@ end'''
                     "add", "Casks/kftray.rb", "Formula/kftray-linux.rb", "Formula/kftui.rb"
                 ], check=True)
 
-                subprocess.run([
+                commit_cmd = [
                     "git", "-C", str(tap_dir),
                     "commit", "-m", f"Update kftray to version {self.full_version} and kftui to version {self.full_version}"
-                ], check=True)
+                ]
+                if self.no_gpg_sign:
+                    commit_cmd.insert(4, "--no-gpg-sign")
+                subprocess.run(commit_cmd, check=True)
 
                 subprocess.run([
                     "git", "-C", str(tap_dir),
@@ -487,19 +491,22 @@ end'''
 
 
 def main():
-    if len(sys.argv) < 5 or len(sys.argv) > 6:
-        print("Usage: python3 update_homebrew.py <repo> <version> <tap_repo> <gh_token> [--dry-run]")
+    if len(sys.argv) < 5 or len(sys.argv) > 7:
+        print("Usage: python3 update_homebrew.py <repo> <version> <tap_repo> <gh_token> [--dry-run] [--no-gpg-sign]")
         print("Example: python3 update_homebrew.py hcavarsan/kftray v0.26.3 hcavarsan/homebrew-kftray ghp_xxx")
         print("Dry run: python3 update_homebrew.py hcavarsan/kftray v0.26.3 hcavarsan/homebrew-kftray ghp_xxx --dry-run")
+        print("No GPG: python3 update_homebrew.py hcavarsan/kftray v0.26.3 hcavarsan/homebrew-kftray ghp_xxx --no-gpg-sign")
         sys.exit(1)
 
     repo = sys.argv[1]
     version = sys.argv[2]
     tap_repo = sys.argv[3]
     gh_token = sys.argv[4]
-    dry_run = len(sys.argv) == 6 and sys.argv[5] == "--dry-run"
+    extra_args = sys.argv[5:]
+    dry_run = "--dry-run" in extra_args
+    no_gpg_sign = "--no-gpg-sign" in extra_args
 
-    updater = HomebrewUpdater(repo, version, tap_repo, gh_token, dry_run)
+    updater = HomebrewUpdater(repo, version, tap_repo, gh_token, dry_run, no_gpg_sign)
     try:
         updater.run()
     except Exception as e:
