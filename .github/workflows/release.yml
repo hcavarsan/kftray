@@ -73,8 +73,8 @@ jobs:
       - name: Install rust-cache
         uses: swatinem/rust-cache@5e4a76743357a1c3c57315bc1896d2c7f89d6861
         with:
-          key: rust-coverage-${{ runner.os }}
-          shared-key: rust-coverage
+          key: rust-coverage-${{ runner.os }}-1
+          shared-key: rust-coverage-1
           workspaces: |
             .
             crates/kftray-helper
@@ -214,8 +214,8 @@ jobs:
       - name: Cache Rust
         uses: swatinem/rust-cache@5e4a76743357a1c3c57315bc1896d2c7f89d6861
         with:
-          key: kftray-tauri-${{ matrix.rust_target }}-${{ matrix.os }}
-          shared-key: kftray-tauri-${{ matrix.rust_target }}
+          key: kftray-tauri-${{ matrix.rust_target }}-${{ matrix.os }}-1
+          shared-key: kftray-tauri-${{ matrix.rust_target }}-1
           workspaces: |
             .
             crates/kftray-tauri
@@ -373,7 +373,7 @@ jobs:
           ENABLE_CODE_SIGNING: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
+          APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}cur
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
@@ -487,8 +487,8 @@ jobs:
       - name: Cache Rust
         uses: swatinem/rust-cache@5e4a76743357a1c3c57315bc1896d2c7f89d6861
         with:
-          key: kftui-${{ matrix.rust_target }}-${{ matrix.os }}
-          shared-key: kftui-${{ matrix.rust_target }}
+          key: kftui-${{ matrix.rust_target }}-${{ matrix.os }}-1
+          shared-key: kftui-${{ matrix.rust_target }}-1
           workspaces: |
             .
             crates/kftui
@@ -768,8 +768,8 @@ jobs:
       - name: Cache Rust
         uses: swatinem/rust-cache@5e4a76743357a1c3c57315bc1896d2c7f89d6861
         with:
-          key: publish-cargo-crates
-          shared-key: publish-cargo-crates
+          key: publish-cargo-crates-1
+          shared-key: publish-cargo-crates-1
           workspaces: |
             .
             crates/kftray-commons
