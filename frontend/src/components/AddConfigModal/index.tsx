@@ -335,11 +335,14 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
       }))
 
       const newKubeConfig = newConfig.kubeconfig ?? 'default'
+
+
       setUiState(prev => {
         if (prev.kubeConfig === newKubeConfig) {
           return prev
         }
-        return {
+        
+return {
           ...prev,
           kubeConfig: newKubeConfig,
         }
