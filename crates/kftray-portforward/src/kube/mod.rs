@@ -32,6 +32,9 @@ pub use proxy::{
 };
 pub use service::retrieve_service_configs;
 pub use start::{
+    cleanup_stale_timeout_entries,
+    clear_stopped_by_timeout,
+    is_stopped_by_timeout,
     start_port_forward,
     start_port_forward_with_mode,
 };

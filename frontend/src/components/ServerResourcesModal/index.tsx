@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Box as BoxIcon,
   Database,
@@ -38,24 +38,55 @@ interface FlatResource extends ServerResource {
   displayNamespace: string
 }
 
+interface OrphanedResource {
+  name: string
+  context: string
+  namespace: string
+  resource_type: string
+}
+
+type CleanupMode = 'orphaned' | 'all'
+
+const CONTEXT_TIMEOUT_MS = 8000
+
+const withTimeout = <T, >(
+  promise: Promise<T>,
+  ms: number,
+): Promise<T> => {
+  return Promise.race([
+    promise,
+    new Promise<T>((_, reject) =>
+      setTimeout(() => reject(new Error('Timeout')), ms),
+    ),
+  ])
+}
+
 const CleanupConfirmDialog = ({
   isOpen,
   onClose,
   onConfirm,
-  orphanedCount,
+  resources,
   contextName,
   isLoading,
+  mode,
 }: {
   isOpen: boolean
   onClose: () => void
   onConfirm: () => void
-  orphanedCount: number
+  resources: OrphanedResource[]
   contextName: string
   isLoading: boolean
+  mode: CleanupMode
 }) => {
   if (!isOpen) {
     return null
   }
+
+  const count = resources.length
+  const title = mode === 'orphaned' ? 'Clean Orphaned Resources' : 'Delete All Resources'
+  const description = mode === 'orphaned'
+    ? `Delete ${count} orphaned ${count === 1 ? 'resource' : 'resources'}`
+    : `Delete ${count} ${count === 1 ? 'resource' : 'resources'}`
 
   return createPortal(
     <Box
@@ -64,10 +95,11 @@ const CleanupConfirmDialog = ({
       left={0}
       right={0}
       bottom={0}
-      zIndex={9999}
+      zIndex={10001}
       display='flex'
       alignItems='center'
       justifyContent='center'
+      pointerEvents='auto'
     >
       <Box
         position='fixed'
@@ -78,15 +110,18 @@ const CleanupConfirmDialog = ({
         bg='rgba(0, 0, 0, 0.5)'
         backdropFilter='blur(4px)'
         onClick={onClose}
+        pointerEvents='auto'
       />
       <Box
         position='relative'
-        maxWidth='340px'
+        maxWidth='420px'
         width='90vw'
         bg='#111111'
         borderRadius='lg'
         border='1px solid rgba(255, 255, 255, 0.08)'
-        zIndex={10000}
+        zIndex={10002}
+        onClick={e => e.stopPropagation()}
+        pointerEvents='auto'
       >
         <Box
           p={2}
@@ -95,22 +130,69 @@ const CleanupConfirmDialog = ({
           borderTopRadius='lg'
         >
           <Text fontSize='sm' fontWeight='500' color='white'>
-            Clean Orphaned
+            {title}
           </Text>
         </Box>
 
         <Box p={3}>
-          <Text fontSize='xs' color='whiteAlpha.700' lineHeight='1.5'>
-            Delete{' '}
-            <Text as='span' fontWeight='600' color='red.400'>
-              {orphanedCount}
-            </Text>{' '}
-            orphaned {orphanedCount === 1 ? 'resource' : 'resources'}
+          <Text fontSize='xs' color='whiteAlpha.700' lineHeight='1.5' mb={3}>
+            {description}
             {contextName === 'All Contexts'
               ? ' across all contexts'
               : ` in ${contextName}`}
             ?
+            {mode === 'all' && (
+              <Text as='span' color='orange.400' fontWeight='500'>
+                {' '}This will also stop active port forwards.
+              </Text>
+            )}
           </Text>
+
+          {resources.length > 0 && (
+            <Box
+              bg='#0a0a0a'
+              borderRadius='md'
+              border='1px solid rgba(255, 255, 255, 0.05)'
+              maxHeight='200px'
+              overflowY='auto'
+              css={{
+                '&::-webkit-scrollbar': {
+                  width: '4px',
+                },
+                '&::-webkit-scrollbar-track': {
+                  background: 'transparent',
+                },
+                '&::-webkit-scrollbar-thumb': {
+                  background: 'rgba(255, 255, 255, 0.15)',
+                  borderRadius: '2px',
+                },
+              }}
+            >
+              {resources.map((resource, idx) => (
+                <Box
+                  key={idx}
+                  px={2}
+                  py={1.5}
+                  borderBottom={
+                    idx < resources.length - 1
+                      ? '1px solid rgba(255, 255, 255, 0.03)'
+                      : 'none'
+                  }
+                >
+                  <Text fontSize='xs' color='whiteAlpha.800' truncate>
+                    {resource.name}
+                  </Text>
+                  <Flex gap={1} fontSize='10px' color='whiteAlpha.500' mt={0.5}>
+                    <Text>{resource.resource_type}</Text>
+                    <Text color='whiteAlpha.300'>·</Text>
+                    <Text truncate>{resource.context}</Text>
+                    <Text color='whiteAlpha.300'>/</Text>
+                    <Text truncate>{resource.namespace}</Text>
+                  </Flex>
+                </Box>
+              ))}
+            </Box>
+          )}
         </Box>
 
         <Box
@@ -135,10 +217,10 @@ const CleanupConfirmDialog = ({
               colorPalette='red'
               onClick={onConfirm}
               loading={isLoading}
-              loadingText='Cleaning...'
+              loadingText='Deleting...'
               height='26px'
             >
-              Clean
+              Delete {count}
             </Button>
           </HStack>
         </Box>
@@ -148,20 +230,28 @@ const CleanupConfirmDialog = ({
   )
 }
 
+
 const ServerResourcesModal: React.FC<ServerResourcesModalProps> = ({
   isOpen,
   onClose,
 }) => {
+
   const [contexts, setContexts] = useState<StringOption[]>([])
   const [selectedContext, setSelectedContext] = useState<StringOption | null>(
     null,
   )
   const [namespaceGroups, setNamespaceGroups] = useState<NamespaceGroup[]>([])
   const [isLoading, setIsLoading] = useState(false)
+  const [loadingProgress, setLoadingProgress] = useState<{
+    loaded: number
+    total: number
+  } | null>(null)
   const [isDeleting, setIsDeleting] = useState<string | null>(null)
   const [isCleaningAll, setIsCleaningAll] = useState(false)
   const [kubeconfig] = useState<string>('default')
   const [showConfirmDialog, setShowConfirmDialog] = useState(false)
+  const [cleanupMode, setCleanupMode] = useState<CleanupMode>('orphaned')
+  const abortControllerRef = useRef<AbortController | null>(null)
 
   const selectStyles = {
     control: (base: any) => ({
@@ -274,8 +364,14 @@ const ServerResourcesModal: React.FC<ServerResourcesModalProps> = ({
       return
     }
 
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+    }
+    abortControllerRef.current = new AbortController()
+
     try {
       setIsLoading(true)
+      setLoadingProgress(null)
 
       if (selectedContext.value === '__all__') {
         const configs = await invoke<any[]>('get_configs_cmd')
@@ -287,44 +383,41 @@ const ServerResourcesModal: React.FC<ServerResourcesModalProps> = ({
           ),
         )
 
-        const allResources: Array<{
-          context: string
-          groups: NamespaceGroup[]
-        }> = []
+        setLoadingProgress({ loaded: 0, total: uniqueContexts.length })
 
-        for (const contextName of uniqueContexts) {
-          try {
-            const resources = await invoke<NamespaceGroup[]>(
-              'list_all_kftray_resources',
-              {
-                contextName,
-                kubeconfig: kubeconfig === 'default' ? null : kubeconfig,
-              },
-            )
+        const allGroups: NamespaceGroup[] = []
+        let loadedCount = 0
 
-            if (resources.length > 0) {
-              allResources.push({ context: contextName, groups: resources })
+        await Promise.all(
+          uniqueContexts.map(async contextName => {
+            try {
+              const resources = await withTimeout(
+                invoke<NamespaceGroup[]>('list_all_kftray_resources', {
+                  contextName,
+                  kubeconfig: kubeconfig === 'default' ? null : kubeconfig,
+                }),
+                CONTEXT_TIMEOUT_MS,
+              )
+
+              if (resources.length > 0) {
+                resources.forEach(group => {
+                  allGroups.push({
+                    namespace: `${contextName} / ${group.namespace}`,
+                    resources: group.resources,
+                  })
+                })
+              }
+            } catch (error) {
+              console.warn(`Skipped context ${contextName}: ${error}`)
+            } finally {
+              loadedCount++
+              setLoadingProgress({ loaded: loadedCount, total: uniqueContexts.length })
+              setNamespaceGroups([...allGroups])
             }
-          } catch (error) {
-            console.error(
-              `Error loading resources for context ${contextName}:`,
-              error,
-            )
-          }
-        }
+          }),
+        )
 
-        const flattenedGroups: NamespaceGroup[] = []
-
-        allResources.forEach(({ context, groups }) => {
-          groups.forEach(group => {
-            flattenedGroups.push({
-              namespace: `${context} / ${group.namespace}`,
-              resources: group.resources,
-            })
-          })
-        })
-
-        setNamespaceGroups(flattenedGroups)
+        setNamespaceGroups(allGroups)
       } else {
         const resources = await invoke<NamespaceGroup[]>(
           'list_all_kftray_resources',
@@ -345,6 +438,7 @@ const ServerResourcesModal: React.FC<ServerResourcesModalProps> = ({
       })
     } finally {
       setIsLoading(false)
+      setLoadingProgress(null)
     }
   }, [selectedContext, kubeconfig])
 
@@ -359,6 +453,9 @@ const ServerResourcesModal: React.FC<ServerResourcesModalProps> = ({
     } else {
       setSelectedContext(null)
       setNamespaceGroups([])
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort()
+      }
     }
   }, [isOpen])
 
@@ -409,10 +506,14 @@ const ServerResourcesModal: React.FC<ServerResourcesModalProps> = ({
     }
   }
 
-  const handleCleanupOrphaned = async () => {
+  const handleCleanup = async () => {
     if (!selectedContext) {
       return
     }
+
+    const command = cleanupMode === 'orphaned'
+      ? 'cleanup_orphaned_kftray_resources'
+      : 'cleanup_all_kftray_resources'
 
     try {
       setIsCleaningAll(true)
@@ -427,34 +528,37 @@ const ServerResourcesModal: React.FC<ServerResourcesModalProps> = ({
           ),
         )
 
-        let totalDeleted = 0
-
-        for (const contextName of uniqueContexts) {
-          try {
-            const result = await invoke<string>(
-              'cleanup_all_kftray_resources',
-              {
+        const results = await Promise.allSettled(
+          uniqueContexts.map(async contextName => {
+            const result = await withTimeout(
+              invoke<string>(command, {
                 contextName,
                 kubeconfig: kubeconfig === 'default' ? null : kubeconfig,
-              },
+              }),
+              CONTEXT_TIMEOUT_MS * 2,
             )
             const matches = result.match(/(\d+)/)
 
-            if (matches) {
-              totalDeleted += parseInt(matches[1], 10)
-            }
-          } catch (error) {
-            console.error(`Error cleaning context ${contextName}:`, error)
-          }
-        }
+
+
+return matches ? parseInt(matches[1], 10) : 0
+          }),
+        )
+
+        const totalDeleted = results
+          .filter(
+            (result): result is PromiseFulfilledResult<number> =>
+              result.status === 'fulfilled',
+          )
+          .reduce((sum, result) => sum + result.value, 0)
 
         toaster.success({
           title: 'Done',
-          description: `Removed ${totalDeleted} orphaned`,
+          description: `Removed ${totalDeleted} resources`,
           duration: 2000,
         })
       } else {
-        const result = await invoke<string>('cleanup_all_kftray_resources', {
+        const result = await invoke<string>(command, {
           contextName: selectedContext.value,
           kubeconfig: kubeconfig === 'default' ? null : kubeconfig,
         })
@@ -508,7 +612,29 @@ const ServerResourcesModal: React.FC<ServerResourcesModalProps> = ({
     }))
   })
 
-  const orphanedCount = flatResources.filter(r => r.is_orphaned).length
+  const orphanedResources: OrphanedResource[] = flatResources
+    .filter(r => r.is_orphaned)
+    .map(r => ({
+      name: r.name,
+      context: r.context,
+      namespace: r.displayNamespace,
+      resource_type: r.resource_type,
+    }))
+
+  const allResourcesForDialog: OrphanedResource[] = flatResources.map(r => ({
+    name: r.name,
+    context: r.context,
+    namespace: r.displayNamespace,
+    resource_type: r.resource_type,
+  }))
+
+  const orphanedCount = orphanedResources.length
+  const totalCount = flatResources.length
+
+  const openCleanupDialog = (mode: CleanupMode) => {
+    setCleanupMode(mode)
+    setShowConfirmDialog(true)
+  }
 
   return (
     <>
@@ -571,17 +697,29 @@ const ServerResourcesModal: React.FC<ServerResourcesModalProps> = ({
                     menuPlacement='auto'
                   />
                 </Box>
-                {orphanedCount > 0 && !isLoading && (
-                  <Flex align='center' gap={1.5} flexShrink={0}>
-                    <Box
-                      width='5px'
-                      height='5px'
-                      borderRadius='full'
-                      bg='red.400'
-                    />
-                    <Text fontSize='xs' color='whiteAlpha.600'>
-                      {orphanedCount} orphaned
+                {loadingProgress && (
+                  <Text fontSize='10px' color='whiteAlpha.500' flexShrink={0}>
+                    {loadingProgress.loaded}/{loadingProgress.total}
+                  </Text>
+                )}
+                {!isLoading && totalCount > 0 && (
+                  <Flex align='center' gap={2} flexShrink={0}>
+                    <Text fontSize='xs' color='whiteAlpha.500'>
+                      {totalCount}
                     </Text>
+                    {orphanedCount > 0 && (
+                      <Flex align='center' gap={1}>
+                        <Box
+                          width='5px'
+                          height='5px'
+                          borderRadius='full'
+                          bg='red.400'
+                        />
+                        <Text fontSize='xs' color='red.400'>
+                          {orphanedCount}
+                        </Text>
+                      </Flex>
+                    )}
                   </Flex>
                 )}
               </Flex>
@@ -607,14 +745,21 @@ const ServerResourcesModal: React.FC<ServerResourcesModalProps> = ({
                 },
               }}
             >
-              {isLoading ? (
+              {isLoading && flatResources.length === 0 ? (
                 <Flex
                   justify='center'
                   align='center'
                   height='100%'
                   minHeight='200px'
+                  direction='column'
+                  gap={2}
                 >
                   <Spinner size='sm' color='blue.400' />
+                  {loadingProgress && (
+                    <Text fontSize='xs' color='whiteAlpha.500'>
+                      Loading contexts...
+                    </Text>
+                  )}
                 </Flex>
               ) : !selectedContext ? (
                 <Flex
@@ -628,7 +773,7 @@ const ServerResourcesModal: React.FC<ServerResourcesModalProps> = ({
                     Select a context
                   </Text>
                 </Flex>
-              ) : flatResources.length === 0 ? (
+              ) : flatResources.length === 0 && !isLoading ? (
                 <Flex
                   direction='column'
                   align='center'
@@ -760,6 +905,11 @@ const ServerResourcesModal: React.FC<ServerResourcesModalProps> = ({
                       </Box>
                     )
                   })}
+                  {isLoading && flatResources.length > 0 && (
+                    <Flex justify='center' py={2}>
+                      <Spinner size='xs' color='blue.400' />
+                    </Flex>
+                  )}
                 </Stack>
               )}
             </Dialog.Body>
@@ -770,31 +920,54 @@ const ServerResourcesModal: React.FC<ServerResourcesModalProps> = ({
               bg='#161616'
               borderTop='1px solid rgba(255, 255, 255, 0.05)'
             >
-              <Flex justify='flex-end' align='center' gap={2} width='100%'>
-                <Button
-                  size='xs'
-                  variant='ghost'
-                  onClick={loadResources}
-                  disabled={isLoading || !selectedContext}
-                  height='26px'
-                  px={2}
-                  _hover={{ bg: 'whiteAlpha.50' }}
-                >
-                  <RefreshCw size={12} />
-                </Button>
+              <Flex justify='space-between' align='center' width='100%'>
+                <Flex gap={1}>
+                  {totalCount > 0 && (
+                    <Tooltip content='Delete all resources' portalled>
+                      <Button
+                        size='xs'
+                        variant='ghost'
+                        onClick={() => openCleanupDialog('all')}
+                        disabled={isLoading || isCleaningAll}
+                        height='26px'
+                        px={2}
+                        color='whiteAlpha.600'
+                        _hover={{ bg: 'whiteAlpha.50', color: 'red.400' }}
+                      >
+                        <Trash2 size={12} />
+                      </Button>
+                    </Tooltip>
+                  )}
+                </Flex>
 
-                {orphanedCount > 0 && (
-                  <Button
-                    size='xs'
-                    colorPalette='red'
-                    variant='surface'
-                    onClick={() => setShowConfirmDialog(true)}
-                    disabled={isLoading || isCleaningAll}
-                    height='26px'
-                  >
-                    Clean Orphaned
-                  </Button>
-                )}
+                <Flex gap={2}>
+                  <Tooltip content='Refresh' portalled>
+                    <Button
+                      size='xs'
+                      variant='ghost'
+                      onClick={loadResources}
+                      disabled={isLoading || !selectedContext}
+                      height='26px'
+                      px={2}
+                      _hover={{ bg: 'whiteAlpha.50' }}
+                    >
+                      <RefreshCw size={12} className={isLoading ? 'animate-spin' : ''} />
+                    </Button>
+                  </Tooltip>
+
+                  {orphanedCount > 0 && (
+                    <Button
+                      size='xs'
+                      colorPalette='red'
+                      variant='surface'
+                      onClick={() => openCleanupDialog('orphaned')}
+                      disabled={isLoading || isCleaningAll}
+                      height='26px'
+                    >
+                      Clean {orphanedCount} Orphaned
+                    </Button>
+                  )}
+                </Flex>
               </Flex>
             </Dialog.Footer>
           </Dialog.Content>
@@ -804,10 +977,11 @@ const ServerResourcesModal: React.FC<ServerResourcesModalProps> = ({
       <CleanupConfirmDialog
         isOpen={showConfirmDialog}
         onClose={() => setShowConfirmDialog(false)}
-        onConfirm={handleCleanupOrphaned}
-        orphanedCount={orphanedCount}
+        onConfirm={handleCleanup}
+        resources={cleanupMode === 'orphaned' ? orphanedResources : allResourcesForDialog}
         contextName={selectedContext?.label || 'All Contexts'}
         isLoading={isCleaningAll}
+        mode={cleanupMode}
       />
     </>
   )

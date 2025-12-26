@@ -1,7 +1,7 @@
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
 
+use dashmap::DashMap;
 use kube::Client;
 use kube::api::Api;
 use lazy_static::lazy_static;
@@ -148,9 +148,7 @@ impl PortForwardProcess {
 }
 
 lazy_static! {
-    pub static ref CHILD_PROCESSES: Arc<Mutex<HashMap<String, PortForwardProcess>>> =
-        Arc::new(Mutex::new(HashMap::new()));
-    pub static ref PROCESS_MANAGEMENT_LOCK: Arc<Mutex<()>> = Arc::new(Mutex::new(()));
+    pub static ref CHILD_PROCESSES: DashMap<String, PortForwardProcess> = DashMap::new();
 }
 
 impl PortForward {
@@ -161,7 +159,7 @@ impl PortForward {
     ) -> anyhow::Result<Self> {
         let namespace = target.namespace.name_any();
 
-        let client_key = ServiceClientKey::new(context_name.clone(), kubeconfig.clone(), config_id);
+        let client_key = ServiceClientKey::new(context_name.clone(), kubeconfig.clone());
         let client = SHARED_CLIENT_MANAGER.get_client(client_key).await?;
 
         let shared_client = Client::clone(&client);
@@ -416,28 +414,22 @@ mod tests {
 
     #[tokio::test]
     async fn test_child_processes_map() {
-        {
-            let mut processes = CHILD_PROCESSES.lock().await;
-            processes.clear();
+        CHILD_PROCESSES.clear();
+
+        assert_eq!(CHILD_PROCESSES.len(), 0);
+
+        CHILD_PROCESSES.insert(
+            "test-key".to_string(),
+            PortForwardProcess::new(dummy_handle(), "test-key".to_string()),
+        );
+        assert_eq!(CHILD_PROCESSES.len(), 1);
+        assert!(CHILD_PROCESSES.contains_key("test-key"));
+
+        let handle = CHILD_PROCESSES.remove("test-key");
+        if let Some((_, h)) = handle {
+            h.abort();
         }
-
-        {
-            let mut processes = CHILD_PROCESSES.lock().await;
-            assert_eq!(processes.len(), 0);
-
-            processes.insert(
-                "test-key".to_string(),
-                PortForwardProcess::new(dummy_handle(), "test-key".to_string()),
-            );
-            assert_eq!(processes.len(), 1);
-            assert!(processes.contains_key("test-key"));
-
-            let handle = processes.remove("test-key");
-            if let Some(h) = handle {
-                h.abort();
-            }
-            assert_eq!(processes.len(), 0);
-        }
+        assert_eq!(CHILD_PROCESSES.len(), 0);
     }
 
     fn dummy_handle() -> JoinHandle<anyhow::Result<()>> {

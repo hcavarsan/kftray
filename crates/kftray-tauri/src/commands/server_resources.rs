@@ -556,3 +556,59 @@ pub async fn cleanup_all_kftray_resources(
 
     Ok(message)
 }
+
+#[tauri::command]
+pub async fn cleanup_orphaned_kftray_resources(
+    context_name: &str, kubeconfig: Option<String>,
+) -> Result<String, String> {
+    info!(
+        "Cleaning up orphaned kftray resources for context: {}",
+        context_name
+    );
+
+    let namespace_groups = list_all_kftray_resources(context_name, kubeconfig.clone()).await?;
+
+    let mut deleted_count = 0;
+    let mut error_count = 0;
+
+    for group in namespace_groups {
+        for resource in group.resources {
+            if !resource.is_orphaned {
+                continue;
+            }
+
+            match delete_kftray_resource(
+                context_name,
+                &resource.namespace,
+                &resource.resource_type,
+                &resource.name,
+                resource.config_id.clone(),
+                kubeconfig.clone(),
+            )
+            .await
+            {
+                Ok(_) => deleted_count += 1,
+                Err(e) => {
+                    error!(
+                        "Failed to delete orphaned resource {}: {}",
+                        resource.name, e
+                    );
+                    error_count += 1;
+                }
+            }
+        }
+    }
+
+    let message = if error_count > 0 {
+        format!(
+            "Deleted {} orphaned resources with {} errors",
+            deleted_count, error_count
+        )
+    } else {
+        format!("Successfully deleted {} orphaned resources", deleted_count)
+    };
+
+    info!("{}", message);
+
+    Ok(message)
+}

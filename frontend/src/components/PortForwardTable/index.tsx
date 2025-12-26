@@ -18,6 +18,8 @@ const PortForwardTable: React.FC<TableProps> = ({
   startSelectedPortForwarding,
   stopSelectedPortForwarding,
   stopAllPortForwarding,
+  abortStartOperation,
+  abortStopOperation,
   handleEditConfig,
   handleDuplicateConfig,
   handleDeleteConfig,
@@ -185,6 +187,8 @@ const PortForwardTable: React.FC<TableProps> = ({
             startSelectedPortForwarding={startSelectedPortForwarding}
             stopSelectedPortForwarding={stopSelectedPortForwarding}
             stopAllPortForwarding={stopAllPortForwarding}
+            abortStartOperation={abortStartOperation}
+            abortStopOperation={abortStopOperation}
             isInitiating={isInitiating}
             isStopping={isStopping}
             toggleExpandAll={toggleExpandAll}

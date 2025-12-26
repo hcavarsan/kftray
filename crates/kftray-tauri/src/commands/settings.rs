@@ -126,7 +126,9 @@ pub async fn update_network_monitor(enabled: bool) -> Result<(), String> {
             error!("Failed to start network monitor: {e}");
             return Err(format!("Failed to start network monitor: {e}"));
         }
-    } else if let Err(e) = kftray_network_monitor::stop().await {
+    } else if kftray_network_monitor::is_running().await
+        && let Err(e) = kftray_network_monitor::stop().await
+    {
         error!("Failed to stop network monitor: {e}");
         return Err(format!("Failed to stop network monitor: {e}"));
     }
