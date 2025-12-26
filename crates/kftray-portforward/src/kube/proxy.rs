@@ -2,12 +2,18 @@ use std::{
     collections::HashMap,
     fs::File,
     io::Read,
+    pin::Pin,
     time::{
         SystemTime,
         UNIX_EPOCH,
     },
 };
 
+use futures::{
+    Future,
+    StreamExt,
+    stream::FuturesUnordered,
+};
 use k8s_openapi::api::{
     apps::v1::Deployment,
     core::v1::Pod,
@@ -56,240 +62,336 @@ pub async fn deploy_and_forward_pod(configs: Vec<Config>) -> Result<Vec<CustomRe
 pub async fn deploy_and_forward_pod_with_mode(
     configs: Vec<Config>, mode: DatabaseMode, ssl_override: bool,
 ) -> Result<Vec<CustomResponse>, String> {
+    if configs.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    type ProxyFuture = Pin<Box<dyn Future<Output = Result<CustomResponse, String>> + Send>>;
+    let mut futures: FuturesUnordered<ProxyFuture> = FuturesUnordered::new();
+
+    for config in configs {
+        futures.push(Box::pin(process_single_proxy_config(
+            config,
+            mode,
+            ssl_override,
+        )));
+    }
+
+    // Collect results as they complete - allow partial success
     let mut responses: Vec<CustomResponse> = Vec::new();
+    let mut errors: Vec<String> = Vec::new();
 
-    for mut config in configs.into_iter() {
-        let client_key = ServiceClientKey::new(
-            config.context.clone(),
-            config.kubeconfig.clone(),
-            config.id.unwrap_or(-1),
-        );
-
-        let shared_client = SHARED_CLIENT_MANAGER
-            .get_client(client_key)
-            .await
-            .map_err(|e| {
-                error!("Failed to get shared Kubernetes client: {e}");
-                e.to_string()
-            })?;
-        let client = Client::clone(&shared_client);
-
-        let timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .map_err(|e| e.to_string())?
-            .as_secs();
-
-        let random_string: String = Alphanumeric
-            .sample_string(&mut rand::rng(), 6)
-            .chars()
-            .map(|c| c.to_ascii_lowercase())
-            .collect();
-
-        let username = whoami::username().to_lowercase();
-        let clean_username: String = username.chars().filter(|c| c.is_alphanumeric()).collect();
-
-        info!("Cleaned username: {clean_username}");
-
-        let protocol = config.protocol.to_string().to_lowercase();
-
-        let hashed_name =
-            format!("kftray-forward-{clean_username}-{protocol}-{timestamp}-{random_string}")
-                .to_lowercase();
-
-        let config_id_str = config
-            .id
-            .map_or_else(|| "default".into(), |id| id.to_string());
-
-        if config.remote_address.as_ref().is_none_or(|s| s.is_empty()) {
-            config.remote_address.clone_from(&config.service);
-        }
-
-        let mut values: HashMap<&str, String> = HashMap::new();
-        values.insert("hashed_name", hashed_name.clone());
-        values.insert("config_id", config_id_str.clone());
-        values.insert("service_name", config.service.as_ref().unwrap().clone());
-        values.insert(
-            "remote_address",
-            config.remote_address.as_ref().unwrap().clone(),
-        );
-        values.insert("remote_port", config.remote_port.expect("None").to_string());
-        let local_port_value = config
-            .remote_port
-            .unwrap_or(config.local_port.expect("None"))
-            .to_string();
-        values.insert("local_port", local_port_value);
-        values.insert("protocol", protocol.clone());
-
-        let use_deployment = should_use_deployment_manifest();
-
-        if use_deployment {
-            // Use new Deployment manifest
-            let manifest_path = get_proxy_deployment_manifest_path().map_err(|e| e.to_string())?;
-            let mut file = File::open(manifest_path).map_err(|e| e.to_string())?;
-            let mut contents = String::new();
-            file.read_to_string(&mut contents)
-                .map_err(|e| e.to_string())?;
-
-            let rendered_json = render_json_template(&contents, &values);
-            let deployment: Deployment =
-                serde_json::from_str(&rendered_json).map_err(|e| e.to_string())?;
-
-            let deployments: Api<Deployment> = Api::namespaced(client.clone(), &config.namespace);
-
-            match deployments
-                .create(&PostParams::default(), &deployment)
-                .await
-            {
-                Ok(_) => {
-                    let pods: Api<Pod> = Api::namespaced(client.clone(), &config.namespace);
-                    let label_selector = format!("app={},config_id={}", hashed_name, config_id_str);
-                    let lp = ListParams::default().labels(&label_selector);
-
-                    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-
-                    let pod_list = pods.list(&lp).await.map_err(|e| e.to_string())?;
-                    let pod = pod_list
-                        .items
-                        .first()
-                        .ok_or("No pod found for deployment")?;
-                    let pod_name = pod.metadata.name.clone().ok_or("Pod has no name")?;
-
-                    if let Err(e) = kube_runtime::wait::await_condition(
-                        pods.clone(),
-                        &pod_name,
-                        conditions::is_pod_running(),
-                    )
-                    .await
-                    {
-                        let dp = DeleteParams {
-                            grace_period_seconds: Some(0),
-                            ..DeleteParams::default()
-                        };
-                        let _ = deployments.delete(&hashed_name, &dp).await;
-                        return Err(e.to_string());
-                    }
-
-                    config.service = Some(hashed_name.clone());
-
-                    let start_response = match protocol.as_str() {
-                        "udp" => {
-                            super::start::start_port_forward_with_mode(
-                                vec![config.clone()],
-                                "udp",
-                                mode,
-                                ssl_override,
-                            )
-                            .await
-                        }
-                        "tcp" => {
-                            super::start::start_port_forward_with_mode(
-                                vec![config.clone()],
-                                "tcp",
-                                mode,
-                                ssl_override,
-                            )
-                            .await
-                        }
-                        _ => {
-                            let _ = deployments
-                                .delete(&hashed_name, &DeleteParams::default())
-                                .await;
-                            return Err("Unsupported proxy type".to_string());
-                        }
-                    };
-
-                    match start_response {
-                        Ok(mut port_forward_responses) => {
-                            let response = port_forward_responses
-                                .pop()
-                                .ok_or("No response received from port forwarding")?;
-                            responses.push(response);
-                        }
-                        Err(e) => {
-                            let _ = deployments
-                                .delete(&hashed_name, &DeleteParams::default())
-                                .await;
-                            return Err(format!("Failed to start port forwarding {e}"));
-                        }
-                    }
-                }
-                Err(e) => return Err(e.to_string()),
+    while let Some(result) = futures.next().await {
+        match result {
+            Ok(response) => {
+                responses.push(response);
             }
-        } else {
-            let manifest_path = get_pod_manifest_path().map_err(|e| e.to_string())?;
-            let mut file = File::open(manifest_path).map_err(|e| e.to_string())?;
-            let mut contents = String::new();
-            file.read_to_string(&mut contents)
-                .map_err(|e| e.to_string())?;
-
-            let rendered_json = render_json_template(&contents, &values);
-            let pod: Pod = serde_json::from_str(&rendered_json).map_err(|e| e.to_string())?;
-
-            let pods: Api<Pod> = Api::namespaced(client.clone(), &config.namespace);
-
-            match pods.create(&PostParams::default(), &pod).await {
-                Ok(_) => {
-                    if let Err(e) = kube_runtime::wait::await_condition(
-                        pods.clone(),
-                        &hashed_name,
-                        conditions::is_pod_running(),
-                    )
-                    .await
-                    {
-                        let dp = DeleteParams {
-                            grace_period_seconds: Some(0),
-                            ..DeleteParams::default()
-                        };
-                        let _ = pods.delete(&hashed_name, &dp).await;
-                        return Err(e.to_string());
-                    }
-
-                    config.service = Some(hashed_name.clone());
-
-                    let start_response = match protocol.as_str() {
-                        "udp" => {
-                            super::start::start_port_forward_with_mode(
-                                vec![config.clone()],
-                                "udp",
-                                mode,
-                                ssl_override,
-                            )
-                            .await
-                        }
-                        "tcp" => {
-                            super::start::start_port_forward_with_mode(
-                                vec![config.clone()],
-                                "tcp",
-                                mode,
-                                ssl_override,
-                            )
-                            .await
-                        }
-                        _ => {
-                            let _ = pods.delete(&hashed_name, &DeleteParams::default()).await;
-                            return Err("Unsupported proxy type".to_string());
-                        }
-                    };
-
-                    match start_response {
-                        Ok(mut port_forward_responses) => {
-                            let response = port_forward_responses
-                                .pop()
-                                .ok_or("No response received from port forwarding")?;
-                            responses.push(response);
-                        }
-                        Err(e) => {
-                            let _ = pods.delete(&hashed_name, &DeleteParams::default()).await;
-                            return Err(format!("Failed to start port forwarding {e}"));
-                        }
-                    }
-                }
-                Err(e) => return Err(e.to_string()),
+            Err(e) => {
+                error!("Proxy config failed: {e}");
+                errors.push(e);
             }
         }
     }
 
+    if !errors.is_empty() && responses.is_empty() {
+        return Err(errors.join("; "));
+    }
+
+    if !errors.is_empty() {
+        error!(
+            "Partial proxy deployment: {} succeeded, {} failed",
+            responses.len(),
+            errors.len()
+        );
+    }
+
     Ok(responses)
+}
+
+async fn process_single_proxy_config(
+    mut config: Config, mode: DatabaseMode, ssl_override: bool,
+) -> Result<CustomResponse, String> {
+    let client_key = ServiceClientKey::new(config.context.clone(), config.kubeconfig.clone());
+
+    let shared_client = SHARED_CLIENT_MANAGER
+        .get_client(client_key)
+        .await
+        .map_err(|e| {
+            error!("Failed to get shared Kubernetes client: {e}");
+            e.to_string()
+        })?;
+    let client = Client::clone(&shared_client);
+
+    let timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(|e| e.to_string())?
+        .as_secs();
+
+    let random_string: String = Alphanumeric
+        .sample_string(&mut rand::rng(), 6)
+        .chars()
+        .map(|c| c.to_ascii_lowercase())
+        .collect();
+
+    let username = whoami::username().to_lowercase();
+    let clean_username: String = username.chars().filter(|c| c.is_alphanumeric()).collect();
+
+    info!("Cleaned username: {clean_username}");
+
+    let protocol = config.protocol.to_string().to_lowercase();
+
+    let hashed_name =
+        format!("kftray-forward-{clean_username}-{protocol}-{timestamp}-{random_string}")
+            .to_lowercase();
+
+    let config_id_str = config
+        .id
+        .map_or_else(|| "default".into(), |id| id.to_string());
+
+    if config.remote_address.as_ref().is_none_or(|s| s.is_empty()) {
+        config.remote_address.clone_from(&config.service);
+    }
+
+    let mut values: HashMap<String, String> = HashMap::new();
+    values.insert("hashed_name".to_string(), hashed_name.clone());
+    values.insert("config_id".to_string(), config_id_str.clone());
+    values.insert(
+        "service_name".to_string(),
+        config.service.as_ref().unwrap().clone(),
+    );
+    values.insert(
+        "remote_address".to_string(),
+        config.remote_address.as_ref().unwrap().clone(),
+    );
+    values.insert(
+        "remote_port".to_string(),
+        config.remote_port.expect("None").to_string(),
+    );
+    let local_port_value = config
+        .remote_port
+        .unwrap_or(config.local_port.expect("None"))
+        .to_string();
+    values.insert("local_port".to_string(), local_port_value);
+    values.insert("protocol".to_string(), protocol.clone());
+
+    let use_deployment = should_use_deployment_manifest();
+
+    if use_deployment {
+        process_deployment_proxy(
+            client,
+            &mut config,
+            &hashed_name,
+            &config_id_str,
+            &values,
+            &protocol,
+            mode,
+            ssl_override,
+        )
+        .await
+    } else {
+        process_pod_proxy(
+            client,
+            &mut config,
+            &hashed_name,
+            &values,
+            &protocol,
+            mode,
+            ssl_override,
+        )
+        .await
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn process_deployment_proxy(
+    client: Client, config: &mut Config, hashed_name: &str, config_id_str: &str,
+    values: &HashMap<String, String>, protocol: &str, mode: DatabaseMode, ssl_override: bool,
+) -> Result<CustomResponse, String> {
+    let manifest_path = get_proxy_deployment_manifest_path().map_err(|e| e.to_string())?;
+    let mut file = File::open(manifest_path).map_err(|e| e.to_string())?;
+    let mut contents = String::new();
+    file.read_to_string(&mut contents)
+        .map_err(|e| e.to_string())?;
+
+    let rendered_json = render_json_template_owned(&contents, values);
+    let deployment: Deployment = serde_json::from_str(&rendered_json).map_err(|e| e.to_string())?;
+
+    let deployments: Api<Deployment> = Api::namespaced(client.clone(), &config.namespace);
+
+    match deployments
+        .create(&PostParams::default(), &deployment)
+        .await
+    {
+        Ok(_) => {
+            let pods: Api<Pod> = Api::namespaced(client.clone(), &config.namespace);
+            let label_selector = format!("app={},config_id={}", hashed_name, config_id_str);
+            let lp = ListParams::default().labels(&label_selector);
+
+            let pod_name = wait_for_deployment_pod(&pods, &lp, hashed_name, &deployments).await?;
+
+            if let Err(e) = kube_runtime::wait::await_condition(
+                pods.clone(),
+                &pod_name,
+                conditions::is_pod_running(),
+            )
+            .await
+            {
+                let dp = DeleteParams {
+                    grace_period_seconds: Some(0),
+                    ..DeleteParams::default()
+                };
+                let _ = deployments.delete(hashed_name, &dp).await;
+                return Err(e.to_string());
+            }
+
+            config.service = Some(hashed_name.to_string());
+
+            let start_response = match protocol {
+                "udp" => {
+                    super::start::start_port_forward_with_mode(
+                        vec![config.clone()],
+                        "udp",
+                        mode,
+                        ssl_override,
+                    )
+                    .await
+                }
+                "tcp" => {
+                    super::start::start_port_forward_with_mode(
+                        vec![config.clone()],
+                        "tcp",
+                        mode,
+                        ssl_override,
+                    )
+                    .await
+                }
+                _ => {
+                    let _ = deployments
+                        .delete(hashed_name, &DeleteParams::default())
+                        .await;
+                    return Err("Unsupported proxy type".to_string());
+                }
+            };
+
+            match start_response {
+                Ok(mut port_forward_responses) => match port_forward_responses.pop() {
+                    Some(response) => Ok(response),
+                    None => {
+                        let _ = deployments
+                            .delete(hashed_name, &DeleteParams::default())
+                            .await;
+                        Err("No response received from port forwarding".to_string())
+                    }
+                },
+                Err(e) => {
+                    let _ = deployments
+                        .delete(hashed_name, &DeleteParams::default())
+                        .await;
+                    Err(format!("Failed to start port forwarding {e}"))
+                }
+            }
+        }
+        Err(e) => Err(e.to_string()),
+    }
+}
+
+async fn wait_for_deployment_pod(
+    pods: &Api<Pod>, lp: &ListParams, hashed_name: &str, deployments: &Api<Deployment>,
+) -> Result<String, String> {
+    for attempt in 0..10 {
+        let pod_list = pods.list(lp).await.map_err(|e| e.to_string())?;
+        if let Some(pod) = pod_list.items.first()
+            && let Some(name) = pod.metadata.name.clone()
+        {
+            return Ok(name);
+        }
+        if attempt < 9 {
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        }
+    }
+    let dp = DeleteParams {
+        grace_period_seconds: Some(0),
+        ..DeleteParams::default()
+    };
+    let _ = deployments.delete(hashed_name, &dp).await;
+    Err("No pod found for deployment after retries".to_string())
+}
+
+async fn process_pod_proxy(
+    client: Client, config: &mut Config, hashed_name: &str, values: &HashMap<String, String>,
+    protocol: &str, mode: DatabaseMode, ssl_override: bool,
+) -> Result<CustomResponse, String> {
+    let manifest_path = get_pod_manifest_path().map_err(|e| e.to_string())?;
+    let mut file = File::open(manifest_path).map_err(|e| e.to_string())?;
+    let mut contents = String::new();
+    file.read_to_string(&mut contents)
+        .map_err(|e| e.to_string())?;
+
+    let rendered_json = render_json_template_owned(&contents, values);
+    let pod: Pod = serde_json::from_str(&rendered_json).map_err(|e| e.to_string())?;
+
+    let pods: Api<Pod> = Api::namespaced(client.clone(), &config.namespace);
+
+    match pods.create(&PostParams::default(), &pod).await {
+        Ok(_) => {
+            if let Err(e) = kube_runtime::wait::await_condition(
+                pods.clone(),
+                hashed_name,
+                conditions::is_pod_running(),
+            )
+            .await
+            {
+                let dp = DeleteParams {
+                    grace_period_seconds: Some(0),
+                    ..DeleteParams::default()
+                };
+                let _ = pods.delete(hashed_name, &dp).await;
+                return Err(e.to_string());
+            }
+
+            config.service = Some(hashed_name.to_string());
+
+            let start_response = match protocol {
+                "udp" => {
+                    super::start::start_port_forward_with_mode(
+                        vec![config.clone()],
+                        "udp",
+                        mode,
+                        ssl_override,
+                    )
+                    .await
+                }
+                "tcp" => {
+                    super::start::start_port_forward_with_mode(
+                        vec![config.clone()],
+                        "tcp",
+                        mode,
+                        ssl_override,
+                    )
+                    .await
+                }
+                _ => {
+                    let _ = pods.delete(hashed_name, &DeleteParams::default()).await;
+                    return Err("Unsupported proxy type".to_string());
+                }
+            };
+
+            match start_response {
+                Ok(mut port_forward_responses) => match port_forward_responses.pop() {
+                    Some(response) => Ok(response),
+                    None => {
+                        let _ = pods.delete(hashed_name, &DeleteParams::default()).await;
+                        Err("No response received from port forwarding".to_string())
+                    }
+                },
+                Err(e) => {
+                    let _ = pods.delete(hashed_name, &DeleteParams::default()).await;
+                    Err(format!("Failed to start port forwarding {e}"))
+                }
+            }
+        }
+        Err(e) => Err(e.to_string()),
+    }
 }
 
 pub async fn stop_proxy_forward_with_mode(
@@ -305,11 +407,7 @@ pub async fn stop_proxy_forward_with_mode(
             e.to_string()
         })?;
 
-    let client_key = ServiceClientKey::new(
-        config.context.clone(),
-        config.kubeconfig.clone(),
-        config.id.unwrap_or(-1),
-    );
+    let client_key = ServiceClientKey::new(config.context.clone(), config.kubeconfig.clone());
 
     let shared_client = SHARED_CLIENT_MANAGER
         .get_client(client_key)
@@ -386,11 +484,7 @@ pub async fn stop_proxy_forward(
             e.to_string()
         })?;
 
-    let client_key = ServiceClientKey::new(
-        config.context.clone(),
-        config.kubeconfig.clone(),
-        config.id.unwrap_or(-1),
-    );
+    let client_key = ServiceClientKey::new(config.context.clone(), config.kubeconfig.clone());
 
     let shared_client = SHARED_CLIENT_MANAGER
         .get_client(client_key)
@@ -499,7 +593,7 @@ fn should_use_deployment_manifest() -> bool {
     false
 }
 
-fn render_json_template(template: &str, values: &HashMap<&str, String>) -> String {
+fn render_json_template_owned(template: &str, values: &HashMap<String, String>) -> String {
     let mut rendered_template = template.to_string();
 
     for (key, value) in values.iter() {
@@ -518,7 +612,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_render_json_template() {
+    fn test_render_json_template_owned() {
         let template = r#"{
             "name": "{hashed_name}",
             "config_id": "{config_id}",
@@ -527,12 +621,12 @@ mod tests {
         }"#;
 
         let mut values = HashMap::new();
-        values.insert("hashed_name", "test-pod".to_string());
-        values.insert("config_id", "123".to_string());
-        values.insert("service_name", "test-service".to_string());
-        values.insert("remote_port", "8080".to_string());
+        values.insert("hashed_name".to_string(), "test-pod".to_string());
+        values.insert("config_id".to_string(), "123".to_string());
+        values.insert("service_name".to_string(), "test-service".to_string());
+        values.insert("remote_port".to_string(), "8080".to_string());
 
-        let rendered = render_json_template(template, &values);
+        let rendered = render_json_template_owned(template, &values);
 
         assert!(rendered.contains("\"name\": \"test-pod\""));
         assert!(rendered.contains("\"config_id\": \"123\""));
@@ -541,7 +635,7 @@ mod tests {
     }
 
     #[test]
-    fn test_render_json_template_with_missing_values() {
+    fn test_render_json_template_owned_with_missing_values() {
         let template = r#"{
             "name": "{hashed_name}",
             "config_id": "{config_id}",
@@ -549,10 +643,10 @@ mod tests {
         }"#;
 
         let mut values = HashMap::new();
-        values.insert("hashed_name", "test-pod".to_string());
-        values.insert("config_id", "123".to_string());
+        values.insert("hashed_name".to_string(), "test-pod".to_string());
+        values.insert("config_id".to_string(), "123".to_string());
 
-        let rendered = render_json_template(template, &values);
+        let rendered = render_json_template_owned(template, &values);
 
         assert!(rendered.contains("\"name\": \"test-pod\""));
         assert!(rendered.contains("\"config_id\": \"123\""));
@@ -560,16 +654,16 @@ mod tests {
     }
 
     #[test]
-    fn test_render_json_template_with_empty_values() {
+    fn test_render_json_template_owned_with_empty_values() {
         let template = r#"{"name": "{hashed_name}"}"#;
         let values = HashMap::new();
 
-        let rendered = render_json_template(template, &values);
+        let rendered = render_json_template_owned(template, &values);
         assert_eq!(rendered, r#"{"name": "{hashed_name}"}"#);
     }
 
     #[test]
-    fn test_render_json_template_complex() {
+    fn test_render_json_template_owned_complex() {
         let template = r#"{
             "apiVersion": "v1",
             "kind": "Pod",
@@ -599,12 +693,12 @@ mod tests {
         }"#;
 
         let mut values = HashMap::new();
-        values.insert("hashed_name", "test-pod-abc123".to_string());
-        values.insert("config_id", "456".to_string());
-        values.insert("remote_port", "9090".to_string());
-        values.insert("protocol", "TCP".to_string());
+        values.insert("hashed_name".to_string(), "test-pod-abc123".to_string());
+        values.insert("config_id".to_string(), "456".to_string());
+        values.insert("remote_port".to_string(), "9090".to_string());
+        values.insert("protocol".to_string(), "TCP".to_string());
 
-        let rendered = render_json_template(template, &values);
+        let rendered = render_json_template_owned(template, &values);
 
         assert!(rendered.contains("\"name\": \"test-pod-abc123\""));
         assert!(rendered.contains("\"config_id\": \"456\""));

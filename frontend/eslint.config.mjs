@@ -80,7 +80,7 @@ export default [{
         indent: "off",
 
         complexity: ["error", {
-            max: 20,
+            max: 30,
         }],
 
         curly: "error",

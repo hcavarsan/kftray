@@ -11,6 +11,7 @@ use kftray_commons::config::{
 };
 use kftray_commons::models::config_model::Config;
 use kftray_commons::utils::settings::get_ssl_enabled;
+use kftray_portforward::kube::clear_stopped_by_timeout;
 use kftray_portforward::ssl::cert_manager::CertificateManager;
 use log::{
     error,
@@ -205,6 +206,7 @@ async fn restart_ssl_proxies_with_retry() {
 #[tauri::command]
 pub async fn delete_config_cmd(id: i64) -> Result<(), String> {
     info!("Deleting config with id: {id}");
+    clear_stopped_by_timeout(id);
     let result = delete_config(id).await;
     if result.is_ok() {
         let _ = regenerate_ssl_certificate_if_needed().await;
@@ -215,6 +217,9 @@ pub async fn delete_config_cmd(id: i64) -> Result<(), String> {
 #[tauri::command]
 pub async fn delete_configs_cmd(ids: Vec<i64>) -> Result<(), String> {
     info!("Deleting configs with ids: {ids:?}");
+    for id in &ids {
+        clear_stopped_by_timeout(*id);
+    }
     let result = delete_configs(ids).await;
     if result.is_ok() {
         let _ = regenerate_ssl_certificate_if_needed().await;

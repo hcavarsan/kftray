@@ -137,6 +137,20 @@ fn main() {
                 }
             });
 
+            tauri::async_runtime::spawn(async move {
+                use std::time::Duration;
+
+                use kftray_portforward::kube::cleanup_stale_timeout_entries;
+                use kftray_portforward::kube::shared_client::SHARED_CLIENT_MANAGER;
+
+                let mut interval = tokio::time::interval(Duration::from_secs(3600));
+                loop {
+                    interval.tick().await;
+                    cleanup_stale_timeout_entries().await;
+                    SHARED_CLIENT_MANAGER.cleanup_expired();
+                }
+            });
+
             #[cfg(not(debug_assertions))]
             {
                 let app_handle_clone = app_handle.clone();
@@ -334,6 +348,7 @@ fn main() {
             commands::server_resources::list_all_kftray_resources,
             commands::server_resources::delete_kftray_resource,
             commands::server_resources::cleanup_all_kftray_resources,
+            commands::server_resources::cleanup_orphaned_kftray_resources,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");

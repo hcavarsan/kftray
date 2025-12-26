@@ -50,8 +50,7 @@ async fn start_single_expose(config: Config, mode: DatabaseMode) -> Result<Custo
 
     let config_id = config.id.ok_or("Config has no ID")?;
 
-    let client_key =
-        ServiceClientKey::new(config.context.clone(), config.kubeconfig.clone(), config_id);
+    let client_key = ServiceClientKey::new(config.context.clone(), config.kubeconfig.clone());
     let client = SHARED_CLIENT_MANAGER
         .get_client(client_key)
         .await
@@ -95,10 +94,7 @@ async fn start_single_expose(config: Config, mode: DatabaseMode) -> Result<Custo
         websocket_port
     );
 
-    {
-        let mut processes = CHILD_PROCESSES.lock().await;
-        processes.insert(config_id.to_string(), pf_process);
-    }
+    CHILD_PROCESSES.insert(config_id.to_string(), pf_process);
 
     let local_service_port = config.local_port.unwrap_or(8080);
     let local_service_address = config
@@ -123,11 +119,8 @@ async fn start_single_expose(config: Config, mode: DatabaseMode) -> Result<Custo
     });
 
     // Store the WebSocket client handle so it can be aborted when stopping
-    {
-        let mut processes = CHILD_PROCESSES.lock().await;
-        if let Some(process) = processes.get_mut(&config_id.to_string()) {
-            process.set_ws_client_handle(ws_handle);
-        }
+    if let Some(mut process) = CHILD_PROCESSES.get_mut(&config_id.to_string()) {
+        process.set_ws_client_handle(ws_handle);
     }
 
     let config_state = ConfigState {
@@ -166,16 +159,12 @@ pub async fn stop_expose(
 
     let config = get_config_with_mode(config_id, mode).await?;
 
-    {
-        let mut processes = CHILD_PROCESSES.lock().await;
-        if let Some(pf_process) = processes.remove(&config_id.to_string()) {
-            info!("Cleaning up port-forward for config {}", config_id);
-            pf_process.cleanup_and_abort().await;
-        }
+    if let Some((_, pf_process)) = CHILD_PROCESSES.remove(&config_id.to_string()) {
+        info!("Cleaning up port-forward for config {}", config_id);
+        pf_process.cleanup_and_abort().await;
     }
 
-    let client_key =
-        ServiceClientKey::new(config.context.clone(), config.kubeconfig.clone(), config_id);
+    let client_key = ServiceClientKey::new(config.context.clone(), config.kubeconfig.clone());
     let client = SHARED_CLIENT_MANAGER
         .get_client(client_key)
         .await

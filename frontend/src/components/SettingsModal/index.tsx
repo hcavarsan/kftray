@@ -15,7 +15,6 @@ interface SettingsModalProps {
   onClose: () => void
 }
 
-// eslint-disable-next-line complexity
 const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
   const [disconnectTimeout, setDisconnectTimeout] = useState<string>('0')
   const [networkMonitor, setNetworkMonitor] = useState<boolean>(true)

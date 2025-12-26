@@ -627,13 +627,16 @@ impl App {
         for config_state in config_states {
             if config_state.is_running {
                 let handle_key = format!("config:{}:service:", config_state.config_id);
-                let processes = CHILD_PROCESSES.lock().await;
+
+                let matching_forwarders: Vec<_> = CHILD_PROCESSES
+                    .iter()
+                    .filter(|entry| entry.key().starts_with(&handle_key))
+                    .filter_map(|entry| entry.value().direct_forwarder.clone())
+                    .collect();
 
                 let mut active_pod = None;
-                for (key, process) in processes.iter() {
-                    if key.starts_with(&handle_key)
-                        && let Some(pod_name) = process.get_current_active_pod().await
-                    {
+                for forwarder in matching_forwarders {
+                    if let Some(pod_name) = forwarder.get_current_active_pod().await {
                         active_pod = Some(pod_name);
                         break;
                     }
@@ -1545,6 +1548,11 @@ pub async fn handle_delete_confirmation_input(
                     .iter()
                     .filter_map(|&row| app.stopped_configs.get(row).and_then(|config| config.id))
                     .collect();
+
+                // Clean up timeout tracking for these configs to prevent memory leaks
+                for id in &ids_to_delete {
+                    kftray_portforward::kube::clear_stopped_by_timeout(*id);
+                }
 
                 match kftray_commons::utils::config::delete_configs_with_mode(
                     ids_to_delete.clone(),

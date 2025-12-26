@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react'
-import { ChevronDown, ChevronUp, RefreshCw, X } from 'lucide-react'
+import { ChevronDown, ChevronUp, Loader2, RefreshCw, X } from 'lucide-react'
 
 import { Box, Group } from '@chakra-ui/react'
 
@@ -15,6 +15,8 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
   startSelectedPortForwarding,
   stopSelectedPortForwarding,
   stopAllPortForwarding,
+  abortStartOperation,
+  abortStopOperation,
   isInitiating,
   isStopping,
   toggleExpandAll,
@@ -83,14 +85,18 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
         <Group display='flex' alignItems='center' gap={2}>
           <Tooltip
             content={
-              selectedConfigs.length > 0 &&
-              selectedConfigs.some(selected => {
-                const currentConfig = configs.find(c => c.id === selected.id)
+              isInitiating
+                ? 'Starting port forwards...'
+                : selectedConfigs.length > 0 &&
+                    selectedConfigs.some(selected => {
+                      const currentConfig = configs.find(
+                        c => c.id === selected.id,
+                      )
 
-                return currentConfig && !currentConfig.is_running
-              })
-                ? 'Start selected port forwards'
-                : 'Start all port forwards'
+                      return currentConfig && !currentConfig.is_running
+                    })
+                  ? 'Start selected port forwards'
+                  : 'Start all port forwards'
             }
             portalled={true}
             contentProps={{ zIndex: 100 }}
@@ -110,8 +116,6 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
                     })
                   : configs.every(config => config.is_running))
               }
-              loading={isInitiating}
-              loadingText='Starting...'
               onClick={
                 selectedConfigs.length > 0
                   ? startSelectedPortForwarding
@@ -120,43 +124,90 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
                         configs.filter(config => !config.is_running),
                       )
               }
-              _hover={{ bg: 'whiteAlpha.100' }}
+              _hover={{ bg: isInitiating ? undefined : 'whiteAlpha.100' }}
               height='26px'
               minWidth='90px'
               bg='whiteAlpha.50'
               px={2}
               borderRadius='md'
               border='1px solid rgba(255, 255, 255, 0.08)'
+              cursor={isInitiating ? 'default' : undefined}
             >
-              <Box
-                as={RefreshCw}
-                width='12px'
-                height='12px'
-                marginRight={1.5}
-              />
-              <span style={{ fontSize: '11px' }}>
-                {selectedConfigs.length > 0 &&
-                selectedConfigs.some(selected => {
-                  const currentConfig = configs.find(c => c.id === selected.id)
+              {isInitiating ? (
+                <>
+                  <Box
+                    as={Loader2}
+                    width='12px'
+                    height='12px'
+                    marginRight={1.5}
+                    animation='spin 1s linear infinite'
+                    css={{
+                      '@keyframes spin': {
+                        from: { transform: 'rotate(0deg)' },
+                        to: { transform: 'rotate(360deg)' },
+                      },
+                    }}
+                  />
+                  <span style={{ fontSize: '11px' }}>Starting...</span>
+                  <Tooltip content='Cancel' portalled contentProps={{ zIndex: 101 }}>
+                    <Box
+                      as='span'
+                      display='inline-flex'
+                      alignItems='center'
+                      justifyContent='center'
+                      marginLeft={1.5}
+                      padding='2px'
+                      borderRadius='sm'
+                      cursor='pointer'
+                      _hover={{ bg: 'red.700' }}
+                      onClick={e => {
+                        e.stopPropagation()
+                        abortStartOperation()
+                      }}
+                    >
+                      <Box as={X} width='10px' height='10px' color='red.300' />
+                    </Box>
+                  </Tooltip>
+                </>
+              ) : (
+                <>
+                  <Box
+                    as={RefreshCw}
+                    width='12px'
+                    height='12px'
+                    marginRight={1.5}
+                  />
+                  <span style={{ fontSize: '11px' }}>
+                    {selectedConfigs.length > 0 &&
+                    selectedConfigs.some(selected => {
+                      const currentConfig = configs.find(
+                        c => c.id === selected.id,
+                      )
 
-                  return currentConfig && !currentConfig.is_running
-                })
-                  ? 'Start Selected'
-                  : 'Start All'}
-              </span>
+                      return currentConfig && !currentConfig.is_running
+                    })
+                      ? 'Start Selected'
+                      : 'Start All'}
+                  </span>
+                </>
+              )}
             </Button>
           </Tooltip>
 
           <Tooltip
             content={
-              selectedConfigs.length > 0 &&
-              selectedConfigs.some(selected => {
-                const currentConfig = configs.find(c => c.id === selected.id)
+              isStopping
+                ? 'Stopping port forwards...'
+                : selectedConfigs.length > 0 &&
+                    selectedConfigs.some(selected => {
+                      const currentConfig = configs.find(
+                        c => c.id === selected.id,
+                      )
 
-                return currentConfig && currentConfig.is_running
-              })
-                ? 'Stop selected port forwards'
-                : 'Stop all port forwards'
+                      return currentConfig && currentConfig.is_running
+                    })
+                  ? 'Stop selected port forwards'
+                  : 'Stop all port forwards'
             }
             portalled={true}
             contentProps={{ zIndex: 100 }}
@@ -176,32 +227,73 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
                     })
                   : configs.every(config => !config.is_running))
               }
-              loading={isStopping}
-              loadingText='Stopping...'
               onClick={
                 selectedConfigs.length > 0
                   ? stopSelectedPortForwarding
                   : stopAllPortForwarding
               }
-              _hover={{ bg: 'whiteAlpha.100' }}
+              _hover={{ bg: isStopping ? undefined : 'whiteAlpha.100' }}
               height='26px'
               minWidth='90px'
               bg='whiteAlpha.50'
               px={2}
               borderRadius='md'
               border='1px solid rgba(255, 255, 255, 0.08)'
+              cursor={isStopping ? 'default' : undefined}
             >
-              <Box as={X} width='12px' height='12px' marginRight={1.5} />
-              <span style={{ fontSize: '11px' }}>
-                {selectedConfigs.length > 0 &&
-                selectedConfigs.some(selected => {
-                  const currentConfig = configs.find(c => c.id === selected.id)
+              {isStopping ? (
+                <>
+                  <Box
+                    as={Loader2}
+                    width='12px'
+                    height='12px'
+                    marginRight={1.5}
+                    animation='spin 1s linear infinite'
+                    css={{
+                      '@keyframes spin': {
+                        from: { transform: 'rotate(0deg)' },
+                        to: { transform: 'rotate(360deg)' },
+                      },
+                    }}
+                  />
+                  <span style={{ fontSize: '11px' }}>Stopping...</span>
+                  <Tooltip content='Cancel' portalled contentProps={{ zIndex: 101 }}>
+                    <Box
+                      as='span'
+                      display='inline-flex'
+                      alignItems='center'
+                      justifyContent='center'
+                      marginLeft={1.5}
+                      padding='2px'
+                      borderRadius='sm'
+                      cursor='pointer'
+                      _hover={{ bg: 'red.700' }}
+                      onClick={e => {
+                        e.stopPropagation()
+                        abortStopOperation()
+                      }}
+                    >
+                      <Box as={X} width='10px' height='10px' color='red.300' />
+                    </Box>
+                  </Tooltip>
+                </>
+              ) : (
+                <>
+                  <Box as={X} width='12px' height='12px' marginRight={1.5} />
+                  <span style={{ fontSize: '11px' }}>
+                    {selectedConfigs.length > 0 &&
+                    selectedConfigs.some(selected => {
+                      const currentConfig = configs.find(
+                        c => c.id === selected.id,
+                      )
 
-                  return currentConfig && currentConfig.is_running
-                })
-                  ? 'Stop Selected'
-                  : 'Stop All'}
-              </span>
+                      return currentConfig && currentConfig.is_running
+                    })
+                      ? 'Stop Selected'
+                      : 'Stop All'}
+                  </span>
+                </>
+              )}
             </Button>
           </Tooltip>
         </Group>

@@ -149,7 +149,8 @@ impl TcpForwarder {
         }
         if current_logging_enabled || self.logger.is_some() {
             let config_id = self.config_id;
-            let shared_logger = Arc::new(Mutex::new(self.logger.take()));
+            let shared_logger: Arc<Mutex<Option<Arc<crate::Logger>>>> =
+                Arc::new(Mutex::new(self.logger.take().map(Arc::new)));
 
             let request_id = Arc::new(Mutex::new(None));
             let mut client_conn_guard = client_conn.lock().await;
@@ -180,7 +181,10 @@ impl TcpForwarder {
 
             let result = tokio::try_join!(client_to_upstream, upstream_to_client);
 
-            self.logger = Arc::try_unwrap(shared_logger).unwrap().into_inner();
+            self.logger = Arc::try_unwrap(shared_logger)
+                .ok()
+                .and_then(|mutex| mutex.into_inner())
+                .and_then(|arc_logger| Arc::try_unwrap(arc_logger).ok());
 
             match result {
                 Ok(_) => {
@@ -248,7 +252,7 @@ impl TcpForwarder {
 
     #[allow(clippy::too_many_arguments)]
     async fn forward_client_to_upstream<'a>(
-        logger: Arc<Mutex<Option<crate::Logger>>>, config_id: i64,
+        logger: Arc<Mutex<Option<Arc<crate::Logger>>>>, config_id: i64,
         client_reader: &'a mut (impl AsyncReadExt + Unpin),
         upstream_writer: &'a mut (impl AsyncWriteExt + Unpin),
         request_id: Arc<Mutex<Option<String>>>, cancellation_token: CancellationToken,
@@ -278,12 +282,14 @@ impl TcpForwarder {
 
                     if should_log {
                         if let Some(ref mut req_buf) = request_buffer.as_mut() {
-                            let logger_guard = logger.lock().await;
-                            if let Some(ref log) = *logger_guard {
                             req_buf.extend_from_slice(&buffer[..n]);
-                            let mut req_id_guard = request_id.lock().await;
+                            let maybe_logger = {
+                                let guard = logger.lock().await;
+                                guard.clone()
+                            };
+                            if let Some(log) = maybe_logger {
                                 let new_request_id = log.log_request(req_buf.clone().into()).await;
-                                drop(logger_guard);
+                                let mut req_id_guard = request_id.lock().await;
                                 *req_id_guard = Some(new_request_id);
 
                                 if let Err(e) = upstream_writer.write_all(req_buf).await {
@@ -299,32 +305,36 @@ impl TcpForwarder {
                 log_event = log_subscriber.recv() => {
                     if let Ok(event) = log_event
                         && event.config_id == config_id {
-                            let new_should_log = event.enabled && {
-                                let mut logger_guard = logger.lock().await;
-                                if event.enabled && logger_guard.is_none() {
-                                    let http_logs_enabled = match kftray_commons::utils::http_logs_config::get_http_logs_config(config_id).await {
-                                        Ok(config) => config.enabled,
-                                        Err(_) => false,
-                                    };
+                            let needs_logger = event.enabled && {
+                                let guard = logger.lock().await;
+                                guard.is_none()
+                            };
 
-                                    if http_logs_enabled {
-                                            match kftray_http_logs::HttpLogger::for_config(config_id, local_port).await { Ok(new_logger) => {
-                                                *logger_guard = Some(new_logger);
-                                                drop(logger_guard);
-                                                true
-                                            } _ => {
-                                                drop(logger_guard);
-                                                false
-                                            }}
-                                    } else {
-                                        drop(logger_guard);
-                                        false
+                            let new_should_log = if needs_logger {
+                                let http_logs_enabled = match kftray_commons::utils::http_logs_config::get_http_logs_config(config_id).await {
+                                    Ok(config) => config.enabled,
+                                    Err(_) => false,
+                                };
+
+                                if http_logs_enabled {
+                                    match kftray_http_logs::HttpLogger::for_config(config_id, local_port).await {
+                                        Ok(new_logger) => {
+                                            let mut guard = logger.lock().await;
+                                            if guard.is_none() {
+                                                *guard = Some(Arc::new(new_logger));
+                                            }
+                                            true
+                                        }
+                                        _ => false,
                                     }
                                 } else {
-                                    let result = logger_guard.is_some();
-                                    drop(logger_guard);
-                                    result
+                                    false
                                 }
+                            } else if event.enabled {
+                                let guard = logger.lock().await;
+                                guard.is_some()
+                            } else {
+                                false
                             };
 
                             if new_should_log != should_log {
@@ -350,7 +360,7 @@ impl TcpForwarder {
 
     #[allow(clippy::too_many_arguments)]
     async fn forward_upstream_to_client<'a>(
-        logger: Arc<Mutex<Option<crate::Logger>>>, config_id: i64,
+        logger: Arc<Mutex<Option<Arc<crate::Logger>>>>, config_id: i64,
         upstream_reader: &'a mut (impl AsyncReadExt + Unpin),
         client_writer: &'a mut (impl AsyncWriteExt + Unpin),
         request_id: Arc<Mutex<Option<String>>>, cancellation_token: CancellationToken,
@@ -391,8 +401,11 @@ impl TcpForwarder {
                     if n == 0 {
                         if should_log
                             && let Some(ref mut state) = response_state.as_mut() {
-                                let logger_guard = logger.lock().await;
-                                if let Some(ref log) = *logger_guard
+                                let maybe_logger = {
+                                    let guard = logger.lock().await;
+                                    guard.clone()
+                                };
+                                if let Some(log) = maybe_logger
                                     && !state.buffer.is_empty() && !state.current_response_logged {
                                         let req_id_guard = request_id.lock().await;
                                         if let Some(req_id) = &*req_id_guard {
@@ -415,32 +428,36 @@ impl TcpForwarder {
                 log_event = log_subscriber.recv() => {
                     if let Ok(event) = log_event
                         && event.config_id == config_id {
-                            let new_should_log = event.enabled && {
-                                let mut logger_guard = logger.lock().await;
-                                if event.enabled && logger_guard.is_none() {
-                                    let http_logs_enabled = match kftray_commons::utils::http_logs_config::get_http_logs_config(config_id).await {
-                                        Ok(config) => config.enabled,
-                                        Err(_) => false,
-                                    };
+                            let needs_logger = event.enabled && {
+                                let guard = logger.lock().await;
+                                guard.is_none()
+                            };
 
-                                    if http_logs_enabled {
-                                            match kftray_http_logs::HttpLogger::for_config(config_id, local_port).await { Ok(new_logger) => {
-                                                *logger_guard = Some(new_logger);
-                                                drop(logger_guard);
-                                                true
-                                            } _ => {
-                                                drop(logger_guard);
-                                                false
-                                            }}
-                                    } else {
-                                        drop(logger_guard);
-                                        false
+                            let new_should_log = if needs_logger {
+                                let http_logs_enabled = match kftray_commons::utils::http_logs_config::get_http_logs_config(config_id).await {
+                                    Ok(config) => config.enabled,
+                                    Err(_) => false,
+                                };
+
+                                if http_logs_enabled {
+                                    match kftray_http_logs::HttpLogger::for_config(config_id, local_port).await {
+                                        Ok(new_logger) => {
+                                            let mut guard = logger.lock().await;
+                                            if guard.is_none() {
+                                                *guard = Some(Arc::new(new_logger));
+                                            }
+                                            true
+                                        }
+                                        _ => false,
                                     }
                                 } else {
-                                    let result = logger_guard.is_some();
-                                    drop(logger_guard);
-                                    result
+                                    false
                                 }
+                            } else if event.enabled {
+                                let guard = logger.lock().await;
+                                guard.is_some()
+                            } else {
+                                false
                             };
 
                             if new_should_log != should_log {
@@ -474,7 +491,7 @@ impl TcpForwarder {
     }
 
     async fn handle_response_logging_static(
-        buffer: &[u8], state: &mut ResponseState, logger: &Arc<Mutex<Option<Logger>>>,
+        buffer: &[u8], state: &mut ResponseState, logger: &Arc<Mutex<Option<Arc<Logger>>>>,
         request_id: &Arc<Mutex<Option<String>>>,
     ) {
         let req_id_guard = request_id.lock().await;
@@ -508,8 +525,11 @@ impl TcpForwarder {
         state.buffer.extend_from_slice(buffer);
 
         if !state.current_response_logged {
-            let logger_guard = logger.lock().await;
-            if let Some(ref log) = *logger_guard {
+            let maybe_logger = {
+                let guard = logger.lock().await;
+                guard.clone()
+            };
+            if let Some(log) = maybe_logger {
                 let should_log = Self::should_log_response_static(state);
                 if should_log && state.current_response_id.is_some() {
                     let response_id = state.current_response_id.as_ref().unwrap().clone();

@@ -1,6 +1,14 @@
 use std::sync::Arc;
 
 use anyhow::Result;
+use dashmap::DashSet;
+use futures::{
+    future::BoxFuture,
+    stream::{
+        FuturesUnordered,
+        StreamExt,
+    },
+};
 use kftray_commons::{
     models::{
         config_model::Config,
@@ -35,11 +43,54 @@ use crate::{
         Target,
         TargetSelector,
     },
-    port_forward::{
-        CHILD_PROCESSES,
-        PROCESS_MANAGEMENT_LOCK,
-    },
+    port_forward::CHILD_PROCESSES,
 };
+
+pub static STOPPED_BY_TIMEOUT: Lazy<DashSet<i64>> = Lazy::new(DashSet::new);
+
+pub fn clear_stopped_by_timeout(config_id: i64) {
+    STOPPED_BY_TIMEOUT.remove(&config_id);
+}
+
+pub fn is_stopped_by_timeout(config_id: i64) -> bool {
+    STOPPED_BY_TIMEOUT.contains(&config_id)
+}
+
+pub async fn cleanup_stale_timeout_entries() {
+    use kftray_commons::utils::config::get_configs;
+
+    if let Ok(configs) = get_configs().await {
+        let valid_ids: std::collections::HashSet<i64> =
+            configs.iter().filter_map(|c| c.id).collect();
+
+        STOPPED_BY_TIMEOUT.retain(|id| valid_ids.contains(id));
+        debug!(
+            "Cleaned up stale timeout entries, {} remaining",
+            STOPPED_BY_TIMEOUT.len()
+        );
+    }
+}
+
+async fn handle_timeout_callback(id: i64) {
+    info!("User-configured timeout reached for config {id}, stopping port forward");
+
+    STOPPED_BY_TIMEOUT.insert(id);
+
+    if let Err(e) = crate::kube::stop::stop_port_forward(id.to_string()).await {
+        error!("Failed to stop port forward {id} on timeout: {e}");
+        STOPPED_BY_TIMEOUT.remove(&id);
+    } else {
+        info!("Port forward {id} stopped due to user-configured timeout");
+    }
+}
+
+fn create_static_timeout_callback() -> Arc<dyn Fn(i64) + Send + Sync> {
+    Arc::new(move |id: i64| {
+        tokio::spawn(async move {
+            handle_timeout_callback(id).await;
+        });
+    })
+}
 
 async fn build_tls_acceptor(
     _config: &Config, settings: &kftray_commons::models::settings_model::AppSettings,
@@ -329,424 +380,407 @@ pub async fn start_port_forward(
     start_port_forward_with_mode(configs, protocol, DatabaseMode::File, false).await
 }
 
+enum SingleConfigResult {
+    Success(CustomResponse),
+    Error {
+        message: String,
+        failed_handle: Option<String>,
+    },
+    ExposeResult {
+        responses: Vec<CustomResponse>,
+        error: Option<String>,
+    },
+}
+
+async fn process_single_config_with_address(
+    config: Config, protocol: String, mode: DatabaseMode, ssl_override: bool,
+) -> SingleConfigResult {
+    if let Some(config_id) = config.id {
+        clear_stopped_by_timeout(config_id);
+    }
+
+    let selector = match (config.workload_type.as_deref(), config.protocol.as_str()) {
+        (Some("pod"), "tcp") => TargetSelector::PodLabel(config.target.clone().unwrap_or_default()),
+        (Some("pod"), "udp") => TargetSelector::PodLabel(config.target.clone().unwrap_or_default()),
+        (Some("service"), "tcp") => {
+            TargetSelector::ServiceName(config.service.clone().unwrap_or_default())
+        }
+        (Some("service"), "udp") => TargetSelector::PodLabel(format!(
+            "app={},config_id={}",
+            config.service.clone().unwrap_or_default(),
+            config.id.unwrap_or_default()
+        )),
+        (Some("proxy"), "udp") => TargetSelector::PodLabel(format!(
+            "app={},config_id={}",
+            config.service.clone().unwrap_or_default(),
+            config.id.unwrap_or_default()
+        )),
+        (Some("proxy"), "tcp") => TargetSelector::PodLabel(format!(
+            "app={},config_id={}",
+            config.service.clone().unwrap_or_default(),
+            config.id.unwrap_or_default()
+        )),
+        _ => TargetSelector::ServiceName(config.service.clone().unwrap_or_default()),
+    };
+
+    let remote_port = Port::from(config.remote_port.unwrap_or_default() as i32);
+    let context_name = Some(config.context.clone());
+    let kubeconfig = Some(config.kubeconfig.clone());
+    let namespace = config.namespace.clone();
+    let target = Target::new(selector, remote_port, namespace.clone());
+
+    debug!("Remote Port: {:?}", config.remote_port);
+    debug!("Local Port: {:?}", config.local_port);
+
+    match config.workload_type.as_deref() {
+        Some("pod") => info!("Attempting to forward to pod label: {:?}", &config.target),
+        Some("proxy") => info!("Attempting to forward to proxy pod: {:?}", &config.service),
+        _ => info!("Attempting to forward to service: {:?}", &config.service),
+    }
+
+    let final_local_address = config
+        .local_address
+        .clone()
+        .unwrap_or_else(|| "127.0.0.1".to_string());
+
+    if config.domain_enabled.unwrap_or_default()
+        && let Some(service_name) = &config.service
+    {
+        match final_local_address.parse::<std::net::IpAddr>() {
+            Ok(ip_addr) => {
+                let entry_id = format!("{}", config.id.unwrap_or_default());
+                let host_entry = HostEntry {
+                    ip: ip_addr,
+                    hostname: config.alias.clone().unwrap_or_default(),
+                };
+
+                if let Err(e) = add_host_entry(entry_id, host_entry) {
+                    let error_message = format!(
+                        "Failed to write to the hostfile for {service_name}: {e}. Domain alias feature requires hostfile access."
+                    );
+                    error!("{}", &error_message);
+                    return SingleConfigResult::Error {
+                        message: error_message,
+                        failed_handle: None,
+                    };
+                }
+            }
+            Err(_) => {
+                let error_message =
+                    format!("Invalid IP address format for domain alias: {final_local_address}");
+                error!("{}", &error_message);
+                return SingleConfigResult::Error {
+                    message: error_message,
+                    failed_handle: None,
+                };
+            }
+        }
+    }
+
+    let local_address_clone = Some(final_local_address);
+
+    let should_use_ssl = if let Ok(settings) = get_app_settings().await {
+        (settings.ssl_enabled || ssl_override) && config.alias.is_some()
+    } else {
+        ssl_override && config.alias.is_some()
+    };
+
+    let actual_config = config.clone();
+
+    let port_forward_result: Result<PortForward, anyhow::Error> = PortForward::new(
+        target,
+        actual_config.local_port,
+        local_address_clone,
+        context_name.clone().flatten(),
+        kubeconfig.flatten(),
+        actual_config.id.unwrap_or_default(),
+        actual_config.workload_type.clone().unwrap_or_default(),
+    )
+    .await;
+
+    match port_forward_result {
+        Ok(port_forward) => {
+            let tls_acceptor = if protocol == "tcp" && should_use_ssl {
+                match get_app_settings().await {
+                    Ok(settings) => match build_tls_acceptor(&actual_config, &settings).await {
+                        Ok(acceptor) => Some(acceptor),
+                        Err(e) => {
+                            warn!("Failed to create TLS acceptor: {}", e);
+                            None
+                        }
+                    },
+                    Err(e) => {
+                        warn!("Failed to get app settings for SSL: {}", e);
+                        None
+                    }
+                }
+            } else {
+                None
+            };
+
+            let forward_result = match protocol.as_str() {
+                "udp" => port_forward.clone().port_forward_udp().await,
+                "tcp" => port_forward.clone().port_forward_tcp(tls_acceptor).await,
+                _ => {
+                    error!("Unsupported protocol: {protocol}");
+                    Err(anyhow::anyhow!("Unsupported protocol: {}", protocol))
+                }
+            };
+
+            match forward_result {
+                Ok((actual_local_port, handle)) => {
+                    let protocol_upper = protocol.to_uppercase();
+                    info!(
+                        "{} port forwarding is set up on local port: {:?} for {}: {:?}",
+                        protocol_upper,
+                        actual_local_port,
+                        workload_type_description(config.workload_type.as_deref()),
+                        &config.service
+                    );
+
+                    debug!(
+                        "Port forwarding established for config_id: {}",
+                        port_forward.config_id
+                    );
+                    debug!("Actual local port: {actual_local_port}");
+
+                    let handle_key = format!(
+                        "config:{}:service:{}",
+                        config.id.unwrap(),
+                        config.service.clone().unwrap_or_default()
+                    );
+
+                    // Insert into DashMap - lock-free operation
+                    CHILD_PROCESSES.insert(handle_key.clone(), handle);
+
+                    let config_state = ConfigState::new(config.id.unwrap(), true);
+                    if let Err(e) = update_config_state_with_mode(&config_state, mode).await {
+                        error!("Failed to update config state: {e}");
+                    }
+
+                    let config_id = config.id.unwrap();
+
+                    let timeout_callback = create_static_timeout_callback();
+
+                    if let Err(e) = start_timeout_for_forward(config_id, timeout_callback).await {
+                        error!("Failed to start timeout for config {config_id}: {e}");
+                    }
+
+                    if should_use_ssl
+                        && protocol == "tcp"
+                        && let Err(e) = update_hosts_with_ssl(&config).await
+                    {
+                        warn!("Failed to update hosts file for SSL: {}", e);
+                    }
+
+                    SingleConfigResult::Success(CustomResponse {
+                        id: config.id,
+                        service: config.service.clone().unwrap(),
+                        namespace: namespace.clone(),
+                        local_port: actual_local_port,
+                        remote_port: config.remote_port.unwrap_or_default(),
+                        context: config.context.clone().unwrap_or_default(),
+                        protocol: config.protocol.clone(),
+                        stdout: {
+                            let protocol_display = if should_use_ssl && protocol == "tcp" {
+                                "HTTPS".to_string()
+                            } else {
+                                protocol.to_uppercase()
+                            };
+                            format!(
+                                "{} forwarding from 127.0.0.1:{} -> {:?}:{}{}",
+                                protocol_display,
+                                actual_local_port,
+                                config.remote_port.unwrap_or_default(),
+                                config.service.clone().unwrap(),
+                                if should_use_ssl && protocol == "tcp" {
+                                    " (HTTP redirects to HTTPS)"
+                                } else {
+                                    ""
+                                }
+                            )
+                        },
+                        stderr: String::new(),
+                        status: 0,
+                    })
+                }
+                Err(e) => {
+                    let protocol_upper = protocol.to_uppercase();
+                    let error_message = format!(
+                        "Failed to start {} port forwarding for {} {}: {}",
+                        protocol_upper,
+                        workload_type_description(config.workload_type.as_deref()),
+                        config.service.clone().unwrap_or_default(),
+                        e
+                    );
+                    error!("{}", &error_message);
+
+                    if let Err(cleanup_err) = port_forward.cleanup_resources().await {
+                        error!(
+                            "Failed to cleanup resources for failed port forward: {}",
+                            cleanup_err
+                        );
+                    }
+
+                    let failed_handle = config.id.map(|config_id| {
+                        format!(
+                            "config:{}:service:{}",
+                            config_id,
+                            config.service.clone().unwrap_or_default()
+                        )
+                    });
+
+                    SingleConfigResult::Error {
+                        message: error_message,
+                        failed_handle,
+                    }
+                }
+            }
+        }
+        Err(e) => {
+            let error_message = format!(
+                "Failed to create PortForward for {} {}: {}",
+                workload_type_description(config.workload_type.as_deref()),
+                config.service.clone().unwrap_or_default(),
+                e
+            );
+            error!("{}", &error_message);
+
+            if let Some(local_addr) = &config.local_address
+                && crate::network_utils::is_custom_loopback_address(local_addr)
+                && let Err(cleanup_err) =
+                    crate::network_utils::remove_loopback_address(local_addr).await
+            {
+                error!(
+                    "Failed to cleanup loopback address {} after PortForward creation failure: {}",
+                    local_addr, cleanup_err
+                );
+            }
+
+            let failed_handle = config.id.map(|config_id| {
+                format!(
+                    "config:{}:service:{}",
+                    config_id,
+                    config.service.clone().unwrap_or_default()
+                )
+            });
+
+            SingleConfigResult::Error {
+                message: error_message,
+                failed_handle,
+            }
+        }
+    }
+}
+
+async fn process_expose_config(config: Config, mode: DatabaseMode) -> SingleConfigResult {
+    match crate::expose::start_expose(vec![config.clone()], mode).await {
+        Ok(responses) => SingleConfigResult::ExposeResult {
+            responses,
+            error: None,
+        },
+        Err(e) => {
+            let error_message = format!(
+                "Failed to start expose for config {}: {}",
+                config.id.unwrap_or_default(),
+                e
+            );
+            error!("{}", &error_message);
+            SingleConfigResult::ExposeResult {
+                responses: vec![],
+                error: Some(error_message),
+            }
+        }
+    }
+}
+
 pub async fn start_port_forward_with_mode(
-    mut configs: Vec<Config>, protocol: &str, mode: DatabaseMode, ssl_override: bool,
+    configs: Vec<Config>, protocol: &str, mode: DatabaseMode, ssl_override: bool,
 ) -> Result<Vec<CustomResponse>, String> {
     let mut responses = Vec::new();
     let mut errors = Vec::new();
     let mut failed_handles = Vec::new();
 
-    for config in configs.iter_mut() {
-        if config.workload_type.as_deref() == Some("expose") {
-            match crate::expose::start_expose(vec![config.clone()], mode).await {
-                Ok(response) => responses.extend(response),
+    let (expose_configs, regular_configs): (Vec<_>, Vec<_>) = configs
+        .into_iter()
+        .partition(|c| c.workload_type.as_deref() == Some("expose"));
+
+    let mut regular_configs_with_addresses = Vec::with_capacity(regular_configs.len());
+    for mut config in regular_configs {
+        if config.auto_loopback_address || config.local_address.is_none() {
+            match allocate_local_address_for_config(&mut config).await {
+                Ok(address) => {
+                    debug!(
+                        "Pre-allocated address {} for config {}",
+                        address,
+                        config.id.unwrap_or_default()
+                    );
+                }
                 Err(e) => {
-                    let error_message = format!(
-                        "Failed to start expose for config {}: {}",
+                    error!(
+                        "Failed to pre-allocate address for config {}: {}",
                         config.id.unwrap_or_default(),
                         e
                     );
-                    error!("{}", &error_message);
-                    errors.push(error_message);
-                }
-            }
-            continue;
-        }
-
-        let selector = match (config.workload_type.as_deref(), config.protocol.as_str()) {
-            (Some("pod"), "tcp") => {
-                TargetSelector::PodLabel(config.target.clone().unwrap_or_default())
-            }
-            (Some("pod"), "udp") => {
-                TargetSelector::PodLabel(config.target.clone().unwrap_or_default())
-            }
-            (Some("service"), "tcp") => {
-                TargetSelector::ServiceName(config.service.clone().unwrap_or_default())
-            }
-            (Some("service"), "udp") => TargetSelector::PodLabel(format!(
-                "app={},config_id={}",
-                config.service.clone().unwrap_or_default(),
-                config.id.unwrap_or_default()
-            )),
-            (Some("proxy"), "udp") => TargetSelector::PodLabel(format!(
-                "app={},config_id={}",
-                config.service.clone().unwrap_or_default(),
-                config.id.unwrap_or_default()
-            )),
-            (Some("proxy"), "tcp") => TargetSelector::PodLabel(format!(
-                "app={},config_id={}",
-                config.service.clone().unwrap_or_default(),
-                config.id.unwrap_or_default()
-            )),
-            _ => TargetSelector::ServiceName(config.service.clone().unwrap_or_default()),
-        };
-
-        let remote_port = Port::from(config.remote_port.unwrap_or_default() as i32);
-        let context_name = Some(config.context.clone());
-        let kubeconfig = Some(config.kubeconfig.clone());
-        let namespace = config.namespace.clone();
-        let target = Target::new(selector, remote_port, namespace.clone());
-
-        debug!("Remote Port: {:?}", config.remote_port);
-        debug!("Local Port: {:?}", config.local_port);
-
-        match config.workload_type.as_deref() {
-            Some("pod") => info!("Attempting to forward to pod label: {:?}", &config.target),
-            Some("proxy") => info!("Attempting to forward to proxy pod: {:?}", &config.service),
-            _ => info!("Attempting to forward to service: {:?}", &config.service),
-        }
-
-        let final_local_address = match allocate_local_address_for_config(config).await {
-            Ok(address) => address,
-            Err(e) => {
-                error!("Failed to allocate local address: {e}");
-                return Err(format!("Address allocation failed: {e}"));
-            }
-        };
-
-        if config.domain_enabled.unwrap_or_default()
-            && let Some(service_name) = &config.service
-        {
-            match final_local_address.parse::<std::net::IpAddr>() {
-                Ok(ip_addr) => {
-                    let entry_id = format!("{}", config.id.unwrap_or_default());
-                    let host_entry = HostEntry {
-                        ip: ip_addr,
-                        hostname: config.alias.clone().unwrap_or_default(),
-                    };
-
-                    if let Err(e) = add_host_entry(entry_id, host_entry) {
-                        let error_message = format!(
-                            "Failed to write to the hostfile for {service_name}: {e}. Domain alias feature requires hostfile access."
-                        );
-                        error!("{}", &error_message);
-                        errors.push(error_message);
-                        continue;
-                    }
-                }
-                Err(_) => {
-                    let error_message = format!(
-                        "Invalid IP address format for domain alias: {final_local_address}"
-                    );
-                    error!("{}", &error_message);
-                    errors.push(error_message);
+                    errors.push(format!(
+                        "Address allocation failed for config {}: {}",
+                        config.id.unwrap_or_default(),
+                        e
+                    ));
                     continue;
                 }
             }
         }
+        regular_configs_with_addresses.push(config);
+    }
 
-        let local_address_clone = Some(final_local_address);
+    let mut futures: FuturesUnordered<BoxFuture<'static, SingleConfigResult>> =
+        FuturesUnordered::new();
 
-        let should_use_ssl = if let Ok(settings) = get_app_settings().await {
-            (settings.ssl_enabled || ssl_override) && config.alias.is_some()
-        } else {
-            ssl_override && config.alias.is_some()
-        };
+    for config in expose_configs {
+        futures.push(Box::pin(process_expose_config(config, mode)));
+    }
 
-        let actual_config = config.clone();
+    let protocol_owned = protocol.to_string();
+    for config in regular_configs_with_addresses {
+        let proto = protocol_owned.clone();
+        futures.push(Box::pin(process_single_config_with_address(
+            config,
+            proto,
+            mode,
+            ssl_override,
+        )));
+    }
 
-        let port_forward_result: Result<PortForward, anyhow::Error> = PortForward::new(
-            target,
-            actual_config.local_port,
-            local_address_clone,
-            context_name.clone().flatten(),
-            kubeconfig.flatten(),
-            actual_config.id.unwrap_or_default(),
-            actual_config.workload_type.clone().unwrap_or_default(),
-        )
-        .await;
-
-        match port_forward_result {
-            Ok(port_forward) => {
-                let tls_acceptor = if protocol == "tcp" && should_use_ssl {
-                    match get_app_settings().await {
-                        Ok(settings) => match build_tls_acceptor(&actual_config, &settings).await {
-                            Ok(acceptor) => Some(acceptor),
-                            Err(e) => {
-                                warn!("Failed to create TLS acceptor: {}", e);
-                                None
-                            }
-                        },
-                        Err(e) => {
-                            warn!("Failed to get app settings for SSL: {}", e);
-                            None
-                        }
-                    }
-                } else {
-                    None
-                };
-
-                let forward_result = match protocol {
-                    "udp" => port_forward.clone().port_forward_udp().await,
-                    "tcp" => port_forward.clone().port_forward_tcp(tls_acceptor).await,
-                    _ => {
-                        error!("Unsupported protocol: {protocol}");
-                        Err(anyhow::anyhow!("Unsupported protocol: {}", protocol))
-                    }
-                };
-
-                match forward_result {
-                    Ok((actual_local_port, handle)) => {
-                        let protocol_upper = protocol.to_uppercase();
-                        info!(
-                            "{} port forwarding is set up on local port: {:?} for {}: {:?}",
-                            protocol_upper,
-                            actual_local_port,
-                            workload_type_description(config.workload_type.as_deref()),
-                            &config.service
-                        );
-
-                        debug!(
-                            "Port forwarding established for config_id: {}",
-                            port_forward.config_id
-                        );
-                        debug!("Actual local port: {actual_local_port}");
-
-                        let handle_key = format!(
-                            "config:{}:service:{}",
-                            config.id.unwrap(),
-                            config.service.clone().unwrap_or_default()
-                        );
-
-                        let _global_lock = PROCESS_MANAGEMENT_LOCK.lock().await;
-                        CHILD_PROCESSES
-                            .lock()
-                            .await
-                            .insert(handle_key.clone(), handle);
-
-                        let config_state = ConfigState::new(config.id.unwrap(), true);
-                        if let Err(e) = update_config_state_with_mode(&config_state, mode).await {
-                            error!("Failed to update config state: {e}");
-                        }
-
-                        let config_id = config.id.unwrap();
-
-                        fn create_timeout_callback() -> Arc<dyn Fn(i64) + Send + Sync> {
-                            Arc::new(move |id: i64| {
-                                let callback_fn = create_timeout_callback();
-                                tokio::spawn(async move {
-                                    let composite_key = {
-                                        let _global_lock = PROCESS_MANAGEMENT_LOCK.lock().await;
-                                        let child_processes = CHILD_PROCESSES.lock().await;
-                                        child_processes
-                                            .keys()
-                                            .find(|key| {
-                                                key.starts_with(&format!("config:{id}:service:"))
-                                            })
-                                            .map(|key| key.to_string())
-                                    };
-
-                                    if let Some(composite_key) = composite_key {
-                                        let has_active_pod = {
-                                            let _global_lock = PROCESS_MANAGEMENT_LOCK.lock().await;
-                                            let child_processes = CHILD_PROCESSES.lock().await;
-                                            if let Some(process) =
-                                                child_processes.get(&composite_key)
-                                            {
-                                                process.get_current_active_pod().await.is_some()
-                                            } else {
-                                                false
-                                            }
-                                        };
-
-                                        if has_active_pod {
-                                            info!(
-                                                "Port forward {id} has ready pod, restarting timeout instead of stopping"
-                                            );
-                                            if let Err(e) =
-                                                start_timeout_for_forward(id, callback_fn).await
-                                            {
-                                                error!(
-                                                    "Failed to restart timeout for config {id}: {e}"
-                                                );
-                                            }
-                                            return;
-                                        }
-
-                                        info!(
-                                            "No ready pod found for {id}, checking for running pods during rollout"
-                                        );
-
-                                        tokio::time::sleep(tokio::time::Duration::from_secs(10))
-                                            .await;
-
-                                        let has_pods_during_rollout = {
-                                            let _global_lock = PROCESS_MANAGEMENT_LOCK.lock().await;
-                                            let child_processes = CHILD_PROCESSES.lock().await;
-                                            if let Some(process) =
-                                                child_processes.get(&composite_key)
-                                            {
-                                                process.get_current_active_pod().await.is_some()
-                                            } else {
-                                                false
-                                            }
-                                        };
-
-                                        if has_pods_during_rollout {
-                                            info!(
-                                                "Port forward {id} has running pods during rollout, checking if ready"
-                                            );
-
-                                            let has_ready_pod = {
-                                                let _global_lock =
-                                                    PROCESS_MANAGEMENT_LOCK.lock().await;
-                                                let child_processes = CHILD_PROCESSES.lock().await;
-                                                if let Some(process) =
-                                                    child_processes.get(&composite_key)
-                                                {
-                                                    let pod_name =
-                                                        process.get_current_active_pod().await;
-                                                    pod_name.is_some()
-                                                        && pod_name
-                                                            != Some("pending-rollout".to_string())
-                                                } else {
-                                                    false
-                                                }
-                                            };
-
-                                            if has_ready_pod {
-                                                info!(
-                                                    "Port forward {id} found ready pod after rollout, restarting timeout"
-                                                );
-                                                if let Err(e) =
-                                                    start_timeout_for_forward(id, callback_fn).await
-                                                {
-                                                    error!(
-                                                        "Failed to restart timeout for config {id}: {e}"
-                                                    );
-                                                }
-                                                return;
-                                            } else {
-                                                info!(
-                                                    "Port forward {id} still in rollout, stopping to allow restart"
-                                                );
-                                            }
-                                        }
-                                    }
-
-                                    if let Err(e) =
-                                        crate::kube::stop::stop_port_forward(id.to_string()).await
-                                    {
-                                        error!("Failed to stop port forward {id} on timeout: {e}");
-                                    } else {
-                                        info!("Port forward {id} stopped due to timeout");
-                                    }
-                                });
-                            })
-                        }
-
-                        let timeout_callback = create_timeout_callback();
-
-                        if let Err(e) = start_timeout_for_forward(config_id, timeout_callback).await
-                        {
-                            error!("Failed to start timeout for config {config_id}: {e}");
-                        }
-
-                        if should_use_ssl
-                            && protocol == "tcp"
-                            && let Err(e) = update_hosts_with_ssl(config).await
-                        {
-                            warn!("Failed to update hosts file for SSL: {}", e);
-                        }
-
-                        responses.push(CustomResponse {
-                            id: config.id,
-                            service: config.service.clone().unwrap(),
-                            namespace: namespace.clone(),
-                            local_port: actual_local_port,
-                            remote_port: config.remote_port.unwrap_or_default(),
-                            context: config.context.clone().unwrap_or_default(),
-                            protocol: config.protocol.clone(),
-                            stdout: {
-                                let protocol_display = if should_use_ssl && protocol == "tcp" {
-                                    "HTTPS".to_string()
-                                } else {
-                                    protocol.to_uppercase()
-                                };
-                                format!(
-                                    "{} forwarding from 127.0.0.1:{} -> {:?}:{}{}",
-                                    protocol_display,
-                                    actual_local_port,
-                                    config.remote_port.unwrap_or_default(),
-                                    config.service.clone().unwrap(),
-                                    if should_use_ssl && protocol == "tcp" {
-                                        " (HTTP redirects to HTTPS)"
-                                    } else {
-                                        ""
-                                    }
-                                )
-                            },
-                            stderr: String::new(),
-                            status: 0,
-                        });
-                    }
-                    Err(e) => {
-                        let protocol_upper = protocol.to_uppercase();
-                        let error_message = format!(
-                            "Failed to start {} port forwarding for {} {}: {}",
-                            protocol_upper,
-                            workload_type_description(config.workload_type.as_deref()),
-                            config.service.clone().unwrap_or_default(),
-                            e
-                        );
-                        error!("{}", &error_message);
-                        errors.push(error_message);
-
-                        if let Err(cleanup_err) = port_forward.cleanup_resources().await {
-                            error!(
-                                "Failed to cleanup resources for failed port forward: {}",
-                                cleanup_err
-                            );
-                        }
-
-                        if let Some(config_id) = config.id {
-                            failed_handles.push(format!(
-                                "config:{}:service:{}",
-                                config_id,
-                                config.service.clone().unwrap_or_default()
-                            ));
-                        }
-                    }
+    while let Some(result) = futures.next().await {
+        match result {
+            SingleConfigResult::Success(response) => {
+                responses.push(response);
+            }
+            SingleConfigResult::Error {
+                message,
+                failed_handle,
+            } => {
+                errors.push(message);
+                if let Some(handle) = failed_handle {
+                    failed_handles.push(handle);
                 }
             }
-            Err(e) => {
-                let error_message = format!(
-                    "Failed to create PortForward for {} {}: {}",
-                    workload_type_description(config.workload_type.as_deref()),
-                    config.service.clone().unwrap_or_default(),
-                    e
-                );
-                error!("{}", &error_message);
-                errors.push(error_message);
-
-                if let Some(local_addr) = &config.local_address
-                    && crate::network_utils::is_custom_loopback_address(local_addr)
-                    && let Err(cleanup_err) =
-                        crate::network_utils::remove_loopback_address(local_addr).await
-                {
-                    error!(
-                        "Failed to cleanup loopback address {} after PortForward creation failure: {}",
-                        local_addr, cleanup_err
-                    );
-                }
-
-                if let Some(config_id) = config.id {
-                    failed_handles.push(format!(
-                        "config:{}:service:{}",
-                        config_id,
-                        config.service.clone().unwrap_or_default()
-                    ));
+            SingleConfigResult::ExposeResult {
+                responses: expose_responses,
+                error,
+            } => {
+                responses.extend(expose_responses);
+                if let Some(e) = error {
+                    errors.push(e);
                 }
             }
         }
     }
 
-    if !failed_handles.is_empty() {
-        let _global_lock = PROCESS_MANAGEMENT_LOCK.lock().await;
-        for handle_key in failed_handles {
-            if let Some(process) = CHILD_PROCESSES.lock().await.remove(&handle_key) {
-                process.abort();
-            }
+    for handle_key in failed_handles {
+        if let Some((_, process)) = CHILD_PROCESSES.remove(&handle_key) {
+            process.abort();
         }
     }
 

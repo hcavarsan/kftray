@@ -308,10 +308,7 @@ async fn test_port_forward_tcp_success() -> Result<()> {
         match port_forward.port_forward_tcp(None).await {
             Ok((port, handle)) => {
                 let key = "1_test-service".to_string();
-                {
-                    let mut processes = CHILD_PROCESSES.lock().await;
-                    processes.insert(key.clone(), handle);
-                }
+                CHILD_PROCESSES.insert(key.clone(), handle);
 
                 println!("Port forwarding successfully established on port {port}");
 
@@ -355,10 +352,7 @@ async fn test_port_forward_tcp_success() -> Result<()> {
 
     mock_task.abort();
 
-    {
-        let mut processes = CHILD_PROCESSES.lock().await;
-        processes.clear();
-    }
+    CHILD_PROCESSES.clear();
 
     Ok(())
 }
@@ -412,10 +406,7 @@ async fn test_port_forward_udp_success() -> Result<()> {
         match port_forward.port_forward_udp().await {
             Ok((port, handle)) => {
                 let key = "1_test-service".to_string();
-                {
-                    let mut processes = CHILD_PROCESSES.lock().await;
-                    processes.insert(key.clone(), handle);
-                }
+                CHILD_PROCESSES.insert(key.clone(), handle);
 
                 println!("UDP Port forwarding successfully established on port {port}");
 
@@ -438,11 +429,8 @@ async fn test_port_forward_udp_success() -> Result<()> {
             );
             println!("UDP Port forwarding unexpectedly succeeded (port {bound_port})");
 
-            {
-                let mut processes = CHILD_PROCESSES.lock().await;
-                if let Some(handle) = processes.remove("1_test-service") {
-                    handle.abort();
-                }
+            if let Some((_, handle)) = CHILD_PROCESSES.remove("1_test-service") {
+                handle.abort();
             }
         }
         Ok(Ok(Err(_))) | Ok(Err(_)) | Err(_) => {
@@ -583,16 +571,10 @@ async fn test_start_port_forward_mock_components() -> Result<()> {
                 test_config.id.unwrap(),
                 test_config.service.clone().unwrap_or_default()
             );
-            {
-                let mut processes = CHILD_PROCESSES.lock().await;
-                processes.insert(handle_key.clone(), handle);
-            }
+            CHILD_PROCESSES.insert(handle_key.clone(), handle);
 
-            {
-                let mut processes = CHILD_PROCESSES.lock().await;
-                if let Some(handle) = processes.remove(&handle_key) {
-                    handle.abort();
-                }
+            if let Some((_, handle)) = CHILD_PROCESSES.remove(&handle_key) {
+                handle.abort();
             }
 
             success_counter.fetch_add(1, Ordering::SeqCst);

@@ -180,12 +180,14 @@ pub async fn get_active_pod_cmd(config_id: String) -> Result<Option<String>, Str
 
     let handle_key = format!("config:{}:service:", config_id);
 
-    let processes = CHILD_PROCESSES.lock().await;
+    let matching_forwarders: Vec<_> = CHILD_PROCESSES
+        .iter()
+        .filter(|entry| entry.key().starts_with(&handle_key) || entry.key() == &config_id)
+        .filter_map(|entry| entry.value().direct_forwarder.clone())
+        .collect();
 
-    for (key, process) in processes.iter() {
-        if (key.starts_with(&handle_key) || key == &config_id)
-            && let Some(pod_name) = process.get_current_active_pod().await
-        {
+    for forwarder in matching_forwarders {
+        if let Some(pod_name) = forwarder.get_current_active_pod().await {
             return Ok(Some(pod_name));
         }
     }
