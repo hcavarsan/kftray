@@ -45,12 +45,9 @@ use crate::kube::shared_client::{
     SHARED_CLIENT_MANAGER,
     ServiceClientKey,
 };
+use crate::port_forward::CHILD_PROCESSES;
 #[cfg(test)]
 use crate::port_forward::PortForwardProcess;
-use crate::port_forward::{
-    CHILD_PROCESSES,
-    PROCESS_MANAGEMENT_LOCK,
-};
 
 /// Synchronous helper function to release address via helper service.
 /// Must be called from spawn_blocking to avoid blocking the tokio runtime.
@@ -136,14 +133,14 @@ pub async fn stop_all_port_forward_with_mode(
 
     let mut responses = Vec::with_capacity(1024);
 
-    let handle_keys: Vec<String> = {
-        let _global_lock = PROCESS_MANAGEMENT_LOCK.lock().await;
-        let processes = CHILD_PROCESSES.lock().await;
-        if processes.is_empty() {
-            debug!("No port forwarding processes to stop");
-        }
-        processes.keys().cloned().collect()
-    };
+    let handle_keys: Vec<String> = CHILD_PROCESSES
+        .iter()
+        .map(|entry| entry.key().clone())
+        .collect();
+
+    if handle_keys.is_empty() {
+        debug!("No port forwarding processes to stop");
+    }
 
     for composite_key in &handle_keys {
         if let Some(config_id_str) = composite_key
@@ -258,12 +255,7 @@ pub async fn stop_all_port_forward_with_mode(
                     }
                 }
 
-                let process = {
-                    let _global_lock = PROCESS_MANAGEMENT_LOCK.lock().await;
-                    CHILD_PROCESSES.lock().await.remove(&composite_key)
-                };
-
-                if let Some(process) = process {
+                if let Some((_, process)) = CHILD_PROCESSES.remove(&composite_key) {
                     process.cleanup_and_abort().await;
                 }
 
@@ -302,11 +294,8 @@ pub async fn stop_all_port_forward_with_mode(
         .map(|(config, kubeconfig)| {
             let config_id_str = config.id.unwrap_or_default();
             async move {
-                let client_key = ServiceClientKey::new(
-                    config.context.clone(),
-                    Some(kubeconfig.clone()),
-                    config_id_str,
-                );
+                let client_key =
+                    ServiceClientKey::new(config.context.clone(), Some(kubeconfig.clone()));
 
                 match SHARED_CLIENT_MANAGER.get_client(client_key).await {
                     Ok(shared_client) => {
@@ -445,14 +434,14 @@ pub async fn stop_port_forward_with_mode(
         return crate::expose::stop_expose(config_id_parsed, &config.namespace, mode).await;
     }
 
-    let composite_key = {
-        let _global_lock = PROCESS_MANAGEMENT_LOCK.lock().await;
-        let child_processes = CHILD_PROCESSES.lock().await;
-        child_processes
-            .keys()
-            .find(|key| key.starts_with(&format!("config:{config_id}:service:")))
-            .map(|key| key.to_string())
-    };
+    let composite_key = CHILD_PROCESSES
+        .iter()
+        .find(|entry| {
+            entry
+                .key()
+                .starts_with(&format!("config:{config_id}:service:"))
+        })
+        .map(|entry| entry.key().clone());
 
     if let Some(composite_key) = composite_key {
         let config_id_parsed = config_id.parse::<i64>().unwrap_or_default();
@@ -478,13 +467,7 @@ pub async fn stop_port_forward_with_mode(
             }
         }
 
-        let port_forward_process = {
-            let _global_lock = PROCESS_MANAGEMENT_LOCK.lock().await;
-            let mut child_processes = CHILD_PROCESSES.lock().await;
-            child_processes.remove(&composite_key)
-        };
-
-        if let Some(process) = port_forward_process {
+        if let Some((_, process)) = CHILD_PROCESSES.remove(&composite_key) {
             process.cleanup_and_abort().await;
         }
 
@@ -523,11 +506,8 @@ pub async fn stop_port_forward_with_mode(
         }
 
         if let Some(config) = configs.iter().find(|c| c.id == Some(config_id_parsed)) {
-            let client_key = ServiceClientKey::new(
-                config.context.clone(),
-                config.kubeconfig.clone(),
-                config_id_parsed,
-            );
+            let client_key =
+                ServiceClientKey::new(config.context.clone(), config.kubeconfig.clone());
             SHARED_CLIENT_MANAGER.invalidate_client(&client_key);
             debug!("Invalidated client for config {}", config_id);
         }
@@ -654,127 +634,104 @@ mod tests {
 
     #[tokio::test]
     async fn test_stop_port_forward_with_handle() {
-        let _global_lock = PROCESS_MANAGEMENT_LOCK.lock().await;
-
         let dummy_handle = create_dummy_handle().await;
         let key = "config:201:service:test-service".to_string();
 
-        {
-            let mut processes = CHILD_PROCESSES.lock().await;
-            println!("Before cleanup, found {} processes:", processes.len());
-            for existing_key in processes.keys() {
-                println!("  Existing process: {}", existing_key);
-            }
-
-            for process in processes.values() {
-                process.abort();
-            }
-            processes.clear();
-            processes.insert(key.clone(), dummy_handle);
-
-            assert_eq!(processes.len(), 1, "Process should be added");
-            assert!(processes.contains_key(&key), "Process should be present");
+        println!("Before cleanup, found {} processes:", CHILD_PROCESSES.len());
+        for entry in CHILD_PROCESSES.iter() {
+            println!("  Existing process: {}", entry.key());
         }
 
-        {
-            let mut processes = CHILD_PROCESSES.lock().await;
-            if let Some(process) = processes.remove(&key) {
-                process.abort();
-            }
+        for entry in CHILD_PROCESSES.iter() {
+            entry.value().abort();
+        }
+        CHILD_PROCESSES.clear();
+
+        CHILD_PROCESSES.insert(key.clone(), dummy_handle);
+        assert_eq!(CHILD_PROCESSES.len(), 1, "Process should be added");
+        assert!(
+            CHILD_PROCESSES.contains_key(&key),
+            "Process should be present"
+        );
+
+        if let Some((_, process)) = CHILD_PROCESSES.remove(&key) {
+            process.abort();
         }
 
-        {
-            let processes = CHILD_PROCESSES.lock().await;
-            assert!(
-                processes.is_empty(),
-                "Process handle should be removed. Found {} processes",
-                processes.len()
-            );
-        }
+        assert!(
+            CHILD_PROCESSES.is_empty(),
+            "Process handle should be removed. Found {} processes",
+            CHILD_PROCESSES.len()
+        );
     }
 
     #[tokio::test]
     async fn test_stop_port_forward_with_multiple_handles() {
-        let _global_lock = PROCESS_MANAGEMENT_LOCK.lock().await;
+        use std::time::{
+            SystemTime,
+            UNIX_EPOCH,
+        };
+
+        let unique_suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
 
         let dummy_handle1 = create_dummy_handle().await;
         let dummy_handle2 = create_dummy_handle().await;
         let dummy_handle3 = create_dummy_handle().await;
 
-        let key1 = "config:101:service:service1".to_string();
-        let key2 = "config:102:service:service2".to_string();
-        let key3 = "config:103:service:service3".to_string();
+        let key1 = format!("config:test_multi_101_{}:service:service1", unique_suffix);
+        let key2 = format!("config:test_multi_102_{}:service:service2", unique_suffix);
+        let key3 = format!("config:test_multi_103_{}:service:service3", unique_suffix);
 
-        {
-            let mut processes = CHILD_PROCESSES.lock().await;
-            for process in processes.values() {
-                process.abort();
-            }
-            processes.clear();
+        // Insert test processes (no global clear - other tests may be running)
+        CHILD_PROCESSES.insert(key1.clone(), dummy_handle1);
+        CHILD_PROCESSES.insert(key2.clone(), dummy_handle2);
+        CHILD_PROCESSES.insert(key3.clone(), dummy_handle3);
 
-            processes.insert(key1.clone(), dummy_handle1);
-            processes.insert(key2.clone(), dummy_handle2);
-            processes.insert(key3.clone(), dummy_handle3);
+        // Verify all 3 keys we inserted exist
+        assert!(
+            CHILD_PROCESSES.contains_key(&key1),
+            "Should contain key1 after insert"
+        );
+        assert!(
+            CHILD_PROCESSES.contains_key(&key2),
+            "Should contain key2 after insert"
+        );
+        assert!(
+            CHILD_PROCESSES.contains_key(&key3),
+            "Should contain key3 after insert"
+        );
 
-            println!(
-                "After adding 3 processes, found {} processes:",
-                processes.len()
-            );
-            for key in processes.keys() {
-                println!("  Process key: {}", key);
-            }
-            assert_eq!(processes.len(), 3);
+        // Remove key2
+        if let Some((_, process)) = CHILD_PROCESSES.remove(&key2) {
+            process.abort();
+        } else {
+            panic!("key2 should have been found for removal");
         }
 
-        {
-            let mut processes = CHILD_PROCESSES.lock().await;
-            println!("Before removing key2, found {} processes:", processes.len());
-            if let Some(process) = processes.remove(&key2) {
-                process.abort();
-                println!("Successfully removed and aborted process for key2");
-            } else {
-                println!("Warning: key2 not found for removal");
-            }
+        assert!(
+            CHILD_PROCESSES.contains_key(&key1),
+            "Should still contain key1: {}",
+            key1
+        );
+        assert!(
+            !CHILD_PROCESSES.contains_key(&key2),
+            "Should not contain key2 after removal: {}",
+            key2
+        );
+        assert!(
+            CHILD_PROCESSES.contains_key(&key3),
+            "Should still contain key3: {}",
+            key3
+        );
+
+        if let Some((_, p)) = CHILD_PROCESSES.remove(&key1) {
+            p.abort();
         }
-
-        {
-            let processes = CHILD_PROCESSES.lock().await;
-            println!("After removing key2, found {} processes:", processes.len());
-            for key in processes.keys() {
-                println!("  Process key: {}", key);
-            }
-
-            assert_eq!(
-                processes.len(),
-                2,
-                "Only the specified process should be removed. Expected keys: {}, {}. Found: {:?}",
-                key1,
-                key3,
-                processes.keys().collect::<Vec<_>>()
-            );
-            assert!(
-                processes.contains_key(&key1),
-                "Should contain key1: {}",
-                key1
-            );
-            assert!(
-                !processes.contains_key(&key2),
-                "Should not contain key2: {}",
-                key2
-            );
-            assert!(
-                processes.contains_key(&key3),
-                "Should contain key3: {}",
-                key3
-            );
-        }
-
-        {
-            let mut processes = CHILD_PROCESSES.lock().await;
-            for process in processes.values() {
-                process.abort();
-            }
-            processes.clear();
+        if let Some((_, p)) = CHILD_PROCESSES.remove(&key3) {
+            p.abort();
         }
     }
 

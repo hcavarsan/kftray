@@ -1,4 +1,8 @@
 use std::sync::Arc;
+use std::sync::atomic::{
+    AtomicBool,
+    Ordering,
+};
 
 use httparse::Request;
 use k8s_openapi::api::core::v1::Pod;
@@ -76,17 +80,19 @@ pub struct PortForwarder {
     next_portforwarder: Arc<tokio::sync::Mutex<Option<kube::api::Portforwarder>>>,
     portforward_semaphore: Arc<tokio::sync::Semaphore>,
     http_log_watcher: HttpLogStateWatcher,
-    initialization_lock: Arc<tokio::sync::Mutex<bool>>,
+    initialized: Arc<AtomicBool>,
+    initialization_mutex: Arc<tokio::sync::Mutex<()>>,
     background_tasks: Arc<tokio::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
+    connection_tasks: Arc<tokio::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
 }
 
 impl PortForwarder {
     pub async fn new(
         namespace: &str, target: Target, context_name: Option<String>, kubeconfig: Option<String>,
-        config_id: i64,
+        _config_id: i64,
     ) -> anyhow::Result<Self> {
         let client_key =
-            crate::kube::shared_client::ServiceClientKey::new(context_name, kubeconfig, config_id);
+            crate::kube::shared_client::ServiceClientKey::new(context_name, kubeconfig);
         let client = SHARED_CLIENT_MANAGER.get_client(client_key).await?;
         let pod_watcher = PodWatcher::new((*client).clone(), target.clone()).await?;
 
@@ -98,8 +104,10 @@ impl PortForwarder {
             next_portforwarder: Arc::new(tokio::sync::Mutex::new(None)),
             portforward_semaphore: Arc::new(tokio::sync::Semaphore::new(50)),
             http_log_watcher: HttpLogStateWatcher::new(),
-            initialization_lock: Arc::new(tokio::sync::Mutex::new(false)),
+            initialized: Arc::new(AtomicBool::new(false)),
+            initialization_mutex: Arc::new(tokio::sync::Mutex::new(())),
             background_tasks: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            connection_tasks: Arc::new(tokio::sync::Mutex::new(Vec::new())),
         })
     }
 
@@ -127,8 +135,13 @@ impl PortForwarder {
     }
 
     pub async fn initialize(&mut self, target: &Target) -> anyhow::Result<()> {
-        let mut init_lock = self.initialization_lock.lock().await;
-        if *init_lock {
+        if self.initialized.load(Ordering::Acquire) {
+            return Ok(());
+        }
+
+        let _guard = self.initialization_mutex.lock().await;
+
+        if self.initialized.load(Ordering::Acquire) {
             return Ok(());
         }
 
@@ -144,8 +157,7 @@ impl PortForwarder {
         for _ in 2..=3 {
             self.spawn_next_portforwarder(target_port);
         }
-
-        *init_lock = true;
+        self.initialized.store(true, Ordering::Release);
         info!(
             "Initialized port forwarder for port {} with 1 ready + 2 creating",
             target_port
@@ -154,13 +166,11 @@ impl PortForwarder {
     }
 
     pub async fn get_stream(&self) -> anyhow::Result<Box<dyn PortForwardStream>> {
-        let init_lock = self.initialization_lock.lock().await;
-        if !*init_lock {
+        if !self.initialized.load(Ordering::Acquire) {
             return Err(anyhow::anyhow!(
                 "Port forwarder not initialized - call initialize() first"
             ));
         }
-        drop(init_lock);
 
         let target_port = self.target_port.ok_or_else(|| {
             anyhow::anyhow!("Port forwarder not initialized - call initialize() first")
@@ -188,9 +198,12 @@ impl PortForwarder {
     {
         if let Some(stream) = portforwarder.take_stream(target_port) {
             if let Some(error_future) = portforwarder.take_error(target_port) {
+                let next_pf = self.next_portforwarder.clone();
                 tokio::spawn(async move {
                     if let Some(error_msg) = error_future.await {
-                        debug!("Portforwarder error detected: {}", error_msg);
+                        tracing::warn!("Portforwarder error: {}, invalidating cache", error_msg);
+                        let mut guard = next_pf.lock().await;
+                        *guard = None;
                     }
                 });
             }
@@ -202,9 +215,15 @@ impl PortForwarder {
         match retry_portforwarder.take_stream(target_port) {
             Some(stream) => {
                 if let Some(error_future) = retry_portforwarder.take_error(target_port) {
+                    let next_pf = self.next_portforwarder.clone();
                     tokio::spawn(async move {
                         if let Some(error_msg) = error_future.await {
-                            debug!("Retry portforwarder error: {}", error_msg);
+                            tracing::warn!(
+                                "Retry portforwarder error: {}, invalidating cache",
+                                error_msg
+                            );
+                            let mut guard = next_pf.lock().await;
+                            *guard = None;
                         }
                     });
                 }
@@ -217,11 +236,13 @@ impl PortForwarder {
     async fn create_portforwarder(
         &self, target_port: u16,
     ) -> anyhow::Result<kube::api::Portforwarder> {
-        let _permit = self
-            .portforward_semaphore
-            .acquire()
-            .await
-            .map_err(|_| anyhow::anyhow!("Semaphore closed"))?;
+        let _permit = tokio::time::timeout(
+            tokio::time::Duration::from_secs(10),
+            self.portforward_semaphore.acquire(),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("Timed out waiting for available connection slot (10s)"))?
+        .map_err(|_| anyhow::anyhow!("Semaphore closed"))?;
 
         let selected_pod = self
             .pod_watcher
@@ -265,26 +286,28 @@ impl PortForwarder {
         let next_pf = self.next_portforwarder.clone();
 
         tokio::spawn(async move {
-            let mut guard = next_pf.lock().await;
-            if guard.is_some() {
-                return;
+            {
+                let guard = next_pf.lock().await;
+                if guard.is_some() {
+                    return;
+                }
             }
 
-            if let Some(selected_pod) = pod_watcher
+            let new_portforwarder = if let Some(selected_pod) = pod_watcher
                 .wait_for_ready_pod(tokio::time::Duration::from_secs(5))
                 .await
             {
+                let mut result = None;
                 for attempt in 1..=2 {
-                    let result = tokio::time::timeout(
+                    match tokio::time::timeout(
                         tokio::time::Duration::from_secs(3),
                         pod_api.portforward(&selected_pod.pod_name, &[target_port]),
                     )
-                    .await;
-
-                    match result {
-                        Ok(Ok(portforwarder)) => {
-                            *guard = Some(portforwarder);
-                            return;
+                    .await
+                    {
+                        Ok(Ok(pf)) => {
+                            result = Some(pf);
+                            break;
                         }
                         Ok(Err(e)) => {
                             if e.to_string().contains("404") && attempt == 1 {
@@ -296,13 +319,23 @@ impl PortForwarder {
                                 continue;
                             }
                             debug!("Spawn portforward failed: {}", e);
-                            return;
+                            break;
                         }
                         Err(e) => {
                             debug!("Spawn portforward timeout: {}", e);
-                            return;
+                            break;
                         }
                     }
+                }
+                result
+            } else {
+                None
+            };
+
+            if let Some(pf) = new_portforwarder {
+                let mut guard = next_pf.lock().await;
+                if guard.is_none() {
+                    *guard = Some(pf);
                 }
             }
         });
@@ -405,8 +438,9 @@ impl PortForwarder {
             let http_log_watcher_clone = Arc::new(self.http_log_watcher.clone());
             let cancel_token_clone = cancel_token.clone();
             let tls_acceptor_clone = tls_acceptor.clone();
+            let connection_tasks = Arc::clone(&self.connection_tasks);
 
-            tokio::spawn(async move {
+            let handle = tokio::spawn(async move {
                 let mut client_conn = client_conn;
                 let upstream_stream = match forwarder.get_stream().await {
                     Ok(stream) => stream,
@@ -457,6 +491,12 @@ impl PortForwarder {
                     debug!("TCP forwarding error for {}: {}", client_addr, e);
                 }
             });
+
+            {
+                let mut tasks = connection_tasks.lock().await;
+                tasks.retain(|h| !h.is_finished());
+                tasks.push(handle);
+            }
         }
 
         Ok(())
@@ -597,6 +637,17 @@ impl PortForwarder {
         }
     }
 
+    async fn cleanup_connection_tasks(&self) {
+        let mut tasks = self.connection_tasks.lock().await;
+        let count = tasks.len();
+        for handle in tasks.drain(..) {
+            handle.abort();
+        }
+        if count > 0 {
+            debug!("Aborted {} active connection tasks", count);
+        }
+    }
+
     pub async fn get_current_active_pod(&self) -> Option<String> {
         match self.pod_watcher.get_ready_pod().await {
             Some(target_pod) => Some(target_pod.pod_name),
@@ -620,6 +671,7 @@ impl PortForwarder {
         self.http_log_watcher.shutdown();
 
         self.cleanup_background_tasks().await;
+        self.cleanup_connection_tasks().await;
 
         let mut next_pf = self.next_portforwarder.lock().await;
         if let Some(portforwarder) = next_pf.take() {

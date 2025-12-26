@@ -62,6 +62,8 @@ const KFTray = () => {
   const cancelRef = React.useRef<HTMLElement>(null)
   const [isInitiating, setIsInitiating] = useState(false)
   const [isStopping, setIsStopping] = useState(false)
+  const startAbortControllerRef = useRef<AbortController | null>(null)
+  const stopAbortControllerRef = useRef<AbortController | null>(null)
   const [isAlertOpen, setIsAlertOpen] = useState(false)
   const [configToDelete, setConfigToDelete] = useState<number | undefined>()
   const [isAutoImportModalOpen, setIsAutoImportModalOpen] = useState(false)
@@ -437,40 +439,175 @@ const KFTray = () => {
     }
   }
 
+  const abortStartOperation = useCallback(() => {
+    if (startAbortControllerRef.current) {
+      startAbortControllerRef.current.abort()
+      startAbortControllerRef.current = null
+    }
+    setIsInitiating(false)
+    toaster.info({
+      title: 'Aborted',
+      description: 'Start operation was cancelled',
+      duration: 2000,
+    })
+    updateConfigsWithState()
+  }, [updateConfigsWithState])
+
+  const abortStopOperation = useCallback(() => {
+    if (stopAbortControllerRef.current) {
+      stopAbortControllerRef.current.abort()
+      stopAbortControllerRef.current = null
+    }
+    setIsStopping(false)
+    toaster.info({
+      title: 'Aborted',
+      description: 'Stop operation was cancelled',
+      duration: 2000,
+    })
+    updateConfigsWithState()
+  }, [updateConfigsWithState])
+
+  const START_TIMEOUT_MS = 60000
+  const PER_CONFIG_TIMEOUT_MS = 30000
+
+  const withConfigTimeout = <T, >(
+    promise: Promise<T>,
+    configId: number,
+    ms: number,
+  ): Promise<T> => {
+    return new Promise((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        reject(new Error(`Config ${configId} timed out after ${ms / 1000}s`))
+      }, ms)
+
+      promise
+        .then(result => {
+          clearTimeout(timeoutId)
+          resolve(result)
+        })
+        .catch(err => {
+          clearTimeout(timeoutId)
+          reject(err)
+        })
+    })
+  }
+
   const initiatePortForwarding = async (configsToStart: Config[]) => {
+    if (startAbortControllerRef.current) {
+      startAbortControllerRef.current.abort()
+    }
+    const abortController = new AbortController()
+
+
+    startAbortControllerRef.current = abortController
+    const abortSignal = abortController.signal
+
     setIsInitiating(true)
 
-    const portForwardingPromises = configsToStart.map(async config => {
-      try {
-        await handlePortForwarding(config)
+    let globalTimeoutId: NodeJS.Timeout | null = null
 
-        return { id: config.id, error: null }
-      } catch (error) {
-        return { id: config.id, error }
-      }
-    })
-
-    const results = await Promise.allSettled(portForwardingPromises)
-
-    const errors = results
-      .map(result => (result.status === 'fulfilled' ? result.value : null))
-      .filter(
-        (result): result is { id: number; error: any } => result?.error != null,
-      )
-
-    if (errors.length > 0) {
-      const errorMessage = errors
-        .map(e => `Config ID: ${e.id}, Error: ${e.error}`)
-        .join(', ')
-
-      toaster.error({
-        title: 'Error Starting Port Forwarding',
-        description: `Some configs failed: ${errorMessage}`,
-        duration: 1000,
+    try {
+      const portForwardingPromises = configsToStart.map(async config => {
+        if (abortSignal.aborted) {
+          return { id: config.id, error: new Error('Aborted'), aborted: true }
+        }
+        try {
+          await withConfigTimeout(
+            handlePortForwarding(config),
+            config.id,
+            PER_CONFIG_TIMEOUT_MS,
+          )
+          return { id: config.id, error: null, aborted: false }
+        } catch (error) {
+          return { id: config.id, error, aborted: abortSignal.aborted }
+        }
       })
-    }
 
-    setIsInitiating(false)
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        globalTimeoutId = setTimeout(() => {
+          reject(new Error('Start operation timed out'))
+        }, START_TIMEOUT_MS)
+
+        abortSignal.addEventListener(
+          'abort',
+          () => {
+            if (globalTimeoutId) {
+              clearTimeout(globalTimeoutId)
+              globalTimeoutId = null
+            }
+            reject(new Error('Aborted'))
+          },
+          { once: true },
+        )
+      })
+
+      const results = await Promise.race([
+        Promise.allSettled(portForwardingPromises),
+        timeoutPromise,
+      ])
+
+      if (globalTimeoutId) {
+        clearTimeout(globalTimeoutId)
+        globalTimeoutId = null
+      }
+
+      if (!abortSignal.aborted) {
+        const errors: Array<{ id: number; error: unknown }> = []
+
+
+        for (const result of results) {
+          if (result.status === 'fulfilled') {
+            const value = result.value
+
+
+            if (value && value.error != null && !value.aborted) {
+              errors.push({ id: value.id, error: value.error })
+            }
+          }
+        }
+
+        if (errors.length > 0) {
+          const errorCount = errors.length
+          const firstError = errors[0]
+          const errorMessage =
+            firstError.error instanceof Error
+              ? firstError.error.message
+              : String(firstError.error)
+          const isTimeout = errorMessage.includes('timed out')
+
+          toaster.error({
+            title: isTimeout ? 'Connection Timeout' : 'Start Failed',
+            description:
+              errorCount === 1
+                ? `Config ${firstError.id}: ${errorMessage}`
+                : `${errorCount} configs failed to start`,
+            duration: 3000,
+          })
+        }
+      }
+    } catch (error) {
+      if (globalTimeoutId) {
+        clearTimeout(globalTimeoutId)
+        globalTimeoutId = null
+      }
+
+      if (error instanceof Error && error.message !== 'Aborted') {
+        console.error('Error during port forwarding:', error)
+        toaster.warning({
+          title: error.message.includes('timed out') ? 'Timeout' : 'Error',
+          description: error.message.includes('timed out')
+            ? 'Some port forwards may still be starting in the background.'
+            : `Start operation failed: ${error.message}`,
+          duration: 2000,
+        })
+      }
+    } finally {
+      if (startAbortControllerRef.current === abortController) {
+        startAbortControllerRef.current = null
+      }
+      setIsInitiating(false)
+      await updateConfigsWithState()
+    }
   }
   const handlePortForwarding = async (config: Config) => {
     switch (config.workload_type) {
@@ -549,7 +686,87 @@ const KFTray = () => {
     }
   }
 
-  const STOP_TIMEOUT_MS = 30000 // 30 seconds max for stop operations
+  const STOP_TIMEOUT_MS = 30000
+
+  const executeStopOperation = async (
+    configsToStop: Config[],
+    successMessage: string,
+  ) => {
+    if (stopAbortControllerRef.current) {
+      stopAbortControllerRef.current.abort()
+    }
+    const abortController = new AbortController()
+
+
+    stopAbortControllerRef.current = abortController
+    const abortSignal = abortController.signal
+
+    setIsStopping(true)
+    let globalTimeoutId: NodeJS.Timeout | null = null
+
+    try {
+      const stopPromises = configsToStop.map(config =>
+        stopPortForwardingForConfig(config),
+      )
+
+      const timeoutPromise = new Promise<never>((_, reject) => {
+        globalTimeoutId = setTimeout(() => {
+          reject(new Error('Stop operation timed out'))
+        }, STOP_TIMEOUT_MS)
+
+        abortSignal.addEventListener(
+          'abort',
+          () => {
+            if (globalTimeoutId) {
+              clearTimeout(globalTimeoutId)
+              globalTimeoutId = null
+            }
+            reject(new Error('Aborted'))
+          },
+          { once: true },
+        )
+      })
+
+      await Promise.race([Promise.allSettled(stopPromises), timeoutPromise])
+
+      if (globalTimeoutId) {
+        clearTimeout(globalTimeoutId)
+        globalTimeoutId = null
+      }
+
+      if (!abortSignal.aborted) {
+        toaster.success({
+          title: 'Success',
+          description: successMessage,
+          duration: 1000,
+        })
+      }
+    } catch (error) {
+      if (globalTimeoutId) {
+        clearTimeout(globalTimeoutId)
+        globalTimeoutId = null
+      }
+
+      if (error instanceof Error && error.message !== 'Aborted') {
+        console.error('Error stopping port forwards:', error)
+        const isTimeout = error.message.includes('timed out')
+
+        toaster.warning({
+          title: isTimeout ? 'Partial Stop' : 'Error',
+          description: isTimeout
+            ? 'Some port forwards may not have stopped cleanly.'
+            : 'Failed to stop port forwards.',
+          duration: 2000,
+        })
+      }
+    } finally {
+      if (stopAbortControllerRef.current === abortController) {
+        stopAbortControllerRef.current = null
+      }
+      setIsStopping(false)
+      await updateConfigsWithState()
+    }
+  }
 
   const stopSelectedPortForwarding = async () => {
     const configsToStop = selectedConfigs
@@ -559,45 +776,10 @@ const KFTray = () => {
       )
 
     if (configsToStop.length > 0) {
-      setIsStopping(true)
-      try {
-        const stopPromises = configsToStop.map(config =>
-          stopPortForwardingForConfig(config),
-        )
-
-        // Race against timeout to prevent UI from hanging indefinitely
-        await Promise.race([
-          Promise.allSettled(stopPromises),
-          new Promise((_, reject) =>
-            setTimeout(
-              () => reject(new Error('Stop operation timed out')),
-              STOP_TIMEOUT_MS,
-            ),
-          ),
-        ])
-        toaster.success({
-          title: 'Success',
-          description: 'Selected port forwards stopped successfully.',
-          duration: 1000,
-        })
-      } catch (error) {
-        console.error('Error stopping selected port forwards:', error)
-        const isTimeout =
-          error instanceof Error && error.message.includes('timed out')
-
-
-        toaster.warning({
-          title: isTimeout ? 'Partial Stop' : 'Error',
-          description: isTimeout
-            ? 'Some port forwards may not have stopped cleanly.'
-            : 'Failed to stop selected port forwards.',
-          duration: 2000,
-        })
-      } finally {
-        setIsStopping(false)
-        // Refresh state from backend to get actual status
-        await updateConfigsWithState()
-      }
+      await executeStopOperation(
+        configsToStop,
+        'Selected port forwards stopped successfully.',
+      )
     }
   }
 
@@ -605,49 +787,10 @@ const KFTray = () => {
     const configsToStop = configs.filter(config => config.is_running)
 
     if (configsToStop.length > 0) {
-      setIsStopping(true)
-      try {
-        const stopPromises = configsToStop.map(config =>
-          stopPortForwardingForConfig(config),
-        )
-
-        // Race against timeout to prevent UI from hanging indefinitely
-        await Promise.race([
-          Promise.allSettled(stopPromises),
-          new Promise((_, reject) =>
-            setTimeout(
-              () => reject(new Error('Stop operation timed out')),
-              STOP_TIMEOUT_MS,
-            ),
-          ),
-        ])
-        toaster.success({
-          title: 'Success',
-          description:
-            'Port forwarding stopped successfully for all configurations.',
-          duration: 1000,
-        })
-      } catch (error) {
-        console.error(
-          'An error occurred while stopping port forwarding:',
-          error,
-        )
-        const isTimeout =
-          error instanceof Error && error.message.includes('timed out')
-
-
-        toaster.warning({
-          title: isTimeout ? 'Partial Stop' : 'Error',
-          description: isTimeout
-            ? 'Some port forwards may not have stopped cleanly.'
-            : `An error occurred while stopping port forwarding: ${error}`,
-          duration: 2000,
-        })
-      } finally {
-        setIsStopping(false)
-        // Refresh state from backend to get actual status
-        await updateConfigsWithState()
-      }
+      await executeStopOperation(
+        configsToStop,
+        'Port forwarding stopped successfully for all configurations.',
+      )
     }
   }
 
@@ -732,6 +875,8 @@ const KFTray = () => {
               handleDuplicateConfig={handleDuplicateConfig}
               stopSelectedPortForwarding={stopSelectedPortForwarding}
               stopAllPortForwarding={stopAllPortForwarding}
+              abortStartOperation={abortStartOperation}
+              abortStopOperation={abortStopOperation}
               handleDeleteConfig={handleDeleteConfig}
               confirmDeleteConfig={confirmDeleteConfig}
               isAlertOpen={isAlertOpen}

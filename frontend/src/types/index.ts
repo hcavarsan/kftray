@@ -54,6 +54,8 @@ export interface TableProps {
   startSelectedPortForwarding: () => Promise<void>
   stopSelectedPortForwarding: () => Promise<void>
   stopAllPortForwarding: () => Promise<void>
+  abortStartOperation: () => void
+  abortStopOperation: () => void
   confirmDeleteConfig: () => void
   handleDeleteConfig: (id: number) => void
   handleEditConfig: (id: number) => void
@@ -160,6 +162,8 @@ export interface HeaderMenuProps {
   startSelectedPortForwarding: () => void
   stopSelectedPortForwarding: () => void
   stopAllPortForwarding: () => void
+  abortStartOperation: () => void
+  abortStopOperation: () => void
   isInitiating: boolean
   isStopping: boolean
   toggleExpandAll: () => void

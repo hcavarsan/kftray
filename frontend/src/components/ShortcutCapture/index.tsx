@@ -5,7 +5,6 @@ import { Box, Flex, Text } from '@chakra-ui/react'
 
 import { Button } from '@/components/ui/button'
 
-/* eslint-disable complexity */
 
 interface ShortcutCaptureProps {
   value: string

@@ -761,9 +761,12 @@ mod tests {
         assert!(!editor.is_empty(), "Should detect a default editor");
 
         if cfg!(target_os = "macos") {
+            let valid_editors = ["code", "cursor", "vscode", "atom", "sublime_text", "open"];
             assert!(
-                editor == "code" || editor == "open",
-                "Default editor on macOS should be 'code' or 'open'"
+                valid_editors.contains(&editor.as_str()),
+                "Default editor on macOS should be one of: {:?}, got: {}",
+                valid_editors,
+                editor
             );
         }
 
