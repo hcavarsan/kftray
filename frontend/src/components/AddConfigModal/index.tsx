@@ -333,10 +333,20 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
             }
           : null,
       }))
-      setUiState(prev => ({
-        ...prev,
-        kubeConfig: newConfig.kubeconfig ?? 'default',
-      }))
+
+      const newKubeConfig = newConfig.kubeconfig ?? 'default'
+
+
+      setUiState(prev => {
+        if (prev.kubeConfig === newKubeConfig) {
+          return prev
+        }
+        
+return {
+          ...prev,
+          kubeConfig: newKubeConfig,
+        }
+      })
     }
   }, [isEdit, isModalOpen, newConfig])
 

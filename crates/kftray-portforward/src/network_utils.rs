@@ -222,7 +222,7 @@ pub async fn remove_loopback_address(addr: &str) -> Result<()> {
             "Could not remove loopback address {} via helper. Skipping osascript fallback to avoid blocking. Address will be freed on restart.",
             addr
         );
-        return Ok(());
+        Ok(())
     }
 
     #[cfg(target_os = "linux")]
