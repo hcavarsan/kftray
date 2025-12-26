@@ -1,5 +1,4 @@
 import React, { useCallback, useEffect, useState } from 'react'
-import { createPortal } from 'react-dom'
 import {
   Box as BoxIcon,
   Database,
@@ -8,6 +7,7 @@ import {
   Server,
   Trash2,
 } from 'lucide-react'
+import { createPortal } from 'react-dom'
 import Select, { SingleValue } from 'react-select'
 
 import {
