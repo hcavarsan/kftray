@@ -361,7 +361,9 @@ impl PortForwarder {
                         Ok(connection) => connection,
                         Err(e) => {
                             error!("Accept failed: {}", e);
-                            break;
+                            // Continue accepting new connections instead of breaking
+                            // Most accept errors are transient (e.g., too many open files)
+                            continue;
                         }
                     }
                 }
@@ -405,10 +407,13 @@ impl PortForwarder {
             let tls_acceptor_clone = tls_acceptor.clone();
 
             tokio::spawn(async move {
+                let mut client_conn = client_conn;
                 let upstream_stream = match forwarder.get_stream().await {
                     Ok(stream) => stream,
                     Err(e) => {
                         error!("Failed to create stream for {}: {}", client_addr, e);
+                        // Close client connection properly to avoid leaving socket open
+                        let _ = client_conn.shutdown().await;
                         return;
                     }
                 };

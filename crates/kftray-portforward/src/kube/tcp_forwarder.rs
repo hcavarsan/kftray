@@ -7,7 +7,6 @@ use tokio::io::{
 };
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
-use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 use tracing::{
     debug,
@@ -18,7 +17,6 @@ use crate::Logger;
 use crate::kube::http_log_watcher::HttpLogStateWatcher;
 
 const BUFFER_SIZE: usize = 65536;
-const TIMEOUT_DURATION: Duration = Duration::from_secs(600);
 
 #[derive(Clone)]
 pub struct TcpForwarder {
@@ -223,6 +221,9 @@ impl TcpForwarder {
         mut upstream: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
         cancellation_token: tokio_util::sync::CancellationToken,
     ) -> anyhow::Result<()> {
+        // Apply socket optimizations to the underlying TCP stream
+        Self::apply_socket_optimizations(client.get_ref().0);
+
         let copy_fut = tokio::io::copy_bidirectional(&mut client, &mut upstream);
         tokio::select! {
             res = copy_fut => match res {
@@ -290,11 +291,10 @@ impl TcpForwarder {
 
         loop {
             tokio::select! {
-                n = timeout(TIMEOUT_DURATION, client_reader.read(&mut buffer)) => {
-                    let n = match n {
-                        Ok(Ok(n)) => n,
-                        Ok(Err(e)) => return Err(e.into()),
-                        Err(_) => return Err(anyhow::anyhow!("Read timeout")),
+                result = client_reader.read(&mut buffer) => {
+                    let n = match result {
+                        Ok(n) => n,
+                        Err(e) => return Err(e.into()),
                     };
 
                     if n == 0 {
@@ -407,11 +407,10 @@ impl TcpForwarder {
 
         loop {
             tokio::select! {
-                n = timeout(TIMEOUT_DURATION, upstream_reader.read(&mut buffer)) => {
-                    let n = match n {
-                        Ok(Ok(n)) => n,
-                        Ok(Err(e)) => return Err(e.into()),
-                        Err(_) => return Err(anyhow::anyhow!("Read timeout")),
+                result = upstream_reader.read(&mut buffer) => {
+                    let n = match result {
+                        Ok(n) => n,
+                        Err(e) => return Err(e.into()),
                     };
 
                     if n == 0 {
