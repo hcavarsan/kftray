@@ -170,7 +170,7 @@ const CleanupConfirmDialog = ({
             >
               {resources.map((resource, idx) => (
                 <Box
-                  key={idx}
+                  key={`${resource.context}-${resource.namespace}-${resource.resource_type}-${resource.name}`}
                   px={2}
                   py={1.5}
                   borderBottom={
@@ -538,10 +538,7 @@ const ServerResourcesModal: React.FC<ServerResourcesModalProps> = ({
               CONTEXT_TIMEOUT_MS * 2,
             )
             const matches = result.match(/(\d+)/)
-
-
-
-return matches ? parseInt(matches[1], 10) : 0
+            return matches ? parseInt(matches[1], 10) : 0
           }),
         )
 
@@ -790,13 +787,13 @@ return matches ? parseInt(matches[1], 10) : 0
                 </Flex>
               ) : (
                 <Stack gap={2}>
-                  {flatResources.map((resource, idx) => {
+                  {flatResources.map((resource) => {
                     const resourceKey = `${resource.context}-${resource.displayNamespace}-${resource.resource_type}-${resource.name}`
                     const isDeletingThis = isDeleting === resourceKey
 
                     return (
                       <Box
-                        key={idx}
+                        key={resourceKey}
                         bg='#161616'
                         p={2}
                         borderRadius='md'
