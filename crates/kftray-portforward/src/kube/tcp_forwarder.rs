@@ -246,31 +246,6 @@ impl TcpForwarder {
         }
     }
 
-    async fn monitor_logging_state_simple(
-        config_id: i64,
-        mut log_subscriber: tokio::sync::broadcast::Receiver<
-            crate::kube::http_log_watcher::HttpLogStateEvent,
-        >,
-        cancellation_token: CancellationToken,
-    ) {
-        loop {
-            tokio::select! {
-                log_event = log_subscriber.recv() => {
-                    if let Ok(event) = log_event {
-                        debug!("Simple connection received log event: config_id={}, enabled={}", event.config_id, event.enabled);
-                        if event.config_id == config_id && event.enabled {
-                            debug!("HTTP logging enabled, terminating simple connection");
-                            return;
-                        }
-                    } else {
-                        debug!("Simple connection log subscriber error");
-                    }
-                }
-                _ = cancellation_token.cancelled() => return,
-            }
-        }
-    }
-
     #[allow(clippy::too_many_arguments)]
     async fn forward_client_to_upstream<'a>(
         logger: Arc<Mutex<Option<crate::Logger>>>, config_id: i64,
