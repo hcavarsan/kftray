@@ -1,4 +1,4 @@
-FROM rust:1.91.0-alpine3.20 AS builder
+FROM rust:1.92.0-alpine3.23 AS builder
 
 RUN apk add --no-cache musl-dev openssl-dev openssl-libs-static pkgconfig
 
@@ -10,7 +10,7 @@ COPY crates/kftray-server ./
 # Build kftray-server
 RUN cargo build --release
 
-FROM alpine:3.22
+FROM alpine:3.23
 
 RUN apk add --no-cache ca-certificates libgcc openssl
 
