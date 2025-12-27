@@ -61,12 +61,12 @@ jobs:
         run: rustup component add llvm-tools
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@50cee16bd6b97b2579572f83cfa1c0a721b1e336
+        uses: taiki-e/install-action@3d30e7d625f7c928dccd48823053b03bb2f6ed05
         with:
           tool: cargo-llvm-cov
 
       - name: Install nextest
-        uses: taiki-e/install-action@50cee16bd6b97b2579572f83cfa1c0a721b1e336
+        uses: taiki-e/install-action@3d30e7d625f7c928dccd48823053b03bb2f6ed05
         with:
           tool: cargo-nextest
 
@@ -246,7 +246,7 @@ jobs:
 
       - name: Set up Visual Studio shell
         if: matrix.os == 'windows-latest' && matrix.arch == 'arm64'
-        uses: TheMrMilchmann/setup-msvc-dev@ced9887c29958f18f71b18c99d9eb0837859434c
+        uses: TheMrMilchmann/setup-msvc-dev@3462509a550bd581ef073d5daa110e2fa2738b38
         with:
           arch: amd64_arm64
 
@@ -361,7 +361,7 @@ jobs:
           echo "Certificate identity: $CERT_ID"
 
       - name: Build kftray-tauri Desktop App
-        uses: tauri-apps/tauri-action@9ce1dcc1a78395184050946b71457a6c242beab6
+        uses: tauri-apps/tauri-action@7efe013fbe6638db18430fdde186a55e6d3fdec9
         id: tauri_build
         continue-on-error: true
         env:
@@ -386,7 +386,7 @@ jobs:
 
       - name: Retry Build on Failure
         if: steps.tauri_build.outcome == 'failure'
-        uses: tauri-apps/tauri-action@9ce1dcc1a78395184050946b71457a6c242beab6
+        uses: tauri-apps/tauri-action@7efe013fbe6638db18430fdde186a55e6d3fdec9
         env:
           RUSTFLAGS: ${{ matrix.os == 'macos-latest' && '-C link-arg=-s' || (matrix.os == 'windows-latest' && '' || '-C target-cpu=native -C link-arg=-s') }}
           AWS_LC_SYS_PREBUILT_NASM: ${{ matrix.os == 'windows-latest' && '1' || '' }}
@@ -540,7 +540,7 @@ jobs:
 
       - name: Set up Visual Studio shell
         if: matrix.os == 'windows-latest' && matrix.arch == 'arm64'
-        uses: TheMrMilchmann/setup-msvc-dev@ced9887c29958f18f71b18c99d9eb0837859434c
+        uses: TheMrMilchmann/setup-msvc-dev@3462509a550bd581ef073d5daa110e2fa2738b38
         with:
           arch: amd64_arm64
 
@@ -551,7 +551,7 @@ jobs:
 
       - name: Set up Perl on Windows
         if: matrix.os == 'windows-latest'
-        uses: shogo82148/actions-setup-perl@b27fdd828a97a63c975cdedfe6ad62830c3b55c9
+        uses: shogo82148/actions-setup-perl@49ace8451778e3159d9a30f45a37b30c57d09436
         with:
           perl-version: "5.32"
           distribution: "strawberry"
