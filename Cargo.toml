@@ -133,7 +133,7 @@ tui-logger = "0.17.4"
 tungstenite = { version = "0.28.0", features = ["native-tls"] }
 url = "2.5.7"
 uuid = { version = "1.18.0", features = ["v4"] }
-whoami = "1.6.1"
+whoami = "2.0.0"
 windows = { version = "0.62", features = [
   "Win32_Foundation",
   "Win32_Security",
