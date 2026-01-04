@@ -150,7 +150,7 @@ jobs:
 
       - name: Set up Perl on Windows
         if: matrix.os == 'windows-latest'
-        uses: shogo82148/actions-setup-perl@b27fdd828a97a63c975cdedfe6ad62830c3b55c9
+        uses: shogo82148/actions-setup-perl@0b6fc51a70f4862dfdc7998a9aa0db239060b869
         with:
           perl-version: "5.32"
           distribution: "strawberry"
@@ -217,12 +217,12 @@ jobs:
         run: rustup component add llvm-tools
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@50cee16bd6b97b2579572f83cfa1c0a721b1e336
+        uses: taiki-e/install-action@83028a3bd2aa82774df2a85dd5fc94198a213e88
         with:
           tool: cargo-llvm-cov
 
       - name: Install nextest
-        uses: taiki-e/install-action@50cee16bd6b97b2579572f83cfa1c0a721b1e336
+        uses: taiki-e/install-action@83028a3bd2aa82774df2a85dd5fc94198a213e88
         with:
           tool: cargo-nextest
 
