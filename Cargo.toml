@@ -76,7 +76,7 @@ rand = "0.9"
 ratatui = { version = "0.29", features = ["unstable-widget-ref"] }
 ratatui-explorer = "0.2"
 rcgen = "0.14"
-reqwest = "0.12.23"
+reqwest = "0.13.0"
 rustls = { version = "0.23", features = ["ring"] }
 rustls-native-certs = "0.8.1"
 secrecy = "0.10"
@@ -110,7 +110,7 @@ tauri-plugin-shell = "2.3.1"
 tauri-plugin-updater = "2.5.1"
 tempfile = "3.22.0"
 thiserror = "2.0.17"
-throbber-widgets-tui = "0.9.0"
+throbber-widgets-tui = "0.10.0"
 time = "0.3"
 tokio = { version = "1.47.1", features = [
   "fs",
