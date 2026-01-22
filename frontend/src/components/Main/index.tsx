@@ -517,7 +517,8 @@ const KFTray = () => {
             config.id,
             PER_CONFIG_TIMEOUT_MS,
           )
-          return { id: config.id, error: null, aborted: false }
+          
+return { id: config.id, error: null, aborted: false }
         } catch (error) {
           return { id: config.id, error, aborted: abortSignal.aborted }
         }

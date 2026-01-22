@@ -45,10 +45,6 @@ impl TcpForwarder {
             tracing::debug!("Failed to set TCP_NODELAY: {}", e);
         }
 
-        if let Err(e) = stream.set_linger(None) {
-            tracing::debug!("Failed to disable SO_LINGER: {}", e);
-        }
-
         let sock_ref = SockRef::from(stream);
 
         if let Err(e) = sock_ref.set_recv_buffer_size(BUFFER_SIZE) {

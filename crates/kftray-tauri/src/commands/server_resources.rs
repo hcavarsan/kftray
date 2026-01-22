@@ -60,7 +60,9 @@ pub async fn list_all_kftray_resources(
     let client =
         client.ok_or_else(|| format!("Client not created for context '{context_name}'"))?;
 
-    let username = whoami::username().to_lowercase();
+    let username = whoami::username()
+        .unwrap_or_else(|_| "unknown".to_string())
+        .to_lowercase();
     let clean_username: String = username
         .chars()
         .filter(|c: &char| c.is_alphanumeric())
@@ -397,18 +399,23 @@ async fn list_ingresses_in_namespace(
 }
 
 fn calculate_age(creation_timestamp: &Time) -> String {
-    let created: k8s_openapi::chrono::DateTime<k8s_openapi::chrono::Utc> = creation_timestamp.0;
-    let now = k8s_openapi::chrono::Utc::now();
-    let duration = now.signed_duration_since(created);
+    let created = creation_timestamp.0;
+    let now = jiff::Timestamp::now();
+    let duration = now.since(created).unwrap_or_default();
 
-    if duration.num_days() > 0 {
-        format!("{}d", duration.num_days())
-    } else if duration.num_hours() > 0 {
-        format!("{}h", duration.num_hours())
-    } else if duration.num_minutes() > 0 {
-        format!("{}m", duration.num_minutes())
+    let days = duration.get_days();
+    let hours = duration.get_hours();
+    let minutes = duration.get_minutes();
+    let seconds = duration.get_seconds();
+
+    if days > 0 {
+        format!("{}d", days)
+    } else if hours > 0 {
+        format!("{}h", hours)
+    } else if minutes > 0 {
+        format!("{}m", minutes)
     } else {
-        format!("{}s", duration.num_seconds())
+        format!("{}s", seconds)
     }
 }
 

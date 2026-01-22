@@ -133,8 +133,13 @@ async fn process_single_proxy_config(
         .map(|c| c.to_ascii_lowercase())
         .collect();
 
-    let username = whoami::username().to_lowercase();
-    let clean_username: String = username.chars().filter(|c| c.is_alphanumeric()).collect();
+    let username = whoami::username()
+        .unwrap_or_else(|_| "unknown".to_string())
+        .to_lowercase();
+    let clean_username: String = username
+        .chars()
+        .filter(|c: &char| c.is_alphanumeric())
+        .collect();
 
     info!("Cleaned username: {clean_username}");
 
@@ -427,7 +432,7 @@ pub async fn stop_proxy_forward_with_mode(
         e.to_string()
     })?;
 
-    let username = whoami::username();
+    let username = whoami::username().unwrap_or_else(|_| "unknown".to_string());
     let pod_prefix = format!("kftray-forward-{username}");
 
     debug!("Looking for pods with prefix: {pod_prefix}");
@@ -504,7 +509,7 @@ pub async fn stop_proxy_forward(
         e.to_string()
     })?;
 
-    let username = whoami::username();
+    let username = whoami::username().unwrap_or_else(|_| "unknown".to_string());
     let pod_prefix = format!("kftray-forward-{username}");
 
     debug!("Looking for pods with prefix: {pod_prefix}");

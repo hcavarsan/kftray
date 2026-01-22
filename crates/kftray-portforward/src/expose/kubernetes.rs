@@ -76,8 +76,13 @@ pub async fn create_expose_resources(
             .collect()
     };
 
-    let username = whoami::username().to_lowercase();
-    let clean_username: String = username.chars().filter(|c| c.is_alphanumeric()).collect();
+    let username = whoami::username()
+        .unwrap_or_else(|_| "unknown".to_string())
+        .to_lowercase();
+    let clean_username: String = username
+        .chars()
+        .filter(|c: &char| c.is_alphanumeric())
+        .collect();
 
     let deployment_name = format!(
         "kftray-expose-{}-{}-{}",

@@ -1,13 +1,6 @@
 [tools]
-"rust" = { version = "nightly", components = "rust-src,llvm-tools" }
-cargo = "latest"
 node = "24"
 pnpm = "latest"
-
-"cargo:cargo-llvm-cov" = "latest"
-"cargo:cargo-nextest" = "latest"
-"cargo:cargo-insta" = "latest"
-"cargo:tauri-cli" = "latest"
 
 [tasks.dev]
 description = "Start Tauri development mode (tauri dev)"
