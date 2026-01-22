@@ -141,8 +141,6 @@ async fn process_single_proxy_config(
         .filter(|c: &char| c.is_alphanumeric())
         .collect();
 
-    info!("Cleaned username: {clean_username}");
-
     let protocol = config.protocol.to_string().to_lowercase();
 
     let hashed_name =
