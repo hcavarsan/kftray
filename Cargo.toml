@@ -1,4 +1,5 @@
-cargo-features = ["profile-rustflags", "trim-paths"]
+cargo-features = ["profile-rustflags"]
+
 
 [workspace]
 resolver = "2"

@@ -48,7 +48,30 @@ fn main() {
 
     let _ = logging::setup_logging();
 
-    let _ = fix_path_env::fix();
+    // needed for exec auth (AWS EKS, GKE, etc.)
+    // fix_all_vars imports all env vars. Fallback only restores PATH (usually
+    // sufficient)
+    if let Err(e) = fix_path_env::fix_all_vars() {
+        log::warn!("fix_path_env failed: {e}, trying non-interactive fallback");
+        // if fix path env fails, use login shell without interactive mode (-lc instead
+        // of -ilc)
+        if let Ok(shell) = std::env::var("SHELL") {
+            if let Ok(output) = std::process::Command::new(&shell)
+                .args(["-lc", "echo $PATH"])
+                .output()
+            {
+                if output.status.success() {
+                    if let Ok(path) = String::from_utf8(output.stdout) {
+                        let path = path.trim();
+                        if !path.is_empty() {
+                            log::info!("PATH set from shell fallback");
+                            unsafe { std::env::set_var("PATH", path) };
+                        }
+                    }
+                }
+            }
+        }
+    }
 
     kftray_portforward::ssl::ensure_crypto_provider_installed();
 
