@@ -144,6 +144,9 @@ jobs:
         with:
           toolchain: nightly
 
+      - name: Install clippy for nightly
+        run: rustup component add --toolchain nightly clippy
+
       - name: Install OpenSSL on Windows
         if: matrix.os == 'windows-latest'
         run: choco install openssl

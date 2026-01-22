@@ -49,7 +49,8 @@ fn main() {
     let _ = logging::setup_logging();
 
     // needed for exec auth (AWS EKS, GKE, etc.)
-    // fix_all_vars imports all env vars (PATH, HOME, AWS_*, etc.) not just PATH
+    // fix_all_vars imports all env vars. Fallback only restores PATH (usually
+    // sufficient)
     if let Err(e) = fix_path_env::fix_all_vars() {
         log::warn!("fix_path_env failed: {e}, trying non-interactive fallback");
         // if fix path env fails, use login shell without interactive mode (-lc instead
