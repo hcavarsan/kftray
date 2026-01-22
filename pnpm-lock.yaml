@@ -10,7 +10,7 @@ importers:
     devDependencies:
       '@codecov/vite-plugin':
         specifier: 1.9.1
-        version: 1.9.1(vite@7.3.0(@types/node@25.0.10)(jiti@2.6.1)(terser@5.46.0))
+        version: 1.9.1(vite@7.3.1(@types/node@25.0.10)(jiti@2.6.1)(terser@5.46.0))
       '@eslint/eslintrc':
         specifier: ^3.3.3
         version: 3.3.3
@@ -34,7 +34,7 @@ importers:
         version: 4.17.23
       '@vitejs/plugin-react-swc':
         specifier: ^4.2.2
-        version: 4.2.2(@swc/helpers@0.5.18)(vite@7.3.0(@types/node@25.0.10)(jiti@2.6.1)(terser@5.46.0))
+        version: 4.2.2(@swc/helpers@0.5.18)(vite@7.3.1(@types/node@25.0.10)(jiti@2.6.1)(terser@5.46.0))
       lodash:
         specifier: ^4.17.21
         version: 4.17.23
@@ -70,8 +70,8 @@ importers:
         specifier: 2.8.3
         version: 2.8.3
       '@tauri-apps/plugin-dialog':
-        specifier: ~2.4.2
-        version: 2.4.2
+        specifier: ~2.6.0
+        version: 2.6.0
       '@tauri-apps/plugin-fs':
         specifier: ~2.4.4
         version: 2.4.5
@@ -121,11 +121,11 @@ importers:
         specifier: 5.9.3
         version: 5.9.3
       vite:
-        specifier: 7.3.0
-        version: 7.3.0(@types/node@25.0.10)(jiti@2.6.1)(terser@5.46.0)
+        specifier: 7.3.1
+        version: 7.3.1(@types/node@25.0.10)(jiti@2.6.1)(terser@5.46.0)
       vite-tsconfig-paths:
         specifier: ^6.0.3
-        version: 6.0.4(typescript@5.9.3)(vite@7.3.0(@types/node@25.0.10)(jiti@2.6.1)(terser@5.46.0))
+        version: 6.0.4(typescript@5.9.3)(vite@7.3.1(@types/node@25.0.10)(jiti@2.6.1)(terser@5.46.0))
 
 packages:
 
@@ -1089,8 +1089,8 @@ packages:
     engines: {node: '>= 10'}
     hasBin: true
 
-  '@tauri-apps/plugin-dialog@2.4.2':
-    resolution: {integrity: sha512-lNIn5CZuw8WZOn8zHzmFmDSzg5zfohWoa3mdULP0YFh/VogVdMVWZPcWSHlydsiJhRQYaTNSYKN7RmZKE2lCYQ==}
+  '@tauri-apps/plugin-dialog@2.6.0':
+    resolution: {integrity: sha512-q4Uq3eY87TdcYzXACiYSPhmpBA76shgmQswGkSVio4C82Sz2W4iehe9TnKYwbq7weHiL88Yw19XZm7v28+Micg==}
 
   '@tauri-apps/plugin-fs@2.4.5':
     resolution: {integrity: sha512-dVxWWGE6VrOxC7/jlhyE+ON/Cc2REJlM35R3PJX3UvFw2XwYhLGQVAIyrehenDdKjotipjYEVc4YjOl3qq90fA==}
@@ -2672,8 +2672,8 @@ packages:
       vite:
         optional: true
 
-  vite@7.3.0:
-    resolution: {integrity: sha512-dZwN5L1VlUBewiP6H9s2+B3e3Jg96D0vzN+Ry73sOefebhYr9f94wwkMNN/9ouoU8pV1BqA1d1zGk8928cx0rg==}
+  vite@7.3.1:
+    resolution: {integrity: sha512-w+N7Hifpc3gRjZ63vYBXA56dvvRlNWRczTdmCBBa+CotUzAPf5b7YMdMR/8CQoeYE5LX3W4wj6RYTgonm1b9DA==}
     engines: {node: ^20.19.0 || >=22.12.0}
     hasBin: true
     peerDependencies:
@@ -3007,11 +3007,11 @@ snapshots:
       unplugin: 1.16.1
       zod: 3.25.76
 
-  '@codecov/vite-plugin@1.9.1(vite@7.3.0(@types/node@25.0.10)(jiti@2.6.1)(terser@5.46.0))':
+  '@codecov/vite-plugin@1.9.1(vite@7.3.1(@types/node@25.0.10)(jiti@2.6.1)(terser@5.46.0))':
     dependencies:
       '@codecov/bundler-plugin-core': 1.9.1
       unplugin: 1.16.1
-      vite: 7.3.0(@types/node@25.0.10)(jiti@2.6.1)(terser@5.46.0)
+      vite: 7.3.1(@types/node@25.0.10)(jiti@2.6.1)(terser@5.46.0)
 
   '@emnapi/core@1.8.1':
     dependencies:
@@ -3675,7 +3675,7 @@ snapshots:
       '@tauri-apps/cli-win32-ia32-msvc': 2.9.6
       '@tauri-apps/cli-win32-x64-msvc': 2.9.6
 
-  '@tauri-apps/plugin-dialog@2.4.2':
+  '@tauri-apps/plugin-dialog@2.6.0':
     dependencies:
       '@tauri-apps/api': 2.8.0
 
@@ -3809,11 +3809,11 @@ snapshots:
       '@typescript-eslint/types': 8.53.1
       eslint-visitor-keys: 4.2.1
 
-  '@vitejs/plugin-react-swc@4.2.2(@swc/helpers@0.5.18)(vite@7.3.0(@types/node@25.0.10)(jiti@2.6.1)(terser@5.46.0))':
+  '@vitejs/plugin-react-swc@4.2.2(@swc/helpers@0.5.18)(vite@7.3.1(@types/node@25.0.10)(jiti@2.6.1)(terser@5.46.0))':
     dependencies:
       '@rolldown/pluginutils': 1.0.0-beta.47
       '@swc/core': 1.15.10(@swc/helpers@0.5.18)
-      vite: 7.3.0(@types/node@25.0.10)(jiti@2.6.1)(terser@5.46.0)
+      vite: 7.3.1(@types/node@25.0.10)(jiti@2.6.1)(terser@5.46.0)
     transitivePeerDependencies:
       - '@swc/helpers'
 
@@ -5878,18 +5878,18 @@ snapshots:
     optionalDependencies:
       '@types/react': 19.2.9
 
-  vite-tsconfig-paths@6.0.4(typescript@5.9.3)(vite@7.3.0(@types/node@25.0.10)(jiti@2.6.1)(terser@5.46.0)):
+  vite-tsconfig-paths@6.0.4(typescript@5.9.3)(vite@7.3.1(@types/node@25.0.10)(jiti@2.6.1)(terser@5.46.0)):
     dependencies:
       debug: 4.4.3
       globrex: 0.1.2
       tsconfck: 3.1.6(typescript@5.9.3)
     optionalDependencies:
-      vite: 7.3.0(@types/node@25.0.10)(jiti@2.6.1)(terser@5.46.0)
+      vite: 7.3.1(@types/node@25.0.10)(jiti@2.6.1)(terser@5.46.0)
     transitivePeerDependencies:
       - supports-color
       - typescript
 
-  vite@7.3.0(@types/node@25.0.10)(jiti@2.6.1)(terser@5.46.0):
+  vite@7.3.1(@types/node@25.0.10)(jiti@2.6.1)(terser@5.46.0):
     dependencies:
       esbuild: 0.27.2
       fdir: 6.5.0(picomatch@4.0.3)
