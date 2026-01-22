@@ -76,6 +76,7 @@ tracing = { workspace = true }
 tungstenite = { workspace = true }
 uuid = { workspace = true }
 whoami = { workspace = true }
+jiff = { version = "0.2", features = ["serde"] }
 
 [dev-dependencies]
 http = { workspace = true }

@@ -52,6 +52,7 @@ tauri-plugin-updater = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true }
 whoami = { workspace = true }
+jiff = "0.2"
 
 [dev-dependencies]
 async-trait = { workspace = true }

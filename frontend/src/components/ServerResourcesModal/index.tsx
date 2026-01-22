@@ -538,7 +538,10 @@ const ServerResourcesModal: React.FC<ServerResourcesModalProps> = ({
               CONTEXT_TIMEOUT_MS * 2,
             )
             const matches = result.match(/(\d+)/)
-            return matches ? parseInt(matches[1], 10) : 0
+
+
+            
+return matches ? parseInt(matches[1], 10) : 0
           }),
         )
 

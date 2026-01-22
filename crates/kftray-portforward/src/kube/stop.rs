@@ -306,7 +306,8 @@ pub async fn stop_all_port_forward_with_mode(
 
                         match pods.list(&lp).await {
                             Ok(pod_list) => {
-                                let username = whoami::username();
+                                let username =
+                                    whoami::username().unwrap_or_else(|_| "unknown".to_string());
                                 let pod_prefix = format!("kftray-forward-{username}");
                                 let delete_tasks: FuturesUnordered<_> = pod_list
                                     .items

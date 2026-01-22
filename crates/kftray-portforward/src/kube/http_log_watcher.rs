@@ -9,7 +9,7 @@ use anyhow::{
     Result,
     anyhow,
 };
-use k8s_openapi::chrono;
+use jiff::Timestamp;
 use tokio::sync::{
     RwLock,
     broadcast,
@@ -24,7 +24,7 @@ use tracing::{
 pub struct HttpLogStateEvent {
     pub config_id: i64,
     pub enabled: bool,
-    pub timestamp: chrono::DateTime<chrono::Utc>,
+    pub timestamp: Timestamp,
     pub metadata: Option<String>,
 }
 
@@ -33,7 +33,7 @@ impl HttpLogStateEvent {
         Self {
             config_id,
             enabled,
-            timestamp: chrono::Utc::now(),
+            timestamp: Timestamp::now(),
             metadata: None,
         }
     }
@@ -42,7 +42,7 @@ impl HttpLogStateEvent {
         Self {
             config_id,
             enabled,
-            timestamp: chrono::Utc::now(),
+            timestamp: Timestamp::now(),
             metadata: Some(metadata),
         }
     }
