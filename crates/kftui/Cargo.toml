@@ -30,7 +30,6 @@ libc = { workspace = true }
 log = { workspace = true }
 ratatui = { workspace = true }
 ratatui-explorer = { workspace = true }
-reqwest = { workspace = true }
 self_update = { version = "0.42.0", features = [
   "archive-tar",
   "compression-flate2",
@@ -49,3 +48,13 @@ insta = { workspace = true }
 
 [build-dependencies]
 built = { workspace = true }
+
+[target.'cfg(not(windows))'.dependencies]
+reqwest = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+reqwest = { version = "0.13.1", default-features = false, features = [
+  "native-tls",
+  "http2",
+  "charset",
+] }
