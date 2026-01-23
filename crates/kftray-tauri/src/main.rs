@@ -14,7 +14,6 @@ use crate::validation::alert_multiple_configs;
 mod commands;
 mod glibc_detector;
 mod init_check;
-mod logging;
 mod shortcuts;
 mod tray;
 mod validation;
@@ -46,31 +45,15 @@ fn main() {
     // client and XInitThreads has not been called" on Linux X11 systems.
     x11_init::init_x11_threads();
 
-    let _ = logging::setup_logging();
-
-    // needed for exec auth (AWS EKS, GKE, etc.)
-    // fix_all_vars imports all env vars. Fallback only restores PATH (usually
-    // sufficient)
     if let Err(e) = fix_path_env::fix_all_vars() {
-        log::warn!("fix_path_env failed: {e}, trying non-interactive fallback");
-        // if fix path env fails, use login shell without interactive mode (-lc instead
-        // of -ilc)
-        if let Ok(shell) = std::env::var("SHELL") {
-            if let Ok(output) = std::process::Command::new(&shell)
-                .args(["-lc", "echo $PATH"])
-                .output()
-            {
-                if output.status.success() {
-                    if let Ok(path) = String::from_utf8(output.stdout) {
-                        let path = path.trim();
-                        if !path.is_empty() {
-                            log::info!("PATH set from shell fallback");
-                            unsafe { std::env::set_var("PATH", path) };
-                        }
-                    }
-                }
-            }
-        }
+        log::warn!("fix_path_env::fix_all_vars failed: {e}");
+    }
+
+    #[cfg(unix)]
+    if std::env::var("HOME").is_err()
+        && let Some(home) = dirs::home_dir()
+    {
+        unsafe { std::env::set_var("HOME", home) };
     }
 
     kftray_portforward::ssl::ensure_crypto_provider_installed();
@@ -134,6 +117,15 @@ fn main() {
 
             tauri::async_runtime::spawn(async move {
                 alert_multiple_configs(app_handle_clone2).await;
+            });
+
+            let app_handle_logs = app_handle.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) =
+                    crate::commands::logs::cleanup_old_logs_on_startup(app_handle_logs).await
+                {
+                    log::warn!("Failed to cleanup old logs on startup: {e}");
+                }
             });
 
             let port_ops = Arc::new(RealPortOperations);
@@ -266,7 +258,26 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_http::init())
-        .plugin(tauri_plugin_notification::init());
+        .plugin(tauri_plugin_notification::init())
+        .plugin({
+            let log_filename = format!(
+                "kftray_{}",
+                jiff::Zoned::now().strftime("%Y-%m-%d_%H-%M-%S")
+            );
+            tauri_plugin_log::Builder::new()
+                .targets([
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Webview),
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
+                        file_name: Some(log_filename),
+                    }),
+                ])
+                .level(log::LevelFilter::Info)
+                .timezone_strategy(tauri_plugin_log::TimezoneStrategy::UseLocal)
+                .max_file_size(5_000_000)
+                .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepOne)
+                .build()
+        });
 
     let app = app
         .plugin(tauri_plugin_os::init())
@@ -338,6 +349,19 @@ fn main() {
             commands::settings::set_setting_value,
             commands::settings::update_auto_update_enabled,
             commands::settings::get_auto_update_status,
+            commands::settings::run_diagnostics,
+            commands::logs::get_log_info,
+            commands::logs::get_log_contents,
+            commands::logs::get_log_contents_json,
+            commands::logs::clear_logs,
+            commands::logs::generate_diagnostic_report,
+            commands::logs::open_log_directory,
+            commands::logs::list_log_files,
+            commands::logs::cleanup_old_logs,
+            commands::logs::delete_log_file,
+            commands::logs::get_log_settings,
+            commands::logs::set_log_settings,
+            commands::logs::open_log_viewer_window_cmd,
             commands::ssl::get_ssl_settings,
             commands::ssl::set_ssl_settings,
             commands::ssl::regenerate_certificate,
@@ -435,11 +459,5 @@ mod tests {
 
         is_plugin_moving.store(true, Ordering::SeqCst);
         assert!(is_plugin_moving.load(Ordering::SeqCst));
-    }
-
-    #[test]
-    fn test_setup_logging() {
-        let result = logging::setup_logging();
-        assert!(result.is_ok());
     }
 }

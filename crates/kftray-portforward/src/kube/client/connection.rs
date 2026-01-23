@@ -249,9 +249,35 @@ pub fn build_kube_client<C>(
 where
     C: hyper_util::client::legacy::connect::Connect + Clone + Send + Sync + 'static,
 {
-    let auth_layer = config
-        .auth_layer()
-        .map_err(|e| KubeClientError::auth_error_with_source("Failed to create auth layer", e))?;
+    let auth_layer = config.auth_layer().map_err(|e| {
+        let error_detail = format!("{e}");
+        let error_debug = format!("{e:?}");
+
+        if error_detail.contains("AuthExecStart")
+            || error_detail.contains("unable to run auth exec")
+        {
+            error!(
+                "Failed to start auth exec plugin. The command could not be executed. \
+                 Error: {error_detail}. Debug: {error_debug}"
+            );
+        } else if error_detail.contains("AuthExecRun")
+            || error_detail.contains("failed with status")
+        {
+            error!(
+                "Auth exec plugin command failed. The plugin ran but returned an error. \
+                 Error: {error_detail}. Debug: {error_debug}"
+            );
+        } else if error_detail.contains("MissingCommand") {
+            error!(
+                "Auth exec plugin has no command specified in kubeconfig. \
+                 Error: {error_detail}"
+            );
+        } else {
+            warn!("Failed to create auth layer: {error_detail}. Debug: {error_debug}");
+        }
+
+        KubeClientError::auth_error_with_source("Failed to create auth layer", e)
+    })?;
 
     let service = ServiceBuilder::new()
         .layer(config.base_uri_layer())

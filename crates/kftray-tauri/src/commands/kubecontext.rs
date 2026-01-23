@@ -109,11 +109,7 @@ pub async fn list_namespaces(
     let ns_list = api
         .list(&ListParams::default())
         .await
-        .map_err(|e| {
-            let error_message = format!("Failed to list namespaces: {e}");
-            log::error!("{error_message}");
-            error_message
-        })?
+        .map_err(|e| format!("Failed to list namespaces: {e}"))?
         .iter()
         .map(|ns| KubeNamespaceInfo {
             name: ns.name_any(),

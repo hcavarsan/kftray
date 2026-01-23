@@ -3,7 +3,8 @@
   "description": "permissions that were migrated from v1",
   "local": true,
   "windows": [
-    "main"
+    "main",
+    "logs"
   ],
   "permissions": [
     "core:default",
@@ -93,6 +94,7 @@
     "notification:allow-request-permission",
     "notification:allow-show",
     "positioner:default",
-    "updater:default"
+    "updater:default",
+    "log:default"
   ]
 }

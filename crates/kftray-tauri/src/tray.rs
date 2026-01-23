@@ -57,6 +57,7 @@ pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<tauri::tray::TrayIcon<W
         .build(app)?;
     let open = MenuItemBuilder::with_id("toggle", "Toggle App").build(app)?;
     let pin = MenuItemBuilder::with_id("pin", "Pin Window").build(app)?;
+    let view_logs = MenuItemBuilder::with_id("view_logs", "View Logs").build(app)?;
 
     let set_center_position =
         MenuItemBuilder::with_id("set_center_position", "Center").build(app)?;
@@ -109,11 +110,14 @@ pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<tauri::tray::TrayIcon<W
         .build()?;
 
     let main_separator = PredefinedMenuItem::separator(app)?;
+    let logs_separator = PredefinedMenuItem::separator(app)?;
     let menu = MenuBuilder::new(app)
         .item(&open)
         .item(&main_separator)
         .item(&pin)
         .item(&set_window_position_submenu)
+        .item(&logs_separator)
+        .item(&view_logs)
         .item(&quit)
         .build()?;
     let icon_bytes = include_bytes!("../icons/tray.ico");
@@ -175,6 +179,11 @@ pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<tauri::tray::TrayIcon<W
             "pin" => {
                 if let Some(window) = app.get_webview_window("main") {
                     toggle_pin_state(app.state::<AppState>(), window);
+                }
+            }
+            "view_logs" => {
+                if let Err(e) = crate::commands::logs::open_log_viewer_window(app.clone()) {
+                    error!("Failed to open log viewer window: {e}");
                 }
             }
             _ => {}
@@ -282,6 +291,7 @@ pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
     if let WindowEvent::Focused(is_focused) = event
         && !is_focused
         && !app_state.pinned.load(Ordering::SeqCst)
+        && webview_window.label() == "main"
     {
         let app_handle = webview_window.app_handle();
 
@@ -293,8 +303,17 @@ pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
             let runtime = app_state.runtime.clone();
             runtime.spawn(async move {
                 sleep(Duration::from_millis(200)).await;
-                if let Some(main_window) = app_handle_clone.get_webview_window("main")
-                    && !main_window.is_focused().unwrap_or(false)
+                let main_focused = app_handle_clone
+                    .get_webview_window("main")
+                    .map(|w| w.is_focused().unwrap_or(false))
+                    .unwrap_or(false);
+                let logs_focused = app_handle_clone
+                    .get_webview_window("logs")
+                    .map(|w| w.is_focused().unwrap_or(false))
+                    .unwrap_or(false);
+
+                if !main_focused
+                    && !logs_focused
                     && let Err(e) = webview_window_clone.hide()
                 {
                     error!("Failed to hide window: {e}");
@@ -321,24 +340,27 @@ pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
             {}
         });
 
-        let app_state = webview_window.state::<AppState>();
+        if webview_window.label() == "main" {
+            let app_state = webview_window.state::<AppState>();
 
-        #[cfg(target_os = "linux")]
-        {
-            app_state.positioning_active.store(false, Ordering::SeqCst);
-        }
+            #[cfg(target_os = "linux")]
+            {
+                app_state.positioning_active.store(false, Ordering::SeqCst);
+            }
 
-        if !app_state.positioning_active.load(Ordering::SeqCst) {
-            let webview_window_clone = webview_window.clone();
-            let runtime = app_state.runtime.clone();
-            runtime.spawn(async move {
-                sleep(Duration::from_millis(500)).await;
-                save_window_position(&webview_window_clone);
-            });
+            if !app_state.positioning_active.load(Ordering::SeqCst) {
+                let webview_window_clone = webview_window.clone();
+                let runtime = app_state.runtime.clone();
+                runtime.spawn(async move {
+                    sleep(Duration::from_millis(500)).await;
+                    save_window_position(&webview_window_clone);
+                });
+            }
         }
     }
 
     if let WindowEvent::CloseRequested { api, .. } = event
+        && webview_window.label() == "main"
         && !app_state.pinned.load(Ordering::SeqCst)
     {
         api.prevent_close();

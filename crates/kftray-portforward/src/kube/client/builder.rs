@@ -12,6 +12,22 @@ use super::config::{
 };
 use super::connection::create_client_with_config;
 
+fn env_debug_info() -> String {
+    let path = env::var("PATH")
+        .map(|p| {
+            if p.len() > 80 {
+                format!("{}...", &p[..80])
+            } else {
+                p
+            }
+        })
+        .unwrap_or_else(|_| "<not set>".into());
+    let home = env::var("HOME").unwrap_or_else(|_| "<not set>".into());
+    let kubeconfig = env::var("KUBECONFIG").unwrap_or_else(|_| "<not set>".into());
+
+    format!("PATH={path} | HOME={home} | KUBECONFIG={kubeconfig}")
+}
+
 pub async fn create_client_with_specific_context(
     kubeconfig: Option<String>, context_name: Option<&str>,
 ) -> Result<(Option<Client>, Option<Kubeconfig>, Vec<String>)> {
@@ -32,15 +48,11 @@ pub async fn create_client_with_specific_context(
                     return Ok((Some(client), Some(merged_kubeconfig), all_contexts));
                 }
                 _ => {
-                    errors.push(format!(
-                        "Failed to create client for context '{context_name}': All connection strategies failed"
-                    ));
+                    errors.push(format!("Connection failed for context '{context_name}'"));
                 }
             },
             Err(e) => {
-                errors.push(format!(
-                    "Failed to create configuration for context '{context_name}': {e}. Check if the context exists and is properly configured"
-                ));
+                errors.push(format!("Config error for context '{context_name}': {e}"));
             }
         }
     } else {
@@ -49,12 +61,14 @@ pub async fn create_client_with_specific_context(
     }
 
     Err(anyhow::anyhow!(
-        "Unable to create Kubernetes client. Tried {} kubeconfig path(s). Errors encountered:\n{}",
-        kubeconfig_paths.len(),
+        "Failed to create Kubernetes client.\n\
+         Errors:\n{}\n\
+         Environment: {}",
         errors
             .iter()
             .map(|e| format!("  • {e}"))
             .collect::<Vec<_>>()
-            .join("\n")
+            .join("\n"),
+        env_debug_info()
     ))
 }

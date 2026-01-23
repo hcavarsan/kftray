@@ -19,6 +19,7 @@ path = "src/lib.rs"
 [dependencies]
 anyhow = { workspace = true }
 async-trait = { workspace = true }
+dirs = { workspace = true }
 env_logger = { workspace = true }
 fix-path-env = { workspace = true }
 k8s-openapi = { workspace = true }
@@ -43,6 +44,7 @@ tauri-plugin-dialog = { workspace = true }
 tauri-plugin-fs = { workspace = true }
 tauri-plugin-global-shortcut = { workspace = true }
 tauri-plugin-http = { workspace = true }
+tauri-plugin-log = { workspace = true }
 tauri-plugin-notification = { workspace = true }
 tauri-plugin-os = { workspace = true }
 tauri-plugin-positioner = { workspace = true }

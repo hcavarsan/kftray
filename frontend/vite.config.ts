@@ -1,4 +1,4 @@
-import path from 'node:path'
+import path, { resolve } from 'node:path'
 import { visualizer } from 'rollup-plugin-visualizer'
 import { defineConfig, type Plugin, type UserConfig } from 'vite'
 import tsconfigPaths from 'vite-tsconfig-paths'
@@ -110,6 +110,10 @@ export default defineConfig({
     minify: !process.env.TAURI_DEBUG ? 'terser' : false,
     sourcemap: !!process.env.TAURI_DEBUG,
     rollupOptions: {
+      input: {
+        main: resolve(__dirname, 'index.html'),
+        logs: resolve(__dirname, 'logs.html'),
+      },
       output: {
         manualChunks: createManualChunks,
         chunkFileNames: 'assets/[name]-[hash].js',

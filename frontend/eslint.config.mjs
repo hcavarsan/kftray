@@ -103,7 +103,7 @@ export default [{
         "max-statements": ["error", 50],
 
 
-        "max-lines-per-function": ["error", 1000],
+        "max-lines-per-function": ["error", 1100],
         "max-params": ["error", 15],
         "newline-after-var": "error",
         "newline-before-return": "error",

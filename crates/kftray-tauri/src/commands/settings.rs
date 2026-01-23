@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::process::Command;
 
 use kftray_commons::utils::settings::{
     get_auto_update_enabled,
@@ -17,6 +18,7 @@ use log::{
     error,
     info,
 };
+use serde::Serialize;
 
 #[tauri::command]
 pub async fn get_settings() -> Result<HashMap<String, String>, String> {
@@ -178,4 +180,200 @@ pub async fn get_auto_update_status() -> Result<HashMap<String, String>, String>
     }
 
     Ok(status)
+}
+
+#[derive(Serialize)]
+pub struct DiagnosticResult {
+    pub name: String,
+    pub status: String,
+    pub value: String,
+    pub hint: String,
+}
+
+#[derive(Serialize)]
+pub struct DiagnosticsReport {
+    pub checks: Vec<DiagnosticResult>,
+    pub overall_status: String,
+}
+
+fn check_command_exists(cmd: &str) -> bool {
+    Command::new("which")
+        .arg(cmd)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+fn get_command_path(cmd: &str) -> Option<String> {
+    Command::new("which")
+        .arg(cmd)
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+}
+
+#[tauri::command]
+pub async fn run_diagnostics() -> Result<DiagnosticsReport, String> {
+    let mut checks = Vec::new();
+    let mut has_errors = false;
+
+    let home = std::env::var("HOME");
+    checks.push(DiagnosticResult {
+        name: "HOME".into(),
+        status: if home.is_ok() {
+            "ok".into()
+        } else {
+            "error".into()
+        },
+        value: home.clone().unwrap_or_else(|_| "<not set>".into()),
+        hint: if home.is_err() {
+            "HOME is required for credential files (~/.aws, ~/.kube)".into()
+        } else {
+            String::new()
+        },
+    });
+    if home.is_err() {
+        has_errors = true;
+    }
+
+    let path = std::env::var("PATH");
+    checks.push(DiagnosticResult {
+        name: "PATH".into(),
+        status: if path.is_ok() {
+            "ok".into()
+        } else {
+            "error".into()
+        },
+        value: path
+            .clone()
+            .map(|p| {
+                if p.len() > 60 {
+                    format!("{}...", &p[..60])
+                } else {
+                    p
+                }
+            })
+            .unwrap_or_else(|_| "<not set>".into()),
+        hint: if path.is_err() {
+            "PATH is required to find CLI tools".into()
+        } else {
+            String::new()
+        },
+    });
+    if path.is_err() {
+        has_errors = true;
+    }
+
+    let kubeconfig = std::env::var("KUBECONFIG");
+    let default_kubeconfig = home
+        .as_ref()
+        .map(|h| format!("{}/.kube/config", h))
+        .unwrap_or_default();
+    let kubeconfig_exists = kubeconfig
+        .as_ref()
+        .map(|p| std::path::Path::new(p).exists())
+        .unwrap_or_else(|_| std::path::Path::new(&default_kubeconfig).exists());
+    checks.push(DiagnosticResult {
+        name: "KUBECONFIG".into(),
+        status: if kubeconfig_exists {
+            "ok".into()
+        } else {
+            "warning".into()
+        },
+        value: kubeconfig.unwrap_or_else(|_| format!("{} (default)", default_kubeconfig)),
+        hint: if !kubeconfig_exists {
+            "Kubeconfig file not found".into()
+        } else {
+            String::new()
+        },
+    });
+
+    let kubectl_exists = check_command_exists("kubectl");
+    checks.push(DiagnosticResult {
+        name: "kubectl".into(),
+        status: if kubectl_exists {
+            "ok".into()
+        } else {
+            "warning".into()
+        },
+        value: get_command_path("kubectl").unwrap_or_else(|| "<not found>".into()),
+        hint: if !kubectl_exists {
+            "kubectl not in PATH (optional but recommended)".into()
+        } else {
+            String::new()
+        },
+    });
+
+    let aws_exists = check_command_exists("aws");
+    let aws_profile = std::env::var("AWS_PROFILE").ok();
+    checks.push(DiagnosticResult {
+        name: "AWS CLI".into(),
+        status: if aws_exists {
+            "ok".into()
+        } else {
+            "info".into()
+        },
+        value: get_command_path("aws")
+            .map(|p| {
+                if let Some(ref profile) = aws_profile {
+                    format!("{} (profile: {})", p, profile)
+                } else {
+                    p
+                }
+            })
+            .unwrap_or_else(|| "<not found>".into()),
+        hint: if !aws_exists {
+            "AWS CLI not found (required for EKS)".into()
+        } else {
+            String::new()
+        },
+    });
+
+    let gcloud_exists = check_command_exists("gcloud");
+    checks.push(DiagnosticResult {
+        name: "gcloud CLI".into(),
+        status: if gcloud_exists {
+            "ok".into()
+        } else {
+            "info".into()
+        },
+        value: get_command_path("gcloud").unwrap_or_else(|| "<not found>".into()),
+        hint: if !gcloud_exists {
+            "gcloud CLI not found (required for GKE)".into()
+        } else {
+            String::new()
+        },
+    });
+
+    let az_exists = check_command_exists("az");
+    checks.push(DiagnosticResult {
+        name: "Azure CLI".into(),
+        status: if az_exists {
+            "ok".into()
+        } else {
+            "info".into()
+        },
+        value: get_command_path("az").unwrap_or_else(|| "<not found>".into()),
+        hint: if !az_exists {
+            "Azure CLI not found (required for AKS)".into()
+        } else {
+            String::new()
+        },
+    });
+
+    let overall_status = if has_errors {
+        "error"
+    } else if checks.iter().any(|c| c.status == "warning") {
+        "warning"
+    } else {
+        "ok"
+    }
+    .into();
+
+    Ok(DiagnosticsReport {
+        checks,
+        overall_status,
+    })
 }

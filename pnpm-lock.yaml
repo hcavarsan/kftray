@@ -53,6 +53,12 @@ importers:
       react-select:
         specifier: ^5.10.2
         version: 5.10.2(@types/react@19.2.9)(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      react-window:
+        specifier: ^1.8.10
+        version: 1.8.11(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      terser:
+        specifier: ^5.46.0
+        version: 5.46.0
     devDependencies:
       '@eslint/compat':
         specifier: ^2.0.0
@@ -75,6 +81,9 @@ importers:
       '@tauri-apps/plugin-fs':
         specifier: ~2.4.4
         version: 2.4.5
+      '@tauri-apps/plugin-log':
+        specifier: ~2
+        version: 2.8.0
       '@tauri-apps/plugin-shell':
         specifier: ~2.3.3
         version: 2.3.4
@@ -87,6 +96,9 @@ importers:
       '@types/react-dom':
         specifier: ^19.2.3
         version: 19.2.3(@types/react@19.2.9)
+      '@types/react-window':
+        specifier: ^1.8.8
+        version: 1.8.8
       '@typescript-eslint/eslint-plugin':
         specifier: ^8.50.1
         version: 8.53.1(@typescript-eslint/parser@8.53.1(eslint@9.39.2(jiti@2.6.1))(typescript@5.9.3))(eslint@9.39.2(jiti@2.6.1))(typescript@5.9.3)
@@ -1095,6 +1107,9 @@ packages:
   '@tauri-apps/plugin-fs@2.4.5':
     resolution: {integrity: sha512-dVxWWGE6VrOxC7/jlhyE+ON/Cc2REJlM35R3PJX3UvFw2XwYhLGQVAIyrehenDdKjotipjYEVc4YjOl3qq90fA==}
 
+  '@tauri-apps/plugin-log@2.8.0':
+    resolution: {integrity: sha512-a+7rOq3MJwpTOLLKbL8d0qGZ85hgHw5pNOWusA9o3cf7cEgtYHiGY/+O8fj8MvywQIGqFv0da2bYQDlrqLE7rw==}
+
   '@tauri-apps/plugin-shell@2.3.4':
     resolution: {integrity: sha512-ktsRWf8wHLD17aZEyqE8c5x98eNAuTizR1FSX475zQ4TxaiJnhwksLygQz+AGwckJL5bfEP13nWrlTNQJUpKpA==}
 
@@ -1128,6 +1143,9 @@ packages:
     resolution: {integrity: sha512-8TV6R3h2j7a91c+1DXdJi3Syo69zzIZbz7Lg5tORM5LEJG7X/E6a1V3drRyBRZq7/utz7A+c4OgYLiLcYGHG6w==}
     peerDependencies:
       '@types/react': '*'
+
+  '@types/react-window@1.8.8':
+    resolution: {integrity: sha512-8Ls660bHR1AUA2kuRvVG9D/4XpRC6wjAaPT9dil7Ckc76eP9TKWZwwmgfq8Q1LANX3QNDnoU4Zp48A3w+zK69Q==}
 
   '@types/react@19.2.9':
     resolution: {integrity: sha512-Lpo8kgb/igvMIPeNV2rsYKTgaORYdO1XGVZ4Qz3akwOj0ySGYMPlQWa8BaLn0G63D1aSaAQ5ldR06wCpChQCjA==}
@@ -2169,6 +2187,9 @@ packages:
     resolution: {integrity: sha512-/IXtbwEk5HTPyEwyKX6hGkYXxM9nbj64B+ilVJnC/R6B0pH5G4V3b0pVbL7DBj4tkhBAppbQUlf6F6Xl9LHu1g==}
     engines: {node: '>= 0.4'}
 
+  memoize-one@5.2.1:
+    resolution: {integrity: sha512-zYiwtZUcYyXKo/np96AGZAckk+FWWsUdJ3cHGGmld7+AhvcWmQyGCYUh1hc4Q/pkOhb65dQR/pqCyK0cOaHz4Q==}
+
   memoize-one@6.0.0:
     resolution: {integrity: sha512-rkpe71W0N0c0Xz6QD0eJETuWAJGnJ9afsl1srmwPrI+yBCkge5EycXXbYRyvL29zZVUWQCY7InPRCv3GDXuZNw==}
 
@@ -2360,6 +2381,13 @@ packages:
     peerDependencies:
       react: '>=16.6.0'
       react-dom: '>=16.6.0'
+
+  react-window@1.8.11:
+    resolution: {integrity: sha512-+SRbUVT2scadgFSWx+R1P754xHPEqvcfSfVX10QYg6POOz+WNgkN48pS+BtZNIMGiL1HYrSEiCkwsMS15QogEQ==}
+    engines: {node: '>8.0.0'}
+    peerDependencies:
+      react: ^15.0.0 || ^16.0.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
+      react-dom: ^15.0.0 || ^16.0.0 || ^17.0.0 || ^18.0.0 || ^19.0.0
 
   react@19.2.3:
     resolution: {integrity: sha512-Ku/hhYbVjOQnXDZFv2+RibmLFGwFdeeKHFcOTlrt7xplBnya5OGn/hIRDsqDiSUcfORsDC7MPxwork8jBwsIWA==}
@@ -3683,6 +3711,10 @@ snapshots:
     dependencies:
       '@tauri-apps/api': 2.8.0
 
+  '@tauri-apps/plugin-log@2.8.0':
+    dependencies:
+      '@tauri-apps/api': 2.8.0
+
   '@tauri-apps/plugin-shell@2.3.4':
     dependencies:
       '@tauri-apps/api': 2.8.0
@@ -3711,6 +3743,10 @@ snapshots:
       '@types/react': 19.2.9
 
   '@types/react-transition-group@4.4.12(@types/react@19.2.9)':
+    dependencies:
+      '@types/react': 19.2.9
+
+  '@types/react-window@1.8.8':
     dependencies:
       '@types/react': 19.2.9
 
@@ -5283,6 +5319,8 @@ snapshots:
 
   math-intrinsics@1.1.0: {}
 
+  memoize-one@5.2.1: {}
+
   memoize-one@6.0.0: {}
 
   merge2@1.4.1: {}
@@ -5502,6 +5540,13 @@ snapshots:
       dom-helpers: 5.2.1
       loose-envify: 1.4.0
       prop-types: 15.8.1
+      react: 19.2.3
+      react-dom: 19.2.3(react@19.2.3)
+
+  react-window@1.8.11(react-dom@19.2.3(react@19.2.3))(react@19.2.3):
+    dependencies:
+      '@babel/runtime': 7.28.6
+      memoize-one: 5.2.1
       react: 19.2.3
       react-dom: 19.2.3(react@19.2.3)
 

@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react'
-import { Download, RefreshCw, Shield } from 'lucide-react'
+import { Download, FileText, RefreshCw, Shield, Trash2 } from 'lucide-react'
 
 import { Box, Dialog, Flex, Input, Stack, Text } from '@chakra-ui/react'
 import { app } from '@tauri-apps/api'
 import { invoke } from '@tauri-apps/api/core'
 
+import type { LogFileInfo, LogSettings } from '@/components/LogViewer'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { DialogCloseTrigger } from '@/components/ui/dialog'
@@ -21,7 +22,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
   const [networkMonitorStatus, setNetworkMonitorStatus] =
     useState<boolean>(false)
   const [autoUpdateEnabled, setAutoUpdateEnabled] = useState<boolean>(true)
-  const [lastUpdateCheck, setLastUpdateCheck] = useState<string>('Never')
+  const [lastUpdateCheckDisplay, setLastUpdateCheckDisplay] = useState<string>('Never')
   const [currentVersion, setCurrentVersion] = useState<string>('')
   const [latestVersion, setLatestVersion] = useState<string>('')
   const [updateStatus, setUpdateStatus] = useState<
@@ -35,10 +36,17 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
   const [sslEnabled, setSslEnabled] = useState<boolean>(false)
   const [sslCertValidityDays, setSslCertValidityDays] = useState<string>('365')
 
+  const [logRetentionCount, setLogRetentionCount] = useState<string>('10')
+  const [logRetentionDays, setLogRetentionDays] = useState<string>('7')
+  const [logFileCount, setLogFileCount] = useState<number>(0)
+  const [logTotalSize, setLogTotalSize] = useState<number>(0)
+  const [isCleaningLogs, setIsCleaningLogs] = useState(false)
+
   useEffect(() => {
     if (isOpen) {
       loadSettings()
       loadVersionInfo()
+      loadLogInfo()
     }
   }, [isOpen])
 
@@ -57,11 +65,11 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
       if (lastCheck > 0) {
         const date = new Date(lastCheck * 1000)
 
-        setLastUpdateCheck(
+        setLastUpdateCheckDisplay(
           date.toLocaleDateString() + ' at ' + date.toLocaleTimeString(),
         )
       } else {
-        setLastUpdateCheck('Never')
+        setLastUpdateCheckDisplay('Never')
       }
 
       try {
@@ -78,6 +86,17 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
         console.error('Error loading SSL settings:', sslError)
         setSslEnabled(false)
         setSslCertValidityDays('365')
+      }
+
+      try {
+        const logSettings = await invoke<LogSettings>('get_log_settings')
+
+        setLogRetentionCount(String(logSettings.retention_count))
+        setLogRetentionDays(String(logSettings.retention_days))
+      } catch (logError) {
+        console.error('Error loading log settings:', logError)
+        setLogRetentionCount('10')
+        setLogRetentionDays('7')
       }
     } catch (error) {
       console.error('Error loading settings:', error)
@@ -101,6 +120,17 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
     } catch (error) {
       console.error('Error loading version info:', error)
       setUpdateStatus('error')
+    }
+  }
+
+  const loadLogInfo = async () => {
+    try {
+      const files = await invoke<LogFileInfo[]>('list_log_files')
+
+      setLogFileCount(files.length)
+      setLogTotalSize(files.reduce((acc, f) => acc + f.size, 0))
+    } catch (error) {
+      console.error('Error loading log info:', error)
     }
   }
 
@@ -177,11 +207,58 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
     }
   }
 
+  const cleanupLogs = async () => {
+    try {
+      setIsCleaningLogs(true)
+      const deleted = await invoke<number>('cleanup_old_logs')
+
+      await loadLogInfo()
+
+      if (deleted > 0) {
+        toaster.success({
+          title: 'Logs Cleaned',
+          description: `Deleted ${deleted} old log file${deleted === 1 ? '' : 's'}`,
+          duration: 3000,
+        })
+      } else {
+        toaster.create({
+          title: 'No Cleanup Needed',
+          description: 'No log files met the cleanup criteria',
+          duration: 3000,
+        })
+      }
+    } catch (error) {
+      console.error('Error cleaning logs:', error)
+      toaster.error({
+        title: 'Cleanup Failed',
+        description: String(error),
+        duration: 4000,
+      })
+    } finally {
+      setIsCleaningLogs(false)
+    }
+  }
+
+  const openLogsWindow = async () => {
+    try {
+      await invoke('open_log_viewer_window_cmd')
+    } catch (error) {
+      console.error('Error opening logs:', error)
+      toaster.error({
+        title: 'Error',
+        description: 'Failed to open log viewer',
+        duration: 3000,
+      })
+    }
+  }
+
   const saveSettings = async () => {
     try {
       setIsSaving(true)
       const timeoutValue = parseInt(disconnectTimeout, 10)
       const certValidityValue = parseInt(sslCertValidityDays, 10)
+      const logCountValue = parseInt(logRetentionCount, 10)
+      const logDaysValue = parseInt(logRetentionDays, 10)
 
       if (isNaN(timeoutValue) || timeoutValue < 0) {
         toaster.error({
@@ -201,6 +278,26 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
         toaster.error({
           title: 'Invalid Input',
           description: 'Certificate validity must be between 1 and 3650 days',
+          duration: 3000,
+        })
+
+        return
+      }
+
+      if (isNaN(logCountValue) || logCountValue < 1 || logCountValue > 100) {
+        toaster.error({
+          title: 'Invalid Input',
+          description: 'Log retention count must be between 1 and 100',
+          duration: 3000,
+        })
+
+        return
+      }
+
+      if (isNaN(logDaysValue) || logDaysValue < 1 || logDaysValue > 365) {
+        toaster.error({
+          title: 'Invalid Input',
+          description: 'Log retention days must be between 1 and 365',
           duration: 3000,
         })
 
@@ -243,6 +340,23 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
         })
       }
 
+      try {
+        await invoke('set_log_settings', {
+          settings: {
+            retention_count: logCountValue,
+            retention_days: logDaysValue,
+          },
+        })
+      } catch (logError) {
+        console.error('Error saving log settings:', logError)
+        toaster.error({
+          title: 'Log Settings Error',
+          description:
+            'Failed to save log settings, but other settings were saved',
+          duration: 4000,
+        })
+      }
+
       await loadSettings()
 
       if (!(wasDisabled && willBeEnabled)) {
@@ -280,6 +394,37 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
     if (value === '' || (/^\d+$/.test(value) && parseInt(value, 10) <= 3650)) {
       setSslCertValidityDays(value)
     }
+  }
+
+  const handleLogRetentionCountChange = (
+    e: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const value = e.target.value
+
+    if (value === '' || (/^\d+$/.test(value) && parseInt(value, 10) <= 100)) {
+      setLogRetentionCount(value)
+    }
+  }
+
+  const handleLogRetentionDaysChange = (
+    e: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const value = e.target.value
+
+    if (value === '' || (/^\d+$/.test(value) && parseInt(value, 10) <= 365)) {
+      setLogRetentionDays(value)
+    }
+  }
+
+  const formatFileSize = (bytes: number): string => {
+    if (bytes < 1024) {
+      return `${bytes} B`
+    }
+    if (bytes < 1024 * 1024) {
+      return `${(bytes / 1024).toFixed(1)} KB`
+    }
+
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
   }
 
   return (
@@ -361,34 +506,39 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
                     fontSize='xs'
                     color='whiteAlpha.600'
                     lineHeight='1.3'
-                    mb={2}
                     flex='1'
                   >
                     Disconnect port forwards after specified time (min). Set to
                     0 to disable.
                   </Text>
-                  <Flex align='center' justify='flex-end' gap={2}>
-                    <Text fontSize='xs' color='whiteAlpha.500'>
-                      Minutes:
-                    </Text>
-                    <Input
-                      value={disconnectTimeout}
-                      onChange={handleTimeoutChange}
-                      placeholder='0'
-                      size='xs'
-                      width='45px'
-                      height='22px'
-                      bg='#111111'
-                      border='1px solid rgba(255, 255, 255, 0.08)'
-                      _hover={{ borderColor: 'rgba(255, 255, 255, 0.15)' }}
-                      _focus={{ borderColor: 'blue.400', boxShadow: 'none' }}
-                      color='white'
-                      _placeholder={{ color: 'whiteAlpha.500' }}
-                      disabled={isLoading}
-                      textAlign='center'
-                      fontSize='xs'
-                    />
-                  </Flex>
+                  <Box
+                    borderTop='1px solid rgba(255, 255, 255, 0.06)'
+                    mt={3}
+                    pt={3}
+                  >
+                    <Flex align='center' justify='flex-end' gap={2}>
+                      <Text fontSize='xs' color='whiteAlpha.500'>
+                        Minutes:
+                      </Text>
+                      <Input
+                        value={disconnectTimeout}
+                        onChange={handleTimeoutChange}
+                        placeholder='0'
+                        size='xs'
+                        width='45px'
+                        height='22px'
+                        bg='#111111'
+                        border='1px solid rgba(255, 255, 255, 0.08)'
+                        _hover={{ borderColor: 'rgba(255, 255, 255, 0.15)' }}
+                        _focus={{ borderColor: 'blue.400', boxShadow: 'none' }}
+                        color='white'
+                        _placeholder={{ color: 'whiteAlpha.500' }}
+                        disabled={isLoading}
+                        textAlign='center'
+                        fontSize='xs'
+                      />
+                    </Flex>
+                  </Box>
                 </Box>
 
                 {/* Right Column - Network Monitor */}
@@ -417,25 +567,30 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
                     fontSize='xs'
                     color='whiteAlpha.600'
                     lineHeight='1.3'
-                    mb={2}
                     flex='1'
                   >
                     Monitor connectivity and reconnect port forwards when
                     network is restored.
                   </Text>
-                  <Flex align='center' justify='flex-end' gap={2}>
-                    <Text fontSize='xs' color='whiteAlpha.500'>
-                      Enabled:
-                    </Text>
-                    <Checkbox
-                      checked={networkMonitor}
-                      onCheckedChange={e =>
-                        setNetworkMonitor(e.checked === true)
-                      }
-                      disabled={isLoading}
-                      size='sm'
-                    />
-                  </Flex>
+                  <Box
+                    borderTop='1px solid rgba(255, 255, 255, 0.06)'
+                    mt={3}
+                    pt={3}
+                  >
+                    <Flex align='center' justify='flex-end' gap={2}>
+                      <Text fontSize='xs' color='whiteAlpha.500'>
+                        Enabled:
+                      </Text>
+                      <Checkbox
+                        checked={networkMonitor}
+                        onCheckedChange={e =>
+                          setNetworkMonitor(e.checked === true)
+                        }
+                        disabled={isLoading}
+                        size='sm'
+                      />
+                    </Flex>
+                  </Box>
                 </Box>
 
                 {/* Left Column - SSL Configuration */}
@@ -470,23 +625,28 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
                     fontSize='xs'
                     color='whiteAlpha.600'
                     lineHeight='1.3'
-                    mb={2}
                     flex='1'
                   >
                     Enable HTTPS for port forwards with domain aliases. Creates
                     SSL certificates automatically.
                   </Text>
-                  <Flex align='center' justify='flex-end' gap={2}>
-                    <Text fontSize='xs' color='whiteAlpha.500'>
-                      Enabled:
-                    </Text>
-                    <Checkbox
-                      checked={sslEnabled}
-                      onCheckedChange={e => setSslEnabled(e.checked === true)}
-                      disabled={isLoading}
-                      size='sm'
-                    />
-                  </Flex>
+                  <Box
+                    borderTop='1px solid rgba(255, 255, 255, 0.06)'
+                    mt={3}
+                    pt={3}
+                  >
+                    <Flex align='center' justify='flex-end' gap={2}>
+                      <Text fontSize='xs' color='whiteAlpha.500'>
+                        Enabled:
+                      </Text>
+                      <Checkbox
+                        checked={sslEnabled}
+                        onCheckedChange={e => setSslEnabled(e.checked === true)}
+                        disabled={isLoading}
+                        size='sm'
+                      />
+                    </Flex>
+                  </Box>
                 </Box>
 
                 {/* Right Column - SSL Certificate Settings */}
@@ -507,34 +667,39 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
                     fontSize='xs'
                     color='whiteAlpha.600'
                     lineHeight='1.3'
-                    mb={2}
                     flex='1'
                   >
                     Configure SSL certificate validity period. Certificates will
                     auto-regenerate and CA will be auto-installed.
                   </Text>
-                  <Flex align='center' justify='flex-end' gap={2}>
-                    <Text fontSize='xs' color='whiteAlpha.500'>
-                      Validity (days):
-                    </Text>
-                    <Input
-                      value={sslCertValidityDays}
-                      onChange={handleCertValidityChange}
-                      placeholder='365'
-                      size='xs'
-                      width='55px'
-                      height='22px'
-                      bg='#111111'
-                      border='1px solid rgba(255, 255, 255, 0.08)'
-                      _hover={{ borderColor: 'rgba(255, 255, 255, 0.15)' }}
-                      _focus={{ borderColor: 'blue.400', boxShadow: 'none' }}
-                      color='white'
-                      _placeholder={{ color: 'whiteAlpha.500' }}
-                      disabled={isLoading || !sslEnabled}
-                      textAlign='center'
-                      fontSize='xs'
-                    />
-                  </Flex>
+                  <Box
+                    borderTop='1px solid rgba(255, 255, 255, 0.06)'
+                    mt={3}
+                    pt={3}
+                  >
+                    <Flex align='center' justify='flex-end' gap={2}>
+                      <Text fontSize='xs' color='whiteAlpha.500'>
+                        Validity (days):
+                      </Text>
+                      <Input
+                        value={sslCertValidityDays}
+                        onChange={handleCertValidityChange}
+                        placeholder='365'
+                        size='xs'
+                        width='55px'
+                        height='22px'
+                        bg='#111111'
+                        border='1px solid rgba(255, 255, 255, 0.08)'
+                        _hover={{ borderColor: 'rgba(255, 255, 255, 0.15)' }}
+                        _focus={{ borderColor: 'blue.400', boxShadow: 'none' }}
+                        color='white'
+                        _placeholder={{ color: 'whiteAlpha.500' }}
+                        disabled={isLoading || !sslEnabled}
+                        textAlign='center'
+                        fontSize='xs'
+                      />
+                    </Flex>
+                  </Box>
                 </Box>
 
                 {/* Left Column - Auto Update */}
@@ -554,28 +719,122 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
                     fontSize='xs'
                     color='whiteAlpha.600'
                     lineHeight='1.3'
-                    mb={2}
                     flex='1'
                   >
                     Check for updates when app starts and prompt to install if
                     available.
                   </Text>
-                  <Flex align='center' justify='flex-end' gap={2}>
-                    <Text fontSize='xs' color='whiteAlpha.500'>
-                      Enabled:
-                    </Text>
-                    <Checkbox
-                      checked={autoUpdateEnabled}
-                      onCheckedChange={e =>
-                        setAutoUpdateEnabled(e.checked === true)
-                      }
-                      disabled={isLoading}
-                      size='sm'
-                    />
-                  </Flex>
+                  <Box
+                    borderTop='1px solid rgba(255, 255, 255, 0.06)'
+                    mt={3}
+                    pt={3}
+                  >
+                    <Flex align='center' justify='flex-end' gap={2}>
+                      <Text fontSize='xs' color='whiteAlpha.500'>
+                        Enabled:
+                      </Text>
+                      <Checkbox
+                        checked={autoUpdateEnabled}
+                        onCheckedChange={e =>
+                          setAutoUpdateEnabled(e.checked === true)
+                        }
+                        disabled={isLoading}
+                        size='sm'
+                      />
+                    </Flex>
+                  </Box>
                 </Box>
 
-                {/* Right Column - Version Information */}
+                {/* Right Column - Version Information with Status */}
+                <Box
+                  bg='#161616'
+                  p={2}
+                  borderRadius='md'
+                  border='1px solid rgba(255, 255, 255, 0.08)'
+                  display='flex'
+                  flexDirection='column'
+                  height='100%'
+                >
+                  <Flex align='center' justify='space-between' mb={1}>
+                    <Text fontSize='sm' fontWeight='500' color='white'>
+                      Version Information
+                    </Text>
+                    <Button
+                      size='2xs'
+                      variant='outline'
+                      onClick={
+                        updateStatus === 'available'
+                          ? installUpdate
+                          : checkForUpdates
+                      }
+                      loading={isCheckingUpdates || isUpdating}
+                      loadingText={isUpdating ? '...' : '...'}
+                      disabled={isLoading}
+                      height='18px'
+                      fontSize='10px'
+                      color='whiteAlpha.600'
+                      borderColor='rgba(255, 255, 255, 0.1)'
+                      _hover={{
+                        borderColor: 'rgba(255, 255, 255, 0.2)',
+                        bg: 'whiteAlpha.50',
+                      }}
+                      px={1.5}
+                    >
+                      <Box
+                        as={updateStatus === 'available' ? Download : RefreshCw}
+                        width='8px'
+                        height='8px'
+                        mr={0.5}
+                      />
+                      {updateStatus === 'available' ? 'Install' : 'Check'}
+                    </Button>
+                  </Flex>
+                  <Text
+                    fontSize='xs'
+                    color='whiteAlpha.600'
+                    lineHeight='1.3'
+                    flex='1'
+                  >
+                    Current: {currentVersion || '...'}{updateStatus === 'available' ? ` → ${latestVersion}` : ''}
+                  </Text>
+                  <Box
+                    borderTop='1px solid rgba(255, 255, 255, 0.06)'
+                    mt={3}
+                    pt={3}
+                  >
+                    <Flex align='center' gap={1.5}>
+                      <Box
+                        width='5px'
+                        height='5px'
+                        borderRadius='full'
+                        bg={
+                          updateStatus === 'checking'
+                            ? 'blue.400'
+                            : updateStatus === 'available'
+                              ? 'green.400'
+                              : updateStatus === 'up-to-date'
+                                ? 'gray.400'
+                                : updateStatus === 'error'
+                                  ? 'red.400'
+                                  : 'gray.500'
+                        }
+                      />
+                      <Text fontSize='10px' color='whiteAlpha.500'>
+                        {updateStatus === 'checking'
+                          ? 'Checking...'
+                          : updateStatus === 'available'
+                            ? 'Update available'
+                            : updateStatus === 'up-to-date'
+                              ? 'Up to date'
+                              : updateStatus === 'error'
+                                ? 'Check failed'
+                                : `Last: ${lastUpdateCheckDisplay}`}
+                      </Text>
+                    </Flex>
+                  </Box>
+                </Box>
+
+                {/* Left Column - Log Retention */}
                 <Box
                   bg='#161616'
                   p={2}
@@ -586,90 +845,134 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
                   height='100%'
                 >
                   <Text fontSize='sm' fontWeight='500' color='white' mb={1}>
-                    Version Information
+                    Log Retention
                   </Text>
-                  <Box flex='1'>
-                    <Text fontSize='xs' color='whiteAlpha.600' mb={0.5}>
-                      Current: {currentVersion || 'Loading...'}
-                    </Text>
-                    {updateStatus === 'available' && (
-                      <Text fontSize='xs' color='whiteAlpha.600' mb={1}>
-                        Latest: {latestVersion}
-                      </Text>
-                    )}
-                  </Box>
-
-                  <Flex justify='flex-end' gap={1.5}>
-                    <Button
-                      size='2xs'
-                      variant='outline'
-                      onClick={
-                        updateStatus === 'available'
-                          ? installUpdate
-                          : checkForUpdates
-                      }
-                      loading={isCheckingUpdates || isUpdating}
-                      loadingText={isUpdating ? 'Installing...' : 'Checking...'}
-                      disabled={isLoading}
-                      height='20px'
-                      fontSize='xs'
-                      color='whiteAlpha.700'
-                      borderColor='rgba(255, 255, 255, 0.15)'
-                      _hover={{
-                        borderColor: 'rgba(255, 255, 255, 0.3)',
-                        bg: 'whiteAlpha.100',
-                      }}
-                      px={2}
-                    >
-                      <Box
-                        as={updateStatus === 'available' ? Download : RefreshCw}
-                        width='8px'
-                        height='8px'
-                        mr={1}
-                      />
-                      {updateStatus === 'available' ? 'Install' : 'Check'}
-                    </Button>
-                  </Flex>
-                </Box>
-              </Box>
-
-              {/* Update Status Indicator - Always Visible */}
-              <Box
-                bg='#161616'
-                p={2}
-                borderRadius='md'
-                border='1px solid rgba(255, 255, 255, 0.08)'
-                gridColumn='1 / -1'
-              >
-                <Flex align='center' gap={2}>
+                  <Text
+                    fontSize='xs'
+                    color='whiteAlpha.600'
+                    lineHeight='1.3'
+                    flex='1'
+                  >
+                    Auto-cleanup when both limits exceeded.
+                  </Text>
                   <Box
-                    width='5px'
-                    height='5px'
-                    borderRadius='full'
-                    bg={
-                      updateStatus === 'checking'
-                        ? 'blue.400'
-                        : updateStatus === 'available'
-                          ? 'green.400'
-                          : updateStatus === 'up-to-date'
-                            ? 'gray.400'
-                            : updateStatus === 'error'
-                              ? 'red.400'
-                              : 'gray.500'
-                    }
-                  />
-                  <Text fontSize='xs' color='whiteAlpha.600'>
-                    {updateStatus === 'checking'
-                      ? 'Checking for updates...'
-                      : updateStatus === 'available'
-                        ? `Update to ${latestVersion} available`
-                        : updateStatus === 'up-to-date'
-                          ? `Application is up to date - Last check: ${lastUpdateCheck}`
-                          : updateStatus === 'error'
-                            ? 'Update check failed'
-                            : 'Click "Check" to verify for updates'}
+                    borderTop='1px solid rgba(255, 255, 255, 0.06)'
+                    mt={3}
+                    pt={3}
+                  >
+                    <Flex align='center' justify='flex-end' gap={2} mb={1}>
+                      <Text fontSize='xs' color='whiteAlpha.500'>
+                        Max files:
+                      </Text>
+                      <Input
+                        value={logRetentionCount}
+                        onChange={handleLogRetentionCountChange}
+                        size='xs'
+                        width='45px'
+                        height='22px'
+                        bg='#111111'
+                        border='1px solid rgba(255, 255, 255, 0.08)'
+                        _hover={{ borderColor: 'rgba(255, 255, 255, 0.15)' }}
+                        _focus={{ borderColor: 'blue.400', boxShadow: 'none' }}
+                        color='white'
+                        disabled={isLoading}
+                        textAlign='center'
+                        fontSize='xs'
+                      />
+                    </Flex>
+                    <Flex align='center' justify='flex-end' gap={2}>
+                      <Text fontSize='xs' color='whiteAlpha.500'>
+                        Max days:
+                      </Text>
+                      <Input
+                        value={logRetentionDays}
+                        onChange={handleLogRetentionDaysChange}
+                        size='xs'
+                        width='45px'
+                        height='22px'
+                        bg='#111111'
+                        border='1px solid rgba(255, 255, 255, 0.08)'
+                        _hover={{ borderColor: 'rgba(255, 255, 255, 0.15)' }}
+                        _focus={{ borderColor: 'blue.400', boxShadow: 'none' }}
+                        color='white'
+                        disabled={isLoading}
+                        textAlign='center'
+                        fontSize='xs'
+                      />
+                    </Flex>
+                  </Box>
+                </Box>
+
+                {/* Right Column - Log Files */}
+                <Box
+                  bg='#161616'
+                  p={2}
+                  borderRadius='md'
+                  border='1px solid rgba(255, 255, 255, 0.08)'
+                  display='flex'
+                  flexDirection='column'
+                  height='100%'
+                >
+                  <Text fontSize='sm' fontWeight='500' color='white' mb={1}>
+                    Log Files
                   </Text>
-                </Flex>
+                  <Text
+                    fontSize='xs'
+                    color='whiteAlpha.600'
+                    lineHeight='1.3'
+                    flex='1'
+                  >
+                    {logFileCount} files • {formatFileSize(logTotalSize)} total
+                  </Text>
+                  <Box
+                    borderTop='1px solid rgba(255, 255, 255, 0.06)'
+                    mt={3}
+                    pt={3}
+                  >
+                    <Flex align='center' justify='flex-end' mb={1}>
+                      <Button
+                        size='2xs'
+                        variant='outline'
+                        onClick={openLogsWindow}
+                        disabled={isLoading}
+                        height='18px'
+                        fontSize='10px'
+                        color='whiteAlpha.600'
+                        borderColor='rgba(255, 255, 255, 0.1)'
+                        _hover={{
+                          borderColor: 'rgba(255, 255, 255, 0.2)',
+                          bg: 'whiteAlpha.50',
+                        }}
+                        px={1.5}
+                      >
+                        <Box as={FileText} width='8px' height='8px' mr={0.5} />
+                        View Logs
+                      </Button>
+                    </Flex>
+                    <Flex align='center' justify='flex-end'>
+                      <Button
+                        size='2xs'
+                        variant='outline'
+                        onClick={cleanupLogs}
+                        loading={isCleaningLogs}
+                        loadingText='...'
+                        disabled={isLoading}
+                        height='18px'
+                        fontSize='10px'
+                        color='whiteAlpha.600'
+                        borderColor='rgba(255, 255, 255, 0.1)'
+                        _hover={{
+                          borderColor: 'rgba(255, 255, 255, 0.2)',
+                          bg: 'whiteAlpha.50',
+                        }}
+                        px={1.5}
+                      >
+                        <Box as={Trash2} width='8px' height='8px' mr={0.5} />
+                        Purge Now
+                      </Button>
+                    </Flex>
+                  </Box>
+                </Box>
               </Box>
             </Stack>
           </Dialog.Body>
