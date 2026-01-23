@@ -1,6 +1,6 @@
 [package]
 name = "kftray-portforward"
-version = "0.27.7"
+version = "0.27.8"
 authors = ["Henrique Cavarsan <hencavarsan@gmail.com>"]
 edition = "2024"
 description = "KFtray library with port forwarding logic"
@@ -42,6 +42,7 @@ httparse = { workspace = true }
 hyper = { workspace = true }
 hyper-openssl = { workspace = true }
 hyper-util = { workspace = true }
+jiff = { version = "0.2", features = ["serde"] }
 k8s-openapi = { workspace = true }
 keyring = { workspace = true }
 kftray-commons = { workspace = true }
@@ -76,7 +77,6 @@ tracing = { workspace = true }
 tungstenite = { workspace = true }
 uuid = { workspace = true }
 whoami = { workspace = true }
-jiff = { version = "0.2", features = ["serde"] }
 
 [dev-dependencies]
 http = { workspace = true }
