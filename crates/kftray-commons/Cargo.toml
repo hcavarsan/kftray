@@ -1,6 +1,6 @@
 [package]
 name = "kftray-commons"
-version = "0.27.9"
+version = "0.27.10"
 authors = ["Henrique Cavarsan <hencavarsan@gmail.com>"]
 edition = "2024"
 description = "KFtray commons"

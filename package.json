@@ -1,6 +1,6 @@
 {
   "name": "kftray",
-  "version": "0.27.9",
+  "version": "0.27.10",
   "private": true,
   "scripts": {
     "build": "pnpm --filter @kftray/ui run build",
