@@ -34,9 +34,16 @@ fn init_path() {
         #[cfg(unix)]
         {
             let current = env::var("PATH").unwrap_or_default();
-            let resolved = shell_path()
-                .map(|p| merge_paths(&p, &current))
-                .unwrap_or_else(|| with_fallback(&current));
+            let resolved = match shell_path() {
+                Some(p) => {
+                    info!("init_path: using shell PATH");
+                    merge_paths(&p, &current)
+                }
+                None => {
+                    info!("init_path: using fallback paths");
+                    with_fallback(&current)
+                }
+            };
             unsafe { env::set_var("PATH", &resolved) };
         }
     });
@@ -44,6 +51,52 @@ fn init_path() {
 
 #[cfg(unix)]
 fn shell_path() -> Option<String> {
+    use std::collections::HashSet;
+    use std::path::Path;
+
+    use log::{
+        info,
+        warn,
+    };
+
+    let home = env::var("HOME").ok()?;
+
+    let shells_to_try: Vec<String> = [
+        env::var("SHELL").ok(),
+        Some("/opt/homebrew/bin/fish".into()),
+        Some("/usr/local/bin/fish".into()),
+        Some("/bin/zsh".into()),
+        Some("/bin/bash".into()),
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|s| Path::new(s).exists())
+    .collect();
+
+    let mut seen = HashSet::new();
+    let mut merged = Vec::new();
+
+    for shell in shells_to_try {
+        if let Some(path) = try_shell_path(&shell, &home) {
+            info!("shell_path: {} returned {} chars", shell, path.len());
+            for p in path.split(':') {
+                if !p.is_empty() && seen.insert(p.to_string()) {
+                    merged.push(p.to_string());
+                }
+            }
+        }
+    }
+
+    if merged.is_empty() {
+        warn!("shell_path: no shell returned valid PATH");
+        return None;
+    }
+
+    Some(merged.join(":"))
+}
+
+#[cfg(unix)]
+fn try_shell_path(shell: &str, home: &str) -> Option<String> {
     use std::io::Read;
     use std::process::{
         Command,
@@ -56,26 +109,23 @@ fn shell_path() -> Option<String> {
 
     use log::warn;
 
-    let shell = env::var("SHELL").ok()?;
-    let home = env::var("HOME").ok()?;
     let is_fish = shell.ends_with("/fish");
-
     let cmd = if is_fish {
         "string join : $PATH"
     } else {
         "echo $PATH"
     };
 
-    let mut child = Command::new(&shell)
+    let mut child = Command::new(shell)
         .args(["-lc", cmd])
         .env("DISABLE_AUTO_UPDATE", "true")
-        .current_dir(&home)
+        .current_dir(home)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .ok()?;
 
-    let timeout = Duration::from_secs(5);
+    let timeout = Duration::from_secs(3);
     let start = Instant::now();
 
     loop {
@@ -87,11 +137,6 @@ fn shell_path() -> Option<String> {
                 }
 
                 if !status.success() {
-                    let mut stderr = String::new();
-                    if let Some(mut err) = child.stderr.take() {
-                        let _ = err.read_to_string(&mut stderr);
-                    }
-                    warn!("shell_path failed: {}", stderr.trim());
                     return None;
                 }
 
@@ -101,7 +146,7 @@ fn shell_path() -> Option<String> {
             Ok(None) if start.elapsed() > timeout => {
                 let _ = child.kill();
                 let _ = child.wait();
-                warn!("shell_path timed out");
+                warn!("try_shell_path: {} timed out", shell);
                 return None;
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(50)),
