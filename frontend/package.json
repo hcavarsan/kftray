@@ -26,7 +26,7 @@
     "react": "^19.2.3",
     "react-dom": "^19.2.3",
     "react-select": "^5.10.2",
-    "react-window": "^1.8.10",
+    "react-window": "^2.0.0",
     "terser": "^5.46.0"
   },
   "devDependencies": {
@@ -42,7 +42,7 @@
     "@types/node": "^25.0.3",
     "@types/react": "^19.2.7",
     "@types/react-dom": "^19.2.3",
-    "@types/react-window": "^1.8.8",
+    "@types/react-window": "^2.0.0",
     "@typescript-eslint/eslint-plugin": "^8.50.1",
     "@typescript-eslint/parser": "^8.50.1",
     "eslint": "^9.39.2",
