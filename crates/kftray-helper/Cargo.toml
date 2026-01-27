@@ -5,6 +5,7 @@ authors = ["KFTray Contributors"]
 edition = "2024"
 description = "Privileged helper binary for KFTray"
 license = "GPL-3.0"
+repository = "https://github.com/hcavarsan/kftray"
 
 [dependencies]
 clap = { workspace = true }
