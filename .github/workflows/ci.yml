@@ -184,7 +184,7 @@ jobs:
     name: Code Coverage
     runs-on: ubuntu-22.04
     permissions:
-      contents: write
+      contents: read
       statuses: write
     steps:
       - name: Checkout repository
@@ -302,7 +302,7 @@ jobs:
   build-and-push-docker:
     if: ${{ contains(github.event.pull_request.title, '[docker]') }}
     permissions:
-      contents: write
+      contents: read
       packages: write
     runs-on: ubuntu-22.04
     steps:
