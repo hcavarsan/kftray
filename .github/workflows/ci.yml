@@ -185,11 +185,9 @@ jobs:
     runs-on: ubuntu-22.04
     permissions:
       contents: read
-      statuses: write
     steps:
       - name: Checkout repository
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
-
 
       - name: Install dependencies
         run: |
@@ -331,4 +329,3 @@ jobs:
           push: true
           tags: |
             ghcr.io/${{ github.repository_owner }}/kftray-server:${{ github.sha }}
-

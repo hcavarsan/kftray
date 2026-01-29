@@ -15,6 +15,9 @@ use tokio::task;
 use tracing::debug;
 
 const MAX_HEADERS: usize = 64;
+/// Maximum allowed chunk size (100MB) to prevent integer overflow and DoS
+/// attacks
+const MAX_CHUNK_SIZE: usize = 100 * 1024 * 1024;
 
 #[derive(Debug, PartialEq)]
 enum ContentCategory {
@@ -277,7 +280,12 @@ impl RequestParser {
         };
 
         let chunk_size = match usize::from_str_radix(size_part, 16) {
-            Ok(size) => size,
+            Ok(size) if size <= MAX_CHUNK_SIZE => size,
+            Ok(_) => {
+                return Ok(ChunkParseResult::Skip {
+                    consumed: line_end + 2,
+                });
+            }
             Err(_) => {
                 return Ok(ChunkParseResult::Skip {
                     consumed: line_end + 2,
@@ -295,15 +303,27 @@ impl RequestParser {
 
         let chunk_start = line_end + 2;
 
-        if chunk_start + chunk_size <= chunk_data.len() {
-            if chunk_start + chunk_size + 2 <= chunk_data.len() {
+        let Some(chunk_end) = chunk_start.checked_add(chunk_size) else {
+            return Ok(ChunkParseResult::Skip {
+                consumed: line_end + 2,
+            });
+        };
+
+        if chunk_end <= chunk_data.len() {
+            let Some(next_pos) = chunk_end.checked_add(2) else {
+                return Ok(ChunkParseResult::Incomplete {
+                    chunk_data: Some(&chunk_data[chunk_start..chunk_end]),
+                    consumed: chunk_data.len(),
+                });
+            };
+            if next_pos <= chunk_data.len() {
                 Ok(ChunkParseResult::Complete {
-                    chunk_data: &chunk_data[chunk_start..chunk_start + chunk_size],
-                    next_pos: chunk_start + chunk_size + 2,
+                    chunk_data: &chunk_data[chunk_start..chunk_end],
+                    next_pos,
                 })
             } else {
                 Ok(ChunkParseResult::Incomplete {
-                    chunk_data: Some(&chunk_data[chunk_start..chunk_start + chunk_size]),
+                    chunk_data: Some(&chunk_data[chunk_start..chunk_end]),
                     consumed: chunk_data.len(),
                 })
             }
