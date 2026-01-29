@@ -43,12 +43,12 @@ keyring = { version = "3.6", features = [
   "linux-native",
   "windows-native",
 ] }
-kftray-commons = { version = "0.27.11", path = "crates/kftray-commons" }
-kftray-helper = { version = "0.27.11", path = "crates/kftray-helper" }
-kftray-http-logs = { version = "0.27.11", path = "crates/kftray-http-logs" }
-kftray-network-monitor = { version = "0.27.11", path = "crates/kftray-network-monitor" }
-kftray-portforward = { version = "0.27.11", path = "crates/kftray-portforward" }
-kftray-shortcuts = { version = "0.27.11", path = "crates/kftray-shortcuts" }
+kftray-commons = { version = "0.27.12", path = "crates/kftray-commons" }
+kftray-helper = { version = "0.27.12", path = "crates/kftray-helper" }
+kftray-http-logs = { version = "0.27.12", path = "crates/kftray-http-logs" }
+kftray-network-monitor = { version = "0.27.12", path = "crates/kftray-network-monitor" }
+kftray-portforward = { version = "0.27.12", path = "crates/kftray-portforward" }
+kftray-shortcuts = { version = "0.27.12", path = "crates/kftray-shortcuts" }
 kube = { version = "3.0.0", features = [
   "client",
   "config",
@@ -74,7 +74,7 @@ pem = "3.0"
 portpicker = "0.1"
 rand = "0.9"
 ratatui = { version = "0.30.0", features = ["unstable-widget-ref"] }
-ratatui-explorer = { git = "https://github.com/hcavarsan/ratatui-explorer", branch = "master" }
+ratatui-explorer = { branch = "master", git = "https://github.com/hcavarsan/ratatui-explorer" }
 rcgen = "0.14"
 reqwest = "0.13.1"
 rustls = { version = "0.23", default-features = false, features = [
