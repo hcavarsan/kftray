@@ -1,6 +1,8 @@
 [tools]
 node = "24"
 pnpm = "latest"
+syft = "latest"
+grype = "latest"
 
 [tasks.dev]
 description = "Start Tauri development mode (tauri dev)"
@@ -72,8 +74,8 @@ run = "cd hacks/kftray-utils && cargo run --bin bump_version major && cd ../.. &
 
 
 [tasks.precommit]
-description = "Run pre-commit checks (format, lint, test)"
-run = ["mise run format", "mise run lint", "mise run test:back"]
+description = "Run pre-commit checks (format, lint, test, sbom scan)"
+run = ["mise run format", "mise run lint", "mise run sbom:scan", "mise run test:back"]
 
 [tasks."precommit:hook"]
 description = "Run git pre-commit hook (format, check, git add)"
@@ -99,3 +101,74 @@ run = "cargo run -p kftui -- --log-level info --logs-to-file"
 [tasks.setup]
 description = "Setup development environment for all platforms"
 run = "bash hacks/setup.sh"
+
+[tasks."sbom:generate"]
+description = "Generate SBOMs for frontend, backend, and optionally Docker image"
+env = { SYFT_CHECK_FOR_APP_UPDATE = "false" }
+run = """
+VERSION="${VERSION:-local}"
+
+echo "Generating frontend SBOM..."
+syft scan dir:frontend --base-path=. --source-name kftray-frontend --source-version $VERSION -o cyclonedx-json=sbom-frontend.cdx.json
+
+echo "Generating backend SBOM..."
+syft scan dir:. --source-name kftray-backend --source-version $VERSION -o cyclonedx-json=sbom-backend.cdx.json
+
+if [ -n "$DOCKER_IMAGE" ]; then
+  echo "Generating Docker SBOM for $DOCKER_IMAGE..."
+  syft scan $DOCKER_IMAGE -o cyclonedx-json=sbom-docker.cdx.json
+  SBOM_FILES="sbom-frontend.cdx.json sbom-backend.cdx.json sbom-docker.cdx.json"
+else
+  echo "Skipping Docker SBOM (DOCKER_IMAGE not set)"
+  SBOM_FILES="sbom-frontend.cdx.json sbom-backend.cdx.json"
+fi
+
+echo "Merging SBOMs..."
+jq -s 'def deepmerge(a;b):
+  reduce b[] as $item (a;
+    reduce ($item | keys_unsorted[]) as $key (.;
+      $item[$key] as $val | ($val | type) as $type | .[$key] = if ($type == "object") then
+        deepmerge({}; [if .[$key] == null then {} else .[$key] end, $val])
+      elif ($type == "array") then
+        (.[$key] + $val | unique)
+      else
+        $val
+      end)
+    );
+  deepmerge({}; .)' $SBOM_FILES > sbom.cdx.json
+rm -f sbom-frontend.cdx.json sbom-backend.cdx.json sbom-docker.cdx.json
+echo "SBOM saved to sbom.cdx.json"
+"""
+
+[tasks."sbom:scan"]
+description = "Generate SBOM, scan for vulnerabilities, exit 1 if critical/high found"
+run = """
+mise run sbom:generate
+
+echo ""
+echo "Scanning for vulnerabilities..."
+grype sbom:sbom.cdx.json -o json=vuln-report.json -c .grype.yaml
+
+echo ""
+jq -r '
+  .matches | group_by(.vulnerability.severity) |
+  map({severity: .[0].vulnerability.severity, count: length}) |
+  sort_by(.severity) | reverse |
+  .[] | "\\(.severity): \\(.count)"
+' vuln-report.json
+
+CRITICAL=$(jq '[.matches[] | select(.vulnerability.severity == "Critical")] | length' vuln-report.json)
+HIGH=$(jq '[.matches[] | select(.vulnerability.severity == "High")] | length' vuln-report.json)
+
+echo ""
+if [ "$CRITICAL" -gt 0 ] || [ "$HIGH" -gt 0 ]; then
+  echo "Found $CRITICAL critical and $HIGH high severity vulnerabilities"
+  echo ""
+  echo "=== Critical/High Vulnerabilities ==="
+  jq -r '.matches[] | select(.vulnerability.severity == "Critical" or .vulnerability.severity == "High") | "\\(.vulnerability.severity) | \\(.artifact.name)@\\(.artifact.version) | \\(.vulnerability.id)"' vuln-report.json
+  exit 1
+fi
+
+echo "No critical or high vulnerabilities found"
+echo "Reports saved to sbom.cdx.json and vuln-report.json"
+"""

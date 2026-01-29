@@ -147,10 +147,6 @@ jobs:
       - name: Install clippy for nightly
         run: rustup component add --toolchain nightly clippy
 
-      - name: Install OpenSSL on Windows
-        if: matrix.os == 'windows-latest'
-        run: choco install openssl
-
       - name: Set up Perl on Windows
         if: matrix.os == 'windows-latest'
         uses: shogo82148/actions-setup-perl@b27fdd828a97a63c975cdedfe6ad62830c3b55c9
