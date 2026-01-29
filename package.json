@@ -25,10 +25,22 @@
     "tauri": "cargo build --bin kftray-helper --release && tauri",
     "knip": "pnpm --filter @kftray/ui run knip"
   },
+  "pnpm": {
+    "peerDependencyRules": {
+      "allowedVersions": {
+        "@codecov/vite-plugin>vite": "7"
+      }
+    },
+    "overrides": {
+      "undici": "^6.23.0",
+      "@codecov/vite-plugin>vite": "^7.0.0"
+    }
+  },
   "devDependencies": {
     "@codecov/vite-plugin": "1.9.1",
     "@eslint/eslintrc": "^3.3.3",
     "@eslint/js": "^9.39.2",
-    "@tauri-apps/cli": "^2.9.6"
+    "@tauri-apps/cli": "^2.9.6",
+    "@types/react-window": "^2.0.0"
   }
 }

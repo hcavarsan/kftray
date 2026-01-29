@@ -1,0 +1,6 @@
+ignore:
+  # glib-rs unsoundness in VariantStrIter (RUSTSEC-2024-0429)
+  # Upstream Tauri dependency via gtk3-rs. Not exploitable in this codebase.
+  # See tauri-apps/tauri#12048
+  - vulnerability: RUSTSEC-2024-0429
+  - vulnerability: GHSA-wrw7-89jp-8q8g

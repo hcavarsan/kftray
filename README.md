@@ -19,6 +19,9 @@
   <a href="https://crates.io/crates/kftui">
     <img src="https://img.shields.io/crates/v/kftui?style=for-the-badge&logo=rust" alt="Crates.io">
   </a>
+  <a href="https://scorecard.dev/viewer/?uri=github.com/hcavarsan/kftray">
+    <img src="https://img.shields.io/ossf-scorecard/github.com/hcavarsan/kftray?style=for-the-badge&label=openssf%20scorecard" alt="OpenSSF Scorecard">
+  </a>
   <br><br>
 </div>
 
@@ -222,6 +225,15 @@ For UDP or when you need to reach external services, we deploy a small relay pod
 ## Recent Updates
 
 Check the [releases page](https://github.com/hcavarsan/kftray/releases) for the full changelog.
+
+## Security and SBOM
+
+Releases are blocked if critical or high severity vulnerabilities are found. The CI scans frontend, backend, Docker image, and GitHub Actions using [Grype](https://github.com/anchore/grype) before publishing. You can run the same scan locally with `mise run sbom:scan`.
+
+A consolidated SBOM is generated with [Syft](https://github.com/anchore/syft) in CycloneDX format, containing all dependencies (Rust, Frontend, and Docker). Links below point to the latest release:
+
+- [SBOM](https://github.com/hcavarsan/kftray/releases/latest/download/sbom.cdx.json)
+- [Vulnerability Report](https://github.com/hcavarsan/kftray/releases/latest/download/vuln-report.json)
 
 ## Development
 
