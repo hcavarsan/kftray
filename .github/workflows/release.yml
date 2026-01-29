@@ -544,10 +544,10 @@ jobs:
         with:
           arch: amd64_arm64
 
-      - name: Install OpenSSL and NASM on Windows
+      - name: Install NASM and Ninja on Windows
         if: matrix.os == 'windows-latest'
         run: |
-          choco install openssl nasm ninja
+          choco install nasm ninja
 
       - name: Set up Perl on Windows
         if: matrix.os == 'windows-latest'

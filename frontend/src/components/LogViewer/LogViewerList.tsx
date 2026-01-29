@@ -88,12 +88,6 @@ function LogViewerListComponent({
     prevEntriesLengthRef.current = entries.length
   }, [entries.length, autoFollow, listRef])
 
-  useEffect(() => {
-    if (autoFollow && listRef && entries.length > 0) {
-      listRef.scrollToRow({ index: entries.length - 1, align: 'end' })
-    }
-  }, [autoFollow, entries.length, listRef])
-
   const Row = useCallback(
     ({
       index,
