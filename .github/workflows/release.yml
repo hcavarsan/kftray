@@ -544,10 +544,10 @@ jobs:
         with:
           arch: amd64_arm64
 
-      - name: Install OpenSSL and NASM on Windows
+      - name: Install NASM and Ninja on Windows
         if: matrix.os == 'windows-latest'
         run: |
-          choco install openssl nasm ninja
+          choco install nasm ninja
 
       - name: Set up Perl on Windows
         if: matrix.os == 'windows-latest'
@@ -678,8 +678,43 @@ jobs:
             ghcr.io/${{ github.repository_owner }}/kftray-server:${{ github.ref_name }}
             ghcr.io/${{ github.repository_owner }}/kftray-server:latest
 
+  sbom-scan:
+    needs: [kftray-server]
+    permissions:
+      contents: read
+      packages: read
+    runs-on: ubuntu-22.04
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
+
+      - name: Setup mise
+        uses: jdx/mise-action@v2
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@6862ffc5ab2cdb4405cf318a62a6f4c066e2298b
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Scan for vulnerabilities
+        env:
+          DOCKER_IMAGE: ghcr.io/${{ github.repository_owner }}/kftray-server:${{ github.ref_name }}
+          VERSION: ${{ github.ref_name }}
+        run: mise run sbom:scan
+
+      - name: Upload SBOM artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-artifacts
+          path: |
+            sbom.cdx.json
+            vuln-report.json
+
   update-release:
-    needs: [kftray-tauri, kftui, kftray-server, create-release-draft]
+    needs: [kftray-tauri, kftui, kftray-server, sbom-scan, create-release-draft]
     permissions:
       contents: write
     runs-on: ubuntu-22.04
@@ -874,6 +909,28 @@ jobs:
           chmod +x ./hacks/obs/*.sh
           ./hacks/obs/setup.sh
           ./hacks/obs/publish.sh
+
+  sbom-upload:
+    needs: [update-release]
+    permissions:
+      contents: write
+    runs-on: ubuntu-22.04
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Download SBOM artifacts
+        uses: actions/download-artifact@v7
+        with:
+          name: sbom-artifacts
+
+      - name: Upload SBOM and report to release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh release upload ${{ github.ref_name }} \
+            sbom.cdx.json \
+            vuln-report.json \
+            --clobber
 
   update-homebrew:
     needs: [update-release]

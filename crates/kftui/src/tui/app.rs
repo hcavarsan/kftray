@@ -78,7 +78,10 @@ pub async fn run_tui(
 
 pub async fn run_app<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>, app: &mut App, mode: DatabaseMode,
-) -> io::Result<()> {
+) -> io::Result<()>
+where
+    std::io::Error: From<B::Error>,
+{
     let mut interval = time::interval(Duration::from_millis(100));
 
     loop {

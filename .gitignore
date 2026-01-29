@@ -42,3 +42,8 @@ PR.md
 post.md
 CLI.md
 .zed
+
+sbom-*.cdx.json
+*.cdx.json
+vuln-report.json
+grype-report.json
