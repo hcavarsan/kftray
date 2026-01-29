@@ -1,11 +1,11 @@
 [package]
 name = "kftray-helper"
-version = "0.27.11"
+version = "0.27.12"
 authors = ["KFTray Contributors"]
 edition = "2024"
 description = "Privileged helper binary for KFTray"
-license = "GPL-3.0"
 repository = "https://github.com/hcavarsan/kftray"
+license = "GPL-3.0"
 
 [dependencies]
 clap = { workspace = true }
