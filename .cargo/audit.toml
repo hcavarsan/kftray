@@ -1,0 +1,25 @@
+[advisories]
+ignore = [
+    #  unmaintained but required by Tauri on Linux
+    "RUSTSEC-2024-0413", # atk
+    "RUSTSEC-2024-0416", # atk-sys
+    "RUSTSEC-2024-0412", # gdk
+    "RUSTSEC-2024-0418", # gdk-sys
+    "RUSTSEC-2024-0411", # gdkwayland-sys
+    "RUSTSEC-2024-0415", # gtk
+    "RUSTSEC-2024-0420", # gtk-sys
+    "RUSTSEC-2024-0419", # gtk3-macros
+    "RUSTSEC-2024-0429",
+
+    # unmaintained with no alternatives
+    "RUSTSEC-2024-0370", # proc-macro-error (widely used, no replacement)
+    "RUSTSEC-2025-0057", # fxhash
+    "RUSTSEC-2025-0119", # number_prefix
+
+    # unic-* crates
+    "RUSTSEC-2025-0081", # unic-char-property
+    "RUSTSEC-2025-0075", # unic-char-range
+    "RUSTSEC-2025-0080", # unic-common
+    "RUSTSEC-2025-0100", # unic-ucd-ident
+    "RUSTSEC-2025-0098", # unic-ucd-version
+]
