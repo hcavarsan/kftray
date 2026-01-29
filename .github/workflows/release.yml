@@ -689,7 +689,7 @@ jobs:
           push-to-registry: true
 
   sbom-scan:
-    needs: [kftray-server]
+    needs: [kftray-server, kftui, kftray-tauri]
     permissions:
       contents: read
       packages: read
@@ -724,7 +724,7 @@ jobs:
             vuln-report.json
 
   update-release:
-    needs: [kftray-tauri, kftui, kftray-server, sbom-scan, create-release-draft]
+    needs: [sbom-scan, create-release-draft]
     permissions:
       contents: write
     runs-on: ubuntu-22.04
