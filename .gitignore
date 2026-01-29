@@ -47,3 +47,9 @@ sbom-*.cdx.json
 *.cdx.json
 vuln-report.json
 grype-report.json
+
+fuzz/target/
+fuzz/artifacts/
+fuzz/corpus/**/crash-*
+fuzz/corpus/**/leak-*
+fuzz/corpus/**/timeout-*

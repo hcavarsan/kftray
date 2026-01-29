@@ -1,7 +1,6 @@
 name: "Mark or close stale issues and PRs"
 on:
   schedule:
-    # Run the stalebot every day at 11pm UTC
     - cron: "00 23 * * *"
 
 permissions:

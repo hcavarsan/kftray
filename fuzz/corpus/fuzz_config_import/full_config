@@ -1,0 +1,1 @@
+{"id":1,"service":"nginx","namespace":"production","local_port":8080,"remote_port":80,"context":"minikube","workload_type":"service","protocol":"tcp","remote_address":"","local_address":"127.0.0.1","alias":"web","domain_enabled":false}
