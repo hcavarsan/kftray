@@ -26,84 +26,6 @@ jobs:
             exit 1
           fi
 
-  rust-coverage:
-    name: Code Coverage
-    runs-on: ubuntu-22.04
-    permissions:
-      contents: read
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt install -y \
-              build-essential \
-              curl \
-              wget \
-              file \
-              libxdo-dev \
-              libssl-dev \
-              libayatana-appindicator3-dev \
-              librsvg2-dev \
-              libwebkit2gtk-4.1-dev \
-              patchelf \
-              xdg-utils
-
-      - name: Install Rust nightly
-        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561
-        with:
-          toolchain: nightly
-
-      - name: Install llvm-tools
-        run: rustup component add llvm-tools
-
-      - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@50cee16bd6b97b2579572f83cfa1c0a721b1e336
-        with:
-          tool: cargo-llvm-cov
-
-      - name: Install nextest
-        uses: taiki-e/install-action@50cee16bd6b97b2579572f83cfa1c0a721b1e336
-        with:
-          tool: cargo-nextest
-
-      - name: Install rust-cache
-        uses: swatinem/rust-cache@5e4a76743357a1c3c57315bc1896d2c7f89d6861
-        with:
-          key: rust-coverage-${{ runner.os }}
-          shared-key: rust-coverage
-          workspaces: |
-            .
-            crates/kftray-helper
-            crates/kftray-http-logs
-            crates/kftray-portforward
-            crates/kftray-network-monitor
-            crates/kftui
-
-      - name: Run tests
-        env:
-          RUSTFLAGS: "-C link-arg=-s"
-        run: cargo build --bin kftray-helper --release && INSTA_UPDATE=1 cargo llvm-cov nextest --profile ci --config-file .cargo/nextest.toml --locked --workspace --all-features --lib --bins --examples --tests --lcov --output-path lcov.info
-
-      - name: Upload test results
-        uses: codecov/test-results-action@0fa95f0e1eeaafde2c782583b36b28ad0d8c77d3
-        if: ${{ !cancelled() }}
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: target/nextest/ci/junit.xml
-          disable_search: true
-          slug: hcavarsan/kftray
-
-      - name: Upload coverage
-        uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de
-        with:
-          token: ${{ secrets.CODECOV_TOKEN }}
-          files: lcov.info
-          disable_search: true
-          slug: hcavarsan/kftray
-
   create-release-draft:
     needs:
       - validate-version
@@ -642,6 +564,7 @@ jobs:
         shell: bash
 
   kftray-server:
+    needs: create-release-draft
     permissions:
       contents: write
       packages: write
@@ -723,7 +646,7 @@ jobs:
             vuln-report.json
 
   update-release:
-    needs: [sbom-scan, create-release-draft]
+    needs: [publish-linux-packages, publish-cargo-crates, create-release-draft]
     permissions:
       contents: write
     runs-on: ubuntu-22.04
@@ -786,7 +709,7 @@ jobs:
           release_id: ${{ needs.create-release-draft.outputs.release_id }}
 
   publish-cargo-crates:
-    needs: [kftui]
+    needs: [sbom-scan]
     permissions:
       contents: read
     runs-on: ubuntu-22.04
@@ -898,7 +821,7 @@ jobs:
           echo "All crates published successfully!"
 
   publish-linux-packages:
-    needs: [kftui, update-release]
+    needs: [sbom-scan]
     runs-on: ubuntu-22.04
     if: |
       startsWith(github.ref, 'refs/tags/v') &&
