@@ -1,8 +1,7 @@
 [tools]
 node = "24"
 pnpm = "latest"
-syft = "latest"
-grype = "latest"
+syft = "1.40.1"   # Pinned for reproducibility (https://github.com/anchore/syft/releases)
 
 [tasks.dev]
 description = "Start Tauri development mode (tauri dev)"
@@ -75,7 +74,7 @@ run = "cd hacks/kftray-utils && cargo run --bin bump_version major && cd ../.. &
 
 [tasks.precommit]
 description = "Run pre-commit checks (format, lint, test, sbom scan)"
-run = ["mise run format", "mise run lint", "mise run sbom:scan", "mise run test:back"]
+run = ["mise run format", "mise run lint", "mise run sbom:scan-all", "mise run test:back"]
 
 [tasks."precommit:hook"]
 description = "Run git pre-commit hook (format, check, git add)"
@@ -102,73 +101,281 @@ run = "cargo run -p kftui -- --log-level info --logs-to-file"
 description = "Setup development environment for all platforms"
 run = "bash hacks/setup.sh"
 
-[tasks."sbom:generate"]
-description = "Generate SBOMs for frontend, backend, and optionally Docker image"
-env = { SYFT_CHECK_FOR_APP_UPDATE = "false" }
+[tasks."sbom:install-tools"]
+description = "Install sbomasm if not present (with checksum verification)"
 run = """
-VERSION="${VERSION:-local}"
-
-echo "Generating frontend SBOM..."
-syft scan dir:frontend --base-path=. --source-name kftray-frontend --source-version $VERSION -o cyclonedx-json=sbom-frontend.cdx.json
-
-echo "Generating backend SBOM..."
-syft scan dir:. --source-name kftray-backend --source-version $VERSION -o cyclonedx-json=sbom-backend.cdx.json
-
-if [ -n "$DOCKER_IMAGE" ]; then
-  echo "Generating Docker SBOM for $DOCKER_IMAGE..."
-  syft scan $DOCKER_IMAGE -o cyclonedx-json=sbom-docker.cdx.json
-  SBOM_FILES="sbom-frontend.cdx.json sbom-backend.cdx.json sbom-docker.cdx.json"
-else
-  echo "Skipping Docker SBOM (DOCKER_IMAGE not set)"
-  SBOM_FILES="sbom-frontend.cdx.json sbom-backend.cdx.json"
+if command -v sbomasm &> /dev/null; then
+  echo "sbomasm already installed: $(sbomasm version 2>/dev/null || echo 'unknown version')"
+  exit 0
 fi
 
-echo "Merging SBOMs..."
-jq -s 'def deepmerge(a;b):
-  reduce b[] as $item (a;
-    reduce ($item | keys_unsorted[]) as $key (.;
-      $item[$key] as $val | ($val | type) as $type | .[$key] = if ($type == "object") then
-        deepmerge({}; [if .[$key] == null then {} else .[$key] end, $val])
-      elif ($type == "array") then
-        (.[$key] + $val | unique)
-      else
-        $val
-      end)
-    );
-  deepmerge({}; .)' $SBOM_FILES > sbom.cdx.json
-rm -f sbom-frontend.cdx.json sbom-backend.cdx.json sbom-docker.cdx.json
-echo "SBOM saved to sbom.cdx.json"
-"""
+echo "Installing sbomasm..."
+mkdir -p ~/.local/bin
+# Checksums from: https://github.com/interlynk-io/sbomasm/releases/tag/v2.0.1
+SBOMASM_VERSION="2.0.1"
+OS=$(uname -s)
+ARCH=$(uname -m)
 
-[tasks."sbom:scan"]
-description = "Generate SBOM, scan for vulnerabilities, exit 1 if critical/high found"
-run = """
-mise run sbom:generate
-
-echo ""
-echo "Scanning for vulnerabilities..."
-grype sbom:sbom.cdx.json -o json=vuln-report.json -c .grype.yaml
-
-echo ""
-jq -r '
-  .matches | group_by(.vulnerability.severity) |
-  map({severity: .[0].vulnerability.severity, count: length}) |
-  sort_by(.severity) | reverse |
-  .[] | "\\(.severity): \\(.count)"
-' vuln-report.json
-
-CRITICAL=$(jq '[.matches[] | select(.vulnerability.severity == "Critical")] | length' vuln-report.json)
-HIGH=$(jq '[.matches[] | select(.vulnerability.severity == "High")] | length' vuln-report.json)
-
-echo ""
-if [ "$CRITICAL" -gt 0 ] || [ "$HIGH" -gt 0 ]; then
-  echo "Found $CRITICAL critical and $HIGH high severity vulnerabilities"
-  echo ""
-  echo "=== Critical/High Vulnerabilities ==="
-  jq -r '.matches[] | select(.vulnerability.severity == "Critical" or .vulnerability.severity == "High") | "\\(.vulnerability.severity) | \\(.artifact.name)@\\(.artifact.version) | \\(.vulnerability.id)"' vuln-report.json
+if [ "$ARCH" = "x86_64" ]; then
+  SBOMASM_ARCH="x86_64"
+  if [ "$OS" = "Darwin" ]; then
+    EXPECTED_SHA="ae71861d7f6a10e9313ed291b60fd9dabd39d21725607d241264f523a016dc96"
+  else
+    EXPECTED_SHA="c2c026100b5407fe29fb04f2b4af3a999c53599d8718ff3e03fe276854be5c97"
+  fi
+elif [ "$ARCH" = "aarch64" ] || [ "$ARCH" = "arm64" ]; then
+  SBOMASM_ARCH="arm64"
+  if [ "$OS" = "Darwin" ]; then
+    EXPECTED_SHA="a7499558b6189bcbcd98bcfb43abd16f1377505332fba2236449718b27366df3"
+  else
+    EXPECTED_SHA="ae90f7f275a5480b2631c34cdb01b88bec67f0f5443ce99d59442153fe2a6982"
+  fi
+else
+  echo "ERROR: Unsupported architecture: $ARCH" >&2
   exit 1
 fi
 
-echo "No critical or high vulnerabilities found"
-echo "Reports saved to sbom.cdx.json and vuln-report.json"
+DOWNLOAD_URL="https://github.com/interlynk-io/sbomasm/releases/download/v${SBOMASM_VERSION}/sbomasm_${SBOMASM_VERSION}_${OS}_${SBOMASM_ARCH}.tar.gz"
+TEMP_FILE=$(mktemp)
+
+echo "Downloading from $DOWNLOAD_URL..."
+curl -sSfL "$DOWNLOAD_URL" -o "$TEMP_FILE" || { echo "ERROR: Download failed" >&2; rm -f "$TEMP_FILE"; exit 1; }
+
+if command -v sha256sum &> /dev/null; then
+  ACTUAL_SHA=$(sha256sum "$TEMP_FILE" | cut -d' ' -f1)
+elif command -v shasum &> /dev/null; then
+  ACTUAL_SHA=$(shasum -a 256 "$TEMP_FILE" | cut -d' ' -f1)
+else
+  echo "ERROR: No sha256sum or shasum available for checksum verification" >&2
+  rm -f "$TEMP_FILE"
+  exit 1
+fi
+
+if [ "$ACTUAL_SHA" != "$EXPECTED_SHA" ]; then
+  echo "ERROR: Checksum verification failed!" >&2
+  echo "Expected: $EXPECTED_SHA" >&2
+  echo "Actual:   $ACTUAL_SHA" >&2
+  rm -f "$TEMP_FILE"
+  exit 1
+fi
+
+tar -xzf "$TEMP_FILE" -C ~/.local/bin sbomasm
+chmod +x ~/.local/bin/sbomasm
+rm -f "$TEMP_FILE"
+
+if ! ~/.local/bin/sbomasm version &> /dev/null; then
+  echo "ERROR: sbomasm installation failed" >&2
+  exit 1
+fi
+
+echo "sbomasm installed successfully to ~/.local/bin/sbomasm"
+"""
+
+[tasks."sbom:kftray"]
+description = "Generate SBOM for kftray desktop app (Rust + Frontend)"
+env = { SYFT_CHECK_FOR_APP_UPDATE = "false" }
+depends = ["sbom:install-tools"]
+run = """
+export PATH="$HOME/.local/bin:$PATH"
+VERSION="${VERSION:-local}"
+
+echo "=== Generating SBOM for kftray desktop app ==="
+
+echo "Scanning frontend dependencies..."
+syft scan dir:frontend \
+  --base-path=frontend \
+  --exclude '**/node_modules/**/.github/**' \
+  --exclude '**/pnpm-lock.yaml' \
+  --source-name kftray-frontend \
+  --source-version $VERSION \
+  --enrich all \
+  -o cyclonedx-json=sbom-kftray-frontend.cdx.json
+
+echo "Scanning Rust backend..."
+syft scan file:Cargo.lock \
+  --source-name kftray-backend \
+  --source-version $VERSION \
+  --enrich all \
+  -o cyclonedx-json=sbom-kftray-backend.cdx.json
+
+echo "Assembling kftray SBOM..."
+sbomasm assemble \
+  --flatMerge \
+  -n kftray \
+  -v $VERSION \
+  -t application \
+  -o sbom-kftray.cdx.json \
+  sbom-kftray-frontend.cdx.json sbom-kftray-backend.cdx.json
+
+echo "Enriching with license data..."
+sbomasm enrich --fields license -o sbom-kftray.cdx.json sbom-kftray.cdx.json
+
+echo "Adding supplier metadata..."
+sbomasm edit --subject document \
+  --supplier "KFtray Contributors (https://github.com/hcavarsan/kftray)" \
+  --timestamp \
+  sbom-kftray.cdx.json
+
+rm -f sbom-kftray-frontend.cdx.json sbom-kftray-backend.cdx.json
+echo "SBOM saved to sbom-kftray.cdx.json"
+"""
+
+[tasks."sbom:kftui"]
+description = "Generate SBOM for kftui CLI (Rust only)"
+env = { SYFT_CHECK_FOR_APP_UPDATE = "false" }
+depends = ["sbom:install-tools"]
+run = """
+export PATH="$HOME/.local/bin:$PATH"
+VERSION="${VERSION:-local}"
+
+echo "=== Generating SBOM for kftui CLI ==="
+
+syft scan file:Cargo.lock \
+  --source-name kftui \
+  --source-version $VERSION \
+  --enrich all \
+  -o cyclonedx-json=sbom-kftui.cdx.json
+
+sbomasm enrich --fields license -o sbom-kftui.cdx.json sbom-kftui.cdx.json
+
+sbomasm edit --subject document \
+  --supplier "KFtray Contributors (https://github.com/hcavarsan/kftray)" \
+  --timestamp \
+  sbom-kftui.cdx.json
+
+echo "SBOM saved to sbom-kftui.cdx.json"
+"""
+
+[tasks."sbom:kftray-server"]
+description = "Generate SBOM for kftray-server Docker image"
+env = { SYFT_CHECK_FOR_APP_UPDATE = "false" }
+depends = ["sbom:install-tools"]
+run = """
+export PATH="$HOME/.local/bin:$PATH"
+VERSION="${VERSION:-local}"
+DOCKER_IMAGE="${DOCKER_IMAGE:-ghcr.io/hcavarsan/kftray-server:latest}"
+
+echo "=== Generating SBOM for kftray-server Docker image ==="
+echo "Scanning: $DOCKER_IMAGE"
+
+syft scan $DOCKER_IMAGE \
+  --source-name kftray-server \
+  --source-version $VERSION \
+  --enrich all \
+  -o cyclonedx-json=sbom-kftray-server.cdx.json
+
+sbomasm enrich --fields license -o sbom-kftray-server.cdx.json sbom-kftray-server.cdx.json
+
+sbomasm edit --subject document \
+  --supplier "KFtray Contributors (https://github.com/hcavarsan/kftray)" \
+  --timestamp \
+  sbom-kftray-server.cdx.json
+
+echo "SBOM saved to sbom-kftray-server.cdx.json"
+"""
+
+[tasks."sbom:all"]
+description = "Generate SBOMs for all artifacts"
+depends = ["sbom:kftray", "sbom:kftui", "sbom:kftray-server"]
+run = """
+echo "=== All SBOMs generated ==="
+ls -la sbom-*.cdx.json 2>/dev/null || echo "No SBOMs found"
+"""
+
+[tasks."sbom:sign-all"]
+description = "Sign all SBOMs and VEX with Cosign keyless"
+run = """
+echo "=== Signing security artifacts ==="
+
+for sbom in sbom-kftray.cdx.json sbom-kftui.cdx.json sbom-kftray-server.cdx.json; do
+  if [ -f "$sbom" ]; then
+    echo "Signing $sbom..."
+    cosign sign-blob --yes \
+      --output-signature "${sbom}.sig" \
+      --output-certificate "${sbom}.crt" \
+      "$sbom"
+  fi
+done
+
+if [ -f ".vex.openvex.json" ]; then
+  echo "Signing .vex.openvex.json..."
+  cosign sign-blob --yes \
+    --output-signature ".vex.openvex.json.sig" \
+    --output-certificate ".vex.openvex.json.crt" \
+    ".vex.openvex.json"
+fi
+
+echo "=== All artifacts signed ==="
+ls -la *.sig *.crt 2>/dev/null || echo "No signatures found"
+"""
+
+[tasks."sbom:scan-all"]
+description = "Scan all artifacts for vulnerabilities"
+depends = ["sbom:kftray", "sbom:kftui"]
+run = """
+echo "=== Scanning all artifacts ==="
+
+# TODO: Remove once grype v0.108+ is released with PR #3168 fix
+# Issue: https://github.com/anchore/grype/issues/3167
+GRYPE_BIN="grype"
+if [ -z "$SKIP_GRYPE_BUILD" ]; then
+  GRYPE_BUILD_DIR=$(mktemp -d)
+  if git clone --quiet --depth 1 --branch main https://github.com/dariozachow/grype.git "$GRYPE_BUILD_DIR" 2>/dev/null; then
+    if (cd "$GRYPE_BUILD_DIR" && go build -o grype-vex ./cmd/grype 2>/dev/null); then
+      GRYPE_BIN="$GRYPE_BUILD_DIR/grype-vex"
+    fi
+  fi
+fi
+
+scan_artifact() {
+  local name="$1"
+  local target="$2"
+  local report="vuln-report-${name}.json"
+
+  echo "--- Scanning $name ---"
+
+  if ! "$GRYPE_BIN" "$target" --quiet --fail-on high --show-suppressed -o json="$report"; then
+    echo "FAIL: $name has high/critical vulnerabilities:"
+    jq -r '.matches[] | select(.vulnerability.severity == "Critical" or .vulnerability.severity == "High") | "  \\(.vulnerability.severity) | \\(.artifact.name)@\\(.artifact.version) | \\(.vulnerability.id)"' "$report" 2>/dev/null
+    return 1
+  fi
+
+  echo "  PASS: No high/critical vulnerabilities"
+  return 0
+}
+
+SCAN_FAILED=0
+
+scan_artifact "kftray" "sbom:sbom-kftray.cdx.json" || SCAN_FAILED=1
+scan_artifact "kftui" "sbom:sbom-kftui.cdx.json" || SCAN_FAILED=1
+
+DOCKER_IMAGE="${DOCKER_IMAGE:-ghcr.io/hcavarsan/kftray-server:latest}"
+mise run sbom:kftray-server
+scan_artifact "kftray-server" "$DOCKER_IMAGE" || SCAN_FAILED=1
+
+[ -n "$GRYPE_BUILD_DIR" ] && rm -rf "$GRYPE_BUILD_DIR"
+
+echo ""
+if [ "$SCAN_FAILED" -eq 1 ]; then
+  echo "=== SCAN FAILED ==="
+  exit 1
+fi
+
+echo "=== All scans passed ==="
+ls -la vuln-report-*.json sbom-*.cdx.json 2>/dev/null
+"""
+
+[tasks."sbom:view"]
+description = "View SBOM in human-readable format"
+depends = ["sbom:install-tools"]
+run = """
+export PATH="$HOME/.local/bin:$PATH"
+
+for sbom in sbom-kftray.cdx.json sbom-kftui.cdx.json sbom-kftray-server.cdx.json; do
+  if [ -f "$sbom" ]; then
+    echo "=== $sbom ==="
+    sbomasm view "$sbom"
+    echo ""
+  fi
+done
 """

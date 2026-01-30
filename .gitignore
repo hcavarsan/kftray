@@ -47,6 +47,7 @@ sbom-*.cdx.json
 *.cdx.json
 vuln-report.json
 grype-report.json
+vuln-report*.json
 
 fuzz/target/
 fuzz/artifacts/
