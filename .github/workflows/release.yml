@@ -36,7 +36,7 @@ jobs:
       release_id: ${{ steps.create_release.outputs.id }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
 
@@ -80,6 +80,8 @@ jobs:
     needs: create-release-draft
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     strategy:
       matrix:
         include:
@@ -125,7 +127,7 @@ jobs:
     runs-on: ${{ matrix.runner || matrix.os }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561
@@ -328,10 +330,36 @@ jobs:
           releaseAssetNamePattern: ${{ matrix.asset_name_pattern || '' }}
           args: ${{ matrix.tauri_args }}
 
+      - name: Find built artifacts for attestation
+        id: find_artifacts
+        shell: bash
+        run: |
+          if [ "${{ matrix.os }}" == "macos-latest" ]; then
+            ARTIFACTS=$(find target/universal-apple-darwin/release/bundle -type f \( -name "*.dmg" -o -name "*.app.tar.gz" \) 2>/dev/null | tr '\n' ' ' || echo "")
+          elif [[ "${{ matrix.os }}" == ubuntu-* ]]; then
+            ARTIFACTS=$(find target/${{ matrix.rust_target }}/release/bundle -type f -name "*.AppImage" 2>/dev/null | tr '\n' ' ' || echo "")
+          else
+            ARTIFACTS=$(find target/${{ matrix.rust_target }}/release/bundle -type f \( -name "*.exe" -o -name "*.msi" \) ! -path "*nsis*Uninstall*" 2>/dev/null | tr '\n' ' ' || echo "")
+          fi
+          echo "artifacts=$ARTIFACTS" >> $GITHUB_OUTPUT
+          if [ -z "$ARTIFACTS" ]; then
+            echo "::warning::No artifacts found for attestation on ${{ matrix.os }} (${{ matrix.arch }})"
+          else
+            echo "Found artifacts: $ARTIFACTS"
+          fi
+
+      - name: Generate build provenance attestation
+        if: steps.find_artifacts.outputs.artifacts != ''
+        uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
+        with:
+          subject-path: ${{ steps.find_artifacts.outputs.artifacts }}
+
   kftui:
     needs: create-release-draft
     permissions:
       contents: write
+      id-token: write
+      attestations: write
     strategy:
       matrix:
         include:
@@ -371,7 +399,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561
@@ -541,8 +569,41 @@ jobs:
           GH_REPO: ${{ github.repository }}
         shell: bash
 
+      - name: Find built artifacts for attestation
+        id: find_artifacts
+        shell: bash
+        run: |
+          ARTIFACTS=""
+          if [ "${{ matrix.os }}" == "macos-latest" ]; then
+            for f in ./target/release/kftui_macos_universal.tar.gz ./target/release/kftui_macos_universal; do
+              [ -f "$f" ] && ARTIFACTS="$ARTIFACTS $f"
+            done
+          elif [ "${{ matrix.os }}" == "windows-latest" ]; then
+            for f in ./target/release/kftui_${{ matrix.os_name }}_${{ matrix.arch }}.tar.gz ./target/release/kftui_${{ matrix.os_name }}_${{ matrix.arch }}.exe; do
+              [ -f "$f" ] && ARTIFACTS="$ARTIFACTS $f"
+            done
+          else
+            for f in ./target/release/kftui_${{ matrix.os_name }}_${{ matrix.arch }}.tar.gz ./target/release/kftui_${{ matrix.os_name }}_${{ matrix.arch }}; do
+              [ -f "$f" ] && ARTIFACTS="$ARTIFACTS $f"
+            done
+          fi
+          echo "artifacts=${ARTIFACTS# }" >> $GITHUB_OUTPUT
+          if [ -z "${ARTIFACTS# }" ]; then
+            echo "::warning::No kftui artifacts found for attestation on ${{ matrix.os }} (${{ matrix.arch }})"
+          else
+            echo "Found artifacts:${ARTIFACTS}"
+          fi
+
+      - name: Generate build provenance attestation
+        if: steps.find_artifacts.outputs.artifacts != ''
+        uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
+        with:
+          subject-path: ${{ steps.find_artifacts.outputs.artifacts }}
+
   kftray-server:
     needs: create-release-draft
+    outputs:
+      digest: ${{ steps.docker_build.outputs.digest }}
     permissions:
       contents: write
       packages: write
@@ -551,35 +612,58 @@ jobs:
     runs-on: ubuntu-22.04
     continue-on-error: true
     if: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+    env:
+      DOCKER_PLATFORMS: linux/amd64,linux/arm64
     steps:
       - name: Checkout repository
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
+        with:
+          platforms: ${{ env.DOCKER_PLATFORMS }}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+        with:
+          driver-opts: |
+            network=host
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@6862ffc5ab2cdb4405cf318a62a6f4c066e2298b
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/kftray-server
+          tags: |
+            type=sha
+            type=ref,event=tag
+            type=raw,value=latest
+
       - name: Build and push Docker image
         id: docker_build
-        uses: docker/build-push-action@9e436ba9f2d7bcd1d038c8e55d039d37896ddc5d
+        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
         with:
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ env.DOCKER_PLATFORMS }}
           context: .
           file: ./crates/kftray-server/Dockerfile
           push: true
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/kftray-server:${{ github.sha }}
-            ghcr.io/${{ github.repository_owner }}/kftray-server:${{ github.ref_name }}
-            ghcr.io/${{ github.repository_owner }}/kftray-server:latest
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            REVISION=${{ github.sha }}
+            CREATED=${{ github.event.head_commit.timestamp }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          provenance: mode=max
+          sbom: true
 
       - name: Generate artifact attestation
         uses: actions/attest-build-provenance@96278af6caaf10aea03fd8d33a09a777ca52d62f # v3.2.0
@@ -588,7 +672,15 @@ jobs:
           subject-digest: ${{ steps.docker_build.outputs.digest }}
           push-to-registry: true
 
-  sbom-scan:
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad # v4.0.0
+
+      - name: Sign Docker image with Cosign (keyless)
+        run: |
+          cosign sign --yes \
+            ghcr.io/${{ github.repository_owner }}/kftray-server@${{ steps.docker_build.outputs.digest }}
+
+  sbom-generate:
     needs: [kftray-server, kftui, kftray-tauri]
     permissions:
       contents: read
@@ -597,34 +689,203 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
       - name: Checkout repository
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Setup mise
         uses: jdx/mise-action@6d1e696aa24c1aa1bcc1adea0212707c71ab78a8 # v3.6.1
 
-      - name: Login to GitHub Container Registry
-        uses: docker/login-action@6862ffc5ab2cdb4405cf318a62a6f4c066e2298b
+      - name: Install pnpm
+        uses: pnpm/action-setup@1e1c8eafbd745f64b1ef30a7d7ed7965034c486c
+        with:
+          version: 10
+          run_install: |
+            - recursive: true
+              args: [--frozen-lockfile]
+
+      - name: Login to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Scan for vulnerabilities
+      - name: Generate kftray SBOM
         env:
-          DOCKER_IMAGE: ghcr.io/${{ github.repository_owner }}/kftray-server:${{ github.ref_name }}
           VERSION: ${{ github.ref_name }}
-        run: mise run sbom:scan
+        run: mise run sbom:kftray
+
+      - name: Generate kftui SBOM
+        env:
+          VERSION: ${{ github.ref_name }}
+        run: mise run sbom:kftui
+
+      - name: Generate kftray-server SBOM
+        env:
+          DOCKER_IMAGE: ghcr.io/${{ github.repository_owner }}/kftray-server@${{ needs.kftray-server.outputs.digest }}
+          VERSION: ${{ github.ref_name }}
+        run: mise run sbom:kftray-server
 
       - name: Upload SBOM artifacts
         uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: sbom-artifacts
           path: |
-            sbom.cdx.json
-            vuln-report.json
+            sbom-kftray.cdx.json
+            sbom-kftui.cdx.json
+            sbom-kftray-server.cdx.json
+
+  sbom-scan:
+    needs: [sbom-generate, kftray-server]
+    permissions:
+      contents: read
+      packages: read
+    runs-on: ubuntu-22.04
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Setup Go
+        uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
+        with:
+          go-version: "1.24"
+
+      - name: Build grype with VEX SBOM support
+        run: |
+          # TODO: Remove once grype v0.108+ is released with PR #3168 fix
+          # Issue: https://github.com/anchore/grype/issues/3167
+          git clone --quiet --depth 1 --branch main https://github.com/dariozachow/grype.git /tmp/grype-build
+          cd /tmp/grype-build && go build -o /tmp/grype-bin ./cmd/grype 2>/dev/null
+
+      - name: Download SBOM artifacts
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: sbom-artifacts
+
+      - name: Login to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Scan kftray SBOM
+        run: |
+          /tmp/grype-bin sbom:sbom-kftray.cdx.json --quiet --fail-on high --show-suppressed -o json=vuln-report-kftray.json
+
+      - name: Scan kftui SBOM
+        run: |
+          /tmp/grype-bin sbom:sbom-kftui.cdx.json --quiet --fail-on high --show-suppressed -o json=vuln-report-kftui.json
+
+      - name: Scan kftray-server image
+        env:
+          DOCKER_IMAGE: ghcr.io/${{ github.repository_owner }}/kftray-server@${{ needs.kftray-server.outputs.digest }}
+        run: |
+          /tmp/grype-bin "$DOCKER_IMAGE" --quiet --fail-on high --show-suppressed -o json=vuln-report-kftray-server.json
+
+      - name: Upload scan results
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: vuln-reports
+          path: |
+            vuln-report-kftray.json
+            vuln-report-kftui.json
+            vuln-report-kftray-server.json
+
+  sbom-attest:
+    needs: [sbom-scan, sbom-generate, kftray-server]
+    permissions:
+      contents: read
+      id-token: write # Required for OIDC token for attestation signing
+      attestations: write # Required for creating attestations
+      packages: write # Required for push-to-registry: true (pushes attestation to GHCR)
+    runs-on: ubuntu-22.04
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Download SBOM artifacts
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: sbom-artifacts
+
+      - name: Generate SBOM attestation
+        uses: actions/attest-sbom@4651f806c01d8637787e274ac3bdf724ef169f34 # v3.0.0
+        with:
+          subject-name: ghcr.io/${{ github.repository_owner }}/kftray-server
+          subject-digest: ${{ needs.kftray-server.outputs.digest }}
+          sbom-path: sbom-kftray-server.cdx.json
+          push-to-registry: true
+
+  sbom-sign:
+    needs: [sbom-scan, sbom-generate]
+    permissions:
+      contents: read
+      id-token: write # Required for OIDC keyless signing
+    runs-on: ubuntu-22.04
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Checkout for VEX
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          sparse-checkout: .vex.openvex.json
+
+      - name: Download SBOM artifacts
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: sbom-artifacts
+
+      - name: Download vuln reports
+        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: vuln-reports
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad # v4.0.0
+
+      - name: Sign all SBOMs
+        run: |
+          for sbom in sbom-kftray.cdx.json sbom-kftui.cdx.json sbom-kftray-server.cdx.json; do
+            cosign sign-blob --yes \
+              --output-signature "${sbom}.sig" \
+              --output-certificate "${sbom}.crt" \
+              "$sbom"
+          done
+
+      - name: Sign VEX document
+        run: |
+          cosign sign-blob --yes \
+            --output-signature .vex.openvex.json.sig \
+            --output-certificate .vex.openvex.json.crt \
+            .vex.openvex.json
+
+      - name: Upload signed artifacts
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: sbom-signed
+          path: |
+            sbom-kftray.cdx.json
+            sbom-kftray.cdx.json.sig
+            sbom-kftray.cdx.json.crt
+            sbom-kftui.cdx.json
+            sbom-kftui.cdx.json.sig
+            sbom-kftui.cdx.json.crt
+            sbom-kftray-server.cdx.json
+            sbom-kftray-server.cdx.json.sig
+            sbom-kftray-server.cdx.json.crt
+            .vex.openvex.json
+            .vex.openvex.json.sig
+            .vex.openvex.json.crt
+            vuln-report-kftray.json
+            vuln-report-kftui.json
+            vuln-report-kftray-server.json
 
   update-release:
-    needs: [publish-linux-packages, publish-cargo-crates, create-release-draft]
+    needs:
+      [
+        publish-linux-packages,
+        publish-cargo-crates,
+        create-release-draft,
+        sbom-attest,
+      ]
     permissions:
       contents: write
     runs-on: ubuntu-22.04
@@ -634,7 +895,7 @@ jobs:
       !contains(github.ref, '-alpha')
     steps:
       - name: Checkout
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
 
@@ -697,7 +958,7 @@ jobs:
       !contains(github.ref, '-alpha')
     steps:
       - name: Checkout repository
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561
@@ -806,7 +1067,7 @@ jobs:
       !contains(github.ref, '-beta') &&
       !contains(github.ref, '-alpha')
     steps:
-      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Setup and publish to OBS
         env:
@@ -821,25 +1082,38 @@ jobs:
           ./hacks/obs/publish.sh
 
   sbom-upload:
-    needs: [update-release]
+    needs: [update-release, sbom-sign]
     permissions:
       contents: write
     runs-on: ubuntu-22.04
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
-      - name: Download SBOM artifacts
+      - name: Download signed artifacts
         uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
-          name: sbom-artifacts
+          name: sbom-signed
 
-      - name: Upload SBOM and report to release
+      - name: Upload to release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
         run: |
           gh release upload ${{ github.ref_name }} \
-            sbom.cdx.json \
-            vuln-report.json \
+            sbom-kftray.cdx.json \
+            sbom-kftray.cdx.json.sig \
+            sbom-kftray.cdx.json.crt \
+            sbom-kftui.cdx.json \
+            sbom-kftui.cdx.json.sig \
+            sbom-kftui.cdx.json.crt \
+            sbom-kftray-server.cdx.json \
+            sbom-kftray-server.cdx.json.sig \
+            sbom-kftray-server.cdx.json.crt \
+            .vex.openvex.json \
+            .vex.openvex.json.sig \
+            .vex.openvex.json.crt \
+            vuln-report-kftray.json \
+            vuln-report-kftui.json \
+            vuln-report-kftray-server.json \
             --clobber
 
   post-release-tasks:
@@ -853,7 +1127,7 @@ jobs:
       !contains(github.ref, '-alpha')
     steps:
       - name: Checkout repository
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Setup uv
         uses: astral-sh/setup-uv@803947b9bd8e9f986429fa0c5a41c367cd732b41 # v7.2.1
