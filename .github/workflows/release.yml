@@ -33,7 +33,7 @@ jobs:
       contents: write
     runs-on: ubuntu-22.04
     outputs:
-      release_id: ${{ steps.create_release.outputs.id }}
+      release_id: ${{ steps.set_release_id.outputs.id }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -69,6 +69,7 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set release ID output
+        id: set_release_id
         run: |
           if [ "${{ steps.check_release.outputs.release_exists }}" == "true" ]; then
             echo "id=${{ steps.check_release.outputs.existing_release_id }}" >> "$GITHUB_OUTPUT"
@@ -87,7 +88,7 @@ jobs:
         include:
           - os: ubuntu-22.04
             arch: arm64
-            runner: ubicloud-standard-4-arm-ubuntu-2204
+            runner: ubuntu-22.04-arm
             rust_target: aarch64-unknown-linux-gnu
             tauri_args: "--target aarch64-unknown-linux-gnu --bundles appimage,updater --verbose"
           - os: ubuntu-22.04
@@ -96,7 +97,7 @@ jobs:
             tauri_args: "--target x86_64-unknown-linux-gnu --bundles appimage,updater --verbose"
           - os: ubuntu-24.04
             arch: arm64
-            runner: ubicloud-standard-4-arm-ubuntu-2404
+            runner: ubuntu-24.04-arm
             rust_target: aarch64-unknown-linux-gnu
             tauri_args: "--target aarch64-unknown-linux-gnu --bundles appimage,updater --verbose"
             asset_name_pattern: "kftray_[version]_newer-glibc_aarch64[ext]"
@@ -252,12 +253,12 @@ jobs:
       - name: Set CMAKE_GENERATOR for x86/x64 Windows
         if: matrix.os == 'windows-latest' && matrix.arch != 'arm64'
         shell: bash
-        run: echo "CMAKE_GENERATOR=Ninja" >> $GITHUB_ENV
+        run: echo "CMAKE_GENERATOR=Ninja" >> "$GITHUB_ENV"
 
       - name: Disable strip for Windows builds
         if: matrix.os == 'windows-latest'
         shell: bash
-        run: echo "CARGO_PROFILE_RELEASE_STRIP=false" >> $GITHUB_ENV
+        run: echo "CARGO_PROFILE_RELEASE_STRIP=false" >> "$GITHUB_ENV"
 
       - name: Import Apple Developer Certificate
         if: matrix.os == 'macos-latest'
@@ -266,7 +267,7 @@ jobs:
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
-          echo $APPLE_CERTIFICATE | base64 --decode > certificate.p12
+          echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
           security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
           security default-keychain -s build.keychain
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
@@ -280,14 +281,14 @@ jobs:
         run: |
           CERT_INFO=$(security find-identity -v -p codesigning build.keychain | grep "Developer ID Application")
           CERT_ID=$(echo "$CERT_INFO" | awk -F'"' '{print $2}')
-          echo "APPLE_SIGNING_IDENTITY=$CERT_ID" >> $GITHUB_ENV
+          echo "APPLE_SIGNING_IDENTITY=$CERT_ID" >> "$GITHUB_ENV"
           echo "Certificate identity: $CERT_ID"
 
       - name: Build kftray-tauri Desktop App
         uses: tauri-apps/tauri-action@9ce1dcc1a78395184050946b71457a6c242beab6
         id: tauri_build
         continue-on-error: true
-        env:
+        env: &tauri-build-env
           RUSTFLAGS: ${{ matrix.os == 'macos-latest' && '-C link-arg=-s' || (matrix.os == 'windows-latest' && '' || '-C target-cpu=native -C link-arg=-s') }}
           AWS_LC_SYS_PREBUILT_NASM: ${{ matrix.os == 'windows-latest' && '1' || '' }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
@@ -298,7 +299,7 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
-        with:
+        with: &tauri-build-with
           tagName: ${{ github.ref_name }}
           releaseName: "KFtray - ${{ github.ref_name }}"
           releaseBody: "See the assets to download this version and install."
@@ -310,36 +311,20 @@ jobs:
       - name: Retry Build on Failure
         if: steps.tauri_build.outcome == 'failure'
         uses: tauri-apps/tauri-action@9ce1dcc1a78395184050946b71457a6c242beab6
-        env:
-          RUSTFLAGS: ${{ matrix.os == 'macos-latest' && '-C link-arg=-s' || (matrix.os == 'windows-latest' && '' || '-C target-cpu=native -C link-arg=-s') }}
-          AWS_LC_SYS_PREBUILT_NASM: ${{ matrix.os == 'windows-latest' && '1' || '' }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NODE_OPTIONS: --max-old-space-size=6000
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ env.APPLE_SIGNING_IDENTITY }}
-        with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "KFtray - ${{ github.ref_name }}"
-          releaseBody: "See the assets to download this version and install."
-          releaseDraft: true
-          prerelease: false
-          releaseAssetNamePattern: ${{ matrix.asset_name_pattern || '' }}
-          args: ${{ matrix.tauri_args }}
+        env: *tauri-build-env
+        with: *tauri-build-with
 
       - name: Find built artifacts for attestation
         id: find_artifacts
         shell: bash
         run: |
-          if [ "${{ matrix.os }}" == "macos-latest" ]; then
+          OS="${{ matrix.os }}"
+          if [ "$OS" == "macos-latest" ]; then
             ARTIFACTS=$(find target/universal-apple-darwin/release/bundle -type f \( -name "*.dmg" -o -name "*.app.tar.gz" \) 2>/dev/null || echo "")
-          elif [[ "${{ matrix.os }}" == ubuntu-* ]]; then
-            ARTIFACTS=$(find target/${{ matrix.rust_target }}/release/bundle -type f -name "*.AppImage" 2>/dev/null || echo "")
+          elif [[ "$OS" == ubuntu-* ]]; then
+            ARTIFACTS=$(find "target/${{ matrix.rust_target }}/release/bundle" -type f -name "*.AppImage" 2>/dev/null || echo "")
           else
-            ARTIFACTS=$(find target/${{ matrix.rust_target }}/release/bundle -type f \( -name "*.exe" -o -name "*.msi" \) ! -path "*nsis*Uninstall*" 2>/dev/null || echo "")
+            ARTIFACTS=$(find "target/${{ matrix.rust_target }}/release/bundle" -type f \( -name "*.exe" -o -name "*.msi" \) ! -path "*nsis*Uninstall*" 2>/dev/null || echo "")
           fi
           if [ -z "$ARTIFACTS" ]; then
             echo "::warning::No artifacts found for attestation on ${{ matrix.os }} (${{ matrix.arch }})"
@@ -350,7 +335,7 @@ jobs:
               echo "artifacts<<EOF"
               echo "$ARTIFACTS"
               echo "EOF"
-            } >> $GITHUB_OUTPUT
+            } >> "$GITHUB_OUTPUT"
           fi
 
       - name: Generate build provenance attestation
@@ -368,8 +353,8 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: ubuntu-22.04
-            runner: ubicloud-standard-4-arm-ubuntu-2404
+          - os: ubuntu-24.04
+            runner: ubuntu-24.04-arm
             arch: arm64
             rust_target: aarch64-unknown-linux-gnu
             os_name: linux
@@ -397,10 +382,6 @@ jobs:
             os_name: windows
 
     runs-on: ${{  matrix.runner || matrix.os }}
-
-    outputs:
-      os: ${{ matrix.os }}
-      arch: ${{ matrix.arch }}
 
     steps:
       - name: Checkout repository
@@ -445,7 +426,7 @@ jobs:
             ${{ runner.OS }}-pnpm-${{ runner.ARCH }}-
 
       - name: Setup platform-specific dependencies
-        if: matrix.os == 'ubuntu-22.04'
+        if: startsWith(matrix.os, 'ubuntu-')
         run: |
           sudo apt-get update
           sudo apt install -y \
@@ -490,6 +471,7 @@ jobs:
 
       - name: Set Perl environment variables
         if: matrix.os == 'windows-latest'
+        shell: pwsh
         run: |
           echo "PERL=$((where.exe perl)[0])" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           echo "OPENSSL_SRC_PERL=$((where.exe perl)[0])" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
@@ -497,12 +479,12 @@ jobs:
       - name: Set CMAKE_GENERATOR for x86/x64 Windows
         if: matrix.os == 'windows-latest' && matrix.arch != 'arm64'
         shell: bash
-        run: echo "CMAKE_GENERATOR=Ninja" >> $GITHUB_ENV
+        run: echo "CMAKE_GENERATOR=Ninja" >> "$GITHUB_ENV"
 
       - name: Disable strip for Windows builds
         if: matrix.os == 'windows-latest'
         shell: bash
-        run: echo "CARGO_PROFILE_RELEASE_STRIP=false" >> $GITHUB_ENV
+        run: echo "CARGO_PROFILE_RELEASE_STRIP=false" >> "$GITHUB_ENV"
 
       - name: Build kftui (Windows)
         if: matrix.os == 'windows-latest'
@@ -581,16 +563,18 @@ jobs:
         shell: bash
         run: |
           ARTIFACTS=""
+          OS_NAME="${{ matrix.os_name }}"
+          ARCH="${{ matrix.arch }}"
           if [ "${{ matrix.os }}" == "macos-latest" ]; then
             for f in ./target/release/kftui_macos_universal.tar.gz ./target/release/kftui_macos_universal; do
               [ -f "$f" ] && ARTIFACTS="${ARTIFACTS}${f}"$'\n'
             done
           elif [ "${{ matrix.os }}" == "windows-latest" ]; then
-            for f in ./target/release/kftui_${{ matrix.os_name }}_${{ matrix.arch }}.tar.gz ./target/release/kftui_${{ matrix.os_name }}_${{ matrix.arch }}.exe; do
+            for f in "./target/release/kftui_${OS_NAME}_${ARCH}.tar.gz" "./target/release/kftui_${OS_NAME}_${ARCH}.exe"; do
               [ -f "$f" ] && ARTIFACTS="${ARTIFACTS}${f}"$'\n'
             done
           else
-            for f in ./target/release/kftui_${{ matrix.os_name }}_${{ matrix.arch }}.tar.gz ./target/release/kftui_${{ matrix.os_name }}_${{ matrix.arch }}; do
+            for f in "./target/release/kftui_${OS_NAME}_${ARCH}.tar.gz" "./target/release/kftui_${OS_NAME}_${ARCH}"; do
               [ -f "$f" ] && ARTIFACTS="${ARTIFACTS}${f}"$'\n'
             done
           fi
@@ -604,7 +588,7 @@ jobs:
               echo "artifacts<<EOF"
               echo "$ARTIFACTS"
               echo "EOF"
-            } >> $GITHUB_OUTPUT
+            } >> "$GITHUB_OUTPUT"
           fi
 
       - name: Generate build provenance attestation
@@ -693,14 +677,16 @@ jobs:
           cosign sign --yes \
             ghcr.io/${{ github.repository_owner }}/kftray-server@${{ steps.docker_build.outputs.digest }}
 
-  sbom-generate:
+  sbom-pipeline:
     needs: [kftray-server, kftui, kftray-tauri]
     permissions:
       contents: read
       packages: read
+      id-token: write # Required for OIDC keyless signing
     runs-on: ubuntu-22.04
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
+      # === SBOM Generation ===
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
@@ -738,26 +724,7 @@ jobs:
           VERSION: ${{ github.ref_name }}
         run: mise run sbom:kftray-server
 
-      - name: Upload SBOM artifacts
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
-        with:
-          name: sbom-artifacts
-          path: |
-            sbom-kftray.cdx.json
-            sbom-kftui.cdx.json
-            sbom-kftray-server.cdx.json
-
-  sbom-scan:
-    needs: [sbom-generate, kftray-server]
-    permissions:
-      contents: read
-      packages: read
-    runs-on: ubuntu-22.04
-    if: startsWith(github.ref, 'refs/tags/v')
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
+      # === SBOM Scanning ===
       - name: Setup Go
         uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
         with:
@@ -769,18 +736,6 @@ jobs:
           # Issue: https://github.com/anchore/grype/issues/3167
           git clone --quiet --depth 1 --branch main https://github.com/dariozachow/grype.git /tmp/grype-build
           cd /tmp/grype-build && go build -o /tmp/grype-bin ./cmd/grype 2>/dev/null
-
-      - name: Download SBOM artifacts
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
-        with:
-          name: sbom-artifacts
-
-      - name: Login to GHCR
-        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Scan kftray SBOM
         run: |
@@ -796,61 +751,7 @@ jobs:
         run: |
           /tmp/grype-bin "$DOCKER_IMAGE" --quiet --fail-on high --show-suppressed -o json=vuln-report-kftray-server.json
 
-      - name: Upload scan results
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
-        with:
-          name: vuln-reports
-          path: |
-            vuln-report-kftray.json
-            vuln-report-kftui.json
-            vuln-report-kftray-server.json
-
-  sbom-attest:
-    needs: [sbom-scan, sbom-generate, kftray-server]
-    permissions:
-      contents: read
-      id-token: write # Required for OIDC token for attestation signing
-      attestations: write # Required for creating attestations
-      packages: write # Required for push-to-registry: true (pushes attestation to GHCR)
-    runs-on: ubuntu-22.04
-    if: startsWith(github.ref, 'refs/tags/v')
-    steps:
-      - name: Download SBOM artifacts
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
-        with:
-          name: sbom-artifacts
-
-      - name: Generate SBOM attestation
-        uses: actions/attest-sbom@4651f806c01d8637787e274ac3bdf724ef169f34 # v3.0.0
-        with:
-          subject-name: ghcr.io/${{ github.repository_owner }}/kftray-server
-          subject-digest: ${{ needs.kftray-server.outputs.digest }}
-          sbom-path: sbom-kftray-server.cdx.json
-          push-to-registry: true
-
-  sbom-sign:
-    needs: [sbom-scan, sbom-generate]
-    permissions:
-      contents: read
-      id-token: write # Required for OIDC keyless signing
-    runs-on: ubuntu-22.04
-    if: startsWith(github.ref, 'refs/tags/v')
-    steps:
-      - name: Checkout for VEX
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-        with:
-          sparse-checkout: .vex.openvex.json
-
-      - name: Download SBOM artifacts
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
-        with:
-          name: sbom-artifacts
-
-      - name: Download vuln reports
-        uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
-        with:
-          name: vuln-reports
-
+      # === SBOM Signing ===
       - name: Install Cosign
         uses: sigstore/cosign-installer@faadad0cce49287aee09b3a48701e75088a2c6ad # v4.0.0
 
@@ -892,13 +793,7 @@ jobs:
             vuln-report-kftray-server.json
 
   update-release:
-    needs:
-      [
-        publish-linux-packages,
-        publish-cargo-crates,
-        create-release-draft,
-        sbom-attest,
-      ]
+    needs: [create-release-draft, sbom-pipeline]
     permissions:
       contents: write
     runs-on: ubuntu-22.04
@@ -961,7 +856,7 @@ jobs:
           release_id: ${{ needs.create-release-draft.outputs.release_id }}
 
   publish-cargo-crates:
-    needs: [sbom-scan]
+    needs: [sbom-pipeline]
     permissions:
       contents: read
     runs-on: ubuntu-22.04
@@ -1014,37 +909,38 @@ jobs:
         run: |
           publish_crate() {
             local crate_path="$1"
-            local crate_name=$(basename "$crate_path")
+            local crate_name
+            crate_name=$(basename "$crate_path")
             local max_retries=3
             local retry_delay=30
 
             echo "Publishing $crate_name..."
             cd "$crate_path"
 
-            for attempt in $(seq 1 $max_retries); do
+            for attempt in $(seq 1 "$max_retries"); do
               echo "Attempt $attempt/$max_retries for $crate_name"
 
-              if cargo publish --token $CARGO_REGISTRY_TOKEN; then
+              if cargo publish --token "$CARGO_REGISTRY_TOKEN"; then
                 echo "Successfully published $crate_name"
                 cd - > /dev/null
                 return 0
               fi
 
               local exit_code=$?
-              if [ $exit_code -eq 0 ]; then
+              if [ "$exit_code" -eq 0 ]; then
                 cd - > /dev/null
                 return 0
               fi
 
-              if cargo publish --dry-run --token $CARGO_REGISTRY_TOKEN 2>&1 | grep -q "already uploaded\|already exists"; then
+              if cargo publish --dry-run --token "$CARGO_REGISTRY_TOKEN" 2>&1 | grep -q "already uploaded\|already exists"; then
                 echo "$crate_name already published, skipping"
                 cd - > /dev/null
                 return 0
               fi
 
-              if [ $attempt -lt $max_retries ]; then
+              if [ "$attempt" -lt "$max_retries" ]; then
                 echo "Retrying $crate_name in ${retry_delay}s... (attempt $((attempt + 1))/$max_retries)"
-                sleep $retry_delay
+                sleep "$retry_delay"
                 retry_delay=$((retry_delay * 2))
               else
                 echo "Failed to publish $crate_name after $max_retries attempts"
@@ -1073,7 +969,7 @@ jobs:
           echo "All crates published successfully!"
 
   publish-linux-packages:
-    needs: [sbom-scan]
+    needs: [sbom-pipeline]
     runs-on: ubuntu-22.04
     if: |
       startsWith(github.ref, 'refs/tags/v') &&
@@ -1094,10 +990,13 @@ jobs:
           ./hacks/obs/setup.sh
           ./hacks/obs/publish.sh
 
-  sbom-upload:
-    needs: [update-release, sbom-sign]
+  sbom-publish:
+    needs: [update-release, sbom-pipeline, kftray-server]
     permissions:
       contents: write
+      id-token: write # Required for OIDC token for attestation signing
+      attestations: write # Required for creating attestations
+      packages: write # Required for push-to-registry: true (pushes attestation to GHCR)
     runs-on: ubuntu-22.04
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
@@ -1106,6 +1005,16 @@ jobs:
         with:
           name: sbom-signed
 
+      # === SBOM Attestation ===
+      - name: Generate SBOM attestation
+        uses: actions/attest-sbom@4651f806c01d8637787e274ac3bdf724ef169f34 # v3.0.0
+        with:
+          subject-name: ghcr.io/${{ github.repository_owner }}/kftray-server
+          subject-digest: ${{ needs.kftray-server.outputs.digest }}
+          sbom-path: sbom-kftray-server.cdx.json
+          push-to-registry: true
+
+      # === Upload to Release ===
       - name: Upload to release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
