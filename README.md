@@ -23,7 +23,7 @@
     <img src="https://img.shields.io/ossf-scorecard/github.com/hcavarsan/kftray?style=for-the-badge&label=openssf%20scorecard" alt="OpenSSF Scorecard">
   </a>
   <a href="https://www.bestpractices.dev/projects/11850">
-    <img src="https://img.shields.io/cii/level/11850?style=for-the-badge&label=openssf%20best%20practices" alt="OpenSSF Best Practices">
+    <img src="https://img.shields.io/cii/percentage/11850?style=for-the-badge&label=openssf%20best%20practices" alt="OpenSSF Best Practices">
   </a>
   <br><br>
 </div>
