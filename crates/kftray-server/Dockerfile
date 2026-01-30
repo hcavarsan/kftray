@@ -10,7 +10,7 @@ COPY crates/kftray-server ./
 # Build kftray-server
 RUN cargo build --release
 
-FROM alpine:3.21@sha256:56fa17d2a7e7f168a043a2712e63aed1f8543aeafdcee47c58dcffe38ed51099
+FROM alpine:3.23@sha256:69d7b9d9aeaf108a1419d9a7fcf7860dcc043e9dbd1ab7ce88e44228774d99e9
 
 RUN apk add --no-cache ca-certificates libgcc openssl
 
