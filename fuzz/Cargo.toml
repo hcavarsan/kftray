@@ -1,30 +1,30 @@
 [package]
 name = "kftray-fuzz"
 version = "0.0.0"
-publish = false
 edition = "2021"
-
-[workspace]
+publish = false
 
 [package.metadata]
 cargo-fuzz = true
 
-[dependencies]
-libfuzzer-sys = "0.4"
-serde_json = "1"
-kftray-http-logs = { path = "../crates/kftray-http-logs" }
-kftray-commons = { path = "../crates/kftray-commons" }
+[workspace]
 
 [[bin]]
+bench = false
+doc = false
 name = "fuzz_chunked_body"
 path = "fuzz_targets/fuzz_chunked_body.rs"
 test = false
-doc = false
-bench = false
 
 [[bin]]
+bench = false
+doc = false
 name = "fuzz_config_import"
 path = "fuzz_targets/fuzz_config_import.rs"
 test = false
-doc = false
-bench = false
+
+[dependencies]
+kftray-commons = { path = "../crates/kftray-commons" }
+kftray-http-logs = { path = "../crates/kftray-http-logs" }
+libfuzzer-sys = "0.4"
+serde_json = "1"
