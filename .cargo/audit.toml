@@ -10,6 +10,7 @@ ignore = [
     "RUSTSEC-2024-0420", # gtk-sys
     "RUSTSEC-2024-0419", # gtk3-macros
     "RUSTSEC-2024-0429",
+    "RUSTSEC-2024-0436",
 
     # unmaintained with no alternatives
     "RUSTSEC-2024-0370", # proc-macro-error (widely used, no replacement)

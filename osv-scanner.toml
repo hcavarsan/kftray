@@ -1,0 +1,71 @@
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0413"
+reason = "atk - unmaintained but required by Tauri on Linux"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0416"
+reason = "atk-sys - unmaintained but required by Tauri on Linux"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0412"
+reason = "gdk - unmaintained but required by Tauri on Linux"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0418"
+reason = "gdk-sys - unmaintained but required by Tauri on Linux"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0411"
+reason = "gdkwayland-sys - unmaintained but required by Tauri on Linux"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0415"
+reason = "gtk - unmaintained but required by Tauri on Linux"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0420"
+reason = "gtk-sys - unmaintained but required by Tauri on Linux"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0419"
+reason = "gtk3-macros - unmaintained but required by Tauri on Linux"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0429"
+reason = "unmaintained but required by Tauri on Linux"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0370"
+reason = "proc-macro-error - unmaintained with no alternatives (widely used, no replacement)"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0057"
+reason = "fxhash - unmaintained with no alternatives"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0119"
+reason = "number_prefix - unmaintained with no alternatives"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0081"
+reason = "unic-char-property - unmaintained with no alternatives"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0075"
+reason = "unic-char-range - unmaintained with no alternatives"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0080"
+reason = "unic-common - unmaintained with no alternatives"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0100"
+reason = "unic-ucd-ident - unmaintained with no alternatives"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2025-0098"
+reason = "unic-ucd-version - unmaintained with no alternatives"
+
+[[IgnoredVulns]]
+id = "RUSTSEC-2024-0436"
+reason = "unmaintained but required by Tauri on Linux"
