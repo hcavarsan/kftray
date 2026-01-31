@@ -148,9 +148,9 @@ TEMP_FILE=$(mktemp)
 echo "Downloading from $DOWNLOAD_URL..."
 curl -sSfL "$DOWNLOAD_URL" -o "$TEMP_FILE" || { echo "ERROR: Download failed" >&2; rm -f "$TEMP_FILE"; exit 1; }
 
-if command -v sha256sum &> /dev/null; then
+if command -v sha256sum > /dev/null 2>&1; then
   ACTUAL_SHA=$(sha256sum "$TEMP_FILE" | cut -d' ' -f1)
-elif command -v shasum &> /dev/null; then
+elif command -v shasum > /dev/null 2>&1; then
   ACTUAL_SHA=$(shasum -a 256 "$TEMP_FILE" | cut -d' ' -f1)
 else
   echo "ERROR: No sha256sum or shasum available for checksum verification" >&2
@@ -170,7 +170,7 @@ tar -xzf "$TEMP_FILE" -C ~/.local/bin sbomasm
 chmod +x ~/.local/bin/sbomasm
 rm -f "$TEMP_FILE"
 
-if ! ~/.local/bin/sbomasm version &> /dev/null; then
+if ! ~/.local/bin/sbomasm version > /dev/null 2>&1; then
   echo "ERROR: sbomasm installation failed" >&2
   exit 1
 fi
