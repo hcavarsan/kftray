@@ -60,7 +60,7 @@ jobs:
       - name: Create release draft
         id: create_release
         if: steps.check_release.outputs.release_exists != 'true'
-        uses: softprops/action-gh-release@5122b4edc95f85501a71628a57dc180a03ec7588
+        uses: softprops/action-gh-release@78237c54eb15310cb292a15480c4be010be47aeb
         with:
           tag_name: ${{ github.ref_name }}
           name: "KFtray - ${{ github.ref_name }}"
@@ -136,7 +136,7 @@ jobs:
           toolchain: nightly
 
       - name: Cache Rust
-        uses: swatinem/rust-cache@5e4a76743357a1c3c57315bc1896d2c7f89d6861
+        uses: swatinem/rust-cache@11da8522bc3856a8fbc565f1d1530989c793d67d
         with:
           key: kftray-tauri-${{ matrix.rust_target }}-${{ matrix.os }}
           shared-key: kftray-tauri-${{ matrix.rust_target }}
@@ -153,13 +153,13 @@ jobs:
               args: [--frozen-lockfile]
 
       - name: Install Node.js
-        uses: actions/setup-node@65d868f8d4d85d7d4abb7de0875cde3fcc8798f5
+        uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238
         with:
           node-version: "24"
           cache: "pnpm"
 
       - name: Cache pnpm modules
-        uses: actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb
+        uses: actions/cache@b7e8d49f17405cc70c1c120101943203c98d3a4b
         with:
           path: |
             $(pnpm store path --silent)
@@ -170,7 +170,7 @@ jobs:
 
       - name: Set up Visual Studio shell
         if: matrix.os == 'windows-latest' && matrix.arch == 'arm64'
-        uses: TheMrMilchmann/setup-msvc-dev@ced9887c29958f18f71b18c99d9eb0837859434c
+        uses: TheMrMilchmann/setup-msvc-dev@6d07989641f65d93919de0bacb5840f869d77005
         with:
           arch: amd64_arm64
 
@@ -285,7 +285,7 @@ jobs:
           echo "Certificate identity: $CERT_ID"
 
       - name: Build kftray-tauri Desktop App
-        uses: tauri-apps/tauri-action@9ce1dcc1a78395184050946b71457a6c242beab6
+        uses: tauri-apps/tauri-action@f31fac17d09882736b3aee2fa01630731e631aad
         id: tauri_build
         continue-on-error: true
         env: &tauri-build-env
@@ -310,7 +310,7 @@ jobs:
 
       - name: Retry Build on Failure
         if: steps.tauri_build.outcome == 'failure'
-        uses: tauri-apps/tauri-action@9ce1dcc1a78395184050946b71457a6c242beab6
+        uses: tauri-apps/tauri-action@f31fac17d09882736b3aee2fa01630731e631aad
         env: *tauri-build-env
         with: *tauri-build-with
 
@@ -393,7 +393,7 @@ jobs:
           toolchain: nightly
 
       - name: Cache Rust
-        uses: swatinem/rust-cache@5e4a76743357a1c3c57315bc1896d2c7f89d6861
+        uses: swatinem/rust-cache@11da8522bc3856a8fbc565f1d1530989c793d67d
         with:
           key: kftui-${{ matrix.rust_target }}-${{ matrix.os }}
           shared-key: kftui-${{ matrix.rust_target }}
@@ -410,13 +410,13 @@ jobs:
               args: [--frozen-lockfile]
 
       - name: Install Node.js
-        uses: actions/setup-node@65d868f8d4d85d7d4abb7de0875cde3fcc8798f5
+        uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238
         with:
           node-version: "24"
           cache: "pnpm"
 
       - name: Cache pnpm modules
-        uses: actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb
+        uses: actions/cache@b7e8d49f17405cc70c1c120101943203c98d3a4b
         with:
           path: |
             $(pnpm store path --silent)
@@ -453,7 +453,7 @@ jobs:
 
       - name: Set up Visual Studio shell
         if: matrix.os == 'windows-latest' && matrix.arch == 'arm64'
-        uses: TheMrMilchmann/setup-msvc-dev@ced9887c29958f18f71b18c99d9eb0837859434c
+        uses: TheMrMilchmann/setup-msvc-dev@6d07989641f65d93919de0bacb5840f869d77005
         with:
           arch: amd64_arm64
 
@@ -464,7 +464,7 @@ jobs:
 
       - name: Set up Perl on Windows
         if: matrix.os == 'windows-latest'
-        uses: shogo82148/actions-setup-perl@b27fdd828a97a63c975cdedfe6ad62830c3b55c9
+        uses: shogo82148/actions-setup-perl@ddd35596040f87fe8a6c151d602c2924b3ff9275
         with:
           perl-version: "5.32"
           distribution: "strawberry"
@@ -696,7 +696,7 @@ jobs:
           toolchain: nightly
 
       - name: Cache cargo-cyclonedx
-        uses: actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb
+        uses: actions/cache@b7e8d49f17405cc70c1c120101943203c98d3a4b
         with:
           path: ~/.cargo/bin/cargo-cyclonedx
           key: cargo-cyclonedx-${{ runner.os }}
@@ -739,7 +739,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
         with:
-          go-version: "1.24"
+          go-version: "1.25"
 
       - name: Build grype with VEX SBOM support
         run: |
@@ -823,7 +823,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Update release notes
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+        uses: actions/github-script@450193c5abd4cdb17ba9f3ffcfe8f635c4bb6c2a
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -880,7 +880,7 @@ jobs:
           toolchain: nightly
 
       - name: Cache Rust
-        uses: swatinem/rust-cache@5e4a76743357a1c3c57315bc1896d2c7f89d6861
+        uses: swatinem/rust-cache@11da8522bc3856a8fbc565f1d1530989c793d67d
         with:
           key: publish-cargo-crates
           shared-key: publish-cargo-crates
