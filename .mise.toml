@@ -105,13 +105,13 @@ run = "bash hacks/setup.sh"
 description = "Install sbomasm if not present (with checksum verification)"
 run = """
 # Check if sbomasm is actually functional (not just exists in PATH)
-if command -v sbomasm &> /dev/null && sbomasm version &> /dev/null; then
+if command -v sbomasm > /dev/null 2>&1 && sbomasm version > /dev/null 2>&1; then
   echo "sbomasm already installed: $(sbomasm version)"
   exit 0
 fi
 
 # Also check ~/.local/bin explicitly
-if [ -x "$HOME/.local/bin/sbomasm" ] && "$HOME/.local/bin/sbomasm" version &> /dev/null; then
+if [ -x "$HOME/.local/bin/sbomasm" ] && "$HOME/.local/bin/sbomasm" version > /dev/null 2>&1; then
   echo "sbomasm already installed at ~/.local/bin: $($HOME/.local/bin/sbomasm version)"
   exit 0
 fi
