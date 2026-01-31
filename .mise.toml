@@ -102,15 +102,22 @@ description = "Setup development environment for all platforms"
 run = "bash hacks/setup.sh"
 
 [tasks."sbom:install-tools"]
-description = "Install sbomasm if not present (with checksum verification)"
+description = "Install sbomasm and cargo-cyclonedx if not present"
 run = """
-# Check if sbomasm is actually functional (not just exists in PATH)
+# Install cargo-cyclonedx if not present
+if ! command -v cargo-cyclonedx > /dev/null 2>&1; then
+  echo "Installing cargo-cyclonedx..."
+  cargo install cargo-cyclonedx --quiet
+else
+  echo "cargo-cyclonedx already installed"
+fi
+
+# Check if sbomasm is already installed
 if command -v sbomasm > /dev/null 2>&1 && sbomasm version > /dev/null 2>&1; then
   echo "sbomasm already installed: $(sbomasm version)"
   exit 0
 fi
 
-# Also check ~/.local/bin explicitly
 if [ -x "$HOME/.local/bin/sbomasm" ] && "$HOME/.local/bin/sbomasm" version > /dev/null 2>&1; then
   echo "sbomasm already installed at ~/.local/bin: $($HOME/.local/bin/sbomasm version)"
   exit 0
@@ -198,12 +205,10 @@ syft scan dir:frontend \
   --enrich all \
   -o cyclonedx-json=sbom-kftray-frontend.cdx.json
 
-echo "Scanning Rust backend..."
-syft scan file:Cargo.lock \
-  --source-name kftray-backend \
-  --source-version $VERSION \
-  --enrich all \
-  -o cyclonedx-json=sbom-kftray-backend.cdx.json
+echo "Generating SBOM for kftray-tauri backend..."
+cargo cyclonedx --manifest-path crates/kftray-tauri/Cargo.toml --format json --spec-version 1.5 --target all --override-filename sbom-kftray-backend
+mv crates/kftray-tauri/sbom-kftray-backend.json sbom-kftray-backend.cdx.json
+find crates -name "sbom-kftray-backend.json" -delete 2>/dev/null || true
 
 echo "Assembling kftray SBOM..."
 sbomasm assemble \
@@ -214,14 +219,12 @@ sbomasm assemble \
   -o sbom-kftray.cdx.json \
   sbom-kftray-frontend.cdx.json sbom-kftray-backend.cdx.json
 
-echo "Enriching with license data..."
-sbomasm enrich --fields license -o sbom-kftray.cdx.json sbom-kftray.cdx.json
-
-echo "Adding supplier metadata..."
-sbomasm edit --subject document \
-  --supplier "KFtray Contributors (https://github.com/hcavarsan/kftray)" \
-  --timestamp \
-  sbom-kftray.cdx.json
+echo "Adding supplier metadata and cleaning up..."
+jq '
+  .metadata.supplier = {"name": "KFtray Contributors", "url": ["https://github.com/hcavarsan/kftray"]} |
+  .components = [.components[] | select(.name != "kftray-frontend" or .type != "file")]
+' sbom-kftray.cdx.json > sbom-kftray.cdx.json.tmp \
+  && mv sbom-kftray.cdx.json.tmp sbom-kftray.cdx.json
 
 rm -f sbom-kftray-frontend.cdx.json sbom-kftray-backend.cdx.json
 echo "SBOM saved to sbom-kftray.cdx.json"
@@ -229,7 +232,6 @@ echo "SBOM saved to sbom-kftray.cdx.json"
 
 [tasks."sbom:kftui"]
 description = "Generate SBOM for kftui CLI (Rust only)"
-env = { SYFT_CHECK_FOR_APP_UPDATE = "false" }
 depends = ["sbom:install-tools"]
 run = """
 export PATH="$HOME/.local/bin:$PATH"
@@ -237,18 +239,13 @@ VERSION="${VERSION:-local}"
 
 echo "=== Generating SBOM for kftui CLI ==="
 
-syft scan file:Cargo.lock \
-  --source-name kftui \
-  --source-version $VERSION \
-  --enrich all \
-  -o cyclonedx-json=sbom-kftui.cdx.json
+cargo cyclonedx --manifest-path crates/kftui/Cargo.toml --format json --spec-version 1.5 --target all --override-filename sbom-kftui
+mv crates/kftui/sbom-kftui.json sbom-kftui.cdx.json
+find crates -name "sbom-kftui.json" -delete 2>/dev/null || true
 
-sbomasm enrich --fields license -o sbom-kftui.cdx.json sbom-kftui.cdx.json
-
-sbomasm edit --subject document \
-  --supplier "KFtray Contributors (https://github.com/hcavarsan/kftray)" \
-  --timestamp \
-  sbom-kftui.cdx.json
+echo "Setting component type and adding supplier metadata..."
+jq '.metadata.component.type = "application" | .metadata.supplier = {"name": "KFtray Contributors", "url": ["https://github.com/hcavarsan/kftray"]}' sbom-kftui.cdx.json > sbom-kftui.cdx.json.tmp \
+  && mv sbom-kftui.cdx.json.tmp sbom-kftui.cdx.json
 
 echo "SBOM saved to sbom-kftui.cdx.json"
 """
@@ -263,21 +260,36 @@ VERSION="${VERSION:-local}"
 DOCKER_IMAGE="${DOCKER_IMAGE:-ghcr.io/hcavarsan/kftray-server:latest}"
 
 echo "=== Generating SBOM for kftray-server Docker image ==="
-echo "Scanning: $DOCKER_IMAGE"
 
+echo "Generating SBOM for kftray-server Rust crate..."
+cargo cyclonedx --manifest-path crates/kftray-server/Cargo.toml --format json --spec-version 1.5 --target all --override-filename sbom-kftray-server-rust
+mv crates/kftray-server/sbom-kftray-server-rust.json sbom-kftray-server-rust.cdx.json
+find crates -name "sbom-kftray-server-rust.json" -delete 2>/dev/null || true
+
+echo "Scanning Docker image: $DOCKER_IMAGE"
 syft scan $DOCKER_IMAGE \
-  --source-name kftray-server \
+  --source-name kftray-server-container \
   --source-version $VERSION \
   --enrich all \
-  -o cyclonedx-json=sbom-kftray-server.cdx.json
+  -o cyclonedx-json=sbom-kftray-server-docker.cdx.json
 
-sbomasm enrich --fields license -o sbom-kftray-server.cdx.json sbom-kftray-server.cdx.json
+echo "Assembling kftray-server SBOM..."
+sbomasm assemble \
+  --flatMerge \
+  -n kftray-server \
+  -v $VERSION \
+  -t container \
+  -o sbom-kftray-server.cdx.json \
+  sbom-kftray-server-rust.cdx.json sbom-kftray-server-docker.cdx.json
 
-sbomasm edit --subject document \
-  --supplier "KFtray Contributors (https://github.com/hcavarsan/kftray)" \
-  --timestamp \
-  sbom-kftray-server.cdx.json
+echo "Adding supplier metadata and cleaning up..."
+jq '
+  .metadata.supplier = {"name": "KFtray Contributors", "url": ["https://github.com/hcavarsan/kftray"]} |
+  .components = [.components[] | select(.name != "kftray-server-container")]
+' sbom-kftray-server.cdx.json > sbom-kftray-server.cdx.json.tmp \
+  && mv sbom-kftray-server.cdx.json.tmp sbom-kftray-server.cdx.json
 
+rm -f sbom-kftray-server-rust.cdx.json sbom-kftray-server-docker.cdx.json
 echo "SBOM saved to sbom-kftray-server.cdx.json"
 """
 
@@ -298,8 +310,7 @@ for sbom in sbom-kftray.cdx.json sbom-kftui.cdx.json sbom-kftray-server.cdx.json
   if [ -f "$sbom" ]; then
     echo "Signing $sbom..."
     cosign sign-blob --yes \
-      --output-signature "${sbom}.sig" \
-      --output-certificate "${sbom}.crt" \
+      --bundle "${sbom}.bundle.json" \
       "$sbom"
   fi
 done
@@ -307,13 +318,12 @@ done
 if [ -f ".vex.openvex.json" ]; then
   echo "Signing .vex.openvex.json..."
   cosign sign-blob --yes \
-    --output-signature ".vex.openvex.json.sig" \
-    --output-certificate ".vex.openvex.json.crt" \
+    --bundle ".vex.openvex.json.bundle.json" \
     ".vex.openvex.json"
 fi
 
 echo "=== All artifacts signed ==="
-ls -la *.sig *.crt 2>/dev/null || echo "No signatures found"
+ls -la *.bundle.json 2>/dev/null || echo "No bundles found"
 """
 
 [tasks."sbom:scan-all"]
