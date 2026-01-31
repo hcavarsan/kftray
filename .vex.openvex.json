@@ -2,7 +2,7 @@
   "@context": "https://openvex.dev/ns/v0.2.0",
   "@id": "https://github.com/hcavarsan/kftray/.vex.openvex.json",
   "author": "KFtray Contributors",
-  "version": 2,
+  "version": 3,
   "statements": [
     {
       "vulnerability": {
@@ -20,7 +20,7 @@
       ],
       "status": "not_affected",
       "justification": "vulnerable_code_not_in_execute_path",
-      "impact_statement": "glib-rs VariantStrIter unsoundness. Upstream Tauri dependency via gtk3-rs. The VariantStrIter type is not used directly in kftray codebase. See tauri-apps/tauri#12048.",
+      "impact_statement": "glib-rs VariantStrIter unsoundness. Upstream Tauri dependency via gtk3-rs (Linux only). The VariantStrIter type is not used directly in kftray codebase. See tauri-apps/tauri#12048.",
       "timestamp": "2026-01-30T21:29:45.179772Z"
     },
     {
@@ -39,86 +39,10 @@
       ],
       "status": "not_affected",
       "justification": "vulnerable_code_not_in_execute_path",
-      "impact_statement": "Related to RUSTSEC-2024-0429. Same glib-rs dependency chain via Tauri/gtk3-rs.",
+      "impact_statement": "Related to RUSTSEC-2024-0429. Same glib-rs dependency chain via Tauri/gtk3-rs (Linux only).",
       "timestamp": "2026-01-30T21:29:55.963332Z"
-    },
-    {
-      "vulnerability": {
-        "name": "RUSTSEC-2024-0429"
-      },
-      "products": [
-        {
-          "@id": "pkg:generic/kftui",
-          "subcomponents": [
-            {
-              "@id": "pkg:cargo/glib@0.18.5"
-            }
-          ]
-        }
-      ],
-      "status": "not_affected",
-      "justification": "vulnerable_code_not_in_execute_path",
-      "impact_statement": "glib-rs VariantStrIter unsoundness. Not applicable to kftui CLI - glib is not in the dependency tree.",
-      "timestamp": "2026-01-30T21:29:55.995106Z"
-    },
-    {
-      "vulnerability": {
-        "name": "GHSA-wrw7-89jp-8q8g"
-      },
-      "products": [
-        {
-          "@id": "pkg:generic/kftui",
-          "subcomponents": [
-            {
-              "@id": "pkg:cargo/glib@0.18.5"
-            }
-          ]
-        }
-      ],
-      "status": "not_affected",
-      "justification": "vulnerable_code_not_in_execute_path",
-      "impact_statement": "Related to RUSTSEC-2024-0429. Not applicable to kftui CLI.",
-      "timestamp": "2026-01-30T21:29:56.026637Z"
-    },
-    {
-      "vulnerability": {
-        "name": "RUSTSEC-2024-0429"
-      },
-      "products": [
-        {
-          "@id": "ghcr.io/hcavarsan/kftray-server",
-          "subcomponents": [
-            {
-              "@id": "pkg:cargo/glib@0.18.5"
-            }
-          ]
-        }
-      ],
-      "status": "not_affected",
-      "justification": "vulnerable_code_not_in_execute_path",
-      "impact_statement": "glib-rs not present in kftray-server Docker image.",
-      "timestamp": "2026-01-30T21:29:56.055461Z"
-    },
-    {
-      "vulnerability": {
-        "name": "GHSA-wrw7-89jp-8q8g"
-      },
-      "products": [
-        {
-          "@id": "ghcr.io/hcavarsan/kftray-server",
-          "subcomponents": [
-            {
-              "@id": "pkg:cargo/glib@0.18.5"
-            }
-          ]
-        }
-      ],
-      "status": "not_affected",
-      "justification": "vulnerable_code_not_in_execute_path",
-      "impact_statement": "Related to RUSTSEC-2024-0429. glib-rs not present in kftray-server.",
-      "timestamp": "2026-01-30T21:29:56.084739Z"
     }
   ],
   "timestamp": "2026-01-30T21:29:45Z",
-  "last_updated": "2026-01-30T21:29:56Z"
+  "last_updated": "2026-01-31T02:00:00Z"
 }
