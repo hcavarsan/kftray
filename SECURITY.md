@@ -40,16 +40,14 @@ gh attestation verify kftray_<version>_amd64.AppImage --owner hcavarsan
 
 ### SBOM Verification
 
-All SBOMs and VEX are signed with Cosign keyless signing:
+All SBOMs and VEX are signed with Cosign keyless signing using the v3 bundle format:
 
 ```bash
 curl -LO https://github.com/hcavarsan/kftray/releases/latest/download/sbom-kftray.cdx.json
-curl -LO https://github.com/hcavarsan/kftray/releases/latest/download/sbom-kftray.cdx.json.sig
-curl -LO https://github.com/hcavarsan/kftray/releases/latest/download/sbom-kftray.cdx.json.crt
+curl -LO https://github.com/hcavarsan/kftray/releases/latest/download/sbom-kftray.cdx.json.bundle.json
 
 cosign verify-blob \
-  --signature sbom-kftray.cdx.json.sig \
-  --certificate sbom-kftray.cdx.json.crt \
+  --bundle sbom-kftray.cdx.json.bundle.json \
   --certificate-identity-regexp "https://github.com/hcavarsan/kftray" \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
   sbom-kftray.cdx.json
@@ -61,12 +59,10 @@ Replace `kftray` with `kftui` or `kftray-server` for other artifacts.
 
 ```bash
 curl -LO https://github.com/hcavarsan/kftray/releases/latest/download/.vex.openvex.json
-curl -LO https://github.com/hcavarsan/kftray/releases/latest/download/.vex.openvex.json.sig
-curl -LO https://github.com/hcavarsan/kftray/releases/latest/download/.vex.openvex.json.crt
+curl -LO https://github.com/hcavarsan/kftray/releases/latest/download/.vex.openvex.json.bundle.json
 
 cosign verify-blob \
-  --signature .vex.openvex.json.sig \
-  --certificate .vex.openvex.json.crt \
+  --bundle .vex.openvex.json.bundle.json \
   --certificate-identity-regexp "https://github.com/hcavarsan/kftray" \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
   .vex.openvex.json
@@ -105,19 +101,18 @@ Builds meet [SLSA Level 2](https://slsa.dev) requirements:
 
 Each release includes per-artifact security documentation:
 
-| Artifact | SBOM | Signature | Certificate | Vuln Report |
-|----------|------|-----------|-------------|-------------|
-| kftray (Desktop) | `sbom-kftray.cdx.json` | `.sig` | `.crt` | `vuln-report-kftray.json` |
-| kftui (CLI) | `sbom-kftui.cdx.json` | `.sig` | `.crt` | `vuln-report-kftui.json` |
-| kftray-server (Docker) | `sbom-kftray-server.cdx.json` | `.sig` | `.crt` | `vuln-report-kftray-server.json` |
+| Artifact | SBOM | Bundle | Vuln Report |
+|----------|------|--------|-------------|
+| kftray (Desktop) | `sbom-kftray.cdx.json` | `.bundle.json` | `vuln-report-kftray.json` |
+| kftui (CLI) | `sbom-kftui.cdx.json` | `.bundle.json` | `vuln-report-kftui.json` |
+| kftray-server (Docker) | `sbom-kftray-server.cdx.json` | `.bundle.json` | `vuln-report-kftray-server.json` |
 
 Additionally:
 
 | File | Description |
 |------|-------------|
 | `.vex.openvex.json` | VEX assessments for vulnerability suppression |
-| `.vex.openvex.json.sig` | VEX Cosign signature |
-| `.vex.openvex.json.crt` | VEX signing certificate |
+| `.vex.openvex.json.bundle.json` | VEX Cosign bundle (signature + certificate) |
 
 ## Acknowledgments
 

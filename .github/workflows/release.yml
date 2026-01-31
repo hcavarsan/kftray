@@ -690,6 +690,17 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561
+        with:
+          toolchain: stable
+
+      - name: Cache cargo-cyclonedx
+        uses: actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb
+        with:
+          path: ~/.cargo/bin/cargo-cyclonedx
+          key: cargo-cyclonedx-${{ runner.os }}
+
       - name: Setup mise
         uses: jdx/mise-action@6d1e696aa24c1aa1bcc1adea0212707c71ab78a8 # v3.6.1
 
@@ -759,16 +770,14 @@ jobs:
         run: |
           for sbom in sbom-kftray.cdx.json sbom-kftui.cdx.json sbom-kftray-server.cdx.json; do
             cosign sign-blob --yes \
-              --output-signature "${sbom}.sig" \
-              --output-certificate "${sbom}.crt" \
+              --bundle "${sbom}.bundle.json" \
               "$sbom"
           done
 
       - name: Sign VEX document
         run: |
           cosign sign-blob --yes \
-            --output-signature .vex.openvex.json.sig \
-            --output-certificate .vex.openvex.json.crt \
+            --bundle .vex.openvex.json.bundle.json \
             .vex.openvex.json
 
       - name: Upload signed artifacts
@@ -777,17 +786,13 @@ jobs:
           name: sbom-signed
           path: |
             sbom-kftray.cdx.json
-            sbom-kftray.cdx.json.sig
-            sbom-kftray.cdx.json.crt
+            sbom-kftray.cdx.json.bundle.json
             sbom-kftui.cdx.json
-            sbom-kftui.cdx.json.sig
-            sbom-kftui.cdx.json.crt
+            sbom-kftui.cdx.json.bundle.json
             sbom-kftray-server.cdx.json
-            sbom-kftray-server.cdx.json.sig
-            sbom-kftray-server.cdx.json.crt
+            sbom-kftray-server.cdx.json.bundle.json
             .vex.openvex.json
-            .vex.openvex.json.sig
-            .vex.openvex.json.crt
+            .vex.openvex.json.bundle.json
             vuln-report-kftray.json
             vuln-report-kftui.json
             vuln-report-kftray-server.json
@@ -1022,17 +1027,13 @@ jobs:
         run: |
           gh release upload ${{ github.ref_name }} \
             sbom-kftray.cdx.json \
-            sbom-kftray.cdx.json.sig \
-            sbom-kftray.cdx.json.crt \
+            sbom-kftray.cdx.json.bundle.json \
             sbom-kftui.cdx.json \
-            sbom-kftui.cdx.json.sig \
-            sbom-kftui.cdx.json.crt \
+            sbom-kftui.cdx.json.bundle.json \
             sbom-kftray-server.cdx.json \
-            sbom-kftray-server.cdx.json.sig \
-            sbom-kftray-server.cdx.json.crt \
+            sbom-kftray-server.cdx.json.bundle.json \
             .vex.openvex.json \
-            .vex.openvex.json.sig \
-            .vex.openvex.json.crt \
+            .vex.openvex.json.bundle.json \
             vuln-report-kftray.json \
             vuln-report-kftui.json \
             vuln-report-kftray-server.json \

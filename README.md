@@ -252,16 +252,14 @@ gh attestation verify kftray_<version>_amd64.AppImage --owner hcavarsan
 
 ### Cosign SBOM Verification
 
-SBOMs and VEX documents are signed with [Cosign](https://docs.sigstore.dev/cosign/overview/):
+SBOMs and VEX documents are signed with [Cosign](https://docs.sigstore.dev/cosign/overview/) using the v3 bundle format:
 
 ```bash
 curl -LO https://github.com/hcavarsan/kftray/releases/latest/download/sbom-kftray.cdx.json
-curl -LO https://github.com/hcavarsan/kftray/releases/latest/download/sbom-kftray.cdx.json.sig
-curl -LO https://github.com/hcavarsan/kftray/releases/latest/download/sbom-kftray.cdx.json.crt
+curl -LO https://github.com/hcavarsan/kftray/releases/latest/download/sbom-kftray.cdx.json.bundle.json
 
 cosign verify-blob \
-  --signature sbom-kftray.cdx.json.sig \
-  --certificate sbom-kftray.cdx.json.crt \
+  --bundle sbom-kftray.cdx.json.bundle.json \
   --certificate-identity-regexp "https://github.com/hcavarsan/kftray" \
   --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
   sbom-kftray.cdx.json
