@@ -14,6 +14,7 @@ use log::{
     error,
     info,
 };
+use tokio_util::sync::CancellationToken;
 
 use crate::kube::shared_client::{
     SHARED_CLIENT_MANAGER,
@@ -94,7 +95,11 @@ async fn start_single_expose(config: Config, mode: DatabaseMode) -> Result<Custo
         websocket_port
     );
 
-    CHILD_PROCESSES.insert(config_id.to_string(), pf_process);
+    // Use consistent key format with start.rs: "config:{id}:service:{service_name}"
+    let service_name = config.service.clone().unwrap_or_else(|| "expose".to_string());
+    let handle_key = format!("config:{}:service:{}", config_id, service_name);
+
+    CHILD_PROCESSES.insert(handle_key.clone(), pf_process);
 
     let local_service_port = config.local_port.unwrap_or(8080);
     let local_service_address = config
@@ -112,15 +117,20 @@ async fn start_single_expose(config: Config, mode: DatabaseMode) -> Result<Custo
         websocket_port, local_service_address, local_service_port
     );
 
+    // Create cancellation token for graceful shutdown
+    let cancellation_token = CancellationToken::new();
+    let ws_cancellation_token = cancellation_token.clone();
+
     let ws_handle = tokio::spawn(async move {
-        if let Err(e) = ws_client.start().await {
+        if let Err(e) = ws_client.start(ws_cancellation_token).await {
             error!("WebSocket client error: {}", e);
         }
     });
 
     // Store the WebSocket client handle so it can be aborted when stopping
-    if let Some(mut process) = CHILD_PROCESSES.get_mut(&config_id.to_string()) {
+    if let Some(mut process) = CHILD_PROCESSES.get_mut(&handle_key) {
         process.set_ws_client_handle(ws_handle);
+        process.set_ws_cancellation_token(cancellation_token);
     }
 
     let config_state = ConfigState {
@@ -159,7 +169,11 @@ pub async fn stop_expose(
 
     let config = get_config_with_mode(config_id, mode).await?;
 
-    if let Some((_, pf_process)) = CHILD_PROCESSES.remove(&config_id.to_string()) {
+    // Use consistent key format with start_single_expose: "config:{id}:service:{service_name}"
+    let service_name = config.service.clone().unwrap_or_else(|| "expose".to_string());
+    let handle_key = format!("config:{}:service:{}", config_id, service_name);
+
+    if let Some((_, pf_process)) = CHILD_PROCESSES.remove(&handle_key) {
         info!("Cleaning up port-forward for config {}", config_id);
         pf_process.cleanup_and_abort().await;
     }

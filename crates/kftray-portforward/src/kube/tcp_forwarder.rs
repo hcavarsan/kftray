@@ -17,6 +17,9 @@ use crate::Logger;
 use crate::kube::http_log_watcher::HttpLogStateWatcher;
 
 const BUFFER_SIZE: usize = 65536;
+/// Maximum size for response buffer when HTTP logging is enabled (10MB)
+/// This prevents memory exhaustion from malicious or very large responses
+const MAX_RESPONSE_BUFFER_SIZE: usize = 10 * 1024 * 1024;
 
 #[derive(Clone)]
 pub struct TcpForwarder {
@@ -381,6 +384,7 @@ impl TcpForwarder {
                 current_response_logged: false,
                 first_chunk_time: None,
                 force_log_time: None,
+                buffer_truncated: false,
             })
         } else {
             None
@@ -468,6 +472,7 @@ impl TcpForwarder {
                                         current_response_logged: false,
                                         first_chunk_time: None,
                                         force_log_time: None,
+                                        buffer_truncated: false,
                                     });
                                     debug!("Enabled HTTP logging for upstream-to-client");
                                 } else {
@@ -518,7 +523,8 @@ impl TcpForwarder {
             &mut state.total_chunks_received,
         );
 
-        state.buffer.extend_from_slice(buffer);
+        // Use safe buffer extension with size limit
+        state.extend_buffer(buffer);
 
         if !state.current_response_logged {
             let maybe_logger = {
@@ -594,6 +600,7 @@ struct ResponseState {
     current_response_logged: bool,
     first_chunk_time: Option<tokio::time::Instant>,
     force_log_time: Option<tokio::time::Instant>,
+    buffer_truncated: bool,
 }
 
 impl ResponseState {
@@ -606,6 +613,7 @@ impl ResponseState {
         self.current_response_id = request_id;
         self.first_chunk_time = Some(tokio::time::Instant::now());
         self.force_log_time = None;
+        self.buffer_truncated = false;
     }
 
     fn reset_for_next_response(&mut self) {
@@ -615,6 +623,34 @@ impl ResponseState {
         self.total_chunks_received = 0;
         self.first_chunk_time = None;
         self.force_log_time = None;
+        self.buffer_truncated = false;
+    }
+
+    /// Extends buffer with data, respecting the maximum buffer size limit.
+    /// Returns true if all data was added, false if truncated.
+    fn extend_buffer(&mut self, data: &[u8]) -> bool {
+        if self.buffer_truncated {
+            // Already truncated, don't add more data
+            return false;
+        }
+
+        let available_space = MAX_RESPONSE_BUFFER_SIZE.saturating_sub(self.buffer.len());
+        if data.len() <= available_space {
+            self.buffer.extend_from_slice(data);
+            true
+        } else {
+            // Truncate: only add what fits
+            if available_space > 0 {
+                self.buffer.extend_from_slice(&data[..available_space]);
+            }
+            self.buffer_truncated = true;
+            debug!(
+                "Response buffer truncated at {} bytes (limit: {} bytes)",
+                self.buffer.len(),
+                MAX_RESPONSE_BUFFER_SIZE
+            );
+            false
+        }
     }
 }
 

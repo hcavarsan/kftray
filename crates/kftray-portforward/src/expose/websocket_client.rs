@@ -28,6 +28,7 @@ use tokio_tungstenite::{
     connect_async,
     tungstenite::Message,
 };
+use tokio_util::sync::CancellationToken;
 
 pub struct WebSocketTunnelClient {
     websocket_port: u16,
@@ -46,12 +47,18 @@ impl WebSocketTunnelClient {
         }
     }
 
-    pub async fn start(&self) -> Result<(), String> {
+    pub async fn start(&self, cancellation_token: CancellationToken) -> Result<(), String> {
         let ws_url = format!("ws://127.0.0.1:{}", self.websocket_port);
         let max_retries = 100;
         let mut retry_count = 0;
 
         loop {
+            // Check for cancellation before attempting connection
+            if cancellation_token.is_cancelled() {
+                info!("WebSocket client cancelled before connection attempt");
+                return Ok(());
+            }
+
             info!(
                 "Connecting WebSocket client to {} (attempt {}/{})",
                 ws_url,
@@ -59,13 +66,24 @@ impl WebSocketTunnelClient {
                 max_retries
             );
 
-            match self.connect_and_run(&ws_url).await {
+            match self.connect_and_run(&ws_url, cancellation_token.clone()).await {
                 Ok(_) => {
                     info!("WebSocket tunnel disconnected gracefully");
                 }
                 Err(e) => {
+                    // Check if this was a cancellation
+                    if cancellation_token.is_cancelled() {
+                        info!("WebSocket client cancelled");
+                        return Ok(());
+                    }
                     error!("WebSocket tunnel error: {}", e);
                 }
+            }
+
+            // Check for cancellation before retry
+            if cancellation_token.is_cancelled() {
+                info!("WebSocket client cancelled, stopping retry loop");
+                return Ok(());
             }
 
             retry_count += 1;
@@ -81,15 +99,29 @@ impl WebSocketTunnelClient {
                 "WebSocket disconnected. Reconnecting in {} seconds...",
                 backoff_secs
             );
-            tokio::time::sleep(tokio::time::Duration::from_secs(backoff_secs)).await;
+
+            // Use select to allow cancellation during backoff sleep
+            tokio::select! {
+                _ = tokio::time::sleep(tokio::time::Duration::from_secs(backoff_secs)) => {}
+                _ = cancellation_token.cancelled() => {
+                    info!("WebSocket client cancelled during backoff");
+                    return Ok(());
+                }
+            }
         }
     }
 
-    async fn connect_and_run(&self, ws_url: &str) -> Result<(), String> {
-        // Connect to the port-forwarded WebSocket endpoint
-        let (ws_stream, _) = connect_async(ws_url)
-            .await
-            .map_err(|e| format!("Failed to connect to WebSocket: {}", e))?;
+    async fn connect_and_run(&self, ws_url: &str, cancellation_token: CancellationToken) -> Result<(), String> {
+        // Connect to the port-forwarded WebSocket endpoint with cancellation support
+        let ws_connect = connect_async(ws_url);
+        let (ws_stream, _) = tokio::select! {
+            result = ws_connect => {
+                result.map_err(|e| format!("Failed to connect to WebSocket: {}", e))?
+            }
+            _ = cancellation_token.cancelled() => {
+                return Err("WebSocket connection cancelled".to_string());
+            }
+        };
 
         info!("WebSocket tunnel connected");
 
@@ -100,69 +132,84 @@ impl WebSocketTunnelClient {
         http_connector.set_keepalive(Some(std::time::Duration::from_secs(30)));
         let http_client = LegacyClient::builder(TokioExecutor::new()).build(http_connector);
 
-        while let Some(msg) = ws_read.next().await {
-            match msg {
-                Ok(Message::Binary(data)) => match TunnelMessage::deserialize(&data) {
-                    Ok(TunnelMessage::HttpRequest {
-                        id,
-                        method,
-                        path,
-                        headers,
-                        body,
-                    }) => {
-                        debug!("Received HTTP request: {} {}", method, path);
+        loop {
+            tokio::select! {
+                msg_option = ws_read.next() => {
+                    let msg = match msg_option {
+                        Some(msg) => msg,
+                        None => break, // Stream ended
+                    };
 
-                        let response_msg = self
-                            .forward_to_local_service(
-                                &http_client,
-                                id.clone(),
+                    match msg {
+                        Ok(Message::Binary(data)) => match TunnelMessage::deserialize(&data) {
+                            Ok(TunnelMessage::HttpRequest {
+                                id,
                                 method,
                                 path,
                                 headers,
                                 body,
-                            )
-                            .await;
+                            }) => {
+                                debug!("Received HTTP request: {} {}", method, path);
 
-                        match response_msg.serialize() {
-                            Ok(response_data) => {
-                                if let Err(e) =
-                                    ws_write.send(Message::Binary(response_data.into())).await
-                                {
-                                    error!("Failed to send response through WebSocket: {}", e);
-                                    break;
+                                let response_msg = self
+                                    .forward_to_local_service(
+                                        &http_client,
+                                        id.clone(),
+                                        method,
+                                        path,
+                                        headers,
+                                        body,
+                                    )
+                                    .await;
+
+                                match response_msg.serialize() {
+                                    Ok(response_data) => {
+                                        if let Err(e) =
+                                            ws_write.send(Message::Binary(response_data.into())).await
+                                        {
+                                            error!("Failed to send response through WebSocket: {}", e);
+                                            break;
+                                        }
+                                    }
+                                    Err(e) => {
+                                        error!("Failed to serialize response: {}", e);
+                                    }
                                 }
                             }
-                            Err(e) => {
-                                error!("Failed to serialize response: {}", e);
+                            Ok(TunnelMessage::Ping) => {
+                                debug!("Received ping, sending pong");
+                                let pong = TunnelMessage::Pong;
+                                if let Ok(pong_data) = pong.serialize() {
+                                    let _ = ws_write.send(Message::Binary(pong_data.into())).await;
+                                }
                             }
+                            Ok(_) => {
+                                warn!("Received unexpected message type from pod");
+                            }
+                            Err(e) => {
+                                error!("Failed to deserialize tunnel message: {}", e);
+                            }
+                        },
+                        Ok(Message::Ping(_)) => {
+                            debug!("Received WebSocket ping");
                         }
-                    }
-                    Ok(TunnelMessage::Ping) => {
-                        debug!("Received ping, sending pong");
-                        let pong = TunnelMessage::Pong;
-                        if let Ok(pong_data) = pong.serialize() {
-                            let _ = ws_write.send(Message::Binary(pong_data.into())).await;
+                        Ok(Message::Close(_)) => {
+                            info!("WebSocket closed by pod");
+                            break;
                         }
+                        Err(e) => {
+                            error!("WebSocket error: {}", e);
+                            break;
+                        }
+                        _ => {}
                     }
-                    Ok(_) => {
-                        warn!("Received unexpected message type from pod");
-                    }
-                    Err(e) => {
-                        error!("Failed to deserialize tunnel message: {}", e);
-                    }
-                },
-                Ok(Message::Ping(_)) => {
-                    debug!("Received WebSocket ping");
                 }
-                Ok(Message::Close(_)) => {
-                    info!("WebSocket closed by pod");
+                _ = cancellation_token.cancelled() => {
+                    info!("WebSocket client received cancellation signal");
+                    // Try to send close frame gracefully
+                    let _ = ws_write.send(Message::Close(None)).await;
                     break;
                 }
-                Err(e) => {
-                    error!("WebSocket error: {}", e);
-                    break;
-                }
-                _ => {}
             }
         }
 

@@ -31,6 +31,7 @@ pub struct PortForwardProcess {
     pub cancellation_token: CancellationToken,
     pub config_id: String,
     pub ws_client_handle: Option<JoinHandle<()>>,
+    pub ws_cancellation_token: Option<CancellationToken>,
 }
 
 impl PortForwardProcess {
@@ -41,6 +42,7 @@ impl PortForwardProcess {
             cancellation_token: CancellationToken::new(),
             config_id,
             ws_client_handle: None,
+            ws_cancellation_token: None,
         }
     }
 
@@ -54,6 +56,7 @@ impl PortForwardProcess {
             cancellation_token,
             config_id,
             ws_client_handle: None,
+            ws_cancellation_token: None,
         }
     }
 
@@ -66,6 +69,7 @@ impl PortForwardProcess {
             cancellation_token: CancellationToken::new(),
             config_id,
             ws_client_handle: None,
+            ws_cancellation_token: None,
         }
     }
 
@@ -79,11 +83,16 @@ impl PortForwardProcess {
             cancellation_token,
             config_id,
             ws_client_handle: None,
+            ws_cancellation_token: None,
         }
     }
 
     pub fn set_ws_client_handle(&mut self, ws_handle: JoinHandle<()>) {
         self.ws_client_handle = Some(ws_handle);
+    }
+
+    pub fn set_ws_cancellation_token(&mut self, token: CancellationToken) {
+        self.ws_cancellation_token = Some(token);
     }
 
     /// Cleanup and abort the port forward process.
@@ -117,7 +126,21 @@ impl PortForwardProcess {
             }
         }
 
-        // Abort the WebSocket client task if it exists
+        // Cancel the WebSocket client gracefully first, then abort if needed
+        if let Some(ws_token) = &self.ws_cancellation_token {
+            tracing::info!(
+                "Cancelling WebSocket client for config: {}",
+                self.config_id
+            );
+            ws_token.cancel();
+        }
+
+        // Give WebSocket client time to shutdown gracefully
+        if self.ws_client_handle.is_some() {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+
+        // Abort the WebSocket client task if it still exists
         if let Some(ws_handle) = self.ws_client_handle {
             tracing::info!(
                 "Aborting WebSocket client task for config: {}",
