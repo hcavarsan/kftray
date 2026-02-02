@@ -386,16 +386,40 @@ impl PortForwarder {
         let mut pod_change_rx = self.pod_watcher.subscribe_pod_changes();
         let mut last_pod_change = tokio::time::Instant::now();
         let mut pending_pod: Option<String> = None;
+        let mut consecutive_accept_errors: u32 = 0;
+        const MAX_ACCEPT_ERRORS: u32 = 10;
+        const BASE_BACKOFF_MS: u64 = 10;
+        const MAX_BACKOFF_MS: u64 = 5000;
 
         loop {
             let (client_conn, client_addr) = tokio::select! {
                 result = listener.accept() => {
                     match result {
-                        Ok(connection) => connection,
+                        Ok(connection) => {
+                            consecutive_accept_errors = 0;
+                            connection
+                        }
                         Err(e) => {
-                            error!("Accept failed: {}", e);
-                            // Continue accepting new connections instead of breaking
-                            // Most accept errors are transient (e.g., too many open files)
+                            consecutive_accept_errors += 1;
+                            let backoff_ms = std::cmp::min(
+                                BASE_BACKOFF_MS * (1 << consecutive_accept_errors.min(10)),
+                                MAX_BACKOFF_MS
+                            );
+                            error!(
+                                "Accept failed ({}/{}): {}, backing off {}ms",
+                                consecutive_accept_errors, MAX_ACCEPT_ERRORS, e, backoff_ms
+                            );
+                            if consecutive_accept_errors >= MAX_ACCEPT_ERRORS {
+                                error!(
+                                    "Too many consecutive accept errors, stopping listener for config {}",
+                                    config_id
+                                );
+                                return Err(anyhow::anyhow!(
+                                    "TCP listener failed after {} consecutive accept errors: {}",
+                                    MAX_ACCEPT_ERRORS, e
+                                ));
+                            }
+                            tokio::time::sleep(tokio::time::Duration::from_millis(backoff_ms)).await;
                             continue;
                         }
                     }
