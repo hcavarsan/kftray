@@ -401,8 +401,9 @@ impl PortForwarder {
                         }
                         Err(e) => {
                             consecutive_accept_errors += 1;
+                            let exponent = consecutive_accept_errors.saturating_sub(1).min(10);
                             let backoff_ms = std::cmp::min(
-                                BASE_BACKOFF_MS * (1 << consecutive_accept_errors.min(10)),
+                                BASE_BACKOFF_MS.saturating_mul(1u64 << exponent),
                                 MAX_BACKOFF_MS
                             );
                             error!(
@@ -419,7 +420,13 @@ impl PortForwarder {
                                     MAX_ACCEPT_ERRORS, e
                                 ));
                             }
-                            tokio::time::sleep(tokio::time::Duration::from_millis(backoff_ms)).await;
+                            tokio::select! {
+                                _ = tokio::time::sleep(tokio::time::Duration::from_millis(backoff_ms)) => {}
+                                _ = cancel_token.cancelled() => {
+                                    debug!("Backoff interrupted by cancellation");
+                                    break;
+                                }
+                            }
                             continue;
                         }
                     }
