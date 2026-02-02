@@ -60,55 +60,61 @@ impl SharedClientManager {
     }
 
     pub async fn get_client(&self, key: ServiceClientKey) -> anyhow::Result<Arc<Client>> {
+        // Fast path: check for valid cached client without lock
         if let Some(cached) = self.clients.get(&key) {
             if !cached.is_expired(self.client_ttl) {
                 return Ok(cached.client.clone());
             }
+            // Drop reference before removal to avoid deadlock
             drop(cached);
-            self.clients.remove(&key);
         }
 
+        // Get or create lock for this key - the lock persists to coordinate waiters
         let lock = self
             .creation_locks
             .entry(key.clone())
             .or_insert_with(|| Arc::new(Mutex::new(())))
             .clone();
 
+        // Acquire lock to serialize client creation for this key
         let _guard = lock.lock().await;
 
+        // Double-check: another task may have created the client while we waited
         if let Some(cached) = self.clients.get(&key) {
             if !cached.is_expired(self.client_ttl) {
                 return Ok(cached.client.clone());
             }
+            // Remove expired client while holding the lock
             drop(cached);
             self.clients.remove(&key);
         }
 
-        let result = async {
-            let (client_opt, _, _) = create_client_with_specific_context(
-                key.kubeconfig_path.clone(),
-                key.context_name.as_deref(),
-            )
-            .await?;
-
-            client_opt.ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Failed to create client for context: {:?}",
-                    key.context_name
-                )
-            })
-        }
+        // Create new client
+        let result = create_client_with_specific_context(
+            key.kubeconfig_path.clone(),
+            key.context_name.as_deref(),
+        )
         .await;
 
         match result {
-            Ok(client) => {
+            Ok((client_opt, _, _)) => {
+                let client = client_opt.ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "Failed to create client for context: {:?}",
+                        key.context_name
+                    )
+                })?;
                 let cached_client = CachedClient::new(client);
                 let client_arc = cached_client.client.clone();
                 self.clients.insert(key, cached_client);
+                // Note: Lock is intentionally NOT removed on success - it stays
+                // to coordinate future requests. cleanup_expired() handles removal.
                 Ok(client_arc)
             }
             Err(e) => {
-                self.creation_locks.remove(&key);
+                // On error, do NOT remove the lock immediately - other waiters
+                // may still be holding references. Let cleanup_expired() handle it.
+                // The lock will be cleaned up when no clients exist for this key.
                 Err(e)
             }
         }

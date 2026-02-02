@@ -179,6 +179,25 @@ impl WebSocketTunnelServer {
         }
 
         info!("Tunnel connection closed");
+
+        // Notify all pending requests that the connection is closed
+        // This prevents 30-second timeout hangs when the tunnel drops
+        {
+            let mut pending = pending_responses.write().await;
+            let request_ids: Vec<String> = pending.keys().cloned().collect();
+            for id in request_ids {
+                if let Some(sender) = pending.remove(&id) {
+                    let error_msg = TunnelMessage::Error {
+                        id: Some(id.clone()),
+                        message: "Tunnel connection closed".to_string(),
+                    };
+                    // Ignore send errors - receiver may have already been dropped
+                    let _ = sender.send(error_msg);
+                    debug!("Notified pending request {} of connection close", id);
+                }
+            }
+        }
+
         {
             let mut tunnel_lock = tunnel.write().await;
             *tunnel_lock = None;
