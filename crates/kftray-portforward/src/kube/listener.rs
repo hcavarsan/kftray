@@ -286,13 +286,23 @@ impl PortForwarder {
         let next_pf = self.next_portforwarder.clone();
 
         tokio::spawn(async move {
-            {
-                let guard = next_pf.lock().await;
-                if guard.is_some() {
+            // Use try_lock to avoid blocking and prevent multiple tasks from creating
+            // portforwarders simultaneously. If we can't get the lock, another task
+            // is already working on it.
+            let mut guard = match next_pf.try_lock() {
+                Ok(guard) => guard,
+                Err(_) => {
+                    debug!("Another task is already creating next portforwarder, skipping");
                     return;
                 }
+            };
+
+            // Check if already populated while holding the lock
+            if guard.is_some() {
+                return;
             }
 
+            // Create portforwarder while holding the lock to prevent races
             let new_portforwarder = if let Some(selected_pod) = pod_watcher
                 .wait_for_ready_pod(tokio::time::Duration::from_secs(5))
                 .await
@@ -332,11 +342,9 @@ impl PortForwarder {
                 None
             };
 
+            // Store the result directly - we still hold the lock
             if let Some(pf) = new_portforwarder {
-                let mut guard = next_pf.lock().await;
-                if guard.is_none() {
-                    *guard = Some(pf);
-                }
+                *guard = Some(pf);
             }
         });
     }
