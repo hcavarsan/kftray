@@ -610,15 +610,6 @@ impl PortForwarder {
             tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
         }
 
-        let test_addr = format!(
-            "{}:{}",
-            listener_config.local_address, listener_config.local_port
-        );
-        let _test_socket = tokio::net::UdpSocket::bind(&test_addr)
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to bind local UDP socket: {}", e))?;
-        drop(_test_socket);
-
         let upstream_stream = self
             .get_stream()
             .await
