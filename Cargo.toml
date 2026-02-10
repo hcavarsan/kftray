@@ -72,7 +72,7 @@ openssl = { version = "0.10", features = ["vendored"] }
 openssl-sys = { version = "0.9", features = ["vendored"] }
 pem = "3.0"
 portpicker = "0.1"
-rand = "0.9"
+rand = "0.10"
 ratatui = { version = "0.30.0", features = ["unstable-widget-ref"] }
 ratatui-explorer = { branch = "master", git = "https://github.com/hcavarsan/ratatui-explorer" }
 rcgen = "0.14"
