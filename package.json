@@ -39,7 +39,7 @@
   "devDependencies": {
     "@codecov/vite-plugin": "1.9.1",
     "@eslint/eslintrc": "^3.3.3",
-    "@eslint/js": "^9.39.2",
+    "@eslint/js": "^10.0.0",
     "@tauri-apps/cli": "^2.9.6",
     "@types/react-window": "^2.0.0"
   }
