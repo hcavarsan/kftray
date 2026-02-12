@@ -27,11 +27,13 @@ brew install kftui
 Using `curl`:
 
 #### Bash Shell
+
 ```sh
 bash <(curl -s https://raw.githubusercontent.com/hcavarsan/kftray/main/hacks/kftui_installer.sh)
 ```
 
 #### Fish Shell
+
 ```fish
 curl -s https://raw.githubusercontent.com/hcavarsan/kftray/main/hacks/kftui_installer.sh | bash
 ```
@@ -39,11 +41,13 @@ curl -s https://raw.githubusercontent.com/hcavarsan/kftray/main/hacks/kftui_inst
 Using `wget`:
 
 #### Bash Shell
+
 ```sh
 bash <(wget -qO- https://raw.githubusercontent.com/hcavarsan/kftray/main/hacks/kftui_installer.sh)
 ```
 
 #### Fish Shell
+
 ```fish
 wget -qO- https://raw.githubusercontent.com/hcavarsan/kftray/main/hacks/kftui_installer.sh | bash
 ```

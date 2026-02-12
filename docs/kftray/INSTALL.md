@@ -3,7 +3,7 @@
 
 `kftray` is available via Homebrew for macOS and Linux. For other systems, download the appropriate release from the [GitHub releases page](https://github.com/hcavarsan/kftray/releases).
 
-### macOS
+## macOS
 
 Install using Homebrew:
 
@@ -21,13 +21,12 @@ brew tap hcavarsan/kftray
 brew install kftray-linux
 ```
 
-
 _Please check the caveats section for global app creation instructions after installation._
 
 Linux Note:
+
 - Due to GTK limitations, it is necessary to install and enable the GNOME Shell extension for AppIndicator support to kftray works. See here: <https://extensions.gnome.org/extension/615/appindicator-support/>
 - For newer Linux distributions (Ubuntu 24.04+), use the "newer-glibc" AppImage versions for better compatibility
-
 
 ### Direct Downloads
 

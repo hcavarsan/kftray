@@ -52,11 +52,8 @@ docker run -e REMOTE_ADDRESS=target.host \
           kftray-server
 ```
 
-
-
 ## Links
 
 Documentation: [kftray.app](https://kftray.app)
 
 Source Code: [github.com/hcavarsan/kftray](https://github.com/hcavarsan/kftray)
-
