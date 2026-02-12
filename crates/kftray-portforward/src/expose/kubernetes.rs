@@ -66,7 +66,7 @@ pub async fn create_expose_resources(
         .as_secs();
 
     let random_string: String = {
-        use rand::Rng;
+        use rand::RngExt;
         let mut rng = rand::rng();
         (0..6)
             .map(|_| {
