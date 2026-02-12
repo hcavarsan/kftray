@@ -34,7 +34,6 @@
 </div>
 </p>
 
-
 ## About
 
 kftray and kftui are Kubernetes port forwarding tools that actually work the way you'd expect them to. While `kubectl port-forward` is fine for quick tasks, it falls apart when pods restart or connections drop – and you're stuck manually reconnecting.
@@ -78,11 +77,7 @@ check out our blog post at [kftray.app/blog/posts/13-kftray-manage-all-k8s-port-
 
 <br>
 
-
-
-
 ## Features Matrix
-
 
 <div align="center">
 
@@ -153,6 +148,7 @@ Both tools share the same JSON configuration format. Here's a example:
 ```
 
 You can import configs from:
+
 - Local JSON files
 - GitHub repositories (public or private)
 - Direct from your cluster using service annotations
@@ -178,6 +174,7 @@ The **expose** workload type lets you share your local development server with y
 - Running local services that need to be accessible from the cluster
 
 **Example: Expose local service to the internet**
+
 ```json
 {
   "alias": "myapp.example.com",
@@ -197,6 +194,7 @@ The **expose** workload type lets you share your local development server with y
 ```
 
 **Example: Expose to cluster internal network only**
+
 ```json
 {
   "alias": "internal-api",
@@ -281,6 +279,7 @@ KFtray builds meet [SLSA](https://slsa.dev) Level 2 requirements:
 Want to contribute or build from source? We use [mise](https://mise.jdx.dev) to manage the development environment.
 
 **Quick start:**
+
 ```bash
 # Install mise
 curl https://mise.run | sh
@@ -294,6 +293,7 @@ mise run dev        # Start development
 ```
 
 **Available commands:**
+
 - `mise run dev` - Start development mode
 - `mise run build` - Build production app
 - `mise run format` - Format code

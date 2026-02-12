@@ -29,11 +29,13 @@
 KFtray uses [mise](https://mise.jdx.dev) to manage the development environment. This ensures all contributors use the same tool versions.
 
 1. **Install mise:**
+
    ```bash
    curl https://mise.run | sh
    ```
 
 2. **Clone and setup:**
+
    ```bash
    git clone https://github.com/hcavarsan/kftray.git
    cd kftray
@@ -42,6 +44,7 @@ KFtray uses [mise](https://mise.jdx.dev) to manage the development environment. 
    ```
 
 3. **Start developing:**
+
    ```bash
    mise run dev        # Launch development mode
    ```

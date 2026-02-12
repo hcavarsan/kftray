@@ -7,6 +7,7 @@ Do not report security vulnerabilities through public GitHub issues.
 Use [GitHub Private Vulnerability Reporting](https://github.com/hcavarsan/kftray/security/advisories/new) instead. You will receive a response within 48 hours.
 
 Include:
+
 - Description of the vulnerability
 - Steps to reproduce
 - Affected versions

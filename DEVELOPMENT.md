@@ -24,11 +24,13 @@ curl https://mise.run | sh
 ```
 
 After installation, restart your terminal or run:
+
 ```bash
 source ~/.bashrc  # or ~/.zshrc
 ```
 
 That's it! mise will handle installing:
+
 - Node.js 24
 - pnpm (latest)
 - Rust nightly (with required components)
@@ -152,7 +154,7 @@ Run `mise tasks` to see all available tasks. Here are the most commonly used:
 
 ## Project Structure
 
-```
+```text
 kftray/
 ├── .mise.toml              # mise configuration (tools + tasks)
 ├── frontend/               # React + TypeScript UI
@@ -175,6 +177,7 @@ kftray/
 ### Pre-commit Hook
 
 The repository has an automatic pre-commit hook that:
+
 1. Formats all code (Prettier + rustfmt)
 2. Lints with auto-fix (ESLint + Clippy)
 3. Stages the fixed files automatically
@@ -182,6 +185,7 @@ The repository has an automatic pre-commit hook that:
 When you run `git commit`, the hook runs automatically. Your code will be formatted and linted before the commit is created.
 
 To bypass the hook (not recommended):
+
 ```bash
 git commit --no-verify
 ```
@@ -195,6 +199,7 @@ git commit --no-verify
 5. Push and create a pull request
 
 The CI will run:
+
 - Format check
 - Lint check (no auto-fix in CI)
 - Backend tests with coverage
@@ -231,6 +236,7 @@ mise run test:server
 ### mise not found
 
 After installing mise, restart your terminal or run:
+
 ```bash
 source ~/.bashrc  # or ~/.zshrc
 ```
@@ -238,6 +244,7 @@ source ~/.bashrc  # or ~/.zshrc
 ### System dependencies missing
 
 Run the setup script again:
+
 ```bash
 mise run setup
 ```
@@ -247,6 +254,7 @@ This will detect your OS and install missing dependencies.
 ### Tool version mismatch
 
 Ensure you have the latest tools:
+
 ```bash
 mise install  # Reinstall all tools
 ```
@@ -254,6 +262,7 @@ mise install  # Reinstall all tools
 ### Port already in use
 
 The default development port is used by Tauri. Kill any process using the port:
+
 ```bash
 # macOS/Linux
 lsof -ti:PORT | xargs kill -9
@@ -266,11 +275,13 @@ taskkill /PID <PID> /F
 ### Pre-commit hook failing
 
 The hook runs format and lint automatically. If it fails:
+
 1. Check the error message
 2. Fix the issue manually
 3. Try committing again
 
 Or run the checks manually:
+
 ```bash
 mise run format
 mise run lint
@@ -279,6 +290,7 @@ mise run lint
 ### Building fails on Windows
 
 Ensure you have:
+
 1. Microsoft C++ Build Tools installed
 2. WebView2 Runtime installed
 3. NASM installed (for some dependencies)
@@ -288,6 +300,7 @@ Run `mise run setup` to see detailed instructions.
 ### Node/pnpm/Rust version issues
 
 mise manages all tool versions. If you're having version issues:
+
 ```bash
 # Check installed versions
 mise ls

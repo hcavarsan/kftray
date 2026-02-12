@@ -1,6 +1,6 @@
 # Building `kftray` from Source
 
-### Overview
+## Overview
 
 `kftray` is a desktop application built using Tauri, which combines a Rust backend with a frontend built using React and TypeScript. The project uses [mise](https://mise.jdx.dev) as a unified task runner and development environment manager.
 
@@ -9,11 +9,13 @@
 The project uses mise to manage all tools and dependencies. You only need to install:
 
 1. **[mise](https://mise.jdx.dev)** - Development environment manager
+
    ```bash
    curl https://mise.run | sh
    ```
 
 That's it! mise will handle installing and managing:
+
 - Node.js
 - pnpm
 - Rust (nightly toolchain)
@@ -24,23 +26,27 @@ That's it! mise will handle installing and managing:
 ### Quick Start
 
 1. **Clone the Repository:**
+
    ```bash
    git clone https://github.com/hcavarsan/kftray.git
    cd kftray
    ```
 
 2. **Setup Development Environment:**
+
    ```bash
    mise install          # Install all tools defined in .mise.toml
    mise run setup        # Install system dependencies and project deps
    ```
 
 3. **Start Development:**
+
    ```bash
    mise run dev          # Launch app in development mode (tauri dev)
    ```
 
 4. **Build for Production:**
+
    ```bash
    mise run build        # Build production app (tauri build)
    ```
@@ -50,12 +56,14 @@ That's it! mise will handle installing and managing:
 Run `mise tasks` to see all available tasks:
 
 **Development:**
+
 - `mise run dev` - Start Tauri development mode
 - `mise run build` - Build production application
 - `mise run build:ui` - Build only the frontend UI
 - `mise run build:analyze` - Build with bundle analysis
 
 **Code Quality:**
+
 - `mise run format` - Format frontend and backend code
 - `mise run lint` - Lint with auto-fix enabled
 - `mise run test:back` - Run Rust backend tests
@@ -63,10 +71,12 @@ Run `mise tasks` to see all available tasks:
 - `mise run check` - TypeScript type checking
 
 **Pre-commit:**
+
 - `mise run precommit` - Run format, lint, and tests
 - `mise run precommit:hook` - Git pre-commit hook (auto-staged)
 
 **Utilities:**
+
 - `mise run setup` - Setup development environment
 - `mise run generate-icons` - Generate application icons
 - `mise run knip` - Detect unused exports
@@ -76,6 +86,7 @@ Run `mise tasks` to see all available tasks:
 The `mise run setup` command automatically detects your OS and installs required dependencies:
 
 **Linux** (Ubuntu/Debian/Fedora/Arch/openSUSE):
+
 - webkit2gtk-4.1-dev
 - build-essential
 - libssl-dev
@@ -84,10 +95,12 @@ The `mise run setup` command automatically detects your OS and installs required
 - And more...
 
 **macOS**:
+
 - Xcode Command Line Tools
 - Homebrew (if not installed)
 
 **Windows**:
+
 - Microsoft C++ Build Tools
 - WebView2 Runtime
 

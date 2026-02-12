@@ -50,6 +50,3 @@
   ```bash
   cargo update
   ```
-
-
-

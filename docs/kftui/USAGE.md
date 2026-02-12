@@ -1,6 +1,5 @@
 # KFtui Usage Guide
 
-
 Start with a simple configuration file. Create `config.json`:
 
 ```json
@@ -19,13 +18,14 @@ Start with a simple configuration file. Create `config.json`:
 ```
 
 Launch kftui with this configuration:
+
 ```bash
 kftui --configs-path config.json
 ```
 
 The interface displays your configuration in the "Stopped" table on the left. Press `f` to start the port-forward. The configuration moves to the "Running" table on the right, and your service becomes accessible at `localhost:8080`. Press `f` again to stop it.
 
-### Persistent Storage
+## Persistent Storage
 
 To avoid specifying the config file path repeatedly, save configurations to kftui's database:
 
@@ -40,13 +40,17 @@ After saving, run `kftui` without arguments to access your stored configurations
 kftui supports several ways to load configurations, each suited to different workflows.
 
 ### Local Files
+
 Load configurations from local JSON files:
+
 ```bash
 kftui --configs-path /path/to/config.json
 ```
 
 ### GitHub Repositories
+
 Import configurations from version-controlled repositories:
+
 ```bash
 kftui --github-url https://github.com/your-team/k8s-configs --configs-path environments/dev.json
 ```
@@ -54,13 +58,17 @@ kftui --github-url https://github.com/your-team/k8s-configs --configs-path envir
 This method works well for teams that maintain environment-specific configurations in version control.
 
 ### Inline JSON
+
 Pass JSON configuration directly for scripting scenarios:
+
 ```bash
 kftui --json '[{"alias":"test","namespace":"default","service":"my-service","local_port":8080,"remote_port":80,"protocol":"tcp","workload_type":"service"}]'
 ```
 
 ### Standard Input
+
 Read configurations from stdin for pipeline integration:
+
 ```bash
 echo '[{"alias":"api",...}]' | kftui --stdin
 ```
@@ -114,6 +122,7 @@ The interface consists of four main areas:
 ### Menu Navigation
 
 The top menu provides seven functions:
+
 - **Help**: Display usage information and keyboard shortcuts
 - **Auto Add**: Discover services from your Kubernetes cluster
 - **Import**: Load configuration files through a file browser
@@ -145,6 +154,7 @@ Enable logging by setting `"http_logs_enabled": true` in your configuration file
 Press `V` to open the HTTP logs viewer, which operates in two modes:
 
 **List Mode** (default view):
+
 - Displays all HTTP requests with timestamps and status codes
 - Navigate requests with `↑/↓` arrow keys
 - Use `PageUp/PageDown` to scroll through multiple entries
@@ -152,6 +162,7 @@ Press `V` to open the HTTP logs viewer, which operates in two modes:
 - Press `a` to toggle automatic scrolling for new requests
 
 **Detail Mode** (activated by pressing Enter on a request):
+
 - Shows complete request and response information including headers and body content
 - Scroll through details with `↑/↓` arrow keys
 - Use `PageUp/PageDown` for faster navigation
@@ -161,6 +172,7 @@ Press `V` to open the HTTP logs viewer, which operates in two modes:
 ### HTTP Logs Configuration
 
 Press `L` to configure HTTP logging behavior:
+
 - Enable or disable logging for individual configurations
 - Set maximum log file size (1-1000 MB)
 - Configure retention period (1-365 days)
@@ -209,10 +221,8 @@ Configuration files use JSON format with the following fields:
 }
 ```
 
-
 ## What kftui Can Do
 
 kftui handles pretty much everything the kftray GUI does, just through terminal commands and keyboard shortcuts. The auto-discovery stuff saves time by reading your Kubernetes service annotations instead of making you type configs manually. The HTTP logging is useful for debugging API calls and seeing what requests are going through your port-forwards.
 
 If you work mostly in terminals or need to manage port-forwards over SSH, kftui covers everything without needing a desktop environment.
-
