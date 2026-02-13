@@ -1,6 +1,7 @@
 import React, { useCallback, useState } from 'react'
 import {
   Download,
+  FileCode,
   Github,
   Keyboard,
   Menu as MenuIcon,
@@ -39,6 +40,7 @@ const Footer: React.FC<FooterProps> = ({
   openGitSyncModal,
   handleExportConfigs,
   handleImportConfigs,
+  handleExportEnv,
   credentialsSaved,
   setCredentialsSaved,
   isGitSyncModalOpen,
@@ -140,6 +142,11 @@ const Footer: React.FC<FooterProps> = ({
       <MenuItem value='export' onClick={handleExportConfigs}>
         <Box as={Upload} width='12px' height='12px' />
         <Box fontSize='11px'>Export Local File</Box>
+      </MenuItem>
+
+      <MenuItem value='export-env' onClick={handleExportEnv}>
+        <Box as={FileCode} width='12px' height='12px' />
+        <Box fontSize='11px'>Export .env File</Box>
       </MenuItem>
 
       <MenuItem

@@ -1,31 +1,15 @@
 use std::collections::HashMap;
 
 use k8s_openapi::api::{
-    apps::v1::Deployment,
-    core::v1::Pod,
-    core::v1::Service,
-    networking::v1::Ingress,
+    apps::v1::Deployment, core::v1::Pod, core::v1::Service, networking::v1::Ingress,
 };
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::Time;
 use kftray_commons::utils::db_mode::DatabaseMode;
 use kftray_portforward::kube::client::create_client_with_specific_context;
-use kube::api::{
-    Api,
-    DeleteParams,
-    ListParams,
-};
-use kube::{
-    Client,
-    ResourceExt,
-};
-use log::{
-    error,
-    info,
-};
-use serde::{
-    Deserialize,
-    Serialize,
-};
+use kube::api::{Api, DeleteParams, ListParams};
+use kube::{Client, ResourceExt};
+use log::{error, info};
+use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ServerResource {

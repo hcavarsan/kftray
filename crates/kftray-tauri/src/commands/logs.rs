@@ -1,25 +1,16 @@
 use std::fs;
-use std::io::{
-    BufRead,
-    BufReader,
-};
+use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 
 use jiff::Zoned;
 use log::info;
-use serde::{
-    Deserialize,
-    Serialize,
-};
+use serde::{Deserialize, Serialize};
 use tauri::AppHandle;
 use tauri::Manager;
 use tauri::WebviewUrl;
 use tauri::WebviewWindowBuilder;
 
-use super::settings::{
-    DiagnosticsReport,
-    run_diagnostics,
-};
+use super::settings::{DiagnosticsReport, run_diagnostics};
 
 #[derive(Serialize)]
 pub struct LogInfo {

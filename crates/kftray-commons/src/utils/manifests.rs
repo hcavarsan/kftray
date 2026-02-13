@@ -3,11 +3,8 @@ use std::io::Write;
 use std::path::Path;
 
 use crate::utils::config_dir::{
-    create_config_dir,
-    get_expose_deployment_manifest_path,
-    get_expose_ingress_manifest_path,
-    get_expose_service_manifest_path,
-    get_proxy_deployment_manifest_path,
+    create_config_dir, get_expose_deployment_manifest_path, get_expose_ingress_manifest_path,
+    get_expose_service_manifest_path, get_proxy_deployment_manifest_path,
 };
 
 /// Default proxy deployment manifest template (Deployment-based)

@@ -1,22 +1,9 @@
-use std::time::{
-    SystemTime,
-    UNIX_EPOCH,
-};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use kftray_commons::utils::settings::set_last_update_check;
-use log::{
-    error,
-    info,
-};
-use tauri::{
-    AppHandle,
-    command,
-};
-use tauri_plugin_dialog::{
-    DialogExt,
-    MessageDialogButtons,
-    MessageDialogKind,
-};
+use log::{error, info};
+use tauri::{AppHandle, command};
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_updater::UpdaterExt;
 
 fn get_current_timestamp() -> i64 {

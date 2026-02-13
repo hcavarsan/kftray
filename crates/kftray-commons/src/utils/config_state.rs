@@ -1,15 +1,9 @@
 use log::error;
-use sqlx::{
-    Row,
-    SqlitePool,
-};
+use sqlx::{Row, SqlitePool};
 
 use crate::db::get_db_pool;
 use crate::models::config_state_model::ConfigState;
-use crate::utils::db_mode::{
-    DatabaseManager,
-    DatabaseMode,
-};
+use crate::utils::db_mode::{DatabaseManager, DatabaseMode};
 
 pub async fn update_config_state_with_pool(
     config_state: &ConfigState, pool: &SqlitePool,

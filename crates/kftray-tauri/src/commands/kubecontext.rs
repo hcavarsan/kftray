@@ -1,29 +1,18 @@
 use std::collections::HashSet;
 
 use anyhow::Result;
-use k8s_openapi::api::core::v1::{
-    Namespace,
-    Pod,
-    Service,
-};
+use k8s_openapi::api::core::v1::{Namespace, Pod, Service};
 use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
 use kftray_commons::config_model::Config;
 use kftray_portforward::kube::client::create_client_with_specific_context;
 use kftray_portforward::kube::models::{
-    KubeContextInfo,
-    KubeNamespaceInfo,
-    KubeServiceInfo,
-    KubeServicePortInfo,
-    PodInfo,
+    KubeContextInfo, KubeNamespaceInfo, KubeServiceInfo, KubeServicePortInfo, PodInfo,
 };
 use kftray_portforward::kube::retrieve_service_configs;
 use kube::Resource;
 use kube::{
     ResourceExt,
-    api::{
-        Api,
-        ListParams,
-    },
+    api::{Api, ListParams},
 };
 use log::info;
 
@@ -262,15 +251,8 @@ mod tests {
     use std::collections::BTreeMap;
 
     use k8s_openapi::api::core::v1::{
-        Container,
-        ContainerPort,
-        Namespace as K8sNamespace,
-        NamespaceSpec,
-        Pod as K8sPod,
-        PodSpec,
-        Service as K8sService,
-        ServicePort,
-        ServiceSpec,
+        Container, ContainerPort, Namespace as K8sNamespace, NamespaceSpec, Pod as K8sPod, PodSpec,
+        Service as K8sService, ServicePort, ServiceSpec,
     };
     use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
 

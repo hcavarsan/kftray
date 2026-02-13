@@ -6,21 +6,9 @@ use std::time::Duration;
 use kftray_commons::models::window::AppState;
 use kftray_commons::models::window::WindowPosition;
 use kftray_commons::utils::config_dir::get_window_state_path;
-use log::{
-    info,
-    warn,
-};
-use tauri::{
-    Manager,
-    PhysicalPosition,
-    PhysicalSize,
-    WebviewWindow,
-    Wry,
-};
-use tauri_plugin_positioner::{
-    Position,
-    WindowExt,
-};
+use log::{info, warn};
+use tauri::{Manager, PhysicalPosition, PhysicalSize, WebviewWindow, Wry};
+use tauri_plugin_positioner::{Position, WindowExt};
 use tokio::time::sleep;
 
 pub fn save_window_position(window: &WebviewWindow<Wry>) {

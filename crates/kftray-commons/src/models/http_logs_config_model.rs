@@ -1,7 +1,4 @@
-use serde::{
-    Deserialize,
-    Serialize,
-};
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Deserialize, PartialEq, Serialize, Debug)]
 pub struct HttpLogsConfig {

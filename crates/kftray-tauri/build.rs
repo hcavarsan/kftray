@@ -1,9 +1,6 @@
 use std::env;
 use std::fs;
-use std::path::{
-    Path,
-    PathBuf,
-};
+use std::path::{Path, PathBuf};
 
 fn main() {
     let target_triple = std::env::var("TARGET").unwrap();

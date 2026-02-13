@@ -1,8 +1,5 @@
 use kftray_helper::HelperClient;
-use log::{
-    info,
-    warn,
-};
+use log::{info, warn};
 
 #[tauri::command]
 pub async fn install_helper() -> Result<bool, String> {

@@ -2,36 +2,18 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use kftray_commons::models::config_model::Config;
-use kftray_shortcuts::{
-    ActionContext,
-    ActionHandler,
-    ActionRegistry,
-    ShortcutManager,
-};
-use log::{
-    error,
-    info,
-};
-use tauri::{
-    AppHandle,
-    Emitter,
-    Manager,
-};
+use kftray_shortcuts::{ActionContext, ActionHandler, ActionRegistry, ShortcutManager};
+use log::{error, info};
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_notification::NotificationExt;
-use tokio::sync::{
-    Mutex,
-    OnceCell,
-};
+use tokio::sync::{Mutex, OnceCell};
 
 use crate::commands::{
     config::get_configs_cmd,
     config_state::get_config_states,
     portforward::{
-        deploy_and_forward_pod_cmd,
-        start_port_forward_tcp_cmd,
-        stop_all_port_forward_cmd,
-        stop_port_forward_cmd,
-        stop_proxy_forward_cmd,
+        deploy_and_forward_pod_cmd, start_port_forward_tcp_cmd, stop_all_port_forward_cmd,
+        stop_port_forward_cmd, stop_proxy_forward_cmd,
     },
 };
 

@@ -2,22 +2,13 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use log::info;
-use serde::{
-    Deserialize,
-    Serialize,
-};
-use sqlx::{
-    Row,
-    SqlitePool,
-};
+use serde::{Deserialize, Serialize};
+use sqlx::{Row, SqlitePool};
 use tokio::sync::RwLock;
 
 use crate::models::settings_model::AppSettings;
 use crate::utils::db::get_db_pool;
-use crate::utils::db_mode::{
-    DatabaseManager,
-    DatabaseMode,
-};
+use crate::utils::db_mode::{DatabaseManager, DatabaseMode};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Setting {
@@ -616,6 +607,38 @@ pub async fn set_ssl_ca_auto_install_with_mode(
     enabled: bool, mode: DatabaseMode,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     set_setting_with_mode("ssl_ca_auto_install", &enabled.to_string(), mode).await
+}
+
+/// Returns whether automatic .env file synchronization is enabled.
+/// Defaults to `true` if not previously set.
+pub async fn get_env_auto_sync_enabled() -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+    if let Some(value) = get_setting("env_auto_sync_enabled").await? {
+        Ok(value.parse::<bool>().unwrap_or(true))
+    } else {
+        Ok(true) // Default to enabled
+    }
+}
+
+/// Sets whether automatic .env file synchronization is enabled.
+pub async fn set_env_auto_sync_enabled(
+    enabled: bool,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    set_setting("env_auto_sync_enabled", &enabled.to_string()).await
+}
+
+/// Returns the file path for automatic .env synchronization.
+/// Returns `None` if no path is configured or the path is empty.
+pub async fn get_env_auto_sync_path()
+-> Result<Option<String>, Box<dyn std::error::Error + Send + Sync>> {
+    let value = get_setting("env_auto_sync_path").await?;
+    Ok(value.filter(|s| !s.is_empty()))
+}
+
+/// Sets the file path for automatic .env synchronization.
+pub async fn set_env_auto_sync_path(
+    path: &str,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    set_setting("env_auto_sync_path", path).await
 }
 
 pub async fn get_app_settings_with_mode(

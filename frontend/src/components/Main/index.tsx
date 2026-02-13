@@ -260,6 +260,39 @@ const KFTray = () => {
     }
   }
 
+  const handleExportEnv = async () => {
+    try {
+      await invoke('open_save_dialog')
+      const content = await invoke<string>('export_env_cmd', { runningOnly: true })
+
+      const filePath = await save({
+        defaultPath: '.env',
+        filters: [{ name: 'Environment', extensions: ['env'] }],
+      })
+
+      await invoke('close_save_dialog')
+
+      if (filePath) {
+        await writeTextFile(filePath, content)
+        toaster.success({
+          title: 'Success',
+          description: '.env file exported successfully.',
+          duration: 1000,
+        })
+      }
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : String(error)
+
+      console.error('Failed to export .env file:', errorMessage)
+      toaster.error({
+        title: 'Failed to export .env file',
+        description: errorMessage,
+        duration: 1000,
+      })
+    }
+  }
+
   const handleImportConfigs = async () => {
     try {
       await invoke('open_save_dialog')
@@ -904,6 +937,7 @@ return { id: config.id, error: null, aborted: false }
               openGitSyncModal={openGitSyncModal}
               handleExportConfigs={handleExportConfigs}
               handleImportConfigs={handleImportConfigs}
+              handleExportEnv={handleExportEnv}
               setCredentialsSaved={handleSetCredentialsSaved}
               credentialsSaved={credentialsSaved}
               isGitSyncModalOpen={isGitSyncModalOpen}

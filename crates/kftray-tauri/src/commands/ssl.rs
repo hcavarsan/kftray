@@ -1,22 +1,10 @@
 use kftray_commons::utils::settings::{
-    get_app_settings,
-    get_ssl_auto_regenerate as get_ssl_auto_regen,
-    get_ssl_cert_validity_days,
-    get_ssl_enabled,
-    set_ssl_auto_regenerate as set_ssl_auto_regen,
-    set_ssl_ca_auto_install,
-    set_ssl_cert_validity_days,
-    set_ssl_enabled,
+    get_app_settings, get_ssl_auto_regenerate as get_ssl_auto_regen, get_ssl_cert_validity_days,
+    get_ssl_enabled, set_ssl_auto_regenerate as set_ssl_auto_regen, set_ssl_ca_auto_install,
+    set_ssl_cert_validity_days, set_ssl_enabled,
 };
-use kftray_portforward::ssl::{
-    CertificateInfo,
-    CertificateManager,
-};
-use log::{
-    error,
-    info,
-    warn,
-};
+use kftray_portforward::ssl::{CertificateInfo, CertificateManager};
+use log::{error, info, warn};
 use tauri::command;
 
 #[command]

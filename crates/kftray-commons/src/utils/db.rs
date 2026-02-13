@@ -1,34 +1,21 @@
-use std::fs::{
-    self,
-    File,
-};
+use std::fs::{self, File};
 use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::Mutex;
 
 use lazy_static::lazy_static;
-use log::{
-    error,
-    info,
-};
+use log::{error, info};
 use serde_json::json;
 use sqlx::SqlitePool;
 use tokio::sync::OnceCell;
 
-use crate::config_dir::{
-    get_db_file_path,
-    get_pod_manifest_path,
-};
+use crate::config_dir::{get_db_file_path, get_pod_manifest_path};
 use crate::utils::manifests::{
-    create_expose_deployment_manifest,
-    create_expose_ingress_manifest,
-    create_expose_service_manifest,
-    create_proxy_deployment_manifest,
-    expose_deployment_manifest_exists,
-    expose_ingress_manifest_exists,
-    expose_service_manifest_exists,
-    proxy_deployment_manifest_exists,
+    create_expose_deployment_manifest, create_expose_ingress_manifest,
+    create_expose_service_manifest, create_proxy_deployment_manifest,
+    expose_deployment_manifest_exists, expose_ingress_manifest_exists,
+    expose_service_manifest_exists, proxy_deployment_manifest_exists,
 };
 
 lazy_static! {
@@ -297,10 +284,7 @@ fn create_db_file() -> Result<(), std::io::Error> {
 #[cfg(test)]
 mod tests {
     use std::env;
-    use std::fs::{
-        self,
-        File,
-    };
+    use std::fs::{self, File};
     use std::sync::Mutex;
 
     use lazy_static::lazy_static;
@@ -308,11 +292,7 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
-    use crate::config_dir::{
-        get_config_dir,
-        get_db_file_path,
-        get_pod_manifest_path,
-    };
+    use crate::config_dir::{get_config_dir, get_db_file_path, get_pod_manifest_path};
 
     lazy_static! {
         static ref ENV_TEST_MUTEX: Mutex<()> = Mutex::new(());

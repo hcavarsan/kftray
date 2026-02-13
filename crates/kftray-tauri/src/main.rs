@@ -5,10 +5,7 @@
 
 use std::sync::Arc;
 
-use log::{
-    error,
-    info,
-};
+use log::{error, info};
 
 use crate::validation::alert_multiple_configs;
 mod commands;
@@ -32,12 +29,7 @@ use crate::commands::portforward::check_and_emit_changes;
 use crate::glibc_detector::get_updater_target_platform;
 use crate::init_check::RealPortOperations;
 use crate::shortcuts::setup_shortcut_integration;
-use crate::tray::{
-    TrayPositionState,
-    create_tray_icon,
-    handle_run_event,
-    handle_window_event,
-};
+use crate::tray::{TrayPositionState, create_tray_icon, handle_run_event, handle_window_event};
 
 fn main() {
     // CRITICAL: Must be called before ANY other code that might touch X11.
@@ -350,6 +342,8 @@ fn main() {
             commands::settings::update_auto_update_enabled,
             commands::settings::get_auto_update_status,
             commands::settings::run_diagnostics,
+            commands::settings::get_env_auto_sync_settings,
+            commands::settings::set_env_auto_sync_settings,
             commands::logs::get_log_info,
             commands::logs::get_log_contents,
             commands::logs::get_log_contents_json,
@@ -396,6 +390,7 @@ fn main() {
             commands::server_resources::delete_kftray_resource,
             commands::server_resources::cleanup_all_kftray_resources,
             commands::server_resources::cleanup_orphaned_kftray_resources,
+            commands::env_export::export_env_cmd,
         ])
         .build(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -405,10 +400,7 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{
-        Mutex,
-        atomic::AtomicBool,
-    };
+    use std::sync::{Mutex, atomic::AtomicBool};
 
     use super::*;
 
