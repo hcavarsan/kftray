@@ -6,6 +6,7 @@ import { app } from '@tauri-apps/api'
 import { invoke } from '@tauri-apps/api/core'
 
 import type { LogFileInfo, LogSettings } from '@/components/LogViewer'
+import EnvAutoSyncSettings from '@/components/SettingsModal/EnvAutoSyncSettings'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { DialogCloseTrigger } from '@/components/ui/dialog'
@@ -42,11 +43,15 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
   const [logTotalSize, setLogTotalSize] = useState<number>(0)
   const [isCleaningLogs, setIsCleaningLogs] = useState(false)
 
+  const [envAutoSyncEnabled, setEnvAutoSyncEnabled] = useState<boolean>(false)
+  const [envAutoSyncPath, setEnvAutoSyncPath] = useState<string>('')
+
   useEffect(() => {
     if (isOpen) {
       loadSettings()
       loadVersionInfo()
       loadLogInfo()
+      loadEnvAutoSyncSettings()
     }
   }, [isOpen])
 
@@ -131,6 +136,22 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
       setLogTotalSize(files.reduce((acc, f) => acc + f.size, 0))
     } catch (error) {
       console.error('Error loading log info:', error)
+    }
+  }
+
+  const loadEnvAutoSyncSettings = async () => {
+    try {
+      const settings = await invoke<{ enabled: boolean; path: string | null }>(
+        'get_env_auto_sync_settings',
+      )
+
+      console.log('Loaded env auto-sync settings from DB:', settings)
+      setEnvAutoSyncEnabled(settings.enabled)
+      setEnvAutoSyncPath(settings.path || '')
+    } catch (error) {
+      console.error('Error loading env auto-sync settings:', error)
+      setEnvAutoSyncEnabled(false)
+      setEnvAutoSyncPath('')
     }
   }
 
@@ -353,6 +374,26 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
           title: 'Log Settings Error',
           description:
             'Failed to save log settings, but other settings were saved',
+          duration: 4000,
+        })
+      }
+
+      try {
+        console.log('Saving env auto-sync settings:', {
+          enabled: envAutoSyncEnabled,
+          path: envAutoSyncPath,
+        })
+        await invoke('set_env_auto_sync_settings', {
+          enabled: envAutoSyncEnabled,
+          path: envAutoSyncPath || null,
+        })
+        console.log('Env auto-sync settings saved successfully')
+      } catch (envError) {
+        console.error('Error saving env auto-sync settings:', envError)
+        toaster.error({
+          title: 'Env Auto-Sync Error',
+          description:
+            'Failed to save .env auto-sync settings, but other settings were saved',
           duration: 4000,
         })
       }
@@ -973,6 +1014,14 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
                     </Flex>
                   </Box>
                 </Box>
+
+                <EnvAutoSyncSettings
+                  envAutoSyncEnabled={envAutoSyncEnabled}
+                  setEnvAutoSyncEnabled={setEnvAutoSyncEnabled}
+                  envAutoSyncPath={envAutoSyncPath}
+                  setEnvAutoSyncPath={setEnvAutoSyncPath}
+                  isLoading={isLoading}
+                />
               </Box>
             </Stack>
           </Dialog.Body>

@@ -4,11 +4,7 @@ use kftray_commons::models::window::AppState;
 use kftray_commons::models::window::SaveDialogState;
 use log::error;
 use tauri::State;
-use tauri::{
-    Emitter,
-    WebviewWindow,
-    Wry,
-};
+use tauri::{Emitter, WebviewWindow, Wry};
 
 #[tauri::command]
 pub fn open_save_dialog(state: State<SaveDialogState>) {
@@ -53,11 +49,7 @@ pub fn toggle_pin_state(app_state: tauri::State<AppState>, window: WebviewWindow
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
-    use std::sync::{
-        Arc,
-        Mutex,
-        atomic::AtomicBool,
-    };
+    use std::sync::{Arc, Mutex, atomic::AtomicBool};
 
     use tokio::runtime::Runtime;
 

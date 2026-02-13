@@ -5,34 +5,20 @@ use kftray_commons::config::get_configs;
 use kftray_commons::models::config_model::Config;
 use kftray_commons::models::response::CustomResponse;
 use kftray_commons::utils::config_state::{
-    cleanup_current_process_config_states,
-    get_configs_state,
+    cleanup_current_process_config_states, get_configs_state,
 };
+use kftray_commons::utils::env_export::write_env_file_if_enabled;
 use kftray_portforward::kube::{
-    deploy_and_forward_pod,
-    start_port_forward,
-    stop_all_port_forward,
-    stop_port_forward,
+    deploy_and_forward_pod, start_port_forward, stop_all_port_forward, stop_port_forward,
     stop_proxy_forward,
 };
 use log::error;
 use log::info;
 use serde_json::json;
-use tauri::{
-    AppHandle,
-    Emitter,
-    Manager,
-    Wry,
-};
-use tauri_plugin_dialog::{
-    DialogExt,
-    MessageDialogButtons,
-};
+use tauri::{AppHandle, Emitter, Manager, Wry};
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 use tokio::sync::Mutex;
-use tokio::time::{
-    Duration,
-    interval,
-};
+use tokio::time::{Duration, interval};
 
 pub async fn check_and_emit_changes(app_handle: AppHandle<Wry>) {
     let mut interval = interval(Duration::from_millis(500));
@@ -97,9 +83,24 @@ pub async fn check_and_emit_changes(app_handle: AppHandle<Wry>) {
         let mut prev_states = previous_config_states.lock().await;
         let mut prev_configs = previous_configs.lock().await;
 
-        if !config_compare_changes(&prev_states, &current_config_states)
-            || !config_compare_changes(&prev_configs, &current_configs)
-        {
+        let states_changed = !config_compare_changes(&prev_states, &current_config_states);
+        let configs_changed = !config_compare_changes(&prev_configs, &current_configs);
+
+        if states_changed || configs_changed {
+            let running_count = current_config_states
+                .iter()
+                .filter(|s| s.is_running)
+                .count();
+            info!(
+                "Config state change detected: states_changed={}, configs_changed={}, running_services={}",
+                states_changed, configs_changed, running_count
+            );
+
+            // Auto-sync .env file if enabled
+            if let Err(e) = write_env_file_if_enabled().await {
+                error!("Failed to auto-sync .env file: {e}");
+            }
+
             app_handle
                 .emit("config_state_changed", &Vec::<Config>::new())
                 .unwrap_or_else(|e| {
@@ -132,35 +133,60 @@ fn config_compare_changes<T: PartialEq>(prev: &[T], current: &[T]) -> bool {
 pub async fn start_port_forward_udp_cmd(
     configs: Vec<Config>, _app_handle: tauri::AppHandle<Wry>,
 ) -> Result<Vec<CustomResponse>, String> {
-    start_port_forward(configs.clone(), "udp").await
+    let result = start_port_forward(configs.clone(), "udp").await;
+    // Trigger env sync after start
+    if let Err(e) = write_env_file_if_enabled().await {
+        error!("Failed to auto-sync .env file after UDP start: {e}");
+    }
+    result
 }
 
 #[tauri::command]
 pub async fn start_port_forward_tcp_cmd(
     configs: Vec<Config>, _app_handle: tauri::AppHandle<Wry>,
 ) -> Result<Vec<CustomResponse>, String> {
-    start_port_forward(configs.clone(), "tcp").await
+    let result = start_port_forward(configs.clone(), "tcp").await;
+    // Trigger env sync after start
+    if let Err(e) = write_env_file_if_enabled().await {
+        error!("Failed to auto-sync .env file after TCP start: {e}");
+    }
+    result
 }
 
 #[tauri::command]
 pub async fn stop_all_port_forward_cmd(
     _app_handle: tauri::AppHandle<Wry>,
 ) -> Result<Vec<CustomResponse>, String> {
-    stop_all_port_forward().await
+    let result = stop_all_port_forward().await;
+    // Trigger env sync after stop all
+    if let Err(e) = write_env_file_if_enabled().await {
+        error!("Failed to auto-sync .env file after stop all: {e}");
+    }
+    result
 }
 
 #[tauri::command]
 pub async fn stop_port_forward_cmd(
     config_id: String, _app_handle: tauri::AppHandle<Wry>,
 ) -> Result<CustomResponse, String> {
-    stop_port_forward(config_id.clone()).await
+    let result = stop_port_forward(config_id.clone()).await;
+    // Trigger env sync after stop
+    if let Err(e) = write_env_file_if_enabled().await {
+        error!("Failed to auto-sync .env file after stop: {e}");
+    }
+    result
 }
 
 #[tauri::command]
 pub async fn deploy_and_forward_pod_cmd(
     configs: Vec<Config>, _app_handle: tauri::AppHandle<Wry>,
 ) -> Result<Vec<CustomResponse>, String> {
-    deploy_and_forward_pod(configs.clone()).await
+    let result = deploy_and_forward_pod(configs.clone()).await;
+    // Trigger env sync after deploy and forward
+    if let Err(e) = write_env_file_if_enabled().await {
+        error!("Failed to auto-sync .env file after deploy: {e}");
+    }
+    result
 }
 
 #[tauri::command]
@@ -171,7 +197,12 @@ pub async fn stop_proxy_forward_cmd(
         .parse::<i64>()
         .map_err(|e| format!("Failed to parse config_id: {e}"))?;
 
-    stop_proxy_forward(config_id, namespace, service_name).await
+    let result = stop_proxy_forward(config_id, namespace, service_name).await;
+    // Trigger env sync after stop proxy
+    if let Err(e) = write_env_file_if_enabled().await {
+        error!("Failed to auto-sync .env file after stop proxy: {e}");
+    }
+    result
 }
 
 #[tauri::command]

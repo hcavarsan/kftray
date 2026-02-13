@@ -1,8 +1,4 @@
-use std::{
-    env,
-    fs,
-    path::PathBuf,
-};
+use std::{env, fs, path::PathBuf};
 
 use anyhow::Result;
 

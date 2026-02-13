@@ -1,7 +1,4 @@
-use serde::{
-    Deserialize,
-    Serialize,
-};
+use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Deserialize, Serialize, Debug)]
 pub struct AppSettings {
@@ -40,6 +37,12 @@ pub struct AppSettings {
 
     #[serde(default = "default_global_shortcut")]
     pub global_shortcut: String,
+
+    #[serde(default = "default_env_auto_sync_enabled")]
+    pub env_auto_sync_enabled: bool,
+
+    #[serde(default)]
+    pub env_auto_sync_path: String,
 }
 
 fn default_network_monitor() -> bool {
@@ -73,6 +76,10 @@ fn default_global_shortcut() -> String {
     return "Ctrl+Shift+F1".to_string();
 }
 
+fn default_env_auto_sync_enabled() -> bool {
+    true
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
@@ -88,11 +95,15 @@ impl Default for AppSettings {
             ssl_auto_regenerate: default_ssl_auto_regenerate(),
             ssl_ca_auto_install: false,
             global_shortcut: default_global_shortcut(),
+            env_auto_sync_enabled: default_env_auto_sync_enabled(),
+            env_auto_sync_path: String::new(),
         }
     }
 }
 
 impl AppSettings {
+    /// Creates an `AppSettings` instance from a settings key-value map.
+    /// Missing keys use default values defined in `AppSettings::default()`.
     pub fn from_settings_manager(settings: &std::collections::HashMap<String, String>) -> Self {
         let mut app_settings = AppSettings::default();
 
@@ -144,9 +155,18 @@ impl AppSettings {
             app_settings.global_shortcut = value.clone();
         }
 
+        if let Some(value) = settings.get("env_auto_sync_enabled") {
+            app_settings.env_auto_sync_enabled = value.parse().unwrap_or(false);
+        }
+
+        if let Some(value) = settings.get("env_auto_sync_path") {
+            app_settings.env_auto_sync_path = value.clone();
+        }
+
         app_settings
     }
 
+    /// Converts this `AppSettings` instance to a key-value map for database storage.
     pub fn to_settings_map(&self) -> std::collections::HashMap<String, String> {
         let mut settings = std::collections::HashMap::new();
 
@@ -193,6 +213,14 @@ impl AppSettings {
             self.ssl_ca_auto_install.to_string(),
         );
         settings.insert("global_shortcut".to_string(), self.global_shortcut.clone());
+        settings.insert(
+            "env_auto_sync_enabled".to_string(),
+            self.env_auto_sync_enabled.to_string(),
+        );
+        settings.insert(
+            "env_auto_sync_path".to_string(),
+            self.env_auto_sync_path.clone(),
+        );
 
         settings
     }

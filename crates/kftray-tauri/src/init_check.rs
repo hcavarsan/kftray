@@ -2,30 +2,14 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use kftray_commons::config::get_config;
-use kftray_commons::config_state::{
-    get_configs_state,
-    update_config_state,
-};
+use kftray_commons::config_state::{get_configs_state, update_config_state};
 use kftray_commons::config_state_model::ConfigState;
 use kftray_commons::models::config_model::Config;
 use kftray_portforward::kube::deploy_and_forward_pod;
 use kftray_portforward::start_port_forward;
-use log::{
-    debug,
-    error,
-    info,
-    warn,
-};
-use netstat2::{
-    AddressFamilyFlags,
-    ProtocolFlags,
-    ProtocolSocketInfo,
-    get_sockets_info,
-};
-use sysinfo::{
-    Pid,
-    System,
-};
+use log::{debug, error, info, warn};
+use netstat2::{AddressFamilyFlags, ProtocolFlags, ProtocolSocketInfo, get_sockets_info};
+use sysinfo::{Pid, System};
 
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]

@@ -1,19 +1,10 @@
 use std::fs;
-use std::path::{
-    Path,
-    PathBuf,
-};
+use std::path::{Path, PathBuf};
 
 use kftray_commons::models::http_logs_config_model::HttpLogsConfig;
 use kftray_commons::utils::config_dir::get_log_folder_path;
-use kftray_commons::utils::http_logs_config::{
-    get_http_logs_config,
-    update_http_logs_config,
-};
-use log::{
-    error,
-    info,
-};
+use kftray_commons::utils::http_logs_config::{get_http_logs_config, update_http_logs_config};
+use log::{error, info};
 
 // HTTP Log Management Commands (using direct database access)
 
@@ -302,15 +293,9 @@ fn is_editor_available(editor: &str) -> bool {
 
 fn open_with_editor(file_path: &str, editor: &str) -> Result<(), String> {
     use std::ffi::OsStr;
-    use std::process::{
-        Command,
-        Stdio,
-    };
+    use std::process::{Command, Stdio};
     use std::thread;
-    use std::time::{
-        Duration,
-        Instant,
-    };
+    use std::time::{Duration, Instant};
 
     // Special handling for macOS 'open' command
     #[cfg(target_os = "macos")]
@@ -518,10 +503,7 @@ mod tests {
     use std::collections::HashMap;
     use std::env;
     use std::io::Write;
-    use std::sync::{
-        Arc,
-        Mutex,
-    };
+    use std::sync::{Arc, Mutex};
 
     use kftray_commons::models::config_model::Config;
     use tempfile::TempDir;

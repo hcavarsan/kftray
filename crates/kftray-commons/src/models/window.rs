@@ -1,10 +1,7 @@
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
-use serde::{
-    Deserialize,
-    Serialize,
-};
+use serde::{Deserialize, Serialize};
 use tokio::runtime::Runtime;
 
 pub struct SaveDialogState {

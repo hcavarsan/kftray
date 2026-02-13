@@ -2,10 +2,7 @@
 use std::process::Command;
 
 #[cfg(target_os = "linux")]
-use log::{
-    debug,
-    warn,
-};
+use log::{debug, warn};
 
 #[derive(Debug, Clone, PartialEq)]
 #[allow(dead_code)]

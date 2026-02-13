@@ -1,15 +1,9 @@
 use log::error;
-use sqlx::{
-    Row,
-    SqlitePool,
-};
+use sqlx::{Row, SqlitePool};
 
 use crate::db::get_db_pool;
 use crate::models::http_logs_config_model::HttpLogsConfig;
-use crate::utils::db_mode::{
-    DatabaseManager,
-    DatabaseMode,
-};
+use crate::utils::db_mode::{DatabaseManager, DatabaseMode};
 
 pub(crate) async fn get_http_logs_config_with_pool(
     config_id: i64, pool: &SqlitePool,

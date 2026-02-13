@@ -1,18 +1,8 @@
 use kftray_commons::utils::validate_configs::{
-    ConfigLocation,
-    detect_multiple_configs,
-    format_alert_message,
+    ConfigLocation, detect_multiple_configs, format_alert_message,
 };
-use tauri::{
-    AppHandle,
-    Manager,
-    Runtime,
-    async_runtime::spawn_blocking,
-};
-use tauri_plugin_dialog::{
-    DialogExt,
-    MessageDialogButtons,
-};
+use tauri::{AppHandle, Manager, Runtime, async_runtime::spawn_blocking};
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 
 async fn show_alert_dialog<R: Runtime>(
     app_handle: AppHandle<R>, configs: Vec<ConfigLocation>, active_config: Option<ConfigLocation>,

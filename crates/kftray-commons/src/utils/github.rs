@@ -1,17 +1,10 @@
 use std::path::Path;
 
-use log::{
-    error,
-    info,
-    warn,
-};
+use log::{error, info, warn};
 use sqlx::SqlitePool;
 
 use crate::db::get_db_pool;
-use crate::utils::db_mode::{
-    DatabaseManager,
-    DatabaseMode,
-};
+use crate::utils::db_mode::{DatabaseManager, DatabaseMode};
 
 pub struct GitHubConfig {
     pub repo_url: String,
@@ -42,11 +35,7 @@ impl GitHubRepository {
         github_token: Option<String>,
     ) -> GitHubResult<String> {
         use git2::{
-            CertificateCheckStatus,
-            Cred,
-            FetchOptions,
-            RemoteCallbacks,
-            build::RepoBuilder,
+            CertificateCheckStatus, Cred, FetchOptions, RemoteCallbacks, build::RepoBuilder,
         };
         use tempfile::TempDir;
 

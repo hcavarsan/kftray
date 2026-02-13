@@ -1,16 +1,7 @@
-use keyring::{
-    Entry,
-    Error as KeyringError,
-};
+use keyring::{Entry, Error as KeyringError};
 use kftray_commons::utils::db_mode::DatabaseMode;
-use kftray_commons::utils::github::{
-    GitHubConfig,
-    GitHubRepository,
-};
-use tauri::{
-    Error as TauriError,
-    ipc::InvokeError,
-};
+use kftray_commons::utils::github::{GitHubConfig, GitHubRepository};
+use tauri::{Error as TauriError, ipc::InvokeError};
 
 #[derive(Debug)]
 pub enum CustomError {
