@@ -60,7 +60,7 @@ jobs:
       - name: Create release draft
         id: create_release
         if: steps.check_release.outputs.release_exists != 'true'
-        uses: softprops/action-gh-release@5122b4edc95f85501a71628a57dc180a03ec7588
+        uses: softprops/action-gh-release@e798e6a1ede8d07b74ac4cdac6bdfa4cc1653907
         with:
           tag_name: ${{ github.ref_name }}
           name: "KFtray - ${{ github.ref_name }}"
@@ -131,12 +131,12 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561
+        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
         with:
           toolchain: nightly
 
       - name: Cache Rust
-        uses: swatinem/rust-cache@5e4a76743357a1c3c57315bc1896d2c7f89d6861
+        uses: swatinem/rust-cache@11da8522bc3856a8fbc565f1d1530989c793d67d
         with:
           key: kftray-tauri-${{ matrix.rust_target }}-${{ matrix.os }}
           shared-key: kftray-tauri-${{ matrix.rust_target }}
@@ -153,13 +153,13 @@ jobs:
               args: [--frozen-lockfile]
 
       - name: Install Node.js
-        uses: actions/setup-node@65d868f8d4d85d7d4abb7de0875cde3fcc8798f5
+        uses: actions/setup-node@d02c89dce7e1ba9ef629ce0680989b3a1cc72edb
         with:
           node-version: "24"
           cache: "pnpm"
 
       - name: Cache pnpm modules
-        uses: actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb
+        uses: actions/cache@b7e8d49f17405cc70c1c120101943203c98d3a4b
         with:
           path: |
             $(pnpm store path --silent)
@@ -170,7 +170,7 @@ jobs:
 
       - name: Set up Visual Studio shell
         if: matrix.os == 'windows-latest' && matrix.arch == 'arm64'
-        uses: TheMrMilchmann/setup-msvc-dev@ced9887c29958f18f71b18c99d9eb0837859434c
+        uses: TheMrMilchmann/setup-msvc-dev@cb5f9f51c14a55a9d5898bdf269465cc6441fce4
         with:
           arch: amd64_arm64
 
@@ -285,7 +285,7 @@ jobs:
           echo "Certificate identity: $CERT_ID"
 
       - name: Build kftray-tauri Desktop App
-        uses: tauri-apps/tauri-action@9ce1dcc1a78395184050946b71457a6c242beab6
+        uses: tauri-apps/tauri-action@063c0231f444e55760d98acb9c469b994269d4a5
         id: tauri_build
         continue-on-error: true
         env: &tauri-build-env
@@ -310,7 +310,7 @@ jobs:
 
       - name: Retry Build on Failure
         if: steps.tauri_build.outcome == 'failure'
-        uses: tauri-apps/tauri-action@9ce1dcc1a78395184050946b71457a6c242beab6
+        uses: tauri-apps/tauri-action@063c0231f444e55760d98acb9c469b994269d4a5
         env: *tauri-build-env
         with: *tauri-build-with
 
@@ -388,12 +388,12 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561
+        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
         with:
           toolchain: nightly
 
       - name: Cache Rust
-        uses: swatinem/rust-cache@5e4a76743357a1c3c57315bc1896d2c7f89d6861
+        uses: swatinem/rust-cache@11da8522bc3856a8fbc565f1d1530989c793d67d
         with:
           key: kftui-${{ matrix.rust_target }}-${{ matrix.os }}
           shared-key: kftui-${{ matrix.rust_target }}
@@ -410,13 +410,13 @@ jobs:
               args: [--frozen-lockfile]
 
       - name: Install Node.js
-        uses: actions/setup-node@65d868f8d4d85d7d4abb7de0875cde3fcc8798f5
+        uses: actions/setup-node@d02c89dce7e1ba9ef629ce0680989b3a1cc72edb
         with:
           node-version: "24"
           cache: "pnpm"
 
       - name: Cache pnpm modules
-        uses: actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb
+        uses: actions/cache@b7e8d49f17405cc70c1c120101943203c98d3a4b
         with:
           path: |
             $(pnpm store path --silent)
@@ -453,7 +453,7 @@ jobs:
 
       - name: Set up Visual Studio shell
         if: matrix.os == 'windows-latest' && matrix.arch == 'arm64'
-        uses: TheMrMilchmann/setup-msvc-dev@ced9887c29958f18f71b18c99d9eb0837859434c
+        uses: TheMrMilchmann/setup-msvc-dev@cb5f9f51c14a55a9d5898bdf269465cc6441fce4
         with:
           arch: amd64_arm64
 
@@ -464,7 +464,7 @@ jobs:
 
       - name: Set up Perl on Windows
         if: matrix.os == 'windows-latest'
-        uses: shogo82148/actions-setup-perl@b27fdd828a97a63c975cdedfe6ad62830c3b55c9
+        uses: shogo82148/actions-setup-perl@ddd35596040f87fe8a6c151d602c2924b3ff9275
         with:
           perl-version: "5.32"
           distribution: "strawberry"
@@ -645,7 +645,7 @@ jobs:
 
       - name: Build and push Docker image
         id: docker_build
-        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           platforms: ${{ env.DOCKER_PLATFORMS }}
           context: .
@@ -691,12 +691,12 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561
+        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
         with:
           toolchain: nightly
 
       - name: Cache cargo-cyclonedx
-        uses: actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb
+        uses: actions/cache@b7e8d49f17405cc70c1c120101943203c98d3a4b
         with:
           path: ~/.cargo/bin/cargo-cyclonedx
           key: cargo-cyclonedx-${{ runner.os }}
@@ -739,7 +739,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
         with:
-          go-version: "1.24"
+          go-version: "1.26"
 
       - name: Build grype with VEX SBOM support
         run: |
@@ -823,7 +823,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Update release notes
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+        uses: actions/github-script@450193c5abd4cdb17ba9f3ffcfe8f635c4bb6c2a
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -875,12 +875,12 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561
+        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
         with:
           toolchain: nightly
 
       - name: Cache Rust
-        uses: swatinem/rust-cache@5e4a76743357a1c3c57315bc1896d2c7f89d6861
+        uses: swatinem/rust-cache@11da8522bc3856a8fbc565f1d1530989c793d67d
         with:
           key: publish-cargo-crates
           shared-key: publish-cargo-crates
@@ -1061,7 +1061,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Setup uv
-        uses: astral-sh/setup-uv@803947b9bd8e9f986429fa0c5a41c367cd732b41 # v7.2.1
+        uses: astral-sh/setup-uv@eac588ad8def6316056a12d4907a9d4d84ff7a3b # v7.3.0
         with:
           python-version: "3.12"
 
