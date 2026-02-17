@@ -1,36 +1,16 @@
 use std::sync::atomic::Ordering;
-use std::sync::{
-    Arc,
-    Mutex,
-};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use kftray_commons::models::window::AppState;
 use kftray_commons::models::window::SaveDialogState;
-use log::{
-    error,
-    info,
-    warn,
-};
+use log::{error, info, warn};
 use tauri::PhysicalPosition;
 use tauri::PhysicalSize;
 use tauri::{
-    Manager,
-    RunEvent,
-    WindowEvent,
-    Wry,
-    menu::{
-        MenuBuilder,
-        MenuItemBuilder,
-        PredefinedMenuItem,
-        SubmenuBuilder,
-    },
-    tray::{
-        MouseButton,
-        MouseButtonState,
-        TrayIconBuilder,
-        TrayIconEvent,
-    },
+    Manager, RunEvent, WindowEvent, Wry,
+    menu::{MenuBuilder, MenuItemBuilder, PredefinedMenuItem, SubmenuBuilder},
+    tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
 };
 use tauri_plugin_positioner::Position;
 use tokio::time::sleep;
@@ -45,10 +25,7 @@ pub struct TrayPositionState {
 use crate::commands::portforward::handle_exit_app;
 use crate::commands::window_state::toggle_pin_state;
 use crate::window::{
-    reset_window_position,
-    save_window_position,
-    set_window_position,
-    toggle_window_visibility,
+    reset_window_position, save_window_position, set_window_position, toggle_window_visibility,
 };
 
 pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<tauri::tray::TrayIcon<Wry>, tauri::Error> {
@@ -386,10 +363,7 @@ pub fn handle_run_event(app_handle: &tauri::AppHandle<Wry>, event: RunEvent) {
 mod tests {
     use std::sync::Arc;
 
-    use kftray_commons::models::window::{
-        AppState,
-        SaveDialogState,
-    };
+    use kftray_commons::models::window::{AppState, SaveDialogState};
     use tokio::runtime::Runtime;
 
     #[test]

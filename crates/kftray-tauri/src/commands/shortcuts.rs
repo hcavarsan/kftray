@@ -1,13 +1,7 @@
 use kftray_shortcuts::ShortcutDefinition;
 use log::info;
-use serde::{
-    Deserialize,
-    Serialize,
-};
-use tauri::{
-    AppHandle,
-    Emitter,
-};
+use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, Emitter};
 
 use crate::shortcuts::get_manager;
 

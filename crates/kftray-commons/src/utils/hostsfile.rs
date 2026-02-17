@@ -2,21 +2,10 @@ use std::{
     collections::BTreeMap,
     fmt,
     fs::OpenOptions,
-    io::{
-        self,
-        BufRead,
-        BufReader,
-        Write,
-    },
+    io::{self, BufRead, BufReader, Write},
     net::IpAddr,
-    path::{
-        Path,
-        PathBuf,
-    },
-    time::{
-        SystemTime,
-        UNIX_EPOCH,
-    },
+    path::{Path, PathBuf},
+    time::{SystemTime, UNIX_EPOCH},
 };
 
 pub type Result<T> = std::result::Result<T, HostsFileError>;

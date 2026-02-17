@@ -2,22 +2,12 @@ use std::collections::HashMap;
 use std::process::Command;
 
 use kftray_commons::utils::settings::{
-    get_auto_update_enabled,
-    get_last_update_check,
-    get_setting,
-    set_auto_update_enabled,
-    set_disconnect_timeout,
-    set_network_monitor,
-    set_setting,
+    get_auto_update_enabled, get_env_auto_sync_enabled, get_env_auto_sync_path,
+    get_last_update_check, get_setting, set_auto_update_enabled, set_disconnect_timeout,
+    set_env_auto_sync_enabled, set_env_auto_sync_path, set_network_monitor, set_setting,
 };
-use kftray_commons::utils::settings::{
-    get_disconnect_timeout,
-    get_network_monitor,
-};
-use log::{
-    error,
-    info,
-};
+use kftray_commons::utils::settings::{get_disconnect_timeout, get_network_monitor};
+use log::{error, info};
 use serde::Serialize;
 
 #[tauri::command]
@@ -180,6 +170,55 @@ pub async fn get_auto_update_status() -> Result<HashMap<String, String>, String>
     }
 
     Ok(status)
+}
+
+#[derive(Serialize)]
+pub struct EnvAutoSyncSettings {
+    pub enabled: bool,
+    pub path: Option<String>,
+}
+
+#[tauri::command]
+pub async fn get_env_auto_sync_settings() -> Result<EnvAutoSyncSettings, String> {
+    let enabled = get_env_auto_sync_enabled().await.map_err(|e| {
+        error!("Failed to get env_auto_sync_enabled: {e}");
+        format!("Failed to get env_auto_sync_enabled: {e}")
+    })?;
+
+    let path = get_env_auto_sync_path().await.map_err(|e| {
+        error!("Failed to get env_auto_sync_path: {e}");
+        format!("Failed to get env_auto_sync_path: {e}")
+    })?;
+
+    Ok(EnvAutoSyncSettings { enabled, path })
+}
+
+#[tauri::command]
+pub async fn set_env_auto_sync_settings(enabled: bool, path: Option<String>) -> Result<(), String> {
+    info!("Setting env auto-sync: enabled={enabled}, path={path:?}");
+
+    set_env_auto_sync_enabled(enabled).await.map_err(|e| {
+        error!("Failed to set env_auto_sync_enabled: {e}");
+        format!("Failed to set env_auto_sync_enabled: {e}")
+    })?;
+
+    let path_value = path.clone().unwrap_or_default();
+    info!("Saving env_auto_sync_path to database: '{}'", path_value);
+    set_env_auto_sync_path(&path_value).await.map_err(|e| {
+        error!("Failed to set env_auto_sync_path: {e}");
+        format!("Failed to set env_auto_sync_path: {e}")
+    })?;
+
+    // Verify the settings were saved correctly
+    let verify_enabled = get_env_auto_sync_enabled().await.unwrap_or(false);
+    let verify_path = get_env_auto_sync_path().await.ok().flatten();
+    info!(
+        "Verified saved settings: enabled={}, path={:?}",
+        verify_enabled, verify_path
+    );
+
+    info!("Successfully set env auto-sync settings");
+    Ok(())
 }
 
 #[derive(Serialize)]

@@ -61,24 +61,15 @@ pub async fn get_timeout_info_for_forward(config_id: i64) -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::atomic::{
-        AtomicBool,
-        Ordering,
-    };
+    use std::sync::atomic::{AtomicBool, Ordering};
 
     use lazy_static::lazy_static;
     use sqlx::SqlitePool;
     use tokio::sync::Mutex;
-    use tokio::time::{
-        Duration,
-        sleep,
-    };
+    use tokio::time::{Duration, sleep};
 
     use super::*;
-    use crate::utils::db::{
-        DB_POOL,
-        create_db_table,
-    };
+    use crate::utils::db::{DB_POOL, create_db_table};
     use crate::utils::settings::set_disconnect_timeout;
 
     lazy_static! {

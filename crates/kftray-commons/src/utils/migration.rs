@@ -1,16 +1,7 @@
-use log::{
-    error,
-    info,
-};
+use log::{error, info};
 use serde_json::Value as JsonValue;
 use sqlx::SqlitePool;
-use sqlx::{
-    Acquire,
-    Row,
-    Sqlite,
-    SqliteConnection,
-    Transaction,
-};
+use sqlx::{Acquire, Row, Sqlite, SqliteConnection, Transaction};
 
 use crate::db::get_db_pool;
 use crate::models::config_model::Config;
@@ -479,10 +470,7 @@ mod tests {
     use super::*;
     use crate::db::create_db_table;
     use crate::models::config_model::Config;
-    use crate::utils::config::{
-        insert_config_with_pool,
-        read_configs_with_pool,
-    };
+    use crate::utils::config::{insert_config_with_pool, read_configs_with_pool};
     use crate::utils::config_state::read_config_states_with_pool;
 
     async fn setup_test_db() -> SqlitePool {

@@ -1,26 +1,14 @@
 use futures::stream::StreamExt;
-use log::{
-    error,
-    info,
-};
+use log::{error, info};
 use portpicker::pick_unused_port;
 use serde_json::json;
-use sqlx::{
-    Row,
-    SqlitePool,
-};
+use sqlx::{Row, SqlitePool};
 
-use crate::db::{
-    create_db_table,
-    get_db_pool,
-};
+use crate::db::{create_db_table, get_db_pool};
 use crate::hostsfile::HostsFile;
 use crate::migration::migrate_configs;
 use crate::models::config_model::Config;
-use crate::utils::db_mode::{
-    DatabaseManager,
-    DatabaseMode,
-};
+use crate::utils::db_mode::{DatabaseManager, DatabaseMode};
 use crate::utils::error::DbError;
 
 pub async fn delete_config_with_pool(id: i64, pool: &SqlitePool) -> Result<(), DbError> {
@@ -739,10 +727,7 @@ mod tests {
     use std::collections::BTreeMap;
 
     use lazy_static::lazy_static;
-    use serde_json::{
-        Value,
-        json,
-    };
+    use serde_json::{Value, json};
     use sqlx::SqlitePool;
     use tokio::sync::Mutex;
 

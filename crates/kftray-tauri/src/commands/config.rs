@@ -1,23 +1,12 @@
 use kftray_commons::config::{
-    delete_all_configs,
-    delete_config,
-    delete_configs,
-    export_configs,
-    get_config,
-    get_configs,
-    import_configs,
-    insert_config,
-    update_config,
+    delete_all_configs, delete_config, delete_configs, export_configs, get_config, get_configs,
+    import_configs, insert_config, update_config,
 };
 use kftray_commons::models::config_model::Config;
 use kftray_commons::utils::settings::get_ssl_enabled;
 use kftray_portforward::kube::clear_stopped_by_timeout;
 use kftray_portforward::ssl::cert_manager::CertificateManager;
-use log::{
-    error,
-    info,
-    warn,
-};
+use log::{error, info, warn};
 
 fn validate_config(config: &Config) -> Result<(), String> {
     if config.auto_loopback_address && config.local_address.is_some() {
@@ -76,10 +65,7 @@ async fn regenerate_ssl_certificate_if_needed() -> Result<(), String> {
 
 async fn restart_ssl_proxies_if_running() -> Result<(), String> {
     use kftray_commons::utils::config_state::get_configs_state;
-    use kftray_portforward::kube::{
-        start_port_forward,
-        stop_port_forward,
-    };
+    use kftray_portforward::kube::{start_port_forward, stop_port_forward};
 
     info!("=== Starting SSL proxy restart process ===");
 

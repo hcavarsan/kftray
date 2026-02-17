@@ -97,6 +97,7 @@ export interface FooterProps {
   openGitSyncModal: () => void
   handleExportConfigs: () => void
   handleImportConfigs: () => void
+  handleExportEnv?: () => void
   credentialsSaved: boolean
   setCredentialsSaved: (value: boolean) => void
   isGitSyncModalOpen: boolean

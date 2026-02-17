@@ -1,15 +1,9 @@
 use std::sync::Arc;
-use std::sync::{
-    LazyLock,
-    Mutex,
-};
+use std::sync::{LazyLock, Mutex};
 
 use sqlx::SqlitePool;
 
-use crate::db::{
-    create_db_table,
-    get_db_pool,
-};
+use crate::db::{create_db_table, get_db_pool};
 
 #[derive(Debug, Clone, PartialEq, Default, Copy)]
 pub enum DatabaseMode {

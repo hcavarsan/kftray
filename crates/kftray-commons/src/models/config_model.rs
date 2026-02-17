@@ -1,8 +1,4 @@
-use serde::{
-    Deserialize,
-    Deserializer,
-    Serialize,
-};
+use serde::{Deserialize, Deserializer, Serialize};
 
 fn deserialize_bool_from_anything<'de, D>(deserializer: D) -> Result<Option<bool>, D::Error>
 where
@@ -10,10 +6,7 @@ where
 {
     use std::fmt;
 
-    use serde::de::{
-        self,
-        Visitor,
-    };
+    use serde::de::{self, Visitor};
 
     struct BoolOrStringVisitor;
 
