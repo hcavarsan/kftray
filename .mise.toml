@@ -1,7 +1,7 @@
 [tools]
 node = "24"
 pnpm = "latest"
-syft = "1.41.2"   # Pinned for reproducibility (https://github.com/anchore/syft/releases)
+syft = "1.42.0"   # Pinned for reproducibility (https://github.com/anchore/syft/releases)
 
 [tasks.dev]
 description = "Start Tauri development mode (tauri dev)"
