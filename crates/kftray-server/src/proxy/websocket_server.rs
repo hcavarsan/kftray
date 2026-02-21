@@ -104,7 +104,7 @@ impl WebSocketTunnelServer {
             });
         }
 
-        let send_task = tokio::spawn(async move {
+        let mut send_task = tokio::spawn(async move {
             while let Some(msg) = request_rx.recv().await {
                 match msg.serialize() {
                     Ok(data) => {
@@ -184,7 +184,17 @@ impl WebSocketTunnelServer {
             *tunnel_lock = None;
         }
 
-        send_task.abort();
+        drop(request_tx);
+
+        tokio::select! {
+            _ = &mut send_task => {
+                info!("Send task completed gracefully");
+            }
+            _ = tokio::time::sleep(Duration::from_secs(5)) => {
+                warn!("Send task did not shut down within 5s, aborting");
+                send_task.abort();
+            }
+        }
 
         Ok(())
     }
