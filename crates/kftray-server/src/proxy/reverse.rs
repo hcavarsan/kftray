@@ -64,10 +64,8 @@ impl ProxyHandler for ReverseProxy {
         shutdown.notified().await;
         info!("Reverse proxy shutting down");
 
-        // Signal all child tasks to shut down gracefully
         shutdown.notify_waiters();
 
-        // Wait up to 5s for WebSocket task, then abort as last resort
         tokio::select! {
             _ = &mut ws_handle => {
                 info!("WebSocket task completed gracefully");
@@ -78,7 +76,6 @@ impl ProxyHandler for ReverseProxy {
             }
         }
 
-        // Wait up to 5s for HTTP proxy task, then abort as last resort
         tokio::select! {
             _ = &mut http_handle => {
                 info!("HTTP proxy task completed gracefully");
@@ -137,7 +134,6 @@ mod tests {
 
     #[tokio::test]
     async fn graceful_shutdown_should_abort_after_timeout_for_stuck_task() {
-        // Spawn a task that ignores shutdown signals entirely
         let mut handle = tokio::spawn(async move {
             loop {
                 tokio::time::sleep(Duration::from_secs(60)).await;
@@ -147,7 +143,6 @@ mod tests {
         let shutdown = Arc::new(Notify::new());
         shutdown.notify_waiters();
 
-        // Use 200ms timeout for test speed (production uses 5s)
         let start = std::time::Instant::now();
         let was_aborted;
         tokio::select! {

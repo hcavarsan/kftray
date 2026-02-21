@@ -105,14 +105,6 @@ mod tests {
 
     use super::*;
 
-    // -- Shared in-memory credential store (modeled after GitButler) ----------
-    //
-    // The built-in `keyring::mock` stores passwords per-Entry *instance*, so
-    // separate `Entry::new()` calls (as in store_key / get_key / delete_key)
-    // never share state.  This store keeps a single BTreeMap behind an
-    // Arc<Mutex<>> so every Entry with the same service+user reads/writes the
-    // same slot.
-
     type SharedStore = Arc<Mutex<BTreeMap<String, String>>>;
 
     struct MockEntry {
@@ -130,7 +122,7 @@ mod tests {
         }
 
         fn set_secret(&self, _secret: &[u8]) -> keyring::Result<()> {
-            unreachable!("unused in tests")
+            Err(keyring::Error::NoEntry)
         }
 
         fn get_password(&self) -> keyring::Result<String> {
@@ -141,7 +133,7 @@ mod tests {
         }
 
         fn get_secret(&self) -> keyring::Result<Vec<u8>> {
-            unreachable!("unused in tests")
+            Err(keyring::Error::NoEntry)
         }
 
         fn delete_credential(&self) -> keyring::Result<()> {
@@ -178,13 +170,10 @@ mod tests {
         }
     }
 
-    /// Replace the global keyring backend with a shared in-memory store.
     fn use_mock_keyring() {
         let store = SharedStore::default();
         keyring::set_default_credential_builder(Box::new(MockCredentialBuilder { store }));
     }
-
-    // -- Tests ----------------------------------------------------------------
 
     #[test]
     fn test_keyring_operations() {

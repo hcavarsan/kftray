@@ -81,8 +81,6 @@ impl ConfigManager {
 
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
-        // Partition configs: proxy workloads need deploy_and_forward_pod,
-        // all others use start_port_forward
         let (proxy_configs, other_configs) = partition_configs_by_workload(configs);
 
         if !other_configs.is_empty() {
@@ -111,8 +109,6 @@ impl ConfigManager {
     }
 }
 
-/// Partition configs into proxy workloads (needing deploy_and_forward_pod)
-/// and other workloads (needing start_port_forward).
 fn partition_configs_by_workload(configs: Vec<Config>) -> (Vec<Config>, Vec<Config>) {
     configs
         .into_iter()

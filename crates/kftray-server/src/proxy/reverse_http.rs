@@ -197,7 +197,6 @@ mod tests {
 
     #[tokio::test]
     async fn http_proxy_should_stop_accepting_when_shutdown_signaled() {
-        // Arrange: create a tunnel server and HTTP proxy on a random port
         let tunnel_server = Arc::new(WebSocketTunnelServer::new(0));
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -209,33 +208,28 @@ mod tests {
 
         let proxy_handle = tokio::spawn(async move { http_proxy.start(shutdown_clone).await });
 
-        // Wait for proxy to be listening
         let addr = format!("127.0.0.1:{}", port).parse().unwrap();
         assert!(
             test_utils::wait_for_port(addr).await,
             "HTTP proxy failed to start"
         );
 
-        // Act: signal shutdown
         shutdown.notify_one();
 
-        // Wait for the proxy task to complete
         let result = tokio::time::timeout(Duration::from_secs(5), proxy_handle)
             .await
             .expect("proxy did not shut down within timeout")
             .expect("proxy task panicked");
 
-        // Assert: proxy exited cleanly
         assert!(result.is_ok(), "proxy should return Ok on shutdown");
 
-        // Assert: new connections are refused after shutdown
         let connect_result =
             tokio::time::timeout(Duration::from_secs(1), TcpStream::connect(addr)).await;
 
         match connect_result {
             Ok(Ok(_)) => panic!("should not accept connections after shutdown"),
-            Ok(Err(_)) => {} // connection refused — expected
-            Err(_) => {}     // timeout — also acceptable
+            Ok(Err(_)) => {}
+            Err(_) => {}
         }
     }
 }

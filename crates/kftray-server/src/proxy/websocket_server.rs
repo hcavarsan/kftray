@@ -29,10 +29,8 @@ use tokio_tungstenite::{
 
 use crate::models::tunnel_protocol::TunnelMessage;
 
-/// Interval between WebSocket Ping frames for keepalive.
 const WS_PING_INTERVAL: Duration = Duration::from_secs(30);
 
-/// Timeout for receiving a Pong after sending a Ping.
 const WS_PONG_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub struct WebSocketTunnelServer {
@@ -128,8 +126,7 @@ impl WebSocketTunnelServer {
             ping_interval_duration,
         );
         let mut awaiting_pong = false;
-        // Pong timeout is initialized far in the future; reset after each Ping is sent.
-        let pong_timeout = tokio::time::sleep(Duration::from_secs(365 * 24 * 3600));
+        let pong_timeout = tokio::time::sleep(Duration::MAX);
         tokio::pin!(pong_timeout);
 
         loop {
@@ -195,9 +192,7 @@ impl WebSocketTunnelServer {
                             debug!("Received WebSocket Pong — keepalive confirmed");
                             awaiting_pong = false;
                         }
-                        Some(Ok(Message::Ping(_))) => {
-                            // Pings from client are automatically responded to by tungstenite
-                        }
+                        Some(Ok(Message::Ping(_))) => {}
                         Some(Ok(Message::Close(_))) => {
                             info!("WebSocket closed by client");
                             break;
@@ -262,15 +257,11 @@ impl WebSocketTunnelServer {
 
         info!("Tunnel connection closed");
 
-        // Step 1: Set tunnel to None to prevent new requests from being accepted
         {
             let mut tunnel_lock = tunnel.write().await;
             *tunnel_lock = None;
         }
 
-        // Step 2: Drain all pending responses, sending an error to each waiting caller
-        // This MUST happen before the function returns (which drops the send side),
-        // so callers get an explicit error instead of hanging until timeout.
         {
             let mut pending = pending_responses.write().await;
             let count = pending.len();
@@ -322,7 +313,6 @@ impl WebSocketTunnelServer {
             Ok(Ok(response)) => Ok(response),
             Ok(Err(_)) => Err("Response channel closed".to_string()),
             Err(_) => {
-                // Timeout - clean up pending response
                 let mut pending = tunnel.pending_responses.write().await;
                 pending.remove(&id);
                 Err("Request timeout".to_string())
@@ -370,7 +360,6 @@ mod tests {
                 .await
                 .unwrap();
 
-        // Wait for first Ping from server (should arrive within ~200ms)
         let msg = tokio::time::timeout(Duration::from_secs(3), ws_client.next())
             .await
             .expect("Timed out waiting for Ping")
@@ -381,9 +370,6 @@ mod tests {
             "Expected Ping, got {msg:?}"
         );
 
-        // tungstenite auto-responds with Pong on the next I/O operation.
-        // Wait for second Ping to confirm the connection survived the first keepalive
-        // cycle.
         let msg = tokio::time::timeout(Duration::from_secs(3), ws_client.next())
             .await
             .expect("Timed out waiting for second Ping — pong may not have been handled")
@@ -405,7 +391,6 @@ mod tests {
         let tunnel: Arc<RwLock<Option<TunnelConnection>>> = Arc::new(RwLock::new(None));
         let tunnel_clone = tunnel.clone();
 
-        // ping_interval > pong_timeout ensures the pong-timeout arm fires first
         let server_handle = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.unwrap();
             WebSocketTunnelServer::handle_tunnel_connection_with_keepalive(
@@ -417,14 +402,11 @@ mod tests {
             .await
         });
 
-        // Connect but never read — server Ping sits in the TCP buffer,
-        // client never processes it, Pong is never sent back.
         let (_ws_client, _) =
             tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{}", addr.port()))
                 .await
                 .unwrap();
 
-        // Server should: send Ping at ~200ms, timeout at ~300ms, close tunnel.
         let result = tokio::time::timeout(Duration::from_secs(5), server_handle)
             .await
             .expect("Server handler did not complete — pong timeout may not be working");
@@ -440,7 +422,6 @@ mod tests {
         let tunnel: Arc<RwLock<Option<TunnelConnection>>> = Arc::new(RwLock::new(None));
         let tunnel_clone = tunnel.clone();
 
-        // Use long keepalive intervals — we close the client explicitly.
         let server_handle = tokio::spawn(async move {
             let (stream, _) = listener.accept().await.unwrap();
             WebSocketTunnelServer::handle_tunnel_connection_with_keepalive(
@@ -457,10 +438,8 @@ mod tests {
                 .await
                 .unwrap();
 
-        // Wait for tunnel to be established
         tokio::time::sleep(Duration::from_millis(100)).await;
 
-        // Grab a reference to pending_responses and insert a fake pending caller
         let pending_ref = {
             let tunnel_lock = tunnel.read().await;
             tunnel_lock.as_ref().unwrap().pending_responses.clone()
@@ -471,10 +450,8 @@ mod tests {
             pending.insert("drain-test-1".to_string(), tx);
         }
 
-        // Close the WebSocket — triggers tunnel close + drain
         drop(ws_client);
 
-        // The pending caller must receive an error (not hang or timeout)
         let result = tokio::time::timeout(Duration::from_secs(5), rx)
             .await
             .expect("Timed out — caller would hang forever without drain fix")
@@ -517,10 +494,8 @@ mod tests {
                 .await
                 .unwrap();
 
-        // Wait for tunnel to be established
         tokio::time::sleep(Duration::from_millis(100)).await;
 
-        // Grab reference and insert multiple pending callers
         let pending_ref = {
             let tunnel_lock = tunnel.read().await;
             tunnel_lock.as_ref().unwrap().pending_responses.clone()
@@ -536,16 +511,13 @@ mod tests {
             assert_eq!(pending.len(), 3, "Expected 3 pending entries before close");
         }
 
-        // Close the WebSocket — triggers tunnel close + drain
         drop(ws_client);
 
-        // Wait for handler to finish
         let _ = tokio::time::timeout(Duration::from_secs(5), server_handle)
             .await
             .expect("Server handler did not complete")
             .expect("Server handler panicked");
 
-        // Verify all pending responses were drained
         let pending = pending_ref.read().await;
         assert!(
             pending.is_empty(),

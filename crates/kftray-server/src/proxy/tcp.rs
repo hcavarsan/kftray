@@ -8,6 +8,7 @@ use async_trait::async_trait;
 use log::{
     error,
     info,
+    warn,
 };
 use socket2::SockRef;
 use tokio::{
@@ -26,24 +27,14 @@ use crate::proxy::{
     traits::ProxyHandler,
 };
 
-/// TCP proxy implementation that forwards TCP connections to a target server
 #[derive(Clone)]
 pub struct TcpProxy;
 
 impl TcpProxy {
-    /// Creates a new TCP proxy instance
     pub fn new() -> Self {
         Self
     }
 
-    /// Establishes connection to the target server with timeout
-    /// Tries resolved IP first, then falls back to hostname
-    ///
-    /// # Parameters
-    /// * `config` - Proxy configuration containing target details
-    ///
-    /// # Returns
-    /// * `Result<TcpStream, ProxyError>` - Connected stream or error
     async fn connect_to_target(&self, config: &ProxyConfig) -> Result<TcpStream, ProxyError> {
         const CONNECTION_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -110,13 +101,6 @@ impl TcpProxy {
         }
     }
 
-    /// Handles an individual TCP proxy connection
-    ///
-    /// Copies data bidirectionally between the client and target server
-    ///
-    /// # Parameters
-    /// * `inbound` - Client connection stream
-    /// * `config` - Proxy configuration
     async fn handle_tcp_connection(
         &self, inbound: TcpStream, config: &ProxyConfig,
     ) -> Result<(), ProxyError> {
@@ -154,7 +138,6 @@ impl TcpProxy {
 fn apply_keepalive(stream: &TcpStream) {
     let sock_ref = SockRef::from(stream);
 
-    // Enable TCP keep-alive for early detection of broken connections
     let keepalive = socket2::TcpKeepalive::new()
         .with_time(Duration::from_secs(60))
         .with_interval(Duration::from_secs(10));
@@ -163,24 +146,12 @@ fn apply_keepalive(stream: &TcpStream) {
     let keepalive = keepalive.with_retries(3);
 
     if let Err(e) = sock_ref.set_tcp_keepalive(&keepalive) {
-        error!("Failed to set TCP keepalive on target connection: {}", e);
+        warn!("Failed to set TCP keepalive on target connection: {}", e);
     }
 }
 
 #[async_trait]
 impl ProxyHandler for TcpProxy {
-    /// Starts the proxy server with the given configuration and shutdown
-    /// signal.
-    ///
-    /// # Parameters
-    /// * `config` - Configuration containing proxy settings like ports and
-    ///   target details
-    /// * `shutdown` - Notification mechanism to signal when the proxy should
-    ///   stop
-    ///
-    /// # Returns
-    /// * `Result<(), ProxyError>` - Success if proxy runs and shuts down
-    ///   cleanly, or error details
     async fn start(&self, config: ProxyConfig, shutdown: Arc<Notify>) -> Result<(), ProxyError> {
         let addr: SocketAddr = format!("0.0.0.0:{}", config.proxy_port).parse()?;
         let listener = TcpListener::bind(addr).await?;
@@ -197,7 +168,7 @@ impl ProxyHandler for TcpProxy {
                             info!("Accepted connection from {addr}");
                             let config = config.clone();
                             let proxy = self.clone();
-                            backoff_ms = 10; // Reset backoff on successful accept
+                            backoff_ms = 10;
 
                             tokio::spawn(async move {
                                 if let Err(e) = proxy.handle_tcp_connection(stream, &config).await {
@@ -402,53 +373,11 @@ mod tests {
 
     #[test]
     fn test_tcp_backoff_calculation() {
-        // Test that backoff grows exponentially and caps at 5000ms
         let mut backoff_ms: u64 = 10;
-
-        // First error: 10ms
-        assert_eq!(backoff_ms, 10);
-        backoff_ms = (backoff_ms * 2).min(5000);
-
-        // Second error: 20ms
-        assert_eq!(backoff_ms, 20);
-        backoff_ms = (backoff_ms * 2).min(5000);
-
-        // Third error: 40ms
-        assert_eq!(backoff_ms, 40);
-        backoff_ms = (backoff_ms * 2).min(5000);
-
-        // Fourth error: 80ms
-        assert_eq!(backoff_ms, 80);
-        backoff_ms = (backoff_ms * 2).min(5000);
-
-        // Fifth error: 160ms
-        assert_eq!(backoff_ms, 160);
-        backoff_ms = (backoff_ms * 2).min(5000);
-
-        // Sixth error: 320ms
-        assert_eq!(backoff_ms, 320);
-        backoff_ms = (backoff_ms * 2).min(5000);
-
-        // Seventh error: 640ms
-        assert_eq!(backoff_ms, 640);
-        backoff_ms = (backoff_ms * 2).min(5000);
-
-        // Eighth error: 1280ms
-        assert_eq!(backoff_ms, 1280);
-        backoff_ms = (backoff_ms * 2).min(5000);
-
-        // Ninth error: 2560ms
-        assert_eq!(backoff_ms, 2560);
-        backoff_ms = (backoff_ms * 2).min(5000);
-
-        // Tenth error: 5000ms (capped)
+        for _ in 0..9 {
+            backoff_ms = (backoff_ms * 2).min(5000);
+        }
         assert_eq!(backoff_ms, 5000);
-        backoff_ms = (backoff_ms * 2).min(5000);
-
-        // Eleventh error: still 5000ms (capped)
-        assert_eq!(backoff_ms, 5000);
-
-        // Reset on success
         backoff_ms = 10;
         assert_eq!(backoff_ms, 10);
     }
