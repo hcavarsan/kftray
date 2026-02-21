@@ -29,6 +29,12 @@ use tokio_tungstenite::{
 
 use crate::models::tunnel_protocol::TunnelMessage;
 
+/// Interval between WebSocket Ping frames for keepalive.
+const WS_PING_INTERVAL: Duration = Duration::from_secs(30);
+
+/// Timeout for receiving a Pong after sending a Ping.
+const WS_PONG_TIMEOUT: Duration = Duration::from_secs(10);
+
 pub struct WebSocketTunnelServer {
     tunnel: Arc<RwLock<Option<TunnelConnection>>>,
     ws_port: u16,
@@ -84,6 +90,19 @@ impl WebSocketTunnelServer {
     async fn handle_tunnel_connection(
         tunnel: Arc<RwLock<Option<TunnelConnection>>>, stream: TcpStream,
     ) -> Result<(), String> {
+        Self::handle_tunnel_connection_with_keepalive(
+            tunnel,
+            stream,
+            WS_PING_INTERVAL,
+            WS_PONG_TIMEOUT,
+        )
+        .await
+    }
+
+    async fn handle_tunnel_connection_with_keepalive(
+        tunnel: Arc<RwLock<Option<TunnelConnection>>>, stream: TcpStream,
+        ping_interval_duration: Duration, pong_timeout_duration: Duration,
+    ) -> Result<(), String> {
         let ws_stream = accept_async(stream)
             .await
             .map_err(|e| format!("WebSocket handshake failed: {}", e))?;
@@ -99,82 +118,145 @@ impl WebSocketTunnelServer {
         {
             let mut tunnel_lock = tunnel.write().await;
             *tunnel_lock = Some(TunnelConnection {
-                request_tx: request_tx.clone(),
+                request_tx,
                 pending_responses: pending_responses.clone(),
             });
         }
 
-        let mut send_task = tokio::spawn(async move {
-            while let Some(msg) = request_rx.recv().await {
-                match msg.serialize() {
-                    Ok(data) => {
-                        if let Err(e) = ws_write.send(Message::Binary(data.into())).await {
-                            error!("Failed to send message through WebSocket: {}", e);
+        let mut ping_interval = tokio::time::interval_at(
+            tokio::time::Instant::now() + ping_interval_duration,
+            ping_interval_duration,
+        );
+        let mut awaiting_pong = false;
+        // Pong timeout is initialized far in the future; reset after each Ping is sent.
+        let pong_timeout = tokio::time::sleep(Duration::from_secs(365 * 24 * 3600));
+        tokio::pin!(pong_timeout);
+
+        loop {
+            tokio::select! {
+                msg = ws_read.next() => {
+                    match msg {
+                        Some(Ok(Message::Binary(data))) => {
+                            match TunnelMessage::deserialize(&data) {
+                                Ok(tunnel_msg) => {
+                                    debug!("Received tunnel message: {:?}", tunnel_msg);
+
+                                    match &tunnel_msg {
+                                        TunnelMessage::HttpResponse { id, .. } => {
+                                            let id_clone = id.clone();
+                                            let mut pending =
+                                                pending_responses.write().await;
+                                            if let Some(sender) =
+                                                pending.remove(&id_clone)
+                                            {
+                                                if sender.send(tunnel_msg).is_err() {
+                                                    warn!(
+                                                        "Failed to send response to waiting handler for request {}",
+                                                        id_clone
+                                                    );
+                                                }
+                                            } else {
+                                                warn!(
+                                                    "Received response for unknown request ID: {}",
+                                                    id_clone
+                                                );
+                                            }
+                                        }
+                                        TunnelMessage::Pong => {
+                                            debug!("Received application-level pong");
+                                        }
+                                        TunnelMessage::Error { id, .. } => {
+                                            error!("Tunnel error for request {:?}", id);
+                                            if let Some(id_val) = id {
+                                                let id_clone = id_val.clone();
+                                                let mut pending =
+                                                    pending_responses.write().await;
+                                                if let Some(sender) =
+                                                    pending.remove(&id_clone)
+                                                {
+                                                    let _ = sender.send(tunnel_msg);
+                                                }
+                                            }
+                                        }
+                                        _ => {
+                                            warn!("Unexpected message type received");
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    error!(
+                                        "Failed to deserialize tunnel message: {}",
+                                        e
+                                    );
+                                }
+                            }
+                        }
+                        Some(Ok(Message::Pong(_))) => {
+                            debug!("Received WebSocket Pong — keepalive confirmed");
+                            awaiting_pong = false;
+                        }
+                        Some(Ok(Message::Ping(_))) => {
+                            // Pings from client are automatically responded to by tungstenite
+                        }
+                        Some(Ok(Message::Close(_))) => {
+                            info!("WebSocket closed by client");
                             break;
                         }
-                    }
-                    Err(e) => {
-                        error!("Failed to serialize message: {}", e);
+                        Some(Err(e)) => {
+                            error!("WebSocket error: {}", e);
+                            break;
+                        }
+                        None => {
+                            info!("WebSocket stream ended");
+                            break;
+                        }
+                        _ => {}
                     }
                 }
-            }
-        });
-
-        while let Some(msg) = ws_read.next().await {
-            match msg {
-                Ok(Message::Binary(data)) => match TunnelMessage::deserialize(&data) {
-                    Ok(tunnel_msg) => {
-                        debug!("Received tunnel message: {:?}", tunnel_msg);
-
-                        match &tunnel_msg {
-                            TunnelMessage::HttpResponse { id, .. } => {
-                                let id_clone = id.clone();
-                                let mut pending = pending_responses.write().await;
-                                if let Some(sender) = pending.remove(&id_clone) {
-                                    if sender.send(tunnel_msg).is_err() {
-                                        warn!(
-                                            "Failed to send response to waiting handler for request {}",
-                                            id_clone
-                                        );
-                                    }
-                                } else {
-                                    warn!("Received response for unknown request ID: {}", id_clone);
-                                }
-                            }
-                            TunnelMessage::Pong => {
-                                debug!("Received pong");
-                            }
-                            TunnelMessage::Error { id, .. } => {
-                                error!("Tunnel error for request {:?}", id);
-                                if let Some(id_val) = id {
-                                    let id_clone = id_val.clone();
-                                    let mut pending = pending_responses.write().await;
-                                    if let Some(sender) = pending.remove(&id_clone) {
-                                        let _ = sender.send(tunnel_msg);
-                                    }
-                                }
-                            }
-                            _ => {
-                                warn!("Unexpected message type received");
+                Some(msg) = request_rx.recv() => {
+                    match msg.serialize() {
+                        Ok(data) => {
+                            if let Err(e) =
+                                ws_write.send(Message::Binary(data.into())).await
+                            {
+                                error!(
+                                    "Failed to send message through WebSocket: {}",
+                                    e
+                                );
+                                break;
                             }
                         }
+                        Err(e) => {
+                            error!("Failed to serialize message: {}", e);
+                        }
                     }
-                    Err(e) => {
-                        error!("Failed to deserialize tunnel message: {}", e);
-                    }
-                },
-                Ok(Message::Ping(_)) => {
-                    // Pings are automatically handled by tungstenite
                 }
-                Ok(Message::Close(_)) => {
-                    info!("WebSocket closed by client");
+                _ = ping_interval.tick() => {
+                    if awaiting_pong {
+                        warn!(
+                            "No WebSocket Pong received before next ping — closing tunnel"
+                        );
+                        break;
+                    }
+                    if let Err(e) =
+                        ws_write.send(Message::Ping(vec![].into())).await
+                    {
+                        error!("Failed to send WebSocket Ping: {}", e);
+                        break;
+                    }
+                    debug!("Sent WebSocket Ping keepalive");
+                    awaiting_pong = true;
+                    pong_timeout.as_mut().reset(
+                        tokio::time::Instant::now() + pong_timeout_duration,
+                    );
+                }
+                _ = &mut pong_timeout, if awaiting_pong => {
+                    warn!(
+                        "WebSocket Pong not received within {}s — closing tunnel",
+                        pong_timeout_duration.as_secs()
+                    );
                     break;
                 }
-                Err(e) => {
-                    error!("WebSocket error: {}", e);
-                    break;
-                }
-                _ => {}
             }
         }
 
@@ -182,18 +264,6 @@ impl WebSocketTunnelServer {
         {
             let mut tunnel_lock = tunnel.write().await;
             *tunnel_lock = None;
-        }
-
-        drop(request_tx);
-
-        tokio::select! {
-            _ = &mut send_task => {
-                info!("Send task completed gracefully");
-            }
-            _ = tokio::time::sleep(Duration::from_secs(5)) => {
-                warn!("Send task did not shut down within 5s, aborting");
-                send_task.abort();
-            }
         }
 
         Ok(())
@@ -240,5 +310,100 @@ impl WebSocketTunnelServer {
 
     pub async fn is_connected(&self) -> bool {
         self.tunnel.read().await.is_some()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use futures::StreamExt;
+    use tokio::net::TcpListener;
+    use tokio::sync::RwLock;
+    use tokio_tungstenite::tungstenite::Message;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn websocket_ping_sent_and_pong_keeps_connection_alive() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let tunnel: Arc<RwLock<Option<TunnelConnection>>> = Arc::new(RwLock::new(None));
+        let tunnel_clone = tunnel.clone();
+
+        let server_handle = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            WebSocketTunnelServer::handle_tunnel_connection_with_keepalive(
+                tunnel_clone,
+                stream,
+                Duration::from_millis(200),
+                Duration::from_secs(5),
+            )
+            .await
+        });
+
+        let (mut ws_client, _) =
+            tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{}", addr.port()))
+                .await
+                .unwrap();
+
+        // Wait for first Ping from server (should arrive within ~200ms)
+        let msg = tokio::time::timeout(Duration::from_secs(3), ws_client.next())
+            .await
+            .expect("Timed out waiting for Ping")
+            .expect("Stream ended")
+            .expect("WebSocket error");
+        assert!(matches!(msg, Message::Ping(_)), "Expected Ping, got {msg:?}");
+
+        // tungstenite auto-responds with Pong on the next I/O operation.
+        // Wait for second Ping to confirm the connection survived the first keepalive cycle.
+        let msg = tokio::time::timeout(Duration::from_secs(3), ws_client.next())
+            .await
+            .expect("Timed out waiting for second Ping — pong may not have been handled")
+            .expect("Stream ended")
+            .expect("WebSocket error");
+        assert!(
+            matches!(msg, Message::Ping(_)),
+            "Expected second Ping, got {msg:?}"
+        );
+
+        drop(ws_client);
+        let _ = server_handle.await;
+    }
+
+    #[tokio::test]
+    async fn websocket_closes_tunnel_when_pong_not_received_within_timeout() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let tunnel: Arc<RwLock<Option<TunnelConnection>>> = Arc::new(RwLock::new(None));
+        let tunnel_clone = tunnel.clone();
+
+        // ping_interval > pong_timeout ensures the pong-timeout arm fires first
+        let server_handle = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            WebSocketTunnelServer::handle_tunnel_connection_with_keepalive(
+                tunnel_clone,
+                stream,
+                Duration::from_millis(200),
+                Duration::from_millis(100),
+            )
+            .await
+        });
+
+        // Connect but never read — server Ping sits in the TCP buffer,
+        // client never processes it, Pong is never sent back.
+        let (_ws_client, _) =
+            tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{}", addr.port()))
+                .await
+                .unwrap();
+
+        // Server should: send Ping at ~200ms, timeout at ~300ms, close tunnel.
+        let result = tokio::time::timeout(Duration::from_secs(5), server_handle)
+            .await
+            .expect("Server handler did not complete — pong timeout may not be working");
+
+        let inner = result.expect("Server handler panicked");
+        assert!(inner.is_ok(), "Server handler returned error: {inner:?}");
     }
 }
