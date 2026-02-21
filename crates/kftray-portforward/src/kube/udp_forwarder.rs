@@ -11,6 +11,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{
     error,
     info,
+    warn,
 };
 
 const BUFFER_SIZE: usize = 131072;
@@ -96,11 +97,11 @@ impl UdpForwarder {
                                     }
                                 },
                                 Ok(None) => {
-                                    tracing::warn!("UDP forwarder received empty packet (server timeout), continuing");
+                                    warn!("UDP forwarder received empty packet (server timeout), continuing");
                                     continue;
                                 },
                                 Err(e) => {
-                                    tracing::warn!("Failed to read from TCP stream (recoverable): {:?}", e);
+                                    warn!("Failed to read from TCP stream (recoverable): {:?}", e);
                                     continue;
                                 }
                             }
@@ -241,35 +242,69 @@ mod tests {
 
     #[tokio::test]
     async fn test_udp_forwarder_continues_after_empty_packet() {
-        // This test verifies that read_tcp_length_and_packet returns Ok(None) for empty packets,
-        // which causes the forwarder loop to continue instead of breaking.
-        let (mut reader, mut writer) = duplex(1024);
+        // Integration test: when TCP stream drops (EOF), read_tcp_length_and_packet
+        // returns Ok(None). The forwarder loop must continue, NOT break.
+        let (client_stream, server_stream) = duplex(1024);
+        drop(client_stream); // EOF on server's reads → Ok(None)
 
-        // Send a 0-length packet (just the length header with value 0)
-        let len_bytes = 0u32.to_be_bytes();
-        writer.write_all(&len_bytes).await.unwrap();
-        writer.flush().await.unwrap();
+        let cancel = CancellationToken::new();
+        let (_port, handle) = UdpForwarder::bind_and_forward(
+            "127.0.0.1".to_string(),
+            0,
+            server_stream,
+            cancel.clone(),
+        )
+        .await
+        .unwrap();
 
-        // read_tcp_length_and_packet should return Ok(Some(vec![])) for 0-length packet
-        let result = UdpForwarder::read_tcp_length_and_packet(&mut reader).await;
-        assert!(result.is_ok());
-        let data = result.unwrap();
-        assert!(data.is_some());
-        assert_eq!(data.unwrap(), Vec::<u8>::new());
+        // Give the loop time to encounter Ok(None) and continue (not break)
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // With the fix, the forwarder continues instead of breaking
+        assert!(
+            !handle.is_finished(),
+            "Forwarder must not exit on Ok(None) — should continue loop"
+        );
+
+        cancel.cancel();
+        let _ = tokio::time::timeout(Duration::from_secs(1), handle).await;
     }
 
     #[tokio::test]
-    async fn test_udp_forwarder_continues_after_error() {
-        // This test verifies that when read_tcp_length_and_packet encounters EOF (writer dropped),
-        // the function returns Ok(None), which causes the forwarder loop to continue.
-        let (mut reader, writer) = duplex(1024);
-        // Drop the writer immediately to cause EOF on the reader
-        drop(writer);
+    async fn test_udp_forwarder_continues_after_tcp_read_error() {
+        // Integration test: simulate a partial/corrupt TCP read.
+        // Write length header claiming 100 bytes, provide only 10, then drop.
+        // read_exact fails mid-packet → Ok(None). Forwarder must continue.
+        let (client_stream, server_stream) = duplex(4096);
+        let cancel = CancellationToken::new();
 
-        // read_tcp_length_and_packet should return Ok(None) on EOF
-        let result = UdpForwarder::read_tcp_length_and_packet(&mut reader).await;
-        assert!(result.is_ok());
-        // When read fails (EOF), the function returns Ok(None)
-        assert!(result.unwrap().is_none());
+        let (_port, handle) = UdpForwarder::bind_and_forward(
+            "127.0.0.1".to_string(),
+            0,
+            server_stream,
+            cancel.clone(),
+        )
+        .await
+        .unwrap();
+
+        // Write partial TCP data: header says 100 bytes, only provide 10
+        let mut client = client_stream;
+        let len_bytes = 100u32.to_be_bytes();
+        client.write_all(&len_bytes).await.unwrap();
+        client.write_all(&[42u8; 10]).await.unwrap();
+        client.flush().await.unwrap();
+        drop(client); // EOF mid-packet → read_exact fails → Ok(None)
+
+        // Give time for the read to fail and the loop to continue
+        tokio::time::sleep(Duration::from_millis(200)).await;
+
+        // Forwarder must still be alive (continued, not broke)
+        assert!(
+            !handle.is_finished(),
+            "Forwarder must not exit on recoverable TCP read error"
+        );
+
+        cancel.cancel();
+        let _ = tokio::time::timeout(Duration::from_secs(1), handle).await;
     }
 }
