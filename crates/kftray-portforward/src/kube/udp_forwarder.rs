@@ -260,15 +260,16 @@ mod tests {
 
     #[tokio::test]
     async fn test_udp_forwarder_continues_after_error() {
-        // This test verifies that when read_tcp_length_and_packet encounters an error,
-        // the forwarder loop continues instead of breaking.
-        // We test this by verifying the function returns Ok(None) on read failure.
-        let (mut reader, _writer) = duplex(0);
+        // This test verifies that when read_tcp_length_and_packet encounters EOF (writer dropped),
+        // the function returns Ok(None), which causes the forwarder loop to continue.
+        let (mut reader, writer) = duplex(1024);
+        // Drop the writer immediately to cause EOF on the reader
+        drop(writer);
 
-        // Attempting to read from a 0-capacity duplex will fail immediately
+        // read_tcp_length_and_packet should return Ok(None) on EOF
         let result = UdpForwarder::read_tcp_length_and_packet(&mut reader).await;
         assert!(result.is_ok());
-        // When read fails, the function returns Ok(None)
+        // When read fails (EOF), the function returns Ok(None)
         assert!(result.unwrap().is_none());
     }
 }
