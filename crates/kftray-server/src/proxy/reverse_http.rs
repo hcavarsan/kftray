@@ -207,9 +207,7 @@ mod tests {
         let shutdown = Arc::new(Notify::new());
         let shutdown_clone = shutdown.clone();
 
-        let proxy_handle = tokio::spawn(async move {
-            http_proxy.start(shutdown_clone).await
-        });
+        let proxy_handle = tokio::spawn(async move { http_proxy.start(shutdown_clone).await });
 
         // Wait for proxy to be listening
         let addr = format!("127.0.0.1:{}", port).parse().unwrap();
@@ -231,11 +229,8 @@ mod tests {
         assert!(result.is_ok(), "proxy should return Ok on shutdown");
 
         // Assert: new connections are refused after shutdown
-        let connect_result = tokio::time::timeout(
-            Duration::from_secs(1),
-            TcpStream::connect(addr),
-        )
-        .await;
+        let connect_result =
+            tokio::time::timeout(Duration::from_secs(1), TcpStream::connect(addr)).await;
 
         match connect_result {
             Ok(Ok(_)) => panic!("should not accept connections after shutdown"),

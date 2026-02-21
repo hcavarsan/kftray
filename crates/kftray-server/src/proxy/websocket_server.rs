@@ -376,10 +376,14 @@ mod tests {
             .expect("Timed out waiting for Ping")
             .expect("Stream ended")
             .expect("WebSocket error");
-        assert!(matches!(msg, Message::Ping(_)), "Expected Ping, got {msg:?}");
+        assert!(
+            matches!(msg, Message::Ping(_)),
+            "Expected Ping, got {msg:?}"
+        );
 
         // tungstenite auto-responds with Pong on the next I/O operation.
-        // Wait for second Ping to confirm the connection survived the first keepalive cycle.
+        // Wait for second Ping to confirm the connection survived the first keepalive
+        // cycle.
         let msg = tokio::time::timeout(Duration::from_secs(3), ws_client.next())
             .await
             .expect("Timed out waiting for second Ping — pong may not have been handled")

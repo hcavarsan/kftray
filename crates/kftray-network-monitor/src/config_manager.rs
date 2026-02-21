@@ -145,10 +145,19 @@ mod tests {
 
         let (proxy, other) = partition_configs_by_workload(configs);
 
-        assert_eq!(proxy.len(), 2, "all proxy configs must be in the proxy partition");
-        assert!(other.is_empty(), "no configs should be in the other partition");
+        assert_eq!(
+            proxy.len(),
+            2,
+            "all proxy configs must be in the proxy partition"
+        );
         assert!(
-            proxy.iter().all(|c| c.workload_type.as_deref() == Some("proxy")),
+            other.is_empty(),
+            "no configs should be in the other partition"
+        );
+        assert!(
+            proxy
+                .iter()
+                .all(|c| c.workload_type.as_deref() == Some("proxy")),
             "all partitioned configs must have workload_type=proxy"
         );
     }
@@ -163,7 +172,10 @@ mod tests {
 
         let (proxy, other) = partition_configs_by_workload(configs);
 
-        assert!(proxy.is_empty(), "no configs should be in the proxy partition");
+        assert!(
+            proxy.is_empty(),
+            "no configs should be in the proxy partition"
+        );
         assert_eq!(
             other.len(),
             3,

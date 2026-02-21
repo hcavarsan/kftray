@@ -391,8 +391,9 @@ mod tests {
         let _ = stream.read_exact(&mut buf).await;
 
         // Assert - The test verifies that keepalive was applied without errors
-        // If keepalive failed, the error would have been logged but connection would still work
-        // This test passes if the proxy successfully connects and applies keepalive
+        // If keepalive failed, the error would have been logged but connection would
+        // still work This test passes if the proxy successfully connects and
+        // applies keepalive
 
         // Cleanup
         shutdown.notify_one();
@@ -403,50 +404,50 @@ mod tests {
     fn test_tcp_backoff_calculation() {
         // Test that backoff grows exponentially and caps at 5000ms
         let mut backoff_ms: u64 = 10;
-        
+
         // First error: 10ms
         assert_eq!(backoff_ms, 10);
         backoff_ms = (backoff_ms * 2).min(5000);
-        
+
         // Second error: 20ms
         assert_eq!(backoff_ms, 20);
         backoff_ms = (backoff_ms * 2).min(5000);
-        
+
         // Third error: 40ms
         assert_eq!(backoff_ms, 40);
         backoff_ms = (backoff_ms * 2).min(5000);
-        
+
         // Fourth error: 80ms
         assert_eq!(backoff_ms, 80);
         backoff_ms = (backoff_ms * 2).min(5000);
-        
+
         // Fifth error: 160ms
         assert_eq!(backoff_ms, 160);
         backoff_ms = (backoff_ms * 2).min(5000);
-        
+
         // Sixth error: 320ms
         assert_eq!(backoff_ms, 320);
         backoff_ms = (backoff_ms * 2).min(5000);
-        
+
         // Seventh error: 640ms
         assert_eq!(backoff_ms, 640);
         backoff_ms = (backoff_ms * 2).min(5000);
-        
+
         // Eighth error: 1280ms
         assert_eq!(backoff_ms, 1280);
         backoff_ms = (backoff_ms * 2).min(5000);
-        
+
         // Ninth error: 2560ms
         assert_eq!(backoff_ms, 2560);
         backoff_ms = (backoff_ms * 2).min(5000);
-        
+
         // Tenth error: 5000ms (capped)
         assert_eq!(backoff_ms, 5000);
         backoff_ms = (backoff_ms * 2).min(5000);
-        
+
         // Eleventh error: still 5000ms (capped)
         assert_eq!(backoff_ms, 5000);
-        
+
         // Reset on success
         backoff_ms = 10;
         assert_eq!(backoff_ms, 10);
