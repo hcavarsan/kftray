@@ -25,6 +25,7 @@ tokio-tungstenite = { version = "0.28.0", features = ["rustls-tls-webpki-roots"]
 tungstenite = "0.28.0"
 url = "2.5.8"
 uuid = { version = "1.19", features = ["v4"] }
+socket2 = "0.6.1"
 
 [dev-dependencies]
 lazy_static = "1.5.0"
