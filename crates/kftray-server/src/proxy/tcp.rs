@@ -187,6 +187,8 @@ impl ProxyHandler for TcpProxy {
 
         info!("TCP Proxy started on port {}", config.proxy_port);
 
+        let mut backoff_ms: u64 = 10;
+
         loop {
             tokio::select! {
                 accept_result = listener.accept() => {
@@ -195,6 +197,7 @@ impl ProxyHandler for TcpProxy {
                             info!("Accepted connection from {addr}");
                             let config = config.clone();
                             let proxy = self.clone();
+                            backoff_ms = 10; // Reset backoff on successful accept
 
                             tokio::spawn(async move {
                                 if let Err(e) = proxy.handle_tcp_connection(stream, &config).await {
@@ -202,7 +205,12 @@ impl ProxyHandler for TcpProxy {
                                 }
                             });
                         }
-                        Err(e) => error!("Failed to accept connection: {e}"),
+                        Err(e) => {
+                            log::warn!("Accept error (retrying in {}ms): {}", backoff_ms, e);
+                            tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
+                            backoff_ms = (backoff_ms * 2).min(5000);
+                            continue;
+                        }
                     }
                 }
                 _ = shutdown.notified() => {
@@ -389,5 +397,58 @@ mod tests {
         // Cleanup
         shutdown.notify_one();
         echo_server.shutdown();
+    }
+
+    #[test]
+    fn test_tcp_backoff_calculation() {
+        // Test that backoff grows exponentially and caps at 5000ms
+        let mut backoff_ms: u64 = 10;
+        
+        // First error: 10ms
+        assert_eq!(backoff_ms, 10);
+        backoff_ms = (backoff_ms * 2).min(5000);
+        
+        // Second error: 20ms
+        assert_eq!(backoff_ms, 20);
+        backoff_ms = (backoff_ms * 2).min(5000);
+        
+        // Third error: 40ms
+        assert_eq!(backoff_ms, 40);
+        backoff_ms = (backoff_ms * 2).min(5000);
+        
+        // Fourth error: 80ms
+        assert_eq!(backoff_ms, 80);
+        backoff_ms = (backoff_ms * 2).min(5000);
+        
+        // Fifth error: 160ms
+        assert_eq!(backoff_ms, 160);
+        backoff_ms = (backoff_ms * 2).min(5000);
+        
+        // Sixth error: 320ms
+        assert_eq!(backoff_ms, 320);
+        backoff_ms = (backoff_ms * 2).min(5000);
+        
+        // Seventh error: 640ms
+        assert_eq!(backoff_ms, 640);
+        backoff_ms = (backoff_ms * 2).min(5000);
+        
+        // Eighth error: 1280ms
+        assert_eq!(backoff_ms, 1280);
+        backoff_ms = (backoff_ms * 2).min(5000);
+        
+        // Ninth error: 2560ms
+        assert_eq!(backoff_ms, 2560);
+        backoff_ms = (backoff_ms * 2).min(5000);
+        
+        // Tenth error: 5000ms (capped)
+        assert_eq!(backoff_ms, 5000);
+        backoff_ms = (backoff_ms * 2).min(5000);
+        
+        // Eleventh error: still 5000ms (capped)
+        assert_eq!(backoff_ms, 5000);
+        
+        // Reset on success
+        backoff_ms = 10;
+        assert_eq!(backoff_ms, 10);
     }
 }

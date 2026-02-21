@@ -3478,6 +3478,7 @@ dependencies = [
  "log",
  "serde",
  "serde_json",
+ "socket2",
  "tokio",
  "tokio-tungstenite",
  "tungstenite",
