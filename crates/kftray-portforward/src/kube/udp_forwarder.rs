@@ -123,16 +123,19 @@ impl UdpForwarder {
     ) -> anyhow::Result<Option<Vec<u8>>> {
         let mut len_bytes = [0u8; 4];
 
-        if tcp_read.read_exact(&mut len_bytes).await.is_err() {
-            return Ok(None);
+        match tcp_read.read_exact(&mut len_bytes).await {
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
+            Err(e) => return Err(e.into()),
         }
 
         let len = u32::from_be_bytes(len_bytes) as usize;
-
         let mut packet = vec![0u8; len];
 
-        if tcp_read.read_exact(&mut packet).await.is_err() {
-            return Ok(None);
+        match tcp_read.read_exact(&mut packet).await {
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
+            Err(e) => return Err(e.into()),
         }
 
         Ok(Some(packet))
