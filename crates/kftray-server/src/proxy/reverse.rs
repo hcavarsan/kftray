@@ -52,8 +52,9 @@ impl ProxyHandler for ReverseProxy {
         });
 
         let http_proxy = ReverseHttpProxy::new(tunnel_server, http_port);
+        let shutdown_http = shutdown.clone();
         let http_handle = tokio::spawn(async move {
-            if let Err(e) = http_proxy.start().await {
+            if let Err(e) = http_proxy.start(shutdown_http).await {
                 error!("HTTP proxy error: {}", e);
             }
         });
