@@ -261,9 +261,31 @@ impl WebSocketTunnelServer {
         }
 
         info!("Tunnel connection closed");
+
+        // Step 1: Set tunnel to None to prevent new requests from being accepted
         {
             let mut tunnel_lock = tunnel.write().await;
             *tunnel_lock = None;
+        }
+
+        // Step 2: Drain all pending responses, sending an error to each waiting caller
+        // This MUST happen before the function returns (which drops the send side),
+        // so callers get an explicit error instead of hanging until timeout.
+        {
+            let mut pending = pending_responses.write().await;
+            let count = pending.len();
+            for (id, sender) in pending.drain() {
+                let _ = sender.send(TunnelMessage::Error {
+                    id: Some(id),
+                    message: "tunnel closed".to_string(),
+                });
+            }
+            if count > 0 {
+                info!(
+                    "Drained {} pending response(s) with tunnel-closed error",
+                    count
+                );
+            }
         }
 
         Ok(())
@@ -405,5 +427,126 @@ mod tests {
 
         let inner = result.expect("Server handler panicked");
         assert!(inner.is_ok(), "Server handler returned error: {inner:?}");
+    }
+
+    #[tokio::test]
+    async fn pending_callers_receive_error_when_tunnel_closes() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let tunnel: Arc<RwLock<Option<TunnelConnection>>> = Arc::new(RwLock::new(None));
+        let tunnel_clone = tunnel.clone();
+
+        // Use long keepalive intervals — we close the client explicitly.
+        let server_handle = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            WebSocketTunnelServer::handle_tunnel_connection_with_keepalive(
+                tunnel_clone,
+                stream,
+                Duration::from_secs(300),
+                Duration::from_secs(300),
+            )
+            .await
+        });
+
+        let (ws_client, _) =
+            tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{}", addr.port()))
+                .await
+                .unwrap();
+
+        // Wait for tunnel to be established
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Grab a reference to pending_responses and insert a fake pending caller
+        let pending_ref = {
+            let tunnel_lock = tunnel.read().await;
+            tunnel_lock.as_ref().unwrap().pending_responses.clone()
+        };
+        let (tx, rx) = oneshot::channel::<TunnelMessage>();
+        {
+            let mut pending = pending_ref.write().await;
+            pending.insert("drain-test-1".to_string(), tx);
+        }
+
+        // Close the WebSocket — triggers tunnel close + drain
+        drop(ws_client);
+
+        // The pending caller must receive an error (not hang or timeout)
+        let result = tokio::time::timeout(Duration::from_secs(5), rx)
+            .await
+            .expect("Timed out — caller would hang forever without drain fix")
+            .expect("Channel closed without sending error response");
+
+        match result {
+            TunnelMessage::Error { id, message } => {
+                assert_eq!(id.as_deref(), Some("drain-test-1"));
+                assert!(
+                    message.contains("tunnel closed"),
+                    "Expected 'tunnel closed' error, got: {message}"
+                );
+            }
+            other => panic!("Expected TunnelMessage::Error, got: {other:?}"),
+        }
+
+        let _ = server_handle.await;
+    }
+
+    #[tokio::test]
+    async fn pending_responses_empty_after_tunnel_close() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let tunnel: Arc<RwLock<Option<TunnelConnection>>> = Arc::new(RwLock::new(None));
+        let tunnel_clone = tunnel.clone();
+
+        let server_handle = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            WebSocketTunnelServer::handle_tunnel_connection_with_keepalive(
+                tunnel_clone,
+                stream,
+                Duration::from_secs(300),
+                Duration::from_secs(300),
+            )
+            .await
+        });
+
+        let (ws_client, _) =
+            tokio_tungstenite::connect_async(format!("ws://127.0.0.1:{}", addr.port()))
+                .await
+                .unwrap();
+
+        // Wait for tunnel to be established
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Grab reference and insert multiple pending callers
+        let pending_ref = {
+            let tunnel_lock = tunnel.read().await;
+            tunnel_lock.as_ref().unwrap().pending_responses.clone()
+        };
+        {
+            let mut pending = pending_ref.write().await;
+            let (tx1, _rx1) = oneshot::channel::<TunnelMessage>();
+            let (tx2, _rx2) = oneshot::channel::<TunnelMessage>();
+            let (tx3, _rx3) = oneshot::channel::<TunnelMessage>();
+            pending.insert("leak-test-1".to_string(), tx1);
+            pending.insert("leak-test-2".to_string(), tx2);
+            pending.insert("leak-test-3".to_string(), tx3);
+            assert_eq!(pending.len(), 3, "Expected 3 pending entries before close");
+        }
+
+        // Close the WebSocket — triggers tunnel close + drain
+        drop(ws_client);
+
+        // Wait for handler to finish
+        let _ = tokio::time::timeout(Duration::from_secs(5), server_handle)
+            .await
+            .expect("Server handler did not complete")
+            .expect("Server handler panicked");
+
+        // Verify all pending responses were drained
+        let pending = pending_ref.read().await;
+        assert!(
+            pending.is_empty(),
+            "Expected pending_responses to be empty after tunnel close, but had {} entries",
+            pending.len()
+        );
     }
 }
