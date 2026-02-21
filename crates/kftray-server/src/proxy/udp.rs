@@ -142,9 +142,7 @@ impl UdpProxy {
                 Err(ProxyError::Io(e))
             }
             Err(_) => {
-                debug!("UDP response timeout");
-                tcp_stream.write_all(&0u32.to_be_bytes()).await?;
-                tcp_stream.flush().await?;
+                debug!("UDP response timed out, no response sent");
                 Ok(())
             }
         }
@@ -358,6 +356,7 @@ mod tests {
         shutdown.notify_one();
         echo_server.shutdown();
     }
+
 
     #[test]
     fn test_udp_backoff_calculation() {
