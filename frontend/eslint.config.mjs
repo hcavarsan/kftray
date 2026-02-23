@@ -3,7 +3,7 @@ import react from "eslint-plugin-react";
 import reactHooks from "eslint-plugin-react-hooks";
 import typescriptEslint from "@typescript-eslint/eslint-plugin";
 import simpleImportSort from "eslint-plugin-simple-import-sort";
-import _import from "eslint-plugin-import";
+import importPlugin, { createNodeResolver } from "eslint-plugin-import-x";
 import tsParser from "@typescript-eslint/parser";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -38,14 +38,14 @@ export default [{
 }, ...fixupConfigRules(compat.extends(
     "plugin:react/recommended",
     "plugin:@typescript-eslint/recommended",
-    "plugin:import/typescript",
-)), {
+)),
+importPlugin.flatConfigs.recommended,
+{
     plugins: {
         react: fixupPluginRules(react),
         "react-hooks": fixupPluginRules(reactHooks),
         "@typescript-eslint": fixupPluginRules(typescriptEslint),
         "simple-import-sort": simpleImportSort,
-        import: fixupPluginRules(_import),
     },
 
     languageOptions: {
@@ -66,11 +66,14 @@ export default [{
         react: {
             version: "detect",
         },
-
-        "import/resolver": {
-            node: {
-                extensions: [".js", ".jsx", ".ts", ".tsx"],
-            },
+        "import-x/resolver-next": [createNodeResolver({
+            extensions: [".js", ".jsx", ".ts", ".tsx"],
+            tsconfig: { configFile: "./tsconfig.json" },
+        })],
+        "import-x/extensions": [".ts", ".tsx", ".cts", ".mts", ".js", ".jsx", ".cjs", ".mjs"],
+        "import-x/external-module-folders": ["node_modules", "node_modules/@types"],
+        "import-x/parsers": {
+            "@typescript-eslint/parser": [".ts", ".tsx", ".cts", ".mts"],
         },
     },
 
@@ -118,9 +121,11 @@ export default [{
         "object-curly-spacing": ["error", "always"],
         "simple-import-sort/imports": "error",
         "simple-import-sort/exports": "error",
-        "import/first": "error",
-        "import/newline-after-import": "error",
-        "import/no-duplicates": "error",
+        "import-x/first": "error",
+        "import-x/newline-after-import": "error",
+        "import-x/no-duplicates": "error",
+        "import-x/named": "off",
+        "import-x/namespace": "off",
 
         "keyword-spacing": ["error", {
             before: true,

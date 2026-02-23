@@ -28,7 +28,10 @@
   "pnpm": {
     "peerDependencyRules": {
       "allowedVersions": {
-        "@codecov/vite-plugin>vite": "7"
+        "@codecov/vite-plugin>vite": "7",
+        "eslint-plugin-react>eslint": "10",
+        "eslint-plugin-react-hooks>eslint": "10",
+        "eslint-plugin-import-x>eslint": "10"
       }
     },
     "overrides": {
