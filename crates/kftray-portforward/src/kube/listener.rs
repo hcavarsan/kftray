@@ -384,6 +384,7 @@ impl PortForwarder {
         let cancel_token = cancellation_token.clone();
 
         let mut pod_change_rx = self.pod_watcher.subscribe_pod_changes();
+        let mut pod_died_rx = self.pod_watcher.subscribe_pod_deaths();
         let mut last_pod_change = tokio::time::Instant::now();
         let mut pending_pod: Option<String> = None;
         let mut consecutive_accept_errors: u32 = 0;
@@ -442,6 +443,26 @@ impl PortForwarder {
                         pending_pod = Some(new_pod.clone());
                         last_pod_change = tokio::time::Instant::now();
                         debug!("Pod change detected: {}, killed connections, debouncing for 3s", new_pod);
+                    }
+                    continue;
+                }
+                pod_died = pod_died_rx.recv() => {
+                    match pod_died {
+                        Ok(dead_pod_name) => {
+                            debug!(
+                                "Pod {} died reactively, signaling recovery for config {}",
+                                dead_pod_name, config_id
+                            );
+                            if let Some(rm) = crate::kube::proxy_recovery::RECOVERY_MANAGERS.get(&config_id) {
+                                rm.signal_recovery(crate::kube::proxy_recovery::RecoverySignal::PodDied);
+                            }
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
+                            debug!("pod_died_rx lagged by {} for config {}", n, config_id);
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Closed) => {
+                            debug!("pod_died_rx closed for config {}", config_id);
+                        }
                     }
                     continue;
                 }
