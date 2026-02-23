@@ -154,6 +154,84 @@ async fn migrate_schema(pool: &SqlitePool) -> Result<(), String> {
         info!("process_id column already exists, skipping migration");
     }
 
+    let is_retrying_exists = sqlx::query(
+        "SELECT COUNT(*) as count FROM pragma_table_info('config_state') WHERE name = 'is_retrying'",
+    )
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(|e| {
+        error!("Failed to check is_retrying column: {e}");
+        e.to_string()
+    })?
+    .get::<i64, _>("count")
+        > 0;
+
+    if !is_retrying_exists {
+        info!("Adding is_retrying column to config_state table");
+        sqlx::query("ALTER TABLE config_state ADD COLUMN is_retrying BOOLEAN NOT NULL DEFAULT false")
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| {
+                error!("Failed to add is_retrying column: {e}");
+                e.to_string()
+            })?;
+        info!("Successfully added is_retrying column");
+    } else {
+        info!("is_retrying column already exists, skipping migration");
+    }
+
+    let retry_count_exists = sqlx::query(
+        "SELECT COUNT(*) as count FROM pragma_table_info('config_state') WHERE name = 'retry_count'",
+    )
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(|e| {
+        error!("Failed to check retry_count column: {e}");
+        e.to_string()
+    })?
+    .get::<i64, _>("count")
+        > 0;
+
+    if !retry_count_exists {
+        info!("Adding retry_count column to config_state table");
+        sqlx::query("ALTER TABLE config_state ADD COLUMN retry_count INTEGER")
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| {
+                error!("Failed to add retry_count column: {e}");
+                e.to_string()
+            })?;
+        info!("Successfully added retry_count column");
+    } else {
+        info!("retry_count column already exists, skipping migration");
+    }
+
+    let last_error_exists = sqlx::query(
+        "SELECT COUNT(*) as count FROM pragma_table_info('config_state') WHERE name = 'last_error'",
+    )
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(|e| {
+        error!("Failed to check last_error column: {e}");
+        e.to_string()
+    })?
+    .get::<i64, _>("count")
+        > 0;
+
+    if !last_error_exists {
+        info!("Adding last_error column to config_state table");
+        sqlx::query("ALTER TABLE config_state ADD COLUMN last_error TEXT")
+            .execute(&mut *conn)
+            .await
+            .map_err(|e| {
+                error!("Failed to add last_error column: {e}");
+                e.to_string()
+            })?;
+        info!("Successfully added last_error column");
+    } else {
+        info!("last_error column already exists, skipping migration");
+    }
+
     migrate_http_logs_config_table(&mut conn).await?;
 
     migrate_shortcuts_table(&mut conn).await?;

@@ -15,9 +15,12 @@ pub async fn update_config_state_with_pool(
     config_state: &ConfigState, pool: &SqlitePool,
 ) -> Result<(), String> {
     let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
-    sqlx::query("UPDATE config_state SET is_running = ?1, process_id = ?2 WHERE config_id = ?3")
+    sqlx::query("UPDATE config_state SET is_running = ?1, process_id = ?2, is_retrying = ?3, retry_count = ?4, last_error = ?5 WHERE config_id = ?6")
         .bind(config_state.is_running)
         .bind(config_state.process_id)
+        .bind(config_state.is_retrying)
+        .bind(config_state.retry_count)
+        .bind(&config_state.last_error)
         .bind(config_state.config_id)
         .execute(&mut *conn)
         .await
@@ -37,7 +40,7 @@ pub async fn read_config_states_with_pool(
         error!("Failed to acquire database connection: {e}");
         e
     })?;
-    let rows = sqlx::query("SELECT id, config_id, is_running, process_id FROM config_state")
+    let rows = sqlx::query("SELECT id, config_id, is_running, process_id, is_retrying, retry_count, last_error FROM config_state")
         .fetch_all(&mut *conn)
         .await
         .map_err(|e| {
@@ -58,11 +61,17 @@ pub async fn read_config_states_with_pool(
                 e
             })?;
             let process_id: Option<u32> = row.try_get("process_id").ok().flatten();
+            let is_retrying: bool = row.try_get("is_retrying").ok().unwrap_or(false);
+            let retry_count: Option<i32> = row.try_get("retry_count").ok().flatten();
+            let last_error: Option<String> = row.try_get("last_error").ok().flatten();
             Ok(ConfigState {
                 id,
                 config_id,
                 is_running,
                 process_id,
+                is_retrying,
+                retry_count,
+                last_error,
             })
         })
         .collect::<Result<Vec<_>, sqlx::Error>>()?;
@@ -226,6 +235,7 @@ mod tests {
             config_id,
             is_running: true,
             process_id: Some(1234),
+            ..Default::default()
         };
         update_config_state_with_pool(&state_to_update, &pool)
             .await
@@ -276,6 +286,7 @@ mod tests {
             config_id: config1_id,
             is_running: true,
             process_id: Some(1234),
+            ..Default::default()
         };
         update_config_state_with_pool(&state_to_update, &pool)
             .await
@@ -323,6 +334,7 @@ mod tests {
             config_id,
             is_running: true,
             process_id: Some(1234),
+            ..Default::default()
         };
 
         tokio::task::yield_now().await;
@@ -381,6 +393,7 @@ mod tests {
             config_id: 1,
             is_running: true,
             process_id: Some(1234),
+            ..Default::default()
         };
 
         let result = update_config_state_with_pool(&config_state, &pool).await;
@@ -429,6 +442,7 @@ mod tests {
             config_id: config2_id,
             is_running: true,
             process_id: Some(1234),
+            ..Default::default()
         };
 
         update_config_state_with_pool(&state, &pool).await.unwrap();
@@ -469,6 +483,7 @@ mod tests {
             config_id,
             is_running: true,
             process_id: Some(1234),
+            ..Default::default()
         };
 
         let result = update_config_state_with_pool(&state, &pool).await;
@@ -563,6 +578,7 @@ mod tests {
             config_id,
             is_running: true,
             process_id: Some(1234),
+            ..Default::default()
         };
 
         update_config_state_with_mode(&state_update, DatabaseMode::Memory)
@@ -596,5 +612,139 @@ mod tests {
             .unwrap();
         assert_eq!(states.len(), 1);
         assert!(!states[0].is_running);
+    }
+
+    #[test]
+    fn test_config_state_default_values() {
+        let state = ConfigState::default();
+        assert_eq!(state.id, None);
+        assert_eq!(state.config_id, 0);
+        assert!(!state.is_running);
+        assert_eq!(state.process_id, None);
+        assert!(!state.is_retrying);
+        assert_eq!(state.retry_count, None);
+        assert_eq!(state.last_error, None);
+    }
+
+    #[test]
+    fn test_config_state_backward_compat_json() {
+        // Old JSON without new fields (is_retrying, retry_count, last_error)
+        let old_json = r#"{"id": 1, "config_id": 42, "is_running": true, "process_id": null}"#;
+        let state: ConfigState = serde_json::from_str(old_json).unwrap();
+        assert_eq!(state.id, Some(1));
+        assert_eq!(state.config_id, 42);
+        assert!(state.is_running);
+        assert_eq!(state.process_id, None);
+        // New fields should have defaults
+        assert!(!state.is_retrying);
+        assert_eq!(state.retry_count, None);
+        assert_eq!(state.last_error, None);
+    }
+
+    #[test]
+    fn test_config_state_json_serialization_with_new_fields() {
+        let state = ConfigState {
+            id: Some(1),
+            config_id: 42,
+            is_running: true,
+            process_id: Some(1234),
+            is_retrying: true,
+            retry_count: Some(3),
+            last_error: Some("Connection timeout".to_string()),
+        };
+        let json = serde_json::to_string(&state).unwrap();
+        let deserialized: ConfigState = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.id, Some(1));
+        assert_eq!(deserialized.config_id, 42);
+        assert!(deserialized.is_running);
+        assert_eq!(deserialized.process_id, Some(1234));
+        assert!(deserialized.is_retrying);
+        assert_eq!(deserialized.retry_count, Some(3));
+        assert_eq!(deserialized.last_error, Some("Connection timeout".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_config_state_db_round_trip_with_retry_fields() {
+        let pool = setup_test_db().await;
+        let config_data = Config {
+            service: Some("retry-test".to_string()),
+            ..Config::default()
+        };
+        config::insert_config_with_pool(config_data.clone(), &pool)
+            .await
+            .unwrap();
+        let configs = config::read_configs_with_pool(&pool).await.unwrap();
+        let config_id = configs.first().unwrap().id.unwrap();
+        let initial_states = read_config_states_with_pool(&pool).await.unwrap();
+        let initial_state = initial_states
+            .iter()
+            .find(|s| s.config_id == config_id)
+            .unwrap();
+        // Update with retry fields
+        let state_to_update = ConfigState {
+            id: initial_state.id,
+            config_id,
+            is_running: true,
+            process_id: Some(5678),
+            is_retrying: true,
+            retry_count: Some(3),
+            last_error: Some("Pod restart detected".to_string()),
+        };
+        update_config_state_with_pool(&state_to_update, &pool)
+            .await
+            .unwrap();
+        // Read back and verify all fields persisted
+        let updated_states = read_config_states_with_pool(&pool).await.unwrap();
+        let updated_state = updated_states
+            .iter()
+            .find(|s| s.config_id == config_id)
+            .unwrap();
+        assert_eq!(updated_state.config_id, config_id);
+        assert!(updated_state.is_running);
+        assert_eq!(updated_state.process_id, Some(5678));
+        assert!(updated_state.is_retrying);
+        assert_eq!(updated_state.retry_count, Some(3));
+        assert_eq!(updated_state.last_error, Some("Pod restart detected".to_string()));
+    }
+
+    #[tokio::test]
+    async fn test_config_state_db_round_trip_retry_count_none() {
+        let pool = setup_test_db().await;
+        let config_data = Config {
+            service: Some("retry-none-test".to_string()),
+            ..Config::default()
+        };
+        config::insert_config_with_pool(config_data.clone(), &pool)
+            .await
+            .unwrap();
+        let configs = config::read_configs_with_pool(&pool).await.unwrap();
+        let config_id = configs.first().unwrap().id.unwrap();
+        let initial_states = read_config_states_with_pool(&pool).await.unwrap();
+        let initial_state = initial_states
+            .iter()
+            .find(|s| s.config_id == config_id)
+            .unwrap();
+        // Update with is_retrying=true but retry_count=None
+        let state_to_update = ConfigState {
+            id: initial_state.id,
+            config_id,
+            is_running: false,
+            process_id: None,
+            is_retrying: true,
+            retry_count: None,
+            last_error: None,
+        };
+        update_config_state_with_pool(&state_to_update, &pool)
+            .await
+            .unwrap();
+        // Read back and verify
+        let updated_states = read_config_states_with_pool(&pool).await.unwrap();
+        let updated_state = updated_states
+            .iter()
+            .find(|s| s.config_id == config_id)
+            .unwrap();
+        assert!(updated_state.is_retrying);
+        assert_eq!(updated_state.retry_count, None);
+        assert_eq!(updated_state.last_error, None);
     }
 }

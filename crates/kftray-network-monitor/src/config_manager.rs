@@ -99,10 +99,31 @@ impl ConfigManager {
         }
 
         if !proxy_configs.is_empty() {
-            match kftray_portforward::kube::deploy_and_forward_pod(proxy_configs).await {
-                Ok(_) => info!("Successfully restarted {protocol} proxy port forwards"),
-                Err(e) => {
-                    error!("Failed to restart {protocol} proxy port forwards: {e}");
+            // Filter out proxy configs that already have recovery in progress
+            let configs_to_restart: Vec<Config> = proxy_configs
+                .into_iter()
+                .filter(|config| {
+                    if let Some(config_id) = config.id
+                        && kftray_portforward::kube::proxy_recovery::RECOVERY_LOCKS
+                            .contains_key(&config_id)
+                    {
+                        info!(
+                            "Skipping network monitor restart for config {} \
+                             \u{2014} recovery already in progress",
+                            config_id
+                        );
+                        return false;
+                    }
+                    true
+                })
+                .collect();
+
+            if !configs_to_restart.is_empty() {
+                match kftray_portforward::kube::deploy_and_forward_pod(configs_to_restart).await {
+                    Ok(_) => info!("Successfully restarted {protocol} proxy port forwards"),
+                    Err(e) => {
+                        error!("Failed to restart {protocol} proxy port forwards: {e}");
+                    }
                 }
             }
         }
@@ -218,4 +239,45 @@ mod tests {
         assert!(proxy.is_empty());
         assert_eq!(other.len(), 1);
     }
+
+    #[test]
+    fn proxy_udp_configs_are_not_skipped_on_no_ready_pods() {
+        // This test verifies that proxy UDP configs are routed to deploy_and_forward_pod()
+        // and NOT subject to the "No ready pods available" skip logic that applies to
+        // non-proxy UDP configs in start_port_forward().
+        //
+        // The partition logic at line 84 separates proxy from other configs completely.
+        // Proxy configs bypass the skip logic at lines 90-93 and go directly to
+        // deploy_and_forward_pod() at line 101.
+
+        let proxy_udp_config = make_config(1, "proxy", "udp");
+        let service_udp_config = make_config(2, "service", "udp");
+
+        let (proxy, other) = partition_configs_by_workload(vec![proxy_udp_config, service_udp_config]);
+
+        // Verify proxy UDP config is in the proxy partition (will go to deploy_and_forward_pod)
+        assert_eq!(
+            proxy.len(),
+            1,
+            "proxy UDP config must be in proxy partition (not subject to skip logic)"
+        );
+        assert_eq!(
+            proxy[0].workload_type.as_deref(),
+            Some("proxy"),
+            "proxy partition must contain proxy workload_type"
+        );
+
+        // Verify service UDP config is in the other partition (subject to skip logic)
+        assert_eq!(
+            other.len(),
+            1,
+            "service UDP config must be in other partition (subject to skip logic)"
+        );
+        assert_eq!(
+            other[0].workload_type.as_deref(),
+            Some("service"),
+            "other partition must contain service workload_type"
+        );
+    }
+
 }

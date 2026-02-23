@@ -3,12 +3,18 @@ use serde::{
     Serialize,
 };
 
-#[derive(Clone, Deserialize, PartialEq, Serialize, Debug)]
+#[derive(Clone, Deserialize, PartialEq, Serialize, Debug, Default)]
 pub struct ConfigState {
     pub id: Option<i64>,
     pub config_id: i64,
     pub is_running: bool,
     pub process_id: Option<u32>,
+    #[serde(default)]
+    pub is_retrying: bool,
+    #[serde(default)]
+    pub retry_count: Option<i32>,
+    #[serde(default)]
+    pub last_error: Option<String>,
 }
 
 impl ConfigState {
@@ -18,6 +24,9 @@ impl ConfigState {
             config_id,
             is_running,
             process_id: Some(std::process::id()),
+            is_retrying: false,
+            retry_count: None,
+            last_error: None,
         }
     }
 
@@ -27,6 +36,9 @@ impl ConfigState {
             config_id,
             is_running,
             process_id: None,
+            is_retrying: false,
+            retry_count: None,
+            last_error: None,
         }
     }
 }

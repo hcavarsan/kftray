@@ -210,12 +210,14 @@ mod tests {
                 config_id: 1,
                 is_running: false,
                 process_id: None,
+                ..Default::default()
             },
             ConfigState {
                 id: Some(2),
                 config_id: 2,
                 is_running: true,
                 process_id: Some(1234),
+                ..Default::default()
             },
         ];
 
