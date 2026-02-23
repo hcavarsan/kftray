@@ -5,6 +5,7 @@ use futures::stream::{
     FuturesUnordered,
     StreamExt,
 };
+use k8s_openapi::api::apps::v1::Deployment;
 use k8s_openapi::api::core::v1::Pod;
 use kftray_commons::config_model::Config;
 use kftray_commons::config_state::get_configs_state;
@@ -118,6 +119,55 @@ async fn release_address_with_fallback(address: &str) {
                 address, ADDRESS_RELEASE_TIMEOUT
             );
         }
+    }
+}
+
+async fn delete_proxy_cluster_resources(client: Client, namespace: &str, config_id: i64) {
+    let username = whoami::username().unwrap_or_else(|_| "unknown".to_string());
+    let pod_prefix = format!("kftray-forward-{username}");
+    let lp = ListParams::default().labels(&format!("config_id={config_id}"));
+
+    // Delete pods
+    let pods: Api<Pod> = Api::namespaced(client.clone(), namespace);
+    match pods.list(&lp).await {
+        Ok(pod_list) => {
+            for pod in pod_list.items {
+                if let Some(pod_name) = pod.metadata.name
+                    && pod_name.starts_with(&pod_prefix)
+                {
+                    let dp = DeleteParams {
+                        grace_period_seconds: Some(0),
+                        ..DeleteParams::default()
+                    };
+                    match pods.delete(&pod_name, &dp).await {
+                        Ok(_) => info!("Deleted proxy pod: {pod_name}"),
+                        Err(e) => warn!("Failed to delete proxy pod {pod_name}: {e}"),
+                    }
+                }
+            }
+        }
+        Err(e) => warn!("Failed to list pods for cleanup (config_id={config_id}): {e}"),
+    }
+
+    let deployments: Api<Deployment> = Api::namespaced(client, namespace);
+    match deployments.list(&lp).await {
+        Ok(dep_list) => {
+            for dep in dep_list.items {
+                if let Some(dep_name) = dep.metadata.name
+                    && dep_name.starts_with(&pod_prefix)
+                {
+                    let dp = DeleteParams {
+                        grace_period_seconds: Some(0),
+                        ..DeleteParams::default()
+                    };
+                    match deployments.delete(&dep_name, &dp).await {
+                        Ok(_) => info!("Deleted proxy deployment: {dep_name}"),
+                        Err(e) => warn!("Failed to delete proxy deployment {dep_name}: {e}"),
+                    }
+                }
+            }
+        }
+        Err(e) => warn!("Failed to list deployments for cleanup (config_id={config_id}): {e}"),
     }
 }
 
@@ -279,84 +329,32 @@ pub async fn stop_all_port_forward_with_mode(
         responses.push(response);
     }
 
-    let pod_deletion_tasks: FuturesUnordered<_> = configs
+    let cluster_cleanup_tasks: FuturesUnordered<_> = configs
         .iter()
         .filter(|config| running_configs_state.contains(&config.id.unwrap_or_default()))
         .filter(|config| {
             config.protocol == "udp" || matches!(config.workload_type.as_deref(), Some("proxy"))
         })
-        .filter_map(|config| {
-            config
-                .kubeconfig
-                .as_ref()
-                .map(|kubeconfig| (config, kubeconfig))
-        })
-        .map(|(config, kubeconfig)| {
-            let config_id_str = config.id.unwrap_or_default();
+        .map(|config| {
+            let config_id = config.id.unwrap_or_default();
+            let namespace = config.namespace.clone();
+            let client_key =
+                ServiceClientKey::new(config.context.clone(), config.kubeconfig.clone());
             async move {
-                let client_key =
-                    ServiceClientKey::new(config.context.clone(), Some(kubeconfig.clone()));
-
                 match SHARED_CLIENT_MANAGER.get_client(client_key).await {
                     Ok(shared_client) => {
                         let client = Client::clone(&shared_client);
-                        let pods: Api<Pod> = Api::all(client.clone());
-                        let lp =
-                            ListParams::default().labels(&format!("config_id={config_id_str}"));
-
-                        match pods.list(&lp).await {
-                            Ok(pod_list) => {
-                                let username =
-                                    whoami::username().unwrap_or_else(|_| "unknown".to_string());
-                                let pod_prefix = format!("kftray-forward-{username}");
-                                let delete_tasks: FuturesUnordered<_> = pod_list
-                                    .items
-                                    .into_iter()
-                                    .filter_map(|pod| {
-                                        if let Some(pod_name) = pod.metadata.name
-                                            && pod_name.starts_with(&pod_prefix)
-                                        {
-                                            let namespace = pod
-                                                .metadata
-                                                .namespace
-                                                .unwrap_or_else(|| "default".to_string());
-                                            let pods_in_namespace: Api<Pod> =
-                                                Api::namespaced(client.clone(), &namespace);
-                                            let dp = DeleteParams {
-                                                grace_period_seconds: Some(0),
-                                                ..DeleteParams::default()
-                                            };
-
-                                            return Some(async move {
-                                                match pods_in_namespace.delete(&pod_name, &dp).await
-                                                {
-                                                    Ok(_) => info!(
-                                                        "Successfully deleted pod: {pod_name}"
-                                                    ),
-                                                    Err(e) => error!(
-                                                        "Failed to delete pod {pod_name}: {e}"
-                                                    ),
-                                                }
-                                            });
-                                        }
-                                        None
-                                    })
-                                    .collect();
-
-                                delete_tasks.collect::<Vec<_>>().await;
-                            }
-                            _ => {
-                                error!("Error listing pods for config_id {config_id_str}");
-                            }
-                        }
+                        delete_proxy_cluster_resources(client, &namespace, config_id).await;
                     }
-                    Err(e) => error!("Failed to get shared Kubernetes client: {e}"),
+                    Err(e) => error!(
+                        "Failed to get K8s client for cluster cleanup of config {config_id}: {e}"
+                    ),
                 }
             }
         })
         .collect();
 
-    pod_deletion_tasks.collect::<Vec<_>>().await;
+    cluster_cleanup_tasks.collect::<Vec<_>>().await;
 
     let address_cleanup_tasks: FuturesUnordered<_> = configs
         .iter()
@@ -470,6 +468,31 @@ pub async fn stop_port_forward_with_mode(
 
         if let Some((_, process)) = CHILD_PROCESSES.remove(&composite_key) {
             process.cleanup_and_abort().await;
+        }
+
+        if let Some(config) = configs.iter().find(|c| c.id == Some(config_id_parsed)) {
+            let needs_cluster_cleanup =
+                config.protocol == "udp" || config.workload_type.as_deref() == Some("proxy");
+
+            if needs_cluster_cleanup {
+                info!(
+                    "Cleaning up cluster resources for config {config_id} \
+                    (protocol={}, workload_type={:?})",
+                    config.protocol, config.workload_type
+                );
+                let client_key =
+                    ServiceClientKey::new(config.context.clone(), config.kubeconfig.clone());
+                match SHARED_CLIENT_MANAGER.get_client(client_key).await {
+                    Ok(shared_client) => {
+                        let client = Client::clone(&shared_client);
+                        delete_proxy_cluster_resources(client, &config.namespace, config_id_parsed)
+                            .await;
+                    }
+                    Err(e) => error!(
+                        "Failed to get K8s client for cluster cleanup of config {config_id}: {e}"
+                    ),
+                }
+            }
         }
 
         let config_id_parsed = config_id.parse::<i64>().unwrap_or_default();
