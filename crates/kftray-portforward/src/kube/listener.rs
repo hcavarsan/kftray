@@ -482,16 +482,11 @@ impl PortForwarder {
                         stream
                     }
                     Err(e) => {
-                        let failures = stream_failures_clone
-                            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-                            + 1;
+                        let failures = stream_failures_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
                         if failures >= MAX_STREAM_FAILURES
-                            && let Some(rm) =
-                                crate::kube::proxy_recovery::RECOVERY_MANAGERS.get(&config_id)
+                            && let Some(rm) = crate::kube::proxy_recovery::RECOVERY_MANAGERS.get(&config_id)
                         {
-                            rm.signal_recovery(
-                                crate::kube::proxy_recovery::RecoverySignal::StreamFailed,
-                            );
+                            rm.signal_recovery(crate::kube::proxy_recovery::RecoverySignal::StreamFailed);
                         }
                         error!("Failed to create stream for {}: {}", client_addr, e);
                         // Close client connection properly to avoid leaving socket open
@@ -643,10 +638,7 @@ impl PortForwarder {
                 .map_err(|e| anyhow::anyhow!("UDP forwarding task failed: {}", e));
             // Signal recovery when UDP stream dies (unless cancelled)
             if let Some(rm) = crate::kube::proxy_recovery::RECOVERY_MANAGERS.get(&config_id) {
-                log::info!(
-                    "UDP forwarder task completed, signaling recovery for config_id={}",
-                    config_id
-                );
+                log::info!("UDP forwarder task completed, signaling recovery for config_id={}", config_id);
                 rm.signal_recovery(crate::kube::proxy_recovery::RecoverySignal::StreamFailed);
             }
             result?;
