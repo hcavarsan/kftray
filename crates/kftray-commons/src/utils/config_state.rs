@@ -660,7 +660,10 @@ mod tests {
         assert_eq!(deserialized.process_id, Some(1234));
         assert!(deserialized.is_retrying);
         assert_eq!(deserialized.retry_count, Some(3));
-        assert_eq!(deserialized.last_error, Some("Connection timeout".to_string()));
+        assert_eq!(
+            deserialized.last_error,
+            Some("Connection timeout".to_string())
+        );
     }
 
     #[tokio::test]
@@ -704,7 +707,10 @@ mod tests {
         assert_eq!(updated_state.process_id, Some(5678));
         assert!(updated_state.is_retrying);
         assert_eq!(updated_state.retry_count, Some(3));
-        assert_eq!(updated_state.last_error, Some("Pod restart detected".to_string()));
+        assert_eq!(
+            updated_state.last_error,
+            Some("Pod restart detected".to_string())
+        );
     }
 
     #[tokio::test]
