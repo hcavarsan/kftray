@@ -42,8 +42,9 @@ impl HealthChecker {
 
         if config.protocol == "udp" {
             // UDP health check: probe if local port is actually bound/listening
-            // Try to bind the same local port — if it succeeds, the port is free (forward is dead)
-            // If it fails with AddrInUse, the port is in use (forward is alive)
+            // Try to bind the same local port — if it succeeds, the port is free (forward
+            // is dead) If it fails with AddrInUse, the port is in use (forward
+            // is alive)
             let socket_addr = format!("{local_address}:{local_port}");
             match std::net::UdpSocket::bind(&socket_addr) {
                 Ok(_) => {
@@ -202,12 +203,13 @@ impl Clone for HealthChecker {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use kftray_commons::models::config_model::Config;
     use std::net::UdpSocket;
+
+    use kftray_commons::models::config_model::Config;
+
+    use super::*;
 
     fn make_test_config(protocol: &str, local_port: u16, local_address: &str) -> Config {
         Config {
@@ -223,7 +225,10 @@ mod tests {
         // Bind a socket to get a free port, then drop it to free the port
         let port = {
             let socket = UdpSocket::bind("127.0.0.1:0").expect("Failed to bind socket");
-            socket.local_addr().expect("Failed to get local addr").port()
+            socket
+                .local_addr()
+                .expect("Failed to get local addr")
+                .port()
         };
         // Port is now free
 
@@ -234,7 +239,13 @@ mod tests {
         // UDP health check should return false (port is free = forward is dead)
         let result = futures::executor::block_on(async {
             checker
-                .check_port_health(&config, Duration::from_secs(1), Duration::from_secs(1), 1, Duration::ZERO)
+                .check_port_health(
+                    &config,
+                    Duration::from_secs(1),
+                    Duration::from_secs(1),
+                    1,
+                    Duration::ZERO,
+                )
                 .await
         });
 
@@ -248,7 +259,10 @@ mod tests {
     fn test_udp_health_check_returns_true_when_port_in_use() {
         // Bind a socket and keep it alive during the test
         let socket = UdpSocket::bind("127.0.0.1:0").expect("Failed to bind socket");
-        let port = socket.local_addr().expect("Failed to get local addr").port();
+        let port = socket
+            .local_addr()
+            .expect("Failed to get local addr")
+            .port();
         // Port is now in use (socket is held open)
 
         let config = make_test_config("udp", port, "127.0.0.1");
@@ -258,7 +272,13 @@ mod tests {
         // UDP health check should return true (port is in use = forward is alive)
         let result = futures::executor::block_on(async {
             checker
-                .check_port_health(&config, Duration::from_secs(1), Duration::from_secs(1), 1, Duration::ZERO)
+                .check_port_health(
+                    &config,
+                    Duration::from_secs(1),
+                    Duration::from_secs(1),
+                    1,
+                    Duration::ZERO,
+                )
                 .await
         });
 
@@ -282,11 +302,20 @@ mod tests {
         // Health check should return false when local_port is None
         let result = futures::executor::block_on(async {
             checker
-                .check_port_health(&config, Duration::from_secs(1), Duration::from_secs(1), 1, Duration::ZERO)
+                .check_port_health(
+                    &config,
+                    Duration::from_secs(1),
+                    Duration::from_secs(1),
+                    1,
+                    Duration::ZERO,
+                )
                 .await
         });
 
-        assert!(!result, "UDP health check should return false when local_port is None");
+        assert!(
+            !result,
+            "UDP health check should return false when local_port is None"
+        );
     }
 
     #[test]
@@ -294,7 +323,10 @@ mod tests {
         // Bind a socket to get a free port, then drop it
         let port = {
             let socket = UdpSocket::bind("127.0.0.1:0").expect("Failed to bind socket");
-            socket.local_addr().expect("Failed to get local addr").port()
+            socket
+                .local_addr()
+                .expect("Failed to get local addr")
+                .port()
         };
 
         let mut config = make_test_config("udp", port, "127.0.0.1");
@@ -306,7 +338,13 @@ mod tests {
         // Should use default "127.0.0.1" and return false (port is free)
         let result = futures::executor::block_on(async {
             checker
-                .check_port_health(&config, Duration::from_secs(1), Duration::from_secs(1), 1, Duration::ZERO)
+                .check_port_health(
+                    &config,
+                    Duration::from_secs(1),
+                    Duration::from_secs(1),
+                    1,
+                    Duration::ZERO,
+                )
                 .await
         });
 

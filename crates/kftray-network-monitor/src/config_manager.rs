@@ -242,9 +242,10 @@ mod tests {
 
     #[test]
     fn proxy_udp_configs_are_not_skipped_on_no_ready_pods() {
-        // This test verifies that proxy UDP configs are routed to deploy_and_forward_pod()
-        // and NOT subject to the "No ready pods available" skip logic that applies to
-        // non-proxy UDP configs in start_port_forward().
+        // This test verifies that proxy UDP configs are routed to
+        // deploy_and_forward_pod() and NOT subject to the "No ready pods
+        // available" skip logic that applies to non-proxy UDP configs in
+        // start_port_forward().
         //
         // The partition logic at line 84 separates proxy from other configs completely.
         // Proxy configs bypass the skip logic at lines 90-93 and go directly to
@@ -253,9 +254,11 @@ mod tests {
         let proxy_udp_config = make_config(1, "proxy", "udp");
         let service_udp_config = make_config(2, "service", "udp");
 
-        let (proxy, other) = partition_configs_by_workload(vec![proxy_udp_config, service_udp_config]);
+        let (proxy, other) =
+            partition_configs_by_workload(vec![proxy_udp_config, service_udp_config]);
 
-        // Verify proxy UDP config is in the proxy partition (will go to deploy_and_forward_pod)
+        // Verify proxy UDP config is in the proxy partition (will go to
+        // deploy_and_forward_pod)
         assert_eq!(
             proxy.len(),
             1,
@@ -279,5 +282,4 @@ mod tests {
             "other partition must contain service workload_type"
         );
     }
-
 }
