@@ -54,6 +54,7 @@ pub struct PodWatcher {
     _subscriber_task: JoinHandle<()>,
     cancellation_token: CancellationToken,
     pod_change_tx: tokio::sync::broadcast::Sender<String>,
+    pod_died_tx: tokio::sync::broadcast::Sender<String>,
     target: Target,
 }
 
@@ -82,13 +83,16 @@ impl PodWatcher {
             .ok_or_else(|| anyhow!("Failed to create subscriber"))?;
 
         let cancellation_token = CancellationToken::new();
-        let latest_ready_pod = Arc::new(RwLock::new(None));
+        let latest_ready_pod: Arc<RwLock<Option<TargetPod>>> = Arc::new(RwLock::new(None));
         let latest_pod_clone = latest_ready_pod.clone();
         let target_clone = target.clone();
         let namespace_clone = namespace.clone();
 
         let (pod_change_tx, _) = tokio::sync::broadcast::channel(16);
         let pod_change_tx_clone = pod_change_tx.clone();
+        let (pod_died_tx, _) = tokio::sync::broadcast::channel::<String>(16);
+        let pod_died_tx_clone = pod_died_tx.clone();
+        let latest_pod_for_reflector = latest_ready_pod.clone();
 
         let pods_api: Api<Pod> = Api::namespaced(client, &namespace);
         let watcher_config = WatcherConfig::default().labels(&label_selector);
@@ -106,8 +110,7 @@ impl PodWatcher {
                         status.ephemeral_container_statuses = None;
                     }
                 })
-                .reflect_shared(writer)
-                .applied_objects();
+                .reflect_shared(writer);
 
             let mut stream = std::pin::pin!(stream);
 
@@ -119,8 +122,22 @@ impl PodWatcher {
                     }
                     result = stream.next() => {
                         match result {
-                            Some(Ok(pod)) => {
+                            Some(Ok(watcher::Event::Apply(pod))) | Some(Ok(watcher::Event::InitApply(pod))) => {
                                 debug!("Pod reflected: {}", pod.name_any());
+                            }
+                            Some(Ok(watcher::Event::Delete(pod))) => {
+                                debug!("Pod deleted: {}", pod.name_any());
+                                let mut latest = latest_pod_for_reflector.write().await;
+                                if let Some(ref current) = *latest {
+                                    if current.pod_name == pod.name_any() {
+                                        *latest = None;
+                                        let _ = pod_died_tx_clone.send(pod.name_any());
+                                        debug!("Signaled pod death for: {}", pod.name_any());
+                                    }
+                                }
+                            }
+                            Some(Ok(watcher::Event::Init)) | Some(Ok(watcher::Event::InitDone)) => {
+                                debug!("Pod watcher init/done event");
                             }
                             Some(Err(e)) => {
                                 error!("Reflector error: {}", e);
@@ -180,6 +197,7 @@ impl PodWatcher {
             _subscriber_task: subscriber_task,
             cancellation_token,
             pod_change_tx,
+            pod_died_tx,
             target,
         })
     }
@@ -284,6 +302,10 @@ impl PodWatcher {
 
     pub fn subscribe_pod_changes(&self) -> tokio::sync::broadcast::Receiver<String> {
         self.pod_change_tx.subscribe()
+    }
+
+    pub fn subscribe_pod_deaths(&self) -> tokio::sync::broadcast::Receiver<String> {
+        self.pod_died_tx.subscribe()
     }
 
     async fn resolve_label_selector(
