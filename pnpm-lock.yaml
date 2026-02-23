@@ -34,7 +34,7 @@ importers:
         specifier: ^11.14.0
         version: 11.14.0(@types/react@19.2.14)(react@19.2.4)
       '@types/lodash':
-        specifier: ^4.17.23
+        specifier: ^4.17.24
         version: 4.17.24
       '@vitejs/plugin-react-swc':
         specifier: ^4.2.3
