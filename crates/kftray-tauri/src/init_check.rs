@@ -302,6 +302,7 @@ mod tests {
             config_id: id,
             is_running,
             process_id: if is_running { Some(1234) } else { None },
+            ..Default::default()
         }
     }
 

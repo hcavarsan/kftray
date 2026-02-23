@@ -278,7 +278,14 @@ async fn process_deployment_proxy(
 
             match start_response {
                 Ok(mut port_forward_responses) => match port_forward_responses.pop() {
-                    Some(response) => Ok(response),
+                    Some(response) => {
+                        // Spawn recovery manager for deployment proxy
+                        crate::kube::proxy_recovery::spawn_recovery_manager(
+                            config.clone(),
+                            crate::kube::proxy_recovery::ProxyType::Deployment,
+                        );
+                        Ok(response)
+                    }
                     None => {
                         let _ = deployments
                             .delete(hashed_name, &DeleteParams::default())
@@ -381,7 +388,14 @@ async fn process_pod_proxy(
 
             match start_response {
                 Ok(mut port_forward_responses) => match port_forward_responses.pop() {
-                    Some(response) => Ok(response),
+                    Some(response) => {
+                        // Spawn recovery manager for bare pod proxy
+                        crate::kube::proxy_recovery::spawn_recovery_manager(
+                            config.clone(),
+                            crate::kube::proxy_recovery::ProxyType::BarePod,
+                        );
+                        Ok(response)
+                    }
                     None => {
                         let _ = pods.delete(hashed_name, &DeleteParams::default()).await;
                         Err("No response received from port forwarding".to_string())
