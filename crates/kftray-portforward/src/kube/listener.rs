@@ -390,6 +390,8 @@ impl PortForwarder {
         const MAX_ACCEPT_ERRORS: u32 = 10;
         const BASE_BACKOFF_MS: u64 = 10;
         const MAX_BACKOFF_MS: u64 = 5000;
+        let consecutive_stream_failures = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        const MAX_STREAM_FAILURES: u32 = 5;
 
         loop {
             let (client_conn, client_addr) = tokio::select! {
@@ -470,12 +472,22 @@ impl PortForwarder {
             let cancel_token_clone = cancel_token.clone();
             let tls_acceptor_clone = tls_acceptor.clone();
             let connection_tasks = Arc::clone(&self.connection_tasks);
+            let stream_failures_clone = Arc::clone(&consecutive_stream_failures);
 
             let handle = tokio::spawn(async move {
                 let mut client_conn = client_conn;
                 let upstream_stream = match forwarder.get_stream().await {
-                    Ok(stream) => stream,
+                    Ok(stream) => {
+                        stream_failures_clone.store(0, std::sync::atomic::Ordering::SeqCst);
+                        stream
+                    }
                     Err(e) => {
+                        let failures = stream_failures_clone.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                        if failures >= MAX_STREAM_FAILURES
+                            && let Some(rm) = crate::kube::proxy_recovery::RECOVERY_MANAGERS.get(&config_id)
+                        {
+                            rm.signal_recovery(crate::kube::proxy_recovery::RecoverySignal::StreamFailed);
+                        }
                         error!("Failed to create stream for {}: {}", client_addr, e);
                         // Close client connection properly to avoid leaving socket open
                         let _ = client_conn.shutdown().await;
@@ -603,18 +615,16 @@ impl PortForwarder {
     }
 
     async fn start_udp_listener(
-        self: Arc<Self>, listener_config: ListenerConfig, _config_id: i64, workload_type: String,
+        self: Arc<Self>, listener_config: ListenerConfig, config_id: i64, workload_type: String,
         cancellation_token: CancellationToken,
     ) -> anyhow::Result<(u16, JoinHandle<anyhow::Result<()>>)> {
         if workload_type == "service" || workload_type == "proxy" {
             tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
         }
-
         let upstream_stream = self
             .get_stream()
             .await
             .map_err(|e| anyhow::anyhow!("Failed to get upstream connection for UDP: {}", e))?;
-
         let (port, handle) = UdpForwarder::bind_and_forward(
             listener_config.local_address,
             listener_config.local_port,
@@ -622,14 +632,18 @@ impl PortForwarder {
             cancellation_token,
         )
         .await?;
-
         let result_handle = tokio::spawn(async move {
-            handle
+            let result = handle
                 .await
-                .map_err(|e| anyhow::anyhow!("UDP forwarding task failed: {}", e))?;
+                .map_err(|e| anyhow::anyhow!("UDP forwarding task failed: {}", e));
+            // Signal recovery when UDP stream dies (unless cancelled)
+            if let Some(rm) = crate::kube::proxy_recovery::RECOVERY_MANAGERS.get(&config_id) {
+                log::info!("UDP forwarder task completed, signaling recovery for config_id={}", config_id);
+                rm.signal_recovery(crate::kube::proxy_recovery::RecoverySignal::StreamFailed);
+            }
+            result?;
             Ok(())
         });
-
         Ok((port, result_handle))
     }
 
