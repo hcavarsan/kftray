@@ -1,6 +1,6 @@
 [package]
 name = "kftray-server"
-version = "0.27.26"
+version = "0.27.27"
 authors = ["Henrique Cavarsan <hencavarsan@gmail.com>"]
 edition = "2024"
 description = "KFtray Server is a Rust application that relays UDP/TCP traffic to an upstream server"
@@ -20,12 +20,12 @@ hyper-util = { version = "0.1", features = ["full"] }
 log = "0.4.29"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+socket2 = "0.6.1"
 tokio = { version = "1.49.0", features = ["full", "macros", "rt-multi-thread"] }
 tokio-tungstenite = { version = "0.28.0", features = ["rustls-tls-webpki-roots"] }
 tungstenite = "0.28.0"
 url = "2.5.8"
 uuid = { version = "1.19", features = ["v4"] }
-socket2 = "0.6.1"
 
 [dev-dependencies]
 lazy_static = "1.5.0"
