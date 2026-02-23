@@ -635,21 +635,23 @@ mod tests {
 
     #[tokio::test]
     async fn test_stop_port_forward_with_handle() {
+        use std::time::{
+            SystemTime,
+            UNIX_EPOCH,
+        };
+
+        let unique_suffix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+
         let dummy_handle = create_dummy_handle().await;
-        let key = "config:201:service:test-service".to_string();
-
-        println!("Before cleanup, found {} processes:", CHILD_PROCESSES.len());
-        for entry in CHILD_PROCESSES.iter() {
-            println!("  Existing process: {}", entry.key());
-        }
-
-        for entry in CHILD_PROCESSES.iter() {
-            entry.value().abort();
-        }
-        CHILD_PROCESSES.clear();
+        let key = format!(
+            "config:test_single_201_{}:service:test-service",
+            unique_suffix
+        );
 
         CHILD_PROCESSES.insert(key.clone(), dummy_handle);
-        assert_eq!(CHILD_PROCESSES.len(), 1, "Process should be added");
         assert!(
             CHILD_PROCESSES.contains_key(&key),
             "Process should be present"
@@ -660,9 +662,8 @@ mod tests {
         }
 
         assert!(
-            CHILD_PROCESSES.is_empty(),
-            "Process handle should be removed. Found {} processes",
-            CHILD_PROCESSES.len()
+            !CHILD_PROCESSES.contains_key(&key),
+            "Process handle should be removed"
         );
     }
 

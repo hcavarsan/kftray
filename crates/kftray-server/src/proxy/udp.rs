@@ -8,6 +8,7 @@ use log::{
     debug,
     error,
     info,
+    warn,
 };
 use tokio::{
     io::{
@@ -31,23 +32,14 @@ use crate::proxy::{
 const UDP_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_UDP_PAYLOAD_SIZE: usize = 65507;
 
-/// UDP proxy implementation that tunnels UDP traffic over TCP connections
 #[derive(Clone)]
 pub struct UdpProxy;
 
 impl UdpProxy {
-    /// Creates a new UDP proxy instance
     pub fn new() -> Self {
         Self
     }
 
-    /// Creates and connects a UDP socket to the target server
-    ///
-    /// # Parameters
-    /// * `config` - Proxy configuration containing target details
-    ///
-    /// # Returns
-    /// * `Result<UdpSocket, ProxyError>` - Connected socket or error
     async fn create_udp_socket(&self, config: &ProxyConfig) -> Result<UdpSocket, ProxyError> {
         let socket = UdpSocket::bind("0.0.0.0:0").await?;
         socket
@@ -61,13 +53,6 @@ impl UdpProxy {
         Ok(socket)
     }
 
-    /// Handles a TCP connection carrying tunneled UDP traffic
-    ///
-    /// Forwards UDP packets between the TCP client and target UDP server
-    ///
-    /// # Parameters
-    /// * `tcp_stream` - Client TCP connection
-    /// * `config` - Proxy configuration
     async fn handle_udp_connection(
         &self, mut tcp_stream: TcpStream, config: &ProxyConfig,
     ) -> Result<(), ProxyError> {
@@ -142,7 +127,7 @@ impl UdpProxy {
                 Err(ProxyError::Io(e))
             }
             Err(_) => {
-                debug!("UDP response timeout");
+                debug!("UDP response timed out, sending zero-length response");
                 tcp_stream.write_all(&0u32.to_be_bytes()).await?;
                 tcp_stream.flush().await?;
                 Ok(())
@@ -157,6 +142,8 @@ impl ProxyHandler for UdpProxy {
         let listener = TcpListener::bind(format!("0.0.0.0:{}", config.proxy_port)).await?;
         info!("UDP-over-TCP Proxy started on port {}", config.proxy_port);
 
+        let mut backoff_ms: u64 = 10;
+
         loop {
             tokio::select! {
                 accept_result = listener.accept() => {
@@ -165,6 +152,7 @@ impl ProxyHandler for UdpProxy {
                             info!("Accepted connection from {addr}");
                             let config = config.clone();
                             let proxy = self.clone();
+                            backoff_ms = 10;
 
                             tokio::spawn(async move {
                                 if let Err(e) = proxy.handle_udp_connection(stream, &config).await {
@@ -172,7 +160,19 @@ impl ProxyHandler for UdpProxy {
                                 }
                             });
                         }
-                        Err(e) => error!("Failed to accept connection: {e}"),
+                        Err(e) => {
+                            warn!("Accept error (retrying in {}ms): {}", backoff_ms, e);
+                            tokio::select! {
+                                _ = tokio::time::sleep(Duration::from_millis(backoff_ms)) => {
+                                    backoff_ms = (backoff_ms * 2).min(5000);
+                                }
+                                _ = shutdown.notified() => {
+                                    info!("Shutdown signal received during backoff, stopping UDP proxy");
+                                    return Ok(());
+                                }
+                            }
+                            continue;
+                        }
                     }
                 }
                 _ = shutdown.notified() => {
@@ -349,5 +349,14 @@ mod tests {
         // Cleanup
         shutdown.notify_one();
         echo_server.shutdown();
+    }
+
+    #[test]
+    fn test_udp_backoff_calculation() {
+        let mut backoff_ms: u64 = 10;
+        for _ in 0..9 {
+            backoff_ms = (backoff_ms * 2).min(5000);
+        }
+        assert_eq!(backoff_ms, 5000);
     }
 }
