@@ -6,3 +6,4 @@ onlyBuiltDependencies:
   - core-js
   - esbuild
   - oxc-resolver
+  - unrs-resolver
