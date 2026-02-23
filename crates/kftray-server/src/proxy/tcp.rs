@@ -58,14 +58,13 @@ impl TcpProxy {
                     return Ok(stream);
                 }
                 Ok(Err(e)) => {
-                    log::warn!(
+                    warn!(
                         "Failed to connect to resolved IP {}: {}. Trying hostname fallback.",
-                        resolved_ip,
-                        e
+                        resolved_ip, e
                     );
                 }
                 Err(_) => {
-                    log::warn!(
+                    warn!(
                         "Connection timeout to resolved IP {}. Trying hostname fallback.",
                         resolved_ip
                     );
@@ -177,9 +176,16 @@ impl ProxyHandler for TcpProxy {
                             });
                         }
                         Err(e) => {
-                            log::warn!("Accept error (retrying in {}ms): {}", backoff_ms, e);
-                            tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
-                            backoff_ms = (backoff_ms * 2).min(5000);
+                            warn!("Accept error (retrying in {}ms): {}", backoff_ms, e);
+                            tokio::select! {
+                                _ = tokio::time::sleep(Duration::from_millis(backoff_ms)) => {
+                                    backoff_ms = (backoff_ms * 2).min(5000);
+                                }
+                                _ = shutdown.notified() => {
+                                    info!("Shutdown signal received during backoff, stopping TCP proxy");
+                                    return Ok(());
+                                }
+                            }
                             continue;
                         }
                     }
@@ -378,7 +384,5 @@ mod tests {
             backoff_ms = (backoff_ms * 2).min(5000);
         }
         assert_eq!(backoff_ms, 5000);
-        backoff_ms = 10;
-        assert_eq!(backoff_ms, 10);
     }
 }

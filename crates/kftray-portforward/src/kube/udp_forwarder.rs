@@ -237,5 +237,15 @@ mod tests {
 
         let result = tokio::time::timeout(Duration::from_secs(1), read_task).await;
         assert!(result.is_ok(), "Test timed out");
+        let inner = result.unwrap().expect("Task should not panic");
+        assert!(
+            inner.is_ok(),
+            "Should return Ok, got: {:?}",
+            inner.as_ref().unwrap_err()
+        );
+        assert!(
+            inner.unwrap().is_none(),
+            "Partial read should return Ok(None)"
+        );
     }
 }

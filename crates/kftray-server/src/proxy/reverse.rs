@@ -66,25 +66,29 @@ impl ProxyHandler for ReverseProxy {
 
         shutdown.notify_waiters();
 
-        tokio::select! {
-            _ = &mut ws_handle => {
-                info!("WebSocket task completed gracefully");
+        let ws_shutdown = async {
+            tokio::select! {
+                _ = &mut ws_handle => {
+                    info!("WebSocket task completed gracefully");
+                }
+                _ = tokio::time::sleep(Duration::from_secs(5)) => {
+                    warn!("WebSocket task did not shut down within 5s, aborting");
+                    ws_handle.abort();
+                }
             }
-            _ = tokio::time::sleep(Duration::from_secs(5)) => {
-                warn!("WebSocket task did not shut down within 5s, aborting");
-                ws_handle.abort();
+        };
+        let http_shutdown = async {
+            tokio::select! {
+                _ = &mut http_handle => {
+                    info!("HTTP proxy task completed gracefully");
+                }
+                _ = tokio::time::sleep(Duration::from_secs(5)) => {
+                    warn!("HTTP proxy task did not shut down within 5s, aborting");
+                    http_handle.abort();
+                }
             }
-        }
-
-        tokio::select! {
-            _ = &mut http_handle => {
-                info!("HTTP proxy task completed gracefully");
-            }
-            _ = tokio::time::sleep(Duration::from_secs(5)) => {
-                warn!("HTTP proxy task did not shut down within 5s, aborting");
-                http_handle.abort();
-            }
-        }
+        };
+        tokio::join!(ws_shutdown, http_shutdown);
 
         Ok(())
     }
@@ -134,13 +138,15 @@ mod tests {
 
     #[tokio::test]
     async fn graceful_shutdown_should_abort_after_timeout_for_stuck_task() {
+        let shutdown = Arc::new(Notify::new());
+        let shutdown_clone = shutdown.clone();
+
         let mut handle = tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(Duration::from_secs(60)).await;
-            }
+            // Observes shutdown but then gets stuck (simulates a hung task)
+            shutdown_clone.notified().await;
+            tokio::time::sleep(Duration::from_secs(60)).await;
         });
 
-        let shutdown = Arc::new(Notify::new());
         shutdown.notify_waiters();
 
         let start = std::time::Instant::now();

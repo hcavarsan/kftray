@@ -33,6 +33,8 @@ const WS_PING_INTERVAL: Duration = Duration::from_secs(30);
 
 const WS_PONG_TIMEOUT: Duration = Duration::from_secs(10);
 
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+
 pub struct WebSocketTunnelServer {
     tunnel: Arc<RwLock<Option<TunnelConnection>>>,
     ws_port: u16,
@@ -160,6 +162,8 @@ impl WebSocketTunnelServer {
                                             }
                                         }
                                         TunnelMessage::Pong => {
+                                            // Application-layer heartbeat (TunnelMessage::Pong), distinct from
+                                            // WebSocket-level Message::Pong. Does NOT reset awaiting_pong.
                                             debug!("Received application-level pong");
                                         }
                                         TunnelMessage::Error { id, .. } => {
@@ -226,6 +230,10 @@ impl WebSocketTunnelServer {
                         }
                     }
                 }
+                // Dual pong-miss detection: both this check (ping interval) and the
+                // dedicated pong_timeout branch below can independently close the tunnel.
+                // With production defaults (WS_PONG_TIMEOUT < WS_PING_INTERVAL), the
+                // pong_timeout fires first; this check is a redundant safety net.
                 _ = ping_interval.tick() => {
                     if awaiting_pong {
                         warn!(
@@ -309,7 +317,7 @@ impl WebSocketTunnelServer {
             .send(request_msg)
             .map_err(|e| format!("Failed to send request: {}", e))?;
 
-        match tokio::time::timeout(Duration::from_secs(30), response_rx).await {
+        match tokio::time::timeout(REQUEST_TIMEOUT, response_rx).await {
             Ok(Ok(response)) => Ok(response),
             Ok(Err(_)) => Err("Response channel closed".to_string()),
             Err(_) => {

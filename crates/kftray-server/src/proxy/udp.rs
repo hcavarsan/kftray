@@ -8,6 +8,7 @@ use log::{
     debug,
     error,
     info,
+    warn,
 };
 use tokio::{
     io::{
@@ -126,7 +127,9 @@ impl UdpProxy {
                 Err(ProxyError::Io(e))
             }
             Err(_) => {
-                debug!("UDP response timed out, no response sent");
+                debug!("UDP response timed out, sending zero-length response");
+                tcp_stream.write_all(&0u32.to_be_bytes()).await?;
+                tcp_stream.flush().await?;
                 Ok(())
             }
         }
@@ -158,9 +161,16 @@ impl ProxyHandler for UdpProxy {
                             });
                         }
                         Err(e) => {
-                            log::warn!("Accept error (retrying in {}ms): {}", backoff_ms, e);
-                            tokio::time::sleep(Duration::from_millis(backoff_ms)).await;
-                            backoff_ms = (backoff_ms * 2).min(5000);
+                            warn!("Accept error (retrying in {}ms): {}", backoff_ms, e);
+                            tokio::select! {
+                                _ = tokio::time::sleep(Duration::from_millis(backoff_ms)) => {
+                                    backoff_ms = (backoff_ms * 2).min(5000);
+                                }
+                                _ = shutdown.notified() => {
+                                    info!("Shutdown signal received during backoff, stopping UDP proxy");
+                                    return Ok(());
+                                }
+                            }
                             continue;
                         }
                     }
@@ -348,7 +358,5 @@ mod tests {
             backoff_ms = (backoff_ms * 2).min(5000);
         }
         assert_eq!(backoff_ms, 5000);
-        backoff_ms = 10;
-        assert_eq!(backoff_ms, 10);
     }
 }
