@@ -1,8 +1,9 @@
+use std::sync::Arc;
+use std::time::Duration;
+
 use dashmap::DashMap;
 use kftray_commons::models::config_model::Config;
 use once_cell::sync::Lazy;
-use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
@@ -79,12 +80,14 @@ pub static RECOVERY_LOCKS: Lazy<DashMap<i64, Arc<Mutex<()>>>> = Lazy::new(DashMa
 
 /// Global map of active recovery managers, keyed by config_id.
 /// Used to cancel recovery when user stops a port forward.
-pub static RECOVERY_MANAGERS: Lazy<DashMap<i64, Arc<ProxyRecoveryManager>>> = Lazy::new(DashMap::new);
+pub static RECOVERY_MANAGERS: Lazy<DashMap<i64, Arc<ProxyRecoveryManager>>> =
+    Lazy::new(DashMap::new);
 
 /// Spawn a recovery manager for the given config and proxy type.
 ///
 /// This is a **sync** helper to avoid opaque-type cycles when called from
-/// async proxy functions that are themselves awaited by `deploy_and_forward_pod`.
+/// async proxy functions that are themselves awaited by
+/// `deploy_and_forward_pod`.
 pub fn spawn_recovery_manager(config: Config, proxy_type: ProxyType) {
     if let Some(config_id) = config.id {
         let manager = Arc::new(ProxyRecoveryManager::new(config, proxy_type));
@@ -115,15 +118,14 @@ pub async fn acquire_recovery_lock(config_id: i64) -> Arc<Mutex<()>> {
 
 /// Remove the recovery lock for a config_id
 ///
-/// Call this during cleanup (e.g., when stopping a port forward) to free resources.
-/// Safe to call even if the lock doesn't exist.
+/// Call this during cleanup (e.g., when stopping a port forward) to free
+/// resources. Safe to call even if the lock doesn't exist.
 ///
 /// # Arguments
 /// * `config_id` - The configuration ID whose lock should be removed
 pub fn remove_recovery_lock(config_id: i64) {
     RECOVERY_LOCKS.remove(&config_id);
 }
-
 
 // ============================================================================
 // T6: Proxy Recovery Manager
@@ -187,7 +189,8 @@ impl ProxyRecoveryManager {
     ///
     /// Runs until cancelled via [`cancel()`](Self::cancel). On each signal:
     /// 1. Acquires the per-config recovery lock
-    /// 2. Retries up to [`MAX_RECOVERY_ATTEMPTS`] times with exponential backoff
+    /// 2. Retries up to [`MAX_RECOVERY_ATTEMPTS`] times with exponential
+    ///    backoff
     /// 3. Updates [`ConfigState`] in the database at each step
     pub async fn run_recovery_loop(&self) {
         let mut rx = self.recovery_signal_tx.subscribe();
@@ -196,8 +199,11 @@ impl ProxyRecoveryManager {
             *s = RecoveryState::Monitoring;
         }
 
+        let mut health_interval = tokio::time::interval(Duration::from_secs(5));
+        health_interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+
         loop {
-            // Wait for a signal or cancellation
+            // Wait for a signal, a health-check tick, or cancellation
             let signal = tokio::select! {
                 result = rx.recv() => {
                     match result {
@@ -212,6 +218,24 @@ impl ProxyRecoveryManager {
                         }
                     }
                 }
+                _ = health_interval.tick() => {
+                    // Proactive pod health check: detect pod death even when no
+                    // connections arrive (TCP proxy with idle clients).
+                    let current_state = {
+                        let s = self.state.read().await;
+                        s.clone()
+                    };
+                    if current_state == RecoveryState::Monitoring
+                        && !self.is_proxy_pod_alive().await
+                    {
+                        log::info!(
+                            "Proxy pod health check: pod gone for config {}, triggering recovery",
+                            self.config_id
+                        );
+                        let _ = self.recovery_signal_tx.send(RecoverySignal::PodDied);
+                    }
+                    continue;
+                }
                 _ = self.cancel_token.cancelled() => {
                     let mut s = self.state.write().await;
                     *s = RecoveryState::Cancelled;
@@ -220,7 +244,11 @@ impl ProxyRecoveryManager {
                 }
             };
 
-            log::info!("Recovery signal {:?} received for config {}", signal, self.config_id);
+            log::info!(
+                "Recovery signal {:?} received for config {}",
+                signal,
+                self.config_id
+            );
 
             // Acquire the per-config lock to serialize recovery attempts
             let lock = acquire_recovery_lock(self.config_id).await;
@@ -247,11 +275,15 @@ impl ProxyRecoveryManager {
                     };
                 }
 
-                self.update_config_state_fields(true, true, Some(attempt as i32), None).await;
+                self.update_config_state_fields(true, true, Some(attempt as i32), None)
+                    .await;
 
                 log::info!(
                     "Recovery attempt {}/{} for config {} (backoff {}s)",
-                    attempt, MAX_RECOVERY_ATTEMPTS, self.config_id, backoff
+                    attempt,
+                    MAX_RECOVERY_ATTEMPTS,
+                    self.config_id,
+                    backoff
                 );
 
                 // Sleep with cancellation awareness
@@ -265,21 +297,35 @@ impl ProxyRecoveryManager {
 
                 match self.do_recovery_attempt().await {
                     Ok(()) => {
-                        log::info!("Recovery succeeded for config {} on attempt {}", self.config_id, attempt);
+                        log::info!(
+                            "Recovery succeeded for config {} on attempt {}",
+                            self.config_id,
+                            attempt
+                        );
                         {
                             let mut s = self.state.write().await;
                             *s = RecoveryState::Monitoring;
                         }
-                        self.update_config_state_fields(true, false, None, None).await;
+                        self.update_config_state_fields(true, false, None, None)
+                            .await;
                         all_attempts_exhausted = false;
                         break;
                     }
                     Err(e) => {
                         log::error!(
                             "Recovery attempt {}/{} failed for config {}: {}",
-                            attempt, MAX_RECOVERY_ATTEMPTS, self.config_id, e
+                            attempt,
+                            MAX_RECOVERY_ATTEMPTS,
+                            self.config_id,
+                            e
                         );
-                        self.update_config_state_fields(true, true, Some(attempt as i32), Some(e.to_string())).await;
+                        self.update_config_state_fields(
+                            true,
+                            true,
+                            Some(attempt as i32),
+                            Some(e.to_string()),
+                        )
+                        .await;
                     }
                 }
             }
@@ -298,7 +344,8 @@ impl ProxyRecoveryManager {
                         final_error: final_error.clone(),
                     };
                 }
-                self.update_config_state_fields(false, false, None, Some(final_error)).await;
+                self.update_config_state_fields(false, false, None, Some(final_error))
+                    .await;
             }
             // Lock released when _guard drops
         }
@@ -308,7 +355,8 @@ impl ProxyRecoveryManager {
     ///
     /// Dispatches to the appropriate recovery function based on [`ProxyType`]:
     /// - [`ProxyType::BarePod`] → full re-deployment via [`recover_bare_pod()`]
-    /// - [`ProxyType::Deployment`] → stream reconnection via [`recover_deployment()`]
+    /// - [`ProxyType::Deployment`] → stream reconnection via
+    ///   [`recover_deployment()`]
     async fn do_recovery_attempt(&self) -> anyhow::Result<()> {
         let client_key = crate::kube::shared_client::ServiceClientKey::new(
             self.config.context.clone(),
@@ -328,10 +376,7 @@ impl ProxyRecoveryManager {
 
     /// Update ConfigState fields in the database for UI display.
     async fn update_config_state_fields(
-        &self,
-        is_running: bool,
-        is_retrying: bool,
-        retry_count: Option<i32>,
+        &self, is_running: bool, is_retrying: bool, retry_count: Option<i32>,
         last_error: Option<String>,
     ) {
         let state = kftray_commons::models::config_state_model::ConfigState {
@@ -344,12 +389,51 @@ impl ProxyRecoveryManager {
             last_error,
         };
         if let Err(e) = kftray_commons::utils::config_state::update_config_state(&state).await {
-            log::error!("Failed to update ConfigState for config {}: {}", self.config_id, e);
+            log::error!(
+                "Failed to update ConfigState for config {}: {}",
+                self.config_id,
+                e
+            );
+        }
+    }
+    /// Check if the proxy pod is still alive by querying the K8s API.
+    ///
+    /// Returns `true` if at least one Ready pod with label `config_id={self.config_id}`
+    /// exists in the config's namespace. Returns `true` on any error (fail-open:
+    /// assume alive if we can't reach K8s, to avoid false-positive recovery triggers).
+    async fn is_proxy_pod_alive(&self) -> bool {
+        let client_key = crate::kube::shared_client::ServiceClientKey::new(
+            self.config.context.clone(),
+            self.config.kubeconfig.clone(),
+        );
+        let client = match crate::kube::shared_client::SHARED_CLIENT_MANAGER
+            .get_client(client_key)
+            .await
+        {
+            Ok(c) => kube::Client::clone(&c),
+            Err(_) => return true, // Can't reach K8s — assume alive
+        };
+        let namespace = &self.config.namespace;
+        let label_selector = format!("config_id={}", self.config_id);
+        let pods: kube::Api<k8s_openapi::api::core::v1::Pod> =
+            kube::Api::namespaced(client, namespace);
+        let lp = kube::api::ListParams::default().labels(&label_selector);
+        match pods.list(&lp).await {
+            Ok(pod_list) => pod_list.items.iter().any(|pod| {
+                pod.status
+                    .as_ref()
+                    .and_then(|s| s.conditions.as_ref())
+                    .map(|conditions| {
+                        conditions
+                            .iter()
+                            .any(|c| c.type_ == "Ready" && c.status == "True")
+                    })
+                    .unwrap_or(false)
+            }),
+            Err(_) => true, // K8s query failed — assume alive
         }
     }
 }
-
-
 // ============================================================================
 // T7: Bare Pod Recovery
 // ============================================================================
@@ -359,10 +443,14 @@ impl ProxyRecoveryManager {
 /// Bare pods have no controller (no Deployment/ReplicaSet), so when the pod
 /// dies there is nothing to auto-restart it. This function:
 /// 1. Cleans up old cluster resources (pods, deployments) to prevent orphans
-/// 2. Removes stale [`CHILD_PROCESSES`](crate::port_forward::CHILD_PROCESSES) entries for this config
-/// 3. Re-deploys a fresh proxy pod via [`deploy_and_forward_pod()`](crate::kube::proxy::deploy_and_forward_pod)
+/// 2. Removes stale [`CHILD_PROCESSES`](crate::port_forward::CHILD_PROCESSES)
+///    entries for this config
+/// 3. Re-deploys a fresh proxy pod via
+///    [`deploy_and_forward_pod()`](crate::kube::proxy::deploy_and_forward_pod)
 pub async fn recover_bare_pod(config: &Config, client: &kube::Client) -> anyhow::Result<()> {
-    let config_id = config.id.ok_or_else(|| anyhow::anyhow!("Config has no ID"))?;
+    let config_id = config
+        .id
+        .ok_or_else(|| anyhow::anyhow!("Config has no ID"))?;
     let namespace = &config.namespace;
 
     // Step 1: Clean up old cluster resources FIRST (prevents orphaned pods)
@@ -402,7 +490,9 @@ pub async fn recover_bare_pod(config: &Config, client: &kube::Client) -> anyhow:
 /// 4. For UDP: restarts the port forward (UDP streams are single-shot)
 /// 5. For TCP: the existing pod_watcher detects the new pod automatically
 pub async fn recover_deployment(config: &Config, client: &kube::Client) -> anyhow::Result<()> {
-    let config_id = config.id.ok_or_else(|| anyhow::anyhow!("Config has no ID"))?;
+    let config_id = config
+        .id
+        .ok_or_else(|| anyhow::anyhow!("Config has no ID"))?;
     let namespace = &config.namespace;
 
     // Check if the Deployment still exists
@@ -417,13 +507,14 @@ pub async fn recover_deployment(config: &Config, client: &kube::Client) -> anyho
         // Deployment was deleted — fall back to full re-deployment
         log::warn!(
             "Deployment {} not found, falling back to bare pod recovery for config {}",
-            hashed_name, config_id
+            hashed_name,
+            config_id
         );
         return recover_bare_pod(config, client).await;
     }
 
-    // Deployment exists — wait for K8s to restart the pod (up to POD_READY_TIMEOUT_SECS)
-    // Use label selector to find the pod
+    // Deployment exists — wait for K8s to restart the pod (up to
+    // POD_READY_TIMEOUT_SECS) Use label selector to find the pod
     let pods: kube::Api<k8s_openapi::api::core::v1::Pod> =
         kube::Api::namespaced(client.clone(), namespace);
     let label_selector = format!("app={},config_id={}", hashed_name, config_id);
@@ -436,7 +527,8 @@ pub async fn recover_deployment(config: &Config, client: &kube::Client) -> anyho
         if tokio::time::Instant::now() >= deadline {
             return Err(anyhow::anyhow!(
                 "Timed out waiting for replacement pod for deployment {} (config {})",
-                hashed_name, config_id
+                hashed_name,
+                config_id
             ));
         }
 
@@ -460,7 +552,8 @@ pub async fn recover_deployment(config: &Config, client: &kube::Client) -> anyho
         if ready_pod.is_some() {
             log::info!(
                 "Replacement pod ready for deployment {} (config {})",
-                hashed_name, config_id
+                hashed_name,
+                config_id
             );
             // TCP: the existing pod_watcher will detect the new pod and reconnect
             // UDP: the stream is single-shot, so we need to restart the port forward
@@ -468,9 +561,7 @@ pub async fn recover_deployment(config: &Config, client: &kube::Client) -> anyho
                 // Remove old CHILD_PROCESSES entry first
                 let keys_to_remove: Vec<String> = crate::port_forward::CHILD_PROCESSES
                     .iter()
-                    .filter(|entry| {
-                        entry.key().starts_with(&format!("config:{}:", config_id))
-                    })
+                    .filter(|entry| entry.key().starts_with(&format!("config:{}:", config_id)))
                     .map(|entry| entry.key().clone())
                     .collect();
                 for key in keys_to_remove {
@@ -599,7 +690,6 @@ mod tests {
             .expect("Loop task should not panic");
     }
 
-
     // ====================================================================
     // T14: ProxyRecoveryManager + retry logic tests
     // ====================================================================
@@ -682,9 +772,7 @@ mod tests {
         // Verify state is Failed with correct attempt count
         let state = manager.state.read().await;
         match &*state {
-            RecoveryState::Failed {
-                total_attempts, ..
-            } => {
+            RecoveryState::Failed { total_attempts, .. } => {
                 assert_eq!(
                     *total_attempts, MAX_RECOVERY_ATTEMPTS,
                     "Should have exhausted all {} attempts",
@@ -788,7 +876,6 @@ mod tests {
         RECOVERY_LOCKS.remove(&config_id);
     }
 
-
     // ====================================================================
     // T16: Recovery coordination tests
     // ====================================================================
@@ -801,12 +888,9 @@ mod tests {
 
         let lock2 = acquire_recovery_lock(config_id).await;
 
-        // Second attempt for the SAME config_id should block (timeout = proof of blocking)
-        let try_result = tokio::time::timeout(
-            Duration::from_millis(50),
-            lock2.lock(),
-        )
-        .await;
+        // Second attempt for the SAME config_id should block (timeout = proof of
+        // blocking)
+        let try_result = tokio::time::timeout(Duration::from_millis(50), lock2.lock()).await;
 
         assert!(
             try_result.is_err(),
@@ -816,11 +900,7 @@ mod tests {
         drop(guard); // Release first lock
 
         // Now second should succeed immediately
-        let try_result2 = tokio::time::timeout(
-            Duration::from_millis(50),
-            lock2.lock(),
-        )
-        .await;
+        let try_result2 = tokio::time::timeout(Duration::from_millis(50), lock2.lock()).await;
 
         assert!(
             try_result2.is_ok(),
@@ -843,11 +923,7 @@ mod tests {
         let _guard_a = lock_a.lock().await;
 
         // Lock B should succeed immediately (different config_id = different mutex)
-        let try_result_b = tokio::time::timeout(
-            Duration::from_millis(50),
-            lock_b.lock(),
-        )
-        .await;
+        let try_result_b = tokio::time::timeout(Duration::from_millis(50), lock_b.lock()).await;
 
         assert!(
             try_result_b.is_ok(),
@@ -882,8 +958,8 @@ mod tests {
         // Build a list of proxy configs and apply the same filter logic
         // as config_manager.rs:restart_protocol_batch()
         let proxy_configs = vec![
-            make_test_config(config_id),       // has active recovery
-            make_test_config(55555),            // no active recovery
+            make_test_config(config_id), // has active recovery
+            make_test_config(55555),     // no active recovery
         ];
 
         let configs_to_restart: Vec<_> = proxy_configs

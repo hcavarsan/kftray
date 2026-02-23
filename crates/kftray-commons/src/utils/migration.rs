@@ -168,13 +168,15 @@ async fn migrate_schema(pool: &SqlitePool) -> Result<(), String> {
 
     if !is_retrying_exists {
         info!("Adding is_retrying column to config_state table");
-        sqlx::query("ALTER TABLE config_state ADD COLUMN is_retrying BOOLEAN NOT NULL DEFAULT false")
-            .execute(&mut *conn)
-            .await
-            .map_err(|e| {
-                error!("Failed to add is_retrying column: {e}");
-                e.to_string()
-            })?;
+        sqlx::query(
+            "ALTER TABLE config_state ADD COLUMN is_retrying BOOLEAN NOT NULL DEFAULT false",
+        )
+        .execute(&mut *conn)
+        .await
+        .map_err(|e| {
+            error!("Failed to add is_retrying column: {e}");
+            e.to_string()
+        })?;
         info!("Successfully added is_retrying column");
     } else {
         info!("is_retrying column already exists, skipping migration");
