@@ -8,27 +8,52 @@
 //! - GET /mcp for SSE event stream (server-to-client notifications)
 //! - DELETE /mcp to terminate session
 
-use crate::protocol::{
-    CallToolParams, InitializeParams, InitializeResult, JsonRpcRequest,
-    JsonRpcResponse, ListToolsResult, RequestId, ServerCapabilities, ServerInfo, ToolsCapability,
-    error_codes, MCP_PROTOCOL_VERSION, SERVER_NAME, SERVER_VERSION,
-};
-use crate::tools;
-
-use bytes::Bytes;
-use http_body_util::{BodyExt, Full};
-use hyper::body::Incoming;
-use hyper::server::conn::http1;
-use hyper::service::service_fn;
-use hyper::{Method, Request, Response, StatusCode};
-use hyper_util::rt::TokioIo;
-use log::{debug, error, info, warn};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
+
+use bytes::Bytes;
+use http_body_util::{
+    BodyExt,
+    Full,
+};
+use hyper::body::Incoming;
+use hyper::server::conn::http1;
+use hyper::service::service_fn;
+use hyper::{
+    Method,
+    Request,
+    Response,
+    StatusCode,
+};
+use hyper_util::rt::TokioIo;
+use log::{
+    debug,
+    error,
+    info,
+    warn,
+};
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 use uuid::Uuid;
+
+use crate::protocol::{
+    CallToolParams,
+    InitializeParams,
+    InitializeResult,
+    JsonRpcRequest,
+    JsonRpcResponse,
+    ListToolsResult,
+    MCP_PROTOCOL_VERSION,
+    RequestId,
+    SERVER_NAME,
+    SERVER_VERSION,
+    ServerCapabilities,
+    ServerInfo,
+    ToolsCapability,
+    error_codes,
+};
+use crate::tools;
 
 /// Session state
 #[derive(Debug, Clone)]
@@ -57,7 +82,10 @@ impl ServerState {
             initialized: false,
             client_info: None,
         };
-        self.sessions.write().await.insert(session_id.clone(), session);
+        self.sessions
+            .write()
+            .await
+            .insert(session_id.clone(), session);
         session_id
     }
 
@@ -66,7 +94,10 @@ impl ServerState {
     }
 
     pub async fn update_session(&self, session: Session) {
-        self.sessions.write().await.insert(session.id.clone(), session);
+        self.sessions
+            .write()
+            .await
+            .insert(session.id.clone(), session);
     }
 
     pub async fn remove_session(&self, session_id: &str) {
@@ -99,17 +130,17 @@ pub async fn start_server(addr: SocketAddr) -> anyhow::Result<()> {
             });
 
             if let Err(err) = http1::Builder::new().serve_connection(io, service).await
-                && !err.is_incomplete_message() {
-                    error!("Error serving connection from {}: {:?}", remote_addr, err);
-                }
+                && !err.is_incomplete_message()
+            {
+                error!("Error serving connection from {}: {:?}", remote_addr, err);
+            }
         });
     }
 }
 
 /// Handle incoming HTTP requests
 async fn handle_request(
-    req: Request<Incoming>,
-    state: Arc<ServerState>,
+    req: Request<Incoming>, state: Arc<ServerState>,
 ) -> Result<Response<Full<Bytes>>, hyper::Error> {
     let method = req.method().clone();
     let path = req.uri().path().to_string();
@@ -130,10 +161,7 @@ async fn handle_request(
 }
 
 /// Handle POST /mcp - JSON-RPC requests
-async fn handle_mcp_post(
-    req: Request<Incoming>,
-    state: Arc<ServerState>,
-) -> Response<Full<Bytes>> {
+async fn handle_mcp_post(req: Request<Incoming>, state: Arc<ServerState>) -> Response<Full<Bytes>> {
     // Get or create session
     let session_id = req
         .headers()
@@ -191,10 +219,7 @@ async fn handle_mcp_post(
 }
 
 /// Handle GET /mcp - SSE event stream
-async fn handle_mcp_get(
-    req: Request<Incoming>,
-    state: Arc<ServerState>,
-) -> Response<Full<Bytes>> {
+async fn handle_mcp_get(req: Request<Incoming>, state: Arc<ServerState>) -> Response<Full<Bytes>> {
     let session_id = req
         .headers()
         .get("mcp-session-id")
@@ -205,10 +230,7 @@ async fn handle_mcp_get(
             if state.get_session(id).await.is_some() {
                 // For now, return a simple SSE response that keeps connection open
                 // In a full implementation, this would stream events
-                let sse_body = format!(
-                    "event: connected\ndata: {{\"sessionId\":\"{}\"}}\n\n",
-                    id
-                );
+                let sse_body = format!("event: connected\ndata: {{\"sessionId\":\"{}\"}}\n\n", id);
 
                 Response::builder()
                     .status(StatusCode::OK)
@@ -234,8 +256,7 @@ async fn handle_mcp_get(
 
 /// Handle DELETE /mcp - terminate session
 async fn handle_mcp_delete(
-    req: Request<Incoming>,
-    state: Arc<ServerState>,
+    req: Request<Incoming>, state: Arc<ServerState>,
 ) -> Response<Full<Bytes>> {
     let session_id = req
         .headers()
@@ -296,10 +317,9 @@ fn add_cors_headers(
 ) -> Result<Response<Full<Bytes>>, hyper::Error> {
     let (mut parts, body) = response.into_parts();
 
-    parts.headers.insert(
-        "Access-Control-Allow-Origin",
-        "*".parse().unwrap(),
-    );
+    parts
+        .headers
+        .insert("Access-Control-Allow-Origin", "*".parse().unwrap());
     parts.headers.insert(
         "Access-Control-Allow-Methods",
         "GET, POST, DELETE, OPTIONS".parse().unwrap(),
@@ -318,9 +338,7 @@ fn add_cors_headers(
 
 /// Create a JSON-RPC error response
 fn json_rpc_error_response(
-    id: Option<RequestId>,
-    code: i32,
-    message: String,
+    id: Option<RequestId>, code: i32, message: String,
 ) -> Response<Full<Bytes>> {
     let response = JsonRpcResponse::error(id, code, message);
     let json_body = serde_json::to_vec(&response).unwrap_or_default();
@@ -334,9 +352,7 @@ fn json_rpc_error_response(
 
 /// Handle a JSON-RPC request
 async fn handle_json_rpc_request(
-    request: JsonRpcRequest,
-    session_id: &str,
-    state: &ServerState,
+    request: JsonRpcRequest, session_id: &str, state: &ServerState,
 ) -> JsonRpcResponse {
     let method = request.method.as_str();
     let id = request.id.clone();
@@ -370,9 +386,7 @@ async fn handle_json_rpc_request(
 
 /// Handle initialize request
 async fn handle_initialize(
-    request: JsonRpcRequest,
-    session_id: &str,
-    state: &ServerState,
+    request: JsonRpcRequest, session_id: &str, state: &ServerState,
 ) -> JsonRpcResponse {
     let params: InitializeParams = match request.params {
         Some(p) => match serde_json::from_value(p) {
@@ -382,7 +396,7 @@ async fn handle_initialize(
                     request.id,
                     error_codes::INVALID_PARAMS,
                     format!("Invalid initialize params: {e}"),
-                )
+                );
             }
         },
         None => {
@@ -390,7 +404,7 @@ async fn handle_initialize(
                 request.id,
                 error_codes::INVALID_PARAMS,
                 "Missing initialize params",
-            )
+            );
         }
     };
 
@@ -409,7 +423,9 @@ async fn handle_initialize(
     let result = InitializeResult {
         protocol_version: MCP_PROTOCOL_VERSION.to_string(),
         capabilities: ServerCapabilities {
-            tools: Some(ToolsCapability { list_changed: false }),
+            tools: Some(ToolsCapability {
+                list_changed: false,
+            }),
             resources: None,
             prompts: None,
             logging: None,
@@ -445,7 +461,7 @@ async fn handle_call_tool(request: JsonRpcRequest) -> JsonRpcResponse {
                     request.id,
                     error_codes::INVALID_PARAMS,
                     format!("Invalid call tool params: {e}"),
-                )
+                );
             }
         },
         None => {
@@ -453,11 +469,14 @@ async fn handle_call_tool(request: JsonRpcRequest) -> JsonRpcResponse {
                 request.id,
                 error_codes::INVALID_PARAMS,
                 "Missing tool call params",
-            )
+            );
         }
     };
 
-    debug!("Calling tool: {} with args: {:?}", params.name, params.arguments);
+    debug!(
+        "Calling tool: {} with args: {:?}",
+        params.name, params.arguments
+    );
 
     let result = tools::execute_tool(&params.name, params.arguments).await;
 
@@ -517,8 +536,7 @@ mod tests {
         assert!(response.error.is_none());
         assert!(response.result.is_some());
 
-        let result: InitializeResult =
-            serde_json::from_value(response.result.unwrap()).unwrap();
+        let result: InitializeResult = serde_json::from_value(response.result.unwrap()).unwrap();
         assert_eq!(result.server_info.name, SERVER_NAME);
     }
 
@@ -534,8 +552,7 @@ mod tests {
         let response = handle_list_tools(request).await;
         assert!(response.error.is_none());
 
-        let result: ListToolsResult =
-            serde_json::from_value(response.result.unwrap()).unwrap();
+        let result: ListToolsResult = serde_json::from_value(response.result.unwrap()).unwrap();
         assert!(!result.tools.is_empty());
     }
 }

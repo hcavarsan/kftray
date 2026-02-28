@@ -3,10 +3,20 @@
 //! These tools allow LLMs to discover Kubernetes resources like contexts,
 //! namespaces, services, pods, and ports.
 
-use crate::protocol::{CallToolResult, Tool};
+use serde::{
+    Deserialize,
+    Serialize,
+};
+use serde_json::{
+    Value,
+    json,
+};
+
+use crate::protocol::{
+    CallToolResult,
+    Tool,
+};
 use crate::tools::McpTool;
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
 
 // ============================================================================
 // List Kube Contexts Tool
@@ -42,7 +52,9 @@ impl McpTool for ListKubeContextsTool {
 
     async fn execute(&self, arguments: Option<Value>) -> CallToolResult {
         let args: ListKubeContextsArgs = match arguments {
-            Some(v) => serde_json::from_value(v).unwrap_or(ListKubeContextsArgs { kubeconfig: None }),
+            Some(v) => {
+                serde_json::from_value(v).unwrap_or(ListKubeContextsArgs { kubeconfig: None })
+            }
             None => ListKubeContextsArgs { kubeconfig: None },
         };
 
@@ -125,9 +137,10 @@ impl McpTool for ListNamespacesTool {
                     Err(e) => CallToolResult::error(format!("Failed to list namespaces: {e}")),
                 }
             }
-            Ok((None, _, _)) => {
-                CallToolResult::error(format!("Could not create client for context: {}", args.context))
-            }
+            Ok((None, _, _)) => CallToolResult::error(format!(
+                "Could not create client for context: {}",
+                args.context
+            )),
             Err(e) => CallToolResult::error(format!("Failed to create Kubernetes client: {e}")),
         }
     }
@@ -181,13 +194,15 @@ impl McpTool for ListServicesTool {
                 Ok(a) => a,
                 Err(e) => return CallToolResult::error(format!("Invalid arguments: {e}")),
             },
-            None => {
-                return CallToolResult::error("Missing required arguments: context, namespace")
-            }
+            None => return CallToolResult::error("Missing required arguments: context, namespace"),
         };
 
         use k8s_openapi::api::core::v1::Service;
-        use kube::{api::ListParams, Api, ResourceExt};
+        use kube::{
+            Api,
+            ResourceExt,
+            api::ListParams,
+        };
 
         match kftray_portforward::create_client_with_specific_context(
             args.kubeconfig,
@@ -209,9 +224,10 @@ impl McpTool for ListServicesTool {
                     Err(e) => CallToolResult::error(format!("Failed to list services: {e}")),
                 }
             }
-            Ok((None, _, _)) => {
-                CallToolResult::error(format!("Could not create client for context: {}", args.context))
-            }
+            Ok((None, _, _)) => CallToolResult::error(format!(
+                "Could not create client for context: {}",
+                args.context
+            )),
             Err(e) => CallToolResult::error(format!("Failed to create Kubernetes client: {e}")),
         }
     }
@@ -277,13 +293,15 @@ impl McpTool for ListPodsTool {
                 Ok(a) => a,
                 Err(e) => return CallToolResult::error(format!("Invalid arguments: {e}")),
             },
-            None => {
-                return CallToolResult::error("Missing required arguments: context, namespace")
-            }
+            None => return CallToolResult::error("Missing required arguments: context, namespace"),
         };
 
         use k8s_openapi::api::core::v1::Pod;
-        use kube::{api::ListParams, Api, ResourceExt};
+        use kube::{
+            Api,
+            ResourceExt,
+            api::ListParams,
+        };
 
         match kftray_portforward::create_client_with_specific_context(
             args.kubeconfig,
@@ -333,9 +351,10 @@ impl McpTool for ListPodsTool {
                     Err(e) => CallToolResult::error(format!("Failed to list pods: {e}")),
                 }
             }
-            Ok((None, _, _)) => {
-                CallToolResult::error(format!("Could not create client for context: {}", args.context))
-            }
+            Ok((None, _, _)) => CallToolResult::error(format!(
+                "Could not create client for context: {}",
+                args.context
+            )),
             Err(e) => CallToolResult::error(format!("Failed to create Kubernetes client: {e}")),
         }
     }
@@ -409,13 +428,16 @@ impl McpTool for ListPortsTool {
             None => {
                 return CallToolResult::error(
                     "Missing required arguments: context, namespace, service",
-                )
+                );
             }
         };
 
         use k8s_openapi::api::core::v1::Service;
         use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
-        use kube::{Api, api::ListParams};
+        use kube::{
+            Api,
+            api::ListParams,
+        };
 
         match kftray_portforward::create_client_with_specific_context(
             args.kubeconfig,
@@ -445,7 +467,10 @@ impl McpTool for ListPortsTool {
                                             name: p.name.clone(),
                                             port: p.port,
                                             target_port,
-                                            protocol: p.protocol.clone().unwrap_or_else(|| "TCP".to_string()),
+                                            protocol: p
+                                                .protocol
+                                                .clone()
+                                                .unwrap_or_else(|| "TCP".to_string()),
                                         }
                                     })
                                     .collect()
@@ -508,9 +533,10 @@ impl McpTool for ListPortsTool {
                     }
                 }
             }
-            Ok((None, _, _)) => {
-                CallToolResult::error(format!("Could not create client for context: {}", args.context))
-            }
+            Ok((None, _, _)) => CallToolResult::error(format!(
+                "Could not create client for context: {}",
+                args.context
+            )),
             Err(e) => CallToolResult::error(format!("Failed to create Kubernetes client: {e}")),
         }
     }

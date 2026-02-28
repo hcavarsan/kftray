@@ -429,10 +429,11 @@ pub async fn update_mcp_server_enabled(enabled: bool) -> Result<(), String> {
             return Err(format!("Failed to start MCP server: {e}"));
         }
     } else if crate::mcp::is_running().await
-        && let Err(e) = crate::mcp::stop().await {
-            error!("Failed to stop MCP server: {e}");
-            return Err(format!("Failed to stop MCP server: {e}"));
-        }
+        && let Err(e) = crate::mcp::stop().await
+    {
+        error!("Failed to stop MCP server: {e}");
+        return Err(format!("Failed to stop MCP server: {e}"));
+    }
 
     info!("Successfully updated MCP server enabled to {enabled}");
     Ok(())
@@ -449,7 +450,9 @@ pub async fn update_mcp_server_port(port: u16) -> Result<(), String> {
 
     // Warn about privileged ports (below 1024)
     if port < 1024 {
-        info!("Warning: Port {port} is a privileged port (< 1024), may require elevated permissions");
+        info!(
+            "Warning: Port {port} is a privileged port (< 1024), may require elevated permissions"
+        );
     }
 
     set_mcp_server_port(port).await.map_err(|e| {

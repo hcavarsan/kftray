@@ -1,13 +1,18 @@
 //! MCP Tools for kftray operations.
 //!
-//! This module provides all the tools that can be called by LLMs via the MCP protocol.
+//! This module provides all the tools that can be called by LLMs via the MCP
+//! protocol.
 
 pub mod config;
 pub mod kubernetes;
 pub mod portforward;
 
-use crate::protocol::{CallToolResult, Tool};
 use serde_json::Value;
+
+use crate::protocol::{
+    CallToolResult,
+    Tool,
+};
 
 /// Trait for implementing MCP tools
 #[async_trait::async_trait]
@@ -21,7 +26,7 @@ pub trait McpTool: Send + Sync {
 
 /// Get all available tools
 pub fn get_all_tools() -> Vec<Tool> {
-    let mut tools = Vec::new();
+    let mut tools = vec![];
 
     // Kubernetes discovery tools
     tools.push(kubernetes::ListKubeContextsTool.definition());
@@ -60,11 +65,17 @@ pub async fn execute_tool(name: &str, arguments: Option<Value>) -> CallToolResul
 
         // Port-forward tools
         "list_active_port_forwards" => {
-            portforward::ListActivePortForwardsTool.execute(arguments).await
+            portforward::ListActivePortForwardsTool
+                .execute(arguments)
+                .await
         }
         "start_port_forward" => portforward::StartPortForwardTool.execute(arguments).await,
         "stop_port_forward" => portforward::StopPortForwardTool.execute(arguments).await,
-        "stop_all_port_forwards" => portforward::StopAllPortForwardsTool.execute(arguments).await,
+        "stop_all_port_forwards" => {
+            portforward::StopAllPortForwardsTool
+                .execute(arguments)
+                .await
+        }
 
         // Config tools
         "list_configs" => config::ListConfigsTool.execute(arguments).await,

@@ -3,11 +3,21 @@
 //! These tools allow LLMs to manage port-forwarding sessions: listing active
 //! forwards, starting new ones, and stopping existing ones.
 
-use crate::protocol::{CallToolResult, Tool};
-use crate::tools::McpTool;
 use kftray_commons::models::config_model::Config;
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde::{
+    Deserialize,
+    Serialize,
+};
+use serde_json::{
+    Value,
+    json,
+};
+
+use crate::protocol::{
+    CallToolResult,
+    Tool,
+};
+use crate::tools::McpTool;
 
 // ============================================================================
 // List Active Port Forwards Tool
@@ -44,8 +54,8 @@ impl McpTool for ListActivePortForwardsTool {
     }
 
     async fn execute(&self, _arguments: Option<Value>) -> CallToolResult {
-        use kftray_commons::utils::config_state::get_configs_state;
         use kftray_commons::config::get_configs;
+        use kftray_commons::utils::config_state::get_configs_state;
 
         // Get all config states
         let config_states = match get_configs_state().await {
@@ -191,7 +201,7 @@ impl McpTool for StartPortForwardTool {
             None => {
                 return CallToolResult::error(
                     "Must provide either config_id or parameters for a new port-forward",
-                )
+                );
             }
         };
 
@@ -237,7 +247,9 @@ impl McpTool for StartPortForwardTool {
                                 CallToolResult::error("No response received from port-forward")
                             }
                         }
-                        Err(e) => CallToolResult::error(format!("Failed to start port-forward: {e}")),
+                        Err(e) => {
+                            CallToolResult::error(format!("Failed to start port-forward: {e}"))
+                        }
                     }
                 }
                 Err(e) => CallToolResult::error(format!("Config not found: {e}")),
@@ -251,14 +263,18 @@ impl McpTool for StartPortForwardTool {
 
             let remote_port = match args.remote_port {
                 Some(p) => p,
-                None => return CallToolResult::error("remote_port is required for new port-forward"),
+                None => {
+                    return CallToolResult::error("remote_port is required for new port-forward");
+                }
             };
 
             let workload_type = args.workload_type.unwrap_or_else(|| "service".to_string());
 
             // Validate workload-specific requirements
             if workload_type == "service" && args.service.is_none() {
-                return CallToolResult::error("service is required when workload_type is 'service'");
+                return CallToolResult::error(
+                    "service is required when workload_type is 'service'",
+                );
             }
             if workload_type == "pod" && args.target.is_none() {
                 return CallToolResult::error(

@@ -23,9 +23,16 @@
 //! - `DELETE /mcp` - Terminate session
 //! - `GET /health` - Health check
 
+use std::net::{
+    IpAddr,
+    SocketAddr,
+};
+
 use clap::Parser;
-use log::{info, LevelFilter};
-use std::net::{IpAddr, SocketAddr};
+use log::{
+    LevelFilter,
+    info,
+};
 
 /// KFtray MCP Server - Kubernetes port-forwarding via Model Context Protocol
 #[derive(Parser, Debug)]
@@ -72,12 +79,19 @@ async fn main() -> anyhow::Result<()> {
     let addr = SocketAddr::new(args.host, args.port);
 
     info!("Starting KFtray MCP Server v{}", env!("CARGO_PKG_VERSION"));
-    info!("Protocol version: {}", kftray_mcp::protocol::MCP_PROTOCOL_VERSION);
+    info!(
+        "Protocol version: {}",
+        kftray_mcp::protocol::MCP_PROTOCOL_VERSION
+    );
     info!("Listening on http://{}", addr);
     info!("");
     info!("Available tools:");
     for tool in kftray_mcp::tools::get_all_tools() {
-        info!("  - {}: {}", tool.name, tool.description.unwrap_or_default());
+        info!(
+            "  - {}: {}",
+            tool.name,
+            tool.description.unwrap_or_default()
+        );
     }
     info!("");
     info!("Endpoints:");

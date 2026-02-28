@@ -3,7 +3,10 @@
 //! This module implements the MCP specification for streamable HTTP transport.
 //! See: https://modelcontextprotocol.io/specification
 
-use serde::{Deserialize, Serialize};
+use serde::{
+    Deserialize,
+    Serialize,
+};
 use serde_json::Value;
 
 /// JSON-RPC version constant
@@ -183,7 +186,10 @@ pub struct ToolInputSchema {
     pub properties: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub required: Option<Vec<String>>,
-    #[serde(rename = "additionalProperties", skip_serializing_if = "Option::is_none")]
+    #[serde(
+        rename = "additionalProperties",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub additional_properties: Option<bool>,
 }
 
@@ -252,10 +258,7 @@ impl JsonRpcResponse {
 
     /// Create an error response with data
     pub fn error_with_data(
-        id: Option<RequestId>,
-        code: i32,
-        message: impl Into<String>,
-        data: Value,
+        id: Option<RequestId>, code: i32, message: impl Into<String>, data: Value,
     ) -> Self {
         Self {
             jsonrpc: JSONRPC_VERSION.to_string(),
@@ -315,9 +318,7 @@ impl Tool {
 
     /// Create a new tool with input schema
     pub fn with_schema(
-        name: impl Into<String>,
-        description: impl Into<String>,
-        properties: Value,
+        name: impl Into<String>, description: impl Into<String>, properties: Value,
         required: Option<Vec<String>>,
     ) -> Self {
         Self {

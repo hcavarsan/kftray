@@ -3,11 +3,21 @@
 //! These tools allow LLMs to manage port-forward configurations: listing,
 //! creating, updating, deleting, and importing/exporting configurations.
 
-use crate::protocol::{CallToolResult, Tool};
-use crate::tools::McpTool;
 use kftray_commons::models::config_model::Config;
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde::{
+    Deserialize,
+    Serialize,
+};
+use serde_json::{
+    Value,
+    json,
+};
+
+use crate::protocol::{
+    CallToolResult,
+    Tool,
+};
+use crate::tools::McpTool;
 
 // ============================================================================
 // List Configs Tool
@@ -115,8 +125,9 @@ impl McpTool for GetConfigTool {
         };
 
         match kftray_commons::config::get_config(args.config_id).await {
-            Ok(config) => CallToolResult::json(&config)
-                .unwrap_or_else(|e| CallToolResult::error(format!("Failed to serialize config: {e}"))),
+            Ok(config) => CallToolResult::json(&config).unwrap_or_else(|e| {
+                CallToolResult::error(format!("Failed to serialize config: {e}"))
+            }),
             Err(e) => CallToolResult::error(format!("Failed to get config: {e}")),
         }
     }
@@ -231,7 +242,7 @@ impl McpTool for CreateConfigTool {
             None => {
                 return CallToolResult::error(
                     "Missing required arguments: context, namespace, remote_port",
-                )
+                );
             }
         };
 
@@ -247,7 +258,9 @@ impl McpTool for CreateConfigTool {
             );
         }
         if workload_type == "proxy" && args.remote_address.is_none() {
-            return CallToolResult::error("remote_address is required when workload_type is 'proxy'");
+            return CallToolResult::error(
+                "remote_address is required when workload_type is 'proxy'",
+            );
         }
 
         let config = Config {
@@ -286,7 +299,7 @@ impl McpTool for CreateConfigTool {
                     Err(e) => {
                         return CallToolResult::error(format!(
                             "Config created but failed to retrieve ID: {e}"
-                        ))
+                        ));
                     }
                 };
 

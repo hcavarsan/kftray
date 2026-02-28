@@ -293,8 +293,7 @@ impl SettingsManager {
     pub async fn set_mcp_server_port(
         &self, port: u16,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-        self.set_setting("mcp_server_port", &port.to_string())
-            .await
+        self.set_setting("mcp_server_port", &port.to_string()).await
     }
 }
 
