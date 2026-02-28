@@ -266,6 +266,36 @@ impl SettingsManager {
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         self.set_setting("global_shortcut", shortcut).await
     }
+
+    pub async fn get_mcp_server_enabled(&self) -> bool {
+        if let Some(value) = self.get_setting("mcp_server_enabled").await {
+            value.parse::<bool>().unwrap_or(false)
+        } else {
+            false
+        }
+    }
+
+    pub async fn set_mcp_server_enabled(
+        &self, enabled: bool,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.set_setting("mcp_server_enabled", &enabled.to_string())
+            .await
+    }
+
+    pub async fn get_mcp_server_port(&self) -> u16 {
+        if let Some(value) = self.get_setting("mcp_server_port").await {
+            value.parse::<u16>().unwrap_or(3000)
+        } else {
+            3000
+        }
+    }
+
+    pub async fn set_mcp_server_port(
+        &self, port: u16,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        self.set_setting("mcp_server_port", &port.to_string())
+            .await
+    }
 }
 
 impl Default for SettingsManager {
@@ -552,6 +582,34 @@ pub async fn set_global_shortcut(
     shortcut: &str,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     set_setting("global_shortcut", shortcut).await
+}
+
+pub async fn get_mcp_server_enabled() -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+    if let Some(value) = get_setting("mcp_server_enabled").await? {
+        Ok(value.parse::<bool>().unwrap_or(false))
+    } else {
+        Ok(false)
+    }
+}
+
+pub async fn set_mcp_server_enabled(
+    enabled: bool,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    set_setting("mcp_server_enabled", &enabled.to_string()).await
+}
+
+pub async fn get_mcp_server_port() -> Result<u16, Box<dyn std::error::Error + Send + Sync>> {
+    if let Some(value) = get_setting("mcp_server_port").await? {
+        Ok(value.parse::<u16>().unwrap_or(3000))
+    } else {
+        Ok(3000)
+    }
+}
+
+pub async fn set_mcp_server_port(
+    port: u16,
+) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+    set_setting("mcp_server_port", &port.to_string()).await
 }
 
 pub async fn get_ssl_enabled_with_mode(
