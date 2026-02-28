@@ -60,7 +60,7 @@ jobs:
       - name: Create release draft
         id: create_release
         if: steps.check_release.outputs.release_exists != 'true'
-        uses: softprops/action-gh-release@5122b4edc95f85501a71628a57dc180a03ec7588
+        uses: softprops/action-gh-release@e798e6a1ede8d07b74ac4cdac6bdfa4cc1653907
         with:
           tag_name: ${{ github.ref_name }}
           name: "KFtray - ${{ github.ref_name }}"
@@ -131,12 +131,12 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561
+        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
         with:
           toolchain: nightly
 
       - name: Cache Rust
-        uses: swatinem/rust-cache@5e4a76743357a1c3c57315bc1896d2c7f89d6861
+        uses: swatinem/rust-cache@11da8522bc3856a8fbc565f1d1530989c793d67d
         with:
           key: kftray-tauri-${{ matrix.rust_target }}-${{ matrix.os }}
           shared-key: kftray-tauri-${{ matrix.rust_target }}
@@ -145,7 +145,7 @@ jobs:
             crates/kftray-tauri
 
       - name: Install pnpm
-        uses: pnpm/action-setup@1e1c8eafbd745f64b1ef30a7d7ed7965034c486c
+        uses: pnpm/action-setup@9b5745cdf0a2e8c2620f0746130f809adb911c19
         with:
           version: 10
           run_install: |
@@ -153,13 +153,13 @@ jobs:
               args: [--frozen-lockfile]
 
       - name: Install Node.js
-        uses: actions/setup-node@65d868f8d4d85d7d4abb7de0875cde3fcc8798f5
+        uses: actions/setup-node@54045abd5dcd3b0fee9ca02fa24c57545834c9cc
         with:
           node-version: "24"
           cache: "pnpm"
 
       - name: Cache pnpm modules
-        uses: actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb
+        uses: actions/cache@565629816435f6c0b50676926c9b05c254113c0c
         with:
           path: |
             $(pnpm store path --silent)
@@ -170,7 +170,7 @@ jobs:
 
       - name: Set up Visual Studio shell
         if: matrix.os == 'windows-latest' && matrix.arch == 'arm64'
-        uses: TheMrMilchmann/setup-msvc-dev@ced9887c29958f18f71b18c99d9eb0837859434c
+        uses: TheMrMilchmann/setup-msvc-dev@27fcbd0cb8ae9e7d884ce3ccde8e462f2398df37
         with:
           arch: amd64_arm64
 
@@ -285,7 +285,7 @@ jobs:
           echo "Certificate identity: $CERT_ID"
 
       - name: Build kftray-tauri Desktop App
-        uses: tauri-apps/tauri-action@9ce1dcc1a78395184050946b71457a6c242beab6
+        uses: tauri-apps/tauri-action@44a5bf1eaeeebdabfd8951645f567c83b0ae02a3
         id: tauri_build
         continue-on-error: true
         env: &tauri-build-env
@@ -310,7 +310,7 @@ jobs:
 
       - name: Retry Build on Failure
         if: steps.tauri_build.outcome == 'failure'
-        uses: tauri-apps/tauri-action@9ce1dcc1a78395184050946b71457a6c242beab6
+        uses: tauri-apps/tauri-action@44a5bf1eaeeebdabfd8951645f567c83b0ae02a3
         env: *tauri-build-env
         with: *tauri-build-with
 
@@ -388,12 +388,12 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561
+        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
         with:
           toolchain: nightly
 
       - name: Cache Rust
-        uses: swatinem/rust-cache@5e4a76743357a1c3c57315bc1896d2c7f89d6861
+        uses: swatinem/rust-cache@11da8522bc3856a8fbc565f1d1530989c793d67d
         with:
           key: kftui-${{ matrix.rust_target }}-${{ matrix.os }}
           shared-key: kftui-${{ matrix.rust_target }}
@@ -402,7 +402,7 @@ jobs:
             crates/kftui
 
       - name: Install pnpm
-        uses: pnpm/action-setup@1e1c8eafbd745f64b1ef30a7d7ed7965034c486c
+        uses: pnpm/action-setup@9b5745cdf0a2e8c2620f0746130f809adb911c19
         with:
           version: 10
           run_install: |
@@ -410,13 +410,13 @@ jobs:
               args: [--frozen-lockfile]
 
       - name: Install Node.js
-        uses: actions/setup-node@65d868f8d4d85d7d4abb7de0875cde3fcc8798f5
+        uses: actions/setup-node@54045abd5dcd3b0fee9ca02fa24c57545834c9cc
         with:
           node-version: "24"
           cache: "pnpm"
 
       - name: Cache pnpm modules
-        uses: actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb
+        uses: actions/cache@565629816435f6c0b50676926c9b05c254113c0c
         with:
           path: |
             $(pnpm store path --silent)
@@ -453,7 +453,7 @@ jobs:
 
       - name: Set up Visual Studio shell
         if: matrix.os == 'windows-latest' && matrix.arch == 'arm64'
-        uses: TheMrMilchmann/setup-msvc-dev@ced9887c29958f18f71b18c99d9eb0837859434c
+        uses: TheMrMilchmann/setup-msvc-dev@27fcbd0cb8ae9e7d884ce3ccde8e462f2398df37
         with:
           arch: amd64_arm64
 
@@ -464,7 +464,7 @@ jobs:
 
       - name: Set up Perl on Windows
         if: matrix.os == 'windows-latest'
-        uses: shogo82148/actions-setup-perl@b27fdd828a97a63c975cdedfe6ad62830c3b55c9
+        uses: shogo82148/actions-setup-perl@641ec2579c8dab00de845175be8932e9dba09b8c
         with:
           perl-version: "5.32"
           distribution: "strawberry"
@@ -645,7 +645,7 @@ jobs:
 
       - name: Build and push Docker image
         id: docker_build
-        uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6.18.0
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
         with:
           platforms: ${{ env.DOCKER_PLATFORMS }}
           context: .
@@ -691,12 +691,12 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561
+        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
         with:
           toolchain: nightly
 
       - name: Cache cargo-cyclonedx
-        uses: actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb
+        uses: actions/cache@565629816435f6c0b50676926c9b05c254113c0c
         with:
           path: ~/.cargo/bin/cargo-cyclonedx
           key: cargo-cyclonedx-${{ runner.os }}
@@ -705,7 +705,7 @@ jobs:
         uses: jdx/mise-action@6d1e696aa24c1aa1bcc1adea0212707c71ab78a8 # v3.6.1
 
       - name: Install pnpm
-        uses: pnpm/action-setup@1e1c8eafbd745f64b1ef30a7d7ed7965034c486c
+        uses: pnpm/action-setup@9b5745cdf0a2e8c2620f0746130f809adb911c19
         with:
           version: 10
           run_install: |
@@ -737,9 +737,9 @@ jobs:
 
       # === SBOM Scanning ===
       - name: Setup Go
-        uses: actions/setup-go@7a3fe6cf4cb3a834922a1244abfce67bcef6a0c5 # v6.2.0
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
         with:
-          go-version: "1.24"
+          go-version: "1.26"
 
       - name: Build grype with VEX SBOM support
         run: |
@@ -814,7 +814,7 @@ jobs:
           fetch-depth: 0
 
       - name: Generate changelog
-        uses: orhun/git-cliff-action@2032a55a2e7a76b12f13fd1dfe8b9e44fcf84e94
+        uses: orhun/git-cliff-action@c93ef52f3d0ddcdcc9bd5447d98d458a11cd4f72
         id: git-cliff
         with:
           config: cliff.toml
@@ -823,7 +823,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Update release notes
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+        uses: actions/github-script@450193c5abd4cdb17ba9f3ffcfe8f635c4bb6c2a
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -875,12 +875,12 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561
+        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
         with:
           toolchain: nightly
 
       - name: Cache Rust
-        uses: swatinem/rust-cache@5e4a76743357a1c3c57315bc1896d2c7f89d6861
+        uses: swatinem/rust-cache@11da8522bc3856a8fbc565f1d1530989c793d67d
         with:
           key: publish-cargo-crates
           shared-key: publish-cargo-crates
@@ -1061,7 +1061,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Setup uv
-        uses: astral-sh/setup-uv@803947b9bd8e9f986429fa0c5a41c367cd732b41 # v7.2.1
+        uses: astral-sh/setup-uv@5a095e7a2014a4212f075830d4f7277575a9d098 # v7.3.1
         with:
           python-version: "3.12"
 
