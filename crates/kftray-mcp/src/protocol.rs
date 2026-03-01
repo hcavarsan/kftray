@@ -103,6 +103,7 @@ pub struct ClientCapabilities {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct RootsCapability {
     #[serde(default)]
     pub list_changed: bool,
@@ -214,7 +215,11 @@ pub struct CallToolParams {
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum ToolContent {
     Text { text: String },
-    Image { data: String, mime_type: String },
+    Image {
+        data: String,
+        #[serde(rename = "mimeType")]
+        mime_type: String,
+    },
     Resource { resource: Value },
 }
 
