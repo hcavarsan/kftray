@@ -31,7 +31,7 @@
   },
   "devDependencies": {
     "@eslint/compat": "^2.0.2",
-    "@rollup/plugin-terser": "^0.4.4",
+    "@rollup/plugin-terser": "^1.0.0",
     "@tanstack/react-query": "^5.90.21",
     "@tauri-apps/api": "2.10.1",
     "@tauri-apps/cli": "2.10.0",
