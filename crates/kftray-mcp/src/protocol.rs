@@ -434,7 +434,11 @@ mod tests {
         let response = JsonRpcResponse::success(None, serde_json::json!({}));
 
         let json = serde_json::to_string(&response).unwrap();
-        assert!(json.contains(r#""id":null"#), "id should serialize as null, got: {}", json);
+        assert!(
+            json.contains(r#""id":null"#),
+            "id should serialize as null, got: {}",
+            json
+        );
     }
 
     #[test]
@@ -442,7 +446,11 @@ mod tests {
         let response = JsonRpcResponse::success(Some(RequestId::Number(42)), serde_json::json!({}));
 
         let json = serde_json::to_string(&response).unwrap();
-        assert!(json.contains(r#""id":42"#), "id should serialize as 42, got: {}", json);
+        assert!(
+            json.contains(r#""id":42"#),
+            "id should serialize as 42, got: {}",
+            json
+        );
     }
 
     #[test]
@@ -546,7 +554,9 @@ mod tests {
         let result = InitializeResult {
             protocol_version: MCP_PROTOCOL_VERSION.to_string(),
             capabilities: ServerCapabilities {
-                tools: Some(ToolsCapability { list_changed: false }),
+                tools: Some(ToolsCapability {
+                    list_changed: false,
+                }),
                 resources: None,
                 prompts: None,
                 logging: None,

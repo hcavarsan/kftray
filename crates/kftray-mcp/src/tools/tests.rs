@@ -8,24 +8,53 @@ fn test_get_all_tools_returns_expected_tools() {
     let tools = get_all_tools();
 
     // Check that we have a reasonable number of tools
-    assert!(tools.len() >= 10, "Expected at least 10 tools, got {}", tools.len());
+    assert!(
+        tools.len() >= 10,
+        "Expected at least 10 tools, got {}",
+        tools.len()
+    );
 
     // Check that each tool has a name and description
     for tool in &tools {
         assert!(!tool.name.is_empty(), "Tool name should not be empty");
-        assert!(tool.description.is_some(), "Tool {} should have a description", tool.name);
+        assert!(
+            tool.description.is_some(),
+            "Tool {} should have a description",
+            tool.name
+        );
     }
 
     // Check for specific expected tools
     let tool_names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
 
-    assert!(tool_names.contains(&"list_configs"), "Should have list_configs tool");
-    assert!(tool_names.contains(&"get_config"), "Should have get_config tool");
-    assert!(tool_names.contains(&"create_config"), "Should have create_config tool");
-    assert!(tool_names.contains(&"update_config"), "Should have update_config tool");
-    assert!(tool_names.contains(&"delete_config"), "Should have delete_config tool");
-    assert!(tool_names.contains(&"export_configs"), "Should have export_configs tool");
-    assert!(tool_names.contains(&"import_configs"), "Should have import_configs tool");
+    assert!(
+        tool_names.contains(&"list_configs"),
+        "Should have list_configs tool"
+    );
+    assert!(
+        tool_names.contains(&"get_config"),
+        "Should have get_config tool"
+    );
+    assert!(
+        tool_names.contains(&"create_config"),
+        "Should have create_config tool"
+    );
+    assert!(
+        tool_names.contains(&"update_config"),
+        "Should have update_config tool"
+    );
+    assert!(
+        tool_names.contains(&"delete_config"),
+        "Should have delete_config tool"
+    );
+    assert!(
+        tool_names.contains(&"export_configs"),
+        "Should have export_configs tool"
+    );
+    assert!(
+        tool_names.contains(&"import_configs"),
+        "Should have import_configs tool"
+    );
     assert!(
         tool_names.contains(&"list_active_port_forwards"),
         "Should have list_active_port_forwards tool"
@@ -34,7 +63,10 @@ fn test_get_all_tools_returns_expected_tools() {
         tool_names.contains(&"start_port_forward"),
         "Should have start_port_forward tool"
     );
-    assert!(tool_names.contains(&"stop_port_forward"), "Should have stop_port_forward tool");
+    assert!(
+        tool_names.contains(&"stop_port_forward"),
+        "Should have stop_port_forward tool"
+    );
     assert!(
         tool_names.contains(&"stop_all_port_forwards"),
         "Should have stop_all_port_forwards tool"
@@ -43,10 +75,22 @@ fn test_get_all_tools_returns_expected_tools() {
         tool_names.contains(&"list_kube_contexts"),
         "Should have list_kube_contexts tool"
     );
-    assert!(tool_names.contains(&"list_namespaces"), "Should have list_namespaces tool");
-    assert!(tool_names.contains(&"list_services"), "Should have list_services tool");
-    assert!(tool_names.contains(&"list_pods"), "Should have list_pods tool");
-    assert!(tool_names.contains(&"list_ports"), "Should have list_ports tool");
+    assert!(
+        tool_names.contains(&"list_namespaces"),
+        "Should have list_namespaces tool"
+    );
+    assert!(
+        tool_names.contains(&"list_services"),
+        "Should have list_services tool"
+    );
+    assert!(
+        tool_names.contains(&"list_pods"),
+        "Should have list_pods tool"
+    );
+    assert!(
+        tool_names.contains(&"list_ports"),
+        "Should have list_ports tool"
+    );
 }
 
 #[test]
@@ -74,7 +118,10 @@ fn test_tool_definitions_have_valid_schemas() {
 async fn test_execute_unknown_tool_returns_error() {
     let result = execute_tool("nonexistent_tool", None).await;
 
-    assert!(result.is_error == Some(true), "Unknown tool should return error");
+    assert!(
+        result.is_error == Some(true),
+        "Unknown tool should return error"
+    );
 
     // Check the error message
     if let Some(ToolContent::Text { text }) = result.content.first() {
@@ -92,7 +139,10 @@ async fn test_execute_tool_with_invalid_arguments() {
     // Test get_config with missing config_id
     let result = execute_tool("get_config", None).await;
 
-    assert!(result.is_error == Some(true), "Missing required args should return error");
+    assert!(
+        result.is_error == Some(true),
+        "Missing required args should return error"
+    );
 
     // Test get_config with invalid argument type
     let result = execute_tool(
@@ -101,7 +151,10 @@ async fn test_execute_tool_with_invalid_arguments() {
     )
     .await;
 
-    assert!(result.is_error == Some(true), "Invalid argument type should return error");
+    assert!(
+        result.is_error == Some(true),
+        "Invalid argument type should return error"
+    );
 }
 
 #[tokio::test]
