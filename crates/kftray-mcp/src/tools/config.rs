@@ -292,23 +292,11 @@ impl McpTool for CreateConfigTool {
         };
 
         match kftray_commons::config::insert_config(config).await {
-            Ok(()) => {
-                // Get the newly created config ID
-                let configs = match kftray_commons::config::get_configs().await {
-                    Ok(c) => c,
-                    Err(e) => {
-                        return CallToolResult::error(format!(
-                            "Config created but failed to retrieve ID: {e}"
-                        ));
-                    }
-                };
-
-                let config_id = configs.into_iter().last().and_then(|c| c.id);
-
+            Ok(config_id) => {
                 let response = CreateConfigResponse {
                     success: true,
                     message: "Configuration created successfully".to_string(),
-                    config_id,
+                    config_id: Some(config_id),
                 };
 
                 CallToolResult::json(&response).unwrap_or_else(|e| {

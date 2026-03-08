@@ -310,20 +310,16 @@ impl McpTool for StartPortForwardTool {
                 ingress_annotations: None,
             };
 
-            // Insert the config first
-            if let Err(e) = kftray_commons::config::insert_config(config.clone()).await {
-                return CallToolResult::error(format!("Failed to create config: {e}"));
-            }
-
-            // Get the newly created config
-            let configs = match kftray_commons::config::get_configs().await {
-                Ok(c) => c,
-                Err(e) => return CallToolResult::error(format!("Failed to get configs: {e}")),
+            // Insert the config first and get its ID
+            let inserted_id = match kftray_commons::config::insert_config(config.clone()).await {
+                Ok(id) => id,
+                Err(e) => return CallToolResult::error(format!("Failed to create config: {e}")),
             };
 
-            let new_config = match configs.into_iter().last() {
-                Some(c) => c,
-                None => return CallToolResult::error("Failed to retrieve created config"),
+            // Get the newly created config by ID
+            let new_config = match kftray_commons::config::get_config(inserted_id).await {
+                Ok(c) => c,
+                Err(e) => return CallToolResult::error(format!("Failed to get config: {e}")),
             };
 
             let protocol = new_config.protocol.clone();
@@ -457,11 +453,23 @@ impl McpTool for StopAllPortForwardsTool {
     async fn execute(&self, _arguments: Option<Value>) -> CallToolResult {
         match kftray_portforward::stop_all_port_forward().await {
             Ok(responses) => {
+                let total_count = responses.len();
                 let stopped_count = responses.iter().filter(|r| r.status == 0).count();
+                let failed_count = total_count - stopped_count;
+                let success = failed_count == 0;
+
+                let message = if failed_count > 0 {
+                    format!(
+                        "Stopped {stopped_count} port-forward(s), {failed_count} failed to stop"
+                    )
+                } else {
+                    format!("Stopped {stopped_count} port-forward(s)")
+                };
+
                 let response = StopAllPortForwardsResponse {
-                    success: true,
+                    success,
                     stopped_count,
-                    message: format!("Stopped {stopped_count} port-forward(s)"),
+                    message,
                 };
                 CallToolResult::json(&response).unwrap_or_else(|e| {
                     CallToolResult::error(format!("Failed to serialize response: {e}"))
