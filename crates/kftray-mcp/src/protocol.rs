@@ -45,6 +45,10 @@ pub struct JsonRpcRequest {
 }
 
 /// JSON-RPC Response
+///
+/// Note: The `id` field MUST be included per JSON-RPC 2.0 spec. When `None`,
+/// it serializes as `null` (not omitted). This is required for proper
+/// correlation with requests.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JsonRpcResponse {
     pub jsonrpc: String,
@@ -52,7 +56,7 @@ pub struct JsonRpcResponse {
     pub result: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<JsonRpcError>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// The request ID. Must be included (serializes as `null` if `None`).
     pub id: Option<RequestId>,
 }
 
@@ -362,6 +366,30 @@ mod tests {
     }
 
     #[test]
+    fn test_json_rpc_request_with_string_id() {
+        let json = r#"{
+            "jsonrpc": "2.0",
+            "method": "test",
+            "id": "abc-123"
+        }"#;
+
+        let request: JsonRpcRequest = serde_json::from_str(json).unwrap();
+        assert_eq!(request.id, Some(RequestId::String("abc-123".to_string())));
+    }
+
+    #[test]
+    fn test_json_rpc_request_without_id_is_notification() {
+        let json = r#"{
+            "jsonrpc": "2.0",
+            "method": "notify"
+        }"#;
+
+        let request: JsonRpcRequest = serde_json::from_str(json).unwrap();
+        assert!(request.id.is_none());
+        assert!(request.params.is_none());
+    }
+
+    #[test]
     fn test_json_rpc_response_success() {
         let response = JsonRpcResponse::success(
             Some(RequestId::Number(1)),
@@ -386,6 +414,53 @@ mod tests {
     }
 
     #[test]
+    fn test_json_rpc_response_error_with_data() {
+        let response = JsonRpcResponse::error_with_data(
+            Some(RequestId::Number(1)),
+            error_codes::INVALID_PARAMS,
+            "Invalid params",
+            serde_json::json!({"field": "name", "reason": "required"}),
+        );
+
+        assert!(response.error.is_some());
+        let error = response.error.unwrap();
+        assert_eq!(error.code, error_codes::INVALID_PARAMS);
+        assert!(error.data.is_some());
+    }
+
+    #[test]
+    fn test_json_rpc_response_id_serializes_as_null_when_none() {
+        // JSON-RPC 2.0 spec: id MUST be included, serialized as null when None
+        let response = JsonRpcResponse::success(None, serde_json::json!({}));
+
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains(r#""id":null"#), "id should serialize as null, got: {}", json);
+    }
+
+    #[test]
+    fn test_json_rpc_response_id_serializes_with_number() {
+        let response = JsonRpcResponse::success(Some(RequestId::Number(42)), serde_json::json!({}));
+
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains(r#""id":42"#), "id should serialize as 42, got: {}", json);
+    }
+
+    #[test]
+    fn test_json_rpc_response_id_serializes_with_string() {
+        let response = JsonRpcResponse::success(
+            Some(RequestId::String("req-1".to_string())),
+            serde_json::json!({}),
+        );
+
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(
+            json.contains(r#""id":"req-1""#),
+            "id should serialize as string, got: {}",
+            json
+        );
+    }
+
+    #[test]
     fn test_tool_result_text() {
         let result = CallToolResult::text("Hello, World!");
         assert_eq!(result.content.len(), 1);
@@ -396,5 +471,157 @@ mod tests {
     fn test_tool_result_error() {
         let result = CallToolResult::error("Something went wrong");
         assert_eq!(result.is_error, Some(true));
+    }
+
+    #[test]
+    fn test_tool_result_json() {
+        #[derive(serde::Serialize)]
+        struct TestData {
+            name: String,
+            count: i32,
+        }
+
+        let data = TestData {
+            name: "test".to_string(),
+            count: 42,
+        };
+
+        let result = CallToolResult::json(&data).unwrap();
+        assert_eq!(result.content.len(), 1);
+        assert!(result.is_error.is_none());
+
+        if let ToolContent::Text { text } = &result.content[0] {
+            assert!(text.contains("\"name\""));
+            assert!(text.contains("\"test\""));
+            assert!(text.contains("42"));
+        } else {
+            panic!("Expected text content");
+        }
+    }
+
+    #[test]
+    fn test_tool_new() {
+        let tool = Tool::new("my_tool", "A test tool");
+        assert_eq!(tool.name, "my_tool");
+        assert_eq!(tool.description, Some("A test tool".to_string()));
+        assert_eq!(tool.input_schema.schema_type, "object");
+        assert!(tool.input_schema.required.is_none());
+    }
+
+    #[test]
+    fn test_tool_with_schema() {
+        let tool = Tool::with_schema(
+            "create_item",
+            "Create a new item",
+            serde_json::json!({
+                "name": { "type": "string" },
+                "count": { "type": "integer" }
+            }),
+            Some(vec!["name".to_string()]),
+        );
+
+        assert_eq!(tool.name, "create_item");
+        assert!(tool.input_schema.properties.is_some());
+        assert_eq!(tool.input_schema.required, Some(vec!["name".to_string()]));
+    }
+
+    #[test]
+    fn test_initialize_params_parsing() {
+        let json = r#"{
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": {
+                "name": "test-client",
+                "version": "1.0.0"
+            }
+        }"#;
+
+        let params: InitializeParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.protocol_version, "2024-11-05");
+        assert_eq!(params.client_info.name, "test-client");
+    }
+
+    #[test]
+    fn test_initialize_result_serialization() {
+        let result = InitializeResult {
+            protocol_version: MCP_PROTOCOL_VERSION.to_string(),
+            capabilities: ServerCapabilities {
+                tools: Some(ToolsCapability { list_changed: false }),
+                resources: None,
+                prompts: None,
+                logging: None,
+                experimental: None,
+            },
+            server_info: ServerInfo {
+                name: SERVER_NAME.to_string(),
+                version: SERVER_VERSION.to_string(),
+            },
+        };
+
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("protocolVersion"));
+        assert!(json.contains("serverInfo"));
+        assert!(json.contains("capabilities"));
+    }
+
+    #[test]
+    fn test_list_tools_result_serialization() {
+        let result = ListToolsResult {
+            tools: vec![Tool::new("test", "Test tool")],
+            next_cursor: None,
+        };
+
+        let json = serde_json::to_string(&result).unwrap();
+        assert!(json.contains("tools"));
+        assert!(!json.contains("nextCursor")); // should be skipped when None
+    }
+
+    #[test]
+    fn test_call_tool_params_parsing() {
+        let json = r#"{
+            "name": "list_configs",
+            "arguments": {"filter": "active"}
+        }"#;
+
+        let params: CallToolParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.name, "list_configs");
+        assert!(params.arguments.is_some());
+    }
+
+    #[test]
+    fn test_call_tool_params_without_arguments() {
+        let json = r#"{"name": "list_all"}"#;
+
+        let params: CallToolParams = serde_json::from_str(json).unwrap();
+        assert_eq!(params.name, "list_all");
+        assert!(params.arguments.is_none());
+    }
+
+    #[test]
+    fn test_tool_content_text_serialization() {
+        let content = ToolContent::Text {
+            text: "Hello".to_string(),
+        };
+
+        let json = serde_json::to_string(&content).unwrap();
+        assert!(json.contains(r#""type":"text""#));
+        assert!(json.contains(r#""text":"Hello""#));
+    }
+
+    #[test]
+    fn test_error_codes_values() {
+        assert_eq!(error_codes::PARSE_ERROR, -32700);
+        assert_eq!(error_codes::INVALID_REQUEST, -32600);
+        assert_eq!(error_codes::METHOD_NOT_FOUND, -32601);
+        assert_eq!(error_codes::INVALID_PARAMS, -32602);
+        assert_eq!(error_codes::INTERNAL_ERROR, -32603);
+    }
+
+    #[test]
+    fn test_constants() {
+        assert_eq!(JSONRPC_VERSION, "2.0");
+        assert_eq!(MCP_PROTOCOL_VERSION, "2024-11-05");
+        assert_eq!(SERVER_NAME, "kftray-mcp");
+        assert!(!SERVER_VERSION.is_empty());
     }
 }

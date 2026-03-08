@@ -521,8 +521,13 @@ impl McpTool for DeleteConfigTool {
             None => return CallToolResult::error("Missing required argument: config_id"),
         };
 
-        // Try to stop if running (ignore errors)
-        let _ = kftray_portforward::stop_port_forward(args.config_id.to_string()).await;
+        // Try to stop if running (log errors but proceed with deletion)
+        if let Err(e) = kftray_portforward::stop_port_forward(args.config_id.to_string()).await {
+            log::debug!(
+                "Failed to stop port-forward for config {} before deletion: {e}",
+                args.config_id
+            );
+        }
 
         match kftray_commons::config::delete_config(args.config_id).await {
             Ok(()) => {

@@ -7,6 +7,9 @@ pub mod config;
 pub mod kubernetes;
 pub mod portforward;
 
+#[cfg(test)]
+mod tests;
+
 use serde_json::Value;
 
 use crate::protocol::{

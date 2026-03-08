@@ -335,6 +335,18 @@ impl McpTool for StartPortForwardTool {
             match result {
                 Ok(responses) => {
                     if let Some(resp) = responses.first() {
+                        // If the port-forward failed to start, clean up the config
+                        if resp.status != 0 {
+                            if let Err(del_err) =
+                                kftray_commons::config::delete_config(inserted_id).await
+                            {
+                                log::debug!(
+                                    "Failed to clean up config {} after port-forward failure: {del_err}",
+                                    inserted_id
+                                );
+                            }
+                        }
+
                         let response = StartPortForwardResponse {
                             success: resp.status == 0,
                             message: if resp.status == 0 {
@@ -345,7 +357,7 @@ impl McpTool for StartPortForwardTool {
                             } else {
                                 resp.stderr.clone()
                             },
-                            config_id,
+                            config_id: if resp.status == 0 { config_id } else { None },
                             local_port: Some(resp.local_port),
                             remote_port: Some(resp.remote_port),
                         };
@@ -353,10 +365,28 @@ impl McpTool for StartPortForwardTool {
                             CallToolResult::error(format!("Failed to serialize response: {e}"))
                         })
                     } else {
+                        // No response - clean up the config
+                        if let Err(del_err) =
+                            kftray_commons::config::delete_config(inserted_id).await
+                        {
+                            log::debug!(
+                                "Failed to clean up config {} after empty response: {del_err}",
+                                inserted_id
+                            );
+                        }
                         CallToolResult::error("No response received from port-forward")
                     }
                 }
-                Err(e) => CallToolResult::error(format!("Failed to start port-forward: {e}")),
+                Err(e) => {
+                    // Clean up the config on failure
+                    if let Err(del_err) = kftray_commons::config::delete_config(inserted_id).await {
+                        log::debug!(
+                            "Failed to clean up config {} after error: {del_err}",
+                            inserted_id
+                        );
+                    }
+                    CallToolResult::error(format!("Failed to start port-forward: {e}"))
+                }
             }
         }
     }
