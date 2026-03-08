@@ -27,70 +27,32 @@ fn test_get_all_tools_returns_expected_tools() {
     // Check for specific expected tools
     let tool_names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
 
-    assert!(
-        tool_names.contains(&"list_configs"),
-        "Should have list_configs tool"
-    );
-    assert!(
-        tool_names.contains(&"get_config"),
-        "Should have get_config tool"
-    );
-    assert!(
-        tool_names.contains(&"create_config"),
-        "Should have create_config tool"
-    );
-    assert!(
-        tool_names.contains(&"update_config"),
-        "Should have update_config tool"
-    );
-    assert!(
-        tool_names.contains(&"delete_config"),
-        "Should have delete_config tool"
-    );
-    assert!(
-        tool_names.contains(&"export_configs"),
-        "Should have export_configs tool"
-    );
-    assert!(
-        tool_names.contains(&"import_configs"),
-        "Should have import_configs tool"
-    );
-    assert!(
-        tool_names.contains(&"list_active_port_forwards"),
-        "Should have list_active_port_forwards tool"
-    );
-    assert!(
-        tool_names.contains(&"start_port_forward"),
-        "Should have start_port_forward tool"
-    );
-    assert!(
-        tool_names.contains(&"stop_port_forward"),
-        "Should have stop_port_forward tool"
-    );
-    assert!(
-        tool_names.contains(&"stop_all_port_forwards"),
-        "Should have stop_all_port_forwards tool"
-    );
-    assert!(
-        tool_names.contains(&"list_kube_contexts"),
-        "Should have list_kube_contexts tool"
-    );
-    assert!(
-        tool_names.contains(&"list_namespaces"),
-        "Should have list_namespaces tool"
-    );
-    assert!(
-        tool_names.contains(&"list_services"),
-        "Should have list_services tool"
-    );
-    assert!(
-        tool_names.contains(&"list_pods"),
-        "Should have list_pods tool"
-    );
-    assert!(
-        tool_names.contains(&"list_ports"),
-        "Should have list_ports tool"
-    );
+    let expected_tools = [
+        "list_configs",
+        "get_config",
+        "create_config",
+        "update_config",
+        "delete_config",
+        "export_configs",
+        "import_configs",
+        "list_active_port_forwards",
+        "start_port_forward",
+        "stop_port_forward",
+        "stop_all_port_forwards",
+        "list_kube_contexts",
+        "list_namespaces",
+        "list_services",
+        "list_pods",
+        "list_ports",
+    ];
+
+    for expected in expected_tools {
+        assert!(
+            tool_names.contains(&expected),
+            "Should have {} tool",
+            expected
+        );
+    }
 }
 
 #[test]
@@ -377,6 +339,13 @@ async fn test_list_services_missing_required() {
     let result = execute_tool("list_services", None).await;
 
     assert!(result.is_error == Some(true));
+    if let Some(ToolContent::Text { text }) = result.content.first() {
+        assert!(
+            text.contains("context") || text.contains("namespace"),
+            "Error should mention missing required field, got: {}",
+            text
+        );
+    }
 }
 
 #[tokio::test]
@@ -384,6 +353,13 @@ async fn test_list_pods_missing_required() {
     let result = execute_tool("list_pods", None).await;
 
     assert!(result.is_error == Some(true));
+    if let Some(ToolContent::Text { text }) = result.content.first() {
+        assert!(
+            text.contains("context") || text.contains("namespace"),
+            "Error should mention missing required field, got: {}",
+            text
+        );
+    }
 }
 
 #[tokio::test]
@@ -391,4 +367,11 @@ async fn test_list_ports_missing_required() {
     let result = execute_tool("list_ports", None).await;
 
     assert!(result.is_error == Some(true));
+    if let Some(ToolContent::Text { text }) = result.content.first() {
+        assert!(
+            text.contains("context") || text.contains("namespace") || text.contains("service"),
+            "Error should mention missing required field, got: {}",
+            text
+        );
+    }
 }

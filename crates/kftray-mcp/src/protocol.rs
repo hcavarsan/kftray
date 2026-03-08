@@ -38,7 +38,7 @@ pub enum RequestId {
 pub struct JsonRpcRequest {
     pub jsonrpc: String,
     pub method: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub params: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<RequestId>,
@@ -74,7 +74,7 @@ pub struct JsonRpcError {
 pub struct JsonRpcNotification {
     pub jsonrpc: String,
     pub method: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub params: Option<Value>,
 }
 
@@ -200,6 +200,7 @@ pub struct ToolInputSchema {
 
 /// List tools response
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ListToolsResult {
     pub tools: Vec<Tool>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -210,7 +211,7 @@ pub struct ListToolsResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CallToolParams {
     pub name: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub arguments: Option<Value>,
 }
 
@@ -633,5 +634,87 @@ mod tests {
         assert_eq!(MCP_PROTOCOL_VERSION, "2024-11-05");
         assert_eq!(SERVER_NAME, "kftray-mcp");
         assert!(!SERVER_VERSION.is_empty());
+    }
+
+    // Wire-format tests to ensure correct MCP key casing
+
+    #[test]
+    fn test_roots_capability_serializes_camel_case() {
+        let roots = RootsCapability { list_changed: true };
+        let value = serde_json::to_value(&roots).unwrap();
+        assert_eq!(
+            value.get("listChanged").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert!(value.get("list_changed").is_none());
+    }
+
+    #[test]
+    fn test_tools_capability_serializes_camel_case() {
+        let tools = ToolsCapability { list_changed: true };
+        let value = serde_json::to_value(&tools).unwrap();
+        assert_eq!(
+            value.get("listChanged").and_then(|v| v.as_bool()),
+            Some(true)
+        );
+        assert!(value.get("list_changed").is_none());
+    }
+
+    #[test]
+    fn test_tool_content_image_serializes_mime_type_camel_case() {
+        let content = ToolContent::Image {
+            data: "abc".to_string(),
+            mime_type: "image/png".to_string(),
+        };
+        let value = serde_json::to_value(&content).unwrap();
+        assert_eq!(
+            value.get("mimeType").and_then(|v| v.as_str()),
+            Some("image/png")
+        );
+        assert!(value.get("mime_type").is_none());
+    }
+
+    #[test]
+    fn test_list_tools_result_next_cursor_camel_case() {
+        let result = ListToolsResult {
+            tools: vec![],
+            next_cursor: Some("cursor123".to_string()),
+        };
+        let value = serde_json::to_value(&result).unwrap();
+        assert_eq!(
+            value.get("nextCursor").and_then(|v| v.as_str()),
+            Some("cursor123")
+        );
+        assert!(value.get("next_cursor").is_none());
+    }
+
+    #[test]
+    fn test_params_omitted_when_none() {
+        let request = JsonRpcRequest {
+            jsonrpc: JSONRPC_VERSION.to_string(),
+            method: "test".to_string(),
+            params: None,
+            id: Some(RequestId::Number(1)),
+        };
+        let json = serde_json::to_string(&request).unwrap();
+        assert!(
+            !json.contains("params"),
+            "params should be omitted when None, got: {}",
+            json
+        );
+    }
+
+    #[test]
+    fn test_arguments_omitted_when_none() {
+        let params = CallToolParams {
+            name: "test".to_string(),
+            arguments: None,
+        };
+        let json = serde_json::to_string(&params).unwrap();
+        assert!(
+            !json.contains("arguments"),
+            "arguments should be omitted when None, got: {}",
+            json
+        );
     }
 }
