@@ -3388,6 +3388,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "kftray-mcp"
+version = "0.27.27"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bytes",
+ "clap",
+ "env_logger",
+ "futures",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "k8s-openapi",
+ "kftray-commons",
+ "kftray-portforward",
+ "kube",
+ "log",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "uuid",
+]
+
+[[package]]
 name = "kftray-network-monitor"
 version = "0.27.27"
 dependencies = [
@@ -3518,6 +3545,7 @@ dependencies = [
  "keyring",
  "kftray-commons",
  "kftray-helper",
+ "kftray-mcp",
  "kftray-network-monitor",
  "kftray-portforward",
  "kftray-shortcuts",

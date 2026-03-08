@@ -1,0 +1,38 @@
+[package]
+name = "kftray-mcp"
+version = "0.27.27"
+authors = ["Henrique Cavarsan <hencavarsan@gmail.com>", "Filipe Andujar <filipeandujar@gmail.com>"]
+edition = "2024"
+description = "KFtray MCP (Model Context Protocol) server for LLM integration"
+homepage = "https://kftray.app"
+repository = "https://github.com/hcavarsan/kftray"
+license = "GPL-3.0"
+
+[[bin]]
+name = "kftray-mcp"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+bytes = { workspace = true }
+clap = { workspace = true }
+env_logger = { workspace = true }
+futures = { workspace = true }
+http = { workspace = true }
+http-body-util = { workspace = true }
+hyper = { workspace = true, features = ["server", "http1"] }
+hyper-util = { workspace = true, features = ["server", "tokio"] }
+k8s-openapi = { workspace = true }
+kftray-commons = { workspace = true }
+kube = { workspace = true }
+kftray-portforward = { workspace = true }
+log = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
