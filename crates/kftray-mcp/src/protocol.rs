@@ -214,13 +214,17 @@ pub struct CallToolParams {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum ToolContent {
-    Text { text: String },
+    Text {
+        text: String,
+    },
     Image {
         data: String,
         #[serde(rename = "mimeType")]
         mime_type: String,
     },
-    Resource { resource: Value },
+    Resource {
+        resource: Value,
+    },
 }
 
 /// Call tool response
