@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM rust:alpine@sha256:4fec02de605563c297c78a31064c8335bc004fa2b0bf406b1b99441da64e2d2d AS builder
+FROM rust:alpine@sha256:ff0adc35894eb79586ce752a1b5a9eadc88b938c56d8f2b4b537b6258ff3fa10 AS builder
 
 ARG TARGETARCH
 
