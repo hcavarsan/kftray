@@ -28,10 +28,10 @@ jobs:
           - fuzz_config_import
     steps:
       - name: Checkout repository
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8
+        uses: actions/checkout@0c366fd6a839edf440554fa01a7085ccba70ac98
 
       - name: Install Rust nightly
-        uses: dtolnay/rust-toolchain@881ba7bf39a41cda34ac9e123fb41b44ed08232f
+        uses: dtolnay/rust-toolchain@efa25f7f19611383d5b0ccf2d1c8914531636bf9
         with:
           toolchain: nightly
 
@@ -39,7 +39,7 @@ jobs:
         run: cargo install cargo-fuzz --version 0.13.1 --locked
 
       - name: Cache cargo registry
-        uses: actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb
+        uses: actions/cache@565629816435f6c0b50676926c9b05c254113c0c
         with:
           path: |
             ~/.cargo/registry
