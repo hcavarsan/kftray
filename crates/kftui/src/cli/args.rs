@@ -182,6 +182,7 @@ impl Cli {
             (self.github_url.is_some(), "--github-url"),
             (self.json.is_some(), "--json"),
             (self.stdin, "--stdin"),
+            (self.auto_discover, "--auto-discover"),
         ];
 
         let active_sources: Vec<&str> = sources
