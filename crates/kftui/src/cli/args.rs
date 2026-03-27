@@ -24,7 +24,7 @@ pub struct Cli {
     #[arg(
         short = 's',
         long,
-        help = "Save configs to SQLite database (requires --configs-path or --github-url)"
+        help = "Save configs to SQLite database (requires a config source: --configs-path, --github-url, --json, --stdin, or --auto-discover)"
     )]
     pub save: bool,
 

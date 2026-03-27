@@ -167,10 +167,6 @@ impl ConfigImporter {
             .await
             .map_err(|e| format!("Failed to save discovered configs to database: {e}"))?;
 
-        if cli.non_interactive {
-            println!("Discovered and imported {count} configuration(s) from annotations");
-        }
-
         Ok(())
     }
 
