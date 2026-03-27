@@ -156,18 +156,20 @@ impl Cli {
             return Err("--context requires --auto-discover".to_string());
         }
 
-        if self.non_interactive && !self.auto_start && !self.save && !self.has_config_source() {
-            return Err(
-                "--non-interactive requires either --auto-start, --save, or --auto-discover to perform an action"
-                    .to_string(),
-            );
-        }
+        if self.non_interactive {
+            if !self.auto_start && !self.save {
+                return Err(
+                    "--non-interactive requires either --auto-start or --save to perform an action"
+                        .to_string(),
+                );
+            }
 
-        if self.non_interactive && self.save && !self.auto_start && !self.has_config_source() {
-            return Err(
-                "--non-interactive with --save requires a config source: --configs-path, --github-url, --json, --stdin, or --auto-discover"
-                    .to_string(),
-            );
+            if self.save && !self.auto_start && !self.has_config_source() {
+                return Err(
+                    "--non-interactive with --save requires a config source: --configs-path, --github-url, --json, --stdin, or --auto-discover"
+                        .to_string(),
+                );
+            }
         }
 
         self.validate_single_config_source()
