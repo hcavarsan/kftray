@@ -24,7 +24,7 @@ pub struct Cli {
     #[arg(
         short = 's',
         long,
-        help = "Save configs to SQLite database (requires --configs-path or --github-url)"
+        help = "Save configs to SQLite database (requires a config source: --configs-path, --github-url, --json, --stdin, or --auto-discover)"
     )]
     pub save: bool,
 
@@ -59,6 +59,38 @@ pub struct Cli {
 
     #[arg(long, help = "Enable SSL/TLS for port forwarding (overrides settings)")]
     pub ssl: bool,
+
+    #[arg(
+        long,
+        help = "Run annotation-based discovery to import configs from Kubernetes services"
+    )]
+    pub auto_discover: bool,
+
+    #[arg(
+        long,
+        help = "Kubernetes context to use for auto-discovery (requires --auto-discover)",
+        value_name = "NAME"
+    )]
+    pub context: Option<String>,
+
+    #[arg(
+        long,
+        help = "Path to kubeconfig file for auto-discovery (default: system default)",
+        value_name = "PATH"
+    )]
+    pub kubeconfig: Option<String>,
+
+    #[arg(
+        long,
+        help = "Enable alias-as-domain for all discovered configs (requires --auto-discover)"
+    )]
+    pub alias_as_domain: bool,
+
+    #[arg(
+        long,
+        help = "Enable auto loopback address for all discovered configs (requires --auto-discover)"
+    )]
+    pub auto_loopback: bool,
 }
 
 impl Cli {
@@ -75,6 +107,7 @@ impl Cli {
             || self.github_url.is_some()
             || self.json.is_some()
             || self.stdin
+            || self.auto_discover
     }
 
     pub fn get_config_path(&self) -> Option<&str> {
@@ -98,9 +131,29 @@ impl Cli {
     pub fn validate(&self) -> Result<(), String> {
         if self.save && !self.has_config_source() {
             return Err(
-                "--save requires either --configs-path, --github-url, --json, or --stdin"
+                "--save requires either --configs-path, --github-url, --json, --stdin, or --auto-discover"
                     .to_string(),
             );
+        }
+
+        if self.auto_discover && self.context.is_none() {
+            return Err("--auto-discover requires --context".to_string());
+        }
+
+        if self.alias_as_domain && !self.auto_discover {
+            return Err("--alias-as-domain requires --auto-discover".to_string());
+        }
+
+        if self.auto_loopback && !self.auto_discover {
+            return Err("--auto-loopback requires --auto-discover".to_string());
+        }
+
+        if self.kubeconfig.is_some() && !self.auto_discover {
+            return Err("--kubeconfig requires --auto-discover".to_string());
+        }
+
+        if self.context.is_some() && !self.auto_discover {
+            return Err("--context requires --auto-discover".to_string());
         }
 
         if self.non_interactive {
@@ -113,7 +166,7 @@ impl Cli {
 
             if self.save && !self.auto_start && !self.has_config_source() {
                 return Err(
-                    "--non-interactive with --save requires a config source: --configs-path, --github-url, --json, or --stdin"
+                    "--non-interactive with --save requires a config source: --configs-path, --github-url, --json, --stdin, or --auto-discover"
                         .to_string(),
                 );
             }
@@ -131,6 +184,7 @@ impl Cli {
             (self.github_url.is_some(), "--github-url"),
             (self.json.is_some(), "--json"),
             (self.stdin, "--stdin"),
+            (self.auto_discover, "--auto-discover"),
         ];
 
         let active_sources: Vec<&str> = sources

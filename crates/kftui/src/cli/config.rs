@@ -1,12 +1,18 @@
 use std::fs;
 
-use kftray_commons::utils::config::import_configs_with_mode;
+use kftray_commons::utils::config::{
+    import_configs_with_mode,
+    upsert_configs_with_mode,
+};
 use kftray_commons::utils::db_mode::DatabaseMode;
 use kftray_commons::utils::github::{
     GitHubConfig,
     GitHubRepository,
 };
-use kftray_portforward::kube::stop_all_port_forward_with_mode;
+use kftray_portforward::kube::{
+    retrieve_service_configs,
+    stop_all_port_forward_with_mode,
+};
 
 use crate::cli::args::Cli;
 use crate::stdin;
@@ -53,7 +59,14 @@ impl ConfigImporter {
 
         let (mode_text, location_text) = Self::get_mode_text(mode);
 
-        if cli.is_github_import() {
+        if cli.auto_discover {
+            println!(
+                "{} configurations from Kubernetes annotations (context: {}) {}",
+                mode_text,
+                cli.context.as_deref().unwrap(),
+                location_text
+            );
+        } else if cli.is_github_import() {
             println!(
                 "{} configurations from GitHub: {} {}",
                 mode_text,
@@ -99,7 +112,9 @@ impl ConfigImporter {
     }
 
     fn get_source_description(cli: &Cli) -> &'static str {
-        if cli.is_github_import() {
+        if cli.auto_discover {
+            "annotations"
+        } else if cli.is_github_import() {
             "GitHub"
         } else if cli.get_config_path().is_some() {
             "file"
@@ -113,7 +128,9 @@ impl ConfigImporter {
     }
 
     async fn import_from_source(cli: &Cli, mode: DatabaseMode) -> Result<(), String> {
-        if cli.is_github_import() {
+        if cli.auto_discover {
+            Self::import_from_annotations(cli, mode).await
+        } else if cli.is_github_import() {
             Self::import_from_github(cli, mode).await
         } else if let Some(config_path) = cli.get_config_path() {
             Self::import_from_file(config_path, mode).await
@@ -124,6 +141,33 @@ impl ConfigImporter {
         } else {
             Err("No config source specified".to_string())
         }
+    }
+
+    async fn import_from_annotations(cli: &Cli, mode: DatabaseMode) -> Result<(), String> {
+        let context = cli.context.as_deref().unwrap();
+
+        if cli.non_interactive {
+            println!("Discovering annotated services from context: {context}");
+        }
+
+        let mut configs = retrieve_service_configs(context, cli.kubeconfig.clone())
+            .await
+            .map_err(|e| {
+                format!("Failed to retrieve annotated services from context '{context}': {e}")
+            })?;
+
+        for config in &mut configs {
+            config.domain_enabled = Some(cli.alias_as_domain);
+            config.auto_loopback_address = cli.auto_loopback;
+        }
+
+        let count = configs.len();
+
+        upsert_configs_with_mode(configs, mode)
+            .await
+            .map_err(|e| format!("Failed to save discovered configs to database: {e}"))?;
+
+        Ok(())
     }
 
     async fn import_from_github(cli: &Cli, mode: DatabaseMode) -> Result<(), String> {

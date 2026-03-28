@@ -79,6 +79,11 @@ echo '[{"alias":"api",...}]' | kftui --stdin
 **`--flush`**: Clear existing configurations before importing new ones
 **`--auto-start`**: Start all port-forwards immediately after loading
 **`--non-interactive`**: Run without the interface for automation scripts
+**`--auto-discover`**: Discover services from Kubernetes annotations (requires `--context`)
+**`--context <NAME>`**: Kubernetes context to use for auto-discovery
+**`--kubeconfig <PATH>`**: Path to kubeconfig file for auto-discovery (default: system default)
+**`--alias-as-domain`**: Enable alias-as-domain for all discovered configs
+**`--auto-loopback`**: Enable auto loopback address for all discovered configs
 
 ## Service Auto-Discovery
 
@@ -108,7 +113,43 @@ spec:
 
 The annotation format is `alias-local_port-remote_port`. Multiple configurations are separated by commas.
 
-To use auto-discovery, navigate to the top menu in kftui and select "Auto Add". Choose your Kubernetes context from the available options, and kftui will create configurations for all annotated services in that context.
+### Auto-Discovery via TUI
+
+To use auto-discovery interactively, navigate to the top menu in kftui and select "Auto Add". Choose your Kubernetes context from the available options, and kftui will create configurations for all annotated services in that context.
+
+### Headless Auto-Discovery
+
+Auto-discovery can also run without the TUI, which is useful for scripted or CI environments where services already carry `kftray.app/configs` annotations:
+
+```bash
+kftui --auto-discover --context my-cluster --auto-start --non-interactive
+```
+
+This single command discovers all annotated services in the given context, starts port-forwards for each of them, and keeps them running until `Ctrl+C`.
+
+To also write the discovered configs to the database for later use:
+
+```bash
+kftui --auto-discover --context my-cluster --save
+```
+
+Enable alias-as-domain and auto loopback address for all discovered services:
+
+```bash
+kftui \
+  --auto-discover \
+  --context my-cluster \
+  --alias-as-domain \
+  --auto-loopback \
+  --auto-start \
+  --non-interactive
+```
+
+Use a custom kubeconfig file:
+
+```bash
+kftui --auto-discover --context my-cluster --kubeconfig /path/to/kubeconfig --auto-start --non-interactive
+```
 
 ## Interface Organization
 
