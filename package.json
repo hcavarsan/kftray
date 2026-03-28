@@ -35,14 +35,14 @@
       }
     },
     "overrides": {
-      "@codecov/vite-plugin>vite": "^8.0.0",
-      "undici": "^7.22.0"
+      "@codecov/vite-plugin>vite": "^8.0.3",
+      "undici": "^7.24.6"
     }
   },
   "devDependencies": {
     "@codecov/vite-plugin": "1.9.1",
-    "@eslint/eslintrc": "^3.3.3",
+    "@eslint/eslintrc": "^3.3.5",
     "@eslint/js": "^10.0.1",
-    "@tauri-apps/cli": "^2.10.0"
+    "@tauri-apps/cli": "^2.10.1"
   }
 }

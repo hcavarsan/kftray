@@ -198,7 +198,7 @@ pub async fn read_configs_with_pool(pool: &SqlitePool) -> Result<Vec<Config>, St
         .await
         .map_err(|e| e.to_string())?;
 
-    let config_results: Vec<Result<Config, String>> = futures::stream::iter(rows.into_iter())
+    let config_results: Vec<Result<Config, String>> = futures::stream::iter(rows)
         .map(|row| {
             let id: Result<i64, String> = row.try_get("id").map_err(|e| e.to_string());
             let data: Result<String, String> = row.try_get("data").map_err(|e| e.to_string());

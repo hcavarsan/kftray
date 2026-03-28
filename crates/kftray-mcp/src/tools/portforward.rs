@@ -336,15 +336,14 @@ impl McpTool for StartPortForwardTool {
                 Ok(responses) => {
                     if let Some(resp) = responses.first() {
                         // If the port-forward failed to start, clean up the config
-                        if resp.status != 0 {
-                            if let Err(del_err) =
+                        if resp.status != 0
+                            && let Err(del_err) =
                                 kftray_commons::config::delete_config(inserted_id).await
-                            {
-                                log::debug!(
-                                    "Failed to clean up config {} after port-forward failure: {del_err}",
-                                    inserted_id
-                                );
-                            }
+                        {
+                            log::debug!(
+                                "Failed to clean up config {} after port-forward failure: {del_err}",
+                                inserted_id
+                            );
                         }
 
                         let response = StartPortForwardResponse {
