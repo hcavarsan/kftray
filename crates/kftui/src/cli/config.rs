@@ -161,7 +161,7 @@ impl ConfigImporter {
             config.auto_loopback_address = cli.auto_loopback;
         }
 
-        let count = configs.len();
+        let _count = configs.len();
 
         upsert_configs_with_mode(configs, mode)
             .await

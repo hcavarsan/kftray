@@ -515,7 +515,7 @@ impl McpTool for ListPortsTool {
                                 }
 
                                 // Deduplicate ports
-                                ports.sort_by(|a, b| a.port.cmp(&b.port));
+                                ports.sort_by_key(|a| a.port);
                                 ports.dedup_by(|a, b| a.port == b.port && a.name == b.name);
 
                                 let response = PortsResponse { ports };

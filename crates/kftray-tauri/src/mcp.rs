@@ -108,17 +108,6 @@ pub async fn stop() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     Ok(())
 }
 
-/// Get the current port the MCP server is running on, if any
-pub async fn get_running_port() -> Option<u16> {
-    let state = MCP_SERVER.read().await;
-    if let Some(ref server) = *state
-        && !server.handle.is_finished()
-    {
-        return Some(server.port);
-    }
-    None
-}
-
 /// Initialize the MCP server based on saved settings
 /// Call this during app startup
 pub async fn init_from_settings() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -149,8 +138,8 @@ pub async fn health_check(port: u16) -> bool {
 
     let addr = format!("127.0.0.1:{}", port);
 
-    match timeout(Duration::from_secs(2), TcpStream::connect(&addr)).await {
-        Ok(Ok(_)) => true,
-        _ => false,
-    }
+    matches!(
+        timeout(Duration::from_secs(2), TcpStream::connect(&addr)).await,
+        Ok(Ok(_))
+    )
 }

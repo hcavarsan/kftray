@@ -29,31 +29,27 @@ pub trait McpTool: Send + Sync {
 
 /// Get all available tools
 pub fn get_all_tools() -> Vec<Tool> {
-    let mut tools = vec![];
-
-    // Kubernetes discovery tools
-    tools.push(kubernetes::ListKubeContextsTool.definition());
-    tools.push(kubernetes::ListNamespacesTool.definition());
-    tools.push(kubernetes::ListServicesTool.definition());
-    tools.push(kubernetes::ListPodsTool.definition());
-    tools.push(kubernetes::ListPortsTool.definition());
-
-    // Port-forward management tools
-    tools.push(portforward::ListActivePortForwardsTool.definition());
-    tools.push(portforward::StartPortForwardTool.definition());
-    tools.push(portforward::StopPortForwardTool.definition());
-    tools.push(portforward::StopAllPortForwardsTool.definition());
-
-    // Configuration management tools
-    tools.push(config::ListConfigsTool.definition());
-    tools.push(config::GetConfigTool.definition());
-    tools.push(config::CreateConfigTool.definition());
-    tools.push(config::UpdateConfigTool.definition());
-    tools.push(config::DeleteConfigTool.definition());
-    tools.push(config::ExportConfigsTool.definition());
-    tools.push(config::ImportConfigsTool.definition());
-
-    tools
+    vec![
+        // Kubernetes discovery tools
+        kubernetes::ListKubeContextsTool.definition(),
+        kubernetes::ListNamespacesTool.definition(),
+        kubernetes::ListServicesTool.definition(),
+        kubernetes::ListPodsTool.definition(),
+        kubernetes::ListPortsTool.definition(),
+        // Port-forward management tools
+        portforward::ListActivePortForwardsTool.definition(),
+        portforward::StartPortForwardTool.definition(),
+        portforward::StopPortForwardTool.definition(),
+        portforward::StopAllPortForwardsTool.definition(),
+        // Configuration management tools
+        config::ListConfigsTool.definition(),
+        config::GetConfigTool.definition(),
+        config::CreateConfigTool.definition(),
+        config::UpdateConfigTool.definition(),
+        config::DeleteConfigTool.definition(),
+        config::ExportConfigsTool.definition(),
+        config::ImportConfigsTool.definition(),
+    ]
 }
 
 /// Execute a tool by name

@@ -1055,16 +1055,8 @@ pub async fn handle_menu_input(app: &mut App, key: KeyCode, mode: DatabaseMode) 
     }
 
     match key {
-        KeyCode::Left => {
-            if app.selected_menu_item > 0 {
-                app.selected_menu_item -= 1
-            }
-        }
-        KeyCode::Right => {
-            if app.selected_menu_item < 6 {
-                app.selected_menu_item += 1
-            }
-        }
+        KeyCode::Left if app.selected_menu_item > 0 => app.selected_menu_item -= 1,
+        KeyCode::Right if app.selected_menu_item < 6 => app.selected_menu_item += 1,
         KeyCode::Down => {
             app.active_component = ActiveComponent::SearchBar;
             app.search_focused = true;
@@ -1629,15 +1621,11 @@ pub async fn handle_settings_input(
             app.state = AppState::Normal;
             app.settings_editing = false;
         }
-        KeyCode::Up => {
-            if app.settings_selected_option > 0 {
-                app.settings_selected_option -= 1;
-            }
+        KeyCode::Up if app.settings_selected_option > 0 => {
+            app.settings_selected_option -= 1;
         }
-        KeyCode::Down => {
-            if app.settings_selected_option < 4 {
-                app.settings_selected_option += 1;
-            }
+        KeyCode::Down if app.settings_selected_option < 4 => {
+            app.settings_selected_option += 1;
         }
         KeyCode::Enter => {
             match app.settings_selected_option {
@@ -1844,28 +1832,22 @@ pub async fn handle_settings_input(
                 _ => {}
             }
         }
-        KeyCode::Char(c) => {
-            if app.settings_editing && c.is_ascii_digit() {
-                match app.settings_selected_option {
-                    1 => app.settings_timeout_input.push(c),
-                    4 => app.settings_ssl_cert_validity_input.push(c),
-                    _ => {}
-                }
+        KeyCode::Char(c) if app.settings_editing && c.is_ascii_digit() => {
+            match app.settings_selected_option {
+                1 => app.settings_timeout_input.push(c),
+                4 => app.settings_ssl_cert_validity_input.push(c),
+                _ => {}
             }
         }
-        KeyCode::Backspace => {
-            if app.settings_editing {
-                match app.settings_selected_option {
-                    1 => {
-                        app.settings_timeout_input.pop();
-                    }
-                    4 => {
-                        app.settings_ssl_cert_validity_input.pop();
-                    }
-                    _ => {}
-                }
+        KeyCode::Backspace if app.settings_editing => match app.settings_selected_option {
+            1 => {
+                app.settings_timeout_input.pop();
             }
-        }
+            4 => {
+                app.settings_ssl_cert_validity_input.pop();
+            }
+            _ => {}
+        },
         _ => {}
     }
     Ok(())
@@ -2278,15 +2260,11 @@ async fn handle_http_logs_config_input(
         },
         KeyCode::Char(c) if app.http_logs_config_editing => {
             match app.http_logs_config_selected_option {
-                1 => {
-                    if c.is_ascii_digit() {
-                        app.http_logs_config_max_file_size_input.push(c);
-                    }
+                1 if c.is_ascii_digit() => {
+                    app.http_logs_config_max_file_size_input.push(c);
                 }
-                2 => {
-                    if c.is_ascii_digit() {
-                        app.http_logs_config_retention_days_input.push(c);
-                    }
+                2 if c.is_ascii_digit() => {
+                    app.http_logs_config_retention_days_input.push(c);
                 }
                 _ => {}
             }
@@ -2439,10 +2417,8 @@ async fn handle_http_logs_viewer_input(app: &mut App, key: KeyCode) -> io::Resul
                 app.http_logs_list_selected = app.http_logs_requests.len() - 1;
             }
         }
-        KeyCode::Char('a') | KeyCode::Char('A') => {
-            if !app.http_logs_detail_mode {
-                app.http_logs_viewer_auto_scroll = !app.http_logs_viewer_auto_scroll;
-            }
+        KeyCode::Char('a') | KeyCode::Char('A') if !app.http_logs_detail_mode => {
+            app.http_logs_viewer_auto_scroll = !app.http_logs_viewer_auto_scroll;
         }
         KeyCode::Char('r') | KeyCode::Char('R') => {
             if app.http_logs_detail_mode
