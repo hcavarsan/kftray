@@ -14,6 +14,7 @@ use crate::validation::alert_multiple_configs;
 mod commands;
 mod glibc_detector;
 mod init_check;
+mod mcp;
 mod shortcuts;
 mod tray;
 mod validation;
@@ -149,6 +150,12 @@ fn main() {
                     && let Err(e) = kftray_network_monitor::start().await
                 {
                     error!("Failed to start network monitor: {e}");
+                }
+            });
+
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = crate::mcp::init_from_settings().await {
+                    error!("Failed to initialize MCP server: {e}");
                 }
             });
 
@@ -350,6 +357,9 @@ fn main() {
             commands::settings::update_auto_update_enabled,
             commands::settings::get_auto_update_status,
             commands::settings::run_diagnostics,
+            commands::settings::get_mcp_server_status,
+            commands::settings::update_mcp_server_enabled,
+            commands::settings::update_mcp_server_port,
             commands::logs::get_log_info,
             commands::logs::get_log_contents,
             commands::logs::get_log_contents_json,
