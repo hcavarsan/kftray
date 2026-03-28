@@ -1,7 +1,10 @@
 [package]
 name = "kftray-mcp"
-version = "0.27.27"
-authors = ["Henrique Cavarsan <hencavarsan@gmail.com>", "Filipe Andujar <filipeandujar@gmail.com>"]
+version = "0.27.28"
+authors = [
+  "Filipe Andujar <filipeandujar@gmail.com>",
+  "Henrique Cavarsan <hencavarsan@gmail.com>",
+]
 edition = "2024"
 description = "KFtray MCP (Model Context Protocol) server for LLM integration"
 homepage = "https://kftray.app"
@@ -21,12 +24,12 @@ env_logger = { workspace = true }
 futures = { workspace = true }
 http = { workspace = true }
 http-body-util = { workspace = true }
-hyper = { workspace = true, features = ["server", "http1"] }
+hyper = { workspace = true, features = ["http1", "server"] }
 hyper-util = { workspace = true, features = ["server", "tokio"] }
 k8s-openapi = { workspace = true }
 kftray-commons = { workspace = true }
-kube = { workspace = true }
 kftray-portforward = { workspace = true }
+kube = { workspace = true }
 log = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
