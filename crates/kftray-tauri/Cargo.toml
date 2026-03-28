@@ -27,6 +27,7 @@ k8s-openapi = { workspace = true }
 keyring = { workspace = true }
 kftray-commons = { workspace = true }
 kftray-helper = { workspace = true }
+kftray-mcp = { workspace = true }
 kftray-network-monitor = { workspace = true }
 kftray-portforward = { workspace = true }
 kftray-shortcuts = { workspace = true }

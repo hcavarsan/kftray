@@ -244,7 +244,7 @@ pub async fn insert_config_cmd(config: Config) -> Result<(), String> {
     if result.is_ok() {
         let _ = regenerate_ssl_certificate_if_needed().await;
     }
-    result
+    result.map(|_| ())
 }
 
 #[tauri::command]
