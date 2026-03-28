@@ -213,6 +213,10 @@ pub async fn handle_exit_app(app_handle: tauri::AppHandle<Wry>) {
                 if let Err(e) = cleanup_current_process_config_states().await {
                     error!("Failed to cleanup config states: {e}");
                 }
+                // Stop MCP server if running
+                if let Err(e) = crate::mcp::stop().await {
+                    error!("Failed to stop MCP server: {e}");
+                }
                 std::process::exit(0);
             }
 
@@ -238,13 +242,23 @@ pub async fn handle_exit_app(app_handle: tauri::AppHandle<Wry>) {
                             if let Err(e) = cleanup_current_process_config_states().await {
                                 error!("Failed to cleanup config states: {e}");
                             }
+                            // Stop MCP server if running
+                            if let Err(e) = crate::mcp::stop().await {
+                                error!("Failed to stop MCP server: {e}");
+                            }
                             std::process::exit(0);
                         });
                     }
                     false => {
                         // User clicked "No" - leave port forwards running and just exit
                         info!("User chose to leave all port-forwards running.");
-                        std::process::exit(0);
+                        // Stop MCP server if running
+                        tauri::async_runtime::spawn(async move {
+                            if let Err(e) = crate::mcp::stop().await {
+                                error!("Failed to stop MCP server: {e}");
+                            }
+                            std::process::exit(0);
+                        });
                     }
                 }
             });
@@ -253,6 +267,10 @@ pub async fn handle_exit_app(app_handle: tauri::AppHandle<Wry>) {
             error!("No windows found, exiting application.");
             if let Err(e) = cleanup_current_process_config_states().await {
                 error!("Failed to cleanup config states: {e}");
+            }
+            // Stop MCP server if running
+            if let Err(e) = crate::mcp::stop().await {
+                error!("Failed to stop MCP server: {e}");
             }
             std::process::exit(0);
         }
