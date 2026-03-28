@@ -35,7 +35,7 @@
       }
     },
     "overrides": {
-      "@codecov/vite-plugin>vite": "^7.3.1",
+      "@codecov/vite-plugin>vite": "^8.0.0",
       "undici": "^7.22.0"
     }
   },
