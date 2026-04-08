@@ -36,7 +36,7 @@
     },
     "overrides": {
       "@codecov/vite-plugin>vite": "^8.0.3",
-      "undici": "^7.24.6"
+      "undici": "^8.0.0"
     }
   },
   "devDependencies": {
