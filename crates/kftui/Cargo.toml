@@ -30,7 +30,7 @@ libc = { workspace = true }
 log = { workspace = true }
 ratatui = { workspace = true }
 ratatui-explorer = { workspace = true }
-self_update = { version = "0.43.0", features = [
+self_update = { version = "0.44.0", features = [
   "archive-tar",
   "compression-flate2",
 ] }
