@@ -52,7 +52,7 @@
     "knip": "^6.1.0",
     "prettier": "^3.8.1",
     "rollup-plugin-visualizer": "^7.0.1",
-    "typescript": "5.9.3",
+    "typescript": "6.0.3",
     "vite": "8.0.8",
     "vite-tsconfig-paths": "^6.1.1"
   }
