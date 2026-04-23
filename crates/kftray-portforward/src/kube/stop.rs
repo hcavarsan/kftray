@@ -122,7 +122,9 @@ async fn release_address_with_fallback(address: &str) {
     }
 }
 
-async fn delete_proxy_cluster_resources(client: Client, namespace: &str, config_id: i64) {
+pub(crate) async fn delete_proxy_cluster_resources(
+    client: Client, namespace: &str, config_id: i64,
+) {
     let username = whoami::username().unwrap_or_else(|_| "unknown".to_string());
     let pod_prefix = format!("kftray-forward-{username}");
     let lp = ListParams::default().labels(&format!("config_id={config_id}"));
@@ -356,6 +358,13 @@ pub async fn stop_all_port_forward_with_mode(
 
     cluster_cleanup_tasks.collect::<Vec<_>>().await;
 
+    // Cancel all recovery managers
+    for entry in crate::kube::proxy_recovery::RECOVERY_MANAGERS.iter() {
+        entry.value().cancel();
+    }
+    crate::kube::proxy_recovery::RECOVERY_MANAGERS.clear();
+    info!("Cancelled and cleared all recovery managers");
+
     let address_cleanup_tasks: FuturesUnordered<_> = configs
         .iter()
         .filter(|config| running_configs_state.contains(&config.id.unwrap_or_default()))
@@ -469,6 +478,16 @@ pub async fn stop_port_forward_with_mode(
         if let Some((_, process)) = CHILD_PROCESSES.remove(&composite_key) {
             process.cleanup_and_abort().await;
         }
+
+        // Cancel any in-progress recovery for this config
+        if let Some((_, manager)) =
+            crate::kube::proxy_recovery::RECOVERY_MANAGERS.remove(&config_id_parsed)
+        {
+            manager.cancel();
+            info!("Cancelled recovery manager for config {}", config_id_parsed);
+        }
+        // Clean up recovery coordination lock
+        crate::kube::proxy_recovery::remove_recovery_lock(config_id_parsed);
 
         if let Some(config) = configs.iter().find(|c| c.id == Some(config_id_parsed)) {
             let needs_cluster_cleanup =
