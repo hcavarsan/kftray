@@ -39,7 +39,7 @@ insta = "1.46"
 k8s-openapi = { version = "0.27.0", default-features = false, features = [
   "latest",
 ] }
-keyring = { version = "3.6", features = [
+keyring = { version = "4.0", features = [
   "apple-native",
   "linux-native",
   "windows-native",
