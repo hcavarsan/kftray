@@ -21,7 +21,7 @@
     "@types/lodash": "^4.17.24",
     "@vitejs/plugin-react-swc": "^4.3.0",
     "lodash": "^4.17.23",
-    "lucide-react": "1.8.0",
+    "lucide-react": "1.14.0",
     "next-themes": "^0.4.6",
     "react": "^19.2.4",
     "react-dom": "^19.2.4",
@@ -53,7 +53,7 @@
     "prettier": "^3.8.1",
     "rollup-plugin-visualizer": "^7.0.1",
     "typescript": "5.9.3",
-    "vite": "8.0.8",
+    "vite": "8.0.10",
     "vite-tsconfig-paths": "^6.1.1"
   }
 }
