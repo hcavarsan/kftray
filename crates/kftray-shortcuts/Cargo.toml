@@ -12,7 +12,7 @@ license = "GPL-3.0"
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 chrono = { workspace = true }
-global-hotkey = "0.7.0"
+global-hotkey = "0.8.0"
 log = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
