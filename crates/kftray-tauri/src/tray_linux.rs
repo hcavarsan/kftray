@@ -1,0 +1,224 @@
+use kftray_commons::models::window::AppState;
+use ksni::{
+    Icon,
+    TrayMethods,
+    menu::{
+        MenuItem,
+        StandardItem,
+        SubMenu,
+    },
+};
+use log::{
+    error,
+    info,
+    warn,
+};
+use tauri::{
+    AppHandle,
+    Manager,
+    Wry,
+};
+use tauri_plugin_positioner::Position;
+
+use crate::commands::portforward::handle_exit_app;
+use crate::commands::window_state::toggle_pin_state;
+use crate::window::{
+    reset_window_position,
+    set_window_position,
+    toggle_window_visibility,
+};
+
+const TRAY_PNG_BYTES: &[u8] = include_bytes!("../icons/tray.png");
+
+struct KftrayTray {
+    app: AppHandle<Wry>,
+    icon: Vec<Icon>,
+}
+
+impl ksni::Tray for KftrayTray {
+    fn id(&self) -> String {
+        "kftray".into()
+    }
+
+    fn title(&self) -> String {
+        "kftray".into()
+    }
+
+    fn icon_pixmap(&self) -> Vec<Icon> {
+        self.icon.clone()
+    }
+
+    fn icon_name(&self) -> String {
+        "kftray".into()
+    }
+
+    fn activate(&mut self, _x: i32, _y: i32) {
+        toggle_main_window(&self.app);
+    }
+
+    fn menu(&self) -> Vec<MenuItem<Self>> {
+        vec![
+            StandardItem {
+                label: "Toggle App".into(),
+                activate: Box::new(|t: &mut Self| toggle_main_window(&t.app)),
+                ..Default::default()
+            }
+            .into(),
+            MenuItem::Separator,
+            StandardItem {
+                label: "Pin Window".into(),
+                activate: Box::new(|t: &mut Self| {
+                    if let Some(window) = t.app.get_webview_window("main") {
+                        toggle_pin_state(t.app.state::<AppState>(), window);
+                    }
+                }),
+                ..Default::default()
+            }
+            .into(),
+            SubMenu {
+                label: "Set Window Position".into(),
+                submenu: vec![
+                    position_item("Center", Position::Center),
+                    position_item("Top Right", Position::TopRight),
+                    position_item("Bottom Right", Position::BottomRight),
+                    position_item("Bottom Left", Position::BottomLeft),
+                    position_item("Top Left", Position::TopLeft),
+                    MenuItem::Separator,
+                    StandardItem {
+                        label: "Reset Position".into(),
+                        activate: Box::new(|t: &mut Self| {
+                            if let Some(window) = t.app.get_webview_window("main") {
+                                reset_window_position(window);
+                            }
+                        }),
+                        ..Default::default()
+                    }
+                    .into(),
+                ],
+                ..Default::default()
+            }
+            .into(),
+            MenuItem::Separator,
+            StandardItem {
+                label: "View Logs".into(),
+                activate: Box::new(|t: &mut Self| {
+                    if let Err(e) = crate::commands::logs::open_log_viewer_window(t.app.clone()) {
+                        error!("Failed to open log viewer window: {e}");
+                    }
+                }),
+                ..Default::default()
+            }
+            .into(),
+            StandardItem {
+                label: "Quit".into(),
+                activate: Box::new(|t: &mut Self| {
+                    let handle = t.app.clone();
+                    tauri::async_runtime::spawn(async move {
+                        handle_exit_app(handle).await;
+                    });
+                }),
+                ..Default::default()
+            }
+            .into(),
+        ]
+    }
+}
+
+fn position_item(label: &str, position: Position) -> MenuItem<KftrayTray> {
+    StandardItem {
+        label: label.into(),
+        activate: Box::new(move |t: &mut KftrayTray| {
+            if let Some(window) = t.app.get_webview_window("main") {
+                set_window_position(&window, position);
+            }
+        }),
+        ..Default::default()
+    }
+    .into()
+}
+
+fn toggle_main_window(app: &AppHandle<Wry>) {
+    match app.get_webview_window("main") {
+        Some(window) => toggle_window_visibility(&window),
+        None => error!("Main window not found on tray activation"),
+    }
+}
+
+pub fn spawn(app: &tauri::App<Wry>) {
+    let handle = app.handle().clone();
+    let icon = match decode_tray_icon() {
+        Some(icon) => vec![icon],
+        None => Vec::new(),
+    };
+    let tray = KftrayTray { app: handle, icon };
+
+    tauri::async_runtime::spawn(async move {
+        match tray.spawn().await {
+            Ok(handle) => {
+                info!("SNI tray service started");
+                std::mem::forget(handle);
+            }
+            Err(e) => {
+                warn!(
+                    "SNI tray service failed to start ({e}); kftray will run without a tray icon"
+                );
+            }
+        }
+    });
+}
+
+fn decode_tray_icon() -> Option<Icon> {
+    let decoder = png::Decoder::new(TRAY_PNG_BYTES);
+    let mut reader = match decoder.read_info() {
+        Ok(reader) => reader,
+        Err(e) => {
+            warn!("Failed to decode tray icon PNG header: {e}");
+            return None;
+        }
+    };
+
+    let mut buf = vec![0u8; reader.output_buffer_size()];
+    let info = match reader.next_frame(&mut buf) {
+        Ok(info) => info,
+        Err(e) => {
+            warn!("Failed to decode tray icon PNG frame: {e}");
+            return None;
+        }
+    };
+
+    let rgba = to_rgba8(&buf[..info.buffer_size()], info.color_type, info.bit_depth)?;
+    Some(Icon {
+        width: info.width as i32,
+        height: info.height as i32,
+        data: rgba_to_argb(&rgba),
+    })
+}
+
+fn to_rgba8(buf: &[u8], color: png::ColorType, bit_depth: png::BitDepth) -> Option<Vec<u8>> {
+    if bit_depth != png::BitDepth::Eight {
+        warn!("Unsupported tray icon bit depth: {bit_depth:?}");
+        return None;
+    }
+    match color {
+        png::ColorType::Rgba => Some(buf.to_vec()),
+        png::ColorType::Rgb => {
+            let mut out = Vec::with_capacity(buf.len() / 3 * 4);
+            for px in buf.chunks_exact(3) {
+                out.extend_from_slice(&[px[0], px[1], px[2], 0xFF]);
+            }
+            Some(out)
+        }
+        other => {
+            warn!("Unsupported tray icon color type: {other:?}");
+            None
+        }
+    }
+}
+
+fn rgba_to_argb(rgba: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(rgba.len());
+    for px in rgba.chunks_exact(4) {
+        out.extend_from_slice(&[px[3], px[0], px[1], px[2]]);
+    }
+    out
+}

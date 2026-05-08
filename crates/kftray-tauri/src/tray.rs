@@ -19,6 +19,9 @@ use tauri::{
     RunEvent,
     WindowEvent,
     Wry,
+};
+#[cfg(not(target_os = "linux"))]
+use tauri::{
     menu::{
         MenuBuilder,
         MenuItemBuilder,
@@ -32,6 +35,7 @@ use tauri::{
         TrayIconEvent,
     },
 };
+#[cfg(not(target_os = "linux"))]
 use tauri_plugin_positioner::Position;
 use tokio::time::sleep;
 
@@ -43,15 +47,24 @@ pub struct TrayPositionState {
 }
 
 use crate::commands::portforward::handle_exit_app;
+#[cfg(not(target_os = "linux"))]
 use crate::commands::window_state::toggle_pin_state;
+use crate::window::save_window_position;
+#[cfg(not(target_os = "linux"))]
 use crate::window::{
     reset_window_position,
-    save_window_position,
     set_window_position,
     toggle_window_visibility,
 };
 
-pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<tauri::tray::TrayIcon<Wry>, tauri::Error> {
+#[cfg(target_os = "linux")]
+pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<(), tauri::Error> {
+    crate::tray_linux::spawn(app);
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<(), tauri::Error> {
     let quit = MenuItemBuilder::with_id("quit", "Quit")
         .accelerator("CmdOrCtrl+Shift+Q")
         .build(app)?;
@@ -266,7 +279,8 @@ pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<tauri::tray::TrayIcon<W
         })
         .build(app)?;
 
-    Ok(tray)
+    let _ = tray;
+    Ok(())
 }
 
 pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
