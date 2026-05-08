@@ -68,7 +68,9 @@ tauri-build = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 inotify = "0.11.0"
+ksni = "0.3"
 libc = { workspace = true }
+png = "0.17"
 
 [features]
 # this feature is used used for production builds where `devPath` points to the filesystem

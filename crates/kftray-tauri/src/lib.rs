@@ -5,5 +5,7 @@ pub mod init_check;
 pub mod mcp;
 pub mod shortcuts;
 pub mod tray;
+#[cfg(target_os = "linux")]
+pub mod tray_linux;
 pub mod validation;
 pub mod window;
