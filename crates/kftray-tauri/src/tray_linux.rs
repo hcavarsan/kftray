@@ -48,10 +48,6 @@ impl ksni::Tray for KftrayTray {
         self.icon.clone()
     }
 
-    fn icon_name(&self) -> String {
-        "kftray".into()
-    }
-
     fn activate(&mut self, _x: i32, _y: i32) {
         toggle_main_window(&self.app);
     }
