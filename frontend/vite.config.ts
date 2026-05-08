@@ -1,11 +1,10 @@
 import path, { resolve } from 'node:path'
 import { visualizer } from 'rollup-plugin-visualizer'
 import { defineConfig, type Plugin, type UserConfig } from 'vite'
-import tsconfigPaths from 'vite-tsconfig-paths'
 
 import { codecovVitePlugin } from '@codecov/vite-plugin'
 import terser from '@rollup/plugin-terser'
-import react from '@vitejs/plugin-react-swc'
+import react from '@vitejs/plugin-react'
 
 const asPlugin = (p: any) => p as Plugin
 
@@ -69,12 +68,12 @@ return
 
 export default defineConfig({
   resolve: {
-    alias: { '@': path.resolve(__dirname, 'src') }
+    alias: { '@': path.resolve(__dirname, 'src') },
+    tsconfigPaths: true
   },
 
   plugins: [
     asPlugin(react()),
-    asPlugin(tsconfigPaths()),
     ...(!process.env.TAURI_DEBUG ? [asPlugin(terser(terserConfig))] : []),
     codecovVitePlugin({
       enableBundleAnalysis: process.env.CODECOV_TOKEN !== undefined,
