@@ -28,7 +28,14 @@ use crate::window::{
     toggle_window_visibility,
 };
 
-const TRAY_PNG_BYTES: &[u8] = include_bytes!("../icons/tray.png");
+const TRAY_PNG_VARIANTS: &[&[u8]] = &[
+    include_bytes!("../icons/tray-16.png"),
+    include_bytes!("../icons/tray-22.png"),
+    include_bytes!("../icons/tray-24.png"),
+    include_bytes!("../icons/tray-32.png"),
+    include_bytes!("../icons/tray-48.png"),
+    include_bytes!("../icons/tray-64.png"),
+];
 
 struct KftrayTray {
     app: AppHandle<Wry>,
@@ -142,10 +149,10 @@ fn toggle_main_window(app: &AppHandle<Wry>) {
 
 pub fn spawn(app: &tauri::App<Wry>) {
     let handle = app.handle().clone();
-    let icon = match decode_tray_icon() {
-        Some(icon) => vec![icon],
-        None => Vec::new(),
-    };
+    let icon: Vec<Icon> = TRAY_PNG_VARIANTS
+        .iter()
+        .filter_map(|bytes| decode_tray_icon(bytes))
+        .collect();
     let tray = KftrayTray { app: handle, icon };
 
     tauri::async_runtime::spawn(async move {
@@ -163,8 +170,8 @@ pub fn spawn(app: &tauri::App<Wry>) {
     });
 }
 
-fn decode_tray_icon() -> Option<Icon> {
-    let decoder = png::Decoder::new(TRAY_PNG_BYTES);
+fn decode_tray_icon(bytes: &[u8]) -> Option<Icon> {
+    let decoder = png::Decoder::new(bytes);
     let mut reader = match decoder.read_info() {
         Ok(reader) => reader,
         Err(e) => {
@@ -214,7 +221,11 @@ fn to_rgba8(buf: &[u8], color: png::ColorType, bit_depth: png::BitDepth) -> Opti
 fn rgba_to_argb(rgba: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(rgba.len());
     for px in rgba.chunks_exact(4) {
-        out.extend_from_slice(&[px[3], px[0], px[1], px[2]]);
+        let a = px[3] as u16;
+        let r = ((px[0] as u16 * a + 127) / 255) as u8;
+        let g = ((px[1] as u16 * a + 127) / 255) as u8;
+        let b = ((px[2] as u16 * a + 127) / 255) as u8;
+        out.extend_from_slice(&[a as u8, r, g, b]);
     }
     out
 }
