@@ -78,11 +78,11 @@ impl ksni::Tray for KftrayTray {
             SubMenu {
                 label: "Set Window Position".into(),
                 submenu: vec![
-                    position_item("Center", Position::Center),
-                    position_item("Top Right", Position::TopRight),
-                    position_item("Bottom Right", Position::BottomRight),
-                    position_item("Bottom Left", Position::BottomLeft),
-                    position_item("Top Left", Position::TopLeft),
+                    position_item("Center", || Position::Center),
+                    position_item("Top Right", || Position::TopRight),
+                    position_item("Bottom Right", || Position::BottomRight),
+                    position_item("Bottom Left", || Position::BottomLeft),
+                    position_item("Top Left", || Position::TopLeft),
                     MenuItem::Separator,
                     StandardItem {
                         label: "Reset Position".into(),
@@ -124,12 +124,12 @@ impl ksni::Tray for KftrayTray {
     }
 }
 
-fn position_item(label: &str, position: Position) -> MenuItem<KftrayTray> {
+fn position_item(label: &str, make: fn() -> Position) -> MenuItem<KftrayTray> {
     StandardItem {
         label: label.into(),
         activate: Box::new(move |t: &mut KftrayTray| {
             if let Some(window) = t.app.get_webview_window("main") {
-                set_window_position(&window, position);
+                set_window_position(&window, make());
             }
         }),
         ..Default::default()
