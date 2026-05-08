@@ -59,6 +59,10 @@ impl ksni::Tray for KftrayTray {
         toggle_main_window(&self.app);
     }
 
+    fn secondary_activate(&mut self, _x: i32, _y: i32) {
+        toggle_main_window(&self.app);
+    }
+
     fn menu(&self) -> Vec<MenuItem<Self>> {
         vec![
             StandardItem {
