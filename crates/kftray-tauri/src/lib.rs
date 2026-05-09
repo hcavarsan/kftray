@@ -11,3 +11,4 @@ pub mod tray_linux;
 pub mod tray_theme;
 pub mod validation;
 pub mod window;
+pub mod window_size;
