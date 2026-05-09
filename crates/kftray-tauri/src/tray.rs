@@ -61,6 +61,44 @@ use crate::window::{
     toggle_window_visibility,
 };
 
+#[cfg(not(target_os = "linux"))]
+pub const TRAY_ID: &str = "kftray-main";
+
+#[cfg(target_os = "windows")]
+const TRAY_LIGHT_ICO: &[u8] = include_bytes!("../icons/tray-light.ico");
+#[cfg(not(target_os = "linux"))]
+const TRAY_DARK_ICO: &[u8] = include_bytes!("../icons/tray-dark.ico");
+
+#[cfg(not(target_os = "linux"))]
+fn current_tray_icon_bytes() -> &'static [u8] {
+    #[cfg(target_os = "windows")]
+    {
+        match crate::tray_theme::current() {
+            crate::tray_theme::TaskbarTheme::Dark => TRAY_LIGHT_ICO,
+            crate::tray_theme::TaskbarTheme::Light => TRAY_DARK_ICO,
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        TRAY_DARK_ICO
+    }
+}
+
+#[cfg(target_os = "windows")]
+pub fn refresh_tray_icon_for_theme(app: &tauri::AppHandle<Wry>) {
+    let Some(tray) = app.tray_by_id(TRAY_ID) else {
+        return;
+    };
+    match tauri::image::Image::from_bytes(current_tray_icon_bytes()) {
+        Ok(icon) => {
+            if let Err(e) = tray.set_icon(Some(icon)) {
+                warn!("Failed to update tray icon for theme change: {e}");
+            }
+        }
+        Err(e) => warn!("Failed to decode tray icon image: {e}"),
+    }
+}
+
 #[cfg(target_os = "linux")]
 pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<(), tauri::Error> {
     crate::tray_linux::spawn(app);
@@ -149,12 +187,12 @@ pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<(), tauri::Error> {
         .item(&view_logs)
         .item(&quit)
         .build()?;
-    let icon_bytes = include_bytes!("../icons/tray.ico");
-    let icon = tauri::image::Image::from_bytes(icon_bytes)?;
+    let icon = tauri::image::Image::from_bytes(current_tray_icon_bytes())?;
 
-    let tray = TrayIconBuilder::new()
+    let tray = TrayIconBuilder::with_id(TRAY_ID)
         .menu(&menu)
         .icon_as_template(true)
+        .tooltip("kftray")
         .show_menu_on_left_click(false)
         .icon(icon)
         .on_menu_event(move |app, event| match event.id().as_ref() {
@@ -327,6 +365,11 @@ pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
             warn!("Failed to set window size during scale change: {e}");
         }
         return;
+    }
+
+    #[cfg(target_os = "windows")]
+    if let WindowEvent::ThemeChanged(_) = event {
+        refresh_tray_icon_for_theme(window.app_handle());
     }
 
     info!("event: {:?}", event);

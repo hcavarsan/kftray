@@ -53,7 +53,7 @@ built = { workspace = true }
 reqwest = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
-reqwest = { version = "0.13.1", default-features = false, features = [
+reqwest = { version = "0.13.3", default-features = false, features = [
   "native-tls",
   "http2",
   "charset",
