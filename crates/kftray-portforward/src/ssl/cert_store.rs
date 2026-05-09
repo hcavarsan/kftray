@@ -8,7 +8,7 @@ use anyhow::{
     Result,
 };
 use base64::Engine;
-use keyring::Entry;
+use keyring_core::Entry;
 use lazy_static::lazy_static;
 use log::{
     debug,

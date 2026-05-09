@@ -56,7 +56,8 @@
       "signingIdentity": null
     },
     "resources": [],
-    "shortDescription": "",
+    "shortDescription": "Kubernetes port-forward manager",
+    "longDescription": "kftray is a cross-platform system tray app for managing multiple Kubernetes port-forwards from a single, persistent UI.",
     "targets": [
       "app",
       "dmg",
