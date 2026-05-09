@@ -37,5 +37,11 @@ fn try_install() -> anyhow::Result<()> {
         keyring_core::set_default_store(store);
     }
 
+    #[cfg(not(any(target_os = "macos", target_os = "linux", target_os = "windows")))]
+    {
+        anyhow::bail!("no native keyring store implementation available for this target");
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "linux", target_os = "windows"))]
     Ok(())
 }

@@ -670,10 +670,24 @@ pub async fn clean_all_custom_hosts_entries_with_mode(mode: DatabaseMode) -> Res
 }
 
 fn pick_unused_local_port() -> Option<u16> {
-    std::net::TcpListener::bind("127.0.0.1:0")
-        .ok()
-        .and_then(|l| l.local_addr().ok())
-        .map(|a| a.port())
+    use std::net::{
+        TcpListener,
+        UdpSocket,
+    };
+
+    for _ in 0..10 {
+        let Ok(tcp) = TcpListener::bind("127.0.0.1:0") else {
+            continue;
+        };
+        let Ok(addr) = tcp.local_addr() else {
+            continue;
+        };
+        let port = addr.port();
+        if UdpSocket::bind(("127.0.0.1", port)).is_ok() {
+            return Some(port);
+        }
+    }
+    None
 }
 
 fn prepare_config(mut config: Config) -> Config {

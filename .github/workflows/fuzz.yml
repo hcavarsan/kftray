@@ -36,7 +36,9 @@ jobs:
           toolchain: nightly
 
       - name: Install cargo-fuzz
-        run: cargo +nightly install cargo-fuzz --version 0.13.1 --locked
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-fuzz@0.13.1
 
       - name: Cache cargo registry
         uses: actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb
