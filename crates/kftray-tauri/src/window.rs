@@ -256,13 +256,22 @@ pub async fn apply_window_size_preset(
         warn!("Failed to set window size for preset {:?}: {e}", preset);
         return;
     }
-    if let Err(e) =
-        kftray_commons::utils::settings::set_setting(crate::window_size::SETTING_KEY, preset.as_id())
-            .await
+    match kftray_commons::utils::settings::set_setting(
+        crate::window_size::SETTING_KEY,
+        preset.as_id(),
+    )
+    .await
     {
-        warn!("Failed to persist window size preset: {e}");
+        Ok(()) => {
+            set_position_before_show(window.clone());
+        }
+        Err(e) => {
+            warn!(
+                "Failed to persist window size preset: {e}; keeping in-memory size for this session"
+            );
+            position_from_tray(window);
+        }
     }
-    set_position_before_show(window.clone());
 }
 
 pub fn is_valid_position(window: &WebviewWindow<Wry>, x: i32, y: i32) -> bool {
@@ -466,9 +475,7 @@ fn position_window(
     window: &WebviewWindow<Wry>, monitor: &tauri::Monitor, tray_pos: PhysicalPosition<f64>,
     tray_size: PhysicalSize<f64>,
 ) {
-    let current_size = window
-        .outer_size()
-        .unwrap_or(PhysicalSize::new(450, 500));
+    let current_size = window.outer_size().unwrap_or(PhysicalSize::new(450, 500));
     let window_size = tauri::PhysicalSize {
         width: current_size.width as f64,
         height: current_size.height as f64,
@@ -480,7 +487,12 @@ fn position_window(
 
     info!(
         "Using window size {}x{}, calculated position: ({}, {}), tray center: ({}, {})",
-        current_size.width, current_size.height, position.0, position.1, tray_center_x, tray_center_y
+        current_size.width,
+        current_size.height,
+        position.0,
+        position.1,
+        tray_center_x,
+        tray_center_y
     );
 
     let app_state = window.state::<AppState>();
