@@ -244,6 +244,12 @@ pub async fn load_saved_window_size_preset() -> crate::window_size::WindowSizePr
 /// correct thread for window APIs, so the same code path works on every
 /// platform.
 ///
+/// Sizes are applied in logical pixels so the same preset renders at the
+/// same visual size across every DPI (1x, 1.5x HiDPI, 2x Retina, ...). The
+/// preset's `dimensions()` already returns logical values matching the
+/// `tauri.conf.json` window declaration, so passing them through
+/// `tauri::Size::Logical` keeps units consistent end to end.
+///
 /// Returns `true` when the size was applied (or was already correct), `false`
 /// when the dispatch or the underlying `set_size` failed.
 async fn apply_window_size_on_main_thread(
@@ -254,14 +260,20 @@ async fn apply_window_size_on_main_thread(
 
     let dispatch = window.app_handle().run_on_main_thread(move || {
         let (w, h) = preset.dimensions(&window_clone);
-        match window_clone.outer_size() {
-            Ok(current) if current.width == w && current.height == h => {
+
+        if let (Ok(current), Ok(Some(monitor))) =
+            (window_clone.outer_size(), window_clone.current_monitor())
+        {
+            let logical = current.to_logical::<u32>(monitor.scale_factor());
+            if logical.width == w && logical.height == h {
                 let _ = tx.send(true);
                 return;
             }
-            Ok(_) | Err(_) => {}
         }
-        match window_clone.set_size(tauri::Size::Physical(PhysicalSize::new(w, h))) {
+
+        match window_clone.set_size(tauri::Size::Logical(tauri::LogicalSize::new(
+            w as f64, h as f64,
+        ))) {
             Ok(()) => {
                 let _ = tx.send(true);
             }
@@ -510,7 +522,13 @@ fn position_window(
     window: &WebviewWindow<Wry>, monitor: &tauri::Monitor, tray_pos: PhysicalPosition<f64>,
     tray_size: PhysicalSize<f64>,
 ) {
-    let current_size = window.outer_size().unwrap_or(PhysicalSize::new(450, 500));
+    let current_size = window.outer_size().unwrap_or_else(|_| {
+        let scale = monitor.scale_factor();
+        PhysicalSize::new(
+            (450.0 * scale).round() as u32,
+            (500.0 * scale).round() as u32,
+        )
+    });
     let window_size = tauri::PhysicalSize {
         width: current_size.width as f64,
         height: current_size.height as f64,
