@@ -94,7 +94,6 @@
     "notification:allow-request-permission",
     "notification:allow-show",
     "positioner:default",
-    "updater:default",
-    "log:default"
+    "updater:default"
   ]
 }
