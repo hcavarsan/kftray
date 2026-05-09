@@ -110,6 +110,8 @@ impl ksni::Tray for KftrayTray {
             SubMenu {
                 label: "Set Window Size".into(),
                 submenu: vec![
+                    size_item("Extra Small", WindowSizePreset::ExtraSmall),
+                    size_item("Small", WindowSizePreset::Small),
                     size_item("Default", WindowSizePreset::Default),
                     size_item("Medium", WindowSizePreset::Medium),
                     size_item("Large", WindowSizePreset::Large),

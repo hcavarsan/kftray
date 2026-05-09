@@ -164,11 +164,15 @@ pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<(), tauri::Error> {
         .item(&reset_position)
         .build()?;
 
+    let set_size_xs = MenuItemBuilder::with_id("set_size_xs", "Extra Small").build(app)?;
+    let set_size_small = MenuItemBuilder::with_id("set_size_small", "Small").build(app)?;
     let set_size_default = MenuItemBuilder::with_id("set_size_default", "Default").build(app)?;
     let set_size_medium = MenuItemBuilder::with_id("set_size_medium", "Medium").build(app)?;
     let set_size_large = MenuItemBuilder::with_id("set_size_large", "Large").build(app)?;
     let set_size_xl = MenuItemBuilder::with_id("set_size_xl", "Extra Large").build(app)?;
     let set_window_size_submenu = SubmenuBuilder::new(app, "Set Window Size")
+        .item(&set_size_xs)
+        .item(&set_size_small)
         .item(&set_size_default)
         .item(&set_size_medium)
         .item(&set_size_large)
