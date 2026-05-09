@@ -72,6 +72,9 @@ ksni = "0.3"
 libc = { workspace = true }
 png = "0.17"
 
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { workspace = true }
+
 [features]
 # this feature is used used for production builds where `devPath` points to the filesystem
 # DO NOT remove this
