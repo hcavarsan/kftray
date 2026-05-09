@@ -266,7 +266,7 @@ async fn handle_mcp_delete(
     match session_id {
         Some(id) => {
             state.remove_session(id).await;
-            info!("Session terminated: {}", id);
+            info!("Session terminated: {}...", redact_session_id(id));
             Response::builder()
                 .status(StatusCode::OK)
                 .body(Full::new(Bytes::from("{\"status\":\"terminated\"}")))
@@ -277,6 +277,12 @@ async fn handle_mcp_delete(
             .body(Full::new(Bytes::from("Missing Mcp-Session-Id header")))
             .unwrap(),
     }
+}
+
+/// Truncate session ID for safe logging. Session IDs are bearer tokens; the
+/// 8-char prefix lets us correlate log lines without leaking the full token.
+fn redact_session_id(id: &str) -> String {
+    id.chars().take(8).collect()
 }
 
 /// Handle health check endpoint
