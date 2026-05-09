@@ -199,6 +199,7 @@ pub fn set_position_before_show(window: WebviewWindow<Wry>) {
     let window_clone = window.clone();
 
     runtime.spawn(async move {
+        apply_saved_window_size(&window_clone).await;
         match load_window_position().await {
             Some(position) if is_valid_position(&window_clone, position.x, position.y) => {
                 info!(
@@ -222,6 +223,46 @@ pub fn set_position_before_show(window: WebviewWindow<Wry>) {
             }
         }
     });
+}
+
+pub async fn load_saved_window_size_preset() -> crate::window_size::WindowSizePreset {
+    match kftray_commons::utils::settings::get_setting(crate::window_size::SETTING_KEY).await {
+        Ok(Some(value)) => {
+            crate::window_size::WindowSizePreset::from_id(&value).unwrap_or_default()
+        }
+        _ => crate::window_size::WindowSizePreset::default(),
+    }
+}
+
+pub async fn apply_saved_window_size(window: &WebviewWindow<Wry>) {
+    let preset = load_saved_window_size_preset().await;
+    let (w, h) = preset.dimensions(window);
+    if let Ok(current) = window.outer_size()
+        && current.width == w
+        && current.height == h
+    {
+        return;
+    }
+    if let Err(e) = window.set_size(tauri::Size::Physical(PhysicalSize::new(w, h))) {
+        warn!("Failed to apply saved window size preset: {e}");
+    }
+}
+
+pub async fn apply_window_size_preset(
+    window: &WebviewWindow<Wry>, preset: crate::window_size::WindowSizePreset,
+) {
+    let (w, h) = preset.dimensions(window);
+    if let Err(e) = window.set_size(tauri::Size::Physical(PhysicalSize::new(w, h))) {
+        warn!("Failed to set window size for preset {:?}: {e}", preset);
+        return;
+    }
+    if let Err(e) =
+        kftray_commons::utils::settings::set_setting(crate::window_size::SETTING_KEY, preset.as_id())
+            .await
+    {
+        warn!("Failed to persist window size preset: {e}");
+    }
+    set_position_before_show(window.clone());
 }
 
 pub fn is_valid_position(window: &WebviewWindow<Wry>, x: i32, y: i32) -> bool {
@@ -425,18 +466,21 @@ fn position_window(
     window: &WebviewWindow<Wry>, monitor: &tauri::Monitor, tray_pos: PhysicalPosition<f64>,
     tray_size: PhysicalSize<f64>,
 ) {
-    let standard_window_size = tauri::PhysicalSize {
-        width: 450.0,
-        height: 500.0,
+    let current_size = window
+        .outer_size()
+        .unwrap_or(PhysicalSize::new(450, 500));
+    let window_size = tauri::PhysicalSize {
+        width: current_size.width as f64,
+        height: current_size.height as f64,
     };
-    let position = calculate_position(monitor, tray_pos, tray_size, standard_window_size);
+    let position = calculate_position(monitor, tray_pos, tray_size, window_size);
 
     let tray_center_x = tray_pos.x as i32 + tray_size.width as i32 / 2;
     let tray_center_y = tray_pos.y as i32 + tray_size.height as i32;
 
     info!(
-        "Using standard size 450x500, calculated position: ({}, {}), tray center: ({}, {})",
-        position.0, position.1, tray_center_x, tray_center_y
+        "Using window size {}x{}, calculated position: ({}, {}), tray center: ({}, {})",
+        current_size.width, current_size.height, position.0, position.1, tray_center_x, tray_center_y
     );
 
     let app_state = window.state::<AppState>();

@@ -861,7 +861,7 @@ return { id: config.id, error: null, aborted: false }
             top={0}
             left={0}
             right={0}
-            bottom={0}
+            bottom='60px'
             overflow='auto'
             padding='5px'
           >

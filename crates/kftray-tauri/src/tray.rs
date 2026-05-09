@@ -126,6 +126,18 @@ pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<(), tauri::Error> {
         .item(&reset_position)
         .build()?;
 
+    let set_size_default =
+        MenuItemBuilder::with_id("set_size_default", "Default").build(app)?;
+    let set_size_medium = MenuItemBuilder::with_id("set_size_medium", "Medium").build(app)?;
+    let set_size_large = MenuItemBuilder::with_id("set_size_large", "Large").build(app)?;
+    let set_size_xl = MenuItemBuilder::with_id("set_size_xl", "Extra Large").build(app)?;
+    let set_window_size_submenu = SubmenuBuilder::new(app, "Set Window Size")
+        .item(&set_size_default)
+        .item(&set_size_medium)
+        .item(&set_size_large)
+        .item(&set_size_xl)
+        .build()?;
+
     let main_separator = PredefinedMenuItem::separator(app)?;
     let logs_separator = PredefinedMenuItem::separator(app)?;
     let menu = MenuBuilder::new(app)
@@ -133,6 +145,7 @@ pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<(), tauri::Error> {
         .item(&main_separator)
         .item(&pin)
         .item(&set_window_position_submenu)
+        .item(&set_window_size_submenu)
         .item(&logs_separator)
         .item(&view_logs)
         .item(&quit)
@@ -201,6 +214,20 @@ pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<(), tauri::Error> {
             "view_logs" => {
                 if let Err(e) = crate::commands::logs::open_log_viewer_window(app.clone()) {
                     error!("Failed to open log viewer window: {e}");
+                }
+            }
+            id if id.starts_with("set_size_") => {
+                let preset_id = id.trim_start_matches("set_size_");
+                if let Some(preset) = crate::window_size::WindowSizePreset::from_id(preset_id) {
+                    if let Some(window) = app.get_webview_window("main") {
+                        let app_state = window.state::<AppState>();
+                        let runtime = app_state.runtime.clone();
+                        runtime.spawn(async move {
+                            crate::window::apply_window_size_preset(&window, preset).await;
+                        });
+                    } else {
+                        error!("Main window not found on size preset event");
+                    }
                 }
             }
             _ => {}
