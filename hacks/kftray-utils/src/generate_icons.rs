@@ -47,6 +47,9 @@ fn main() -> Result<(), CustomError> {
 
     generate_ico()?;
 
+    generate_tray_ico("tray-light.png", "tray-light.ico")?;
+    generate_tray_ico("tray-dark.png", "tray-dark.ico")?;
+
     println!("Info: Done generating icons.");
 
     Ok(())
@@ -162,6 +165,31 @@ fn resize_and_save(
 ) -> Result<(), CustomError> {
     src.resize_exact(width, height, image::imageops::FilterType::Lanczos3)
         .save_with_format(save_path, ImageFormat::Png)?;
+
+    Ok(())
+}
+
+fn generate_tray_ico(src_filename: &str, dst_filename: &str) -> Result<(), CustomError> {
+    println!("Info: Generating {dst_filename} from {src_filename} ...");
+
+    let src_path = PathBuf::from(DST_PATH).join(src_filename);
+    let src = ImageReader::open(&src_path)?.decode()?;
+
+    let mut icon_dir = ico::IconDir::new(ico::ResourceType::Icon);
+
+    let sizes = [16u32, 20, 24, 32, 40, 48, 64, 256];
+
+    for &size in &sizes {
+        let resized = src.resize_exact(size, size, image::imageops::FilterType::Lanczos3);
+        let rgba = resized.to_rgba8();
+        let (width, height) = rgba.dimensions();
+        let ico_image = ico::IconImage::from_rgba_data(width, height, rgba.into_raw());
+        icon_dir.add_entry(ico::IconDirEntry::encode(&ico_image)?);
+    }
+
+    let file_path = PathBuf::from(DST_PATH).join(dst_filename);
+    let file_out = BufWriter::new(File::create(file_path)?);
+    icon_dir.write(file_out)?;
 
     Ok(())
 }
