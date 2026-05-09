@@ -34,7 +34,6 @@ jobs:
         uses: dtolnay/rust-toolchain@881ba7bf39a41cda34ac9e123fb41b44ed08232f
         with:
           toolchain: nightly
-          targets: x86_64-unknown-linux-musl
 
       - name: Install cargo-fuzz
         uses: taiki-e/install-action@v2
@@ -56,4 +55,4 @@ jobs:
       - name: Run fuzzer
         run: |
           cd fuzz
-          cargo +nightly fuzz run ${{ matrix.target }} -- -max_total_time=60
+          cargo +nightly fuzz run --target x86_64-unknown-linux-gnu ${{ matrix.target }} -- -max_total_time=60
