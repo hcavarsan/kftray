@@ -24,17 +24,21 @@ pub struct LinuxCompositeStore {
 
 impl LinuxCompositeStore {
     pub fn new() -> Result<Arc<CredentialStore>> {
-        let primary = dbus_secret_service_keyring_store::Store::new()
+        let primary: Arc<CredentialStore> = dbus_secret_service_keyring_store::Store::new()
             .map_err(|e| Error::PlatformFailure(Box::new(e)))?;
-        let fallback = match linux_keyutils_keyring_store::Store::new() {
-            Ok(store) => Some(store),
-            Err(e) => {
-                log::warn!(
-                    "keyutils fallback unavailable: {e}; legacy keyutils credentials will not be migrated"
-                );
-                None
-            }
-        };
+        let fallback: Option<Arc<CredentialStore>> =
+            match linux_keyutils_keyring_store::Store::new() {
+                Ok(store) => {
+                    let store: Arc<CredentialStore> = store;
+                    Some(store)
+                }
+                Err(e) => {
+                    log::warn!(
+                        "keyutils fallback unavailable: {e}; legacy keyutils credentials will not be migrated"
+                    );
+                    None
+                }
+            };
         Ok(Arc::new(Self { primary, fallback }))
     }
 }
