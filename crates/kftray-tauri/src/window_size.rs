@@ -54,7 +54,7 @@ impl WindowSizePreset {
             if avail.width > 0 && avail.height > 0 {
                 let max_w = avail.width as f32 * MONITOR_FILL_RATIO / BASE_WIDTH as f32;
                 let max_h = avail.height as f32 * MONITOR_FILL_RATIO / BASE_HEIGHT as f32;
-                s = s.min(max_w).min(max_h).max(1.0);
+                s = s.min(max_w).min(max_h);
             }
         }
         (
