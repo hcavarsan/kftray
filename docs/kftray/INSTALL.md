@@ -25,8 +25,8 @@ _Please check the caveats section for global app creation instructions after ins
 
 Linux Note:
 
-- Due to GTK limitations, it is necessary to install and enable the GNOME Shell extension for AppIndicator support to kftray works. See here: <https://extensions.gnome.org/extension/615/appindicator-support/>
-- For newer Linux distributions (Ubuntu 24.04+), use the "newer-glibc" AppImage versions for better compatibility
+- kftray uses the StatusNotifierItem (SNI) protocol for the system tray. KDE, Cinnamon, MATE, XFCE, LXQt, and Unity show the icon out of the box. On vanilla GNOME, install the [AppIndicator and KStatusNotifierItem Support](https://extensions.gnome.org/extension/615/appindicator-support/) extension. If no SNI host is available the app still runs through the main window.
+- For newer Linux distributions (Ubuntu 24.04+), use the "newer-glibc" AppImage versions for better compatibility.
 
 ### Direct Downloads
 

@@ -289,7 +289,7 @@ jobs:
         id: tauri_build
         continue-on-error: true
         env: &tauri-build-env
-          RUSTFLAGS: ${{ matrix.os == 'macos-latest' && '-C link-arg=-s' || (matrix.os == 'windows-latest' && '' || '-C target-cpu=native -C link-arg=-s') }}
+          RUSTFLAGS: ${{ matrix.os == 'windows-latest' && '' || '-C link-arg=-s' }}
           AWS_LC_SYS_PREBUILT_NASM: ${{ matrix.os == 'windows-latest' && '1' || '' }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
@@ -313,6 +313,77 @@ jobs:
         uses: tauri-apps/tauri-action@9ce1dcc1a78395184050946b71457a6c242beab6
         env: *tauri-build-env
         with: *tauri-build-with
+
+      - name: Strip bundled libglvnd from AppImage
+        if: startsWith(matrix.os, 'ubuntu')
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          ASSET_NAME_PATTERN: ${{ matrix.asset_name_pattern }}
+        run: |
+          set -euo pipefail
+
+          version="${GITHUB_REF_NAME#v}"
+          bundle_dir="target/${{ matrix.rust_target }}/release/bundle/appimage"
+          local_appimage="$(find "$bundle_dir" -maxdepth 1 -name 'kftray_*.AppImage' -type f -print -quit 2>/dev/null || true)"
+          if [ -z "$local_appimage" ]; then
+            echo "::warning::No AppImage at $bundle_dir; skipping libglvnd strip"
+            exit 0
+          fi
+
+          # Match the asset name tauri-action uploaded so --clobber targets
+          # the right asset (each matrix entry must produce a unique name).
+          if [ -n "${ASSET_NAME_PATTERN:-}" ]; then
+            expected_name="${ASSET_NAME_PATTERN//\[version\]/$version}"
+            expected_name="${expected_name//\[ext\]/.AppImage}"
+            target_path="$bundle_dir/$expected_name"
+            [ "$local_appimage" != "$target_path" ] && mv "$local_appimage" "$target_path"
+            appimage="$(realpath "$target_path")"
+          else
+            appimage="$(realpath "$local_appimage")"
+          fi
+          asset_name="$(basename "$appimage")"
+
+          arch_kernel="x86_64"
+          [ "${{ matrix.arch }}" = "arm64" ] && arch_kernel="aarch64"
+
+          work="$(mktemp -d)"
+          pushd "$work" >/dev/null
+          "$appimage" --appimage-extract >/dev/null
+
+          # Drop the libglvnd halves + Mesa GBM + libwayland-egl. These are
+          # standard on every desktop Linux distro; bundling them caused the
+          # libglvnd loader/dispatch ABI mismatch that aborted the WebKit
+          # GPU process with EGL_BAD_PARAMETER on rolling distros (#547).
+          find squashfs-root \( -type f -o -type l \) \( \
+              -name 'libGL.so*' -o \
+              -name 'libEGL.so*' -o \
+              -name 'libGLX.so*' -o \
+              -name 'libGLdispatch.so*' -o \
+              -name 'libgbm.so*' -o \
+              -name 'libwayland-egl.so*' \
+              \) -delete
+
+          curl -fsSL --retry 3 -o appimagetool.AppImage \
+              "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-${arch_kernel}.AppImage"
+          chmod +x appimagetool.AppImage
+
+          rm -f "$appimage" "$appimage.sig"
+          ARCH="$arch_kernel" ./appimagetool.AppImage --no-appstream squashfs-root "$appimage"
+          popd >/dev/null
+
+          npx --yes @tauri-apps/cli@^2 signer sign \
+              --private-key "$TAURI_SIGNING_PRIVATE_KEY" \
+              --password "${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}" \
+              "$appimage"
+
+          gh release upload "${{ github.ref_name }}" "$appimage" "$appimage.sig" --clobber
+          echo "Re-uploaded $asset_name (libglvnd-free) with regenerated signature"
+
+          rm -rf "$work"
 
       - name: Find built artifacts for attestation
         id: find_artifacts
@@ -495,7 +566,7 @@ jobs:
       - name: Build kftui
         if: matrix.os != 'windows-latest'
         env:
-          RUSTFLAGS: ${{ matrix.os == 'macos-latest' && '-C link-arg=-s' || '-C target-cpu=native -C link-arg=-s' }}
+          RUSTFLAGS: '-C link-arg=-s'
         run: |
           if [ "${{ matrix.os }}" == "macos-latest" ]; then
             cargo build --release --bin kftui --target aarch64-apple-darwin

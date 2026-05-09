@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use kftray_commons::models::window::AppState;
 use kftray_commons::models::window::SaveDialogState;
+use kftray_commons::models::window::WindowPosition;
 use log::{
     error,
     info,
@@ -19,6 +20,9 @@ use tauri::{
     RunEvent,
     WindowEvent,
     Wry,
+};
+#[cfg(not(target_os = "linux"))]
+use tauri::{
     menu::{
         MenuBuilder,
         MenuItemBuilder,
@@ -32,6 +36,7 @@ use tauri::{
         TrayIconEvent,
     },
 };
+#[cfg(not(target_os = "linux"))]
 use tauri_plugin_positioner::Position;
 use tokio::time::sleep;
 
@@ -43,15 +48,27 @@ pub struct TrayPositionState {
 }
 
 use crate::commands::portforward::handle_exit_app;
+#[cfg(not(target_os = "linux"))]
 use crate::commands::window_state::toggle_pin_state;
 use crate::window::{
+    is_valid_position,
+    save_window_position_async,
+};
+#[cfg(not(target_os = "linux"))]
+use crate::window::{
     reset_window_position,
-    save_window_position,
     set_window_position,
     toggle_window_visibility,
 };
 
-pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<tauri::tray::TrayIcon<Wry>, tauri::Error> {
+#[cfg(target_os = "linux")]
+pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<(), tauri::Error> {
+    crate::tray_linux::spawn(app);
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<(), tauri::Error> {
     let quit = MenuItemBuilder::with_id("quit", "Quit")
         .accelerator("CmdOrCtrl+Shift+Q")
         .build(app)?;
@@ -266,7 +283,8 @@ pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<tauri::tray::TrayIcon<W
         })
         .build(app)?;
 
-    Ok(tray)
+    let _ = tray;
+    Ok(())
 }
 
 pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
@@ -322,7 +340,7 @@ pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
         }
     }
 
-    if let WindowEvent::Moved(_) = event {
+    if let WindowEvent::Moved(physical_position) = event {
         #[warn(unused_must_use)]
         let _ = webview_window.with_webview(|_webview| {
             #[cfg(target_os = "linux")]
@@ -349,12 +367,18 @@ pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
             }
 
             if !app_state.positioning_active.load(Ordering::SeqCst) {
-                let webview_window_clone = webview_window.clone();
-                let runtime = app_state.runtime.clone();
-                runtime.spawn(async move {
-                    sleep(Duration::from_millis(500)).await;
-                    save_window_position(&webview_window_clone);
-                });
+                let x = physical_position.x;
+                let y = physical_position.y;
+
+                if is_valid_position(&webview_window, x, y) {
+                    let runtime = app_state.runtime.clone();
+                    runtime.spawn(async move {
+                        sleep(Duration::from_millis(500)).await;
+                        save_window_position_async(WindowPosition { x, y }).await;
+                    });
+                } else {
+                    warn!("Position ({}, {}) failed validation", x, y);
+                }
             }
         }
     }
