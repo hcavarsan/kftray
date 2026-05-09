@@ -19,15 +19,22 @@ use keyring_core::{
 
 pub struct LinuxCompositeStore {
     primary: Arc<CredentialStore>,
-    fallback: Arc<CredentialStore>,
+    fallback: Option<Arc<CredentialStore>>,
 }
 
 impl LinuxCompositeStore {
     pub fn new() -> Result<Arc<CredentialStore>> {
         let primary = dbus_secret_service_keyring_store::Store::new()
             .map_err(|e| Error::PlatformFailure(Box::new(e)))?;
-        let fallback = linux_keyutils_keyring_store::Store::new()
-            .map_err(|e| Error::PlatformFailure(Box::new(e)))?;
+        let fallback = match linux_keyutils_keyring_store::Store::new() {
+            Ok(store) => Some(store),
+            Err(e) => {
+                log::warn!(
+                    "keyutils fallback unavailable: {e}; legacy keyutils credentials will not be migrated"
+                );
+                None
+            }
+        };
         Ok(Arc::new(Self { primary, fallback }))
     }
 }
@@ -49,7 +56,10 @@ impl CredentialStoreApi for LinuxCompositeStore {
         &self, service: &str, user: &str, modifiers: Option<&HashMap<&str, &str>>,
     ) -> Result<Entry> {
         let primary = self.primary.build(service, user, modifiers)?;
-        let fallback = self.fallback.build(service, user, modifiers).ok();
+        let fallback = self
+            .fallback
+            .as_ref()
+            .and_then(|f| f.build(service, user, modifiers).ok());
         let cred: Arc<Credential> = Arc::new(CompositeCredential { primary, fallback });
         Ok(Entry::new_with_credential(cred))
     }
@@ -93,10 +103,12 @@ impl CredentialApi for CompositeCredential {
 
     fn delete_credential(&self) -> Result<()> {
         let primary_result = self.primary.delete_credential();
-        if let Some(f) = &self.fallback {
-            let _ = f.delete_credential();
+        let fallback_result = self.fallback.as_ref().map(|f| f.delete_credential());
+        match (primary_result, fallback_result) {
+            (Ok(()), _) => Ok(()),
+            (Err(Error::NoEntry), Some(Ok(()))) => Ok(()),
+            (Err(e), _) => Err(e),
         }
-        primary_result
     }
 
     fn get_credential(&self) -> Result<Option<Arc<Credential>>> {
