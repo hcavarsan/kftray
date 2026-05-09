@@ -21,6 +21,7 @@ mod tray;
 mod tray_linux;
 mod validation;
 mod window;
+mod window_size;
 mod x11_init;
 use std::sync::atomic::AtomicBool;
 use std::sync::atomic::Ordering;

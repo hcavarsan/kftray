@@ -9,3 +9,4 @@ pub mod tray;
 pub mod tray_linux;
 pub mod validation;
 pub mod window;
+pub mod window_size;
