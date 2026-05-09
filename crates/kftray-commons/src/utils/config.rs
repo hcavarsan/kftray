@@ -3,7 +3,6 @@ use log::{
     error,
     info,
 };
-use portpicker::pick_unused_port;
 use serde_json::json;
 use sqlx::{
     Row,
@@ -670,6 +669,27 @@ pub async fn clean_all_custom_hosts_entries_with_mode(mode: DatabaseMode) -> Res
     clean_all_custom_hosts_entries_with_pool(&context.pool).await
 }
 
+fn pick_unused_local_port() -> Option<u16> {
+    use std::net::{
+        TcpListener,
+        UdpSocket,
+    };
+
+    for _ in 0..10 {
+        let Ok(tcp) = TcpListener::bind("127.0.0.1:0") else {
+            continue;
+        };
+        let Ok(addr) = tcp.local_addr() else {
+            continue;
+        };
+        let port = addr.port();
+        if UdpSocket::bind(("127.0.0.1", port)).is_ok() {
+            return Some(port);
+        }
+    }
+    None
+}
+
 fn prepare_config(mut config: Config) -> Config {
     if let Some(ref mut alias) = config.alias {
         *alias = alias.trim().to_string();
@@ -679,7 +699,7 @@ fn prepare_config(mut config: Config) -> Config {
     }
 
     if config.local_port == Some(0) || config.local_port.is_none() {
-        match pick_unused_port() {
+        match pick_unused_local_port() {
             Some(port) => config.local_port = Some(port),
             None => {
                 config.local_port = config.remote_port;

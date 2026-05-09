@@ -1,4 +1,4 @@
-use keyring::{
+use keyring_core::{
     Entry,
     Error as KeyringError,
 };
@@ -90,106 +90,37 @@ pub async fn import_configs_from_github(
 
 #[cfg(test)]
 mod tests {
-    use std::any::Any;
-    use std::collections::BTreeMap;
     use std::sync::{
-        Arc,
         Mutex,
-    };
-
-    use keyring::credential::{
-        CredentialApi,
-        CredentialBuilderApi,
-        CredentialPersistence,
+        MutexGuard,
     };
 
     use super::*;
 
-    type SharedStore = Arc<Mutex<BTreeMap<String, String>>>;
+    static KEYRING_TEST_LOCK: Mutex<()> = Mutex::new(());
 
-    struct MockEntry {
-        handle: String,
-        store: SharedStore,
-    }
-
-    impl CredentialApi for MockEntry {
-        fn set_password(&self, password: &str) -> keyring::Result<()> {
-            self.store
-                .lock()
-                .unwrap()
-                .insert(self.handle.clone(), password.into());
-            Ok(())
-        }
-
-        fn set_secret(&self, _secret: &[u8]) -> keyring::Result<()> {
-            Err(keyring::Error::NoEntry)
-        }
-
-        fn get_password(&self) -> keyring::Result<String> {
-            match self.store.lock().unwrap().get(&self.handle) {
-                Some(secret) => Ok(secret.clone()),
-                None => Err(keyring::Error::NoEntry),
-            }
-        }
-
-        fn get_secret(&self) -> keyring::Result<Vec<u8>> {
-            Err(keyring::Error::NoEntry)
-        }
-
-        fn delete_credential(&self) -> keyring::Result<()> {
-            self.store.lock().unwrap().remove(&self.handle);
-            Ok(())
-        }
-
-        fn as_any(&self) -> &dyn Any {
-            self
-        }
-    }
-
-    struct MockCredentialBuilder {
-        store: SharedStore,
-    }
-
-    impl CredentialBuilderApi for MockCredentialBuilder {
-        fn build(
-            &self, _target: Option<&str>, service: &str, user: &str,
-        ) -> keyring::Result<Box<keyring::Credential>> {
-            let credential = MockEntry {
-                handle: format!("{service}:{user}"),
-                store: self.store.clone(),
-            };
-            Ok(Box::new(credential))
-        }
-
-        fn as_any(&self) -> &dyn Any {
-            self
-        }
-
-        fn persistence(&self) -> CredentialPersistence {
-            CredentialPersistence::ProcessOnly
-        }
-    }
-
-    fn use_mock_keyring() {
-        let store = SharedStore::default();
-        keyring::set_default_credential_builder(Box::new(MockCredentialBuilder { store }));
+    fn use_mock_keyring() -> MutexGuard<'static, ()> {
+        let guard = KEYRING_TEST_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap());
+        guard
     }
 
     #[test]
     fn test_keyring_operations() {
-        use_mock_keyring();
+        let _guard = use_mock_keyring();
 
         let entry = Entry::new("test_service", "test_name").unwrap();
         assert!(entry.set_password("test_password").is_ok());
         assert_eq!(entry.get_password().unwrap(), "test_password");
         assert!(entry.delete_credential().is_ok());
-        // After delete, get_password should return NoEntry
-        assert!(entry.get_password().is_err());
+        assert!(matches!(entry.get_password(), Err(KeyringError::NoEntry)));
     }
 
     #[test]
     fn test_store_get_delete_key() {
-        use_mock_keyring();
+        let _guard = use_mock_keyring();
 
         let result = store_key("test_service", "test_name", "test_password");
         assert!(result.is_ok());
