@@ -1,6 +1,9 @@
 pub mod cert_generator;
 pub mod cert_manager;
 pub mod cert_store;
+#[cfg(target_os = "linux")]
+pub mod composite_store;
+pub mod keyring_init;
 pub mod platform;
 
 use std::sync::Once;
@@ -26,3 +29,4 @@ pub use cert_manager::{
     CertificateManager,
 };
 pub use cert_store::CertificateStore;
+pub use keyring_init::install_default_keyring_store;

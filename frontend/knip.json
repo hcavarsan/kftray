@@ -3,5 +3,5 @@
   "entry": ["src/logs.tsx"],
   "project": ["src/**/*.{ts,tsx}!"],
   "ignoreBinaries": ["taze"],
-  "ignoreDependencies": ["@codecov/vite-plugin", "@eslint/js", "@eslint/eslintrc", "@tauri-apps/plugin-log"]
+  "ignoreDependencies": ["@codecov/vite-plugin", "@eslint/js", "@eslint/eslintrc"]
 }

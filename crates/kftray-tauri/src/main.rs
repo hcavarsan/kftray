@@ -44,11 +44,46 @@ use crate::tray::{
     handle_window_event,
 };
 
+fn init_file_logger() -> anyhow::Result<()> {
+    use kftray_commons::utils::config_dir::get_app_log_path;
+
+    let log_path = get_app_log_path().map_err(|e| anyhow::anyhow!(e))?;
+    let log_dir = log_path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("log path has no parent directory"))?
+        .to_path_buf();
+    let basename = format!(
+        "kftray_{}",
+        jiff::Zoned::now().strftime("%Y-%m-%d_%H-%M-%S")
+    );
+
+    flexi_logger::Logger::try_with_str("info")?
+        .log_to_file(
+            flexi_logger::FileSpec::default()
+                .directory(log_dir)
+                .basename(basename),
+        )
+        .duplicate_to_stdout(flexi_logger::Duplicate::Info)
+        .rotate(
+            flexi_logger::Criterion::Size(5_000_000),
+            flexi_logger::Naming::Numbers,
+            flexi_logger::Cleanup::KeepLogFiles(1),
+        )
+        .format(flexi_logger::detailed_format)
+        .start()?;
+
+    Ok(())
+}
+
 fn main() {
     // CRITICAL: Must be called before ANY other code that might touch X11.
     // This prevents crashes with "[xcb] Most likely this is a multi-threaded
     // client and XInitThreads has not been called" on Linux X11 systems.
     x11_init::init_x11_threads();
+
+    if let Err(e) = init_file_logger() {
+        eprintln!("failed to initialize file logger: {e}");
+    }
 
     if let Err(e) = fix_path_env::fix_all_vars() {
         log::warn!("fix_path_env::fix_all_vars failed: {e}");
@@ -61,6 +96,7 @@ fn main() {
         unsafe { std::env::set_var("HOME", home) };
     }
 
+    kftray_portforward::ssl::install_default_keyring_store();
     kftray_portforward::ssl::ensure_crypto_provider_installed();
 
     let positioning_active = Arc::new(AtomicBool::new(false));
@@ -269,26 +305,7 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_http::init())
-        .plugin(tauri_plugin_notification::init())
-        .plugin({
-            let log_filename = format!(
-                "kftray_{}",
-                jiff::Zoned::now().strftime("%Y-%m-%d_%H-%M-%S")
-            );
-            tauri_plugin_log::Builder::new()
-                .targets([
-                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
-                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Webview),
-                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
-                        file_name: Some(log_filename),
-                    }),
-                ])
-                .level(log::LevelFilter::Info)
-                .timezone_strategy(tauri_plugin_log::TimezoneStrategy::UseLocal)
-                .max_file_size(5_000_000)
-                .rotation_strategy(tauri_plugin_log::RotationStrategy::KeepOne)
-                .build()
-        });
+        .plugin(tauri_plugin_notification::init());
 
     let app = app
         .plugin(tauri_plugin_os::init())
