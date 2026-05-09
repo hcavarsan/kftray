@@ -126,8 +126,7 @@ pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<(), tauri::Error> {
         .item(&reset_position)
         .build()?;
 
-    let set_size_default =
-        MenuItemBuilder::with_id("set_size_default", "Default").build(app)?;
+    let set_size_default = MenuItemBuilder::with_id("set_size_default", "Default").build(app)?;
     let set_size_medium = MenuItemBuilder::with_id("set_size_medium", "Medium").build(app)?;
     let set_size_large = MenuItemBuilder::with_id("set_size_large", "Large").build(app)?;
     let set_size_xl = MenuItemBuilder::with_id("set_size_xl", "Extra Large").build(app)?;
