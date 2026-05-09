@@ -234,26 +234,61 @@ pub async fn load_saved_window_size_preset() -> crate::window_size::WindowSizePr
     }
 }
 
+/// Applies a window size preset on the Tauri main thread.
+///
+/// On Linux, `WebviewWindow::current_monitor`, `outer_size`, and `set_size`
+/// are Xlib/GTK calls that corrupt the xcb request queue when invoked from a
+/// worker thread (see commit 2f120f1 for the same class of bug on
+/// `WindowEvent::Moved`). Dispatching the work via `run_on_main_thread` keeps
+/// every Xlib call on the GTK main thread; on macOS/Windows it is still the
+/// correct thread for window APIs, so the same code path works on every
+/// platform.
+///
+/// Returns `true` when the size was applied (or was already correct), `false`
+/// when the dispatch or the underlying `set_size` failed.
+async fn apply_window_size_on_main_thread(
+    window: &WebviewWindow<Wry>, preset: crate::window_size::WindowSizePreset,
+) -> bool {
+    let window_clone = window.clone();
+    let (tx, rx) = tokio::sync::oneshot::channel::<bool>();
+
+    let dispatch = window.app_handle().run_on_main_thread(move || {
+        let (w, h) = preset.dimensions(&window_clone);
+        match window_clone.outer_size() {
+            Ok(current) if current.width == w && current.height == h => {
+                let _ = tx.send(true);
+                return;
+            }
+            Ok(_) | Err(_) => {}
+        }
+        match window_clone.set_size(tauri::Size::Physical(PhysicalSize::new(w, h))) {
+            Ok(()) => {
+                let _ = tx.send(true);
+            }
+            Err(e) => {
+                warn!("Failed to set window size for preset {preset:?}: {e}");
+                let _ = tx.send(false);
+            }
+        }
+    });
+
+    if let Err(e) = dispatch {
+        warn!("Failed to dispatch window size apply to main thread: {e}");
+        return false;
+    }
+
+    rx.await.unwrap_or(false)
+}
+
 pub async fn apply_saved_window_size(window: &WebviewWindow<Wry>) {
     let preset = load_saved_window_size_preset().await;
-    let (w, h) = preset.dimensions(window);
-    if let Ok(current) = window.outer_size()
-        && current.width == w
-        && current.height == h
-    {
-        return;
-    }
-    if let Err(e) = window.set_size(tauri::Size::Physical(PhysicalSize::new(w, h))) {
-        warn!("Failed to apply saved window size preset: {e}");
-    }
+    apply_window_size_on_main_thread(window, preset).await;
 }
 
 pub async fn apply_window_size_preset(
     window: &WebviewWindow<Wry>, preset: crate::window_size::WindowSizePreset,
 ) {
-    let (w, h) = preset.dimensions(window);
-    if let Err(e) = window.set_size(tauri::Size::Physical(PhysicalSize::new(w, h))) {
-        warn!("Failed to set window size for preset {:?}: {e}", preset);
+    if !apply_window_size_on_main_thread(window, preset).await {
         return;
     }
     match kftray_commons::utils::settings::set_setting(
