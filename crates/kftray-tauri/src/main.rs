@@ -17,6 +17,8 @@ mod init_check;
 mod mcp;
 mod shortcuts;
 mod tray;
+#[cfg(target_os = "linux")]
+mod tray_linux;
 mod validation;
 mod window;
 mod x11_init;

@@ -23,42 +23,7 @@ use tauri_plugin_positioner::{
 };
 use tokio::time::sleep;
 
-pub fn save_window_position(window: &WebviewWindow<Wry>) {
-    let app_state = window.state::<AppState>();
-
-    if app_state.positioning_active.load(Ordering::SeqCst) {
-        info!("Skipping position save - app positioning active");
-        return;
-    }
-
-    if let Ok(position) = window.outer_position() {
-        info!(
-            "Attempting to save position: ({}, {})",
-            position.x, position.y
-        );
-
-        if is_valid_position(window, position.x, position.y) {
-            let position_data = WindowPosition {
-                x: position.x,
-                y: position.y,
-            };
-            let runtime = app_state.runtime.clone();
-
-            runtime.spawn(async move {
-                save_position_async(position_data).await;
-            });
-        } else {
-            warn!(
-                "Position ({}, {}) failed validation",
-                position.x, position.y
-            );
-        }
-    } else {
-        warn!("Failed to get window outer position");
-    }
-}
-
-async fn save_position_async(position_data: WindowPosition) {
+pub async fn save_window_position_async(position_data: WindowPosition) {
     let position_json = match serde_json::to_string(&position_data) {
         Ok(json) => json,
         Err(e) => {
