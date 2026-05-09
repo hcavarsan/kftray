@@ -289,7 +289,7 @@ jobs:
         id: tauri_build
         continue-on-error: true
         env: &tauri-build-env
-          RUSTFLAGS: ${{ matrix.os == 'macos-latest' && '-C link-arg=-s' || (matrix.os == 'windows-latest' && '' || '-C target-cpu=native -C link-arg=-s') }}
+          RUSTFLAGS: ${{ matrix.os == 'windows-latest' && '' || '-C link-arg=-s' }}
           AWS_LC_SYS_PREBUILT_NASM: ${{ matrix.os == 'windows-latest' && '1' || '' }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
@@ -566,7 +566,7 @@ jobs:
       - name: Build kftui
         if: matrix.os != 'windows-latest'
         env:
-          RUSTFLAGS: ${{ matrix.os == 'macos-latest' && '-C link-arg=-s' || '-C target-cpu=native -C link-arg=-s' }}
+          RUSTFLAGS: '-C link-arg=-s'
         run: |
           if [ "${{ matrix.os }}" == "macos-latest" ]; then
             cargo build --release --bin kftui --target aarch64-apple-darwin
