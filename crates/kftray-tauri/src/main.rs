@@ -19,6 +19,8 @@ mod shortcuts;
 mod tray;
 #[cfg(target_os = "linux")]
 mod tray_linux;
+#[cfg(target_os = "windows")]
+mod tray_theme;
 mod validation;
 mod window;
 mod x11_init;
