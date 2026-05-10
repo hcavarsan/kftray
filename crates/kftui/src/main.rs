@@ -24,6 +24,7 @@ use crate::logging::{
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    kftray_portforward::ssl::install_default_keyring_store();
     kftray_portforward::ssl::ensure_crypto_provider_installed();
 
     let cli = Cli::parse();

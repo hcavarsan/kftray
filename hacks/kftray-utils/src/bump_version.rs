@@ -155,9 +155,9 @@ fn bump_version(bump_type: &str) -> io::Result<()> {
         update_cargo_toml_version,
     )?;
 
-	println!("kftray-commons Cargo.toml updated");
+    println!("kftray-commons Cargo.toml updated");
 
-	update_file_content(
+    update_file_content(
         "../../crates/kftray-helper/Cargo.toml",
         new_version,
         update_cargo_toml_version,
@@ -165,8 +165,7 @@ fn bump_version(bump_type: &str) -> io::Result<()> {
 
     println!("kftray-helper Cargo.toml updated");
 
-
-	update_file_content(
+    update_file_content(
         "../../crates/kftray-shortcuts/Cargo.toml",
         new_version,
         update_cargo_toml_version,
@@ -174,8 +173,7 @@ fn bump_version(bump_type: &str) -> io::Result<()> {
 
     println!("kftray-shortcuts Cargo.toml updated");
 
-
-	update_file_content(
+    update_file_content(
         "../../crates/kftray-network-monitor/Cargo.toml",
         new_version,
         update_cargo_toml_version,
@@ -183,13 +181,21 @@ fn bump_version(bump_type: &str) -> io::Result<()> {
 
     println!("kftray-network-monitor Cargo.toml updated");
 
-	update_file_content(
+    update_file_content(
         "../../crates/kftray-http-logs/Cargo.toml",
         new_version,
         update_cargo_toml_version,
     )?;
 
     println!("kftray-http-logs Cargo.toml updated");
+
+    update_file_content(
+        "../../crates/kftray-mcp/Cargo.toml",
+        new_version,
+        update_cargo_toml_version,
+    )?;
+
+    println!("kftray-mcp Cargo.toml updated");
 
     update_file_content(
         "../../docs/kftray/INSTALL.md",
@@ -207,7 +213,7 @@ fn bump_version(bump_type: &str) -> io::Result<()> {
 
     println!("tauri.conf.json updated");
 
-	println!("Running tombi format...");
+    println!("Running tombi format...");
     let tombi_output = Command::new("tombi")
         .args(["format"])
         .current_dir(&root_dir)
@@ -333,18 +339,23 @@ fn update_workspace_dependencies(content: &str, new_version: &str) -> io::Result
             in_workspace_dependencies = false;
             updated_lines.push(line.to_string());
         } else if in_workspace_dependencies && kftray_dependency_regex_path_first.is_match(line) {
-            let updated_line = kftray_dependency_regex_path_first.replace(
-                line,
-                format!(r#"$1"{}"$2"#, new_version)
-            ).to_string();
-            println!("Updated workspace dependency (path first): {}", updated_line);
+            let updated_line = kftray_dependency_regex_path_first
+                .replace(line, format!(r#"$1"{}"$2"#, new_version))
+                .to_string();
+            println!(
+                "Updated workspace dependency (path first): {}",
+                updated_line
+            );
             updated_lines.push(updated_line);
-        } else if in_workspace_dependencies && kftray_dependency_regex_version_first.is_match(line) {
-            let updated_line = kftray_dependency_regex_version_first.replace(
-                line,
-                format!(r#"$1"{}"$2"#, new_version)
-            ).to_string();
-            println!("Updated workspace dependency (version first): {}", updated_line);
+        } else if in_workspace_dependencies && kftray_dependency_regex_version_first.is_match(line)
+        {
+            let updated_line = kftray_dependency_regex_version_first
+                .replace(line, format!(r#"$1"{}"$2"#, new_version))
+                .to_string();
+            println!(
+                "Updated workspace dependency (version first): {}",
+                updated_line
+            );
             updated_lines.push(updated_line);
         } else {
             updated_lines.push(line.to_string());

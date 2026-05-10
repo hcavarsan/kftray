@@ -1,6 +1,6 @@
 [package]
 name = "kftray-portforward"
-version = "0.27.27"
+version = "0.27.28"
 authors = ["Henrique Cavarsan <hencavarsan@gmail.com>"]
 edition = "2024"
 description = "KFtray library with port forwarding logic"
@@ -44,7 +44,7 @@ hyper-openssl = { workspace = true }
 hyper-util = { workspace = true }
 jiff = { version = "0.2", features = ["serde"] }
 k8s-openapi = { workspace = true }
-keyring = { workspace = true }
+keyring-core = { workspace = true }
 kftray-commons = { workspace = true }
 kftray-helper = { workspace = true }
 kftray-http-logs = { workspace = true }
@@ -85,12 +85,18 @@ tower-test = { workspace = true }
 tracing-subscriber = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-security-framework = "3.5.1"
+security-framework = "3.7.0"
 core-foundation = "0.10.1"
+apple-native-keyring-store = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+dbus-secret-service-keyring-store = { workspace = true }
+linux-keyutils-keyring-store = { workspace = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-schannel = "0.1.28"
+schannel = "0.1.29"
 windows = { workspace = true }
+windows-native-keyring-store = { workspace = true }
 
 [features]
 default = ["http-proxy", "socks5"]

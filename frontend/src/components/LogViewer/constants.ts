@@ -41,8 +41,6 @@ export const ALL_LEVELS: LogLevel[] = [
 
 export const ROW_HEIGHT_COLLAPSED = 36
 
-export const ROW_HEIGHT_EXPANDED_DEFAULT = 180
-
 export const DEFAULT_LOG_LINES = 1000
 
 export const AUTO_REFRESH_INTERVAL = 2000

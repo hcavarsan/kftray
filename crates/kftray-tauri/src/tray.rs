@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use kftray_commons::models::window::AppState;
 use kftray_commons::models::window::SaveDialogState;
+use kftray_commons::models::window::WindowPosition;
 use log::{
     error,
     info,
@@ -19,6 +20,9 @@ use tauri::{
     RunEvent,
     WindowEvent,
     Wry,
+};
+#[cfg(not(target_os = "linux"))]
+use tauri::{
     menu::{
         MenuBuilder,
         MenuItemBuilder,
@@ -32,6 +36,7 @@ use tauri::{
         TrayIconEvent,
     },
 };
+#[cfg(not(target_os = "linux"))]
 use tauri_plugin_positioner::Position;
 use tokio::time::sleep;
 
@@ -43,15 +48,65 @@ pub struct TrayPositionState {
 }
 
 use crate::commands::portforward::handle_exit_app;
+#[cfg(not(target_os = "linux"))]
 use crate::commands::window_state::toggle_pin_state;
 use crate::window::{
+    is_valid_position,
+    save_window_position_async,
+};
+#[cfg(not(target_os = "linux"))]
+use crate::window::{
     reset_window_position,
-    save_window_position,
     set_window_position,
     toggle_window_visibility,
 };
 
-pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<tauri::tray::TrayIcon<Wry>, tauri::Error> {
+#[cfg(not(target_os = "linux"))]
+pub const TRAY_ID: &str = "kftray-main";
+
+#[cfg(target_os = "windows")]
+const TRAY_LIGHT_ICO: &[u8] = include_bytes!("../icons/tray-light.ico");
+#[cfg(not(target_os = "linux"))]
+const TRAY_DARK_ICO: &[u8] = include_bytes!("../icons/tray-dark.ico");
+
+#[cfg(not(target_os = "linux"))]
+fn current_tray_icon_bytes() -> &'static [u8] {
+    #[cfg(target_os = "windows")]
+    {
+        match crate::tray_theme::current() {
+            crate::tray_theme::TaskbarTheme::Dark => TRAY_LIGHT_ICO,
+            crate::tray_theme::TaskbarTheme::Light => TRAY_DARK_ICO,
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        TRAY_DARK_ICO
+    }
+}
+
+#[cfg(target_os = "windows")]
+pub fn refresh_tray_icon_for_theme(app: &tauri::AppHandle<Wry>) {
+    let Some(tray) = app.tray_by_id(TRAY_ID) else {
+        return;
+    };
+    match tauri::image::Image::from_bytes(current_tray_icon_bytes()) {
+        Ok(icon) => {
+            if let Err(e) = tray.set_icon(Some(icon)) {
+                warn!("Failed to update tray icon for theme change: {e}");
+            }
+        }
+        Err(e) => warn!("Failed to decode tray icon image: {e}"),
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<(), tauri::Error> {
+    crate::tray_linux::spawn(app);
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<(), tauri::Error> {
     let quit = MenuItemBuilder::with_id("quit", "Quit")
         .accelerator("CmdOrCtrl+Shift+Q")
         .build(app)?;
@@ -109,6 +164,21 @@ pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<tauri::tray::TrayIcon<W
         .item(&reset_position)
         .build()?;
 
+    let set_size_xs = MenuItemBuilder::with_id("set_size_xs", "Extra Small").build(app)?;
+    let set_size_small = MenuItemBuilder::with_id("set_size_small", "Small").build(app)?;
+    let set_size_default = MenuItemBuilder::with_id("set_size_default", "Default").build(app)?;
+    let set_size_medium = MenuItemBuilder::with_id("set_size_medium", "Medium").build(app)?;
+    let set_size_large = MenuItemBuilder::with_id("set_size_large", "Large").build(app)?;
+    let set_size_xl = MenuItemBuilder::with_id("set_size_xl", "Extra Large").build(app)?;
+    let set_window_size_submenu = SubmenuBuilder::new(app, "Set Window Size")
+        .item(&set_size_xs)
+        .item(&set_size_small)
+        .item(&set_size_default)
+        .item(&set_size_medium)
+        .item(&set_size_large)
+        .item(&set_size_xl)
+        .build()?;
+
     let main_separator = PredefinedMenuItem::separator(app)?;
     let logs_separator = PredefinedMenuItem::separator(app)?;
     let menu = MenuBuilder::new(app)
@@ -116,16 +186,17 @@ pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<tauri::tray::TrayIcon<W
         .item(&main_separator)
         .item(&pin)
         .item(&set_window_position_submenu)
+        .item(&set_window_size_submenu)
         .item(&logs_separator)
         .item(&view_logs)
         .item(&quit)
         .build()?;
-    let icon_bytes = include_bytes!("../icons/tray.ico");
-    let icon = tauri::image::Image::from_bytes(icon_bytes)?;
+    let icon = tauri::image::Image::from_bytes(current_tray_icon_bytes())?;
 
-    let tray = TrayIconBuilder::new()
+    let tray = TrayIconBuilder::with_id(TRAY_ID)
         .menu(&menu)
         .icon_as_template(true)
+        .tooltip("kftray")
         .show_menu_on_left_click(false)
         .icon(icon)
         .on_menu_event(move |app, event| match event.id().as_ref() {
@@ -184,6 +255,20 @@ pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<tauri::tray::TrayIcon<W
             "view_logs" => {
                 if let Err(e) = crate::commands::logs::open_log_viewer_window(app.clone()) {
                     error!("Failed to open log viewer window: {e}");
+                }
+            }
+            id if id.starts_with("set_size_") => {
+                let preset_id = id.trim_start_matches("set_size_");
+                if let Some(preset) = crate::window_size::WindowSizePreset::from_id(preset_id) {
+                    if let Some(window) = app.get_webview_window("main") {
+                        let app_state = window.state::<AppState>();
+                        let runtime = app_state.runtime.clone();
+                        runtime.spawn(async move {
+                            crate::window::apply_window_size_preset(&window, preset).await;
+                        });
+                    } else {
+                        error!("Main window not found on size preset event");
+                    }
                 }
             }
             _ => {}
@@ -266,7 +351,8 @@ pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<tauri::tray::TrayIcon<W
         })
         .build(app)?;
 
-    Ok(tray)
+    let _ = tray;
+    Ok(())
 }
 
 pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
@@ -283,6 +369,11 @@ pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
             warn!("Failed to set window size during scale change: {e}");
         }
         return;
+    }
+
+    #[cfg(target_os = "windows")]
+    if let WindowEvent::ThemeChanged(_) = event {
+        refresh_tray_icon_for_theme(window.app_handle());
     }
 
     info!("event: {:?}", event);
@@ -322,7 +413,7 @@ pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
         }
     }
 
-    if let WindowEvent::Moved(_) = event {
+    if let WindowEvent::Moved(physical_position) = event {
         #[warn(unused_must_use)]
         let _ = webview_window.with_webview(|_webview| {
             #[cfg(target_os = "linux")]
@@ -349,12 +440,18 @@ pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
             }
 
             if !app_state.positioning_active.load(Ordering::SeqCst) {
-                let webview_window_clone = webview_window.clone();
-                let runtime = app_state.runtime.clone();
-                runtime.spawn(async move {
-                    sleep(Duration::from_millis(500)).await;
-                    save_window_position(&webview_window_clone);
-                });
+                let x = physical_position.x;
+                let y = physical_position.y;
+
+                if is_valid_position(&webview_window, x, y) {
+                    let runtime = app_state.runtime.clone();
+                    runtime.spawn(async move {
+                        sleep(Duration::from_millis(500)).await;
+                        save_window_position_async(WindowPosition { x, y }).await;
+                    });
+                } else {
+                    warn!("Position ({}, {}) failed validation", x, y);
+                }
             }
         }
     }

@@ -6,6 +6,7 @@ import { app } from '@tauri-apps/api'
 import { invoke } from '@tauri-apps/api/core'
 
 import type { LogFileInfo, LogSettings } from '@/components/LogViewer'
+import McpServerSettings from '@/components/SettingsModal/McpServerSettings'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { DialogCloseTrigger } from '@/components/ui/dialog'
@@ -973,6 +974,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
                     </Flex>
                   </Box>
                 </Box>
+
+                {/* MCP Server Settings */}
+                <McpServerSettings isLoading={isLoading} />
               </Box>
             </Stack>
           </Dialog.Body>

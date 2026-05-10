@@ -40,6 +40,12 @@ pub struct AppSettings {
 
     #[serde(default = "default_global_shortcut")]
     pub global_shortcut: String,
+
+    #[serde(default)]
+    pub mcp_server_enabled: bool,
+
+    #[serde(default = "default_mcp_server_port")]
+    pub mcp_server_port: u16,
 }
 
 fn default_network_monitor() -> bool {
@@ -73,6 +79,10 @@ fn default_global_shortcut() -> String {
     return "Ctrl+Shift+F1".to_string();
 }
 
+fn default_mcp_server_port() -> u16 {
+    3000
+}
+
 impl Default for AppSettings {
     fn default() -> Self {
         Self {
@@ -88,6 +98,8 @@ impl Default for AppSettings {
             ssl_auto_regenerate: default_ssl_auto_regenerate(),
             ssl_ca_auto_install: false,
             global_shortcut: default_global_shortcut(),
+            mcp_server_enabled: false,
+            mcp_server_port: default_mcp_server_port(),
         }
     }
 }
@@ -144,6 +156,14 @@ impl AppSettings {
             app_settings.global_shortcut = value.clone();
         }
 
+        if let Some(value) = settings.get("mcp_server_enabled") {
+            app_settings.mcp_server_enabled = value.parse().unwrap_or(false);
+        }
+
+        if let Some(value) = settings.get("mcp_server_port") {
+            app_settings.mcp_server_port = value.parse().unwrap_or(3000);
+        }
+
         app_settings
     }
 
@@ -193,6 +213,14 @@ impl AppSettings {
             self.ssl_ca_auto_install.to_string(),
         );
         settings.insert("global_shortcut".to_string(), self.global_shortcut.clone());
+        settings.insert(
+            "mcp_server_enabled".to_string(),
+            self.mcp_server_enabled.to_string(),
+        );
+        settings.insert(
+            "mcp_server_port".to_string(),
+            self.mcp_server_port.to_string(),
+        );
 
         settings
     }

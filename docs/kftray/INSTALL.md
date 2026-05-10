@@ -25,36 +25,36 @@ _Please check the caveats section for global app creation instructions after ins
 
 Linux Note:
 
-- Due to GTK limitations, it is necessary to install and enable the GNOME Shell extension for AppIndicator support to kftray works. See here: <https://extensions.gnome.org/extension/615/appindicator-support/>
-- For newer Linux distributions (Ubuntu 24.04+), use the "newer-glibc" AppImage versions for better compatibility
+- kftray uses the StatusNotifierItem (SNI) protocol for the system tray. KDE, Cinnamon, MATE, XFCE, LXQt, and Unity show the icon out of the box. On vanilla GNOME, install the [AppIndicator and KStatusNotifierItem Support](https://extensions.gnome.org/extension/615/appindicator-support/) extension. If no SNI host is available the app still runs through the main window.
+- For newer Linux distributions (Ubuntu 24.04+), use the "newer-glibc" AppImage versions for better compatibility.
 
 ### Direct Downloads
 
 Download the latest release directly from GitHub:
 
 <div align="left">
-    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.27.27_universal.dmg">
+    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.27.28_universal.dmg">
         <img src="https://img.shields.io/badge/macOS-Universal-grey.svg?style=for-the-badge&logo=apple" alt="Download for macOS" />
     </a>
-    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.27.27_arm64-setup.exe">
+    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.27.28_arm64-setup.exe">
         <img src="https://img.shields.io/badge/Windows-ARM64-grey.svg?style=for-the-badge&logo=windows" alt="Download for Windows ARM64" />
     </a>
-    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.27.27_x64-setup.exe">
+    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.27.28_x64-setup.exe">
         <img src="https://img.shields.io/badge/Windows-x64-grey.svg?style=for-the-badge&logo=windows" alt="Download for Windows x64" />
     </a>
-    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.27.27_x86-setup.exe">
+    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.27.28_x86-setup.exe">
         <img src="https://img.shields.io/badge/Windows-x86-grey.svg?style=for-the-badge&logo=windows" alt="Download for Windows x86" />
     </a>
-    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.27.27_amd64.AppImage">
+    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.27.28_amd64.AppImage">
         <img src="https://img.shields.io/badge/Linux-x64-grey.svg?style=for-the-badge&logo=linux" alt="Download for Linux AMD64" />
     </a>
-    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.27.27_aarch64.AppImage">
+    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.27.28_aarch64.AppImage">
         <img src="https://img.shields.io/badge/Linux-ARM64-grey.svg?style=for-the-badge&logo=linux" alt="Download for Linux ARM64" />
     </a>
-    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.27.27_newer-glibc_amd64.AppImage">
+    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.27.28_newer-glibc_amd64.AppImage">
         <img src="https://img.shields.io/badge/Linux-x64_newer_glibc-orange.svg?style=for-the-badge&logo=linux" alt="Download for Linux AMD64 (newer glibc)" />
     </a>
-    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.27.27_newer-glibc_aarch64.AppImage">
+    <a href="https://github.com/hcavarsan/kftray/releases/latest/download/kftray_0.27.28_newer-glibc_aarch64.AppImage">
         <img src="https://img.shields.io/badge/Linux-ARM64_newer_glibc-orange.svg?style=for-the-badge&logo=linux" alt="Download for Linux ARM64 (newer glibc)" />
     </a>
 </div>

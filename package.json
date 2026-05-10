@@ -1,6 +1,6 @@
 {
   "name": "kftray",
-  "version": "0.27.27",
+  "version": "0.27.28",
   "private": true,
   "scripts": {
     "build": "pnpm --filter @kftray/ui run build",
@@ -35,14 +35,14 @@
       }
     },
     "overrides": {
-      "@codecov/vite-plugin>vite": "^7.3.1",
-      "undici": "^7.22.0"
+      "@codecov/vite-plugin>vite": "^8.0.3",
+      "undici": "^8.0.0"
     }
   },
   "devDependencies": {
-    "@codecov/vite-plugin": "1.9.1",
-    "@eslint/eslintrc": "^3.3.3",
+    "@codecov/vite-plugin": "2.0.1",
+    "@eslint/eslintrc": "^3.3.5",
     "@eslint/js": "^10.0.1",
-    "@tauri-apps/cli": "^2.10.0"
+    "@tauri-apps/cli": "^2.10.1"
   }
 }

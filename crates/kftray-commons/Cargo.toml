@@ -1,6 +1,6 @@
 [package]
 name = "kftray-commons"
-version = "0.27.27"
+version = "0.27.28"
 authors = ["Henrique Cavarsan <hencavarsan@gmail.com>"]
 edition = "2024"
 description = "KFtray commons"
@@ -19,7 +19,6 @@ futures = { workspace = true }
 git2 = { workspace = true }
 lazy_static = { workspace = true }
 log = { workspace = true }
-portpicker = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sqlx = { workspace = true }

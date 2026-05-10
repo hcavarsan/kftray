@@ -162,7 +162,7 @@ const PortForwardTable: React.FC<TableProps> = ({
     <Box
       display='flex'
       flexDirection='column'
-      height='88%'
+      height='100%'
       width='100%'
       overflow='hidden'
       bg='transparent'

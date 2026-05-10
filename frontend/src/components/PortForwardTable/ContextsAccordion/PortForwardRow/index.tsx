@@ -554,7 +554,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
                   <Box as={Info} width='12px' height='12px' />
                 </IconButton>
 
-                <Text className='text-normal' truncate maxWidth='100px'>
+                <Text className='text-normal' truncate maxWidth='100%'>
                   {config.alias}
                 </Text>
               </Flex>

@@ -1,7 +1,7 @@
 import React, { useCallback, useState } from 'react'
 import {
   Download,
-  Github,
+  GitBranch,
   Keyboard,
   Menu as MenuIcon,
   Plus,
@@ -377,7 +377,7 @@ const Footer: React.FC<FooterProps> = ({
               _hover={{ bg: 'whiteAlpha.100' }}
             >
               <Box display='flex' alignItems='center' gap={1}>
-                <Box as={Github} width='14px' height='14px' />
+                <Box as={GitBranch} width='14px' height='14px' />
                 <Box as={Settings} width='14px' height='14px' />
               </Box>
             </Button>

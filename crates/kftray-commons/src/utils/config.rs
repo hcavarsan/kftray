@@ -3,7 +3,6 @@ use log::{
     error,
     info,
 };
-use portpicker::pick_unused_port;
 use serde_json::json;
 use sqlx::{
     Row,
@@ -78,7 +77,8 @@ pub async fn delete_all_configs() -> Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
-pub async fn insert_config_with_pool(config: Config, pool: &SqlitePool) -> Result<(), String> {
+/// Insert a new config and return its assigned ID.
+pub async fn insert_config_with_pool(config: Config, pool: &SqlitePool) -> Result<i64, String> {
     let config = prepare_config(config);
     let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
 
@@ -115,12 +115,12 @@ pub async fn insert_config_with_pool(config: Config, pool: &SqlitePool) -> Resul
     let inserted_id = result.last_insert_rowid();
     sync_http_logs_config_from_config(&config, inserted_id, pool).await?;
 
-    Ok(())
+    Ok(inserted_id)
 }
 
 pub(crate) async fn insert_config_with_pool_and_mode(
     config: Config, pool: &SqlitePool, mode: DatabaseMode,
-) -> Result<(), String> {
+) -> Result<i64, String> {
     match mode {
         DatabaseMode::Memory => {
             let config = prepare_config(config);
@@ -138,7 +138,7 @@ pub(crate) async fn insert_config_with_pool_and_mode(
                 .map_err(|e| e.to_string())?;
 
             sync_http_logs_config_from_config(&config, next_id, pool).await?;
-            Ok(())
+            Ok(next_id)
         }
         DatabaseMode::File => insert_config_with_pool(config, pool).await,
     }
@@ -184,7 +184,8 @@ async fn get_next_memory_id(pool: &SqlitePool) -> Result<i64, String> {
         .ok_or_else(|| "ID overflow: maximum ID value reached".to_string())
 }
 
-pub async fn insert_config(config: Config) -> Result<(), String> {
+/// Insert a new config and return its assigned ID.
+pub async fn insert_config(config: Config) -> Result<i64, String> {
     let pool = get_db_pool().await.map_err(|e| e.to_string())?;
     insert_config_with_pool(config, &pool).await
 }
@@ -196,7 +197,7 @@ pub async fn read_configs_with_pool(pool: &SqlitePool) -> Result<Vec<Config>, St
         .await
         .map_err(|e| e.to_string())?;
 
-    let config_results: Vec<Result<Config, String>> = futures::stream::iter(rows.into_iter())
+    let config_results: Vec<Result<Config, String>> = futures::stream::iter(rows)
         .map(|row| {
             let id: Result<i64, String> = row.try_get("id").map_err(|e| e.to_string());
             let data: Result<String, String> = row.try_get("data").map_err(|e| e.to_string());
@@ -604,7 +605,7 @@ pub async fn delete_all_configs_with_mode(mode: DatabaseMode) -> Result<(), Stri
         .map_err(|e| e.to_string())
 }
 
-pub async fn insert_config_with_mode(config: Config, mode: DatabaseMode) -> Result<(), String> {
+pub async fn insert_config_with_mode(config: Config, mode: DatabaseMode) -> Result<i64, String> {
     let context = DatabaseManager::get_context(mode).await?;
     insert_config_with_pool_and_mode(config, &context.pool, mode).await
 }
@@ -668,6 +669,27 @@ pub async fn clean_all_custom_hosts_entries_with_mode(mode: DatabaseMode) -> Res
     clean_all_custom_hosts_entries_with_pool(&context.pool).await
 }
 
+fn pick_unused_local_port() -> Option<u16> {
+    use std::net::{
+        TcpListener,
+        UdpSocket,
+    };
+
+    for _ in 0..10 {
+        let Ok(tcp) = TcpListener::bind("127.0.0.1:0") else {
+            continue;
+        };
+        let Ok(addr) = tcp.local_addr() else {
+            continue;
+        };
+        let port = addr.port();
+        if UdpSocket::bind(("127.0.0.1", port)).is_ok() {
+            return Some(port);
+        }
+    }
+    None
+}
+
 fn prepare_config(mut config: Config) -> Config {
     if let Some(ref mut alias) = config.alias {
         *alias = alias.trim().to_string();
@@ -677,7 +699,7 @@ fn prepare_config(mut config: Config) -> Config {
     }
 
     if config.local_port == Some(0) || config.local_port.is_none() {
-        match pick_unused_port() {
+        match pick_unused_local_port() {
             Some(port) => config.local_port = Some(port),
             None => {
                 config.local_port = config.remote_port;
