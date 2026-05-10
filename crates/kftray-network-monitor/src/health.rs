@@ -40,8 +40,8 @@ impl HealthChecker {
         };
         let local_address = config.local_address.as_deref().unwrap_or("127.0.0.1");
 
-        if config.protocol == "udp" {
-            return true;
+        if config.protocol.eq_ignore_ascii_case("udp") {
+            return udp_port_in_use(local_address, local_port).await;
         }
 
         if !is_port_listening(local_address, local_port).await {
@@ -177,10 +177,126 @@ impl HealthChecker {
     }
 }
 
+async fn udp_port_in_use(local_address: &str, local_port: u16) -> bool {
+    if probe_udp_addr_in_use(local_address, local_port).await {
+        return true;
+    }
+    if local_address == "0.0.0.0" || local_address == "::" {
+        return probe_udp_addr_in_use("127.0.0.1", local_port).await;
+    }
+    false
+}
+
+async fn probe_udp_addr_in_use(addr: &str, port: u16) -> bool {
+    let socket_addr = format!("{addr}:{port}");
+    match tokio::net::UdpSocket::bind(&socket_addr).await {
+        Ok(_) => false,
+        Err(e) => e.kind() == std::io::ErrorKind::AddrInUse,
+    }
+}
+
 impl Clone for HealthChecker {
     fn clone(&self) -> Self {
         Self {
             config: self.config.clone(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::net::UdpSocket;
+
+    use kftray_commons::models::config_model::Config;
+
+    use super::*;
+
+    fn make_test_config(protocol: &str, local_port: u16, local_address: &str) -> Config {
+        Config {
+            protocol: protocol.to_string(),
+            local_port: Some(local_port),
+            local_address: Some(local_address.to_string()),
+            ..Config::default()
+        }
+    }
+
+    async fn run_check(config: &Config) -> bool {
+        let checker = HealthChecker::new(MonitorConfig::default());
+        checker
+            .check_port_health(
+                config,
+                Duration::from_secs(1),
+                Duration::from_secs(1),
+                1,
+                Duration::ZERO,
+            )
+            .await
+    }
+
+    #[tokio::test]
+    async fn test_udp_health_check_returns_false_when_port_free() {
+        let port = {
+            let socket = UdpSocket::bind("127.0.0.1:0").expect("Failed to bind socket");
+            socket.local_addr().unwrap().port()
+        };
+
+        let config = make_test_config("udp", port, "127.0.0.1");
+        assert!(
+            !run_check(&config).await,
+            "UDP health check should return false when port is free (forward is dead)"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_udp_health_check_returns_true_when_port_in_use() {
+        let socket = UdpSocket::bind("127.0.0.1:0").expect("Failed to bind socket");
+        let port = socket.local_addr().unwrap().port();
+
+        let config = make_test_config("udp", port, "127.0.0.1");
+        assert!(
+            run_check(&config).await,
+            "UDP health check should return true when port is in use (forward is alive)"
+        );
+        drop(socket);
+    }
+
+    #[tokio::test]
+    async fn test_udp_health_check_returns_false_when_local_port_none() {
+        let mut config = make_test_config("udp", 9999, "127.0.0.1");
+        config.local_port = None;
+
+        assert!(
+            !run_check(&config).await,
+            "UDP health check should return false when local_port is None"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_udp_health_check_uses_default_local_address() {
+        let port = {
+            let socket = UdpSocket::bind("127.0.0.1:0").expect("Failed to bind socket");
+            socket.local_addr().unwrap().port()
+        };
+
+        let mut config = make_test_config("udp", port, "127.0.0.1");
+        config.local_address = None;
+
+        assert!(
+            !run_check(&config).await,
+            "UDP health check should use default 127.0.0.1 and return false when port is free"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_udp_health_check_wildcard_falls_back_to_loopback() {
+        let socket = UdpSocket::bind("127.0.0.1:0").expect("Failed to bind socket");
+        let port = socket.local_addr().unwrap().port();
+
+        let config = make_test_config("udp", port, "0.0.0.0");
+        assert!(
+            run_check(&config).await,
+            "UDP health check on 0.0.0.0 should detect a 127.0.0.1 listener via fallback"
+        );
+        drop(socket);
     }
 }

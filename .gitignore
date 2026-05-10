@@ -37,6 +37,7 @@ llvm-cov*
 **/snapshots/*
 TASKS.md
 .claude/*
+.sisyphus/
 TODO.md
 PR.md
 post.md
