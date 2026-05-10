@@ -89,13 +89,26 @@ pub static RECOVERY_MANAGERS: Lazy<DashMap<i64, Arc<ProxyRecoveryManager>>> =
 /// async proxy functions that are themselves awaited by
 /// `deploy_and_forward_pod`.
 pub fn spawn_recovery_manager(config: Config, proxy_type: ProxyType) {
-    if let Some(config_id) = config.id {
+    let Some(config_id) = config.id else {
+        return;
+    };
+
+    let mut spawned = false;
+    RECOVERY_MANAGERS.entry(config_id).or_insert_with(|| {
         let manager = Arc::new(ProxyRecoveryManager::new(config, proxy_type));
-        RECOVERY_MANAGERS.insert(config_id, Arc::clone(&manager));
+        let rx = manager.recovery_signal_tx.subscribe();
+        let manager_for_task = Arc::clone(&manager);
         tokio::spawn(async move {
-            manager.run_recovery_loop().await;
+            manager_for_task.run_recovery_loop_with_rx(rx).await;
         });
+        spawned = true;
+        manager
+    });
+
+    if spawned {
         log::info!("Spawned recovery manager for proxy config {}", config_id);
+    } else {
+        log::debug!("Recovery manager already active for config {}", config_id);
     }
 }
 
@@ -193,7 +206,13 @@ impl ProxyRecoveryManager {
     ///    backoff
     /// 3. Updates [`ConfigState`] in the database at each step
     pub async fn run_recovery_loop(&self) {
-        let mut rx = self.recovery_signal_tx.subscribe();
+        let rx = self.recovery_signal_tx.subscribe();
+        self.run_recovery_loop_with_rx(rx).await;
+    }
+
+    pub async fn run_recovery_loop_with_rx(
+        &self, mut rx: tokio::sync::broadcast::Receiver<RecoverySignal>,
+    ) {
         {
             let mut s = self.state.write().await;
             *s = RecoveryState::Monitoring;
@@ -362,7 +381,11 @@ impl ProxyRecoveryManager {
             id: None,
             config_id: self.config_id,
             is_running,
-            process_id: None,
+            process_id: if is_running {
+                Some(std::process::id())
+            } else {
+                None
+            },
             is_retrying,
             retry_count,
             last_error,
@@ -381,6 +404,20 @@ impl ProxyRecoveryManager {
 // T7: Bare Pod Recovery
 // ============================================================================
 
+async fn cleanup_child_processes_for_config(config_id: i64) {
+    let prefix = format!("config:{}:", config_id);
+    let keys: Vec<String> = crate::port_forward::CHILD_PROCESSES
+        .iter()
+        .filter(|entry| entry.key().starts_with(&prefix))
+        .map(|entry| entry.key().clone())
+        .collect();
+    for key in keys {
+        if let Some((_, process)) = crate::port_forward::CHILD_PROCESSES.remove(&key) {
+            process.cleanup_and_abort().await;
+        }
+    }
+}
+
 /// Recover a bare pod proxy by fully re-deploying.
 ///
 /// Bare pods have no controller (no Deployment/ReplicaSet), so when the pod
@@ -396,19 +433,8 @@ pub async fn recover_bare_pod(config: &Config, client: &kube::Client) -> anyhow:
         .ok_or_else(|| anyhow::anyhow!("Config has no ID"))?;
     let namespace = &config.namespace;
 
-    // Step 1: Clean up old cluster resources FIRST (prevents orphaned pods)
     crate::kube::stop::delete_proxy_cluster_resources(client.clone(), namespace, config_id).await;
-
-    // Step 2: Remove old CHILD_PROCESSES entry for this config_id
-    // Key format: "config:{id}:service:{name}"
-    let keys_to_remove: Vec<String> = crate::port_forward::CHILD_PROCESSES
-        .iter()
-        .filter(|entry| entry.key().starts_with(&format!("config:{}:", config_id)))
-        .map(|entry| entry.key().clone())
-        .collect();
-    for key in keys_to_remove {
-        crate::port_forward::CHILD_PROCESSES.remove(&key);
-    }
+    cleanup_child_processes_for_config(config_id).await;
 
     // Step 3: Re-deploy via the existing deploy_and_forward_pod() function
     // This generates a new hashed_name and creates a fresh pod + port forward
@@ -500,17 +526,8 @@ pub async fn recover_deployment(config: &Config, client: &kube::Client) -> anyho
             );
             // TCP: the existing pod_watcher will detect the new pod and reconnect
             // UDP: the stream is single-shot, so we need to restart the port forward
-            if config.protocol == "udp" {
-                // Remove old CHILD_PROCESSES entry first
-                let keys_to_remove: Vec<String> = crate::port_forward::CHILD_PROCESSES
-                    .iter()
-                    .filter(|entry| entry.key().starts_with(&format!("config:{}:", config_id)))
-                    .map(|entry| entry.key().clone())
-                    .collect();
-                for key in keys_to_remove {
-                    crate::port_forward::CHILD_PROCESSES.remove(&key);
-                }
-                // Restart UDP port forward
+            if config.protocol.eq_ignore_ascii_case("udp") {
+                cleanup_child_processes_for_config(config_id).await;
                 crate::kube::start::start_port_forward(vec![config.clone()], "udp")
                     .await
                     .map_err(|e| anyhow::anyhow!("Failed to restart UDP forward: {}", e))?;
@@ -908,11 +925,10 @@ mod tests {
         let configs_to_restart: Vec<_> = proxy_configs
             .into_iter()
             .filter(|config| {
-                if let Some(cid) = config.id {
-                    if RECOVERY_LOCKS.contains_key(&cid) {
+                if let Some(cid) = config.id
+                    && RECOVERY_LOCKS.contains_key(&cid) {
                         return false; // skip — recovery in progress
                     }
-                }
                 true
             })
             .collect();
