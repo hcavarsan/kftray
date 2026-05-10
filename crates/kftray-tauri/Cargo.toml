@@ -1,6 +1,6 @@
 [package]
 name = "kftray-tauri"
-version = "0.27.27"
+version = "0.27.28"
 authors = ["Henrique Cavarsan <hencavarsan@gmail.com>"]
 edition = "2024"
 description = "A cross-platform system tray app for Kubernetes port-forward management"
@@ -22,11 +22,13 @@ async-trait = { workspace = true }
 dirs = { workspace = true }
 env_logger = { workspace = true }
 fix-path-env = { workspace = true }
+flexi_logger = { workspace = true }
 jiff = "0.2"
 k8s-openapi = { workspace = true }
-keyring = { workspace = true }
+keyring-core = { workspace = true }
 kftray-commons = { workspace = true }
 kftray-helper = { workspace = true }
+kftray-mcp = { workspace = true }
 kftray-network-monitor = { workspace = true }
 kftray-portforward = { workspace = true }
 kftray-shortcuts = { workspace = true }
@@ -45,7 +47,6 @@ tauri-plugin-dialog = { workspace = true }
 tauri-plugin-fs = { workspace = true }
 tauri-plugin-global-shortcut = { workspace = true }
 tauri-plugin-http = { workspace = true }
-tauri-plugin-log = { workspace = true }
 tauri-plugin-notification = { workspace = true }
 tauri-plugin-os = { workspace = true }
 tauri-plugin-positioner = { workspace = true }
@@ -66,8 +67,13 @@ kftray-helper = { workspace = true }
 tauri-build = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-inotify = "0.11.0"
+inotify = "0.11.1"
+ksni = "0.3"
 libc = { workspace = true }
+png = "0.17"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+windows = { workspace = true }
 
 [features]
 # this feature is used used for production builds where `devPath` points to the filesystem

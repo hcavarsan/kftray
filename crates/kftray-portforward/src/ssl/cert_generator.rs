@@ -5,7 +5,7 @@ use anyhow::{
     Context,
     Result,
 };
-use keyring::Entry;
+use keyring_core::Entry;
 use log::{
     info,
     warn,

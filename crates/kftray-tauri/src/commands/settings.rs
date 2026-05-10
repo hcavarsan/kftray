@@ -4,9 +4,13 @@ use std::process::Command;
 use kftray_commons::utils::settings::{
     get_auto_update_enabled,
     get_last_update_check,
+    get_mcp_server_enabled,
+    get_mcp_server_port,
     get_setting,
     set_auto_update_enabled,
     set_disconnect_timeout,
+    set_mcp_server_enabled,
+    set_mcp_server_port,
     set_network_monitor,
     set_setting,
 };
@@ -376,4 +380,98 @@ pub async fn run_diagnostics() -> Result<DiagnosticsReport, String> {
         checks,
         overall_status,
     })
+}
+
+#[tauri::command]
+pub async fn get_mcp_server_status() -> Result<HashMap<String, String>, String> {
+    let mut status = HashMap::new();
+
+    match get_mcp_server_enabled().await {
+        Ok(enabled) => {
+            status.insert("enabled".to_string(), enabled.to_string());
+        }
+        Err(e) => {
+            error!("Failed to get MCP server enabled: {e}");
+            status.insert("enabled".to_string(), "false".to_string());
+        }
+    }
+
+    match get_mcp_server_port().await {
+        Ok(port) => {
+            status.insert("port".to_string(), port.to_string());
+        }
+        Err(e) => {
+            error!("Failed to get MCP server port: {e}");
+            status.insert("port".to_string(), "3000".to_string());
+        }
+    }
+
+    let is_running = crate::mcp::is_running().await;
+    status.insert("running".to_string(), is_running.to_string());
+
+    info!("Retrieved MCP server status: {status:?}");
+    Ok(status)
+}
+
+#[tauri::command]
+pub async fn update_mcp_server_enabled(enabled: bool) -> Result<(), String> {
+    info!("Updating MCP server enabled to {enabled}");
+
+    set_mcp_server_enabled(enabled).await.map_err(|e| {
+        error!("Failed to update MCP server enabled: {e}");
+        format!("Failed to update MCP server enabled: {e}")
+    })?;
+
+    if enabled {
+        let port = get_mcp_server_port().await.unwrap_or(3000);
+        if let Err(e) = crate::mcp::start(port).await {
+            error!("Failed to start MCP server: {e}");
+            return Err(format!("Failed to start MCP server: {e}"));
+        }
+    } else if crate::mcp::is_running().await
+        && let Err(e) = crate::mcp::stop().await
+    {
+        error!("Failed to stop MCP server: {e}");
+        return Err(format!("Failed to stop MCP server: {e}"));
+    }
+
+    info!("Successfully updated MCP server enabled to {enabled}");
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn update_mcp_server_port(port: u16) -> Result<(), String> {
+    info!("Updating MCP server port to {port}");
+
+    // Validate port range (1-65535, with 0 being invalid)
+    if port == 0 {
+        return Err("Port cannot be 0".to_string());
+    }
+
+    // Warn about privileged ports (below 1024)
+    if port < 1024 {
+        info!(
+            "Warning: Port {port} is a privileged port (< 1024), may require elevated permissions"
+        );
+    }
+
+    set_mcp_server_port(port).await.map_err(|e| {
+        error!("Failed to update MCP server port: {e}");
+        format!("Failed to update MCP server port: {e}")
+    })?;
+
+    // If server is running, restart it with new port
+    if crate::mcp::is_running().await {
+        if let Err(e) = crate::mcp::stop().await {
+            error!("Failed to stop MCP server: {e}");
+            return Err(format!("Failed to stop MCP server: {e}"));
+        }
+        if let Err(e) = crate::mcp::start(port).await {
+            error!("Failed to start MCP server: {e}");
+            return Err(format!("Failed to start MCP server: {e}"));
+        }
+    }
+
+    info!("Successfully updated MCP server port to {port}");
+    Ok(())
 }
