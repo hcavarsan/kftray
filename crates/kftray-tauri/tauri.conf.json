@@ -48,6 +48,7 @@
         "depends": []
       }
     },
+    "longDescription": "kftray is a cross-platform system tray app for managing multiple Kubernetes port-forwards from a single, persistent UI.",
     "macOS": {
       "entitlements": "./entitlements.plist",
       "exceptionDomain": "",
@@ -57,7 +58,6 @@
     },
     "resources": [],
     "shortDescription": "Kubernetes port-forward manager",
-    "longDescription": "kftray is a cross-platform system tray app for managing multiple Kubernetes port-forwards from a single, persistent UI.",
     "targets": [
       "app",
       "dmg",
@@ -82,5 +82,5 @@
     }
   },
   "productName": "kftray",
-  "version": "0.27.28"
+  "version": "0.27.29"
 }
