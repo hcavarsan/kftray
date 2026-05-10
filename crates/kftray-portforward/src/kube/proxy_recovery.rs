@@ -926,9 +926,10 @@ mod tests {
             .into_iter()
             .filter(|config| {
                 if let Some(cid) = config.id
-                    && RECOVERY_LOCKS.contains_key(&cid) {
-                        return false; // skip — recovery in progress
-                    }
+                    && RECOVERY_LOCKS.contains_key(&cid)
+                {
+                    return false; // skip — recovery in progress
+                }
                 true
             })
             .collect();
