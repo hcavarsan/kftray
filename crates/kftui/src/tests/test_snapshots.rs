@@ -77,6 +77,7 @@ fn create_test_config_state() -> ConfigState {
         config_id: 1,
         is_running: true,
         process_id: Some(1234),
+        ..Default::default()
     }
 }
 

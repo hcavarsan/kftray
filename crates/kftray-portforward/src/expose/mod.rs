@@ -128,6 +128,9 @@ async fn start_single_expose(config: Config, mode: DatabaseMode) -> Result<Custo
         config_id,
         is_running: true,
         process_id: Some(std::process::id()),
+        is_retrying: false,
+        retry_count: None,
+        last_error: None,
     };
     update_config_state_with_mode(&config_state, mode).await?;
 
@@ -178,6 +181,9 @@ pub async fn stop_expose(
         config_id,
         is_running: false,
         process_id: None,
+        is_retrying: false,
+        retry_count: None,
+        last_error: None,
     };
     update_config_state_with_mode(&config_state, mode).await?;
 

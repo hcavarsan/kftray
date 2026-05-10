@@ -5,6 +5,7 @@ pub mod models;
 pub mod operations;
 pub mod pod_watcher;
 mod proxy;
+pub mod proxy_recovery;
 mod service;
 pub mod shared_client;
 mod start;
