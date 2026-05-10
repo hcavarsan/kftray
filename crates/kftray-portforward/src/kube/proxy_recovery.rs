@@ -344,6 +344,8 @@ impl ProxyRecoveryManager {
                 }
                 self.update_config_state_fields(false, false, None, Some(final_error))
                     .await;
+                drop(_guard);
+                remove_recovery_lock(self.config_id);
             }
             // Lock released when _guard drops
         }
@@ -470,10 +472,12 @@ pub async fn recover_deployment(config: &Config, client: &kube::Client) -> anyho
     let deployments: kube::Api<k8s_openapi::api::apps::v1::Deployment> =
         kube::Api::namespaced(client.clone(), namespace);
 
-    let deployment_exists = deployments.get(hashed_name).await.is_ok();
+    let deployment = deployments
+        .get_opt(hashed_name)
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to query deployment {}: {}", hashed_name, e))?;
 
-    if !deployment_exists {
-        // Deployment was deleted — fall back to full re-deployment
+    if deployment.is_none() {
         log::warn!(
             "Deployment {} not found, falling back to bare pod recovery for config {}",
             hashed_name,
