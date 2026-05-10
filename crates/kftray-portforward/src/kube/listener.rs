@@ -651,6 +651,7 @@ impl PortForwarder {
             .get_stream()
             .await
             .map_err(|e| anyhow::anyhow!("Failed to get upstream connection for UDP: {}", e))?;
+        let signal_token = cancellation_token.clone();
         let (port, handle) = UdpForwarder::bind_and_forward(
             listener_config.local_address,
             listener_config.local_port,
@@ -662,8 +663,9 @@ impl PortForwarder {
             let result = handle
                 .await
                 .map_err(|e| anyhow::anyhow!("UDP forwarding task failed: {}", e));
-            // Signal recovery when UDP stream dies (unless cancelled)
-            if let Some(rm) = crate::kube::proxy_recovery::RECOVERY_MANAGERS.get(&config_id) {
+            if !signal_token.is_cancelled()
+                && let Some(rm) = crate::kube::proxy_recovery::RECOVERY_MANAGERS.get(&config_id)
+            {
                 log::info!(
                     "UDP forwarder task completed, signaling recovery for config_id={}",
                     config_id

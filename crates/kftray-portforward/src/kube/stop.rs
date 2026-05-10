@@ -363,6 +363,7 @@ pub async fn stop_all_port_forward_with_mode(
         entry.value().cancel();
     }
     crate::kube::proxy_recovery::RECOVERY_MANAGERS.clear();
+    crate::kube::proxy_recovery::RECOVERY_LOCKS.clear();
     info!("Cancelled and cleared all recovery managers");
 
     let address_cleanup_tasks: FuturesUnordered<_> = configs

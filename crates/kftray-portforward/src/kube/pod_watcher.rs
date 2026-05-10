@@ -128,13 +128,12 @@ impl PodWatcher {
                             Some(Ok(watcher::Event::Delete(pod))) => {
                                 debug!("Pod deleted: {}", pod.name_any());
                                 let mut latest = latest_pod_for_reflector.write().await;
-                                if let Some(ref current) = *latest {
-                                    if current.pod_name == pod.name_any() {
+                                if let Some(ref current) = *latest
+                                    && current.pod_name == pod.name_any() {
                                         *latest = None;
                                         let _ = pod_died_tx_clone.send(pod.name_any());
                                         debug!("Signaled pod death for: {}", pod.name_any());
                                     }
-                                }
                             }
                             Some(Ok(watcher::Event::Init)) | Some(Ok(watcher::Event::InitDone)) => {
                                 debug!("Pod watcher init/done event");
