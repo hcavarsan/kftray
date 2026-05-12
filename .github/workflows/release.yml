@@ -354,17 +354,23 @@ jobs:
           pushd "$work" >/dev/null
           "$appimage" --appimage-extract >/dev/null
 
-          # Drop the libglvnd halves + Mesa GBM + libwayland-egl. These are
-          # standard on every desktop Linux distro; bundling them caused the
-          # libglvnd loader/dispatch ABI mismatch that aborted the WebKit
-          # GPU process with EGL_BAD_PARAMETER on rolling distros (#547).
+          # Drop libraries that MUST come from the host system. Bundling them
+          # causes ABI/protocol mismatches with the host's GPU drivers and
+          # Wayland compositor, resulting in blank windows or EGL_BAD_PARAMETER.
+          #
+          # libglvnd family: host GPU driver dispatching (#547)
+          # libgbm: Mesa buffer management, tied to kernel DRM
+          # libwayland-*: protocol version must match host compositor
           find squashfs-root \( -type f -o -type l \) \( \
               -name 'libGL.so*' -o \
               -name 'libEGL.so*' -o \
               -name 'libGLX.so*' -o \
               -name 'libGLdispatch.so*' -o \
               -name 'libgbm.so*' -o \
-              -name 'libwayland-egl.so*' \
+              -name 'libwayland-client.so*' -o \
+              -name 'libwayland-cursor.so*' -o \
+              -name 'libwayland-egl.so*' -o \
+              -name 'libwayland-server.so*' \
               \) -delete
 
           curl -fsSL --retry 3 -o appimagetool.AppImage \
