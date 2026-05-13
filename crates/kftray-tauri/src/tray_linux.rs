@@ -207,7 +207,7 @@ pub fn spawn(app: &tauri::App<Wry>) {
 }
 
 fn decode_tray_icon(bytes: &[u8]) -> Option<Icon> {
-    let decoder = png::Decoder::new(bytes);
+    let decoder = png::Decoder::new(std::io::Cursor::new(bytes));
     let mut reader = match decoder.read_info() {
         Ok(reader) => reader,
         Err(e) => {
