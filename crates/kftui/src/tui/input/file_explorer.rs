@@ -117,7 +117,7 @@ pub async fn handle_import_enter_key(
         .import_file_explorer
         .files()
         .get(app.import_file_explorer.selected_idx())
-        .map(|f| f.path().clone())
+        .map(|f| f.path.clone())
     {
         if selected_path.is_dir() {
             app.import_file_explorer
@@ -145,7 +145,7 @@ pub async fn handle_file_selection_key(app: &mut App) -> Result<(), std::io::Err
         .import_file_explorer
         .files()
         .get(app.import_file_explorer.selected_idx())
-        .map(|f| f.path().clone())
+        .map(|f| f.path.clone())
     {
         handle_file_selection(app, &selected_path).await?;
     }
@@ -182,10 +182,10 @@ pub async fn handle_export_enter_key(app: &mut App) -> Result<(), std::io::Error
         .files()
         .get(app.export_file_explorer.selected_idx())
     {
-        let selected_path = selected_file.path().clone();
+        let selected_path = selected_file.path.clone();
         log::debug!("Selected path: {selected_path:?}");
 
-        if selected_file.is_dir() {
+        if selected_file.is_dir {
             log::debug!("Changed working directory to: {selected_path:?}");
             app.selected_file_path = Some(selected_path.clone());
             app.state = AppState::ShowInputPrompt;
