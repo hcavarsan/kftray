@@ -43,6 +43,6 @@
     "@codecov/vite-plugin": "2.0.1",
     "@eslint/eslintrc": "^3.3.5",
     "@eslint/js": "^10.0.1",
-    "@tauri-apps/cli": "^2.10.1"
+    "@tauri-apps/cli": "^2.11.1"
   }
 }

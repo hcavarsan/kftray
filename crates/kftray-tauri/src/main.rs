@@ -11,6 +11,8 @@ use log::{
 };
 
 use crate::validation::alert_multiple_configs;
+#[cfg(target_os = "linux")]
+mod appimage_wayland_fixup;
 mod commands;
 mod glibc_detector;
 mod init_check;
@@ -45,6 +47,22 @@ use crate::tray::{
     handle_window_event,
 };
 
+/// Sets an environment variable only if it isn't already defined.
+/// Respects user overrides for power users who know their system works
+/// with different settings.
+#[cfg(any(
+    target_os = "linux",
+    target_os = "freebsd",
+    target_os = "dragonfly",
+    target_os = "openbsd",
+    target_os = "netbsd"
+))]
+fn set_default_env(key: &str, value: &str) {
+    if std::env::var_os(key).is_none() {
+        unsafe { std::env::set_var(key, value) };
+    }
+}
+
 fn init_file_logger() -> anyhow::Result<()> {
     use kftray_commons::utils::config_dir::get_app_log_path;
 
@@ -77,9 +95,28 @@ fn init_file_logger() -> anyhow::Result<()> {
 }
 
 fn main() {
-    // CRITICAL: Must be called before ANY other code that might touch X11.
-    // This prevents crashes with "[xcb] Most likely this is a multi-threaded
-    // client and XInitThreads has not been called" on Linux X11 systems.
+    // CRITICAL: WebKit/GPU env vars must be set before any library init.
+    // These prevent blank-window bugs on Linux (EGL_BAD_PARAMETER, DMA-BUF
+    // renderer crashes). Only set if the user hasn't already provided a value.
+    #[cfg(any(
+        target_os = "linux",
+        target_os = "freebsd",
+        target_os = "dragonfly",
+        target_os = "openbsd",
+        target_os = "netbsd"
+    ))]
+    {
+        set_default_env("__GL_THREADED_OPTIMIZATIONS", "0");
+        set_default_env("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
+        set_default_env("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+        set_default_env("__NV_DISABLE_EXPLICIT_SYNC", "1");
+    }
+
+    // Attempt LD_PRELOAD re-exec for AppImage on Wayland before any GTK init.
+    #[cfg(target_os = "linux")]
+    appimage_wayland_fixup::maybe_reexec();
+
+    // Must be called before any X11 interaction to prevent xcb threading crashes.
     x11_init::init_x11_threads();
 
     if let Err(e) = init_file_logger() {
@@ -103,20 +140,6 @@ fn main() {
     let positioning_active = Arc::new(AtomicBool::new(false));
     let pinned = Arc::new(AtomicBool::new(false));
     let runtime = Arc::new(Runtime::new().expect("Failed to create a Tokio runtime"));
-
-    #[cfg(any(
-        target_os = "linux",
-        target_os = "freebsd",
-        target_os = "dragonfly",
-        target_os = "openbsd",
-        target_os = "netbsd"
-    ))]
-    unsafe {
-        std::env::set_var("__GL_THREADED_OPTIMIZATIONS", "0");
-        std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
-        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
-        std::env::set_var("__NV_DISABLE_EXPLICIT_SYNC", "1");
-    }
 
     let app = tauri::Builder::default()
         .manage(SaveDialogState::default())
