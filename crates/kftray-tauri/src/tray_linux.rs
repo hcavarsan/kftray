@@ -216,7 +216,7 @@ fn decode_tray_icon(bytes: &[u8]) -> Option<Icon> {
         }
     };
 
-    let mut buf = vec![0u8; reader.output_buffer_size()];
+    let mut buf = vec![0u8; reader.output_buffer_size()?];
     let info = match reader.next_frame(&mut buf) {
         Ok(info) => info,
         Err(e) => {
