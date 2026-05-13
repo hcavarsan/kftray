@@ -96,7 +96,7 @@ sqlx = { version = "0.8", default-features = false, features = [
   "runtime-tokio-native-tls",
   "sqlite",
 ] }
-sysinfo = "0.39.0"
+sysinfo = "0.39.1"
 tar = "0.4.45"
 tauri = { version = "2.11.1", default-features = false, features = [
   "devtools",
