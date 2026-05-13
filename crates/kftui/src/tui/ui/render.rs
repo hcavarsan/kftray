@@ -1,5 +1,6 @@
 use kftray_commons::models::config_state_model::ConfigState;
 use ratatui::prelude::Alignment;
+use ratatui::widgets::FrameExt;
 use ratatui::{
     Frame,
     layout::{
@@ -133,7 +134,7 @@ pub fn draw_file_explorer_popup(f: &mut Frame, app: &mut App, area: Rect, is_imp
     } else {
         app.export_file_explorer.widget()
     };
-    f.render_widget(file_explorer_widget, upper_chunks[0]);
+    f.render_widget_ref(file_explorer_widget, upper_chunks[0]);
 
     f.render_widget(Clear, upper_chunks[1]);
 

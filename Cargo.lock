@@ -5704,8 +5704,9 @@ dependencies = [
 
 [[package]]
 name = "ratatui-explorer"
-version = "0.2.1"
-source = "git+https://github.com/hcavarsan/ratatui-explorer?branch=master#c60f9a4ade189514b4c2a3021aeae3cc6145538c"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1034d08c806b090cf2eb450f60717e38d28b3a0a9fae01eee282db488d2e513b"
 dependencies = [
  "educe",
  "ratatui",
