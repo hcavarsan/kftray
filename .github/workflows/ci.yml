@@ -33,7 +33,7 @@ jobs:
       - name: Install pnpm
         uses: pnpm/action-setup@1e1c8eafbd745f64b1ef30a7d7ed7965034c486c
         with:
-          version: 10
+          version: 11
           run_install: |
             - recursive: true
               args: [--frozen-lockfile]
@@ -270,7 +270,7 @@ jobs:
       - name: Install pnpm
         uses: pnpm/action-setup@1e1c8eafbd745f64b1ef30a7d7ed7965034c486c
         with:
-          version: 10
+          version: 11
           run_install: |
             - recursive: true
               args: [--frozen-lockfile]
