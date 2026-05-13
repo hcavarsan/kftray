@@ -28,6 +28,7 @@ use ratatui::widgets::ListState;
 use ratatui::widgets::TableState;
 use ratatui_explorer::{
     FileExplorer,
+    FileExplorerBuilder,
     Theme,
 };
 use tui_logger::TuiWidgetEvent;
@@ -306,8 +307,8 @@ impl Default for App {
 impl App {
     pub fn new(logger_state: LoggerState) -> Self {
         let theme = Theme::default().add_default_title();
-        let import_file_explorer = FileExplorer::with_theme(theme.clone()).unwrap();
-        let export_file_explorer = FileExplorer::with_theme(theme).unwrap();
+        let import_file_explorer = FileExplorerBuilder::build_with_theme(theme.clone()).unwrap();
+        let export_file_explorer = FileExplorerBuilder::build_with_theme(theme).unwrap();
         let tui_logger_state = TuiWidgetState::new();
         let (error_sender, error_receiver) = tokio::sync::mpsc::unbounded_channel();
 
