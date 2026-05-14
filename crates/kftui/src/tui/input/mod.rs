@@ -623,26 +623,13 @@ impl App {
     }
 
     pub async fn load_active_pods(&mut self, config_states: &[ConfigState]) {
-        use kftray_portforward::port_forward::CHILD_PROCESSES;
+        use kftray_portforward::registry::PORT_FORWARD_REGISTRY;
 
         for config_state in config_states {
             if config_state.is_running {
-                let handle_key = format!("config:{}:service:", config_state.config_id);
-
-                let matching_forwarders: Vec<_> = CHILD_PROCESSES
-                    .iter()
-                    .filter(|entry| entry.key().starts_with(&handle_key))
-                    .filter_map(|entry| entry.value().direct_forwarder.clone())
-                    .collect();
-
-                let mut active_pod = None;
-                for forwarder in matching_forwarders {
-                    if let Some(pod_name) = forwarder.get_current_active_pod().await {
-                        active_pod = Some(pod_name);
-                        break;
-                    }
-                }
-
+                let active_pod = PORT_FORWARD_REGISTRY
+                    .get_active_pod(config_state.config_id)
+                    .await;
                 self.active_pods.insert(config_state.config_id, active_pod);
             } else {
                 self.active_pods.insert(config_state.config_id, None);

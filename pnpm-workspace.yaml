@@ -1,6 +1,9 @@
 packages:
   - frontend
 
+allowBuilds:
+  unrs-resolver: false
+
 onlyBuiltDependencies:
   - '@swc/core'
   - core-js
