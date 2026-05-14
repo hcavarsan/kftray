@@ -42,13 +42,14 @@ httparse = { workspace = true }
 hyper = { workspace = true }
 hyper-openssl = { workspace = true }
 hyper-util = { workspace = true }
-jiff = { version = "0.2", features = ["serde"] }
+jiff = { workspace = true }
 k8s-openapi = { workspace = true }
 keyring-core = { workspace = true }
 kftray-commons = { workspace = true }
 kftray-helper = { workspace = true }
 kftray-http-logs = { workspace = true }
 kube = { workspace = true }
+kube-portforward = { workspace = true }
 kube-runtime = { workspace = true }
 lazy_static = { workspace = true }
 libc = { workspace = true }
@@ -89,12 +90,12 @@ dbus-secret-service-keyring-store = { workspace = true }
 linux-keyutils-keyring-store = { workspace = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
-security-framework = "3.7.0"
-core-foundation = "0.10.1"
+security-framework = { workspace = true }
+core-foundation = { workspace = true }
 apple-native-keyring-store = { workspace = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-schannel = "0.1.29"
+schannel = { workspace = true }
 windows = { workspace = true }
 windows-native-keyring-store = { workspace = true }
 
