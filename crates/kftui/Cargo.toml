@@ -18,6 +18,7 @@ ignored = ["built"]
 anyhow.workspace = true
 built = { workspace = true }
 chrono = { workspace = true }
+mimalloc = { workspace = true }
 clap = { workspace = true }
 crossterm = { workspace = true }
 env_logger = { workspace = true }
@@ -30,10 +31,7 @@ libc = { workspace = true }
 log = { workspace = true }
 ratatui = { workspace = true }
 ratatui-explorer = { workspace = true }
-self_update = { version = "0.44.0", features = [
-  "archive-tar",
-  "compression-flate2",
-] }
+self_update = { workspace = true }
 semver = { workspace = true }
 serde_json = { workspace = true }
 tar = { workspace = true }
