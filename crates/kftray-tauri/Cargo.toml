@@ -18,12 +18,13 @@ path = "src/lib.rs"
 
 [dependencies]
 anyhow = { workspace = true }
+mimalloc = { workspace = true }
 async-trait = { workspace = true }
 dirs = { workspace = true }
 env_logger = { workspace = true }
 fix-path-env = { workspace = true }
 flexi_logger = { workspace = true }
-jiff = "0.2"
+jiff = { workspace = true }
 k8s-openapi = { workspace = true }
 keyring-core = { workspace = true }
 kftray-commons = { workspace = true }
@@ -35,6 +36,9 @@ kftray-shortcuts = { workspace = true }
 kube = { workspace = true }
 lazy_static = { workspace = true }
 log = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-log = "0.2"
 netstat2 = { workspace = true }
 open = { workspace = true }
 serde = { workspace = true }
@@ -67,10 +71,10 @@ kftray-helper = { workspace = true }
 tauri-build = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-inotify = "0.11.1"
-ksni = "0.3"
+inotify = { workspace = true }
+ksni = { workspace = true }
 libc = { workspace = true }
-png = "0.18"
+png = { workspace = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { workspace = true }
