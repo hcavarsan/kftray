@@ -7,6 +7,7 @@ members = ["crates/*"]
 [workspace.dependencies]
 anyhow = "1.0.102"
 apple-native-keyring-store = { version = "1.0", features = ["keychain"] }
+arc-swap = "1.9"
 async-trait = "0.1.89"
 base64 = "0.22"
 bb8 = "0.9.1"
@@ -15,6 +16,7 @@ built = "0.8"
 bytes = "1.11"
 chrono = { version = "0.4.44", features = ["serde"] }
 clap = { version = "4.6.1", features = ["derive"] }
+core-foundation = "0.10.1"
 crossterm = { version = "0.29", optional = false }
 dashmap = "6.1"
 dbus-secret-service-keyring-store = { version = "1.0", features = [
@@ -22,11 +24,13 @@ dbus-secret-service-keyring-store = { version = "1.0", features = [
 ] }
 dirs = "6.0"
 env_logger = "0.11"
+evdev = "0.13.2"
 fix-path-env = { git = "https://github.com/tauri-apps/fix-path-env-rs" }
 flate2 = "1.1"
 flexi_logger = "0.31"
 futures = "0.3"
 git2 = { version = "0.20", features = ["ssh"] }
+global-hotkey = "0.8.0"
 http = "1.4"
 http-body-util = "0.1"
 httparse = "1.10"
@@ -40,11 +44,14 @@ hyper-util = { version = "0.1.20", features = [
   "server",
   "tokio",
 ] }
+inotify = "0.11.1"
 insta = "1.47"
+jiff = { version = "0.2", features = ["serde"] }
 k8s-openapi = { version = "0.27.1", default-features = false, features = [
   "latest",
 ] }
 keyring-core = "1.0"
+ksni = "0.3"
 kftray-commons = { version = "0.27.30", path = "crates/kftray-commons" }
 kftray-helper = { version = "0.27.30", path = "crates/kftray-helper" }
 kftray-http-logs = { version = "0.27.30", path = "crates/kftray-http-logs" }
@@ -52,6 +59,7 @@ kftray-mcp = { version = "0.27.30", path = "crates/kftray-mcp" }
 kftray-network-monitor = { version = "0.27.30", path = "crates/kftray-network-monitor" }
 kftray-portforward = { version = "0.27.30", path = "crates/kftray-portforward" }
 kftray-shortcuts = { version = "0.27.30", path = "crates/kftray-shortcuts" }
+kube-portforward = { version = "0.1", path = "crates/kube-portforward" }
 kube = { version = "3.1.0", features = [
   "client",
   "config",
@@ -67,17 +75,22 @@ kube-runtime = { version = "3.1.0", features = ["unstable-runtime"] }
 lazy_static = "1.5"
 libc = "0.2.186"
 linux-keyutils-keyring-store = "1.0"
+mio = { version = "1.2.0", features = ["os-ext"] }
 log = "0.4"
+mimalloc = { version = "0.1", default-features = false }
 mockall = "0.14"
 netstat2 = "0.11.2"
 once_cell = "1.21"
 open = "5.3"
 openssl = { version = "0.10", features = ["vendored"] }
 openssl-sys = { version = "0.9", features = ["vendored"] }
+parking_lot = "0.12"
 pem = "3.0"
+png = "0.18"
 rand = "0.10"
 ratatui = { version = "0.30.0", features = ["unstable-widget-ref"] }
 ratatui-explorer = "0.3.0"
+quanta = "0.12"
 rcgen = "0.14"
 reqwest = "0.13.3"
 rustls = { version = "0.23", default-features = false, features = [
@@ -86,7 +99,10 @@ rustls = { version = "0.23", default-features = false, features = [
   "tls12",
 ] }
 rustls-native-certs = "0.8.3"
+schannel = "0.1.29"
 secrecy = "0.10"
+security-framework = "3.7.0"
+self_update = { version = "0.44.0", features = ["archive-tar", "compression-flate2"] }
 semver = "1.0.28"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
@@ -120,7 +136,7 @@ tauri-plugin-shell = "2.3.5"
 tauri-plugin-updater = "2.10.1"
 tempfile = "3.27.0"
 thiserror = "2.0.18"
-throbber-widgets-tui = "0.11.0"
+throbber-widgets-tui = "0.9.0"
 time = "0.3"
 tokio = { version = "1.52.3", features = [
   "fs",
