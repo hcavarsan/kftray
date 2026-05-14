@@ -8,6 +8,8 @@ use kftray_commons::utils::config_dir::{
     get_expose_service_manifest_path,
 };
 
+use crate::port_forward_error::PortForwardError;
+
 pub fn render_template(template: &str, values: &HashMap<&str, String>) -> String {
     let mut rendered = template.to_string();
     for (key, value) in values {
@@ -16,49 +18,34 @@ pub fn render_template(template: &str, values: &HashMap<&str, String>) -> String
     rendered
 }
 
-pub fn load_deployment_template() -> Result<String, String> {
-    let manifest_path = get_expose_deployment_manifest_path()
-        .map_err(|e| format!("Failed to get manifest path: {}", e))?;
-    let mut file = File::open(&manifest_path).map_err(|e| {
-        format!(
-            "Failed to open expose deployment manifest at {:?}: {}",
-            manifest_path, e
-        )
+fn load_template(
+    get_path: fn() -> Result<std::path::PathBuf, String>, kind: &str,
+) -> Result<String, PortForwardError> {
+    let manifest_path = get_path().map_err(|e| PortForwardError::ConfigurationError {
+        message: format!("Failed to get {kind} manifest path: {e}"),
     })?;
+    let mut file =
+        File::open(&manifest_path).map_err(|e| PortForwardError::ConfigurationError {
+            message: format!("Failed to open {kind} manifest at {manifest_path:?}: {e}"),
+        })?;
     let mut contents = String::new();
     file.read_to_string(&mut contents)
-        .map_err(|e| format!("Failed to read manifest: {}", e))?;
+        .map_err(|e| PortForwardError::ConfigurationError {
+            message: format!("Failed to read {kind} manifest: {e}"),
+        })?;
     Ok(contents)
 }
 
-pub fn load_service_template() -> Result<String, String> {
-    let manifest_path = get_expose_service_manifest_path()
-        .map_err(|e| format!("Failed to get manifest path: {}", e))?;
-    let mut file = File::open(&manifest_path).map_err(|e| {
-        format!(
-            "Failed to open expose service manifest at {:?}: {}",
-            manifest_path, e
-        )
-    })?;
-    let mut contents = String::new();
-    file.read_to_string(&mut contents)
-        .map_err(|e| format!("Failed to read manifest: {}", e))?;
-    Ok(contents)
+pub fn load_deployment_template() -> Result<String, PortForwardError> {
+    load_template(get_expose_deployment_manifest_path, "deployment")
 }
 
-pub fn load_ingress_template() -> Result<String, String> {
-    let manifest_path = get_expose_ingress_manifest_path()
-        .map_err(|e| format!("Failed to get manifest path: {}", e))?;
-    let mut file = File::open(&manifest_path).map_err(|e| {
-        format!(
-            "Failed to open expose ingress manifest at {:?}: {}",
-            manifest_path, e
-        )
-    })?;
-    let mut contents = String::new();
-    file.read_to_string(&mut contents)
-        .map_err(|e| format!("Failed to read manifest: {}", e))?;
-    Ok(contents)
+pub fn load_service_template() -> Result<String, PortForwardError> {
+    load_template(get_expose_service_manifest_path, "service")
+}
+
+pub fn load_ingress_template() -> Result<String, PortForwardError> {
+    load_template(get_expose_ingress_manifest_path, "ingress")
 }
 
 pub fn build_ingress_annotations(
@@ -81,15 +68,12 @@ pub fn build_ingress_annotations(
 
     if let Some(json_str) = additional_annotations
         && !json_str.trim().is_empty()
+        && let Ok(parsed) = serde_json::from_str::<serde_json::Value>(json_str)
+        && let Some(obj) = parsed.as_object()
     {
-        // Try to parse as JSON object
-        if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(json_str)
-            && let Some(obj) = parsed.as_object()
-        {
-            for (key, value) in obj {
-                if let Some(val_str) = value.as_str() {
-                    annotations.push(format!(r#""{}": "{}""#, key, val_str));
-                }
+        for (key, value) in obj {
+            if let Some(val_str) = value.as_str() {
+                annotations.push(format!(r#""{}": "{}""#, key, val_str));
             }
         }
     }
