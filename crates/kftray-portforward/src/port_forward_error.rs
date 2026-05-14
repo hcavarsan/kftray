@@ -1,7 +1,9 @@
-use std::error::Error;
 use std::fmt;
 
+use crate::kube::client::error::KubeClientError;
+
 #[derive(Debug)]
+#[non_exhaustive]
 pub enum PortForwardError {
     PodLookupFailed {
         retry_count: usize,
@@ -33,6 +35,42 @@ pub enum PortForwardError {
         operation: String,
         timeout_duration: std::time::Duration,
     },
+    WebsocketUpgradeFailed {
+        status: u16,
+        message: String,
+    },
+    SubprotocolNegotiationFailed {
+        offered: &'static str,
+        returned: Option<String>,
+    },
+    KeepaliveTimeout {
+        last_pong_age_ms: u64,
+    },
+    ServerVersionTooOld {
+        detected: String,
+        required: &'static str,
+    },
+    WebsocketProtocolViolation {
+        context: &'static str,
+        detail: String,
+    },
+    /// Catch-all for errors during incremental migration from `Result<T,
+    /// String>`.
+    Internal(String),
+    /// IO errors (file operations, network).
+    Io(std::io::Error),
+    /// Kubernetes client construction/auth errors.
+    KubeClient(KubeClientError),
+    /// Kubernetes API call errors (deploy, list, delete).
+    KubeApi(String),
+    /// Hosts file read/write errors.
+    HostsFile(String),
+    /// TLS/SSL certificate errors.
+    Ssl(String),
+    /// Expose resource creation/deletion errors.
+    Expose(String),
+    /// Address allocation errors (loopback binding).
+    AddressAllocation(String),
 }
 
 impl fmt::Display for PortForwardError {
@@ -97,11 +135,75 @@ impl fmt::Display for PortForwardError {
                 f,
                 "Operation '{operation}' timed out after {timeout_duration:?}"
             ),
+            PortForwardError::WebsocketUpgradeFailed { status, message } => {
+                if *status == 0 {
+                    write!(f, "WebSocket upgrade failed: {message}")
+                } else {
+                    write!(f, "WebSocket upgrade failed (HTTP {status}): {message}")
+                }
+            }
+            PortForwardError::SubprotocolNegotiationFailed { offered, returned } => write!(
+                f,
+                "Subprotocol negotiation failed: offered '{offered}', server returned {returned:?}"
+            ),
+            PortForwardError::KeepaliveTimeout { last_pong_age_ms } => write!(
+                f,
+                "WebSocket keepalive timed out: last Pong was {last_pong_age_ms}ms ago"
+            ),
+            PortForwardError::ServerVersionTooOld { detected, required } => write!(
+                f,
+                "Kubernetes API server version {detected} does not support WebSocket port-forward; minimum required is {required} (KEP-4006). Upgrade the cluster to a compatible version."
+            ),
+            PortForwardError::WebsocketProtocolViolation { context, detail } => {
+                write!(f, "WebSocket protocol violation in {context}: {detail}")
+            }
+            PortForwardError::Internal(msg) => write!(f, "{msg}"),
+            PortForwardError::Io(err) => write!(f, "IO error: {err}"),
+            PortForwardError::KubeClient(err) => write!(f, "{err}"),
+            PortForwardError::KubeApi(msg) => write!(f, "Kubernetes API error: {msg}"),
+            PortForwardError::HostsFile(msg) => write!(f, "Hosts file error: {msg}"),
+            PortForwardError::Ssl(msg) => write!(f, "SSL error: {msg}"),
+            PortForwardError::Expose(msg) => write!(f, "Expose error: {msg}"),
+            PortForwardError::AddressAllocation(msg) => {
+                write!(f, "Address allocation error: {msg}")
+            }
         }
     }
 }
 
-impl Error for PortForwardError {}
+impl std::error::Error for PortForwardError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            PortForwardError::Io(err) => Some(err),
+            PortForwardError::KubeClient(err) => Some(err),
+            _ => None,
+        }
+    }
+}
+
+impl From<String> for PortForwardError {
+    fn from(s: String) -> Self {
+        PortForwardError::Internal(s)
+    }
+}
+
+impl From<&str> for PortForwardError {
+    fn from(s: &str) -> Self {
+        PortForwardError::Internal(s.to_owned())
+    }
+}
+
+impl From<std::io::Error> for PortForwardError {
+    fn from(err: std::io::Error) -> Self {
+        PortForwardError::Io(err)
+    }
+}
+
+impl From<KubeClientError> for PortForwardError {
+    fn from(err: KubeClientError) -> Self {
+        PortForwardError::KubeClient(err)
+    }
+}
 
 impl PortForwardError {
     pub fn pod_lookup_failed(
@@ -179,6 +281,19 @@ impl PortForwardError {
             PortForwardError::ConfigurationError { .. } => false,
             PortForwardError::ResourceExhausted { .. } => true,
             PortForwardError::TimeoutError { .. } => true,
+            PortForwardError::WebsocketUpgradeFailed { .. } => true,
+            PortForwardError::SubprotocolNegotiationFailed { .. } => false,
+            PortForwardError::KeepaliveTimeout { .. } => true,
+            PortForwardError::ServerVersionTooOld { .. } => false,
+            PortForwardError::WebsocketProtocolViolation { .. } => true,
+            PortForwardError::Io(_) => true,
+            PortForwardError::KubeClient(_) => true,
+            PortForwardError::KubeApi(_) => true,
+            PortForwardError::AddressAllocation(_) => true,
+            PortForwardError::HostsFile(_) => false,
+            PortForwardError::Ssl(_) => false,
+            PortForwardError::Expose(_) => true,
+            PortForwardError::Internal(_) => false,
         }
     }
 
@@ -186,6 +301,9 @@ impl PortForwardError {
         match self {
             PortForwardError::ConfigurationError { .. } => true,
             PortForwardError::NetworkError { recoverable, .. } => !recoverable,
+            PortForwardError::ServerVersionTooOld { .. } => true,
+            PortForwardError::SubprotocolNegotiationFailed { .. } => true,
+            PortForwardError::Ssl(_) => true,
             _ => false,
         }
     }

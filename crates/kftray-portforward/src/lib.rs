@@ -6,6 +6,7 @@ pub mod kube;
 pub mod network_utils;
 pub mod port_forward;
 pub mod port_forward_error;
+pub mod registry;
 pub mod ssl;
 
 pub use expose::{
@@ -32,4 +33,13 @@ pub use kube::{
     stop_port_forward_with_mode,
     stop_proxy_forward,
     stop_proxy_forward_with_mode,
+};
+pub use port_forward_error::{
+    PortForwardError,
+    PortForwardResult,
+};
+pub use registry::{
+    PORT_FORWARD_REGISTRY,
+    PortForwardKey,
+    PortForwardSlot,
 };

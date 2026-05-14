@@ -256,7 +256,9 @@ fn env_debug_info() -> String {
 pub async fn create_client_with_specific_context(
     kubeconfig: Option<String>, context_name: Option<&str>,
 ) -> Result<(Option<Client>, Option<Kubeconfig>, Vec<String>)> {
-    init_path();
+    // init_path() calls try_shell_path() which busy-polls with std::thread::sleep,
+    // so we must run it off the Tokio executor to avoid blocking async tasks.
+    let _ = tokio::task::spawn_blocking(init_path).await;
 
     let kubeconfig_paths = get_kubeconfig_paths_from_option(kubeconfig)?;
     let (merged_kubeconfig, all_contexts, mut errors) = merge_kubeconfigs(&kubeconfig_paths)?;

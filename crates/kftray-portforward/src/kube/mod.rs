@@ -3,7 +3,6 @@ pub mod http_log_watcher;
 pub mod listener;
 pub mod models;
 pub mod operations;
-pub mod pod_watcher;
 mod proxy;
 pub mod proxy_recovery;
 mod service;

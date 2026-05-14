@@ -68,12 +68,19 @@ pub async fn get_services_with_annotation(
 pub fn extract_ports_from_service(service: &Service) -> HashMap<String, i32> {
     let mut ports = HashMap::new();
     if let Some(spec) = &service.spec {
-        for port in spec.ports.as_ref().unwrap_or(&vec![]) {
+        for port in spec.ports.as_deref().unwrap_or(&[]) {
             let port_number = match port.target_port {
                 Some(IntOrString::Int(port)) => port,
-                Some(IntOrString::String(ref name)) => {
-                    resolve_named_port(spec, name).unwrap_or_default()
-                }
+                Some(IntOrString::String(ref name)) => match resolve_named_port(spec, name) {
+                    Some(p) => p,
+                    None => {
+                        log::warn!(
+                            "Named port '{}' could not be resolved, falling back to port 0",
+                            name
+                        );
+                        0
+                    }
+                },
                 None => continue,
             };
             ports.insert(
