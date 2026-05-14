@@ -96,6 +96,53 @@ run = "pnpm --filter @kftray/ui run knip"
 description = "Run kftui CLI"
 run = "cargo run -p kftui -- --log-level info --logs-to-file"
 
+[tasks."pgo:install"]
+description = "Install cargo-pgo plus llvm-tools-preview for Profile-Guided Optimization"
+run = """
+rustup component add llvm-tools-preview
+if ! command -v cargo-pgo >/dev/null 2>&1; then
+  cargo install cargo-pgo
+else
+  echo "cargo-pgo already installed: $(cargo pgo --version 2>/dev/null || echo present)"
+fi
+"""
+
+[tasks."pgo:instrument"]
+description = "Build kftui instrumented for PGO. Run `pgo:profile` after to collect samples."
+depends = ["pgo:install"]
+run = """
+cargo pgo build -- -p kftui --bin kftui
+echo ""
+echo "Instrumented binary built. Now exercise the binary with a representative workload:"
+echo "  mise run pgo:profile"
+echo "Then build the optimized binary with:"
+echo "  mise run pgo:optimize"
+"""
+
+[tasks."pgo:profile"]
+description = "Run the instrumented kftui binary to collect profile data (interactive)"
+run = """
+INSTRUMENTED=$(find target -type f -name kftui -path '*pgo-profiles*' 2>/dev/null | head -n1)
+if [ -z "$INSTRUMENTED" ]; then
+  INSTRUMENTED=$(find target -type f -name kftui -path '*release*' 2>/dev/null | head -n1)
+fi
+if [ -z "$INSTRUMENTED" ]; then
+  echo "No instrumented binary found. Run `mise run pgo:instrument` first." >&2
+  exit 1
+fi
+echo "Running $INSTRUMENTED — exit when you have exercised representative workload."
+"$INSTRUMENTED" --log-level info --logs-to-file
+"""
+
+[tasks."pgo:optimize"]
+description = "Build kftui optimized with collected PGO data (run pgo:instrument + pgo:profile first)"
+depends = ["pgo:install"]
+run = """
+cargo pgo optimize build -- -p kftui --bin kftui
+echo ""
+echo "PGO-optimized kftui ready under target/."
+"""
+
 # Setup Task
 [tasks.setup]
 description = "Setup development environment for all platforms"
