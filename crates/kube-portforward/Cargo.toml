@@ -1,0 +1,41 @@
+[package]
+name = "kube-portforward"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Production-ready Kubernetes port-forward over WebSocket with channel multiplexing"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/hcavarsan/kftray"
+keywords = ["kubernetes", "portforward", "websocket", "async", "tokio"]
+categories = ["network-programming", "asynchronous"]
+
+[dependencies]
+arc-swap = { workspace = true }
+bytes = { workspace = true }
+futures = { workspace = true }
+http = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
+k8s-openapi = { workspace = true }
+kube = { workspace = true }
+kube-runtime = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-tungstenite = { workspace = true }
+tokio-util = { workspace = true }
+tracing = { workspace = true }
+tungstenite = { workspace = true }
+dashmap = { workspace = true }
+parking_lot = { workspace = true }
+quanta = { workspace = true }
+
+[features]
+default = []
+# Built-in apiserver version cache (TTL 1h).
+# Off by default; consumers can implement their own caching strategy.
+version-cache = []
+
+[dev-dependencies]
+k8s-openapi = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+tracing-subscriber = { workspace = true }
