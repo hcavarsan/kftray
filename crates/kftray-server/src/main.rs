@@ -129,7 +129,14 @@ fn load_config() -> Result<ProxyConfig, ProxyError> {
 /// and handles shutdown signals (Ctrl+C and SIGTERM)
 #[tokio::main]
 async fn main() -> Result<(), ProxyError> {
-    env_logger::init();
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_target(true)
+        .with_ansi(false)
+        .init();
 
     let config = load_config()?;
     let server = Arc::new(ProxyServer::new(config));
