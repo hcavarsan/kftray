@@ -254,7 +254,9 @@ pub async fn get_services_with_annotations(
         "get_services_with_annotations called with context: '{context_name}' and kubeconfig: {kubeconfig_path:?}"
     );
 
-    retrieve_service_configs(&context_name, kubeconfig_path).await
+    retrieve_service_configs(&context_name, kubeconfig_path)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

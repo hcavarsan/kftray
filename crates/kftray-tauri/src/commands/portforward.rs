@@ -132,35 +132,43 @@ fn config_compare_changes<T: PartialEq>(prev: &[T], current: &[T]) -> bool {
 pub async fn start_port_forward_udp_cmd(
     configs: Vec<Config>, _app_handle: tauri::AppHandle<Wry>,
 ) -> Result<Vec<CustomResponse>, String> {
-    start_port_forward(configs.clone(), "udp").await
+    start_port_forward(configs.clone(), "udp")
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn start_port_forward_tcp_cmd(
     configs: Vec<Config>, _app_handle: tauri::AppHandle<Wry>,
 ) -> Result<Vec<CustomResponse>, String> {
-    start_port_forward(configs.clone(), "tcp").await
+    start_port_forward(configs.clone(), "tcp")
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn stop_all_port_forward_cmd(
     _app_handle: tauri::AppHandle<Wry>,
 ) -> Result<Vec<CustomResponse>, String> {
-    stop_all_port_forward().await
+    stop_all_port_forward().await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn stop_port_forward_cmd(
     config_id: String, _app_handle: tauri::AppHandle<Wry>,
 ) -> Result<CustomResponse, String> {
-    stop_port_forward(config_id.clone()).await
+    stop_port_forward(config_id.clone())
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn deploy_and_forward_pod_cmd(
     configs: Vec<Config>, _app_handle: tauri::AppHandle<Wry>,
 ) -> Result<Vec<CustomResponse>, String> {
-    deploy_and_forward_pod(configs.clone()).await
+    deploy_and_forward_pod(configs.clone())
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -171,28 +179,20 @@ pub async fn stop_proxy_forward_cmd(
         .parse::<i64>()
         .map_err(|e| format!("Failed to parse config_id: {e}"))?;
 
-    stop_proxy_forward(config_id, namespace, service_name).await
+    stop_proxy_forward(config_id, namespace, service_name)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub async fn get_active_pod_cmd(config_id: String) -> Result<Option<String>, String> {
-    use kftray_portforward::port_forward::CHILD_PROCESSES;
+    use kftray_portforward::registry::PORT_FORWARD_REGISTRY;
 
-    let handle_key = format!("config:{}:service:", config_id);
+    let config_id_parsed = config_id
+        .parse::<i64>()
+        .map_err(|e| format!("Failed to parse config_id: {e}"))?;
 
-    let matching_forwarders: Vec<_> = CHILD_PROCESSES
-        .iter()
-        .filter(|entry| entry.key().starts_with(&handle_key) || entry.key() == &config_id)
-        .filter_map(|entry| entry.value().direct_forwarder.clone())
-        .collect();
-
-    for forwarder in matching_forwarders {
-        if let Some(pod_name) = forwarder.get_current_active_pod().await {
-            return Ok(Some(pod_name));
-        }
-    }
-
-    Ok(None)
+    Ok(PORT_FORWARD_REGISTRY.get_active_pod(config_id_parsed).await)
 }
 
 #[tauri::command]

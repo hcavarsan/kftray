@@ -66,12 +66,14 @@ impl PortOperations for RealPortOperations {
         start_port_forward(configs, protocol)
             .await
             .map(|responses| responses.into_iter().map(|r| format!("{r:?}")).collect())
+            .map_err(|e| e.to_string())
     }
 
     async fn deploy_and_forward_pod(&self, configs: Vec<Config>) -> Result<Vec<String>, String> {
         deploy_and_forward_pod(configs)
             .await
             .map(|responses| responses.into_iter().map(|r| format!("{r:?}")).collect())
+            .map_err(|e| e.to_string())
     }
 }
 

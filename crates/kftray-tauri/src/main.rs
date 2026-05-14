@@ -3,6 +3,9 @@
     windows_subsystem = "windows"
 )]
 
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 use std::sync::Arc;
 
 use log::{
@@ -76,13 +79,27 @@ fn init_file_logger() -> anyhow::Result<()> {
         jiff::Zoned::now().strftime("%Y-%m-%d_%H-%M-%S")
     );
 
-    flexi_logger::Logger::try_with_str("info")?
+    // When RUST_LOG is set, mirror the same level to stdout so terminal output
+    // reflects the requested verbosity (e.g. RUST_LOG=trace mise run dev).
+    let stdout_duplicate = match std::env::var("RUST_LOG")
+        .unwrap_or_default()
+        .to_lowercase()
+        .as_str()
+    {
+        s if s.contains("trace") => flexi_logger::Duplicate::Trace,
+        s if s.contains("debug") => flexi_logger::Duplicate::Debug,
+        s if s.contains("warn") => flexi_logger::Duplicate::Warn,
+        s if s.contains("error") => flexi_logger::Duplicate::Error,
+        _ => flexi_logger::Duplicate::Info,
+    };
+
+    flexi_logger::Logger::try_with_env_or_str("info")?
         .log_to_file(
             flexi_logger::FileSpec::default()
                 .directory(log_dir)
                 .basename(basename),
         )
-        .duplicate_to_stdout(flexi_logger::Duplicate::Info)
+        .duplicate_to_stdout(stdout_duplicate)
         .rotate(
             flexi_logger::Criterion::Size(5_000_000),
             flexi_logger::Naming::Numbers,
@@ -90,6 +107,37 @@ fn init_file_logger() -> anyhow::Result<()> {
         )
         .format(flexi_logger::detailed_format)
         .start()?;
+
+    // Bridge `log` crate events (tungstenite, tokio-tungstenite, etc.) into
+    // `tracing` so a single subscriber handles everything.
+    // max_level matches RUST_LOG or falls back to Debug to avoid filtering
+    // out log:: calls before tracing's EnvFilter can evaluate them.
+    let max_log_level = match std::env::var("RUST_LOG")
+        .unwrap_or_default()
+        .to_lowercase()
+        .as_str()
+    {
+        s if s.contains("trace") => log::LevelFilter::Trace,
+        s if s.contains("debug") => log::LevelFilter::Debug,
+        _ => log::LevelFilter::Info,
+    };
+    tracing_log::LogTracer::builder()
+        .with_max_level(max_log_level)
+        .init()
+        .ok();
+
+    // Single tracing subscriber for both tracing:: and log:: events.
+    // RUST_LOG controls the filter (e.g. tungstenite=trace,kube=debug).
+    let rust_log = std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string());
+    let filter = tracing_subscriber::EnvFilter::try_new(&rust_log)
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"));
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_target(true)
+        .with_level(true)
+        .without_time() // flexi_logger already adds timestamps
+        .try_init()
+        .ok(); // ok() because another subscriber may already be installed
 
     Ok(())
 }
@@ -227,13 +275,13 @@ fn main() {
                 use std::time::Duration;
 
                 use kftray_portforward::kube::cleanup_stale_timeout_entries;
-                use kftray_portforward::kube::shared_client::SHARED_CLIENT_MANAGER;
+                use kftray_portforward::registry::PORT_FORWARD_REGISTRY;
 
                 let mut interval = tokio::time::interval(Duration::from_secs(3600));
                 loop {
                     interval.tick().await;
                     cleanup_stale_timeout_entries().await;
-                    SHARED_CLIENT_MANAGER.cleanup_expired();
+                    PORT_FORWARD_REGISTRY.cleanup_expired_clients();
                 }
             });
 
