@@ -88,6 +88,9 @@ impl HttpLogStateWatcher {
         info!("Starting HTTP log state watcher with event-driven pattern");
 
         let current_state = Arc::new(RwLock::new(HashMap::new()));
+        // Broadcast channel: multiple subscribers (tcp_forwarder connections) receive
+        // log-state change events. Capacity 256 is generous for infrequent state
+        // toggles.
         let (event_sender, mut event_receiver) = broadcast::channel(256);
         let cancellation_token = CancellationToken::new();
 

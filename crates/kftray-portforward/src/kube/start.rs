@@ -43,7 +43,12 @@ use crate::{
         Target,
         TargetSelector,
     },
-    port_forward::CHILD_PROCESSES,
+    kube::shared_client::ServiceClientKey,
+    port_forward_error::PortForwardError,
+    registry::{
+        PORT_FORWARD_REGISTRY,
+        PortForwardKey,
+    },
 };
 
 pub static STOPPED_BY_TIMEOUT: Lazy<DashSet<i64>> = Lazy::new(DashSet::new);
@@ -86,8 +91,13 @@ async fn handle_timeout_callback(id: i64) {
 
 fn create_static_timeout_callback() -> Arc<dyn Fn(i64) + Send + Sync> {
     Arc::new(move |id: i64| {
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             handle_timeout_callback(id).await;
+        });
+        tokio::spawn(async move {
+            if let Err(e) = handle.await {
+                error!("Timeout callback task for config {id} panicked: {e}");
+            }
         });
     })
 }
@@ -111,17 +121,20 @@ async fn build_tls_acceptor(
     Ok(tokio_rustls::TlsAcceptor::from(Arc::new(server_config)))
 }
 
-async fn update_hosts_with_ssl(config: &Config) -> Result<(), String> {
+async fn update_hosts_with_ssl(config: &Config) -> Result<(), PortForwardError> {
     let alias = config
         .alias
         .as_ref()
-        .ok_or("Alias required for SSL hosts entry")?;
+        .ok_or_else(|| PortForwardError::ConfigurationError {
+            message: "Alias required for SSL hosts entry".to_string(),
+        })?;
 
     let config_id = &config.id.unwrap_or(-1).to_string();
     let port = config.local_port.unwrap_or(8080);
 
-    add_ssl_host_entry(config_id, alias, port)
-        .map_err(|e| format!("Failed to add HTTPS hosts entries: {}", e))?;
+    add_ssl_host_entry(config_id, alias, port).map_err(|e| {
+        PortForwardError::HostsFile(format!("Failed to add HTTPS hosts entries: {}", e))
+    })?;
 
     Ok(())
 }
@@ -136,7 +149,9 @@ fn workload_type_description(workload_type: Option<&str>) -> &'static str {
 
 static FALLBACK_ALLOCATION_MUTEX: Lazy<TokioMutex<()>> = Lazy::new(|| TokioMutex::new(()));
 
-async fn allocate_local_address_for_config(config: &mut Config) -> Result<String, String> {
+async fn allocate_local_address_for_config(
+    config: &mut Config,
+) -> Result<String, PortForwardError> {
     if !config.auto_loopback_address {
         let address = config
             .local_address
@@ -148,9 +163,9 @@ async fn allocate_local_address_for_config(config: &mut Config) -> Result<String
             if let Err(config_err) = crate::network_utils::ensure_loopback_address(&address).await {
                 let error_msg = config_err.to_string();
                 if error_msg.contains("cancelled") || error_msg.contains("canceled") {
-                    return Err(format!(
+                    return Err(PortForwardError::AddressAllocation(format!(
                         "Custom loopback address configuration cancelled: {error_msg}"
-                    ));
+                    )));
                 }
                 warn!("Failed to configure custom loopback address {address}: {config_err}");
             }
@@ -204,13 +219,14 @@ async fn allocate_local_address_for_config(config: &mut Config) -> Result<String
                     Ok(allocated_address)
                 }
                 Err(fallback_err) => {
-                    if fallback_err.contains("cancelled") || fallback_err.contains("canceled") {
-                        error!("Address allocation cancelled by user: {fallback_err}");
+                    let fallback_msg = fallback_err.to_string();
+                    if fallback_msg.contains("cancelled") || fallback_msg.contains("canceled") {
+                        error!("Address allocation cancelled by user: {fallback_msg}");
                         return Err(fallback_err);
                     }
 
                     warn!(
-                        "Fallback allocation also failed for service {service_name}: {fallback_err}. Using default 127.0.0.1"
+                        "Fallback allocation also failed for service {service_name}: {fallback_msg}. Using default 127.0.0.1"
                     );
                     let default_address = "127.0.0.1".to_string();
                     config.local_address = Some(default_address.clone());
@@ -221,14 +237,18 @@ async fn allocate_local_address_for_config(config: &mut Config) -> Result<String
     }
 }
 
-async fn try_allocate_address(service_name: &str) -> Result<String, String> {
+/// Synchronous helper for address allocation via helper service IPC.
+/// Must be called from spawn_blocking to avoid blocking the Tokio runtime.
+fn try_allocate_address_sync(service_name: &str) -> Result<String, PortForwardError> {
     let app_id = "com.kftray.app".to_string();
 
-    let socket_path =
-        kftray_helper::communication::get_default_socket_path().map_err(|e| e.to_string())?;
+    let socket_path = kftray_helper::communication::get_default_socket_path()
+        .map_err(|e| PortForwardError::AddressAllocation(e.to_string()))?;
 
     if !kftray_helper::client::socket_comm::is_socket_available(&socket_path) {
-        return Err("Helper service is not available".to_string());
+        return Err(PortForwardError::AddressAllocation(
+            "Helper service is not available".to_string(),
+        ));
     }
 
     let command = kftray_helper::messages::RequestCommand::Address(
@@ -240,95 +260,146 @@ async fn try_allocate_address(service_name: &str) -> Result<String, String> {
     match kftray_helper::client::socket_comm::send_request(&socket_path, &app_id, command) {
         Ok(response) => match response.result {
             kftray_helper::messages::RequestResult::StringSuccess(address) => Ok(address),
-            kftray_helper::messages::RequestResult::Error(error) => Err(error),
-            _ => Err("Unexpected response format".to_string()),
+            kftray_helper::messages::RequestResult::Error(error) => {
+                Err(PortForwardError::AddressAllocation(error))
+            }
+            _ => Err(PortForwardError::AddressAllocation(
+                "Unexpected response format".to_string(),
+            )),
         },
-        Err(e) => Err(e.to_string()),
+        Err(e) => Err(PortForwardError::AddressAllocation(e.to_string())),
+    }
+}
+
+async fn try_allocate_address(service_name: &str) -> Result<String, PortForwardError> {
+    use std::time::Duration;
+
+    const ADDRESS_ALLOCATE_TIMEOUT: Duration = Duration::from_secs(5);
+
+    let service_name_owned = service_name.to_string();
+
+    // Wrap blocking helper-service IPC in spawn_blocking with timeout,
+    // matching the pattern used in stop.rs::release_address_with_fallback.
+    let result = tokio::time::timeout(ADDRESS_ALLOCATE_TIMEOUT, async {
+        let svc = service_name_owned.clone();
+        tokio::task::spawn_blocking(move || try_allocate_address_sync(&svc))
+            .await
+            .map_err(|e| {
+                PortForwardError::AddressAllocation(format!(
+                    "Address allocation task panicked: {e}"
+                ))
+            })
+    })
+    .await;
+
+    match result {
+        Ok(Ok(inner)) => inner,
+        Ok(Err(e)) => Err(e),
+        Err(_) => Err(PortForwardError::AddressAllocation(format!(
+            "Address allocation timed out after {:?}",
+            ADDRESS_ALLOCATE_TIMEOUT
+        ))),
     }
 }
 
 async fn try_fallback_allocate_and_save(
     service_name: &str, config: &mut Config,
-) -> Result<String, String> {
-    let _lock = FALLBACK_ALLOCATION_MUTEX.lock().await;
+) -> Result<String, PortForwardError> {
+    // Acquire lock only to find and reserve an available address, then release
+    let candidate = {
+        let _lock = FALLBACK_ALLOCATION_MUTEX.lock().await;
+        debug!("Acquired fallback allocation lock for service: {service_name}");
 
-    debug!("Acquired fallback allocation lock for service: {service_name}");
+        let allocated_addresses = get_allocated_loopback_addresses().await;
 
-    let allocated_addresses = get_allocated_loopback_addresses().await;
+        let mut found = None;
+        for octet in 2..255u8 {
+            let address = format!("127.0.0.{octet}");
 
-    for octet in 2..255 {
-        let address = format!("127.0.0.{octet}");
-
-        if allocated_addresses.contains(&address) {
-            debug!("Address {address} already allocated to another config, skipping");
-            continue;
-        }
-
-        if crate::network_utils::is_address_accessible(&address).await {
-            debug!("Address {address} is already in use on system, skipping");
-            continue;
-        }
-
-        match crate::network_utils::ensure_loopback_address(&address).await {
-            Ok(_) => {
-                debug!(
-                    "Successfully allocated and configured fallback address: {address} for service: {service_name}"
-                );
-
-                config.local_address = Some(address.clone());
-                info!(
-                    "Setting config.local_address to {} (fallback) for config_id {}",
-                    address,
-                    config.id.unwrap_or_default()
-                );
-
-                match save_allocated_address_to_db(config).await {
-                    Ok(_) => {
-                        info!(
-                            "Successfully updated database with fallback allocated address {} for config {}",
-                            address,
-                            config.id.unwrap_or_default()
-                        );
-                        return Ok(address);
-                    }
-                    Err(e) => {
-                        error!(
-                            "Failed to save fallback allocated address {} to database for config {}: {}",
-                            address,
-                            config.id.unwrap_or_default(),
-                            e
-                        );
-                        if let Err(cleanup_err) =
-                            crate::network_utils::remove_loopback_address(&address).await
-                        {
-                            error!(
-                                "Failed to cleanup address {} after DB save failure: {}",
-                                address, cleanup_err
-                            );
-                        }
-                        continue;
-                    }
-                }
-            }
-            Err(e) => {
-                let error_msg = e.to_string();
-                debug!("Failed to configure fallback address {address}: {error_msg}");
-
-                if error_msg.contains("User cancelled")
-                    || error_msg.contains("user cancelled")
-                    || error_msg.contains("cancelled")
-                    || error_msg.contains("User canceled")
-                    || error_msg.contains("canceled")
-                {
-                    return Err(format!("Address allocation cancelled by user: {error_msg}"));
-                }
-
+            if allocated_addresses.contains(&address) {
+                debug!("Address {address} already allocated to another config, skipping");
                 continue;
             }
+
+            if crate::network_utils::is_address_accessible(&address).await {
+                debug!("Address {address} is already in use on system, skipping");
+                continue;
+            }
+
+            found = Some(address);
+            break;
+        }
+        found
+    };
+    // Lock released here
+
+    let address = match candidate {
+        Some(addr) => addr,
+        None => {
+            return Err(PortForwardError::AddressAllocation(
+                "No available addresses found in fallback allocation".to_string(),
+            ));
+        }
+    };
+
+    match crate::network_utils::ensure_loopback_address(&address).await {
+        Ok(_) => {
+            debug!(
+                "Successfully allocated and configured fallback address: {address} for service: {service_name}"
+            );
+
+            config.local_address = Some(address.clone());
+            info!(
+                "Setting config.local_address to {} (fallback) for config_id {}",
+                address,
+                config.id.unwrap_or_default()
+            );
+
+            match save_allocated_address_to_db(config).await {
+                Ok(_) => {
+                    info!(
+                        "Successfully updated database with fallback allocated address {} for config {}",
+                        address,
+                        config.id.unwrap_or_default()
+                    );
+                    Ok(address)
+                }
+                Err(e) => {
+                    error!(
+                        "Failed to save fallback allocated address {} to database for config {}: {}",
+                        address,
+                        config.id.unwrap_or_default(),
+                        e
+                    );
+                    if let Err(cleanup_err) =
+                        crate::network_utils::remove_loopback_address(&address).await
+                    {
+                        error!(
+                            "Failed to cleanup address {} after DB save failure: {}",
+                            address, cleanup_err
+                        );
+                    }
+                    Err(PortForwardError::AddressAllocation(format!(
+                        "Failed to save allocated address: {e}"
+                    )))
+                }
+            }
+        }
+        Err(e) => {
+            let error_msg = e.to_string();
+            debug!("Failed to configure fallback address {address}: {error_msg}");
+
+            if error_msg.contains("cancelled") || error_msg.contains("canceled") {
+                return Err(PortForwardError::AddressAllocation(format!(
+                    "Address allocation cancelled by user: {error_msg}"
+                )));
+            }
+
+            Err(PortForwardError::AddressAllocation(format!(
+                "Failed to configure fallback address: {error_msg}"
+            )))
         }
     }
-
-    Err("No available addresses found in fallback allocation".to_string())
 }
 
 async fn get_allocated_loopback_addresses() -> std::collections::HashSet<String> {
@@ -356,7 +427,7 @@ async fn get_allocated_loopback_addresses() -> std::collections::HashSet<String>
     allocated
 }
 
-async fn save_allocated_address_to_db(config: &Config) -> Result<(), String> {
+async fn save_allocated_address_to_db(config: &Config) -> Result<(), PortForwardError> {
     use kftray_commons::utils::config::update_config;
 
     match update_config(config.clone()).await {
@@ -369,14 +440,14 @@ async fn save_allocated_address_to_db(config: &Config) -> Result<(), String> {
         }
         Err(e) => {
             error!("Failed to update config in database: {e}");
-            Err(e)
+            Err(PortForwardError::Internal(e))
         }
     }
 }
 
 pub async fn start_port_forward(
     configs: Vec<Config>, protocol: &str,
-) -> Result<Vec<CustomResponse>, String> {
+) -> Result<Vec<CustomResponse>, PortForwardError> {
     start_port_forward_with_mode(configs, protocol, DatabaseMode::File, false).await
 }
 
@@ -399,27 +470,20 @@ async fn process_single_config_with_address(
         clear_stopped_by_timeout(config_id);
     }
 
+    let pod_label = || {
+        format!(
+            "app={},config_id={}",
+            config.service.clone().unwrap_or_default(),
+            config.id.unwrap_or_default()
+        )
+    };
+
     let selector = match (config.workload_type.as_deref(), config.protocol.as_str()) {
-        (Some("pod"), "tcp") => TargetSelector::PodLabel(config.target.clone().unwrap_or_default()),
-        (Some("pod"), "udp") => TargetSelector::PodLabel(config.target.clone().unwrap_or_default()),
+        (Some("pod"), _) => TargetSelector::PodLabel(config.target.clone().unwrap_or_default()),
         (Some("service"), "tcp") => {
             TargetSelector::ServiceName(config.service.clone().unwrap_or_default())
         }
-        (Some("service"), "udp") => TargetSelector::PodLabel(format!(
-            "app={},config_id={}",
-            config.service.clone().unwrap_or_default(),
-            config.id.unwrap_or_default()
-        )),
-        (Some("proxy"), "udp") => TargetSelector::PodLabel(format!(
-            "app={},config_id={}",
-            config.service.clone().unwrap_or_default(),
-            config.id.unwrap_or_default()
-        )),
-        (Some("proxy"), "tcp") => TargetSelector::PodLabel(format!(
-            "app={},config_id={}",
-            config.service.clone().unwrap_or_default(),
-            config.id.unwrap_or_default()
-        )),
+        (Some("service"), "udp") | (Some("proxy"), _) => TargetSelector::PodLabel(pod_label()),
         _ => TargetSelector::ServiceName(config.service.clone().unwrap_or_default()),
     };
 
@@ -529,6 +593,19 @@ async fn process_single_config_with_address(
 
             match forward_result {
                 Ok((actual_local_port, handle)) => {
+                    let config_id = config
+                        .id
+                        .ok_or_else(|| "config missing id".to_string())
+                        .map_err(|e| SingleConfigResult::Error {
+                            message: e,
+                            failed_handle: None,
+                        });
+                    let config_id = match config_id {
+                        Ok(id) => id,
+                        Err(err) => return err,
+                    };
+                    let service_name = config.service.clone().unwrap_or_default();
+
                     let protocol_upper = protocol.to_uppercase();
                     info!(
                         "{} port forwarding is set up on local port: {:?} for {}: {:?}",
@@ -544,21 +621,16 @@ async fn process_single_config_with_address(
                     );
                     debug!("Actual local port: {actual_local_port}");
 
-                    let handle_key = format!(
-                        "config:{}:service:{}",
-                        config.id.unwrap(),
-                        config.service.clone().unwrap_or_default()
-                    );
+                    let pf_key = PortForwardKey::named(config_id, &service_name);
+                    let client_key =
+                        ServiceClientKey::new(config.context.clone(), config.kubeconfig.clone());
 
-                    // Insert into DashMap - lock-free operation
-                    CHILD_PROCESSES.insert(handle_key.clone(), handle);
+                    PORT_FORWARD_REGISTRY.insert_process(pf_key.clone(), handle, client_key);
 
-                    let config_state = ConfigState::new(config.id.unwrap(), true);
+                    let config_state = ConfigState::new(config_id, true);
                     if let Err(e) = update_config_state_with_mode(&config_state, mode).await {
                         error!("Failed to update config state: {e}");
                     }
-
-                    let config_id = config.id.unwrap();
 
                     let timeout_callback = create_static_timeout_callback();
 
@@ -575,7 +647,7 @@ async fn process_single_config_with_address(
 
                     SingleConfigResult::Success(CustomResponse {
                         id: config.id,
-                        service: config.service.clone().unwrap(),
+                        service: service_name.clone(),
                         namespace: namespace.clone(),
                         local_port: actual_local_port,
                         remote_port: config.remote_port.unwrap_or_default(),
@@ -592,7 +664,7 @@ async fn process_single_config_with_address(
                                 protocol_display,
                                 actual_local_port,
                                 config.remote_port.unwrap_or_default(),
-                                config.service.clone().unwrap(),
+                                service_name,
                                 if should_use_ssl && protocol == "tcp" {
                                     " (HTTP redirects to HTTPS)"
                                 } else {
@@ -696,7 +768,7 @@ async fn process_expose_config(config: Config, mode: DatabaseMode) -> SingleConf
 
 pub async fn start_port_forward_with_mode(
     configs: Vec<Config>, protocol: &str, mode: DatabaseMode, ssl_override: bool,
-) -> Result<Vec<CustomResponse>, String> {
+) -> Result<Vec<CustomResponse>, PortForwardError> {
     let mut responses = Vec::new();
     let mut errors = Vec::new();
     let mut failed_handles = Vec::new();
@@ -779,8 +851,15 @@ pub async fn start_port_forward_with_mode(
     }
 
     for handle_key in failed_handles {
-        if let Some((_, process)) = CHILD_PROCESSES.remove(&handle_key) {
-            process.abort();
+        // Parse old-style composite key to extract config_id and service_name
+        if let Some(content) = handle_key.strip_prefix("config:")
+            && let Some((config_part, service_part)) = content.split_once(":service:")
+            && let Ok(cid) = config_part.parse::<i64>()
+        {
+            let key = PortForwardKey::named(cid, service_part);
+            if let Some(entry) = PORT_FORWARD_REGISTRY.remove_process(&key) {
+                entry.process.abort();
+            }
         }
     }
 
@@ -792,7 +871,7 @@ pub async fn start_port_forward_with_mode(
         }
         Ok(responses)
     } else if !errors.is_empty() {
-        Err(errors.join("\n"))
+        Err(PortForwardError::Internal(errors.join("\n")))
     } else {
         Ok(Vec::new())
     }

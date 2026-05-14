@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures::stream::{
@@ -42,24 +43,42 @@ use crate::hostsfile::{
     remove_host_entry,
     remove_ssl_host_entry,
 };
-use crate::kube::shared_client::{
-    SHARED_CLIENT_MANAGER,
-    ServiceClientKey,
-};
-use crate::port_forward::CHILD_PROCESSES;
+use crate::kube::shared_client::ServiceClientKey;
 #[cfg(test)]
 use crate::port_forward::PortForwardProcess;
+use crate::port_forward_error::PortForwardError;
+use crate::registry::PORT_FORWARD_REGISTRY;
+#[cfg(test)]
+use crate::registry::PortForwardKey;
+
+/// Load configs from the database, logging errors and falling back to empty
+/// vec.
+async fn load_configs(mode: DatabaseMode) -> Vec<Config> {
+    let result = match mode {
+        DatabaseMode::File => get_configs().await,
+        DatabaseMode::Memory => read_configs_with_mode(mode).await,
+    };
+    match result {
+        Ok(v) => v,
+        Err(e) => {
+            warn!("Failed to read configs ({mode:?}): {e}");
+            vec![]
+        }
+    }
+}
 
 /// Synchronous helper function to release address via helper service.
 /// Must be called from spawn_blocking to avoid blocking the tokio runtime.
-fn try_release_address_sync(address: &str) -> Result<(), String> {
+fn try_release_address_sync(address: &str) -> Result<(), PortForwardError> {
     let app_id = "com.kftray.app".to_string();
 
-    let socket_path =
-        kftray_helper::communication::get_default_socket_path().map_err(|e| e.to_string())?;
+    let socket_path = kftray_helper::communication::get_default_socket_path()
+        .map_err(|e| PortForwardError::AddressAllocation(e.to_string()))?;
 
     if !kftray_helper::client::socket_comm::is_socket_available(&socket_path) {
-        return Err("Helper service is not available".to_string());
+        return Err(PortForwardError::AddressAllocation(
+            "Helper service is not available".to_string(),
+        ));
     }
 
     let command = kftray_helper::messages::RequestCommand::Address(
@@ -71,10 +90,14 @@ fn try_release_address_sync(address: &str) -> Result<(), String> {
     match kftray_helper::client::socket_comm::send_request(&socket_path, &app_id, command) {
         Ok(response) => match response.result {
             kftray_helper::messages::RequestResult::Success => Ok(()),
-            kftray_helper::messages::RequestResult::Error(error) => Err(error),
-            _ => Err("Unexpected response format".to_string()),
+            kftray_helper::messages::RequestResult::Error(error) => {
+                Err(PortForwardError::AddressAllocation(error))
+            }
+            _ => Err(PortForwardError::AddressAllocation(
+                "Unexpected response format".to_string(),
+            )),
         },
-        Err(e) => Err(e.to_string()),
+        Err(e) => Err(PortForwardError::AddressAllocation(e.to_string())),
     }
 }
 
@@ -173,35 +196,26 @@ pub(crate) async fn delete_proxy_cluster_resources(
     }
 }
 
-pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
+pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, PortForwardError> {
     stop_all_port_forward_with_mode(DatabaseMode::File).await
 }
 
 pub async fn stop_all_port_forward_with_mode(
     mode: DatabaseMode,
-) -> Result<Vec<CustomResponse>, String> {
+) -> Result<Vec<CustomResponse>, PortForwardError> {
     crate::ssl::ensure_crypto_provider_installed();
     info!("Attempting to stop all port forwards in mode: {mode:?}");
 
     let mut responses = Vec::with_capacity(1024);
 
-    let handle_keys: Vec<String> = CHILD_PROCESSES
-        .iter()
-        .map(|entry| entry.key().clone())
-        .collect();
+    let all_keys = PORT_FORWARD_REGISTRY.all_keys();
 
-    if handle_keys.is_empty() {
+    if all_keys.is_empty() {
         debug!("No port forwarding processes to stop");
     }
 
-    for composite_key in &handle_keys {
-        if let Some(config_id_str) = composite_key
-            .strip_prefix("config:")
-            .and_then(|s| s.split(":service:").next())
-            && let Ok(config_id) = config_id_str.parse::<i64>()
-        {
-            cancel_timeout_for_forward(config_id).await;
-        }
+    for key in &all_keys {
+        cancel_timeout_for_forward(key.config_id).await;
     }
 
     let running_configs_state = match get_configs_state().await {
@@ -213,89 +227,60 @@ pub async fn stop_all_port_forward_with_mode(
         Err(e) => {
             let error_message = format!("Failed to retrieve config states: {e}");
             error!("{error_message}");
-            return Err(error_message);
+            return Err(PortForwardError::Internal(error_message));
         }
     };
 
-    let configs = match mode {
-        DatabaseMode::File => get_configs().await.unwrap_or_default(),
-        DatabaseMode::Memory => read_configs_with_mode(mode).await.unwrap_or_default(),
-    };
+    let configs = load_configs(mode).await;
 
     let config_map: HashMap<i64, &Config> = configs
         .iter()
         .filter_map(|c| c.id.map(|id| (id, c)))
         .collect();
 
-    let empty_str = String::new();
+    // Remove all processes from registry at once
+    let removed_entries = PORT_FORWARD_REGISTRY.remove_all();
 
-    let mut abort_handles: FuturesUnordered<_> = handle_keys
+    let config_map = Arc::new(config_map);
+
+    let mut abort_handles: FuturesUnordered<_> = removed_entries
         .into_iter()
-        .map(|composite_key| {
-            let empty_str_clone = empty_str.clone();
-            let config_map_cloned = config_map.clone();
+        .map(|(pf_key, entry)| {
+            let config_map_ref = Arc::clone(&config_map);
 
             async move {
-                let (config_id_str, service_id) = if let Some(content) = composite_key.strip_prefix("config:") {
-                    if let Some((config_part, service_part)) = content.split_once(":service:") {
-                        (config_part, service_part.to_string())
-                    } else {
-                        error!("Invalid composite key format encountered: {composite_key}");
-                        return CustomResponse {
-                            id: None,
-                            service: empty_str_clone.clone(),
-                            namespace: empty_str_clone.clone(),
-                            local_port: 0,
-                            remote_port: 0,
-                            context: empty_str_clone.clone(),
-                            protocol: empty_str_clone.clone(),
-                            stdout: empty_str_clone.clone(),
-                            stderr: String::from("Invalid composite key format"),
-                            status: 1,
-                        };
-                    }
-                } else {
-                    error!("Invalid composite key format encountered: {composite_key}");
-                    return CustomResponse {
-                        id: None,
-                        service: empty_str_clone.clone(),
-                        namespace: empty_str_clone.clone(),
-                        local_port: 0,
-                        remote_port: 0,
-                        context: empty_str_clone.clone(),
-                        protocol: empty_str_clone.clone(),
-                        stdout: empty_str_clone.clone(),
-                        stderr: String::from("Invalid composite key format"),
-                        status: 1,
-                    };
+                let config_id_parsed = pf_key.config_id;
+                let config_id_str = config_id_parsed.to_string();
+                let service_id = match &pf_key.slot {
+                    crate::registry::PortForwardSlot::Named(name) => name.clone(),
+                    crate::registry::PortForwardSlot::Expose => "expose".to_string(),
                 };
-                let config_id_parsed = config_id_str.parse::<i64>().unwrap_or_default();
-                let config_option = config_map_cloned.get(&config_id_parsed).cloned();
 
-                if let Some(config) = config_option
-                    && config.domain_enabled.unwrap_or_default()
-                {
-                    if let Err(e) = remove_host_entry(config_id_str) {
-                        error!(
-                            "Failed to remove host entry for ID {config_id_str}: {e}"
-                        );
-                    }
+                let config_option = config_map_ref.get(&config_id_parsed).cloned();
 
+                if let Some(config) = &config_option {
+                    if config.domain_enabled.unwrap_or_default() {
+                        if let Err(e) = remove_host_entry(&config_id_str) {
+                            error!(
+                                "Failed to remove host entry for ID {config_id_str}: {e}"
+                            );
+                        }
 
-                    if let Err(e) = remove_ssl_host_entry(config_id_str) {
-                        error!(
-                            "Failed to remove SSL host entry for ID {config_id_str}: {e}"
-                        );
+                        if let Err(e) = remove_ssl_host_entry(&config_id_str) {
+                            error!(
+                                "Failed to remove SSL host entry for ID {config_id_str}: {e}"
+                            );
+                        }
                     }
                 } else {
-                    warn!("Config with id '{config_id_str}' not found.");
+                    warn!("Config with id '{config_id_str}' not found in database.");
                 }
 
                 info!(
                     "Aborting port forwarding task for config_id: {config_id_str}"
                 );
 
-                if let Some(config) = config_map_cloned.get(&config_id_parsed).cloned() {
+                if let Some(config) = &config_option {
                     info!("stop_all: Found config {} with local_address: {:?} and auto_loopback_address: {}",
                           config_id_str, config.local_address, config.auto_loopback_address);
                     if let Some(local_addr) = &config.local_address && crate::network_utils::is_custom_loopback_address(local_addr) {
@@ -307,20 +292,18 @@ pub async fn stop_all_port_forward_with_mode(
                     }
                 }
 
-                if let Some((_, process)) = CHILD_PROCESSES.remove(&composite_key) {
-                    process.cleanup_and_abort().await;
-                }
+                entry.process.cleanup_and_abort().await;
 
                 CustomResponse {
                     id: Some(config_id_parsed),
                     service: service_id,
-                    namespace: empty_str_clone.clone(),
+                    namespace: String::new(),
                     local_port: 0,
                     remote_port: 0,
-                    context: empty_str_clone.clone(),
-                    protocol: empty_str_clone.clone(),
+                    context: String::new(),
+                    protocol: String::new(),
                     stdout: String::from("Service port forwarding has been stopped"),
-                    stderr: empty_str_clone,
+                    stderr: String::new(),
                     status: 0,
                 }
             }
@@ -343,7 +326,7 @@ pub async fn stop_all_port_forward_with_mode(
             let client_key =
                 ServiceClientKey::new(config.context.clone(), config.kubeconfig.clone());
             async move {
-                match SHARED_CLIENT_MANAGER.get_client(client_key).await {
+                match PORT_FORWARD_REGISTRY.acquire_client(client_key).await {
                     Ok(shared_client) => {
                         let client = Client::clone(&shared_client);
                         delete_proxy_cluster_resources(client, &namespace, config_id).await;
@@ -421,21 +404,21 @@ pub async fn stop_all_port_forward_with_mode(
     Ok(responses)
 }
 
-pub async fn stop_port_forward(config_id: String) -> Result<CustomResponse, String> {
+pub async fn stop_port_forward(config_id: String) -> Result<CustomResponse, PortForwardError> {
     stop_port_forward_with_mode(config_id, DatabaseMode::File).await
 }
 
 pub async fn stop_port_forward_with_mode(
     config_id: String, mode: DatabaseMode,
-) -> Result<CustomResponse, String> {
-    let config_id_parsed = config_id
-        .parse::<i64>()
-        .map_err(|_| "Invalid config ID".to_string())?;
+) -> Result<CustomResponse, PortForwardError> {
+    let config_id_parsed =
+        config_id
+            .parse::<i64>()
+            .map_err(|_| PortForwardError::ConfigurationError {
+                message: "Invalid config ID".to_string(),
+            })?;
 
-    let configs = match mode {
-        DatabaseMode::File => get_configs().await.unwrap_or_default(),
-        DatabaseMode::Memory => read_configs_with_mode(mode).await.unwrap_or_default(),
-    };
+    let configs = load_configs(mode).await;
 
     if let Some(config) = configs.iter().find(|c| c.id == Some(config_id_parsed))
         && config.workload_type.as_deref() == Some("expose")
@@ -443,23 +426,9 @@ pub async fn stop_port_forward_with_mode(
         return crate::expose::stop_expose(config_id_parsed, &config.namespace, mode).await;
     }
 
-    let composite_key = CHILD_PROCESSES
-        .iter()
-        .find(|entry| {
-            entry
-                .key()
-                .starts_with(&format!("config:{config_id}:service:"))
-        })
-        .map(|entry| entry.key().clone());
+    let pf_key = PORT_FORWARD_REGISTRY.find_key_for_config(config_id_parsed);
 
-    if let Some(composite_key) = composite_key {
-        let config_id_parsed = config_id.parse::<i64>().unwrap_or_default();
-
-        let configs = match mode {
-            DatabaseMode::File => get_configs().await.unwrap_or_default(),
-            DatabaseMode::Memory => read_configs_with_mode(mode).await.unwrap_or_default(),
-        };
-
+    if let Some(pf_key) = pf_key {
         if let Some(config) = configs.iter().find(|c| c.id == Some(config_id_parsed)) {
             info!(
                 "Found config {} during stop with local_address: {:?} and auto_loopback_address: {}",
@@ -476,8 +445,8 @@ pub async fn stop_port_forward_with_mode(
             }
         }
 
-        if let Some((_, process)) = CHILD_PROCESSES.remove(&composite_key) {
-            process.cleanup_and_abort().await;
+        if let Some(entry) = PORT_FORWARD_REGISTRY.remove_process(&pf_key) {
+            entry.process.cleanup_and_abort().await;
         }
 
         // Cancel any in-progress recovery for this config
@@ -502,7 +471,7 @@ pub async fn stop_port_forward_with_mode(
                 );
                 let client_key =
                     ServiceClientKey::new(config.context.clone(), config.kubeconfig.clone());
-                match SHARED_CLIENT_MANAGER.get_client(client_key).await {
+                match PORT_FORWARD_REGISTRY.acquire_client(client_key).await {
                     Ok(shared_client) => {
                         let client = Client::clone(&shared_client);
                         delete_proxy_cluster_resources(client, &config.namespace, config_id_parsed)
@@ -515,33 +484,31 @@ pub async fn stop_port_forward_with_mode(
             }
         }
 
-        let config_id_parsed = config_id.parse::<i64>().unwrap_or_default();
         cancel_timeout_for_forward(config_id_parsed).await;
 
-        let service_name = composite_key
-            .strip_prefix("config:")
-            .and_then(|s| s.split_once(":service:"))
-            .map(|(_, service)| service)
-            .unwrap_or("");
+        let service_name = match &pf_key.slot {
+            crate::registry::PortForwardSlot::Named(name) => name.as_str(),
+            crate::registry::PortForwardSlot::Expose => "expose",
+        };
 
-        if let Some(config) = configs.iter().find(|c| c.id == Some(config_id_parsed))
-            && config.domain_enabled.unwrap_or_default()
-        {
-            if let Err(e) = remove_host_entry(&config_id) {
-                error!("Failed to remove host entry for ID {config_id}: {e}");
+        if let Some(config) = configs.iter().find(|c| c.id == Some(config_id_parsed)) {
+            if config.domain_enabled.unwrap_or_default() {
+                if let Err(e) = remove_host_entry(&config_id) {
+                    error!("Failed to remove host entry for ID {config_id}: {e}");
 
-                let config_state = ConfigState::new(config_id_parsed, false);
-                if let Err(e) = update_config_state_with_mode(&config_state, mode).await {
-                    error!("Failed to update config state: {e}");
+                    let config_state = ConfigState::new(config_id_parsed, false);
+                    if let Err(e) = update_config_state_with_mode(&config_state, mode).await {
+                        error!("Failed to update config state: {e}");
+                    }
+                    return Err(PortForwardError::HostsFile(e.to_string()));
                 }
-                return Err(e.to_string());
-            }
 
-            if let Err(e) = remove_ssl_host_entry(&config_id) {
-                error!("Failed to remove SSL host entry for ID {config_id}: {e}");
+                if let Err(e) = remove_ssl_host_entry(&config_id) {
+                    error!("Failed to remove SSL host entry for ID {config_id}: {e}");
+                }
             }
         } else {
-            warn!("Config with id '{config_id}' not found.");
+            warn!("Config with id '{config_id}' not found in database.");
         }
 
         let config_state = ConfigState::new(config_id_parsed, false);
@@ -552,7 +519,7 @@ pub async fn stop_port_forward_with_mode(
         if let Some(config) = configs.iter().find(|c| c.id == Some(config_id_parsed)) {
             let client_key =
                 ServiceClientKey::new(config.context.clone(), config.kubeconfig.clone());
-            SHARED_CLIENT_MANAGER.invalidate_client(&client_key);
+            PORT_FORWARD_REGISTRY.invalidate_client(&client_key);
             debug!("Invalidated client for config {}", config_id);
         }
 
@@ -571,17 +538,14 @@ pub async fn stop_port_forward_with_mode(
     } else {
         let config_id_parsed = config_id.parse::<i64>().unwrap_or_default();
 
-        let configs = match mode {
-            DatabaseMode::File => get_configs().await.unwrap_or_default(),
-            DatabaseMode::Memory => read_configs_with_mode(mode).await.unwrap_or_default(),
-        };
+        let configs = load_configs(mode).await;
 
         let config = configs.iter().find(|c| c.id == Some(config_id_parsed));
 
         if config.is_none() {
-            return Err(format!(
+            return Err(PortForwardError::Internal(format!(
                 "No port forwarding process found for config_id '{config_id}'"
-            ));
+            )));
         }
 
         let config_state = ConfigState::new(config_id_parsed, false);
@@ -672,111 +636,72 @@ mod tests {
         assert!(
             result
                 .unwrap_err()
+                .to_string()
                 .contains("No port forwarding process found")
         );
     }
 
     #[tokio::test]
     async fn test_stop_port_forward_with_handle() {
-        use std::time::{
-            SystemTime,
-            UNIX_EPOCH,
-        };
-
-        let unique_suffix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        use crate::kube::shared_client::ServiceClientKey;
 
         let dummy_handle = create_dummy_handle().await;
-        let key = format!(
-            "config:test_single_201_{}:service:test-service",
-            unique_suffix
-        );
+        let key = PortForwardKey::named(20100, "test-service");
+        let client_key = ServiceClientKey::new(None, None);
 
-        CHILD_PROCESSES.insert(key.clone(), dummy_handle);
+        PORT_FORWARD_REGISTRY.insert_process(key.clone(), dummy_handle, client_key);
         assert!(
-            CHILD_PROCESSES.contains_key(&key),
+            PORT_FORWARD_REGISTRY.has_process_for_config(20100),
             "Process should be present"
         );
 
-        if let Some((_, process)) = CHILD_PROCESSES.remove(&key) {
-            process.abort();
+        if let Some(entry) = PORT_FORWARD_REGISTRY.remove_process(&key) {
+            entry.process.abort();
         }
 
         assert!(
-            !CHILD_PROCESSES.contains_key(&key),
+            !PORT_FORWARD_REGISTRY.has_process_for_config(20100),
             "Process handle should be removed"
         );
     }
 
     #[tokio::test]
     async fn test_stop_port_forward_with_multiple_handles() {
-        use std::time::{
-            SystemTime,
-            UNIX_EPOCH,
-        };
-
-        let unique_suffix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+        use crate::kube::shared_client::ServiceClientKey;
 
         let dummy_handle1 = create_dummy_handle().await;
         let dummy_handle2 = create_dummy_handle().await;
         let dummy_handle3 = create_dummy_handle().await;
 
-        let key1 = format!("config:test_multi_101_{}:service:service1", unique_suffix);
-        let key2 = format!("config:test_multi_102_{}:service:service2", unique_suffix);
-        let key3 = format!("config:test_multi_103_{}:service:service3", unique_suffix);
+        let key1 = PortForwardKey::named(30101, "service1");
+        let key2 = PortForwardKey::named(30102, "service2");
+        let key3 = PortForwardKey::named(30103, "service3");
+        let client_key = ServiceClientKey::new(None, None);
 
-        // Insert test processes (no global clear - other tests may be running)
-        CHILD_PROCESSES.insert(key1.clone(), dummy_handle1);
-        CHILD_PROCESSES.insert(key2.clone(), dummy_handle2);
-        CHILD_PROCESSES.insert(key3.clone(), dummy_handle3);
+        PORT_FORWARD_REGISTRY.insert_process(key1.clone(), dummy_handle1, client_key.clone());
+        PORT_FORWARD_REGISTRY.insert_process(key2.clone(), dummy_handle2, client_key.clone());
+        PORT_FORWARD_REGISTRY.insert_process(key3.clone(), dummy_handle3, client_key);
 
-        // Verify all 3 keys we inserted exist
-        assert!(
-            CHILD_PROCESSES.contains_key(&key1),
-            "Should contain key1 after insert"
-        );
-        assert!(
-            CHILD_PROCESSES.contains_key(&key2),
-            "Should contain key2 after insert"
-        );
-        assert!(
-            CHILD_PROCESSES.contains_key(&key3),
-            "Should contain key3 after insert"
-        );
+        assert!(PORT_FORWARD_REGISTRY.has_process_for_config(30101));
+        assert!(PORT_FORWARD_REGISTRY.has_process_for_config(30102));
+        assert!(PORT_FORWARD_REGISTRY.has_process_for_config(30103));
 
         // Remove key2
-        if let Some((_, process)) = CHILD_PROCESSES.remove(&key2) {
-            process.abort();
+        if let Some(entry) = PORT_FORWARD_REGISTRY.remove_process(&key2) {
+            entry.process.abort();
         } else {
             panic!("key2 should have been found for removal");
         }
 
-        assert!(
-            CHILD_PROCESSES.contains_key(&key1),
-            "Should still contain key1: {}",
-            key1
-        );
-        assert!(
-            !CHILD_PROCESSES.contains_key(&key2),
-            "Should not contain key2 after removal: {}",
-            key2
-        );
-        assert!(
-            CHILD_PROCESSES.contains_key(&key3),
-            "Should still contain key3: {}",
-            key3
-        );
+        assert!(PORT_FORWARD_REGISTRY.has_process_for_config(30101));
+        assert!(!PORT_FORWARD_REGISTRY.has_process_for_config(30102));
+        assert!(PORT_FORWARD_REGISTRY.has_process_for_config(30103));
 
-        if let Some((_, p)) = CHILD_PROCESSES.remove(&key1) {
-            p.abort();
+        if let Some(e) = PORT_FORWARD_REGISTRY.remove_process(&key1) {
+            e.process.abort();
         }
-        if let Some((_, p)) = CHILD_PROCESSES.remove(&key3) {
-            p.abort();
+        if let Some(e) = PORT_FORWARD_REGISTRY.remove_process(&key3) {
+            e.process.abort();
         }
     }
 

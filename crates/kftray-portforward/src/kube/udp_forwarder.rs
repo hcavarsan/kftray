@@ -6,7 +6,6 @@ use tokio::io::{
     AsyncWriteExt,
 };
 use tokio::net::UdpSocket as TokioUdpSocket;
-use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use tracing::{
     error,
@@ -36,38 +35,35 @@ impl UdpForwarder {
         info!("Local UDP socket bound to {}", local_udp_addr);
 
         let (tcp_read, tcp_write) = tokio::io::split(upstream_conn);
-        let tcp_read = Arc::new(Mutex::new(tcp_read));
-        let tcp_write = Arc::new(Mutex::new(tcp_write));
 
         let local_udp_socket_read = local_udp_socket.clone();
         let local_udp_socket_write = local_udp_socket;
 
         let handle = tokio::spawn({
-            let tcp_read = tcp_read.clone();
-            let tcp_write = tcp_write.clone();
             let cancel_token = cancellation_token.clone();
             async move {
                 let mut udp_buffer = [0u8; BUFFER_SIZE];
-                let peer: Arc<Mutex<Option<std::net::SocketAddr>>> = Arc::new(Mutex::new(None));
+                let mut tcp_read = tcp_read;
+                let mut tcp_write = tcp_write;
+                let mut peer_addr: Option<std::net::SocketAddr> = None;
 
                 loop {
                     tokio::select! {
                         result = local_udp_socket_read.recv_from(&mut udp_buffer) => {
                             match result {
                                 Ok((len, src)) => {
-                                    *peer.lock().await = Some(src);
-                                    let mut writer = tcp_write.lock().await;
+                                    peer_addr = Some(src);
 
                                     let packet_len = (len as u32).to_be_bytes();
-                                    if let Err(e) = writer.write_all(&packet_len).await {
+                                    if let Err(e) = tcp_write.write_all(&packet_len).await {
                                         error!("Failed to write packet length to TCP stream: {:?}", e);
                                         break;
                                     }
-                                    if let Err(e) = writer.write_all(&udp_buffer[..len]).await {
+                                    if let Err(e) = tcp_write.write_all(&udp_buffer[..len]).await {
                                         error!("Failed to write UDP packet to TCP stream: {:?}", e);
                                         break;
                                     }
-                                    if let Err(e) = writer.flush().await {
+                                    if let Err(e) = tcp_write.flush().await {
                                         error!("Failed to flush TCP stream: {:?}", e);
                                         break;
                                     }
@@ -78,15 +74,11 @@ impl UdpForwarder {
                                 }
                             }
                         },
-                        result = async {
-                            let mut reader = tcp_read.lock().await;
-                            Self::read_tcp_length_and_packet(&mut *reader).await
-                        } => {
+                        result = Self::read_tcp_length_and_packet(&mut tcp_read) => {
                             match result {
                                 Ok(Some(packet)) => {
-                                    let peer_addr = *peer.lock().await;
-                                    if let Some(peer_addr) = peer_addr {
-                                        if let Err(e) = local_udp_socket_write.send_to(&packet, &peer_addr).await {
+                                    if let Some(addr) = peer_addr {
+                                        if let Err(e) = local_udp_socket_write.send_to(&packet, &addr).await {
                                             error!("Failed to send UDP packet to peer: {:?}", e);
                                             break;
                                         }
@@ -109,7 +101,7 @@ impl UdpForwarder {
                     }
                 }
 
-                if let Err(e) = tcp_write.lock().await.shutdown().await {
+                if let Err(e) = tcp_write.shutdown().await {
                     error!("Error shutting down TCP writer: {:?}", e);
                 }
             }

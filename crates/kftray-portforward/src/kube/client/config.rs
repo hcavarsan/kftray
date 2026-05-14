@@ -25,6 +25,9 @@ use super::utils::{
     is_pkcs8_key,
 };
 
+/// Extension trait for `kube::config::Config` to create variants with modified
+/// TLS settings. Single-impl by design: exists to keep the extension method
+/// discoverable and separate from kube's own `Config` API.
 pub trait ConfigExtClone {
     fn clone_with_invalid_certs(&self, accept_invalid_certs: bool) -> Self;
 }

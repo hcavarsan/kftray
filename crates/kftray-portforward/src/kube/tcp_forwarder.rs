@@ -131,17 +131,35 @@ impl TcpForwarder {
         Ok(())
     }
 
+    // Forward client <-> upstream bytes until EITHER direction finishes.
+    //
+    // We deliberately do NOT wait for both directions to EOF (as `try_join!` or
+    // `copy_bidirectional` would). Upstream Kubernetes WebSocket port-forwards
+    // use HTTP keep-alive on the pod side and never reciprocate the v5 close
+    // signal we send on `poll_shutdown`. Waiting for upstream EOF would hang the
+    // task forever, leaking the local TcpStream (CLOSE_WAIT) and the
+    // pre-allocated kube-portforward channel pair until the session is exhausted
+    // (~64 requests).
+    //
+    // When the winning future resolves, dropping the loser cancels its in-flight
+    // I/O. The owning `client_conn` and `upstream_conn` then drop at end of
+    // scope, triggering `kube_portforward::ReleaseGuard::Drop` which sends a
+    // final v5 0xFF to the apiserver (graceful pod-side teardown) and frees the
+    // channel pair back to the session.
     pub async fn forward_connection(
         &mut self, client_conn: Arc<Mutex<TcpStream>>,
-        mut upstream_conn: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+        upstream_conn: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
         cancellation_token: CancellationToken, http_log_watcher: Arc<HttpLogStateWatcher>,
         local_port: u16,
     ) -> anyhow::Result<()> {
         let log_subscriber = http_log_watcher.create_filtered_subscriber(self.config_id);
         let current_logging_enabled = http_log_watcher.get_http_logs(self.config_id).await;
 
-        if current_logging_enabled && self.logger.is_none() {
-            let _ = self.initialize_logger(local_port).await;
+        if current_logging_enabled
+            && self.logger.is_none()
+            && let Err(e) = self.initialize_logger(local_port).await
+        {
+            tracing::warn!("Logger init failed for config {}: {e}", self.config_id);
         }
         if current_logging_enabled || self.logger.is_some() {
             let config_id = self.config_id;
@@ -175,7 +193,27 @@ impl TcpForwarder {
                 local_port,
             );
 
-            let result = tokio::try_join!(client_to_upstream, upstream_to_client);
+            let result: anyhow::Result<()> = tokio::select! {
+                biased;
+                res = client_to_upstream => {
+                    match res {
+                        Ok(()) => {
+                            tracing::debug!("HTTP-aware: client->upstream finished (client EOF); tearing down upstream half");
+                            Ok(())
+                        }
+                        Err(e) => Err(e),
+                    }
+                }
+                res = upstream_to_client => {
+                    match res {
+                        Ok(()) => {
+                            tracing::debug!("HTTP-aware: upstream->client finished (upstream EOF); tearing down client half");
+                            Ok(())
+                        }
+                        Err(e) => Err(e),
+                    }
+                }
+            };
 
             self.logger = Arc::try_unwrap(shared_logger)
                 .ok()
@@ -192,24 +230,42 @@ impl TcpForwarder {
                 }
             }
         } else {
+            let t_start = std::time::Instant::now();
             let mut client_conn_guard = client_conn.lock().await;
+            let (client_reader, mut client_writer) = tokio::io::split(&mut *client_conn_guard);
+            let (upstream_reader, mut upstream_writer) = tokio::io::split(upstream_conn);
 
-            let copy_future =
-                tokio::io::copy_bidirectional(&mut *client_conn_guard, &mut upstream_conn);
+            let mut client_reader = tokio::io::BufReader::with_capacity(65_536, client_reader);
+            let mut upstream_reader = tokio::io::BufReader::with_capacity(65_536, upstream_reader);
+
+            let c2u = async {
+                let res = tokio::io::copy_buf(&mut client_reader, &mut upstream_writer).await;
+                let _ = upstream_writer.shutdown().await;
+                res
+            };
+            let u2c = async {
+                let res = tokio::io::copy_buf(&mut upstream_reader, &mut client_writer).await;
+                let _ = client_writer.shutdown().await;
+                res
+            };
 
             tokio::select! {
-                result = copy_future => {
-                    match result {
-                        Ok(_) => debug!("Simple connection closed normally"),
-                        Err(e) => {
-                            error!("Simple connection closed with error: {}", e);
-                            return Err(e.into());
-                        }
+                biased;
+                res = c2u => match res {
+                    Ok(n) => debug!("simple: c->u finished {}B in {}ms", n, t_start.elapsed().as_millis()),
+                    Err(e) => {
+                        error!("simple c->u error: {}", e);
+                        return Err(e.into());
                     }
-                }
-                _ = cancellation_token.cancelled() => {
-                    debug!("Connection cancelled");
-                }
+                },
+                res = u2c => match res {
+                    Ok(n) => debug!("simple: u->c finished {}B in {}ms", n, t_start.elapsed().as_millis()),
+                    Err(e) => {
+                        error!("simple u->c error: {}", e);
+                        return Err(e.into());
+                    }
+                },
+                _ = cancellation_token.cancelled() => debug!("connection cancelled"),
             }
         }
 
@@ -217,33 +273,48 @@ impl TcpForwarder {
     }
 
     pub async fn forward_tls_streams(
-        &self, mut client: tokio_rustls::server::TlsStream<TcpStream>,
-        mut upstream: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
+        &self, client: tokio_rustls::server::TlsStream<TcpStream>,
+        upstream: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
         cancellation_token: tokio_util::sync::CancellationToken,
     ) -> anyhow::Result<()> {
-        // Apply socket optimizations to the underlying TCP stream
         Self::apply_socket_optimizations(client.get_ref().0);
 
-        let copy_fut = tokio::io::copy_bidirectional(&mut client, &mut upstream);
+        let (mut client_r, mut client_w) = tokio::io::split(client);
+        let (mut upstream_r, mut upstream_w) = tokio::io::split(upstream);
+
+        let c2u = async {
+            let r = tokio::io::copy(&mut client_r, &mut upstream_w).await;
+            let _ = upstream_w.shutdown().await;
+            r
+        };
+        let u2c = async {
+            let r = tokio::io::copy(&mut upstream_r, &mut client_w).await;
+            let _ = client_w.shutdown().await;
+            r
+        };
+
         tokio::select! {
-            res = copy_fut => match res {
-                Ok((to_upstream, to_client)) => {
-                    debug!(
-                        "TLS connection closed: sent {} bytes, received {} bytes",
-                        to_upstream, to_client
-                    );
-                    Ok(())
-                }
+            biased;
+            res = c2u => match res {
+                Ok(n) => debug!("TLS client->upstream: {} bytes", n),
                 Err(e) => {
-                    error!("TLS connection closed with error: {}", e);
-                    Err(e.into())
+                    error!("TLS c->u error: {}", e);
+                    return Err(e.into());
+                }
+            },
+            res = u2c => match res {
+                Ok(n) => debug!("TLS upstream->client: {} bytes", n),
+                Err(e) => {
+                    error!("TLS u->c error: {}", e);
+                    return Err(e.into());
                 }
             },
             _ = cancellation_token.cancelled() => {
                 debug!("TLS connection canceled");
-                Err(anyhow::anyhow!("TLS connection canceled"))
+                return Err(anyhow::anyhow!("TLS connection canceled"));
             }
         }
+        Ok(())
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -527,8 +598,7 @@ impl TcpForwarder {
             };
             if let Some(log) = maybe_logger {
                 let should_log = Self::should_log_response_static(state);
-                if should_log && state.current_response_id.is_some() {
-                    let response_id = state.current_response_id.as_ref().unwrap().clone();
+                if should_log && let Some(response_id) = state.current_response_id.clone() {
                     state.current_response_logged = true;
                     log.log_response(state.buffer.clone().into(), response_id)
                         .await;
@@ -802,5 +872,56 @@ mod tests {
         .await;
 
         assert!(result.is_ok());
+    }
+
+    #[tokio::test]
+    async fn client_eof_releases_resources_promptly() {
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let accept_task = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            stream
+        });
+
+        let mut client_side = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let server_side = accept_task.await.unwrap();
+
+        let (upstream_local, mut upstream_remote) = tokio::io::duplex(1024);
+
+        let mut forwarder = TcpForwarder::new(1, "pod".to_string());
+        let cancellation_token = CancellationToken::new();
+        let watcher = Arc::new(HttpLogStateWatcher::new());
+
+        let forward_handle = tokio::spawn(async move {
+            forwarder
+                .forward_connection(
+                    Arc::new(Mutex::new(server_side)),
+                    upstream_local,
+                    cancellation_token,
+                    watcher,
+                    8080,
+                )
+                .await
+        });
+
+        client_side
+            .write_all(b"GET / HTTP/1.1\r\n\r\n")
+            .await
+            .unwrap();
+        client_side.flush().await.unwrap();
+
+        let mut buf = [0u8; 1024];
+        let _ = upstream_remote.read(&mut buf).await.unwrap();
+
+        drop(client_side);
+
+        let result = tokio::time::timeout(Duration::from_secs(1), forward_handle).await;
+        assert!(
+            result.is_ok(),
+            "forward_connection must return promptly after client EOF, did not finish within 1s"
+        );
     }
 }

@@ -1,10 +1,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use dashmap::DashMap;
 use kube::Client;
 use kube::api::Api;
-use lazy_static::lazy_static;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
@@ -20,10 +18,8 @@ use crate::kube::models::{
     PortForward,
     Target,
 };
-use crate::kube::shared_client::{
-    SHARED_CLIENT_MANAGER,
-    ServiceClientKey,
-};
+use crate::kube::shared_client::ServiceClientKey;
+use crate::registry::PORT_FORWARD_REGISTRY;
 
 pub struct PortForwardProcess {
     pub handle: JoinHandle<anyhow::Result<()>>,
@@ -38,31 +34,6 @@ impl PortForwardProcess {
         Self {
             handle,
             direct_forwarder: None,
-            cancellation_token: CancellationToken::new(),
-            config_id,
-            ws_client_handle: None,
-        }
-    }
-
-    pub fn new_with_token(
-        handle: JoinHandle<anyhow::Result<()>>, config_id: String,
-        cancellation_token: CancellationToken,
-    ) -> Self {
-        Self {
-            handle,
-            direct_forwarder: None,
-            cancellation_token,
-            config_id,
-            ws_client_handle: None,
-        }
-    }
-
-    pub fn with_forwarder(
-        handle: JoinHandle<anyhow::Result<()>>, forwarder: Arc<PortForwarder>, config_id: String,
-    ) -> Self {
-        Self {
-            handle,
-            direct_forwarder: Some(forwarder),
             cancellation_token: CancellationToken::new(),
             config_id,
             ws_client_handle: None,
@@ -94,7 +65,6 @@ impl PortForwardProcess {
 
         tracing::info!("Cancelling port forward for config: {}", self.config_id);
 
-        // Signal cancellation
         self.cancellation_token.cancel();
 
         // Brief delay for cancellation to propagate (reduced from 1500ms)
@@ -117,7 +87,6 @@ impl PortForwardProcess {
             }
         }
 
-        // Abort the WebSocket client task if it exists
         if let Some(ws_handle) = self.ws_client_handle {
             tracing::info!(
                 "Aborting WebSocket client task for config: {}",
@@ -147,10 +116,6 @@ impl PortForwardProcess {
     }
 }
 
-lazy_static! {
-    pub static ref CHILD_PROCESSES: DashMap<String, PortForwardProcess> = DashMap::new();
-}
-
 impl PortForward {
     pub async fn new(
         target: Target, local_port: impl Into<Option<u16>>,
@@ -160,7 +125,7 @@ impl PortForward {
         let namespace = target.namespace.name_any();
 
         let client_key = ServiceClientKey::new(context_name.clone(), kubeconfig.clone());
-        let client = SHARED_CLIENT_MANAGER.get_client(client_key).await?;
+        let client = PORT_FORWARD_REGISTRY.acquire_client(client_key).await?;
 
         let shared_client = Client::clone(&client);
         let pod_api = Api::namespaced(shared_client.clone(), &namespace);
@@ -413,23 +378,32 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_child_processes_map() {
-        CHILD_PROCESSES.clear();
+    async fn test_registry_process_insert_remove() {
+        use crate::kube::shared_client::ServiceClientKey;
+        use crate::registry::{
+            PORT_FORWARD_REGISTRY,
+            PortForwardKey,
+        };
 
-        assert_eq!(CHILD_PROCESSES.len(), 0);
+        PORT_FORWARD_REGISTRY.clear();
 
-        CHILD_PROCESSES.insert(
-            "test-key".to_string(),
+        assert_eq!(PORT_FORWARD_REGISTRY.len(), 0);
+
+        let key = PortForwardKey::named(999, "test-key");
+        let client_key = ServiceClientKey::new(None, None);
+        PORT_FORWARD_REGISTRY.insert_process(
+            key.clone(),
             PortForwardProcess::new(dummy_handle(), "test-key".to_string()),
+            client_key,
         );
-        assert_eq!(CHILD_PROCESSES.len(), 1);
-        assert!(CHILD_PROCESSES.contains_key("test-key"));
+        assert_eq!(PORT_FORWARD_REGISTRY.len(), 1);
 
-        let handle = CHILD_PROCESSES.remove("test-key");
-        if let Some((_, h)) = handle {
-            h.abort();
+        let entry = PORT_FORWARD_REGISTRY.remove_process(&key);
+        assert!(entry.is_some());
+        if let Some(e) = entry {
+            e.process.abort();
         }
-        assert_eq!(CHILD_PROCESSES.len(), 0);
+        assert_eq!(PORT_FORWARD_REGISTRY.len(), 0);
     }
 
     fn dummy_handle() -> JoinHandle<anyhow::Result<()>> {

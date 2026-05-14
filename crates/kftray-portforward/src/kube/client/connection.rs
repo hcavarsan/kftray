@@ -1,6 +1,10 @@
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::LazyLock;
+use std::task::{
+    Context,
+    Poll,
+};
 
 use hyper_openssl::client::legacy::HttpsConnector;
 use hyper_util::client::legacy::connect::HttpConnector;
@@ -19,7 +23,11 @@ use openssl::ssl::{
     SslSessionCacheMode,
     SslVerifyMode,
 };
-use tower::ServiceBuilder;
+use tower::{
+    Layer,
+    Service,
+    ServiceBuilder,
+};
 
 use super::config::ConfigExtClone;
 use super::error::{
@@ -243,6 +251,71 @@ async fn test_client_connection(client: &Client) -> KubeResult<()> {
     Ok(())
 }
 
+// ── HTTP request/response logger ─────────────────────────────────────────────
+// Active only when RUST_LOG contains `kftray_portforward::kube::client` at
+// debug level or lower. Zero overhead otherwise (log::log_enabled! check).
+
+#[derive(Clone)]
+struct HttpLogLayer;
+
+#[derive(Clone)]
+struct HttpLogService<S>(S);
+
+impl<S> Layer<S> for HttpLogLayer {
+    type Service = HttpLogService<S>;
+
+    fn layer(&self, inner: S) -> Self::Service {
+        HttpLogService(inner)
+    }
+}
+
+impl<S, ReqBody, ResBody> Service<http::Request<ReqBody>> for HttpLogService<S>
+where
+    S: Service<http::Request<ReqBody>, Response = http::Response<ResBody>>
+        + Clone
+        + Send
+        + 'static,
+    S::Future: Send + 'static,
+    S::Error: std::fmt::Debug,
+    ReqBody: std::fmt::Debug,
+{
+    type Response = S::Response;
+    type Error = S::Error;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.0.poll_ready(cx)
+    }
+
+    fn call(&mut self, req: http::Request<ReqBody>) -> Self::Future {
+        if log::log_enabled!(log::Level::Debug) {
+            log::debug!(
+                "HTTP → {} {} {:?}\n  headers: {:?}",
+                req.method(),
+                req.uri(),
+                req.version(),
+                req.headers(),
+            );
+        }
+        let fut = self.0.call(req);
+        Box::pin(async move {
+            let res = fut.await;
+            if log::log_enabled!(log::Level::Debug) {
+                match &res {
+                    Ok(r) => log::debug!(
+                        "HTTP ← {} {:?}\n  headers: {:?}",
+                        r.status(),
+                        r.version(),
+                        r.headers(),
+                    ),
+                    Err(e) => log::debug!("HTTP ← error: {:?}", e),
+                }
+            }
+            res
+        })
+    }
+}
+
 pub fn build_kube_client<C>(
     config: Config, hyper_client: hyper_util::client::legacy::Client<C, kube::client::Body>,
 ) -> KubeResult<Client>
@@ -280,6 +353,7 @@ where
     })?;
 
     let service = ServiceBuilder::new()
+        .layer(HttpLogLayer)
         .layer(config.base_uri_layer())
         .option_layer(auth_layer)
         .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })

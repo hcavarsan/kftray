@@ -105,6 +105,9 @@ impl From<kube::Error> for KubeClientError {
     }
 }
 
+/// Maps all `anyhow::Error` values to `ConfigError` because the primary source
+/// of anyhow errors in this crate is kubeconfig parsing/loading. Non-config
+/// anyhow errors are rare and always originate from config-adjacent code paths.
 impl From<anyhow::Error> for KubeClientError {
     fn from(err: anyhow::Error) -> Self {
         KubeClientError::ConfigError {
