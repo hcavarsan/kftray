@@ -10,20 +10,24 @@ use log::{
     info,
     warn,
 };
-use socket2::SockRef;
 use tokio::{
-    io::copy_bidirectional,
     net::{
         TcpListener,
         TcpStream,
     },
     sync::Notify,
-    time::timeout,
 };
+use tokio_util::sync::CancellationToken;
 
 use crate::proxy::{
     config::ProxyConfig,
     error::ProxyError,
+    http_proxy::HttpProxy,
+    relay::relay_direct,
+    sniff::{
+        Protocol,
+        classify,
+    },
     traits::ProxyHandler,
 };
 
@@ -35,117 +39,28 @@ impl TcpProxy {
         Self
     }
 
-    async fn connect_to_target(&self, config: &ProxyConfig) -> Result<TcpStream, ProxyError> {
-        const CONNECTION_TIMEOUT: Duration = Duration::from_secs(5);
-
-        if let Some(ref resolved_ip) = config.resolved_ip {
-            info!(
-                "Attempting connection to resolved IP {}:{}",
-                resolved_ip, config.target_port
-            );
-            match timeout(
-                CONNECTION_TIMEOUT,
-                TcpStream::connect(format!("{}:{}", resolved_ip, config.target_port)),
-            )
-            .await
-            {
-                Ok(Ok(stream)) => {
-                    info!(
-                        "Connected to target via IP {}:{}",
-                        resolved_ip, config.target_port
-                    );
-                    apply_keepalive(&stream);
-                    return Ok(stream);
-                }
-                Ok(Err(e)) => {
-                    warn!(
-                        "Failed to connect to resolved IP {}: {}. Trying hostname fallback.",
-                        resolved_ip, e
-                    );
-                }
-                Err(_) => {
-                    warn!(
-                        "Connection timeout to resolved IP {}. Trying hostname fallback.",
-                        resolved_ip
-                    );
-                }
-            }
-        }
-
-        info!(
-            "Attempting connection to hostname {}:{}",
-            config.target_host, config.target_port
-        );
-        match timeout(
-            CONNECTION_TIMEOUT,
-            TcpStream::connect(format!("{}:{}", config.target_host, config.target_port)),
-        )
-        .await
-        {
-            Ok(Ok(stream)) => {
-                info!(
-                    "Connected to target via hostname {}:{}",
-                    config.target_host, config.target_port
-                );
-                apply_keepalive(&stream);
-                Ok(stream)
-            }
-            Ok(Err(e)) => {
-                error!("Failed to connect to target: {e}");
-                Err(ProxyError::Connection(format!(
-                    "Failed to connect to target: {e}"
-                )))
-            }
-            Err(_) => Err(ProxyError::Connection("Connection timeout".into())),
-        }
-    }
-
     async fn handle_tcp_connection(
-        &self, inbound: TcpStream, config: &ProxyConfig,
+        inbound: TcpStream, config: ProxyConfig, http_proxy: HttpProxy, cancel: CancellationToken,
     ) -> Result<(), ProxyError> {
-        let outbound = self.connect_to_target(config).await?;
-        let (mut inbound, mut outbound) = (inbound, outbound);
+        let _ = inbound.set_nodelay(true);
+        let protocol = classify(&inbound)
+            .await
+            .map_err(|e| ProxyError::Connection(format!("sniff: {e}")))?;
 
-        match copy_bidirectional(&mut inbound, &mut outbound).await {
-            Ok((from_client, from_server)) => {
-                info!(
-                    "Connection closed. Bytes from client: {from_client}, from server: {from_server}"
-                );
-                Ok(())
+        match protocol {
+            Protocol::Http1 => {
+                tracing::debug!(?protocol, "dispatch: http1");
+                http_proxy.serve_http1(inbound, cancel).await
             }
-            Err(e) if Self::is_connection_reset(&e) => {
-                info!("Connection closed by peer");
-                Ok(())
+            Protocol::Http2 => {
+                tracing::debug!(?protocol, "dispatch: http2");
+                http_proxy.serve_http2(inbound, cancel).await
             }
-            Err(e) => {
-                error!("Connection error: {e}");
-                Err(ProxyError::Io(e))
+            _ => {
+                tracing::debug!(?protocol, "dispatch: raw relay");
+                relay_direct(inbound, &config, cancel).await
             }
         }
-    }
-
-    fn is_connection_reset(error: &std::io::Error) -> bool {
-        matches!(
-            error.kind(),
-            std::io::ErrorKind::BrokenPipe
-                | std::io::ErrorKind::ConnectionReset
-                | std::io::ErrorKind::ConnectionAborted
-        )
-    }
-}
-
-fn apply_keepalive(stream: &TcpStream) {
-    let sock_ref = SockRef::from(stream);
-
-    let keepalive = socket2::TcpKeepalive::new()
-        .with_time(Duration::from_secs(60))
-        .with_interval(Duration::from_secs(10));
-
-    #[cfg(any(target_os = "linux", target_os = "macos"))]
-    let keepalive = keepalive.with_retries(3);
-
-    if let Err(e) = sock_ref.set_tcp_keepalive(&keepalive) {
-        warn!("Failed to set TCP keepalive on target connection: {}", e);
     }
 }
 
@@ -157,6 +72,16 @@ impl ProxyHandler for TcpProxy {
 
         info!("TCP Proxy started on port {}", config.proxy_port);
 
+        let http_proxy = HttpProxy::new(&config);
+
+        let cancel = CancellationToken::new();
+        let shutdown_cancel = cancel.clone();
+        let shutdown_notify = shutdown.clone();
+        let bridge = tokio::spawn(async move {
+            shutdown_notify.notified().await;
+            shutdown_cancel.cancel();
+        });
+
         let mut backoff_ms: u64 = 10;
 
         loop {
@@ -165,12 +90,13 @@ impl ProxyHandler for TcpProxy {
                     match accept_result {
                         Ok((stream, addr)) => {
                             info!("Accepted connection from {addr}");
-                            let config = config.clone();
-                            let proxy = self.clone();
                             backoff_ms = 10;
+                            let config = config.clone();
+                            let http_proxy = http_proxy.clone();
+                            let child_cancel = cancel.child_token();
 
                             tokio::spawn(async move {
-                                if let Err(e) = proxy.handle_tcp_connection(stream, &config).await {
+                                if let Err(e) = Self::handle_tcp_connection(stream, config, http_proxy, child_cancel).await {
                                     error!("Connection error for {addr}: {e}");
                                 }
                             });
@@ -181,8 +107,9 @@ impl ProxyHandler for TcpProxy {
                                 _ = tokio::time::sleep(Duration::from_millis(backoff_ms)) => {
                                     backoff_ms = (backoff_ms * 2).min(5000);
                                 }
-                                _ = shutdown.notified() => {
+                                _ = cancel.cancelled() => {
                                     info!("Shutdown signal received during backoff, stopping TCP proxy");
+                                    bridge.abort();
                                     return Ok(());
                                 }
                             }
@@ -190,13 +117,14 @@ impl ProxyHandler for TcpProxy {
                         }
                     }
                 }
-                _ = shutdown.notified() => {
+                _ = cancel.cancelled() => {
                     info!("Shutdown signal received, stopping TCP proxy");
                     break;
                 }
             }
         }
 
+        bridge.abort();
         Ok(())
     }
 }
@@ -233,7 +161,6 @@ mod tests {
         let shutdown = Arc::new(Notify::new());
         let shutdown_clone = shutdown.clone();
 
-        // Bind to 127.0.0.1:0 first to get an available port
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         drop(listener);
@@ -250,7 +177,6 @@ mod tests {
             let _ = proxy.start(config, shutdown).await;
         });
 
-        // Wait for the proxy to be ready
         assert!(
             test_utils::wait_for_port(addr).await,
             "Proxy failed to start"
@@ -261,12 +187,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_tcp_proxy_echo() {
-        // Arrange
         let (echo_server, shutdown, proxy_addr) = setup_proxy().await;
-        let test_data = b"Hello, proxy!";
+        let test_data = b"\x01\x02\x03Hello, proxy!";
         let mut response = vec![0; test_data.len()];
 
-        // Act
         let mut stream = TcpStream::connect(proxy_addr).await.unwrap();
         stream.write_all(test_data).await.unwrap();
         stream.flush().await.unwrap();
@@ -276,23 +200,19 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        // Assert
         assert_eq!(n, test_data.len());
         assert_eq!(&response, test_data);
 
-        // Cleanup
         shutdown.notify_one();
         echo_server.shutdown();
     }
 
     #[tokio::test]
     async fn test_tcp_proxy_large_data() {
-        // Arrange
         let (echo_server, shutdown, proxy_addr) = setup_proxy().await;
-        let test_data = vec![0x55; 1024 * 1024]; // 1MB of data
+        let test_data = vec![0x55; 1024 * 1024];
         let mut response = vec![0; test_data.len()];
 
-        // Act
         let mut stream = TcpStream::connect(proxy_addr).await.unwrap();
         stream.write_all(&test_data).await.unwrap();
         stream.flush().await.unwrap();
@@ -302,24 +222,20 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        // Assert
         assert_eq!(n, test_data.len());
         assert_eq!(response, test_data);
 
-        // Cleanup
         shutdown.notify_one();
         echo_server.shutdown();
     }
 
     #[tokio::test]
     async fn test_tcp_proxy_multiple_clients() {
-        // Arrange
         let (echo_server, shutdown, proxy_addr) = setup_proxy().await;
-        let test_data = b"Hello from client";
+        let test_data = b"\x00\x01Hello from client";
         let client_count = 5;
         let mut handles = Vec::new();
 
-        // Act
         for i in 0..client_count {
             let addr = proxy_addr;
             let data = test_data.to_vec();
@@ -334,7 +250,6 @@ mod tests {
             }));
         }
 
-        // Assert
         for handle in handles {
             let (client_id, n, response) = handle.await.unwrap();
             assert_eq!(
@@ -348,33 +263,111 @@ mod tests {
             );
         }
 
-        // Cleanup
         shutdown.notify_one();
         echo_server.shutdown();
     }
 
     #[tokio::test]
     async fn test_target_connection_has_keepalive() {
-        // Arrange
         let (echo_server, shutdown, proxy_addr) = setup_proxy().await;
 
-        // Act - Connect through proxy to target
         let mut stream = TcpStream::connect(proxy_addr).await.unwrap();
-        stream.write_all(b"test").await.unwrap();
+        stream.write_all(b"\x00\x00\x00test").await.unwrap();
         stream.flush().await.unwrap();
 
-        // Read response to ensure connection is established
-        let mut buf = [0; 4];
+        let mut buf = [0; 7];
         let _ = stream.read_exact(&mut buf).await;
 
-        // Assert - The test verifies that keepalive was applied without errors
-        // If keepalive failed, the error would have been logged but connection would
-        // still work This test passes if the proxy successfully connects and
-        // applies keepalive
-
-        // Cleanup
         shutdown.notify_one();
         echo_server.shutdown();
+    }
+
+    #[tokio::test]
+    async fn test_http_traffic_through_proxy_uses_pool_correctly() {
+        use http_body_util::{
+            BodyExt,
+            Empty,
+        };
+        use hyper::body::{
+            Bytes,
+            Incoming,
+        };
+        use hyper::server::conn::http1;
+        use hyper::service::service_fn;
+        use hyper::{
+            Request,
+            Response,
+        };
+        use hyper_util::rt::TokioIo;
+
+        let http_listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let http_addr = http_listener.local_addr().unwrap();
+
+        tokio::spawn(async move {
+            loop {
+                let (sock, _) = match http_listener.accept().await {
+                    Ok(v) => v,
+                    Err(_) => return,
+                };
+                tokio::spawn(async move {
+                    let io = TokioIo::new(sock);
+                    let svc = service_fn(|_req: Request<Incoming>| async move {
+                        Ok::<_, hyper::Error>(
+                            Response::builder()
+                                .status(200)
+                                .body(Empty::<Bytes>::new())
+                                .unwrap(),
+                        )
+                    });
+                    let _ = http1::Builder::new()
+                        .keep_alive(true)
+                        .serve_connection(io, svc)
+                        .await;
+                });
+            }
+        });
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy_addr = listener.local_addr().unwrap();
+        drop(listener);
+
+        let config = ProxyConfig::builder()
+            .target_host("127.0.0.1".into())
+            .target_port(http_addr.port())
+            .proxy_port(proxy_addr.port())
+            .proxy_type(ProxyType::Tcp)
+            .build()
+            .unwrap();
+
+        let proxy = TcpProxy::new();
+        let shutdown = Arc::new(Notify::new());
+        let shutdown_clone = shutdown.clone();
+        tokio::spawn(async move {
+            let _ = proxy.start(config, shutdown).await;
+        });
+        assert!(test_utils::wait_for_port(proxy_addr).await);
+
+        for _ in 0..5 {
+            let stream = TcpStream::connect(proxy_addr).await.unwrap();
+            let io = TokioIo::new(stream);
+            let (mut sender, conn) = hyper::client::conn::http1::handshake::<_, Empty<Bytes>>(io)
+                .await
+                .unwrap();
+            tokio::spawn(async move {
+                let _ = conn.await;
+            });
+            let req = Request::builder()
+                .method("GET")
+                .uri("/")
+                .header("host", "test")
+                .body(Empty::<Bytes>::new())
+                .unwrap();
+            let resp = sender.send_request(req).await.unwrap();
+            assert_eq!(resp.status(), 200);
+            let _ = resp.into_body().collect().await;
+        }
+
+        shutdown_clone.notify_one();
     }
 
     #[test]
