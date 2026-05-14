@@ -87,7 +87,7 @@ impl ConfigManager {
             match kftray_portforward::kube::start_port_forward(other_configs, protocol).await {
                 Ok(_) => info!("Successfully restarted {protocol} port forwards"),
                 Err(e) => {
-                    if protocol == "udp" && e.contains("No ready pods available") {
+                    if protocol == "udp" && e.to_string().contains("No ready pods available") {
                         log::warn!(
                             "UDP port forward restart skipped - no ready pods available: {e}"
                         );
