@@ -25,8 +25,12 @@ use crate::kube::models::{
     Target,
     TargetSelector,
 };
+use crate::kube::shared_client::ServiceClientKey;
 use crate::kube::start::start_port_forward;
-use crate::port_forward::CHILD_PROCESSES;
+use crate::registry::{
+    PORT_FORWARD_REGISTRY,
+    PortForwardKey,
+};
 
 struct KubernetesMocker {
     handle: mock::Handle<Request<Body>, Response<Body>>,
@@ -307,8 +311,9 @@ async fn test_port_forward_tcp_success() -> Result<()> {
     let port_forward_task = tokio::spawn(async move {
         match port_forward.port_forward_tcp(None).await {
             Ok((port, handle)) => {
-                let key = "1_test-service".to_string();
-                CHILD_PROCESSES.insert(key.clone(), handle);
+                let key = PortForwardKey::named(1, "test-service");
+                let client_key = ServiceClientKey::new(None, None);
+                PORT_FORWARD_REGISTRY.insert_process(key, handle, client_key);
 
                 println!("Port forwarding successfully established on port {port}");
 
@@ -352,7 +357,7 @@ async fn test_port_forward_tcp_success() -> Result<()> {
 
     mock_task.abort();
 
-    CHILD_PROCESSES.clear();
+    PORT_FORWARD_REGISTRY.clear();
 
     Ok(())
 }
@@ -405,8 +410,9 @@ async fn test_port_forward_udp_success() -> Result<()> {
     let port_forward_task = tokio::spawn(async move {
         match port_forward.port_forward_udp().await {
             Ok((port, handle)) => {
-                let key = "1_test-service".to_string();
-                CHILD_PROCESSES.insert(key.clone(), handle);
+                let key = PortForwardKey::named(1, "test-service");
+                let client_key = ServiceClientKey::new(None, None);
+                PORT_FORWARD_REGISTRY.insert_process(key, handle, client_key);
 
                 println!("UDP Port forwarding successfully established on port {port}");
 
@@ -429,8 +435,9 @@ async fn test_port_forward_udp_success() -> Result<()> {
             );
             println!("UDP Port forwarding unexpectedly succeeded (port {bound_port})");
 
-            if let Some((_, handle)) = CHILD_PROCESSES.remove("1_test-service") {
-                handle.abort();
+            let key = PortForwardKey::named(1, "test-service");
+            if let Some(entry) = PORT_FORWARD_REGISTRY.remove_process(&key) {
+                entry.process.abort();
             }
         }
         Ok(Ok(Err(_))) | Ok(Err(_)) | Err(_) => {
@@ -566,15 +573,15 @@ async fn test_start_port_forward_mock_components() -> Result<()> {
                 println!("Successfully connected to the forwarded port");
             }
 
-            let handle_key = format!(
-                "{}_{}",
+            let pf_key = PortForwardKey::named(
                 test_config.id.unwrap(),
-                test_config.service.clone().unwrap_or_default()
+                test_config.service.clone().unwrap_or_default(),
             );
-            CHILD_PROCESSES.insert(handle_key.clone(), handle);
+            let client_key = ServiceClientKey::new(None, None);
+            PORT_FORWARD_REGISTRY.insert_process(pf_key.clone(), handle, client_key);
 
-            if let Some((_, handle)) = CHILD_PROCESSES.remove(&handle_key) {
-                handle.abort();
+            if let Some(entry) = PORT_FORWARD_REGISTRY.remove_process(&pf_key) {
+                entry.process.abort();
             }
 
             success_counter.fetch_add(1, Ordering::SeqCst);

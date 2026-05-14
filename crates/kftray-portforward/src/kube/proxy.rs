@@ -1,7 +1,5 @@
 use std::{
     collections::HashMap,
-    fs::File,
-    io::Read,
     pin::Pin,
     time::{
         SystemTime,
@@ -50,23 +48,25 @@ use rand::distr::{
     SampleString,
 };
 
-use crate::kube::shared_client::{
-    SHARED_CLIENT_MANAGER,
-    ServiceClientKey,
-};
+use crate::kube::shared_client::ServiceClientKey;
+use crate::port_forward_error::PortForwardError;
+use crate::registry::PORT_FORWARD_REGISTRY;
 
-pub async fn deploy_and_forward_pod(configs: Vec<Config>) -> Result<Vec<CustomResponse>, String> {
+pub async fn deploy_and_forward_pod(
+    configs: Vec<Config>,
+) -> Result<Vec<CustomResponse>, PortForwardError> {
     deploy_and_forward_pod_with_mode(configs, DatabaseMode::File, false).await
 }
 
 pub async fn deploy_and_forward_pod_with_mode(
     configs: Vec<Config>, mode: DatabaseMode, ssl_override: bool,
-) -> Result<Vec<CustomResponse>, String> {
+) -> Result<Vec<CustomResponse>, PortForwardError> {
     if configs.is_empty() {
         return Ok(Vec::new());
     }
 
-    type ProxyFuture = Pin<Box<dyn Future<Output = Result<CustomResponse, String>> + Send>>;
+    type ProxyFuture =
+        Pin<Box<dyn Future<Output = Result<CustomResponse, PortForwardError>> + Send>>;
     let mut futures: FuturesUnordered<ProxyFuture> = FuturesUnordered::new();
 
     for config in configs {
@@ -87,14 +87,15 @@ pub async fn deploy_and_forward_pod_with_mode(
                 responses.push(response);
             }
             Err(e) => {
-                error!("Proxy config failed: {e}");
-                errors.push(e);
+                let msg = e.to_string();
+                error!("Proxy config failed: {msg}");
+                errors.push(msg);
             }
         }
     }
 
     if !errors.is_empty() && responses.is_empty() {
-        return Err(errors.join("; "));
+        return Err(PortForwardError::Internal(errors.join("; ")));
     }
 
     if !errors.is_empty() {
@@ -110,21 +111,21 @@ pub async fn deploy_and_forward_pod_with_mode(
 
 async fn process_single_proxy_config(
     mut config: Config, mode: DatabaseMode, ssl_override: bool,
-) -> Result<CustomResponse, String> {
+) -> Result<CustomResponse, PortForwardError> {
     let client_key = ServiceClientKey::new(config.context.clone(), config.kubeconfig.clone());
 
-    let shared_client = SHARED_CLIENT_MANAGER
-        .get_client(client_key)
+    let shared_client = PORT_FORWARD_REGISTRY
+        .acquire_client(client_key)
         .await
         .map_err(|e| {
             error!("Failed to get shared Kubernetes client: {e}");
-            e.to_string()
+            PortForwardError::KubeApi(e.to_string())
         })?;
     let client = Client::clone(&shared_client);
 
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_err(|e| e.to_string())?
+        .map_err(|e| PortForwardError::Internal(e.to_string()))?
         .as_secs();
 
     let random_string: String = Alphanumeric
@@ -155,29 +156,42 @@ async fn process_single_proxy_config(
         config.remote_address.clone_from(&config.service);
     }
 
+    let service =
+        config
+            .service
+            .as_deref()
+            .ok_or_else(|| PortForwardError::ConfigurationError {
+                message: "config missing service".to_string(),
+            })?;
+    let remote_address =
+        config
+            .remote_address
+            .as_deref()
+            .ok_or_else(|| PortForwardError::ConfigurationError {
+                message: "config missing remote_address".to_string(),
+            })?;
+    let remote_port = config
+        .remote_port
+        .ok_or_else(|| PortForwardError::ConfigurationError {
+            message: "config missing remote_port".to_string(),
+        })?;
+    let local_port = config
+        .local_port
+        .ok_or_else(|| PortForwardError::ConfigurationError {
+            message: "config missing local_port".to_string(),
+        })?;
+
     let mut values: HashMap<String, String> = HashMap::new();
     values.insert("hashed_name".to_string(), hashed_name.clone());
     values.insert("config_id".to_string(), config_id_str.clone());
-    values.insert(
-        "service_name".to_string(),
-        config.service.as_ref().unwrap().clone(),
-    );
-    values.insert(
-        "remote_address".to_string(),
-        config.remote_address.as_ref().unwrap().clone(),
-    );
-    values.insert(
-        "remote_port".to_string(),
-        config.remote_port.expect("None").to_string(),
-    );
-    let local_port_value = config
-        .remote_port
-        .unwrap_or(config.local_port.expect("None"))
-        .to_string();
+    values.insert("service_name".to_string(), service.to_string());
+    values.insert("remote_address".to_string(), remote_address.to_string());
+    values.insert("remote_port".to_string(), remote_port.to_string());
+    let local_port_value = config.remote_port.unwrap_or(local_port).to_string();
     values.insert("local_port".to_string(), local_port_value);
     values.insert("protocol".to_string(), protocol.clone());
 
-    let use_deployment = should_use_deployment_manifest();
+    let use_deployment = should_use_deployment_manifest().await;
 
     if use_deployment {
         process_deployment_proxy(
@@ -209,15 +223,16 @@ async fn process_single_proxy_config(
 async fn process_deployment_proxy(
     client: Client, config: &mut Config, hashed_name: &str, config_id_str: &str,
     values: &HashMap<String, String>, protocol: &str, mode: DatabaseMode, ssl_override: bool,
-) -> Result<CustomResponse, String> {
-    let manifest_path = get_proxy_deployment_manifest_path().map_err(|e| e.to_string())?;
-    let mut file = File::open(manifest_path).map_err(|e| e.to_string())?;
-    let mut contents = String::new();
-    file.read_to_string(&mut contents)
-        .map_err(|e| e.to_string())?;
+) -> Result<CustomResponse, PortForwardError> {
+    let manifest_path = get_proxy_deployment_manifest_path()
+        .map_err(|e| PortForwardError::Internal(e.to_string()))?;
+    let contents = tokio::fs::read_to_string(&manifest_path)
+        .await
+        .map_err(PortForwardError::Io)?;
 
     let rendered_json = render_json_template_owned(&contents, values);
-    let deployment: Deployment = serde_json::from_str(&rendered_json).map_err(|e| e.to_string())?;
+    let deployment: Deployment = serde_json::from_str(&rendered_json)
+        .map_err(|e| PortForwardError::KubeApi(e.to_string()))?;
 
     let deployments: Api<Deployment> = Api::namespaced(client.clone(), &config.namespace);
 
@@ -244,7 +259,7 @@ async fn process_deployment_proxy(
                     ..DeleteParams::default()
                 };
                 let _ = deployments.delete(hashed_name, &dp).await;
-                return Err(e.to_string());
+                return Err(PortForwardError::KubeApi(e.to_string()));
             }
 
             config.service = Some(hashed_name.to_string());
@@ -272,7 +287,9 @@ async fn process_deployment_proxy(
                     let _ = deployments
                         .delete(hashed_name, &DeleteParams::default())
                         .await;
-                    return Err("Unsupported proxy type".to_string());
+                    return Err(PortForwardError::ConfigurationError {
+                        message: "Unsupported proxy type".to_string(),
+                    });
                 }
             };
 
@@ -290,26 +307,33 @@ async fn process_deployment_proxy(
                         let _ = deployments
                             .delete(hashed_name, &DeleteParams::default())
                             .await;
-                        Err("No response received from port forwarding".to_string())
+                        Err(PortForwardError::Internal(
+                            "No response received from port forwarding".to_string(),
+                        ))
                     }
                 },
                 Err(e) => {
                     let _ = deployments
                         .delete(hashed_name, &DeleteParams::default())
                         .await;
-                    Err(format!("Failed to start port forwarding {e}"))
+                    Err(PortForwardError::Internal(format!(
+                        "Failed to start port forwarding {e}"
+                    )))
                 }
             }
         }
-        Err(e) => Err(e.to_string()),
+        Err(e) => Err(PortForwardError::KubeApi(e.to_string())),
     }
 }
 
 async fn wait_for_deployment_pod(
     pods: &Api<Pod>, lp: &ListParams, hashed_name: &str, deployments: &Api<Deployment>,
-) -> Result<String, String> {
+) -> Result<String, PortForwardError> {
     for attempt in 0..10 {
-        let pod_list = pods.list(lp).await.map_err(|e| e.to_string())?;
+        let pod_list = pods
+            .list(lp)
+            .await
+            .map_err(|e| PortForwardError::KubeApi(e.to_string()))?;
         if let Some(pod) = pod_list.items.first()
             && let Some(name) = pod.metadata.name.clone()
         {
@@ -324,21 +348,24 @@ async fn wait_for_deployment_pod(
         ..DeleteParams::default()
     };
     let _ = deployments.delete(hashed_name, &dp).await;
-    Err("No pod found for deployment after retries".to_string())
+    Err(PortForwardError::KubeApi(
+        "No pod found for deployment after retries".to_string(),
+    ))
 }
 
 async fn process_pod_proxy(
     client: Client, config: &mut Config, hashed_name: &str, values: &HashMap<String, String>,
     protocol: &str, mode: DatabaseMode, ssl_override: bool,
-) -> Result<CustomResponse, String> {
-    let manifest_path = get_pod_manifest_path().map_err(|e| e.to_string())?;
-    let mut file = File::open(manifest_path).map_err(|e| e.to_string())?;
-    let mut contents = String::new();
-    file.read_to_string(&mut contents)
-        .map_err(|e| e.to_string())?;
+) -> Result<CustomResponse, PortForwardError> {
+    let manifest_path =
+        get_pod_manifest_path().map_err(|e| PortForwardError::Internal(e.to_string()))?;
+    let contents = tokio::fs::read_to_string(&manifest_path)
+        .await
+        .map_err(PortForwardError::Io)?;
 
     let rendered_json = render_json_template_owned(&contents, values);
-    let pod: Pod = serde_json::from_str(&rendered_json).map_err(|e| e.to_string())?;
+    let pod: Pod = serde_json::from_str(&rendered_json)
+        .map_err(|e| PortForwardError::KubeApi(e.to_string()))?;
 
     let pods: Api<Pod> = Api::namespaced(client.clone(), &config.namespace);
 
@@ -356,7 +383,7 @@ async fn process_pod_proxy(
                     ..DeleteParams::default()
                 };
                 let _ = pods.delete(hashed_name, &dp).await;
-                return Err(e.to_string());
+                return Err(PortForwardError::KubeApi(e.to_string()));
             }
 
             config.service = Some(hashed_name.to_string());
@@ -382,7 +409,9 @@ async fn process_pod_proxy(
                 }
                 _ => {
                     let _ = pods.delete(hashed_name, &DeleteParams::default()).await;
-                    return Err("Unsupported proxy type".to_string());
+                    return Err(PortForwardError::ConfigurationError {
+                        message: "Unsupported proxy type".to_string(),
+                    });
                 }
             };
 
@@ -398,23 +427,27 @@ async fn process_pod_proxy(
                     }
                     None => {
                         let _ = pods.delete(hashed_name, &DeleteParams::default()).await;
-                        Err("No response received from port forwarding".to_string())
+                        Err(PortForwardError::Internal(
+                            "No response received from port forwarding".to_string(),
+                        ))
                     }
                 },
                 Err(e) => {
                     let _ = pods.delete(hashed_name, &DeleteParams::default()).await;
-                    Err(format!("Failed to start port forwarding {e}"))
+                    Err(PortForwardError::Internal(format!(
+                        "Failed to start port forwarding {e}"
+                    )))
                 }
             }
         }
-        Err(e) => Err(e.to_string()),
+        Err(e) => Err(PortForwardError::KubeApi(e.to_string())),
     }
 }
 
 pub async fn stop_proxy_forward_with_mode(
     config_id: i64, _namespace: &str, service_name: String,
     mode: kftray_commons::utils::db_mode::DatabaseMode,
-) -> Result<CustomResponse, String> {
+) -> Result<CustomResponse, PortForwardError> {
     info!("Stopping proxy forward for service: {service_name}");
     super::stop::stop_port_forward_with_mode(config_id.to_string(), mode)
         .await
@@ -426,7 +459,7 @@ pub async fn stop_proxy_forward_with_mode(
 
 pub async fn stop_proxy_forward(
     config_id: i64, _namespace: &str, service_name: String,
-) -> Result<CustomResponse, String> {
+) -> Result<CustomResponse, PortForwardError> {
     info!("Stopping proxy forward for service: {service_name}");
     super::stop::stop_port_forward_with_mode(
         config_id.to_string(),
@@ -439,13 +472,12 @@ pub async fn stop_proxy_forward(
     })
 }
 
-fn is_custom_pod_manifest() -> bool {
+async fn is_custom_pod_manifest() -> bool {
     match get_pod_manifest_path() {
         Ok(path) if path.exists() => {
-            // Read the current manifest
-            if let Ok(mut file) = File::open(&path) {
-                let mut contents = String::new();
-                if file.read_to_string(&mut contents).is_ok() {
+            // Read the current manifest using async I/O
+            match tokio::fs::read_to_string(&path).await {
+                Ok(contents) => {
                     let size = contents.len();
                     if !(520..=780).contains(&size) {
                         debug!("Pod manifest appears customized (size: {} bytes)", size);
@@ -456,17 +488,17 @@ fn is_custom_pod_manifest() -> bool {
                         return true;
                     }
                     debug!("Pod manifest appears to be default template");
-                    return false;
+                    false
                 }
+                Err(_) => true,
             }
-            true
         }
         _ => false,
     }
 }
 
-fn should_use_deployment_manifest() -> bool {
-    if is_custom_pod_manifest() {
+async fn should_use_deployment_manifest() -> bool {
+    if is_custom_pod_manifest().await {
         info!("Using legacy Pod manifest (custom detected)");
         return false;
     }

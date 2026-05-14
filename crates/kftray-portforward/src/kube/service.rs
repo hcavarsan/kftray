@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 
-use anyhow::Result;
 use futures::stream::{
     self,
     StreamExt,
@@ -17,31 +16,30 @@ use crate::kube::operations::{
     get_services_with_annotation,
     list_all_namespaces,
 };
-use crate::kube::shared_client::{
-    SHARED_CLIENT_MANAGER,
-    ServiceClientKey,
-};
+use crate::kube::shared_client::ServiceClientKey;
+use crate::port_forward_error::PortForwardError;
+use crate::registry::PORT_FORWARD_REGISTRY;
 pub async fn retrieve_service_configs(
     context: &str, kubeconfig: Option<String>,
-) -> Result<Vec<Config>, String> {
+) -> Result<Vec<Config>, PortForwardError> {
     let client_key = ServiceClientKey::new(Some(context.to_string()), kubeconfig.clone());
 
-    let client = SHARED_CLIENT_MANAGER
-        .get_client(client_key)
+    let client = PORT_FORWARD_REGISTRY
+        .acquire_client(client_key)
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| PortForwardError::KubeApi(e.to_string()))?;
 
     retrieve_service_configs_direct(context, kubeconfig, &client).await
 }
 
 async fn retrieve_service_configs_direct(
     context: &str, kubeconfig: Option<String>, client: &std::sync::Arc<kube::Client>,
-) -> Result<Vec<Config>, String> {
+) -> Result<Vec<Config>, PortForwardError> {
     let annotation = "kftray.app/configs";
 
     let namespaces = list_all_namespaces(Client::clone(client))
         .await
-        .map_err(|e| e.to_string())?;
+        .map_err(|e| PortForwardError::KubeApi(e.to_string()))?;
 
     debug!(
         "Found {} namespaces for direct API discovery",
@@ -62,7 +60,7 @@ async fn retrieve_service_configs_direct(
                 let services =
                     get_services_with_annotation(client.clone(), &namespace, &annotation)
                         .await
-                        .map_err(|e| e.to_string())?;
+                        .map_err(|e| PortForwardError::KubeApi(e.to_string()))?;
 
                 let mut namespace_configs = Vec::new();
 
@@ -94,7 +92,8 @@ async fn retrieve_service_configs_direct(
         .buffer_unordered(concurrency_limit)
         .fold(
             Ok(Vec::new()),
-            |mut acc: Result<Vec<Config>, String>, result: Result<Vec<Config>, String>| async {
+            |mut acc: Result<Vec<Config>, PortForwardError>,
+             result: Result<Vec<Config>, PortForwardError>| async {
                 match (&mut acc, result) {
                     (Ok(configs), Ok(mut namespace_configs)) => {
                         configs.append(&mut namespace_configs);

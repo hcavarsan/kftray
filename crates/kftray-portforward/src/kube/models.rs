@@ -196,6 +196,9 @@ pub struct TargetPod {
     pub port_number: u16,
 }
 
+/// Abstraction for pod selection strategy.
+/// Currently only `AnyReady` is implemented, but the trait exists to allow
+/// alternative strategies (e.g., round-robin, sticky) in tests or future use.
 pub trait PodSelection {
     fn select<'p>(&self, pods: &'p [Pod], selector: &str) -> anyhow::Result<&'p Pod>;
 }

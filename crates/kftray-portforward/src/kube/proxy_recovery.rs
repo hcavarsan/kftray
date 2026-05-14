@@ -5,6 +5,7 @@ use dashmap::DashMap;
 use kftray_commons::models::config_model::Config;
 use once_cell::sync::Lazy;
 use tokio::sync::Mutex;
+use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 // ============================================================================
@@ -98,9 +99,18 @@ pub fn spawn_recovery_manager(config: Config, proxy_type: ProxyType) {
         let manager = Arc::new(ProxyRecoveryManager::new(config, proxy_type));
         let rx = manager.recovery_signal_tx.subscribe();
         let manager_for_task = Arc::clone(&manager);
-        tokio::spawn(async move {
+        let handle = tokio::spawn(async move {
             manager_for_task.run_recovery_loop_with_rx(rx).await;
         });
+        // Store the JoinHandle so panics can be detected and the task is tracked
+        if let Ok(mut guard) = manager.task_handle.try_lock() {
+            *guard = Some(handle);
+        } else {
+            log::warn!(
+                "Could not store task handle for recovery manager config {}",
+                config_id
+            );
+        }
         spawned = true;
         manager
     });
@@ -162,6 +172,8 @@ pub struct ProxyRecoveryManager {
     state: Arc<tokio::sync::RwLock<RecoveryState>>,
     /// Broadcast sender to trigger recovery from any source
     recovery_signal_tx: tokio::sync::broadcast::Sender<RecoverySignal>,
+    /// Handle to the spawned recovery loop task, so panics can be detected
+    task_handle: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl ProxyRecoveryManager {
@@ -172,7 +184,10 @@ impl ProxyRecoveryManager {
     /// * `proxy_type` - Whether this is a bare pod or deployment proxy
     pub fn new(config: Config, proxy_type: ProxyType) -> Self {
         let config_id = config.id.unwrap_or(0);
-        let (recovery_signal_tx, _) = tokio::sync::broadcast::channel::<RecoverySignal>(16);
+        // Capacity 64: recovery signals are infrequent (pod deaths, stream failures),
+        // but we use a generous buffer to avoid RecvError::Lagged under burst
+        // conditions (e.g., multiple simultaneous network failures).
+        let (recovery_signal_tx, _) = tokio::sync::broadcast::channel::<RecoverySignal>(64);
         Self {
             config,
             config_id,
@@ -180,6 +195,7 @@ impl ProxyRecoveryManager {
             cancel_token: CancellationToken::new(),
             state: Arc::new(tokio::sync::RwLock::new(RecoveryState::Idle)),
             recovery_signal_tx,
+            task_handle: Mutex::new(None),
         }
     }
 
@@ -219,7 +235,6 @@ impl ProxyRecoveryManager {
         }
 
         loop {
-            // Wait for a signal or cancellation
             let signal = tokio::select! {
                 result = rx.recv() => {
                     match result {
@@ -247,10 +262,6 @@ impl ProxyRecoveryManager {
                 signal,
                 self.config_id
             );
-
-            // Acquire the per-config lock to serialize recovery attempts
-            let lock = acquire_recovery_lock(self.config_id).await;
-            let _guard = lock.lock().await;
 
             let mut all_attempts_exhausted = true;
             for attempt in 1..=MAX_RECOVERY_ATTEMPTS {
@@ -284,7 +295,7 @@ impl ProxyRecoveryManager {
                     backoff
                 );
 
-                // Sleep with cancellation awareness
+                // Sleep before acquiring the lock so the guard isn't held during backoff
                 tokio::select! {
                     _ = tokio::time::sleep(Duration::from_secs(backoff)) => {}
                     _ = self.cancel_token.cancelled() => {
@@ -292,6 +303,10 @@ impl ProxyRecoveryManager {
                         break;
                     }
                 }
+
+                // Acquire lock only for the actual recovery operation
+                let lock = acquire_recovery_lock(self.config_id).await;
+                let _guard = lock.lock().await;
 
                 match self.do_recovery_attempt().await {
                     Ok(()) => {
@@ -326,9 +341,9 @@ impl ProxyRecoveryManager {
                         .await;
                     }
                 }
+                // Guard released here before next iteration's backoff sleep
             }
 
-            // All attempts exhausted without success or cancellation
             if all_attempts_exhausted {
                 let final_error = format!(
                     "Recovery failed after {} attempts for config {}",
@@ -344,10 +359,8 @@ impl ProxyRecoveryManager {
                 }
                 self.update_config_state_fields(false, false, None, Some(final_error))
                     .await;
-                drop(_guard);
                 remove_recovery_lock(self.config_id);
             }
-            // Lock released when _guard drops
         }
     }
 
@@ -362,8 +375,8 @@ impl ProxyRecoveryManager {
             self.config.context.clone(),
             self.config.kubeconfig.clone(),
         );
-        let client = crate::kube::shared_client::SHARED_CLIENT_MANAGER
-            .get_client(client_key)
+        let client = crate::registry::PORT_FORWARD_REGISTRY
+            .acquire_client(client_key)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to get K8s client: {}", e))?;
         let client = kube::Client::clone(&client);
@@ -407,16 +420,9 @@ impl ProxyRecoveryManager {
 // ============================================================================
 
 async fn cleanup_child_processes_for_config(config_id: i64) {
-    let prefix = format!("config:{}:", config_id);
-    let keys: Vec<String> = crate::port_forward::CHILD_PROCESSES
-        .iter()
-        .filter(|entry| entry.key().starts_with(&prefix))
-        .map(|entry| entry.key().clone())
-        .collect();
-    for key in keys {
-        if let Some((_, process)) = crate::port_forward::CHILD_PROCESSES.remove(&key) {
-            process.cleanup_and_abort().await;
-        }
+    let entries = crate::registry::PORT_FORWARD_REGISTRY.remove_processes_for_config(config_id);
+    for entry in entries {
+        entry.process.cleanup_and_abort().await;
     }
 }
 
@@ -425,8 +431,7 @@ async fn cleanup_child_processes_for_config(config_id: i64) {
 /// Bare pods have no controller (no Deployment/ReplicaSet), so when the pod
 /// dies there is nothing to auto-restart it. This function:
 /// 1. Cleans up old cluster resources (pods, deployments) to prevent orphans
-/// 2. Removes stale [`CHILD_PROCESSES`](crate::port_forward::CHILD_PROCESSES)
-///    entries for this config
+/// 2. Removes stale registry entries for this config
 /// 3. Re-deploys a fresh proxy pod via
 ///    [`deploy_and_forward_pod()`](crate::kube::proxy::deploy_and_forward_pod)
 pub async fn recover_bare_pod(config: &Config, client: &kube::Client) -> anyhow::Result<()> {
@@ -438,8 +443,24 @@ pub async fn recover_bare_pod(config: &Config, client: &kube::Client) -> anyhow:
     crate::kube::stop::delete_proxy_cluster_resources(client.clone(), namespace, config_id).await;
     cleanup_child_processes_for_config(config_id).await;
 
-    // Step 3: Re-deploy via the existing deploy_and_forward_pod() function
-    // This generates a new hashed_name and creates a fresh pod + port forward
+    // Remove the current recovery manager BEFORE re-deploying.
+    //
+    // `deploy_and_forward_pod` calls `spawn_recovery_manager`, which uses
+    // `or_insert_with` — it only creates a new manager when none exists.
+    // If we leave the old manager in the map, the new forwarder's
+    // `on_recovery` callback will signal the *old* manager that is currently
+    // executing this recovery loop, causing an infinite PodDied → recover →
+    // PodDied cycle. Removing it here lets `spawn_recovery_manager` install a
+    // fresh manager that the new forwarder will signal correctly.
+    if let Some((_, old_manager)) = RECOVERY_MANAGERS.remove(&config_id) {
+        old_manager.cancel();
+    }
+
+    // Re-deploy via deploy_and_forward_pod() which creates a fresh pod + port
+    // forward. Note: deploy_and_forward_pod returns Result<_, PortForwardError>
+    // which uses Display formatting. The original error provenance is lost in
+    // the string conversion. This is a known architectural limitation (tracked:
+    // Result<T, String> public surface).
     crate::kube::proxy::deploy_and_forward_pod(vec![config.clone()])
         .await
         .map_err(|e| anyhow::anyhow!("Re-deployment failed: {}", e))?;

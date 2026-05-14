@@ -436,7 +436,8 @@ impl CertificateGenerator {
         })
     }
 
-    /// Sign a certificate using the CA key pair, returning (cert_der, ca_cert_der, private_key).
+    /// Sign a certificate using the CA key pair, returning (cert_der,
+    /// ca_cert_der, private_key).
     async fn sign_certificate(
         ca_cert: Certificate, ca_key_pair: KeyPair, cert_params: CertificateParams,
     ) -> Result<(
