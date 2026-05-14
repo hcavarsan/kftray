@@ -28,6 +28,9 @@ use tokio_tungstenite::{
     connect_async,
     tungstenite::Message,
 };
+use tokio_util::sync::CancellationToken;
+
+use crate::port_forward_error::PortForwardError;
 
 pub struct WebSocketTunnelClient {
     websocket_port: u16,
@@ -46,12 +49,17 @@ impl WebSocketTunnelClient {
         }
     }
 
-    pub async fn start(&self) -> Result<(), String> {
+    pub async fn start(&self, cancel: CancellationToken) -> Result<(), PortForwardError> {
         let ws_url = format!("ws://127.0.0.1:{}", self.websocket_port);
         let max_retries = 100;
         let mut retry_count = 0;
 
         loop {
+            if cancel.is_cancelled() {
+                info!("WebSocket tunnel cancelled before connect");
+                break;
+            }
+
             info!(
                 "Connecting WebSocket client to {} (attempt {}/{})",
                 ws_url,
@@ -59,21 +67,29 @@ impl WebSocketTunnelClient {
                 max_retries
             );
 
-            match self.connect_and_run(&ws_url).await {
-                Ok(_) => {
-                    info!("WebSocket tunnel disconnected gracefully");
+            tokio::select! {
+                _ = cancel.cancelled() => {
+                    info!("WebSocket tunnel cancelled during connect");
+                    break;
                 }
-                Err(e) => {
-                    error!("WebSocket tunnel error: {}", e);
+                result = self.connect_and_run(&ws_url) => {
+                    match result {
+                        Ok(_) => {
+                            info!("WebSocket tunnel disconnected gracefully");
+                        }
+                        Err(e) => {
+                            error!("WebSocket tunnel error: {}", e);
+                        }
+                    }
                 }
             }
 
             retry_count += 1;
             if retry_count >= max_retries {
-                return Err(format!(
+                return Err(PortForwardError::Expose(format!(
                     "Max reconnection attempts ({}) reached",
                     max_retries
-                ));
+                )));
             }
 
             let backoff_secs = std::cmp::min(2_u64.pow(retry_count.min(4)), 30);
@@ -81,15 +97,24 @@ impl WebSocketTunnelClient {
                 "WebSocket disconnected. Reconnecting in {} seconds...",
                 backoff_secs
             );
-            tokio::time::sleep(tokio::time::Duration::from_secs(backoff_secs)).await;
+
+            tokio::select! {
+                _ = cancel.cancelled() => {
+                    info!("WebSocket tunnel cancelled during backoff");
+                    break;
+                }
+                _ = tokio::time::sleep(tokio::time::Duration::from_secs(backoff_secs)) => {}
+            }
         }
+
+        Ok(())
     }
 
-    async fn connect_and_run(&self, ws_url: &str) -> Result<(), String> {
+    async fn connect_and_run(&self, ws_url: &str) -> Result<(), PortForwardError> {
         // Connect to the port-forwarded WebSocket endpoint
-        let (ws_stream, _) = connect_async(ws_url)
-            .await
-            .map_err(|e| format!("Failed to connect to WebSocket: {}", e))?;
+        let (ws_stream, _) = connect_async(ws_url).await.map_err(|e| {
+            PortForwardError::Expose(format!("Failed to connect to WebSocket: {}", e))
+        })?;
 
         info!("WebSocket tunnel connected");
 

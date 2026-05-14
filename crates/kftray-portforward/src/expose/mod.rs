@@ -15,15 +15,17 @@ use log::{
     info,
 };
 
-use crate::kube::shared_client::{
-    SHARED_CLIENT_MANAGER,
-    ServiceClientKey,
+use crate::kube::shared_client::ServiceClientKey;
+use crate::port_forward_error::PortForwardError;
+use crate::registry::{
+    PORT_FORWARD_REGISTRY,
+    PortForwardKey,
 };
 
 /// Start expose for given configs
 pub async fn start_expose(
     configs: Vec<Config>, mode: DatabaseMode,
-) -> Result<Vec<CustomResponse>, String> {
+) -> Result<Vec<CustomResponse>, PortForwardError> {
     let mut responses = Vec::new();
 
     for config in configs {
@@ -36,7 +38,9 @@ pub async fn start_expose(
     Ok(responses)
 }
 
-async fn start_single_expose(config: Config, mode: DatabaseMode) -> Result<CustomResponse, String> {
+async fn start_single_expose(
+    config: Config, mode: DatabaseMode,
+) -> Result<CustomResponse, PortForwardError> {
     use self::kubernetes::create_expose_resources;
     use self::websocket_client::WebSocketTunnelClient;
     use crate::kube::models::{
@@ -46,15 +50,18 @@ async fn start_single_expose(config: Config, mode: DatabaseMode) -> Result<Custo
         Target,
         TargetSelector,
     };
-    use crate::port_forward::CHILD_PROCESSES;
 
-    let config_id = config.id.ok_or("Config has no ID")?;
+    let config_id = config
+        .id
+        .ok_or_else(|| PortForwardError::ConfigurationError {
+            message: "Config has no ID".to_string(),
+        })?;
 
     let client_key = ServiceClientKey::new(config.context.clone(), config.kubeconfig.clone());
-    let client = SHARED_CLIENT_MANAGER
-        .get_client(client_key)
+    let client = PORT_FORWARD_REGISTRY
+        .acquire_client(client_key.clone())
         .await
-        .map_err(|e| format!("Failed to get K8s client: {}", e))?;
+        .map_err(|e| PortForwardError::KubeApi(format!("Failed to get K8s client: {}", e)))?;
     let client = (*client).clone();
 
     info!("Creating expose resources for config {}", config_id);
@@ -82,19 +89,21 @@ async fn start_single_expose(config: Config, mode: DatabaseMode) -> Result<Custo
         "expose".to_string(),
     )
     .await
-    .map_err(|e| format!("Failed to create port-forward: {}", e))?;
+    .map_err(|e| PortForwardError::Expose(format!("Failed to create port-forward: {}", e)))?;
 
     let (websocket_port, pf_process) = port_forward
         .port_forward_tcp(None)
         .await
-        .map_err(|e| format!("Failed to start port-forward: {}", e))?;
+        .map_err(|e| PortForwardError::Expose(format!("Failed to start port-forward: {}", e)))?;
 
     info!(
         "Port-forward established: localhost:{} → pod:9999",
         websocket_port
     );
 
-    CHILD_PROCESSES.insert(config_id.to_string(), pf_process);
+    let ws_cancel = pf_process.cancellation_token.clone();
+    let pf_key = PortForwardKey::expose(config_id);
+    PORT_FORWARD_REGISTRY.insert_process(pf_key.clone(), pf_process, client_key);
 
     let local_service_port = config.local_port.unwrap_or(8080);
     let local_service_address = config
@@ -113,15 +122,15 @@ async fn start_single_expose(config: Config, mode: DatabaseMode) -> Result<Custo
     );
 
     let ws_handle = tokio::spawn(async move {
-        if let Err(e) = ws_client.start().await {
+        if let Err(e) = ws_client.start(ws_cancel).await {
             error!("WebSocket client error: {}", e);
         }
     });
 
     // Store the WebSocket client handle so it can be aborted when stopping
-    if let Some(mut process) = CHILD_PROCESSES.get_mut(&config_id.to_string()) {
-        process.set_ws_client_handle(ws_handle);
-    }
+    PORT_FORWARD_REGISTRY.with_process_mut(&pf_key, |entry| {
+        entry.process.set_ws_client_handle(ws_handle);
+    });
 
     let config_state = ConfigState {
         id: None,
@@ -152,26 +161,26 @@ async fn start_single_expose(config: Config, mode: DatabaseMode) -> Result<Custo
 
 pub async fn stop_expose(
     config_id: i64, namespace: &str, mode: DatabaseMode,
-) -> Result<CustomResponse, String> {
+) -> Result<CustomResponse, PortForwardError> {
     use kftray_commons::utils::config::get_config_with_mode;
 
     use self::kubernetes::delete_expose_resources;
-    use crate::port_forward::CHILD_PROCESSES;
 
     info!("Stopping expose for config {}", config_id);
 
     let config = get_config_with_mode(config_id, mode).await?;
 
-    if let Some((_, pf_process)) = CHILD_PROCESSES.remove(&config_id.to_string()) {
+    let pf_key = PortForwardKey::expose(config_id);
+    if let Some(entry) = PORT_FORWARD_REGISTRY.remove_process(&pf_key) {
         info!("Cleaning up port-forward for config {}", config_id);
-        pf_process.cleanup_and_abort().await;
+        entry.process.cleanup_and_abort().await;
     }
 
     let client_key = ServiceClientKey::new(config.context.clone(), config.kubeconfig.clone());
-    let client = SHARED_CLIENT_MANAGER
-        .get_client(client_key)
+    let client = PORT_FORWARD_REGISTRY
+        .acquire_client(client_key)
         .await
-        .map_err(|e| format!("Failed to get K8s client: {}", e))?;
+        .map_err(|e| PortForwardError::KubeApi(format!("Failed to get K8s client: {}", e)))?;
     let client = (*client).clone();
 
     delete_expose_resources(client, namespace, &config_id.to_string()).await?;
