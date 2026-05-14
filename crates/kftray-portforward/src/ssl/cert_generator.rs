@@ -132,12 +132,16 @@ impl CertificateGenerator {
     }
 
     async fn create_new_ca(&self) -> Result<(Certificate, KeyPair)> {
-        let ca_params = Self::build_ca_params()?;
-        let ca_key_pair = KeyPair::generate()?;
-
-        let ca_cert = ca_params
-            .self_signed(&ca_key_pair)
-            .context("Failed to create self-signed CA certificate")?;
+        let (ca_cert, ca_key_pair) = tokio::task::spawn_blocking(move || {
+            let ca_params = Self::build_ca_params()?;
+            let ca_key_pair = KeyPair::generate()?;
+            let ca_cert = ca_params
+                .self_signed(&ca_key_pair)
+                .context("Failed to create self-signed CA certificate")?;
+            Ok::<_, anyhow::Error>((ca_cert, ca_key_pair))
+        })
+        .await
+        .context("CA generation task panicked")??;
 
         info!("Created new kftray CA certificate (valid for 10 years)");
         Ok((ca_cert, ca_key_pair))
@@ -152,13 +156,17 @@ impl CertificateGenerator {
             .await
             .context("Failed to retrieve CA private key from keychain")?;
 
-        let ca_key_pair =
-            KeyPair::from_pem(&key_pem).context("Failed to create key pair from PEM")?;
-
-        let ca_params = Self::build_ca_params()?;
-        let ca_cert = ca_params
-            .self_signed(&ca_key_pair)
-            .context("Failed to recreate CA certificate from existing key")?;
+        let (ca_cert, ca_key_pair) = tokio::task::spawn_blocking(move || {
+            let ca_key_pair =
+                KeyPair::from_pem(&key_pem).context("Failed to create key pair from PEM")?;
+            let ca_params = Self::build_ca_params()?;
+            let ca_cert = ca_params
+                .self_signed(&ca_key_pair)
+                .context("Failed to recreate CA certificate from existing key")?;
+            Ok::<_, anyhow::Error>((ca_cert, ca_key_pair))
+        })
+        .await
+        .context("CA loading task panicked")??;
 
         info!("Successfully loaded existing CA key from keychain and recreated certificate");
         Ok((ca_cert, ca_key_pair))
@@ -247,20 +255,8 @@ impl CertificateGenerator {
         cert_params.not_before = now - Duration::minutes(1);
         cert_params.not_after = now + Duration::days(validity_days as i64);
 
-        let key_pair = KeyPair::generate()?;
-
-        let ca_params = Self::build_ca_params()?;
-        let ca_issuer = Issuer::from_params(&ca_params, &ca_key_pair);
-        let cert = cert_params
-            .signed_by(&key_pair, &ca_issuer)
-            .context("Failed to sign certificate")?;
-
-        let cert_der = cert.der();
-        let ca_cert_der = ca_cert.der();
-
-        let private_key = PrivatePkcs8KeyDer::from(key_pair.serialize_der())
-            .clone_key()
-            .into();
+        let (cert_der, ca_cert_der, private_key) =
+            Self::sign_certificate(ca_cert, ca_key_pair, cert_params).await?;
 
         info!(
             "Generated SSL certificate for {} (valid for {} days)",
@@ -268,7 +264,7 @@ impl CertificateGenerator {
         );
 
         Ok(CertificatePair {
-            certificate: vec![cert_der.clone(), ca_cert_der.clone()],
+            certificate: vec![cert_der, ca_cert_der],
             private_key,
             domain,
             local_domain,
@@ -279,15 +275,14 @@ impl CertificateGenerator {
     pub async fn generate_for_domains_with_validity(
         &self, domains: Vec<String>, validity_days: u16,
     ) -> Result<CertificatePair> {
-        if domains.is_empty() {
-            return Err(anyhow::anyhow!("At least one domain must be provided"));
-        }
+        let primary_domain = match domains.first() {
+            Some(d) => d.clone(),
+            None => return Err(anyhow::anyhow!("At least one domain must be provided")),
+        };
 
         super::ensure_crypto_provider_installed();
 
         let (ca_cert, ca_key_pair) = self.get_or_create_ca().await?;
-
-        let primary_domain = domains.first().unwrap().clone();
         let local_domain = if primary_domain.ends_with(".local") {
             primary_domain.clone()
         } else {
@@ -308,17 +303,25 @@ impl CertificateGenerator {
 
         for domain in &domains {
             if seen_domains.insert(domain.clone()) {
-                cert_params.subject_alt_names.push(rcgen::SanType::DnsName(
-                    domain.as_str().try_into().expect("Invalid domain"),
-                ));
+                let dns_name = domain
+                    .as_str()
+                    .try_into()
+                    .with_context(|| format!("Invalid domain: {}", domain))?;
+                cert_params
+                    .subject_alt_names
+                    .push(rcgen::SanType::DnsName(dns_name));
                 san_names.push(domain.clone());
 
                 if !domain.ends_with(".local") {
                     let local_domain = format!("{}.local", domain);
                     if seen_domains.insert(local_domain.clone()) {
-                        cert_params.subject_alt_names.push(rcgen::SanType::DnsName(
-                            local_domain.as_str().try_into().expect("Invalid domain"),
-                        ));
+                        let local_dns_name = local_domain
+                            .as_str()
+                            .try_into()
+                            .with_context(|| format!("Invalid domain: {}", local_domain))?;
+                        cert_params
+                            .subject_alt_names
+                            .push(rcgen::SanType::DnsName(local_dns_name));
                         san_names.push(local_domain);
                     }
                 }
@@ -339,20 +342,8 @@ impl CertificateGenerator {
         cert_params.not_before = now - Duration::minutes(1);
         cert_params.not_after = now + Duration::days(validity_days as i64);
 
-        let key_pair = KeyPair::generate()?;
-
-        let ca_params = Self::build_ca_params()?;
-        let ca_issuer = Issuer::from_params(&ca_params, &ca_key_pair);
-        let cert = cert_params
-            .signed_by(&key_pair, &ca_issuer)
-            .context("Failed to sign certificate")?;
-
-        let cert_der = cert.der();
-        let ca_cert_der = ca_cert.der();
-
-        let private_key = PrivatePkcs8KeyDer::from(key_pair.serialize_der())
-            .clone_key()
-            .into();
+        let (cert_der, ca_cert_der, private_key) =
+            Self::sign_certificate(ca_cert, ca_key_pair, cert_params).await?;
 
         info!(
             "Generated SSL certificate for domains: {:?} (valid for {} days)",
@@ -360,7 +351,7 @@ impl CertificateGenerator {
         );
 
         Ok(CertificatePair {
-            certificate: vec![cert_der.clone(), ca_cert_der.clone()],
+            certificate: vec![cert_der, ca_cert_der],
             private_key,
             domain: primary_domain,
             local_domain,
@@ -428,20 +419,8 @@ impl CertificateGenerator {
         cert_params.not_before = now - Duration::minutes(1);
         cert_params.not_after = now + Duration::days(validity_days as i64);
 
-        let key_pair = KeyPair::generate()?;
-
-        let ca_params = Self::build_ca_params()?;
-        let ca_issuer = Issuer::from_params(&ca_params, &ca_key_pair);
-        let cert = cert_params
-            .signed_by(&key_pair, &ca_issuer)
-            .context("Failed to sign certificate")?;
-
-        let cert_der = cert.der();
-        let ca_cert_der = ca_cert.der();
-
-        let private_key = PrivatePkcs8KeyDer::from(key_pair.serialize_der())
-            .clone_key()
-            .into();
+        let (cert_der, ca_cert_der, private_key) =
+            Self::sign_certificate(ca_cert, ca_key_pair, cert_params).await?;
 
         info!(
             "Generated wildcard SSL certificate for *.{} (valid for {} days)",
@@ -449,12 +428,39 @@ impl CertificateGenerator {
         );
 
         Ok(CertificatePair {
-            certificate: vec![cert_der.clone(), ca_cert_der.clone()],
+            certificate: vec![cert_der, ca_cert_der],
             private_key,
             domain: wildcard_domain,
             local_domain,
             subject_alt_names: san_names,
         })
+    }
+
+    /// Sign a certificate using the CA key pair, returning (cert_der, ca_cert_der, private_key).
+    async fn sign_certificate(
+        ca_cert: Certificate, ca_key_pair: KeyPair, cert_params: CertificateParams,
+    ) -> Result<(
+        CertificateDer<'static>,
+        CertificateDer<'static>,
+        PrivateKeyDer<'static>,
+    )> {
+        tokio::task::spawn_blocking(move || {
+            let key_pair = KeyPair::generate()?;
+            let ca_params = Self::build_ca_params()?;
+            let ca_issuer = Issuer::from_params(&ca_params, &ca_key_pair);
+            let cert = cert_params
+                .signed_by(&key_pair, &ca_issuer)
+                .context("Failed to sign certificate")?;
+            let cert_der = cert.der().clone();
+            let ca_cert_der = ca_cert.der().clone();
+            let private_key: PrivateKeyDer<'static> =
+                PrivatePkcs8KeyDer::from(key_pair.serialize_der())
+                    .clone_key()
+                    .into();
+            Ok((cert_der, ca_cert_der, private_key))
+        })
+        .await
+        .context("Certificate signing task panicked")?
     }
 
     pub async fn get_ca_info(&self) -> Result<Option<CaInfo>> {

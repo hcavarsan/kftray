@@ -26,6 +26,18 @@ pub struct CertificateInfo {
     pub file_path: Option<String>,
 }
 
+/// Compute the path to the CA certificate file.
+fn ca_cert_path() -> Result<PathBuf> {
+    let base = if let Ok(config_dir) = std::env::var("KFTRAY_CONFIG") {
+        PathBuf::from(config_dir)
+    } else {
+        dirs::config_dir()
+            .context("No config directory found")?
+            .join("kftray")
+    };
+    Ok(base.join("ssl-ca").join("kftray-ca.crt"))
+}
+
 pub struct CertificateManager {
     generator: CertificateGenerator,
     store: CertificateStore,
@@ -274,17 +286,7 @@ impl CertificateManager {
             return Ok(());
         }
 
-        let ca_cert_path = if let Ok(config_dir) = std::env::var("KFTRAY_CONFIG") {
-            PathBuf::from(config_dir)
-                .join("ssl-ca")
-                .join("kftray-ca.crt")
-        } else {
-            dirs::config_dir()
-                .context("No config directory found")?
-                .join("kftray")
-                .join("ssl-ca")
-                .join("kftray-ca.crt")
-        };
+        let ca_cert_path = ca_cert_path()?;
 
         if !ca_cert_path.exists() {
             info!("No CA certificate file found, skipping system trust store removal");
@@ -492,17 +494,7 @@ impl CertificateManager {
         if let Ok(Some(_ca_info)) = self.generator.get_ca_info().await {
             info!("CA certificate file exists, verifying system installation status");
 
-            let ca_cert_path = if let Ok(config_dir) = std::env::var("KFTRAY_CONFIG") {
-                PathBuf::from(config_dir)
-                    .join("ssl-ca")
-                    .join("kftray-ca.crt")
-            } else {
-                dirs::config_dir()
-                    .context("No config directory found")?
-                    .join("kftray")
-                    .join("ssl-ca")
-                    .join("kftray-ca.crt")
-            };
+            let ca_cert_path = ca_cert_path()?;
 
             if ca_cert_path.exists()
                 && let Ok(ca_pem) = tokio::fs::read_to_string(&ca_cert_path).await
@@ -557,17 +549,7 @@ impl CertificateManager {
                 .await?;
             let _ = self.store.remove("_ca_install_temp").await;
 
-            let ca_cert_path = if let Ok(config_dir) = std::env::var("KFTRAY_CONFIG") {
-                PathBuf::from(config_dir)
-                    .join("ssl-ca")
-                    .join("kftray-ca.crt")
-            } else {
-                dirs::config_dir()
-                    .context("No config directory found")?
-                    .join("kftray")
-                    .join("ssl-ca")
-                    .join("kftray-ca.crt")
-            };
+            let ca_cert_path = ca_cert_path()?;
 
             if let Ok(ca_pem) = tokio::fs::read_to_string(&ca_cert_path).await {
                 if let Ok(ca_der_vec) = pem::parse(&ca_pem) {
@@ -595,25 +577,6 @@ impl CertificateManager {
         CA_INSTALL_ATTEMPTED.store(true, std::sync::atomic::Ordering::Relaxed);
 
         info!("CA certificate installation and trust completed");
-        Ok(())
-    }
-
-    pub async fn ensure_ca_installed(&self) -> Result<()> {
-        if let Ok(Some(_ca_info)) = self.generator.get_ca_info().await {
-            info!("CA certificate already installed, skipping installation");
-            return Ok(());
-        }
-
-        info!("CA certificate not found, installing...");
-
-        let _temp_cert = self
-            .generator
-            .generate_for_alias("_ca_install_temp")
-            .await?;
-
-        let _ = self.store.remove("_ca_install_temp").await;
-
-        info!("CA certificate installation completed");
         Ok(())
     }
 
