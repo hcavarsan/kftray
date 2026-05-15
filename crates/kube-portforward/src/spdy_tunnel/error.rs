@@ -6,7 +6,7 @@ pub enum Error {
     InvalidFrame(&'static str),
 
     #[error("zlib compression error: {0}")]
-    Compression(#[source] std::io::Error),
+    Compression(String),
 
     #[error("stream {0} not found")]
     StreamNotFound(u32),

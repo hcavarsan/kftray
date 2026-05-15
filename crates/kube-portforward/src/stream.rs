@@ -93,11 +93,7 @@ impl AsyncBufRead for Stream {
         match &mut self.get_mut().inner {
             StreamInner::Channel(s) => Pin::new(s).poll_fill_buf(cx),
             #[cfg(feature = "spdy-tunnel")]
-            StreamInner::Spdy(_) => {
-                // SPDY streams don't implement AsyncBufRead natively.
-                // Return an empty buffer and let callers use AsyncRead instead.
-                Poll::Ready(Ok(&[]))
-            }
+            StreamInner::Spdy(s) => Pin::new(s).poll_fill_buf(cx),
         }
     }
 
@@ -105,9 +101,7 @@ impl AsyncBufRead for Stream {
         match &mut self.get_mut().inner {
             StreamInner::Channel(s) => Pin::new(s).consume(amt),
             #[cfg(feature = "spdy-tunnel")]
-            StreamInner::Spdy(_) => {
-                let _ = amt;
-            }
+            StreamInner::Spdy(s) => Pin::new(s).consume(amt),
         }
     }
 }
@@ -167,7 +161,7 @@ impl AsyncBufRead for DataStream {
         match &mut self.get_mut().inner {
             DataStreamInner::Channel(s) => Pin::new(s).poll_fill_buf(cx),
             #[cfg(feature = "spdy-tunnel")]
-            DataStreamInner::Spdy(_) => Poll::Ready(Ok(&[])),
+            DataStreamInner::Spdy(s) => Pin::new(s).poll_fill_buf(cx),
         }
     }
 
@@ -175,9 +169,7 @@ impl AsyncBufRead for DataStream {
         match &mut self.get_mut().inner {
             DataStreamInner::Channel(s) => Pin::new(s).consume(amt),
             #[cfg(feature = "spdy-tunnel")]
-            DataStreamInner::Spdy(_) => {
-                let _ = amt;
-            }
+            DataStreamInner::Spdy(s) => Pin::new(s).consume(amt),
         }
     }
 }

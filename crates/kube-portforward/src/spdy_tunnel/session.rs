@@ -47,7 +47,7 @@ impl Session {
     }
 
     pub(crate) fn available(&self) -> usize {
-        usize::MAX
+        self.capacity().saturating_sub(self.in_use())
     }
 
     pub(crate) fn is_full(&self) -> bool {

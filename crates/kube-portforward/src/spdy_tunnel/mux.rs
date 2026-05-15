@@ -33,7 +33,7 @@ use super::stream::Stream;
 const SYN_REPLY_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Command sent from MuxHandle to the background mux task.
-enum MuxCommand {
+pub(crate) enum MuxCommand {
     OpenStream {
         stream_id: u32,
         headers: Vec<(String, String)>,
@@ -82,9 +82,8 @@ impl MuxHandle {
         };
 
         let (ping_tx, ping_rx) = oneshot::channel();
-        let active_pairs_task = Arc::clone(&active_pairs);
         tokio::spawn(async move {
-            run_mux_task(ws, cmd_rx, closed, active_pairs_task, Some(ping_tx)).await;
+            run_mux_task(ws, cmd_rx, closed, Some(ping_tx)).await;
         });
 
         // Wait for the initial PING roundtrip to confirm the upstream
@@ -206,13 +205,17 @@ impl MuxHandle {
     pub(crate) fn is_closed(&self) -> bool {
         self.closed.is_cancelled()
     }
+
+    /// Clone the command sender for use by `PollSender` in stream writes.
+    pub(crate) fn cmd_sender(&self) -> mpsc::Sender<MuxCommand> {
+        self.cmd_tx.clone()
+    }
 }
 
 /// Background task that owns the WebSocket and routes frames.
 async fn run_mux_task(
     ws: WebSocketStream<TokioIo<Upgraded>>, mut cmd_rx: mpsc::Receiver<MuxCommand>,
-    cancel: CancellationToken, _active_pairs: Arc<AtomicUsize>,
-    ping_ready: Option<oneshot::Sender<Result<(), Error>>>,
+    cancel: CancellationToken, ping_ready: Option<oneshot::Sender<Result<(), Error>>>,
 ) {
     let (mut ws_write, mut ws_read) = ws.split();
     let mut codec = SpdyCodec::new();
@@ -236,6 +239,11 @@ async fn run_mux_task(
             return;
         }
     }
+
+    // Keepalive PING: client uses odd IDs; 1 was the initial PING.
+    let mut ping_interval = tokio::time::interval(Duration::from_secs(10));
+    ping_interval.tick().await; // skip the immediate first tick
+    let mut ping_id: u32 = 3;
 
     loop {
         tokio::select! {
@@ -266,6 +274,16 @@ async fn run_mux_task(
                         cancel.cancel();
                         break;
                     }
+                }
+            }
+
+            _ = ping_interval.tick() => {
+                let ping = codec.encode_ping(ping_id);
+                ping_id = ping_id.wrapping_add(2);
+                if let Err(e) = ws_write.send(Message::Binary(ping.into())).await {
+                    tracing::warn!("SPDY mux: keepalive PING failed: {e}");
+                    cancel.cancel();
+                    break;
                 }
             }
 
@@ -323,18 +341,17 @@ async fn run_mux_task(
                                             }
                                         }
                                         Frame::Ping { id } => {
-                                            // If this is the response to our initial PING,
-                                            // signal that the connection is ready.
                                             if let Some(tx) = waiting_ping_ready.take() {
                                                 tracing::debug!(id, "SPDY mux: initial PING response received");
                                                 let _ = tx.send(Ok(()));
-                                            } else {
-                                                // Server-initiated PING — respond with same ID
+                                            } else if id % 2 == 0 {
+                                                // Server-initiated PING (even ID) — respond
                                                 let pong = codec.encode_ping(id);
                                                 if let Err(e) = ws_write.send(Message::Binary(pong.into())).await {
                                                     tracing::warn!("failed to send SPDY PING response: {e}");
                                                 }
                                             }
+                                            // else: response to our keepalive PING (odd ID), ignore
                                         }
                                         Frame::GoAway { last_good_stream_id, status } => {
                                             tracing::warn!(last_good_stream_id, status, "SPDY GOAWAY received");
@@ -450,12 +467,17 @@ async fn handle_command(
 
 /// Format a byte slice as hex for trace logging, truncated to `max_bytes`.
 fn format_hex_preview(data: &[u8], max_bytes: usize) -> String {
-    let preview = &data[..data.len().min(max_bytes)];
-    let hex: Vec<String> = preview.iter().map(|b| format!("{b:02x}")).collect();
-    let suffix = if data.len() > max_bytes {
-        format!("... ({} more bytes)", data.len() - max_bytes)
-    } else {
-        String::new()
-    };
-    format!("{}{suffix}", hex.join(" "))
+    use std::fmt::Write;
+    let limit = data.len().min(max_bytes);
+    let mut s = String::with_capacity(limit * 3);
+    for (i, b) in data[..limit].iter().enumerate() {
+        if i > 0 {
+            s.push(' ');
+        }
+        let _ = write!(s, "{b:02x}");
+    }
+    if data.len() > max_bytes {
+        let _ = write!(s, "... ({} more bytes)", data.len() - max_bytes);
+    }
+    s
 }
