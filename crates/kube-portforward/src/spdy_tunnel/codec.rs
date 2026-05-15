@@ -105,7 +105,7 @@ impl SpdyCodec {
     }
 
     /// Encode a DATA frame.
-    pub(crate) fn encode_data(&mut self, stream_id: u32, payload: &[u8], fin: bool) -> Vec<u8> {
+    pub(crate) fn encode_data(&self, stream_id: u32, payload: &[u8], fin: bool) -> Vec<u8> {
         let mut frame = Vec::with_capacity(8 + payload.len());
 
         // Data frame: stream_id with MSB=0
@@ -118,7 +118,7 @@ impl SpdyCodec {
     }
 
     /// Encode a RST_STREAM control frame.
-    pub(crate) fn encode_rst_stream(&mut self, stream_id: u32, status: u32) -> Vec<u8> {
+    pub(crate) fn encode_rst_stream(&self, stream_id: u32, status: u32) -> Vec<u8> {
         let mut frame = Vec::with_capacity(16);
 
         frame.extend_from_slice(&SPDY_VERSION.to_be_bytes());
@@ -131,8 +131,8 @@ impl SpdyCodec {
         frame
     }
 
-    /// Encode a PING frame (for responding to server pings).
-    pub(crate) fn encode_ping(&mut self, id: u32) -> Vec<u8> {
+    /// Encode a PING frame.
+    pub(crate) fn encode_ping(&self, id: u32) -> Vec<u8> {
         let mut frame = Vec::with_capacity(12);
 
         frame.extend_from_slice(&SPDY_VERSION.to_be_bytes());
@@ -265,8 +265,7 @@ impl SpdyCodec {
         if !self.dict_set_compress {
             self.compressor
                 .set_dictionary(SPDY_DICT)
-                .map_err(compress_io_error)
-                .map_err(Error::Compression)?;
+                .map_err(|e| Error::Compression(e.to_string()))?;
             self.dict_set_compress = true;
         }
 
@@ -288,8 +287,7 @@ impl SpdyCodec {
                     &mut self.compress_buf[total_out..],
                     FlushCompress::Sync,
                 )
-                .map_err(compress_io_error)
-                .map_err(Error::Compression)?;
+                .map_err(|e| Error::Compression(e.to_string()))?;
 
             let consumed = self.compressor.total_in() as usize - before_in;
             let produced = self.compressor.total_out() as usize - before_out;
@@ -302,7 +300,7 @@ impl SpdyCodec {
                         break;
                     }
                     // Need more output space
-                    if total_out >= self.compress_buf.len() - 64 {
+                    if total_out >= self.compress_buf.len().saturating_sub(64) {
                         self.compress_buf.resize(self.compress_buf.len() * 2, 0);
                     }
                 }
@@ -368,13 +366,12 @@ impl SpdyCodec {
                     if e.needs_dictionary().is_some() && !self.dict_set_decompress {
                         self.decompressor
                             .set_dictionary(SPDY_DICT)
-                            .map_err(decompress_io_error)
-                            .map_err(Error::Compression)?;
+                            .map_err(|e| Error::Compression(e.to_string()))?;
                         self.dict_set_decompress = true;
                         // Continue the loop — retry decompression from where we
                         // left off.
                     } else {
-                        return Err(Error::Compression(decompress_io_error(e)));
+                        return Err(Error::Compression(e.to_string()));
                     }
                 }
             }
@@ -433,14 +430,6 @@ fn parse_header_block(data: &[u8]) -> Result<Vec<(String, String)>, Error> {
     }
 
     Ok(headers)
-}
-
-fn compress_io_error(e: flate2::CompressError) -> std::io::Error {
-    std::io::Error::other(e.to_string())
-}
-
-fn decompress_io_error(e: flate2::DecompressError) -> std::io::Error {
-    std::io::Error::other(e.to_string())
 }
 
 #[cfg(test)]
