@@ -162,7 +162,7 @@ impl PortForwarder {
                 selector: label_selector,
             })
             .max_sessions(128)
-            .session_capacity(1)
+            .session_capacity(32)
             .keepalive(
                 std::time::Duration::from_secs(15),
                 std::time::Duration::from_secs(30),

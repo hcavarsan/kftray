@@ -43,4 +43,8 @@ pub enum Error {
 
     #[error(transparent)]
     Io(#[from] std::io::Error),
+
+    #[cfg(feature = "spdy-tunnel")]
+    #[error(transparent)]
+    Spdy(#[from] crate::spdy_tunnel::Error),
 }
