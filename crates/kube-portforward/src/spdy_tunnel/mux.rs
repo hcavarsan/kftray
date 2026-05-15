@@ -7,7 +7,7 @@ use std::sync::atomic::{
 };
 use std::time::Duration;
 
-use bytes::Bytes;
+use bytes::{Buf, Bytes, BytesMut};
 use futures::stream::SplitSink;
 use futures::{
     SinkExt,
@@ -62,8 +62,13 @@ pub(crate) struct MuxHandle {
 }
 
 impl MuxHandle {
-    /// Start the mux background task and return a handle.
-    pub(crate) fn spawn(ws: WebSocketStream<TokioIo<Upgraded>>, cancel: CancellationToken) -> Self {
+    /// Start the mux background task, send an initial PING to verify the
+    /// upstream SPDY connection is established (the API server's TunnelingHandler
+    /// needs time to complete the kubelet SPDY handshake before forwarding
+    /// frames), and return a handle once the PING response arrives.
+    pub(crate) async fn spawn(
+        ws: WebSocketStream<TokioIo<Upgraded>>, cancel: CancellationToken,
+    ) -> Result<Self, Error> {
         let (cmd_tx, cmd_rx) = mpsc::channel(256);
         let active_pairs = Arc::new(AtomicUsize::new(0));
         let closed = cancel.clone();
@@ -76,12 +81,23 @@ impl MuxHandle {
             closed: closed.clone(),
         };
 
+        let (ping_tx, ping_rx) = oneshot::channel();
         let active_pairs_task = Arc::clone(&active_pairs);
         tokio::spawn(async move {
-            run_mux_task(ws, cmd_rx, closed, active_pairs_task).await;
+            run_mux_task(ws, cmd_rx, closed, active_pairs_task, Some(ping_tx)).await;
         });
 
-        handle
+        // Wait for the initial PING roundtrip to confirm the upstream
+        // SPDY connection is alive before returning the handle.
+        match tokio::time::timeout(Duration::from_secs(10), ping_rx).await {
+            Ok(Ok(Ok(()))) => {
+                tracing::debug!("SPDY mux: initial PING succeeded, connection ready");
+                Ok(handle)
+            }
+            Ok(Ok(Err(e))) => Err(e),
+            Ok(Err(_)) => Err(Error::MuxClosed),
+            Err(_) => Err(Error::SynReplyTimeout(0)),
+        }
     }
 
     /// Open a port-forward stream pair (error stream + data stream).
@@ -98,10 +114,12 @@ impl MuxHandle {
         // 1. Open error stream (FIN=true, client closes write side immediately)
         let error_id = self.next_stream_id.fetch_add(2, Ordering::Relaxed);
         let (error_tx, error_rx) = mpsc::channel(64);
+        // SPDY/3.1 requires lowercased header names — Go's spdystream
+        // rejects frames with non-lowercase names ("header was not lowercased").
         let error_headers = vec![
-            ("streamType".to_string(), "error".to_string()),
+            ("streamtype".to_string(), "error".to_string()),
             ("port".to_string(), port.to_string()),
-            ("requestID".to_string(), request_id.to_string()),
+            ("requestid".to_string(), request_id.to_string()),
         ];
         self.send_open(error_id, error_headers, true, error_tx)
             .await?;
@@ -110,9 +128,9 @@ impl MuxHandle {
         let data_id = self.next_stream_id.fetch_add(2, Ordering::Relaxed);
         let (data_tx, data_rx) = mpsc::channel(256);
         let data_headers = vec![
-            ("streamType".to_string(), "data".to_string()),
+            ("streamtype".to_string(), "data".to_string()),
             ("port".to_string(), port.to_string()),
-            ("requestID".to_string(), request_id.to_string()),
+            ("requestid".to_string(), request_id.to_string()),
         ];
         let reply = self
             .send_open(data_id, data_headers, false, data_tx)
@@ -194,11 +212,30 @@ impl MuxHandle {
 async fn run_mux_task(
     ws: WebSocketStream<TokioIo<Upgraded>>, mut cmd_rx: mpsc::Receiver<MuxCommand>,
     cancel: CancellationToken, _active_pairs: Arc<AtomicUsize>,
+    ping_ready: Option<oneshot::Sender<Result<(), Error>>>,
 ) {
     let (mut ws_write, mut ws_read) = ws.split();
     let mut codec = SpdyCodec::new();
     let mut streams: HashMap<u32, mpsc::Sender<Bytes>> = HashMap::new();
     let mut pending_replies: HashMap<u32, oneshot::Sender<Result<(), Error>>> = HashMap::new();
+    let mut frame_buf = BytesMut::with_capacity(16 * 1024);
+    let mut waiting_ping_ready = ping_ready;
+
+    // Send initial PING to confirm upstream SPDY connection is alive.
+    // The API server's TunnelingHandler needs to complete the kubelet
+    // SPDY handshake before it can forward frames.
+    {
+        let ping_frame = codec.encode_ping(1);
+        tracing::debug!("SPDY mux: sending initial PING");
+        if let Err(e) = ws_write.send(Message::Binary(ping_frame.into())).await {
+            tracing::warn!("SPDY mux: failed to send initial PING: {e}");
+            if let Some(tx) = waiting_ping_ready.take() {
+                let _ = tx.send(Err(Error::WebSocket(e)));
+            }
+            cancel.cancel();
+            return;
+        }
+    }
 
     loop {
         tokio::select! {
@@ -235,62 +272,98 @@ async fn run_mux_task(
             msg = ws_read.next() => {
                 match msg {
                     Some(Ok(Message::Binary(data))) => {
-                        match codec.decode_frame(&data) {
-                            Ok(Frame::Data { stream_id, payload, fin }) => {
-                                if let Some(tx) = streams.get(&stream_id) {
-                                    if !payload.is_empty() {
-                                        let _ = tx.send(payload).await;
+                        tracing::trace!(
+                            len = data.len(),
+                            hex = %format_hex_preview(&data, 64),
+                            "SPDY mux: received WS binary message"
+                        );
+                        frame_buf.extend_from_slice(&data);
+
+                        // Parse all complete frames from the accumulated buffer
+                        let mut should_break = false;
+                        while frame_buf.len() >= 8 {
+                            match codec.decode_frame(&frame_buf) {
+                                Ok(Some((frame, consumed))) => {
+                                    frame_buf.advance(consumed);
+                                    match frame {
+                                        Frame::Data { stream_id, payload, fin } => {
+                                            if let Some(tx) = streams.get(&stream_id) {
+                                                if !payload.is_empty() {
+                                                    let _ = tx.send(payload).await;
+                                                }
+                                            } else {
+                                                tracing::debug!(stream_id, "SPDY DATA for unknown stream (dropped)");
+                                            }
+                                            if fin {
+                                                streams.remove(&stream_id);
+                                            }
+                                        }
+                                        Frame::SynReply { stream_id, headers, fin } => {
+                                            tracing::debug!(
+                                                stream_id,
+                                                num_headers = headers.len(),
+                                                fin,
+                                                "SPDY SYN_REPLY received"
+                                            );
+                                            if let Some(reply_tx) = pending_replies.remove(&stream_id) {
+                                                let _ = reply_tx.send(Ok(()));
+                                            }
+                                        }
+                                        Frame::RstStream { stream_id, status } => {
+                                            let was_tracked = streams.remove(&stream_id).is_some();
+                                            if let Some(reply_tx) = pending_replies.remove(&stream_id) {
+                                                let _ = reply_tx.send(Err(Error::StreamReset(stream_id, status)));
+                                            } else if !was_tracked {
+                                                tracing::debug!(
+                                                    stream_id,
+                                                    status,
+                                                    "SPDY RST_STREAM for unknown stream: {}",
+                                                    Error::StreamNotFound(stream_id)
+                                                );
+                                            }
+                                        }
+                                        Frame::Ping { id } => {
+                                            // If this is the response to our initial PING,
+                                            // signal that the connection is ready.
+                                            if let Some(tx) = waiting_ping_ready.take() {
+                                                tracing::debug!(id, "SPDY mux: initial PING response received");
+                                                let _ = tx.send(Ok(()));
+                                            } else {
+                                                // Server-initiated PING — respond with same ID
+                                                let pong = codec.encode_ping(id);
+                                                if let Err(e) = ws_write.send(Message::Binary(pong.into())).await {
+                                                    tracing::warn!("failed to send SPDY PING response: {e}");
+                                                }
+                                            }
+                                        }
+                                        Frame::GoAway { last_good_stream_id, status } => {
+                                            tracing::warn!(last_good_stream_id, status, "SPDY GOAWAY received");
+                                            cancel.cancel();
+                                            should_break = true;
+                                            break;
+                                        }
+                                        Frame::SynStream { stream_id, headers, fin } => {
+                                            tracing::debug!(
+                                                stream_id,
+                                                num_headers = headers.len(),
+                                                fin,
+                                                "SPDY server-initiated SynStream (ignored for port-forward)"
+                                            );
+                                        }
+                                        Frame::Unknown => {}
                                     }
-                                } else {
-                                    tracing::debug!(stream_id, "SPDY DATA for unknown stream (dropped)");
                                 }
-                                if fin {
-                                    streams.remove(&stream_id);
-                                }
-                            }
-                            Ok(Frame::SynReply { stream_id, headers, fin }) => {
-                                tracing::debug!(
-                                    stream_id,
-                                    num_headers = headers.len(),
-                                    fin,
-                                    "SPDY SYN_REPLY received"
-                                );
-                                if let Some(reply_tx) = pending_replies.remove(&stream_id) {
-                                    let _ = reply_tx.send(Ok(()));
+                                Ok(None) => break, // need more data
+                                Err(e) => {
+                                    tracing::warn!("SPDY decode error: {e}");
+                                    cancel.cancel();
+                                    should_break = true;
+                                    break;
                                 }
                             }
-                            Ok(Frame::RstStream { stream_id, status }) => {
-                                let was_tracked = streams.remove(&stream_id).is_some();
-                                if let Some(reply_tx) = pending_replies.remove(&stream_id) {
-                                    let _ = reply_tx.send(Err(Error::StreamReset(stream_id, status)));
-                                } else if !was_tracked {
-                                    tracing::debug!(
-                                        stream_id,
-                                        status,
-                                        "SPDY RST_STREAM for unknown stream: {}",
-                                        Error::StreamNotFound(stream_id)
-                                    );
-                                }
-                            }
-                            Ok(Frame::Ping { id }) => {
-                                // Respond with PONG (same ID)
-                                let pong = codec.encode_ping(id);
-                                if let Err(e) = ws_write.send(Message::Binary(pong.into())).await {
-                                    tracing::warn!("failed to send SPDY PING response: {e}");
-                                }
-                            }
-                            Ok(Frame::SynStream { stream_id, headers, fin }) => {
-                                tracing::debug!(
-                                    stream_id,
-                                    num_headers = headers.len(),
-                                    fin,
-                                    "SPDY server-initiated SynStream (ignored for port-forward)"
-                                );
-                            }
-                            Ok(Frame::Unknown) => {}
-                            Err(e) => {
-                                tracing::warn!("SPDY decode error: {e}");
-                            }
+                        }
+                        if should_break {
+                            break;
                         }
                     }
                     Some(Ok(Message::Ping(p))) => {
@@ -334,6 +407,14 @@ async fn handle_command(
             reply_tx,
         } => {
             let frame_bytes = codec.encode_syn_stream(stream_id, &headers, fin)?;
+            tracing::debug!(
+                stream_id,
+                ?headers,
+                fin,
+                len = frame_bytes.len(),
+                hex = %format_hex_preview(&frame_bytes, 64),
+                "SPDY mux: sending SYN_STREAM"
+            );
             ws_write
                 .send(Message::Binary(frame_bytes.into()))
                 .await
@@ -365,4 +446,16 @@ async fn handle_command(
         }
     }
     Ok(())
+}
+
+/// Format a byte slice as hex for trace logging, truncated to `max_bytes`.
+fn format_hex_preview(data: &[u8], max_bytes: usize) -> String {
+    let preview = &data[..data.len().min(max_bytes)];
+    let hex: Vec<String> = preview.iter().map(|b| format!("{b:02x}")).collect();
+    let suffix = if data.len() > max_bytes {
+        format!("... ({} more bytes)", data.len() - max_bytes)
+    } else {
+        String::new()
+    };
+    format!("{}{suffix}", hex.join(" "))
 }

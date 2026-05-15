@@ -4,15 +4,17 @@ use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 
 use crate::channel::connect::build_channel_session;
+use crate::channel::keepalive::{
+    RecoveryCallback,
+    RecoverySignal,
+};
+#[cfg(feature = "spdy-tunnel")]
+use crate::connect::upgrade_spdy_portforward;
 use crate::connect::{
     KeepaliveConfig,
     upgrade_portforward,
 };
 use crate::error::Error;
-use crate::channel::keepalive::{
-    RecoveryCallback,
-    RecoverySignal,
-};
 use crate::session::Session;
 use crate::subprotocol::Subprotocol;
 
@@ -164,6 +166,38 @@ impl<'c> SessionBuilder<'c> {
             .recovery_callback
             .unwrap_or_else(|| Arc::new(|_signal| {}));
 
+        // Try SPDY tunnel first (no ?ports= in URL, SPDY-only subprotocol).
+        // Falls back to channel protocol if the server rejects SPDY.
+        #[cfg(feature = "spdy-tunnel")]
+        {
+            match upgrade_spdy_portforward(
+                self.client.kube_client(),
+                self.client.cluster_url(),
+                &self.namespace,
+                &self.pod,
+                &recovery_callback,
+            )
+            .await
+            {
+                Ok(upgraded) => {
+                    match crate::spdy_tunnel::Session::new(
+                        upgraded.ws, self.port, cancel.clone(),
+                    )
+                    .await
+                    {
+                        Ok(spdy_session) => return Ok(Session::from_spdy(spdy_session)),
+                        Err(e) => {
+                            tracing::debug!("SPDY session init failed: {e}");
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::debug!("SPDY upgrade failed, falling back to channel: {e}");
+                }
+            }
+        }
+
+        // Channel protocol path: ports in URL, v5/v4 subprotocols
         let upgraded = upgrade_portforward(
             self.client.kube_client(),
             self.client.cluster_url(),
@@ -195,11 +229,9 @@ impl<'c> SessionBuilder<'c> {
             }
             #[cfg(feature = "spdy-tunnel")]
             Subprotocol::Spdy31Tunnel => {
-                let spdy_session = crate::spdy_tunnel::Session::new(
-                    upgraded.ws,
-                    self.port,
-                    cancel,
-                );
+                // Shouldn't happen since upgrade_portforward uses channel subprotocols,
+                // but handle it gracefully.
+                let spdy_session = crate::spdy_tunnel::Session::new(upgraded.ws, self.port, cancel).await?;
                 Ok(Session::from_spdy(spdy_session))
             }
         }

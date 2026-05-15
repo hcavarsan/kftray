@@ -15,6 +15,7 @@ const SYN_STREAM_TYPE: u16 = 0x0001;
 const SYN_REPLY_TYPE: u16 = 0x0002;
 const RST_STREAM_TYPE: u16 = 0x0003;
 const PING_TYPE: u16 = 0x0006;
+const GOAWAY_TYPE: u16 = 0x0007;
 
 const FLAG_FIN: u8 = 0x01;
 
@@ -42,6 +43,10 @@ pub(crate) enum Frame {
     },
     Ping {
         id: u32,
+    },
+    GoAway {
+        last_good_stream_id: u32,
+        status: u32,
     },
     Unknown,
 }
@@ -139,10 +144,13 @@ impl SpdyCodec {
         frame
     }
 
-    /// Decode a SPDY frame from raw bytes.
-    pub(crate) fn decode_frame(&mut self, data: &[u8]) -> Result<Frame, Error> {
+    /// Attempt to decode one SPDY frame from a byte buffer.
+    ///
+    /// Returns `Ok(Some((frame, consumed)))` when a complete frame is available,
+    /// `Ok(None)` when more data is needed, or `Err` on a protocol error.
+    pub(crate) fn decode_frame(&mut self, data: &[u8]) -> Result<Option<(Frame, usize)>, Error> {
         if data.len() < 8 {
-            return Err(Error::InvalidFrame("frame too short"));
+            return Ok(None);
         }
 
         let first_u16 = u16::from_be_bytes([data[0], data[1]]);
@@ -152,23 +160,26 @@ impl SpdyCodec {
         let flags = (flags_len >> 24) as u8;
         let payload_len = (flags_len & 0x00FF_FFFF) as usize;
 
-        if data.len() < 8 + payload_len {
-            return Err(Error::InvalidFrame("frame truncated"));
+        let total = 8 + payload_len;
+        if data.len() < total {
+            return Ok(None);
         }
 
-        let payload = &data[8..8 + payload_len];
+        let payload = &data[8..total];
 
-        if is_control {
+        let frame = if is_control {
             let frame_type = u16::from_be_bytes([data[2], data[3]]);
-            self.decode_control_frame(frame_type, flags, payload)
+            self.decode_control_frame(frame_type, flags, payload)?
         } else {
             let stream_id = u32::from_be_bytes([data[0], data[1], data[2], data[3]]) & 0x7FFF_FFFF;
-            Ok(Frame::Data {
+            Frame::Data {
                 stream_id,
                 payload: Bytes::copy_from_slice(payload),
                 fin: (flags & FLAG_FIN) != 0,
-            })
-        }
+            }
+        };
+
+        Ok(Some((frame, total)))
     }
 
     fn decode_control_frame(
@@ -217,20 +228,35 @@ impl SpdyCodec {
                 let id = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
                 Ok(Frame::Ping { id })
             }
+            GOAWAY_TYPE => {
+                if payload.len() < 8 {
+                    return Err(Error::InvalidFrame("GOAWAY payload too short"));
+                }
+                let last_good_stream_id =
+                    u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
+                let status =
+                    u32::from_be_bytes([payload[4], payload[5], payload[6], payload[7]]);
+                Ok(Frame::GoAway {
+                    last_good_stream_id,
+                    status,
+                })
+            }
             _ => Ok(Frame::Unknown),
         }
     }
 
     /// Compress a header block using the stateful zlib compressor with SPDY
-    /// dictionary.
+    /// dictionary. Header names are lowercased per SPDY/3.1 spec — Go's
+    /// spdystream rejects frames with non-lowercase names.
     fn compress_headers(&mut self, headers: &[(String, String)]) -> Result<Vec<u8>, Error> {
-        // Build uncompressed header block
+        // Build uncompressed header block (names MUST be lowercased)
         let mut block = Vec::new();
         let num_headers = headers.len() as u32;
         block.extend_from_slice(&num_headers.to_be_bytes());
         for (name, value) in headers {
-            block.extend_from_slice(&(name.len() as u32).to_be_bytes());
-            block.extend_from_slice(name.as_bytes());
+            let lower_name = name.to_ascii_lowercase();
+            block.extend_from_slice(&(lower_name.len() as u32).to_be_bytes());
+            block.extend_from_slice(lower_name.as_bytes());
             block.extend_from_slice(&(value.len() as u32).to_be_bytes());
             block.extend_from_slice(value.as_bytes());
         }
@@ -421,14 +447,22 @@ fn decompress_io_error(e: flate2::DecompressError) -> std::io::Error {
 mod tests {
     use super::*;
 
+    /// Helper: decode a complete frame, panicking if the buffer is incomplete.
+    fn decode_one(codec: &mut SpdyCodec, data: &[u8]) -> Frame {
+        codec
+            .decode_frame(data)
+            .expect("decode error")
+            .expect("incomplete frame")
+            .0
+    }
+
     #[test]
     fn encode_decode_data_frame() {
         let mut codec = SpdyCodec::new();
         let payload = b"hello world";
         let encoded = codec.encode_data(3, payload, false);
 
-        let frame = codec.decode_frame(&encoded).unwrap();
-        match frame {
+        match decode_one(&mut codec, &encoded) {
             Frame::Data {
                 stream_id,
                 payload: p,
@@ -447,8 +481,7 @@ mod tests {
         let mut codec = SpdyCodec::new();
         let encoded = codec.encode_data(7, b"", true);
 
-        let frame = codec.decode_frame(&encoded).unwrap();
-        match frame {
+        match decode_one(&mut codec, &encoded) {
             Frame::Data { stream_id, fin, .. } => {
                 assert_eq!(stream_id, 7);
                 assert!(fin);
@@ -462,8 +495,7 @@ mod tests {
         let mut codec = SpdyCodec::new();
         let encoded = codec.encode_rst_stream(5, 2);
 
-        let frame = codec.decode_frame(&encoded).unwrap();
-        match frame {
+        match decode_one(&mut codec, &encoded) {
             Frame::RstStream { stream_id, status } => {
                 assert_eq!(stream_id, 5);
                 assert_eq!(status, 2);
@@ -481,9 +513,8 @@ mod tests {
         ];
 
         let encoded = codec.encode_syn_stream(1, &headers, false).unwrap();
-        let frame = codec.decode_frame(&encoded).unwrap();
 
-        match frame {
+        match decode_one(&mut codec, &encoded) {
             Frame::SynStream {
                 stream_id,
                 headers: decoded_headers,
@@ -507,9 +538,8 @@ mod tests {
         ];
 
         let encoded = codec.encode_syn_stream(1, &headers, true).unwrap();
-        let frame = codec.decode_frame(&encoded).unwrap();
 
-        match frame {
+        match decode_one(&mut codec, &encoded) {
             Frame::SynStream {
                 stream_id,
                 fin,
@@ -544,10 +574,7 @@ mod tests {
         let enc2 = codec.encode_syn_stream(3, &h2, false).unwrap();
 
         // Both should decode correctly with the same codec
-        let f1 = codec.decode_frame(&enc1).unwrap();
-        let f2 = codec.decode_frame(&enc2).unwrap();
-
-        match f1 {
+        match decode_one(&mut codec, &enc1) {
             Frame::SynStream {
                 stream_id,
                 headers,
@@ -559,7 +586,7 @@ mod tests {
             }
             _ => panic!("expected SynStream"),
         }
-        match f2 {
+        match decode_one(&mut codec, &enc2) {
             Frame::SynStream {
                 stream_id,
                 headers,
@@ -578,17 +605,71 @@ mod tests {
         let mut codec = SpdyCodec::new();
         let encoded = codec.encode_ping(42);
 
-        let frame = codec.decode_frame(&encoded).unwrap();
-        match frame {
+        match decode_one(&mut codec, &encoded) {
             Frame::Ping { id } => assert_eq!(id, 42),
             _ => panic!("expected Ping frame"),
         }
     }
 
     #[test]
-    fn frame_too_short_returns_error() {
+    fn incomplete_buffer_returns_none() {
         let mut codec = SpdyCodec::new();
-        let result = codec.decode_frame(&[0u8; 4]);
-        assert!(result.is_err());
+        // Less than 8 bytes — not enough for any frame header
+        assert!(codec.decode_frame(&[0u8; 4]).unwrap().is_none());
+
+        // Full header but truncated payload
+        let encoded = codec.encode_data(1, b"hello", false);
+        assert!(codec.decode_frame(&encoded[..10]).unwrap().is_none());
+    }
+
+    #[test]
+    fn decode_goaway_frame() {
+        let mut codec = SpdyCodec::new();
+        // Hand-craft a GOAWAY frame: version=0x8003, type=0x0007
+        let mut frame = Vec::new();
+        frame.extend_from_slice(&0x8003u16.to_be_bytes()); // version
+        frame.extend_from_slice(&0x0007u16.to_be_bytes()); // GOAWAY type
+        frame.extend_from_slice(&8u32.to_be_bytes()); // flags=0, length=8
+        frame.extend_from_slice(&42u32.to_be_bytes()); // last_good_stream_id
+        frame.extend_from_slice(&0u32.to_be_bytes()); // status OK
+
+        match decode_one(&mut codec, &frame) {
+            Frame::GoAway {
+                last_good_stream_id,
+                status,
+            } => {
+                assert_eq!(last_good_stream_id, 42);
+                assert_eq!(status, 0);
+            }
+            _ => panic!("expected GoAway frame"),
+        }
+    }
+
+    #[test]
+    fn streaming_decode_multiple_frames() {
+        let mut codec = SpdyCodec::new();
+        // Concatenate two data frames into one buffer
+        let f1 = codec.encode_data(1, b"aaa", false);
+        let f2 = codec.encode_data(3, b"bbb", true);
+        let mut buf = Vec::new();
+        buf.extend_from_slice(&f1);
+        buf.extend_from_slice(&f2);
+
+        let (frame1, consumed1) = codec.decode_frame(&buf).unwrap().unwrap();
+        assert_eq!(consumed1, f1.len());
+        match frame1 {
+            Frame::Data { stream_id, .. } => assert_eq!(stream_id, 1),
+            _ => panic!("expected Data"),
+        }
+
+        let (frame2, consumed2) = codec.decode_frame(&buf[consumed1..]).unwrap().unwrap();
+        assert_eq!(consumed2, f2.len());
+        match frame2 {
+            Frame::Data { stream_id, fin, .. } => {
+                assert_eq!(stream_id, 3);
+                assert!(fin);
+            }
+            _ => panic!("expected Data"),
+        }
     }
 }
