@@ -22,12 +22,12 @@ use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
 
-use crate::client::Client;
-use crate::error::Error;
 use crate::channel::keepalive::{
     RecoveryCallback,
     RecoverySignal,
 };
+use crate::client::Client;
+use crate::error::Error;
 use crate::pod_watch::{
     PodChange,
     PodSelector,

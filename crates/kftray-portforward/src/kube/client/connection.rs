@@ -271,10 +271,7 @@ impl<S> Layer<S> for HttpLogLayer {
 
 impl<S, ReqBody, ResBody> Service<http::Request<ReqBody>> for HttpLogService<S>
 where
-    S: Service<http::Request<ReqBody>, Response = http::Response<ResBody>>
-        + Clone
-        + Send
-        + 'static,
+    S: Service<http::Request<ReqBody>, Response = http::Response<ResBody>> + Clone + Send + 'static,
     S::Future: Send + 'static,
     S::Error: std::fmt::Debug,
     ReqBody: std::fmt::Debug,

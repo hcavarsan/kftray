@@ -248,8 +248,11 @@ mod tests {
     use tokio::sync::mpsc;
     use tokio_tungstenite::tungstenite;
 
-    use crate::channel::stream::{ChannelHalf, ShutdownSignal};
     use crate::channel::frame;
+    use crate::channel::stream::{
+        ChannelHalf,
+        ShutdownSignal,
+    };
 
     #[tokio::test]
     async fn channel_half_round_trip() {

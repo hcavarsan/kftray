@@ -220,14 +220,11 @@ impl ShutdownSignal {
             if let Err(err) = self.writer_mailbox.try_send(msg) {
                 match err {
                     mpsc::error::TrySendError::Full(msg) => {
-                        match tokio::runtime::Handle::try_current() {
-                            Ok(handle) => {
-                                let mailbox = self.writer_mailbox.clone();
-                                handle.spawn(async move {
-                                    let _ = mailbox.send(msg).await;
-                                });
-                            }
-                            Err(_) => {}
+                        if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                            let mailbox = self.writer_mailbox.clone();
+                            handle.spawn(async move {
+                                let _ = mailbox.send(msg).await;
+                            });
                         }
                     }
                     mpsc::error::TrySendError::Closed(_) => {}

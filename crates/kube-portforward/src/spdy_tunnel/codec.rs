@@ -1,5 +1,11 @@
 use bytes::Bytes;
-use flate2::{Compress, Decompress, FlushCompress, FlushDecompress, Status};
+use flate2::{
+    Compress,
+    Decompress,
+    FlushCompress,
+    FlushDecompress,
+    Status,
+};
 
 use super::dictionary::SPDY_DICT;
 use super::error::Error;
@@ -72,7 +78,8 @@ impl SpdyCodec {
     ) -> Result<Vec<u8>, Error> {
         let compressed_headers = self.compress_headers(headers)?;
 
-        // SYN_STREAM payload: stream_id(4) + assoc_id(4) + priority(1) + slot(1) + headers
+        // SYN_STREAM payload: stream_id(4) + assoc_id(4) + priority(1) + slot(1) +
+        // headers
         let payload_len = 10 + compressed_headers.len();
         let mut frame = Vec::with_capacity(8 + payload_len);
 
@@ -172,7 +179,8 @@ impl SpdyCodec {
                 if payload.len() < 10 {
                     return Err(Error::InvalidFrame("SYN_STREAM payload too short"));
                 }
-                let stream_id = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
+                let stream_id =
+                    u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
                 let headers = self.decompress_headers(&payload[10..])?;
                 Ok(Frame::SynStream {
                     stream_id,
@@ -184,7 +192,8 @@ impl SpdyCodec {
                 if payload.len() < 4 {
                     return Err(Error::InvalidFrame("SYN_REPLY payload too short"));
                 }
-                let stream_id = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
+                let stream_id =
+                    u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
                 let headers = self.decompress_headers(&payload[4..])?;
                 Ok(Frame::SynReply {
                     stream_id,
@@ -196,7 +205,8 @@ impl SpdyCodec {
                 if payload.len() < 8 {
                     return Err(Error::InvalidFrame("RST_STREAM payload too short"));
                 }
-                let stream_id = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
+                let stream_id =
+                    u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
                 let status = u32::from_be_bytes([payload[4], payload[5], payload[6], payload[7]]);
                 Ok(Frame::RstStream { stream_id, status })
             }
@@ -211,7 +221,8 @@ impl SpdyCodec {
         }
     }
 
-    /// Compress a header block using the stateful zlib compressor with SPDY dictionary.
+    /// Compress a header block using the stateful zlib compressor with SPDY
+    /// dictionary.
     fn compress_headers(&mut self, headers: &[(String, String)]) -> Result<Vec<u8>, Error> {
         // Build uncompressed header block
         let mut block = Vec::new();
@@ -276,10 +287,9 @@ impl SpdyCodec {
         Ok(self.compress_buf[..total_out].to_vec())
     }
 
-    /// Decompress a header block using the stateful zlib decompressor with SPDY dictionary.
-    fn decompress_headers(
-        &mut self, compressed: &[u8],
-    ) -> Result<Vec<(String, String)>, Error> {
+    /// Decompress a header block using the stateful zlib decompressor with SPDY
+    /// dictionary.
+    fn decompress_headers(&mut self, compressed: &[u8]) -> Result<Vec<(String, String)>, Error> {
         if compressed.is_empty() {
             return Ok(Vec::new());
         }
@@ -335,7 +345,8 @@ impl SpdyCodec {
                             .map_err(decompress_io_error)
                             .map_err(Error::Compression)?;
                         self.dict_set_decompress = true;
-                        // Continue the loop — retry decompression from where we left off.
+                        // Continue the loop — retry decompression from where we
+                        // left off.
                     } else {
                         return Err(Error::Compression(decompress_io_error(e)));
                     }
@@ -359,9 +370,12 @@ fn parse_header_block(data: &[u8]) -> Result<Vec<(String, String)>, Error> {
         if offset + 4 > data.len() {
             return Err(Error::InvalidFrame("header block truncated at name length"));
         }
-        let name_len =
-            u32::from_be_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]])
-                as usize;
+        let name_len = u32::from_be_bytes([
+            data[offset],
+            data[offset + 1],
+            data[offset + 2],
+            data[offset + 3],
+        ]) as usize;
         offset += 4;
 
         if offset + name_len > data.len() {
@@ -371,11 +385,16 @@ fn parse_header_block(data: &[u8]) -> Result<Vec<(String, String)>, Error> {
         offset += name_len;
 
         if offset + 4 > data.len() {
-            return Err(Error::InvalidFrame("header block truncated at value length"));
+            return Err(Error::InvalidFrame(
+                "header block truncated at value length",
+            ));
         }
-        let value_len =
-            u32::from_be_bytes([data[offset], data[offset + 1], data[offset + 2], data[offset + 3]])
-                as usize;
+        let value_len = u32::from_be_bytes([
+            data[offset],
+            data[offset + 1],
+            data[offset + 2],
+            data[offset + 3],
+        ]) as usize;
         offset += 4;
 
         if offset + value_len > data.len() {
@@ -391,11 +410,11 @@ fn parse_header_block(data: &[u8]) -> Result<Vec<(String, String)>, Error> {
 }
 
 fn compress_io_error(e: flate2::CompressError) -> std::io::Error {
-    std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+    std::io::Error::other(e.to_string())
 }
 
 fn decompress_io_error(e: flate2::DecompressError) -> std::io::Error {
-    std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
+    std::io::Error::other(e.to_string())
 }
 
 #[cfg(test)]
@@ -430,9 +449,7 @@ mod tests {
 
         let frame = codec.decode_frame(&encoded).unwrap();
         match frame {
-            Frame::Data {
-                stream_id, fin, ..
-            } => {
+            Frame::Data { stream_id, fin, .. } => {
                 assert_eq!(stream_id, 7);
                 assert!(fin);
             }
@@ -494,7 +511,10 @@ mod tests {
 
         match frame {
             Frame::SynStream {
-                stream_id, fin, headers: h, ..
+                stream_id,
+                fin,
+                headers: h,
+                ..
             } => {
                 assert_eq!(stream_id, 1);
                 assert!(fin);
@@ -528,7 +548,11 @@ mod tests {
         let f2 = codec.decode_frame(&enc2).unwrap();
 
         match f1 {
-            Frame::SynStream { stream_id, headers, fin } => {
+            Frame::SynStream {
+                stream_id,
+                headers,
+                fin,
+            } => {
                 assert_eq!(stream_id, 1);
                 assert!(fin);
                 assert_eq!(headers, h1);
@@ -536,7 +560,11 @@ mod tests {
             _ => panic!("expected SynStream"),
         }
         match f2 {
-            Frame::SynStream { stream_id, headers, fin } => {
+            Frame::SynStream {
+                stream_id,
+                headers,
+                fin,
+            } => {
                 assert_eq!(stream_id, 3);
                 assert!(!fin);
                 assert_eq!(headers, h2);
