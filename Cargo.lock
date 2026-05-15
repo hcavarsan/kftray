@@ -2002,6 +2002,7 @@ checksum = "843fba2746e448b37e26a819579957415c8cef339bf08564fe8b7ddbd959573c"
 dependencies = [
  "crc32fast",
  "miniz_oxide",
+ "zlib-rs",
 ]
 
 [[package]]
@@ -3739,6 +3740,9 @@ dependencies = [
  "tauri-plugin-updater",
  "tempfile",
  "tokio",
+ "tracing",
+ "tracing-log",
+ "tracing-subscriber",
  "whoami",
  "windows 0.62.2",
 ]
@@ -3865,6 +3869,7 @@ dependencies = [
  "arc-swap",
  "bytes",
  "dashmap",
+ "flate2",
  "futures",
  "http",
  "hyper",
@@ -10149,6 +10154,12 @@ dependencies = [
  "ed25519-dalek",
  "thiserror 2.0.18",
 ]
+
+[[package]]
+name = "zlib-rs"
+version = "0.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3be3d40e40a133f9c916ee3f9f4fa2d9d63435b5fbe1bfc6d9dae0aa0ada1513"
 
 [[package]]
 name = "zmij"

@@ -1,199 +1,118 @@
-use std::sync::Arc;
-use std::time::Duration;
-
-use parking_lot::Mutex;
-use tokio::sync::mpsc;
-use tokio::task::JoinSet;
-use tokio_tungstenite::tungstenite;
 use tokio_util::sync::CancellationToken;
-use tungstenite::Message;
 
-use crate::allocator::ChannelAllocator;
 use crate::error::Error;
-use crate::keepalive::{
-    KeepaliveHandle,
-    RecoveryCallback,
-};
-use crate::routing::Router;
-use crate::shutdown;
-use crate::stream::{
-    ChannelHalf,
-    ShutdownSignal,
-    Stream,
-};
+use crate::stream::Stream;
 use crate::subprotocol::Subprotocol;
-
-#[derive(Clone, Copy)]
-struct AllocatedIds {
-    data: u8,
-    error: u8,
-}
-
-pub(crate) struct ReleaseGuard {
-    ids: Option<AllocatedIds>,
-    allocator: Arc<Mutex<ChannelAllocator>>,
-    router: Router,
-    shutdown_signal: Arc<ShutdownSignal>,
-    cancel: CancellationToken,
-}
-
-impl ReleaseGuard {
-    fn new(
-        ids: AllocatedIds, allocator: Arc<Mutex<ChannelAllocator>>, router: Router,
-        shutdown_signal: Arc<ShutdownSignal>, cancel: CancellationToken,
-    ) -> Self {
-        Self {
-            ids: Some(ids),
-            allocator,
-            router,
-            shutdown_signal,
-            cancel,
-        }
-    }
-}
-
-impl Drop for ReleaseGuard {
-    fn drop(&mut self) {
-        let Some(ids) = self.ids.take() else { return };
-        self.shutdown_signal.fire();
-        self.router.remove(ids.data);
-        self.router.remove(ids.error);
-        let drained = {
-            let mut alloc = self.allocator.lock();
-            alloc.release_pair(ids.data);
-            alloc.is_drained()
-        };
-        if drained {
-            self.cancel.cancel();
-        }
-    }
-}
 
 /// One WebSocket port-forward session that multiplexes up to `capacity_pairs`
 /// concurrent local connections (each backed by a data/error channel pair)
 /// over a single upgrade.
 pub struct Session {
-    allocator: Arc<Mutex<ChannelAllocator>>,
-    router: Router,
-    writer_mailbox: mpsc::Sender<Message>,
-    cancel: CancellationToken,
-    #[allow(dead_code)]
-    keepalive: KeepaliveHandle,
-    protocol: Subprotocol,
-    join_set: JoinSet<Result<(), Error>>,
-    drain_timeout: Duration,
-    #[allow(dead_code)]
-    recovery_callback: RecoveryCallback,
+    inner: SessionInner,
 }
 
-#[allow(clippy::too_many_arguments)]
+enum SessionInner {
+    Channel(crate::channel::Session),
+    #[cfg(feature = "spdy-tunnel")]
+    Spdy(crate::spdy_tunnel::Session),
+}
+
 impl Session {
-    pub(crate) fn new(
-        allocator: Arc<Mutex<ChannelAllocator>>, router: Router,
-        writer_mailbox: mpsc::Sender<Message>, cancel: CancellationToken,
-        keepalive: KeepaliveHandle, protocol: Subprotocol, join_set: JoinSet<Result<(), Error>>,
-        drain_timeout: Duration, recovery_callback: RecoveryCallback,
-    ) -> Self {
+    pub(crate) fn from_channel(session: crate::channel::Session) -> Self {
         Self {
-            allocator,
-            router,
-            writer_mailbox,
-            cancel,
-            keepalive,
-            protocol,
-            join_set,
-            drain_timeout,
-            recovery_callback,
+            inner: SessionInner::Channel(session),
+        }
+    }
+
+    #[cfg(feature = "spdy-tunnel")]
+    pub(crate) fn from_spdy(session: crate::spdy_tunnel::Session) -> Self {
+        Self {
+            inner: SessionInner::Spdy(session),
         }
     }
 
     /// Allocate the next channel pair and return a bidirectional [`Stream`].
     pub async fn connect(&self) -> Result<Stream, Error> {
-        let (data_id, error_id) = {
-            let mut alloc = self.allocator.lock();
-            let live = alloc.live_count();
-            let capacity = alloc.capacity_pairs();
-            alloc.allocate_pair().ok_or(Error::CapacityExhausted {
-                in_use: live,
-                capacity,
-            })?
-        };
-
-        tracing::debug!(data_id, error_id, "opening channel pair");
-
-        let (data_half, data_inbound_tx) = ChannelHalf::pair(data_id, self.writer_mailbox.clone());
-        let (error_half, error_inbound_tx) =
-            ChannelHalf::pair(error_id, self.writer_mailbox.clone());
-
-        self.router.insert(data_id, data_inbound_tx, false);
-        self.router.insert(error_id, error_inbound_tx, false);
-
-        let shutdown_signal = ShutdownSignal::new(
-            data_id,
-            error_id,
-            self.writer_mailbox.clone(),
-            self.protocol.supports_half_close(),
-        );
-
-        let guard = ReleaseGuard::new(
-            AllocatedIds {
-                data: data_id,
-                error: error_id,
-            },
-            Arc::clone(&self.allocator),
-            self.router.clone(),
-            Arc::clone(&shutdown_signal),
-            self.cancel.clone(),
-        );
-
-        Ok(Stream::new(data_half, error_half, shutdown_signal, guard))
+        match &self.inner {
+            SessionInner::Channel(s) => s.connect().await.map(Stream::from_channel),
+            #[cfg(feature = "spdy-tunnel")]
+            SessionInner::Spdy(s) => s
+                .connect()
+                .await
+                .map(Stream::from_spdy)
+                .map_err(Error::from),
+        }
     }
 
     pub fn protocol(&self) -> Subprotocol {
-        self.protocol
+        match &self.inner {
+            SessionInner::Channel(s) => s.protocol(),
+            #[cfg(feature = "spdy-tunnel")]
+            SessionInner::Spdy(s) => s.protocol(),
+        }
     }
 
     /// Maximum number of concurrent streams this session can hold.
     pub fn capacity(&self) -> usize {
-        self.allocator.lock().capacity_pairs()
+        match &self.inner {
+            SessionInner::Channel(s) => s.capacity(),
+            #[cfg(feature = "spdy-tunnel")]
+            SessionInner::Spdy(s) => s.capacity(),
+        }
     }
 
     /// Number of channel pairs currently in use.
     pub fn in_use(&self) -> usize {
-        self.allocator.lock().live_count()
+        match &self.inner {
+            SessionInner::Channel(s) => s.in_use(),
+            #[cfg(feature = "spdy-tunnel")]
+            SessionInner::Spdy(s) => s.in_use(),
+        }
     }
 
     /// Pairs still available for new streams.
     pub fn available(&self) -> usize {
-        let alloc = self.allocator.lock();
-        alloc.capacity_pairs() - alloc.live_count()
+        match &self.inner {
+            SessionInner::Channel(s) => s.available(),
+            #[cfg(feature = "spdy-tunnel")]
+            SessionInner::Spdy(s) => s.available(),
+        }
     }
 
     pub fn is_full(&self) -> bool {
-        self.allocator.lock().is_full()
+        match &self.inner {
+            SessionInner::Channel(s) => s.is_full(),
+            #[cfg(feature = "spdy-tunnel")]
+            SessionInner::Spdy(s) => s.is_full(),
+        }
     }
 
     /// Returns true if every channel pair this session preallocated has been
     /// allocated AND released. A drained session can never produce another
     /// stream — callers should drop it and open a new session.
     pub fn is_drained(&self) -> bool {
-        self.allocator.lock().is_drained()
+        match &self.inner {
+            SessionInner::Channel(s) => s.is_drained(),
+            #[cfg(feature = "spdy-tunnel")]
+            SessionInner::Spdy(s) => s.is_drained(),
+        }
     }
 
     pub fn cancellation_token(&self) -> CancellationToken {
-        self.cancel.clone()
+        match &self.inner {
+            SessionInner::Channel(s) => s.cancellation_token(),
+            #[cfg(feature = "spdy-tunnel")]
+            SessionInner::Spdy(s) => s.cancellation_token(),
+        }
     }
 
     /// Gracefully close the session, draining background tasks within the
     /// configured drain timeout before aborting any leftover work.
-    pub async fn close(mut self) -> Result<(), Error> {
-        shutdown::shutdown(
-            self.writer_mailbox.clone(),
-            self.cancel.clone(),
-            &mut self.join_set,
-            self.drain_timeout,
-        )
-        .await;
-        Ok(())
+    pub async fn close(self) -> Result<(), Error> {
+        match self.inner {
+            SessionInner::Channel(s) => s.close().await,
+            #[cfg(feature = "spdy-tunnel")]
+            SessionInner::Spdy(s) => s.close().await,
+        }
     }
 }

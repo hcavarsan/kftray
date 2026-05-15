@@ -22,12 +22,12 @@ use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
 
-use crate::client::Client;
-use crate::error::Error;
-use crate::keepalive::{
+use crate::channel::keepalive::{
     RecoveryCallback,
     RecoverySignal,
 };
+use crate::client::Client;
+use crate::error::Error;
 use crate::pod_watch::{
     PodChange,
     PodSelector,
@@ -50,7 +50,7 @@ async fn drain_and_cancel_all(sessions: &TokioRwLock<SessionPool>) {
 }
 
 const DEFAULT_MAX_SESSIONS: usize = 128;
-const DEFAULT_SESSION_CAPACITY: usize = 1;
+const DEFAULT_SESSION_CAPACITY: usize = 32;
 const DEFAULT_PING: Duration = Duration::from_secs(15);
 const DEFAULT_WATCHDOG: Duration = Duration::from_secs(30);
 const DEFAULT_DRAIN: Duration = Duration::from_secs(2);
@@ -704,7 +704,7 @@ mod tests {
     fn default_config_sane() {
         let c = ForwarderConfig::default();
         assert_eq!(c.max_sessions, 128);
-        assert_eq!(c.session_capacity, 1);
+        assert_eq!(c.session_capacity, 32);
         assert!(c.prefetch_threshold > 0.0 && c.prefetch_threshold < 1.0);
     }
 }

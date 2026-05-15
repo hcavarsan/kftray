@@ -56,3 +56,7 @@ reqwest = { version = "0.13.3", default-features = false, features = [
   "http2",
   "charset",
 ] }
+
+[features]
+default = []
+spdy-tunnel = ["kftray-portforward/spdy-tunnel"]

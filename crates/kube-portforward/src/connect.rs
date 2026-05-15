@@ -1,37 +1,27 @@
-use std::sync::Arc;
 use std::time::Duration;
 
-use futures::StreamExt;
 use http::{
     Method,
     Request,
     Uri,
     header,
 };
-use parking_lot::Mutex;
-use tokio::sync::mpsc;
-use tokio::task::JoinSet;
+use hyper::upgrade::Upgraded;
+use hyper_util::rt::TokioIo;
+use kube::client::Body;
 use tokio_tungstenite::WebSocketStream;
 use tokio_tungstenite::tungstenite::protocol::{
     Role,
     WebSocketConfig,
 };
-use tokio_util::sync::CancellationToken;
-use tungstenite::Message;
 
-use crate::allocator::ChannelAllocator;
-use crate::error::Error;
-use crate::keepalive::{
+use crate::channel::keepalive::{
     RecoveryCallback,
     RecoverySignal,
-    spawn_keepalive,
 };
-use crate::reader::spawn_reader;
-use crate::routing::Router;
-use crate::session::Session;
+use crate::error::Error;
 use crate::subprotocol::Subprotocol;
 use crate::version;
-use crate::writer::writer_task;
 
 fn name_is_valid(s: &str) -> bool {
     !s.is_empty()
@@ -80,137 +70,275 @@ pub(crate) fn build_portforward_request(
         })
 }
 
+/// Build a port-forward request for SPDY/3.1 tunneling (no `?ports=` query).
+///
+/// The SPDY protocol sends port information via SYN_STREAM headers, not URL
+/// query parameters.
+#[cfg(feature = "spdy-tunnel")]
+pub(crate) fn build_spdy_portforward_request(
+    cluster_url: &Uri, namespace: &str, pod: &str,
+) -> Result<Request<Vec<u8>>, Error> {
+    if !name_is_valid(namespace) || !name_is_valid(pod) {
+        return Err(Error::Configuration(
+            "invalid namespace or pod name: contains forbidden character or non-ASCII".into(),
+        ));
+    }
+    let path = format!("/api/v1/namespaces/{namespace}/pods/{pod}/portforward");
+    let scheme = cluster_url
+        .scheme()
+        .ok_or_else(|| Error::Configuration("cluster_url is missing scheme".into()))?;
+    let authority = cluster_url
+        .authority()
+        .ok_or_else(|| Error::Configuration("cluster_url is missing authority".into()))?;
+    let uri: Uri = format!("{scheme}://{authority}{path}")
+        .parse()
+        .map_err(|e: http::uri::InvalidUri| {
+            Error::Configuration(format!("invalid port-forward URI: {e}"))
+        })?;
+    Request::builder()
+        .method(Method::GET)
+        .uri(uri)
+        .header(
+            header::SEC_WEBSOCKET_PROTOCOL,
+            "SPDY/3.1+portforward.k8s.io",
+        )
+        .body(Vec::new())
+        .map_err(|e: http::Error| {
+            Error::Configuration(format!("failed to build port-forward request: {e}"))
+        })
+}
+
 pub(crate) struct KeepaliveConfig {
     pub ping_interval: Duration,
     pub watchdog_timeout: Duration,
 }
 
-#[allow(clippy::too_many_arguments)]
-pub(crate) async fn open_session(
-    kube_client: &kube::Client, cluster_url: &Uri, namespace: &str, pod: &str, port: u16,
-    capacity_pairs: usize, _subprotocols: &[Subprotocol], cancel: CancellationToken,
-    keepalive_config: KeepaliveConfig, drain_timeout: Duration,
-    recovery_callback: RecoveryCallback,
-) -> Result<Session, Error> {
-    let request = build_portforward_request(cluster_url, namespace, pod, port, capacity_pairs)?;
+/// Result of a successful WebSocket upgrade for port-forwarding.
+pub(crate) struct UpgradedTransport {
+    pub ws: WebSocketStream<TokioIo<Upgraded>>,
+    pub protocol: Subprotocol,
+}
 
-    let request_uri = request.uri().clone();
-    let offered_protocols = request
-        .headers()
-        .get(header::SEC_WEBSOCKET_PROTOCOL)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("<none>")
-        .to_string();
+/// Perform a WebSocket upgrade offering ONLY `SPDY/3.1+portforward.k8s.io`.
+///
+/// Uses the SPDY URL (no `?ports=` query). Returns `Ok(UpgradedTransport)`
+/// on success, or an error if the server rejects the SPDY subprotocol.
+#[cfg(feature = "spdy-tunnel")]
+pub(crate) async fn upgrade_spdy_portforward(
+    kube_client: &kube::Client, cluster_url: &Uri, namespace: &str, pod: &str,
+    recovery_callback: &RecoveryCallback,
+) -> Result<UpgradedTransport, Error> {
+    let request = build_spdy_portforward_request(cluster_url, namespace, pod)?;
+
+    let (mut parts, body) = request.into_parts();
+    parts
+        .headers
+        .insert(header::CONNECTION, "Upgrade".parse().unwrap());
+    parts
+        .headers
+        .insert(header::UPGRADE, "websocket".parse().unwrap());
+    parts
+        .headers
+        .insert(header::SEC_WEBSOCKET_VERSION, "13".parse().unwrap());
+    let key = tokio_tungstenite::tungstenite::handshake::client::generate_key();
+    parts
+        .headers
+        .insert(header::SEC_WEBSOCKET_KEY, key.parse().unwrap());
+    // Only offer SPDY subprotocol
+    parts.headers.insert(
+        header::SEC_WEBSOCKET_PROTOCOL,
+        "SPDY/3.1+portforward.k8s.io".parse().unwrap(),
+    );
+
+    let request_uri = parts.uri.clone();
     tracing::debug!(
         uri = %request_uri,
-        sec_websocket_protocol = %offered_protocols,
-        capacity_pairs,
-        "open_session: sending WebSocket upgrade request"
+        sec_websocket_protocol = "SPDY/3.1+portforward.k8s.io",
+        "upgrade_spdy_portforward: sending WebSocket upgrade request"
     );
 
     let t_upgrade = std::time::Instant::now();
-    let connection = match kube_client.connect(request).await {
-        Ok(c) => c,
+    let res = match kube_client
+        .send(Request::from_parts(parts, Body::from(body)))
+        .await
+    {
+        Ok(r) => r,
         Err(e) => {
             let msg = e.to_string();
-            tracing::debug!(error = %msg, "open_session: WebSocket upgrade failed");
+            tracing::debug!(error = %msg, "upgrade_spdy_portforward: upgrade failed");
             recovery_callback(RecoverySignal::UpgradeFailed {
                 status: None,
                 message: msg,
             });
-            // Attempt version detection to give a better error for old clusters
+            return Err(Error::Kube(e));
+        }
+    };
+
+    if res.status() != http::StatusCode::SWITCHING_PROTOCOLS {
+        let status_code = res.status().as_u16();
+        let msg = format!("SPDY upgrade: expected 101, got {status_code}");
+        return Err(Error::UpgradeFailed {
+            status: Some(status_code),
+            message: msg,
+        });
+    }
+
+    let negotiated_str = res
+        .headers()
+        .get(header::SEC_WEBSOCKET_PROTOCOL)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    let protocol =
+        Subprotocol::from_negotiated(negotiated_str).ok_or_else(|| Error::ProtocolViolation {
+            context: "SPDY WebSocket upgrade",
+            detail: format!(
+                "server negotiated unsupported subprotocol: {:?}",
+                negotiated_str
+            ),
+        })?;
+
+    tracing::info!(
+        pod = %pod,
+        elapsed_ms = t_upgrade.elapsed().as_millis() as u64,
+        negotiated_protocol = %protocol,
+        "upgrade_spdy_portforward: upgrade complete"
+    );
+
+    let upgraded = hyper::upgrade::on(res)
+        .await
+        .map_err(|e| Error::Network(format!("failed to complete HTTP upgrade: {e}")))?;
+
+    let mut ws_config = WebSocketConfig::default();
+    ws_config.max_message_size = Some(64 * 1024 * 1024);
+    ws_config.max_frame_size = Some(16 * 1024 * 1024);
+    let ws =
+        WebSocketStream::from_raw_socket(TokioIo::new(upgraded), Role::Client, Some(ws_config))
+            .await;
+
+    Ok(UpgradedTransport { ws, protocol })
+}
+
+/// Perform the WebSocket upgrade for port-forwarding and return the raw
+/// WebSocket stream plus negotiated subprotocol.
+///
+/// This bypasses `kube::Client::connect()` because kube-rs only supports
+/// `v4.channel.k8s.io` and `v5.channel.k8s.io` subprotocols — it rejects
+/// `SPDY/3.1+portforward.k8s.io`. We use `kube::Client::send()` to perform
+/// a raw HTTP upgrade with our own subprotocol negotiation and validation.
+pub(crate) async fn upgrade_portforward(
+    kube_client: &kube::Client, cluster_url: &Uri, namespace: &str, pod: &str, port: u16,
+    capacity_pairs: usize, recovery_callback: &RecoveryCallback,
+) -> Result<UpgradedTransport, Error> {
+    let request = build_portforward_request(cluster_url, namespace, pod, port, capacity_pairs)?;
+
+    // Rebuild the request with WebSocket upgrade headers.
+    // kube::Client::connect() would do this but it also validates the response
+    // against its own hardcoded StreamProtocol enum (V4/V5 only), rejecting
+    // SPDY/3.1+portforward.k8s.io. So we do the upgrade manually.
+    let (mut parts, body) = request.into_parts();
+    parts
+        .headers
+        .insert(header::CONNECTION, "Upgrade".parse().unwrap());
+    parts
+        .headers
+        .insert(header::UPGRADE, "websocket".parse().unwrap());
+    parts
+        .headers
+        .insert(header::SEC_WEBSOCKET_VERSION, "13".parse().unwrap());
+    let key = tokio_tungstenite::tungstenite::handshake::client::generate_key();
+    parts
+        .headers
+        .insert(header::SEC_WEBSOCKET_KEY, key.parse().unwrap());
+    // Override the Sec-WebSocket-Protocol with our full offer list
+    // (build_portforward_request already sets it, but we re-set after kube
+    // would normally override)
+    parts.headers.insert(
+        header::SEC_WEBSOCKET_PROTOCOL,
+        Subprotocol::offered_header_value().parse().unwrap(),
+    );
+
+    let request_uri = parts.uri.clone();
+    let offered = Subprotocol::offered_header_value();
+    tracing::debug!(
+        uri = %request_uri,
+        sec_websocket_protocol = %offered,
+        capacity_pairs,
+        "upgrade_portforward: sending WebSocket upgrade request"
+    );
+
+    let t_upgrade = std::time::Instant::now();
+    let res = match kube_client
+        .send(Request::from_parts(parts, Body::from(body)))
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            let msg = e.to_string();
+            tracing::debug!(error = %msg, "upgrade_portforward: WebSocket upgrade failed");
+            recovery_callback(RecoverySignal::UpgradeFailed {
+                status: None,
+                message: msg,
+            });
             return match version::detect(kube_client).await {
                 Ok(info) if !info.supports_ws_portforward() => Err(Error::ServerVersionTooOld {
                     detected: info.git_version,
                     required: "1.30",
                 }),
-                // Preserve original kube::Error via #[from] variant
                 _ => Err(Error::Kube(e)),
             };
         }
     };
 
-    let negotiated = if connection.supports_stream_close() {
-        "v5.channel.k8s.io"
-    } else {
-        "v4.channel.k8s.io"
-    };
+    // Validate 101 Switching Protocols
+    if res.status() != http::StatusCode::SWITCHING_PROTOCOLS {
+        let status_code = res.status().as_u16();
+        let msg = format!("expected 101 Switching Protocols, got {status_code}");
+        recovery_callback(RecoverySignal::UpgradeFailed {
+            status: Some(status_code),
+            message: msg.clone(),
+        });
+        return Err(Error::UpgradeFailed {
+            status: Some(status_code),
+            message: msg,
+        });
+    }
+
+    // Extract the negotiated subprotocol from the response header
+    let negotiated_str = res
+        .headers()
+        .get(header::SEC_WEBSOCKET_PROTOCOL)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    let protocol =
+        Subprotocol::from_negotiated(negotiated_str).ok_or_else(|| Error::ProtocolViolation {
+            context: "WebSocket upgrade",
+            detail: format!(
+                "server negotiated unsupported subprotocol: {:?}",
+                negotiated_str
+            ),
+        })?;
+
     tracing::info!(
         pod = %pod,
         port,
         elapsed_ms = t_upgrade.elapsed().as_millis() as u64,
-        negotiated_protocol = negotiated,
-        "open_session: kube_client.connect upgrade complete"
+        negotiated_protocol = %protocol,
+        "upgrade_portforward: upgrade complete"
     );
 
-    let protocol = if connection.supports_stream_close() {
-        Subprotocol::V5
-    } else {
-        Subprotocol::V4
-    };
+    // Extract the upgraded connection
+    let upgraded = hyper::upgrade::on(res)
+        .await
+        .map_err(|e| Error::Network(format!("failed to complete HTTP upgrade: {e}")))?;
 
-    let mut join_set: JoinSet<Result<(), Error>> = JoinSet::new();
-    let (writer_tx, writer_rx) = mpsc::channel::<Message>(256);
-
-    let keepalive = spawn_keepalive(
-        writer_tx.clone(),
-        cancel.clone(),
-        Arc::clone(&recovery_callback),
-        keepalive_config.ping_interval,
-        keepalive_config.watchdog_timeout,
-        &mut join_set,
-    );
-
-    let raw = connection.into_stream().into_inner();
-    // WebSocketConfig is #[non_exhaustive], so struct-update syntax is not
-    // available
     let mut ws_config = WebSocketConfig::default();
     ws_config.max_message_size = Some(64 * 1024 * 1024);
     ws_config.max_frame_size = Some(16 * 1024 * 1024);
-    let ws = WebSocketStream::from_raw_socket(raw, Role::Client, Some(ws_config)).await;
-    let (sink, stream) = ws.split();
-    join_set.spawn(writer_task(sink, writer_rx, cancel.clone()));
-    let router = Router::new();
+    let ws =
+        WebSocketStream::from_raw_socket(TokioIo::new(upgraded), Role::Client, Some(ws_config))
+            .await;
 
-    // Pre-register every channel the apiserver pre-allocated at handshake
-    // (2 per `?ports=` URL occurrence) with a discard sender. The server
-    // sends one initial port-frame per channel right after the upgrade
-    // completes; without pre-registration those frames arrive before any
-    // user-driven Session::connect() call and would be dropped, leaving
-    // routing in port_seen=false for IDs that already had their port-frame.
-    // The next real payload would then be misparsed as a port-frame and
-    // silently swallowed.
-    for pair_index in 0..capacity_pairs {
-        let data_id = (pair_index as u8) * 2;
-        let error_id = data_id + 1;
-        let (discard_tx_data, _) = mpsc::channel::<bytes::Bytes>(1);
-        let (discard_tx_error, _) = mpsc::channel::<bytes::Bytes>(1);
-        router.insert(data_id, discard_tx_data, false);
-        router.insert(error_id, discard_tx_error, false);
-    }
-
-    spawn_reader(
-        protocol,
-        stream,
-        router.clone(),
-        writer_tx.clone(),
-        cancel.clone(),
-        keepalive.clone(),
-        Arc::clone(&recovery_callback),
-        &mut join_set,
-    );
-
-    let allocator = Arc::new(Mutex::new(ChannelAllocator::new(capacity_pairs)));
-
-    Ok(Session::new(
-        allocator,
-        router,
-        writer_tx,
-        cancel,
-        keepalive,
-        protocol,
-        join_set,
-        drain_timeout,
-        recovery_callback,
-    ))
+    Ok(UpgradedTransport { ws, protocol })
 }

@@ -3,15 +3,18 @@ use std::time::Duration;
 
 use tokio_util::sync::CancellationToken;
 
-use crate::connect::{
-    KeepaliveConfig,
-    open_session,
-};
-use crate::error::Error;
-use crate::keepalive::{
+use crate::channel::connect::build_channel_session;
+use crate::channel::keepalive::{
     RecoveryCallback,
     RecoverySignal,
 };
+#[cfg(feature = "spdy-tunnel")]
+use crate::connect::upgrade_spdy_portforward;
+use crate::connect::{
+    KeepaliveConfig,
+    upgrade_portforward,
+};
+use crate::error::Error;
 use crate::session::Session;
 use crate::subprotocol::Subprotocol;
 
@@ -163,22 +166,74 @@ impl<'c> SessionBuilder<'c> {
             .recovery_callback
             .unwrap_or_else(|| Arc::new(|_signal| {}));
 
-        open_session(
+        // Try SPDY tunnel first (no ?ports= in URL, SPDY-only subprotocol).
+        // Falls back to channel protocol if the server rejects SPDY.
+        #[cfg(feature = "spdy-tunnel")]
+        {
+            match upgrade_spdy_portforward(
+                self.client.kube_client(),
+                self.client.cluster_url(),
+                &self.namespace,
+                &self.pod,
+                &recovery_callback,
+            )
+            .await
+            {
+                Ok(upgraded) => {
+                    match crate::spdy_tunnel::Session::new(
+                        upgraded.ws, self.port, cancel.clone(),
+                    )
+                    .await
+                    {
+                        Ok(spdy_session) => return Ok(Session::from_spdy(spdy_session)),
+                        Err(e) => {
+                            tracing::debug!("SPDY session init failed: {e}");
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::debug!("SPDY upgrade failed, falling back to channel: {e}");
+                }
+            }
+        }
+
+        // Channel protocol path: ports in URL, v5/v4 subprotocols
+        let upgraded = upgrade_portforward(
             self.client.kube_client(),
             self.client.cluster_url(),
             &self.namespace,
             &self.pod,
             self.port,
             self.capacity,
-            &self.subprotocols,
-            cancel,
-            KeepaliveConfig {
-                ping_interval: self.ping_interval,
-                watchdog_timeout: self.watchdog_timeout,
-            },
-            self.drain_timeout,
-            recovery_callback,
+            &recovery_callback,
         )
-        .await
+        .await?;
+
+        let keepalive_config = KeepaliveConfig {
+            ping_interval: self.ping_interval,
+            watchdog_timeout: self.watchdog_timeout,
+        };
+
+        match upgraded.protocol {
+            Subprotocol::V4 | Subprotocol::V5 => {
+                let channel_session = build_channel_session(
+                    upgraded,
+                    self.capacity,
+                    cancel,
+                    keepalive_config,
+                    self.drain_timeout,
+                    recovery_callback,
+                )
+                .await?;
+                Ok(Session::from_channel(channel_session))
+            }
+            #[cfg(feature = "spdy-tunnel")]
+            Subprotocol::Spdy31Tunnel => {
+                // Shouldn't happen since upgrade_portforward uses channel subprotocols,
+                // but handle it gracefully.
+                let spdy_session = crate::spdy_tunnel::Session::new(upgraded.ws, self.port, cancel).await?;
+                Ok(Session::from_spdy(spdy_session))
+            }
+        }
     }
 }
