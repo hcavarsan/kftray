@@ -26,6 +26,7 @@ tokio-util = { workspace = true }
 tracing = { workspace = true }
 tungstenite = { workspace = true }
 dashmap = { workspace = true }
+flate2 = { workspace = true, optional = true, features = ["zlib-rs"] }
 parking_lot = { workspace = true }
 quanta = { workspace = true }
 
@@ -34,6 +35,8 @@ default = []
 # Built-in apiserver version cache (TTL 1h).
 # Off by default; consumers can implement their own caching strategy.
 version-cache = []
+# SPDY/3.1 tunnel backend for port-forward over a single WebSocket.
+spdy-tunnel = ["flate2"]
 
 [dev-dependencies]
 k8s-openapi = { workspace = true }

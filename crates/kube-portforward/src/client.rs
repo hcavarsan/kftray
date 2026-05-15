@@ -3,12 +3,10 @@ use std::time::Duration;
 
 use tokio_util::sync::CancellationToken;
 
-use crate::connect::{
-    KeepaliveConfig,
-    open_session,
-};
+use crate::channel::connect::open_session;
+use crate::connect::KeepaliveConfig;
 use crate::error::Error;
-use crate::keepalive::{
+use crate::channel::keepalive::{
     RecoveryCallback,
     RecoverySignal,
 };
@@ -163,7 +161,7 @@ impl<'c> SessionBuilder<'c> {
             .recovery_callback
             .unwrap_or_else(|| Arc::new(|_signal| {}));
 
-        open_session(
+        let channel_session = open_session(
             self.client.kube_client(),
             self.client.cluster_url(),
             &self.namespace,
@@ -179,6 +177,7 @@ impl<'c> SessionBuilder<'c> {
             self.drain_timeout,
             recovery_callback,
         )
-        .await
+        .await?;
+        Ok(Session::from_channel(channel_session))
     }
 }

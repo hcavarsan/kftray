@@ -49,22 +49,18 @@
 //! # Ok(()) }
 //! ```
 
-pub(crate) mod allocator;
+pub(crate) mod channel;
 pub(crate) mod client;
+#[cfg(feature = "spdy-tunnel")]
+pub(crate) mod spdy_tunnel;
 pub(crate) mod connect;
 pub(crate) mod error;
 pub(crate) mod forwarder;
-pub(crate) mod frame;
-pub(crate) mod keepalive;
 pub(crate) mod pod_watch;
-pub(crate) mod reader;
-pub(crate) mod routing;
 pub(crate) mod session;
-pub(crate) mod shutdown;
 pub(crate) mod stream;
 pub(crate) mod subprotocol;
 pub(crate) mod version;
-pub(crate) mod writer;
 
 pub use client::{
     Client,
@@ -76,7 +72,7 @@ pub use forwarder::{
     Forwarder,
     ForwarderBuilder,
 };
-pub use keepalive::{
+pub use channel::keepalive::{
     RecoveryCallback,
     RecoverySignal,
 };

@@ -4,7 +4,7 @@ use bytes::Bytes;
 use parking_lot::RwLock;
 use tokio::sync::mpsc;
 
-use crate::frame;
+use super::frame;
 
 const ROUTER_CAPACITY: usize = 256;
 
