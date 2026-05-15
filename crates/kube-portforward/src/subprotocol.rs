@@ -32,16 +32,9 @@ impl Subprotocol {
         matches!(self, Self::V5)
     }
 
+    /// Header value offering only channel subprotocols (v5/v4).
     pub(crate) fn offered_header_value() -> &'static str {
-        #[cfg(feature = "spdy-tunnel")]
-        {
-            "SPDY/3.1+portforward.k8s.io, v5.channel.k8s.io, v4.channel.k8s.io"
-        }
-
-        #[cfg(not(feature = "spdy-tunnel"))]
-        {
-            "v5.channel.k8s.io, v4.channel.k8s.io"
-        }
+        "v5.channel.k8s.io, v4.channel.k8s.io"
     }
 
     pub(crate) fn from_negotiated(s: &str) -> Option<Self> {

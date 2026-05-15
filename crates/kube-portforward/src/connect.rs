@@ -70,6 +70,44 @@ pub(crate) fn build_portforward_request(
         })
 }
 
+/// Build a port-forward request for SPDY/3.1 tunneling (no `?ports=` query).
+///
+/// The SPDY protocol sends port information via SYN_STREAM headers, not URL
+/// query parameters.
+#[cfg(feature = "spdy-tunnel")]
+pub(crate) fn build_spdy_portforward_request(
+    cluster_url: &Uri, namespace: &str, pod: &str,
+) -> Result<Request<Vec<u8>>, Error> {
+    if !name_is_valid(namespace) || !name_is_valid(pod) {
+        return Err(Error::Configuration(
+            "invalid namespace or pod name: contains forbidden character or non-ASCII".into(),
+        ));
+    }
+    let path = format!("/api/v1/namespaces/{namespace}/pods/{pod}/portforward");
+    let scheme = cluster_url
+        .scheme()
+        .ok_or_else(|| Error::Configuration("cluster_url is missing scheme".into()))?;
+    let authority = cluster_url
+        .authority()
+        .ok_or_else(|| Error::Configuration("cluster_url is missing authority".into()))?;
+    let uri: Uri = format!("{scheme}://{authority}{path}")
+        .parse()
+        .map_err(|e: http::uri::InvalidUri| {
+            Error::Configuration(format!("invalid port-forward URI: {e}"))
+        })?;
+    Request::builder()
+        .method(Method::GET)
+        .uri(uri)
+        .header(
+            header::SEC_WEBSOCKET_PROTOCOL,
+            "SPDY/3.1+portforward.k8s.io",
+        )
+        .body(Vec::new())
+        .map_err(|e: http::Error| {
+            Error::Configuration(format!("failed to build port-forward request: {e}"))
+        })
+}
+
 pub(crate) struct KeepaliveConfig {
     pub ping_interval: Duration,
     pub watchdog_timeout: Duration,
@@ -79,6 +117,106 @@ pub(crate) struct KeepaliveConfig {
 pub(crate) struct UpgradedTransport {
     pub ws: WebSocketStream<TokioIo<Upgraded>>,
     pub protocol: Subprotocol,
+}
+
+/// Perform a WebSocket upgrade offering ONLY `SPDY/3.1+portforward.k8s.io`.
+///
+/// Uses the SPDY URL (no `?ports=` query). Returns `Ok(UpgradedTransport)`
+/// on success, or an error if the server rejects the SPDY subprotocol.
+#[cfg(feature = "spdy-tunnel")]
+pub(crate) async fn upgrade_spdy_portforward(
+    kube_client: &kube::Client, cluster_url: &Uri, namespace: &str, pod: &str,
+    recovery_callback: &RecoveryCallback,
+) -> Result<UpgradedTransport, Error> {
+    let request = build_spdy_portforward_request(cluster_url, namespace, pod)?;
+
+    let (mut parts, body) = request.into_parts();
+    parts
+        .headers
+        .insert(header::CONNECTION, "Upgrade".parse().unwrap());
+    parts
+        .headers
+        .insert(header::UPGRADE, "websocket".parse().unwrap());
+    parts
+        .headers
+        .insert(header::SEC_WEBSOCKET_VERSION, "13".parse().unwrap());
+    let key = tokio_tungstenite::tungstenite::handshake::client::generate_key();
+    parts
+        .headers
+        .insert(header::SEC_WEBSOCKET_KEY, key.parse().unwrap());
+    // Only offer SPDY subprotocol
+    parts.headers.insert(
+        header::SEC_WEBSOCKET_PROTOCOL,
+        "SPDY/3.1+portforward.k8s.io".parse().unwrap(),
+    );
+
+    let request_uri = parts.uri.clone();
+    tracing::debug!(
+        uri = %request_uri,
+        sec_websocket_protocol = "SPDY/3.1+portforward.k8s.io",
+        "upgrade_spdy_portforward: sending WebSocket upgrade request"
+    );
+
+    let t_upgrade = std::time::Instant::now();
+    let res = match kube_client
+        .send(Request::from_parts(parts, Body::from(body)))
+        .await
+    {
+        Ok(r) => r,
+        Err(e) => {
+            let msg = e.to_string();
+            tracing::debug!(error = %msg, "upgrade_spdy_portforward: upgrade failed");
+            recovery_callback(RecoverySignal::UpgradeFailed {
+                status: None,
+                message: msg,
+            });
+            return Err(Error::Kube(e));
+        }
+    };
+
+    if res.status() != http::StatusCode::SWITCHING_PROTOCOLS {
+        let status_code = res.status().as_u16();
+        let msg = format!("SPDY upgrade: expected 101, got {status_code}");
+        return Err(Error::UpgradeFailed {
+            status: Some(status_code),
+            message: msg,
+        });
+    }
+
+    let negotiated_str = res
+        .headers()
+        .get(header::SEC_WEBSOCKET_PROTOCOL)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+
+    let protocol =
+        Subprotocol::from_negotiated(negotiated_str).ok_or_else(|| Error::ProtocolViolation {
+            context: "SPDY WebSocket upgrade",
+            detail: format!(
+                "server negotiated unsupported subprotocol: {:?}",
+                negotiated_str
+            ),
+        })?;
+
+    tracing::info!(
+        pod = %pod,
+        elapsed_ms = t_upgrade.elapsed().as_millis() as u64,
+        negotiated_protocol = %protocol,
+        "upgrade_spdy_portforward: upgrade complete"
+    );
+
+    let upgraded = hyper::upgrade::on(res)
+        .await
+        .map_err(|e| Error::Network(format!("failed to complete HTTP upgrade: {e}")))?;
+
+    let mut ws_config = WebSocketConfig::default();
+    ws_config.max_message_size = Some(64 * 1024 * 1024);
+    ws_config.max_frame_size = Some(16 * 1024 * 1024);
+    let ws =
+        WebSocketStream::from_raw_socket(TokioIo::new(upgraded), Role::Client, Some(ws_config))
+            .await;
+
+    Ok(UpgradedTransport { ws, protocol })
 }
 
 /// Perform the WebSocket upgrade for port-forwarding and return the raw
@@ -173,15 +311,14 @@ pub(crate) async fn upgrade_portforward(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
 
-    let protocol = Subprotocol::from_negotiated(negotiated_str).ok_or_else(|| {
-        Error::ProtocolViolation {
+    let protocol =
+        Subprotocol::from_negotiated(negotiated_str).ok_or_else(|| Error::ProtocolViolation {
             context: "WebSocket upgrade",
             detail: format!(
                 "server negotiated unsupported subprotocol: {:?}",
                 negotiated_str
             ),
-        }
-    })?;
+        })?;
 
     tracing::info!(
         pod = %pod,
@@ -199,12 +336,9 @@ pub(crate) async fn upgrade_portforward(
     let mut ws_config = WebSocketConfig::default();
     ws_config.max_message_size = Some(64 * 1024 * 1024);
     ws_config.max_frame_size = Some(16 * 1024 * 1024);
-    let ws = WebSocketStream::from_raw_socket(
-        TokioIo::new(upgraded),
-        Role::Client,
-        Some(ws_config),
-    )
-    .await;
+    let ws =
+        WebSocketStream::from_raw_socket(TokioIo::new(upgraded), Role::Client, Some(ws_config))
+            .await;
 
     Ok(UpgradedTransport { ws, protocol })
 }

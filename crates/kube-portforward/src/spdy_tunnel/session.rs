@@ -18,11 +18,14 @@ pub(crate) struct Session {
 
 impl Session {
     /// Create a session from an already-upgraded WebSocket transport.
-    pub(crate) fn new(
+    ///
+    /// Sends an initial PING to verify the upstream SPDY connection through
+    /// the API server's TunnelingHandler is established before returning.
+    pub(crate) async fn new(
         ws: WebSocketStream<TokioIo<Upgraded>>, port: u16, cancel: CancellationToken,
-    ) -> Self {
-        let mux = MuxHandle::spawn(ws, cancel.clone());
-        Self { mux, port, cancel }
+    ) -> Result<Self, Error> {
+        let mux = MuxHandle::spawn(ws, cancel.clone()).await?;
+        Ok(Self { mux, port, cancel })
     }
 
     /// Open a new port-forward stream pair through this session.
