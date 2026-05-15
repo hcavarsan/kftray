@@ -1,20 +1,27 @@
 use std::io;
 use std::pin::Pin;
-use std::task::{Context, Poll};
+use std::task::{
+    Context,
+    Poll,
+};
 
 use bytes::Bytes;
-use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio::io::{
+    AsyncRead,
+    AsyncWrite,
+    ReadBuf,
+};
 use tokio::sync::mpsc;
 
 use super::mux::MuxHandle;
 
-/// Bidirectional SPDY port-forward stream backed by a (data, error) stream pair.
+/// Bidirectional SPDY port-forward stream backed by a (data, error) stream
+/// pair.
 ///
 /// Implements `AsyncRead + AsyncWrite` on the data half. The error half is
 /// available via `split()`.
 pub(crate) struct Stream {
     data_id: u32,
-    error_id: u32,
     data_rx: mpsc::Receiver<Bytes>,
     error_rx: mpsc::Receiver<Bytes>,
     mux: MuxHandle,
@@ -50,7 +57,6 @@ impl Stream {
         };
         Self {
             data_id,
-            error_id,
             data_rx,
             error_rx,
             mux,
@@ -60,7 +66,8 @@ impl Stream {
         }
     }
 
-    /// Split into data half (AsyncRead + AsyncWrite) and error half (AsyncRead).
+    /// Split into data half (AsyncRead + AsyncWrite) and error half
+    /// (AsyncRead).
     pub(crate) fn split(self) -> (DataStream, ErrorStream) {
         // Prevent the guard from firing — the halves will manage cleanup.
         let guard = SharedGuard::new(self._guard);
@@ -150,10 +157,7 @@ impl AsyncWrite for Stream {
         // Use try_send for non-blocking; if channel is full, we'll report WouldBlock.
         match this.mux.send_data_nonblocking(this.data_id, data, false) {
             Ok(()) => Poll::Ready(Ok(buf.len())),
-            Err(_) => Poll::Ready(Err(io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                "mux closed",
-            ))),
+            Err(_) => Poll::Ready(Err(io::Error::new(io::ErrorKind::BrokenPipe, "mux closed"))),
         }
     }
 
@@ -171,7 +175,8 @@ impl AsyncWrite for Stream {
     }
 }
 
-/// Data half of a split SPDY stream: AsyncRead (from pod) + AsyncWrite (to pod).
+/// Data half of a split SPDY stream: AsyncRead (from pod) + AsyncWrite (to
+/// pod).
 pub(crate) struct DataStream {
     data_id: u32,
     data_rx: mpsc::Receiver<Bytes>,
@@ -228,10 +233,7 @@ impl AsyncWrite for DataStream {
         let data = Bytes::copy_from_slice(buf);
         match this.mux.send_data_nonblocking(this.data_id, data, false) {
             Ok(()) => Poll::Ready(Ok(buf.len())),
-            Err(_) => Poll::Ready(Err(io::Error::new(
-                io::ErrorKind::BrokenPipe,
-                "mux closed",
-            ))),
+            Err(_) => Poll::Ready(Err(io::Error::new(io::ErrorKind::BrokenPipe, "mux closed"))),
         }
     }
 

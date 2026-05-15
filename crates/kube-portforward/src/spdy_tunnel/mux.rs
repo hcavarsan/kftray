@@ -1,19 +1,32 @@
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{
+    AtomicU32,
+    AtomicUsize,
+    Ordering,
+};
 use std::time::Duration;
 
 use bytes::Bytes;
 use futures::stream::SplitSink;
-use futures::{SinkExt, StreamExt};
+use futures::{
+    SinkExt,
+    StreamExt,
+};
 use hyper::upgrade::Upgraded;
 use hyper_util::rt::TokioIo;
-use tokio::sync::{mpsc, oneshot};
-use tokio_tungstenite::tungstenite::Message;
+use tokio::sync::{
+    mpsc,
+    oneshot,
+};
 use tokio_tungstenite::WebSocketStream;
+use tokio_tungstenite::tungstenite::Message;
 use tokio_util::sync::CancellationToken;
 
-use super::codec::{Frame, SpdyCodec};
+use super::codec::{
+    Frame,
+    SpdyCodec,
+};
 use super::error::Error;
 use super::stream::Stream;
 
@@ -50,9 +63,7 @@ pub(crate) struct MuxHandle {
 
 impl MuxHandle {
     /// Start the mux background task and return a handle.
-    pub(crate) fn spawn(
-        ws: WebSocketStream<TokioIo<Upgraded>>, cancel: CancellationToken,
-    ) -> Self {
+    pub(crate) fn spawn(ws: WebSocketStream<TokioIo<Upgraded>>, cancel: CancellationToken) -> Self {
         let (cmd_tx, cmd_rx) = mpsc::channel(256);
         let active_pairs = Arc::new(AtomicUsize::new(0));
         let closed = cancel.clone();
@@ -77,9 +88,7 @@ impl MuxHandle {
     ///
     /// Returns a `Stream` that provides `AsyncRead + AsyncWrite` on the data
     /// half and `AsyncRead` on the error half.
-    pub(crate) async fn open_portforward_pair(
-        &self, port: u16,
-    ) -> Result<Stream, Error> {
+    pub(crate) async fn open_portforward_pair(&self, port: u16) -> Result<Stream, Error> {
         if self.closed.is_cancelled() {
             return Err(Error::MuxClosed);
         }
@@ -149,20 +158,6 @@ impl MuxHandle {
         Ok(reply_rx)
     }
 
-    /// Send data on a stream.
-    pub(crate) async fn send_data(
-        &self, stream_id: u32, payload: Bytes, fin: bool,
-    ) -> Result<(), Error> {
-        self.cmd_tx
-            .send(MuxCommand::SendData {
-                stream_id,
-                payload,
-                fin,
-            })
-            .await
-            .map_err(|_| Error::MuxClosed)
-    }
-
     /// Non-blocking send for use in poll_write (cannot await in poll context).
     pub(crate) fn send_data_nonblocking(
         &self, stream_id: u32, payload: Bytes, fin: bool,
@@ -192,10 +187,6 @@ impl MuxHandle {
 
     pub(crate) fn is_closed(&self) -> bool {
         self.closed.is_cancelled()
-    }
-
-    pub(crate) fn cancellation_token(&self) -> CancellationToken {
-        self.closed.clone()
     }
 }
 
@@ -250,20 +241,35 @@ async fn run_mux_task(
                                     if !payload.is_empty() {
                                         let _ = tx.send(payload).await;
                                     }
+                                } else {
+                                    tracing::debug!(stream_id, "SPDY DATA for unknown stream (dropped)");
                                 }
                                 if fin {
                                     streams.remove(&stream_id);
                                 }
                             }
-                            Ok(Frame::SynReply { stream_id, .. }) => {
+                            Ok(Frame::SynReply { stream_id, headers, fin }) => {
+                                tracing::debug!(
+                                    stream_id,
+                                    num_headers = headers.len(),
+                                    fin,
+                                    "SPDY SYN_REPLY received"
+                                );
                                 if let Some(reply_tx) = pending_replies.remove(&stream_id) {
                                     let _ = reply_tx.send(Ok(()));
                                 }
                             }
                             Ok(Frame::RstStream { stream_id, status }) => {
-                                streams.remove(&stream_id);
+                                let was_tracked = streams.remove(&stream_id).is_some();
                                 if let Some(reply_tx) = pending_replies.remove(&stream_id) {
                                     let _ = reply_tx.send(Err(Error::StreamReset(stream_id, status)));
+                                } else if !was_tracked {
+                                    tracing::debug!(
+                                        stream_id,
+                                        status,
+                                        "SPDY RST_STREAM for unknown stream: {}",
+                                        Error::StreamNotFound(stream_id)
+                                    );
                                 }
                             }
                             Ok(Frame::Ping { id }) => {
@@ -273,9 +279,15 @@ async fn run_mux_task(
                                     tracing::warn!("failed to send SPDY PING response: {e}");
                                 }
                             }
-                            Ok(Frame::SynStream { .. } | Frame::Unknown) => {
-                                // Ignore server-initiated streams and unknown frames
+                            Ok(Frame::SynStream { stream_id, headers, fin }) => {
+                                tracing::debug!(
+                                    stream_id,
+                                    num_headers = headers.len(),
+                                    fin,
+                                    "SPDY server-initiated SynStream (ignored for port-forward)"
+                                );
                             }
+                            Ok(Frame::Unknown) => {}
                             Err(e) => {
                                 tracing::warn!("SPDY decode error: {e}");
                             }
@@ -309,8 +321,7 @@ async fn run_mux_task(
 }
 
 async fn handle_command(
-    cmd: MuxCommand,
-    ws_write: &mut SplitSink<WebSocketStream<TokioIo<Upgraded>>, Message>,
+    cmd: MuxCommand, ws_write: &mut SplitSink<WebSocketStream<TokioIo<Upgraded>>, Message>,
     codec: &mut SpdyCodec, streams: &mut HashMap<u32, mpsc::Sender<Bytes>>,
     pending_replies: &mut HashMap<u32, oneshot::Sender<Result<(), Error>>>,
 ) -> Result<(), Error> {

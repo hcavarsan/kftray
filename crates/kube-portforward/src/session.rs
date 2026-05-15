@@ -1,7 +1,8 @@
+use tokio_util::sync::CancellationToken;
+
 use crate::error::Error;
 use crate::stream::Stream;
 use crate::subprotocol::Subprotocol;
-use tokio_util::sync::CancellationToken;
 
 /// One WebSocket port-forward session that multiplexes up to `capacity_pairs`
 /// concurrent local connections (each backed by a data/error channel pair)
@@ -35,7 +36,11 @@ impl Session {
         match &self.inner {
             SessionInner::Channel(s) => s.connect().await.map(Stream::from_channel),
             #[cfg(feature = "spdy-tunnel")]
-            SessionInner::Spdy(s) => s.connect().await.map(Stream::from_spdy).map_err(Error::from),
+            SessionInner::Spdy(s) => s
+                .connect()
+                .await
+                .map(Stream::from_spdy)
+                .map_err(Error::from),
         }
     }
 

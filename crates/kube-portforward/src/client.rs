@@ -3,8 +3,11 @@ use std::time::Duration;
 
 use tokio_util::sync::CancellationToken;
 
-use crate::channel::connect::open_session;
-use crate::connect::KeepaliveConfig;
+use crate::channel::connect::build_channel_session;
+use crate::connect::{
+    KeepaliveConfig,
+    upgrade_portforward,
+};
 use crate::error::Error;
 use crate::channel::keepalive::{
     RecoveryCallback,
@@ -161,23 +164,44 @@ impl<'c> SessionBuilder<'c> {
             .recovery_callback
             .unwrap_or_else(|| Arc::new(|_signal| {}));
 
-        let channel_session = open_session(
+        let upgraded = upgrade_portforward(
             self.client.kube_client(),
             self.client.cluster_url(),
             &self.namespace,
             &self.pod,
             self.port,
             self.capacity,
-            &self.subprotocols,
-            cancel,
-            KeepaliveConfig {
-                ping_interval: self.ping_interval,
-                watchdog_timeout: self.watchdog_timeout,
-            },
-            self.drain_timeout,
-            recovery_callback,
+            &recovery_callback,
         )
         .await?;
-        Ok(Session::from_channel(channel_session))
+
+        let keepalive_config = KeepaliveConfig {
+            ping_interval: self.ping_interval,
+            watchdog_timeout: self.watchdog_timeout,
+        };
+
+        match upgraded.protocol {
+            Subprotocol::V4 | Subprotocol::V5 => {
+                let channel_session = build_channel_session(
+                    upgraded,
+                    self.capacity,
+                    cancel,
+                    keepalive_config,
+                    self.drain_timeout,
+                    recovery_callback,
+                )
+                .await?;
+                Ok(Session::from_channel(channel_session))
+            }
+            #[cfg(feature = "spdy-tunnel")]
+            Subprotocol::Spdy31Tunnel => {
+                let spdy_session = crate::spdy_tunnel::Session::new(
+                    upgraded.ws,
+                    self.port,
+                    cancel,
+                );
+                Ok(Session::from_spdy(spdy_session))
+            }
+        }
     }
 }

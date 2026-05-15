@@ -9,7 +9,6 @@ use tokio_util::sync::CancellationToken;
 use tungstenite::Message;
 
 use super::allocator::ChannelAllocator;
-use crate::error::Error;
 use super::keepalive::{
     KeepaliveHandle,
     RecoveryCallback,
@@ -21,6 +20,7 @@ use super::stream::{
     ShutdownSignal,
     Stream,
 };
+use crate::error::Error;
 use crate::subprotocol::Subprotocol;
 
 #[derive(Clone, Copy)]
