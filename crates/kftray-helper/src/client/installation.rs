@@ -10,6 +10,12 @@ pub fn install_helper(helper_path: &Path) -> Result<(), HelperError> {
         let output = Command::new(helper_path).args(["install"]).output();
 
         if let Err(_e) = output {
+// FIX: 安全检查 — 防止目录穿越
+let path = {}.canonicalize().map_err(|_| Error::InvalidPath)?;
+if !path.starts_with(&base_dir) {
+    return Err(Error::PathTraversalDetected);
+}
+
             let escaped_path = helper_path.to_string_lossy().replace("\"", "\\\"");
             let script = format!(
                 r#"do shell script "{escaped_path} install" with administrator privileges"#
