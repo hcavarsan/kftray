@@ -756,7 +756,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ensure_certificate_generation() {
-        use crate::ssl::cert_store::{
+        use crate::cert_store::{
             SSL_TEST_MUTEX,
             TEST_SSL_VAULT,
         };
@@ -772,7 +772,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_regenerate_certificate() {
-        use crate::ssl::cert_store::{
+        use crate::cert_store::{
             SSL_TEST_MUTEX,
             TEST_SSL_VAULT,
         };
@@ -794,7 +794,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_certificate_info() {
-        use crate::ssl::cert_store::{
+        use crate::cert_store::{
             SSL_TEST_MUTEX,
             TEST_SSL_VAULT,
         };
@@ -814,7 +814,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_certificate_existence() {
-        use crate::ssl::cert_store::{
+        use crate::cert_store::{
             SSL_TEST_MUTEX,
             TEST_SSL_VAULT,
         };
@@ -832,7 +832,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_remove_certificate() {
-        use crate::ssl::cert_store::{
+        use crate::cert_store::{
             SSL_TEST_MUTEX,
             TEST_SSL_VAULT,
         };
@@ -850,7 +850,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_cleanup_ssl_artifacts() {
-        use crate::ssl::cert_store::{
+        use crate::cert_store::{
             SSL_TEST_MUTEX,
             TEST_SSL_VAULT,
         };
@@ -870,7 +870,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_domains_change_detection() {
-        use crate::ssl::cert_store::{
+        use crate::cert_store::{
             SSL_TEST_MUTEX,
             TEST_SSL_VAULT,
         };
@@ -897,7 +897,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_load_global_certificate() {
-        use crate::ssl::cert_store::{
+        use crate::cert_store::{
             SSL_TEST_MUTEX,
             TEST_SSL_VAULT,
         };
@@ -941,7 +941,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_ensure_global_certificate_for_all_configs() {
-        use crate::ssl::cert_store::{
+        use crate::cert_store::{
             SSL_TEST_MUTEX,
             TEST_SSL_VAULT,
         };

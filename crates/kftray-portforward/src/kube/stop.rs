@@ -203,7 +203,7 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, PortForwardE
 pub async fn stop_all_port_forward_with_mode(
     mode: DatabaseMode,
 ) -> Result<Vec<CustomResponse>, PortForwardError> {
-    crate::ssl::ensure_crypto_provider_installed();
+    kftray_ssl::ensure_crypto_provider_installed();
     info!("Attempting to stop all port forwards in mode: {mode:?}");
 
     let mut responses = Vec::with_capacity(1024);

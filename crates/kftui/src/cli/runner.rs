@@ -21,7 +21,7 @@ use kftray_portforward::kube::{
     stop_port_forward_with_mode,
     stop_proxy_forward_with_mode,
 };
-use kftray_portforward::ssl::CertificateManager;
+use kftray_ssl::CertificateManager;
 use log::{
     info,
     warn,
