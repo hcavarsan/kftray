@@ -1,3 +1,8 @@
+// NOTE: monolithic listener — no clean sub-domain boundary discovered during
+// decomposition refactor. The PortForwarder struct, its resolution helpers, and
+// HTTP redirect utilities are tightly coupled. Splitting would require
+// introducing artificial layering.
+
 use std::io;
 use std::pin::Pin;
 use std::sync::Arc;

@@ -433,7 +433,7 @@ async fn cleanup_child_processes_for_config(config_id: i64) {
 /// 1. Cleans up old cluster resources (pods, deployments) to prevent orphans
 /// 2. Removes stale registry entries for this config
 /// 3. Re-deploys a fresh proxy pod via
-///    [`deploy_and_forward_pod()`](crate::kube::proxy::deploy_and_forward_pod)
+///    [`deploy_and_forward_pod()`](super::lifecycle::deploy_and_forward_pod)
 pub async fn recover_bare_pod(config: &Config, client: &kube::Client) -> anyhow::Result<()> {
     let config_id = config
         .id
@@ -461,7 +461,7 @@ pub async fn recover_bare_pod(config: &Config, client: &kube::Client) -> anyhow:
     // which uses Display formatting. The original error provenance is lost in
     // the string conversion. This is a known architectural limitation (tracked:
     // Result<T, String> public surface).
-    crate::kube::proxy::deploy_and_forward_pod(vec![config.clone()])
+    super::lifecycle::deploy_and_forward_pod(vec![config.clone()])
         .await
         .map_err(|e| anyhow::anyhow!("Re-deployment failed: {}", e))?;
 
