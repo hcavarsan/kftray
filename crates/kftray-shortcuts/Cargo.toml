@@ -9,7 +9,6 @@ repository = "https://github.com/hcavarsan/kftray"
 license = "GPL-3.0"
 
 [dependencies]
-anyhow = { workspace = true }
 async-trait = { workspace = true }
 chrono = { workspace = true }
 global-hotkey = { workspace = true }

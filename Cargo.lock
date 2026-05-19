@@ -3605,8 +3605,6 @@ dependencies = [
  "bytes",
  "clap",
  "env_logger",
- "futures",
- "http",
  "http-body-util",
  "hyper",
  "hyper-util",
@@ -3620,7 +3618,6 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
- "tokio-util",
  "uuid",
 ]
 
@@ -3643,7 +3640,6 @@ dependencies = [
  "async-trait",
  "bytes",
  "futures",
- "http",
  "http-body-util",
  "hyper",
  "hyper-util",
@@ -3666,7 +3662,6 @@ dependencies = [
 name = "kftray-shortcuts"
 version = "0.27.30"
 dependencies = [
- "anyhow",
  "async-trait",
  "chrono",
  "evdev",
@@ -3713,7 +3708,6 @@ dependencies = [
  "anyhow",
  "async-trait",
  "dirs",
- "env_logger",
  "fix-path-env",
  "flexi_logger",
  "inotify",
@@ -3757,7 +3751,6 @@ dependencies = [
  "tauri-plugin-updater",
  "tempfile",
  "tokio",
- "tracing",
  "tracing-log",
  "tracing-subscriber",
  "whoami",
@@ -3887,10 +3880,7 @@ version = "0.1.0"
 dependencies = [
  "arc-swap",
  "base64 0.22.1",
- "bytes",
  "crossbeam-queue",
- "fastwebsockets",
- "flate2",
  "futures",
  "http",
  "hyper",
@@ -3898,7 +3888,6 @@ dependencies = [
  "k8s-openapi",
  "kube",
  "kube-runtime",
- "parking_lot",
  "quanta",
  "rand 0.10.1",
  "spdy-mux",
