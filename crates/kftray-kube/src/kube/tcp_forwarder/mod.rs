@@ -3,10 +3,7 @@ mod logging;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::io::{
-    AsyncReadExt,
-    AsyncWriteExt,
-};
+use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
@@ -18,8 +15,6 @@ use tracing::{
 use kftray_http_logs::HttpLogger;
 
 use crate::kube::http_log_watcher::HttpLogStateWatcher;
-
-use logging::ResponseState;
 
 // BufReader capacity for the bidirectional `copy_buf` loop. Larger
 // buffers reduce syscall count at high RPS on small responses. 128KB
