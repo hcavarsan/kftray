@@ -186,7 +186,51 @@ windows-core = "0.62"
 windows-native-keyring-store = "1.0"
 windows-service = "0.8"
 
+[workspace.lints.rust]
+unreachable_pub = "warn"
+unused_qualifications = "warn"
+unused_import_braces = "warn"
+unused_lifetimes = "warn"
+trivial_numeric_casts = "warn"
+
 [workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+missing_safety_doc = "allow"
+doc_markdown = "allow"
+too_long_first_doc_paragraph = "allow"
+missing_docs_in_private_items = "allow"
+
+must_use_candidate = "allow"
+return_self_not_must_use = "allow"
+module_name_repetitions = "allow"
+similar_names = "allow"
+
+too_many_lines = "allow"
+too_many_arguments = "allow"
+struct_excessive_bools = "allow"
+
+items_after_statements = "allow"
+if_not_else = "allow"
+single_match_else = "allow"
+redundant_else = "allow"
+match_same_arms = "allow"
+option_if_let_else = "allow"
+map_unwrap_or = "allow"
+
+redundant_pub_crate = "allow"
+
+unused_async = "allow"
+unused_self = "allow"
+unnecessary_wraps = "allow"
+
+significant_drop_tightening = "allow"
+branches_sharing_code = "allow"
+future_not_send = "allow"
+
 duration_suboptimal_units = "allow"
 unnecessary_debug_formatting = "allow"
 ip_constant = "allow"

@@ -62,3 +62,6 @@ reqwest = { version = "0.13.3", default-features = false, features = [
 [features]
 default = []
 
+
+[lints]
+workspace = true

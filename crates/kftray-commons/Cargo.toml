@@ -24,3 +24,6 @@ serde_json = { workspace = true }
 sqlx = { workspace = true }
 tempfile = { workspace = true }
 tokio = { workspace = true }
+
+[lints]
+workspace = true

@@ -35,3 +35,6 @@ default = []
 k8s-openapi = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 tracing-subscriber = { workspace = true }
+
+[lints]
+workspace = true
