@@ -592,7 +592,13 @@ fn poll_lazy_open(
         let mux_clone = mux.clone();
         let fut = async move {
             mux_clone
-                .realize_stream_pair(error_headers, data_headers, first_payload, data_tx, error_tx)
+                .realize_stream_pair(
+                    error_headers,
+                    data_headers,
+                    first_payload,
+                    data_tx,
+                    error_tx,
+                )
                 .await
         };
         *open_in_progress = Some(Box::pin(fut));
