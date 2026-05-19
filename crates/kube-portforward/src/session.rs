@@ -18,6 +18,13 @@ const SPARE_STREAM_CAP: usize = 16;
 /// replenisher refills up to `SPARE_STREAM_CAP`.
 const SPARE_STREAM_LOW_WATERMARK: usize = 8;
 
+/// One header name and value pair as carried on a SPDY SYN_STREAM frame.
+type SpdyHeader = (String, String);
+
+/// The error-stream and data-stream header lists for one paired
+/// `portforward.k8s.io` connection.
+type PortforwardHeaderPair = (Vec<SpdyHeader>, Vec<SpdyHeader>);
+
 /// One SPDY-tunnelled port-forward session that multiplexes many concurrent
 /// local connections over a pool of upgraded connections to the apiserver.
 pub struct Session {
@@ -52,7 +59,7 @@ impl Session {
     /// Build the K8s `portforward.k8s.io v1` SYN_STREAM headers for one
     /// stream-pair connection. Header names are lowercase to match
     /// `kubectl client-go`'s wire format.
-    fn portforward_headers(&self) -> (Vec<(String, String)>, Vec<(String, String)>) {
+    fn portforward_headers(&self) -> PortforwardHeaderPair {
         let request_id = self
             .next_request_id
             .fetch_add(1, Ordering::Relaxed)
