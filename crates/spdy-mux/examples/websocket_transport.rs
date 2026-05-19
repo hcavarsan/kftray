@@ -1,12 +1,12 @@
-//! Paired spdy/3.1 streams over a pool of websocket transports.
+//! Paired SPDY/3.1 streams over a pool of WebSocket transports.
 //!
-//! same caveat as `raw_transport.rs`: replace the duplex placeholders
-//! with `hyper::upgrade::Upgraded` connections returned by your http
-//! client after a successful websocket handshake.
+//! Same caveat as `raw_transport.rs`: replace the duplex placeholders
+//! with `hyper::upgrade::Upgraded` connections returned by your HTTP
+//! client after a successful WebSocket handshake.
 //!
-//! pool sizing: pass several `(writer, reader)` pairs to
-//! `Session::with_config` to run multiple websocket connections behind
-//! one session. streams get distributed across them via
+//! Pool sizing: pass several `(writer, reader)` pairs to
+//! `Session::with_config` to run multiple WebSocket connections behind
+//! one session. Streams are distributed across them via
 //! power-of-two-choices routing.
 
 use spdy_mux::{
