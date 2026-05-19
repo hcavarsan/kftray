@@ -16,7 +16,27 @@ use tracing::{
 use crate::Logger;
 use crate::kube::http_log_watcher::HttpLogStateWatcher;
 
-const BUFFER_SIZE: usize = 65536;
+// BufReader capacity for the bidirectional `copy_buf` loop. Larger
+// buffers reduce syscall count at high RPS on small responses. 128KB
+// fits within the 256KB SOCKET_BUF_SIZE so a single buffered read can
+// drain a full kernel receive buffer in one syscall.
+const BUFFER_SIZE: usize = 131_072;
+const SOCKET_BUF_SIZE: usize = 256 * 1024;
+
+/// Classify whether an I/O error represents a normal client-initiated
+/// disconnect (e.g. wrk closing connections, browser navigating away, curl
+/// hitting Ctrl-C). These are expected, not error conditions, and should
+/// log at debug level instead of polluting error logs at high RPS.
+fn is_client_disconnect(e: &std::io::Error) -> bool {
+    matches!(
+        e.kind(),
+        std::io::ErrorKind::ConnectionReset
+            | std::io::ErrorKind::ConnectionAborted
+            | std::io::ErrorKind::BrokenPipe
+            | std::io::ErrorKind::UnexpectedEof
+            | std::io::ErrorKind::NotConnected
+    )
+}
 
 #[derive(Clone)]
 pub struct TcpForwarder {
@@ -47,11 +67,11 @@ impl TcpForwarder {
 
         let sock_ref = SockRef::from(stream);
 
-        if let Err(e) = sock_ref.set_recv_buffer_size(BUFFER_SIZE) {
+        if let Err(e) = sock_ref.set_recv_buffer_size(SOCKET_BUF_SIZE) {
             tracing::debug!("Failed to set receive buffer size: {}", e);
         }
 
-        if let Err(e) = sock_ref.set_send_buffer_size(BUFFER_SIZE) {
+        if let Err(e) = sock_ref.set_send_buffer_size(SOCKET_BUF_SIZE) {
             tracing::debug!("Failed to set send buffer size: {}", e);
         }
 
@@ -198,7 +218,7 @@ impl TcpForwarder {
                 res = client_to_upstream => {
                     match res {
                         Ok(()) => {
-                            tracing::debug!("HTTP-aware: client->upstream finished (client EOF); tearing down upstream half");
+                            tracing::debug!("HTTP-aware: client->upstream finished (client EOF)");
                             Ok(())
                         }
                         Err(e) => Err(e),
@@ -207,7 +227,7 @@ impl TcpForwarder {
                 res = upstream_to_client => {
                     match res {
                         Ok(()) => {
-                            tracing::debug!("HTTP-aware: upstream->client finished (upstream EOF); tearing down client half");
+                            tracing::debug!("HTTP-aware: upstream->client finished (upstream EOF)");
                             Ok(())
                         }
                         Err(e) => Err(e),
@@ -238,11 +258,17 @@ impl TcpForwarder {
             let mut client_reader = tokio::io::BufReader::with_capacity(65_536, client_reader);
             let mut upstream_reader = tokio::io::BufReader::with_capacity(65_536, upstream_reader);
 
+            // Race client→upstream vs upstream→client. When either direction
+            // finishes, the other is dropped. This works correctly with SPDY
+            // because poll_shutdown() sends DATA+FIN and sets a graceful flag
+            // on the StreamGuard — subsequent drop skips RST_STREAM, allowing
+            // the remote to finish its response naturally.
             let c2u = async {
                 let res = tokio::io::copy_buf(&mut client_reader, &mut upstream_writer).await;
                 let _ = upstream_writer.shutdown().await;
                 res
             };
+
             let u2c = async {
                 let res = tokio::io::copy_buf(&mut upstream_reader, &mut client_writer).await;
                 let _ = client_writer.shutdown().await;
@@ -254,14 +280,22 @@ impl TcpForwarder {
                 res = c2u => match res {
                     Ok(n) => debug!("simple: c->u finished {}B in {}ms", n, t_start.elapsed().as_millis()),
                     Err(e) => {
-                        error!("simple c->u error: {}", e);
+                        if is_client_disconnect(&e) {
+                            debug!("simple c->u closed by client: {}", e);
+                        } else {
+                            error!("simple c->u error: {}", e);
+                        }
                         return Err(e.into());
                     }
                 },
                 res = u2c => match res {
                     Ok(n) => debug!("simple: u->c finished {}B in {}ms", n, t_start.elapsed().as_millis()),
                     Err(e) => {
-                        error!("simple u->c error: {}", e);
+                        if is_client_disconnect(&e) {
+                            debug!("simple u->c closed by client: {}", e);
+                        } else {
+                            error!("simple u->c error: {}", e);
+                        }
                         return Err(e.into());
                     }
                 },
@@ -279,16 +313,19 @@ impl TcpForwarder {
     ) -> anyhow::Result<()> {
         Self::apply_socket_optimizations(client.get_ref().0);
 
-        let (mut client_r, mut client_w) = tokio::io::split(client);
-        let (mut upstream_r, mut upstream_w) = tokio::io::split(upstream);
+        let (client_r, mut client_w) = tokio::io::split(client);
+        let (upstream_r, mut upstream_w) = tokio::io::split(upstream);
+
+        let mut client_r = tokio::io::BufReader::with_capacity(BUFFER_SIZE, client_r);
+        let mut upstream_r = tokio::io::BufReader::with_capacity(BUFFER_SIZE, upstream_r);
 
         let c2u = async {
-            let r = tokio::io::copy(&mut client_r, &mut upstream_w).await;
+            let r = tokio::io::copy_buf(&mut client_r, &mut upstream_w).await;
             let _ = upstream_w.shutdown().await;
             r
         };
         let u2c = async {
-            let r = tokio::io::copy(&mut upstream_r, &mut client_w).await;
+            let r = tokio::io::copy_buf(&mut upstream_r, &mut client_w).await;
             let _ = client_w.shutdown().await;
             r
         };
@@ -298,14 +335,22 @@ impl TcpForwarder {
             res = c2u => match res {
                 Ok(n) => debug!("TLS client->upstream: {} bytes", n),
                 Err(e) => {
-                    error!("TLS c->u error: {}", e);
+                    if is_client_disconnect(&e) {
+                        debug!("TLS c->u closed by client: {}", e);
+                    } else {
+                        error!("TLS c->u error: {}", e);
+                    }
                     return Err(e.into());
                 }
             },
             res = u2c => match res {
                 Ok(n) => debug!("TLS upstream->client: {} bytes", n),
                 Err(e) => {
-                    error!("TLS u->c error: {}", e);
+                    if is_client_disconnect(&e) {
+                        debug!("TLS u->c closed by client: {}", e);
+                    } else {
+                        error!("TLS u->c error: {}", e);
+                    }
                     return Err(e.into());
                 }
             },
@@ -328,7 +373,10 @@ impl TcpForwarder {
         >,
         local_port: u16,
     ) -> anyhow::Result<()> {
-        let mut buffer = [0; BUFFER_SIZE];
+        // Heap-allocated to avoid blowing the async-task stack — this buffer
+        // lives inside an async state machine and in debug builds the state
+        // machine is not size-optimized, so a 128KB stack array overflows.
+        let mut buffer = vec![0u8; BUFFER_SIZE];
         let mut should_log = {
             let logger_guard = logger.lock().await;
             logger_guard.is_some()
@@ -436,7 +484,8 @@ impl TcpForwarder {
         >,
         local_port: u16,
     ) -> anyhow::Result<()> {
-        let mut buffer = [0; BUFFER_SIZE];
+        // Heap-allocated; see `forward_client_to_upstream` for rationale.
+        let mut buffer = vec![0u8; BUFFER_SIZE];
         let mut should_log = {
             let logger_guard = logger.lock().await;
             logger_guard.is_some()
