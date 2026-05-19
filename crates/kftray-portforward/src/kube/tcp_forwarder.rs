@@ -13,7 +13,8 @@ use tracing::{
     error,
 };
 
-use crate::Logger;
+use kftray_http_logs::HttpLogger;
+
 use crate::kube::http_log_watcher::HttpLogStateWatcher;
 
 // BufReader capacity for the bidirectional `copy_buf` loop. Larger
@@ -42,7 +43,7 @@ fn is_client_disconnect(e: &std::io::Error) -> bool {
 pub struct TcpForwarder {
     config_id: i64,
     workload_type: String,
-    logger: Option<Logger>,
+    logger: Option<HttpLogger>,
 }
 
 impl TcpForwarder {
@@ -183,7 +184,7 @@ impl TcpForwarder {
         }
         if current_logging_enabled || self.logger.is_some() {
             let config_id = self.config_id;
-            let shared_logger: Arc<Mutex<Option<Arc<crate::Logger>>>> =
+            let shared_logger: Arc<Mutex<Option<Arc<HttpLogger>>>> =
                 Arc::new(Mutex::new(self.logger.take().map(Arc::new)));
 
             let request_id = Arc::new(Mutex::new(None));
@@ -364,7 +365,7 @@ impl TcpForwarder {
 
     #[allow(clippy::too_many_arguments)]
     async fn forward_client_to_upstream<'a>(
-        logger: Arc<Mutex<Option<Arc<crate::Logger>>>>, config_id: i64,
+        logger: Arc<Mutex<Option<Arc<HttpLogger>>>>, config_id: i64,
         client_reader: &'a mut (impl AsyncReadExt + Unpin),
         upstream_writer: &'a mut (impl AsyncWriteExt + Unpin),
         request_id: Arc<Mutex<Option<String>>>, cancellation_token: CancellationToken,
@@ -475,7 +476,7 @@ impl TcpForwarder {
 
     #[allow(clippy::too_many_arguments)]
     async fn forward_upstream_to_client<'a>(
-        logger: Arc<Mutex<Option<Arc<crate::Logger>>>>, config_id: i64,
+        logger: Arc<Mutex<Option<Arc<HttpLogger>>>>, config_id: i64,
         upstream_reader: &'a mut (impl AsyncReadExt + Unpin),
         client_writer: &'a mut (impl AsyncWriteExt + Unpin),
         request_id: Arc<Mutex<Option<String>>>, cancellation_token: CancellationToken,
@@ -607,7 +608,7 @@ impl TcpForwarder {
     }
 
     async fn handle_response_logging_static(
-        buffer: &[u8], state: &mut ResponseState, logger: &Arc<Mutex<Option<Arc<Logger>>>>,
+        buffer: &[u8], state: &mut ResponseState, logger: &Arc<Mutex<Option<Arc<HttpLogger>>>>,
         request_id: &Arc<Mutex<Option<String>>>,
     ) {
         let req_id_guard = request_id.lock().await;

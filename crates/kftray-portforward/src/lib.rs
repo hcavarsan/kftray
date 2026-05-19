@@ -14,7 +14,6 @@ pub use expose::{
     start_expose,
     stop_expose,
 };
-pub use kftray_http_logs::HttpLogger as Logger;
 pub use kube::client::create_client_with_specific_context;
 pub use kube::models::{
     KubeContextInfo,
