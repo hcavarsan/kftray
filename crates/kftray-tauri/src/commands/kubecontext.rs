@@ -400,12 +400,7 @@ mod tests {
 
         let container_ports = vec![("http".to_string(), 8080), ("metrics".to_string(), 9090)];
 
-        mock_client.add_pod(
-            "test-ns",
-            "test-pod-1",
-            app_labels.clone(),
-            container_ports,
-        );
+        mock_client.add_pod("test-ns", "test-pod-1", app_labels.clone(), container_ports);
 
         mock_client.add_service(
             "test-ns",

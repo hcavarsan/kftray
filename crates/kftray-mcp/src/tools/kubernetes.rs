@@ -206,10 +206,8 @@ impl McpTool for ListServicesTool {
                 let api: Api<Service> = Api::namespaced(client, &args.namespace);
                 match api.list(&ListParams::default()).await {
                     Ok(service_list) => {
-                        let services: Vec<String> = service_list
-                            .iter()
-                            .map(ResourceExt::name_any)
-                            .collect();
+                        let services: Vec<String> =
+                            service_list.iter().map(ResourceExt::name_any).collect();
                         let response = ServicesResponse { services };
                         CallToolResult::json(&response).unwrap_or_else(|e| {
                             CallToolResult::error(format!("Failed to serialize response: {e}"))

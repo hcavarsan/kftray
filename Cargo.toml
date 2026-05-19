@@ -78,7 +78,6 @@ kube = { version = "3.1.0", features = [
 ] }
 kube-core = "3.1"
 kube-runtime = { version = "3.1.0", features = ["unstable-runtime"] }
-lazy_static = "1.5"
 libc = "0.2.186"
 linux-keyutils-keyring-store = "1.0"
 mio = { version = "1.2.0", features = ["os-ext"] }

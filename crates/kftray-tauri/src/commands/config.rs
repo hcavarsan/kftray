@@ -288,15 +288,12 @@ pub(crate) async fn import_configs_cmd(json: String) -> Result<(), String> {
 mod tests {
     use std::sync::Arc;
 
-    use lazy_static::lazy_static;
     use sqlx::SqlitePool;
     use tokio::sync::Mutex;
 
     use super::*;
 
-    lazy_static! {
-        static ref TEST_MUTEX: Mutex<()> = Mutex::new(());
-    }
+    static TEST_MUTEX: std::sync::LazyLock<Mutex<()>> = std::sync::LazyLock::new(|| Mutex::new(()));
 
     async fn setup_isolated_test_db() -> Arc<SqlitePool> {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();

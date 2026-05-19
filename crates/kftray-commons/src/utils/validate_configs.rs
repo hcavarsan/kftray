@@ -102,14 +102,12 @@ mod tests {
     use std::fs;
     use std::sync::Mutex;
 
-    use lazy_static::lazy_static;
     use tempfile::tempdir;
 
     use super::*;
 
-    lazy_static! {
-        static ref ENV_TEST_MUTEX: Mutex<()> = Mutex::new(());
-    }
+    static ENV_TEST_MUTEX: std::sync::LazyLock<Mutex<()>> =
+        std::sync::LazyLock::new(|| Mutex::new(()));
 
     fn preserve_env_vars(keys: &[&str]) -> Vec<(String, Option<String>)> {
         keys.iter()

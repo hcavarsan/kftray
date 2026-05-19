@@ -33,16 +33,15 @@ enum ContentCategory {
     Font,
 }
 
-lazy_static::lazy_static! {
-    static ref HEADERS_CACHE: dashmap::DashMap<&'static str, &'static str> = {
+static HEADERS_CACHE: std::sync::LazyLock<dashmap::DashMap<&'static str, &'static str>> =
+    std::sync::LazyLock::new(|| {
         let map = dashmap::DashMap::new();
         map.insert("content-type", "content-type");
         map.insert("content-length", "content-length");
         map.insert("content-encoding", "content-encoding");
         map.insert("transfer-encoding", "transfer-encoding");
         map
-    };
-}
+    });
 
 #[derive(Debug)]
 pub enum ChunkParseResult<'a> {
@@ -1014,10 +1013,7 @@ mod tests {
         assert_eq!(version, Some(1));
         assert_eq!(headers.len(), 2);
         assert_eq!(headers[0].name, "Host");
-        assert_eq!(
-            str::from_utf8(headers[0].value).unwrap(),
-            "example.com"
-        );
+        assert_eq!(str::from_utf8(headers[0].value).unwrap(), "example.com");
     }
 
     #[test]

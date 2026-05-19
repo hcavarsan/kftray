@@ -9,10 +9,8 @@ use tokio::time::sleep;
 
 use crate::utils::settings::get_disconnect_timeout;
 
-lazy_static::lazy_static! {
-    static ref TIMEOUT_HANDLES: Arc<RwLock<HashMap<i64, JoinHandle<()>>>> =
-        Arc::new(RwLock::new(HashMap::new()));
-}
+static TIMEOUT_HANDLES: std::sync::LazyLock<Arc<RwLock<HashMap<i64, JoinHandle<()>>>>> =
+    std::sync::LazyLock::new(|| Arc::new(RwLock::new(HashMap::new())));
 
 pub async fn start_timeout_for_forward(
     config_id: i64, stop_callback: Arc<dyn Fn(i64) + Send + Sync>,
@@ -66,7 +64,6 @@ mod tests {
         Ordering,
     };
 
-    use lazy_static::lazy_static;
     use sqlx::SqlitePool;
     use tokio::sync::Mutex;
     use tokio::time::{
@@ -81,9 +78,7 @@ mod tests {
     };
     use crate::utils::settings::set_disconnect_timeout;
 
-    lazy_static! {
-        static ref TEST_MUTEX: Mutex<()> = Mutex::new(());
-    }
+    static TEST_MUTEX: std::sync::LazyLock<Mutex<()>> = std::sync::LazyLock::new(|| Mutex::new(()));
 
     async fn setup_test_db() {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();

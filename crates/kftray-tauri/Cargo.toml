@@ -35,7 +35,6 @@ kftray-kube = { workspace = true }
 kftray-ssl = { workspace = true }
 kftray-shortcuts = { workspace = true }
 kube = { workspace = true }
-lazy_static = { workspace = true }
 log = { workspace = true }
 tracing-subscriber = { workspace = true }
 tracing-log = "0.2"

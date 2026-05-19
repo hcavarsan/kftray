@@ -15,7 +15,6 @@ use chrono::{
     Utc,
 };
 use dashmap::DashMap;
-use lazy_static::lazy_static;
 use tokio::fs::{
     File,
     OpenOptions,
@@ -49,11 +48,6 @@ pub struct TraceInfo {
 
 pub fn calculate_time_diff(start: DateTime<Utc>, end: DateTime<Utc>) -> i64 {
     (end - start).num_milliseconds()
-}
-
-lazy_static! {
-    static ref BUFFER_POOL: Arc<tokio::sync::Mutex<Vec<BytesMut>>> =
-        Arc::new(tokio::sync::Mutex::new(Vec::with_capacity(32)));
 }
 
 const CHANNEL_CAPACITY: usize = 256;

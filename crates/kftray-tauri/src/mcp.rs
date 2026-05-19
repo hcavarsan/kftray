@@ -10,7 +10,6 @@ use std::net::{
 };
 use std::sync::Arc;
 
-use lazy_static::lazy_static;
 use log::{
     error,
     info,
@@ -18,11 +17,8 @@ use log::{
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 
-lazy_static! {
-    /// Global state for the MCP server
-    static ref MCP_SERVER: Arc<RwLock<Option<McpServerState>>> =
-        Arc::new(RwLock::new(None));
-}
+static MCP_SERVER: std::sync::LazyLock<Arc<RwLock<Option<McpServerState>>>> =
+    std::sync::LazyLock::new(|| Arc::new(RwLock::new(None)));
 
 struct McpServerState {
     handle: JoinHandle<()>,

@@ -9,7 +9,6 @@ use anyhow::{
 };
 use base64::Engine;
 use keyring_core::Entry;
-use lazy_static::lazy_static;
 use log::{
     debug,
     info,
@@ -31,14 +30,12 @@ use super::cert_generator::CertificatePair;
 const KFTRAY_SERVICE: &str = "kftray-ssl";
 const KFTRAY_SSL_VAULT: &str = "ssl-keys-vault";
 
-lazy_static! {
-    pub static ref TEST_SSL_VAULT: Mutex<SslKeyVault> = Mutex::new(SslKeyVault::default());
-}
+pub static TEST_SSL_VAULT: std::sync::LazyLock<Mutex<SslKeyVault>> =
+    std::sync::LazyLock::new(|| Mutex::new(SslKeyVault::default()));
 
 #[cfg(test)]
-lazy_static! {
-    pub static ref SSL_TEST_MUTEX: tokio::sync::Mutex<()> = tokio::sync::Mutex::new(());
-}
+pub static SSL_TEST_MUTEX: std::sync::LazyLock<tokio::sync::Mutex<()>> =
+    std::sync::LazyLock::new(|| tokio::sync::Mutex::new(()));
 
 #[derive(Serialize, Deserialize, Default, Clone)]
 pub struct SslKeyVault {
@@ -146,9 +143,7 @@ impl CertificateStore {
                                 .as_array()
                                 .map(|arr| {
                                     arr.iter()
-                                        .filter_map(|v| {
-                                            v.as_str().map(ToString::to_string)
-                                        })
+                                        .filter_map(|v| v.as_str().map(ToString::to_string))
                                         .collect()
                                 })
                                 .unwrap_or_else(Vec::new);
@@ -358,9 +353,7 @@ impl CertificateStore {
         } else {
             #[cfg(test)]
             {
-                debug!(
-                    "Test mode: no vault found when checking key for alias {alias}"
-                );
+                debug!("Test mode: no vault found when checking key for alias {alias}");
             }
             false
         }

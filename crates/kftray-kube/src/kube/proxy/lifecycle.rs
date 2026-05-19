@@ -224,8 +224,7 @@ async fn process_deployment_proxy(
     client: Client, config: &mut Config, hashed_name: &str, config_id_str: &str,
     values: &HashMap<String, String>, protocol: &str, mode: DatabaseMode, ssl_override: bool,
 ) -> Result<CustomResponse, PortForwardError> {
-    let manifest_path =
-        get_proxy_deployment_manifest_path().map_err(PortForwardError::Internal)?;
+    let manifest_path = get_proxy_deployment_manifest_path().map_err(PortForwardError::Internal)?;
     let contents = tokio::fs::read_to_string(&manifest_path)
         .await
         .map_err(PortForwardError::Io)?;

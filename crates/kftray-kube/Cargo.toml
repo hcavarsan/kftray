@@ -44,7 +44,6 @@ kftray-http-logs = { workspace = true }
 kube = { workspace = true }
 kube-portforward = { workspace = true }
 kube-runtime = { workspace = true }
-lazy_static = { workspace = true }
 log = { workspace = true }
 once_cell = { workspace = true }
 openssl = { workspace = true }

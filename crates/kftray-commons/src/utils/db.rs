@@ -7,7 +7,6 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::Mutex;
 
-use lazy_static::lazy_static;
 use log::{
     error,
     info,
@@ -30,10 +29,6 @@ use crate::utils::manifests::{
     expose_service_manifest_exists,
     proxy_deployment_manifest_exists,
 };
-
-lazy_static! {
-    static ref ENV_TEST_MUTEX: Mutex<()> = Mutex::new(());
-}
 
 pub async fn init() -> Result<(), Box<dyn std::error::Error>> {
     if !db_file_exists() {
@@ -303,7 +298,6 @@ mod tests {
     };
     use std::sync::Mutex;
 
-    use lazy_static::lazy_static;
     use sqlx::SqlitePool;
     use tempfile::tempdir;
 
@@ -314,9 +308,8 @@ mod tests {
         get_pod_manifest_path,
     };
 
-    lazy_static! {
-        static ref ENV_TEST_MUTEX: Mutex<()> = Mutex::new(());
-    }
+    static ENV_TEST_MUTEX: std::sync::LazyLock<Mutex<()>> =
+        std::sync::LazyLock::new(|| Mutex::new(()));
 
     struct StrictEnvGuard {
         saved_vars: Vec<(String, Option<String>)>,
