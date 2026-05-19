@@ -8,7 +8,7 @@ use kftray_commons::utils::config_state::{
     cleanup_current_process_config_states,
     get_configs_state,
 };
-use kftray_portforward::kube::{
+use kftray_kube::kube::{
     deploy_and_forward_pod,
     start_port_forward,
     stop_all_port_forward,
@@ -19,7 +19,7 @@ use log::error;
 use log::info;
 
 /// Partition configs by workload_type and dispatch expose configs to
-/// kftray_expose, regular configs to kftray_portforward.
+/// kftray_expose, regular configs to kftray_kube.
 async fn start_with_expose_dispatch(
     configs: Vec<Config>, protocol: &str,
 ) -> Result<Vec<CustomResponse>, String> {
@@ -219,7 +219,7 @@ pub async fn stop_proxy_forward_cmd(
 
 #[tauri::command]
 pub async fn get_active_pod_cmd(config_id: String) -> Result<Option<String>, String> {
-    use kftray_portforward::registry::PORT_FORWARD_REGISTRY;
+    use kftray_kube::registry::PORT_FORWARD_REGISTRY;
 
     let config_id_parsed = config_id
         .parse::<i64>()

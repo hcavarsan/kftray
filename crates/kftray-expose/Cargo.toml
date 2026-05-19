@@ -15,7 +15,7 @@ path = "src/lib.rs"
 [dependencies]
 # Internal crates
 kftray-commons = { workspace = true }
-kftray-portforward = { workspace = true }
+kftray-kube = { workspace = true }
 
 # Kubernetes
 k8s-openapi = { workspace = true }

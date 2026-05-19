@@ -425,7 +425,7 @@ pub async fn stop_port_forward_with_mode(
         && config.workload_type.as_deref() == Some("expose")
     {
         return Err(PortForwardError::ConfigurationError {
-            message: "expose workload_type must be stopped via kftray_expose, not kftray_portforward".to_string(),
+            message: "expose workload_type must be stopped via kftray_expose, not kftray_kube".to_string(),
         });
     }
 

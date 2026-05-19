@@ -11,7 +11,7 @@ use kftray_commons::config::{
 };
 use kftray_commons::models::config_model::Config;
 use kftray_commons::utils::settings::get_ssl_enabled;
-use kftray_portforward::kube::clear_stopped_by_timeout;
+use kftray_kube::kube::clear_stopped_by_timeout;
 use kftray_ssl::CertificateManager;
 use log::{
     error,
@@ -76,7 +76,7 @@ async fn regenerate_ssl_certificate_if_needed() -> Result<(), String> {
 
 async fn restart_ssl_proxies_if_running() -> Result<(), String> {
     use kftray_commons::utils::config_state::get_configs_state;
-    use kftray_portforward::kube::{
+    use kftray_kube::kube::{
         start_port_forward,
         stop_port_forward,
     };

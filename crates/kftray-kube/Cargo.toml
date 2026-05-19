@@ -1,9 +1,9 @@
 [package]
-name = "kftray-portforward"
+name = "kftray-kube"
 version = "0.27.30"
 authors = ["Henrique Cavarsan <hencavarsan@gmail.com>"]
 edition = "2024"
-description = "KFtray library with port forwarding logic"
+description = "kftray Kubernetes integration: kubeconfig handling, pod watching, port-forward lifecycle, proxy pod deployment, TCP/UDP listeners, global registry"
 homepage = "https://kftray.app"
 repository = "https://github.com/hcavarsan/kftray"
 license = "GPL-3.0"
@@ -19,7 +19,7 @@ ignored = [
 ]
 
 [lib]
-name = "kftray_portforward"
+name = "kftray_kube"
 path = "src/lib.rs"
 
 [dependencies]

@@ -1,7 +1,7 @@
 use kftray_commons::utils::config::upsert_configs_with_mode;
 use kftray_commons::utils::db_mode::DatabaseMode;
-use kftray_portforward::kube::operations::list_kube_contexts;
-use kftray_portforward::kube::retrieve_service_configs;
+use kftray_kube::kube::operations::list_kube_contexts;
+use kftray_kube::kube::retrieve_service_configs;
 
 use crate::tui::input::{
     App,

@@ -8,7 +8,7 @@ use k8s_openapi::api::{
 };
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::Time;
 use kftray_commons::utils::db_mode::DatabaseMode;
-use kftray_portforward::kube::client::create_client_with_specific_context;
+use kftray_kube::kube::client::create_client_with_specific_context;
 use kube::api::{
     Api,
     DeleteParams,
@@ -441,7 +441,7 @@ pub async fn delete_kftray_resource(
 
             match workload_type {
                 "proxy" => {
-                    let _ = kftray_portforward::stop_proxy_forward(
+                    let _ = kftray_kube::stop_proxy_forward(
                         id,
                         namespace,
                         resource_name.to_string(),
@@ -453,7 +453,7 @@ pub async fn delete_kftray_resource(
                         kftray_expose::stop_expose(id, namespace, DatabaseMode::File).await;
                 }
                 _ => {
-                    let _ = kftray_portforward::stop_port_forward_with_mode(
+                    let _ = kftray_kube::stop_port_forward_with_mode(
                         config_id_str.clone(),
                         DatabaseMode::File,
                     )

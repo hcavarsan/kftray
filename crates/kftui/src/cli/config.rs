@@ -9,7 +9,7 @@ use kftray_commons::utils::github::{
     GitHubConfig,
     GitHubRepository,
 };
-use kftray_portforward::kube::{
+use kftray_kube::kube::{
     retrieve_service_configs,
     stop_all_port_forward_with_mode,
 };

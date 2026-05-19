@@ -17,7 +17,7 @@ use kftray_commons::utils::settings::{
     set_ssl_ca_auto_install,
     set_ssl_enabled,
 };
-use kftray_portforward::kube::{
+use kftray_kube::kube::{
     stop_port_forward_with_mode,
     stop_proxy_forward_with_mode,
 };
