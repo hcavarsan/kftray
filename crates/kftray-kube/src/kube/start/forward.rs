@@ -2,12 +2,24 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use kftray_commons::{
+    models::config_state_model::ConfigState,
+    utils::{
+        config_state::update_config_state_with_mode,
+        db_mode::DatabaseMode,
+        timeout_manager::start_timeout_for_forward,
+    },
+};
+use kftray_commons::{
     models::{
         config_model::Config,
         hostfile::HostEntry,
         response::CustomResponse,
     },
     utils::settings::get_app_settings,
+};
+use kftray_hosts::hostsfile::{
+    add_host_entry,
+    add_ssl_host_entry,
 };
 use log::{
     debug,
@@ -16,9 +28,9 @@ use log::{
     warn,
 };
 
-use kftray_hosts::hostsfile::{
-    add_host_entry,
-    add_ssl_host_entry,
+use super::timeout::{
+    clear_stopped_by_timeout,
+    create_static_timeout_callback,
 };
 use crate::{
     kube::models::{
@@ -33,19 +45,6 @@ use crate::{
         PORT_FORWARD_REGISTRY,
         PortForwardKey,
     },
-};
-use kftray_commons::{
-    models::config_state_model::ConfigState,
-    utils::{
-        config_state::update_config_state_with_mode,
-        db_mode::DatabaseMode,
-        timeout_manager::start_timeout_for_forward,
-    },
-};
-
-use super::timeout::{
-    clear_stopped_by_timeout,
-    create_static_timeout_callback,
 };
 
 pub(super) async fn build_tls_acceptor(

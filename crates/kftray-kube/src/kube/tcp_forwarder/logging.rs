@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use kftray_http_logs::HttpLogger;
 use tokio::io::{
     AsyncReadExt,
     AsyncWriteExt,
@@ -7,8 +8,6 @@ use tokio::io::{
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
-
-use kftray_http_logs::HttpLogger;
 
 use super::{
     BUFFER_SIZE,

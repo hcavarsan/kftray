@@ -112,9 +112,9 @@ impl WebSocketTunnelClient {
 
     async fn connect_and_run(&self, ws_url: &str) -> Result<(), ExposeError> {
         // Connect to the port-forwarded WebSocket endpoint
-        let (ws_stream, _) = connect_async(ws_url).await.map_err(|e| {
-            ExposeError::Expose(format!("Failed to connect to WebSocket: {}", e))
-        })?;
+        let (ws_stream, _) = connect_async(ws_url)
+            .await
+            .map_err(|e| ExposeError::Expose(format!("Failed to connect to WebSocket: {}", e)))?;
 
         info!("WebSocket tunnel connected");
 

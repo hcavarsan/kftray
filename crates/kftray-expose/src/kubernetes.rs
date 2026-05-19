@@ -29,11 +29,11 @@ use log::{
     info,
 };
 
+use crate::error::ExposeError;
 use crate::{
     models::ExposeResources,
     templates,
 };
-use crate::error::ExposeError;
 
 /// Extracts the first part of a domain name (before the first dot) to use as a
 /// DNS-1035 compliant name For example: "testelocal.ideia.totvs.io" ->
