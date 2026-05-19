@@ -107,13 +107,13 @@ struct PairReleaseGuard {
 }
 
 impl PairReleaseGuard {
-    fn new(mux: MuxHandle) -> Self {
+    const fn new(mux: MuxHandle) -> Self {
         Self { mux, armed: true }
     }
 
     /// Disarm without releasing. Use when ownership of the pair counter
     /// transfers to a `StreamGuard`.
-    fn disarm(&mut self) {
+    const fn disarm(&mut self) {
         self.armed = false;
     }
 }
@@ -288,7 +288,7 @@ impl Stream {
                     UnopenedShared {
                         error_headers,
                         data_headers,
-                        mux: mux.clone(),
+                        mux,
                         pending_data_tx,
                         pending_error_tx,
                         open_in_progress,

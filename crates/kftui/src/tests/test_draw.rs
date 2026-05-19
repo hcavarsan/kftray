@@ -211,12 +211,12 @@ mod tests {
     fn test_render_logs() {
         let backend = TestBackend::new(100, 50);
         let mut terminal = Terminal::new(backend).unwrap();
-        let mut app = create_test_app();
+        let app = create_test_app();
 
         terminal
             .draw(|frame| {
                 let area = Rect::new(0, 0, 100, 30);
-                render_logs(frame, &mut app, area, true);
+                render_logs(frame, &app, area, true);
             })
             .unwrap();
 
@@ -226,7 +226,7 @@ mod tests {
         terminal
             .draw(|frame| {
                 let area = Rect::new(0, 0, 100, 30);
-                render_logs(frame, &mut app, area, false);
+                render_logs(frame, &app, area, false);
             })
             .unwrap();
     }

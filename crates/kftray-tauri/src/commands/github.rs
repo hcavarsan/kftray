@@ -137,14 +137,14 @@ mod tests {
         let custom_error = CustomError::from(keyring_error);
         match custom_error {
             CustomError::Keyring(_) => (),
-            _ => panic!("Wrong error variant for KeyringError conversion"),
+            CustomError::Tauri(_) => panic!("Wrong error variant for KeyringError conversion"),
         }
 
         let tauri_error = TauriError::InvalidWebviewUrl("test");
         let custom_error = CustomError::from(tauri_error);
         match custom_error {
             CustomError::Tauri(_) => (),
-            _ => panic!("Wrong error variant for TauriError conversion"),
+            CustomError::Keyring(_) => panic!("Wrong error variant for TauriError conversion"),
         }
 
         let custom_error = CustomError::Keyring(KeyringError::NoEntry);

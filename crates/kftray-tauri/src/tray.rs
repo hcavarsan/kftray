@@ -253,7 +253,7 @@ pub(crate) fn create_tray_icon(app: &tauri::App<Wry>) -> Result<(), tauri::Error
                 }
             }
             "view_logs" => {
-                if let Err(e) = crate::commands::logs::open_log_viewer_window(app.clone()) {
+                if let Err(e) = crate::commands::logs::open_log_viewer_window(app) {
                     error!("Failed to open log viewer window: {e}");
                 }
             }
@@ -354,12 +354,9 @@ pub(crate) fn create_tray_icon(app: &tauri::App<Wry>) -> Result<(), tauri::Error
 }
 
 pub(crate) fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
-    let webview_window = match window.app_handle().get_webview_window(window.label()) {
-        Some(webview_window) => webview_window,
-        _ => {
-            error!("Failed to get webview window for label: {}", window.label());
-            return;
-        }
+    let Some(webview_window) = window.app_handle().get_webview_window(window.label()) else {
+        error!("Failed to get webview window for label: {}", window.label());
+        return;
     };
 
     if let WindowEvent::ScaleFactorChanged { new_inner_size, .. } = event {
@@ -464,6 +461,8 @@ pub(crate) fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEve
     }
 }
 
+// Signature is fixed by `App::run`'s callback contract.
+#[allow(clippy::needless_pass_by_value)]
 pub(crate) fn handle_run_event(app_handle: &tauri::AppHandle<Wry>, event: RunEvent) {
     match event {
         RunEvent::ExitRequested { ref api, .. } => {

@@ -248,9 +248,8 @@ impl RequestParser {
     fn parse_chunk<'a>(
         chunk_data: &'a [u8], chunks_found: &mut usize,
     ) -> Result<ChunkParseResult<'a>> {
-        let line_end = match chunk_data.windows(2).position(|w| w == b"\r\n") {
-            Some(pos) => pos,
-            None => return Err(anyhow::anyhow!("No CRLF found in chunk header")),
+        let Some(line_end) = chunk_data.windows(2).position(|w| w == b"\r\n") else {
+            return Err(anyhow::anyhow!("No CRLF found in chunk header"));
         };
 
         if line_end == 0 {
@@ -354,7 +353,7 @@ impl RequestParser {
                     .iter()
                     .zip(combined.iter())
                     .position(|(a, b)| a != b)
-                    .unwrap_or(combined.len().min(body.len()));
+                    .unwrap_or_else(|| combined.len().min(body.len()));
 
                 if unparsed_start < body.len() {
                     combined.extend_from_slice(&body[unparsed_start..]);

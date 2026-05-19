@@ -131,13 +131,13 @@ pub(super) async fn run_reader<R: WsFrameReader>(parts: ReaderParts<R>, config: 
         tokio::select! {
             biased;
 
-            _ = shared.cancel.cancelled() => {
+            () = shared.cancel.cancelled() => {
                 tracing::debug!("SPDY reader: cancelled");
                 break;
             }
 
             // Idle timeout fires: send a probe PING
-            _ = tokio::time::sleep(idle_remaining), if !idle_ping_sent && idle_probe_sent_at.is_none() => {
+            () = tokio::time::sleep(idle_remaining), if !idle_ping_sent && idle_probe_sent_at.is_none() => {
                 tracing::debug!("SPDY reader: idle timeout ({idle_timeout:?}), sending probe PING");
                 let _ = channels.control_tx.try_send(MuxCommand::EncodePing { id: 0xFFFF_FFFD });
                 idle_ping_sent = true;

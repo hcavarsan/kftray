@@ -68,7 +68,7 @@ mod tests {
             .draw(|frame| {
                 let area = Rect::new(10, 10, 50, 20);
                 let message = Some("Confirmation test".to_string());
-                render_confirmation_popup(frame, &message, area);
+                render_confirmation_popup(frame, message.as_deref(), area);
             })
             .unwrap();
 
@@ -131,7 +131,12 @@ mod tests {
             .draw(|frame| {
                 let area = Rect::new(10, 10, 50, 20);
                 let message = Some("Delete confirmation test".to_string());
-                render_delete_confirmation_popup(frame, &message, area, DeleteButton::Confirm);
+                render_delete_confirmation_popup(
+                    frame,
+                    message.as_deref(),
+                    area,
+                    DeleteButton::Confirm,
+                );
             })
             .unwrap();
 

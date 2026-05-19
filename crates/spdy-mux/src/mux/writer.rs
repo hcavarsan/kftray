@@ -68,7 +68,7 @@ pub(super) struct WriterParts<W: WsFrameWriter> {
 /// `OpenStreamPairAndWrite`, `SendWsPong`, and `CloseStream` are handled
 /// inline in `run_writer` because they require multiple writes or async
 /// operations that cannot be returned as a single `Bytes`.
-pub(super) fn encode_command(cmd: MuxCommand, codec: &mut SpdyCodec) -> Result<Bytes, Error> {
+pub(super) fn encode_command(cmd: MuxCommand, codec: &SpdyCodec) -> Result<Bytes, Error> {
     match cmd {
         MuxCommand::OpenStreamPairAndWrite { .. } => {
             unreachable!("OpenStreamPairAndWrite must be handled inline in run_writer")
@@ -247,7 +247,7 @@ pub(super) async fn run_writer<W: WsFrameWriter>(parts: WriterParts<W>, config: 
         tokio::select! {
             biased;
 
-            _ = cancel.cancelled() => break,
+            () = cancel.cancelled() => break,
 
             // HIGHEST PRIORITY: drain WINDOW_UPDATE channel.
             // Flow-control frames must never be delayed. A stalled
@@ -428,7 +428,7 @@ pub(super) async fn run_writer<W: WsFrameWriter>(parts: WriterParts<W>, config: 
         // freeze the entire data plane. On `Full`, requeue so the next
         // cycle tries again. On `Closed`, the worker is gone.
         let mut requeued: Vec<u32> = Vec::new();
-        for stream_id in pending_closes.drain(..) {
+        for stream_id in std::mem::take(&mut pending_closes) {
             match close_reg_txs[(stream_id % FRAME_WORKERS as u32) as usize]
                 .try_send(StreamRegistration::Close { stream_id })
             {

@@ -353,6 +353,7 @@ mod tests {
     use k8s_openapi::api::core::v1::{
         Pod,
         PodCondition,
+        PodSpec,
         PodStatus,
         Service,
         ServicePort,
@@ -404,7 +405,7 @@ mod tests {
                 labels,
                 ..Default::default()
             },
-            spec: Some(Default::default()),
+            spec: Some(PodSpec::default()),
             status,
         }
     }
@@ -642,11 +643,7 @@ mod tests {
                 let svc = mock_service(
                     "test-svc",
                     "test-ns",
-                    Some(
-                        [("app".to_string(), "my-app".to_string())]
-                            .into_iter()
-                            .collect(),
-                    ),
+                    Some(std::iter::once(("app".to_string(), "my-app".to_string())).collect()),
                 );
                 let response = Response::builder()
                     .status(200)
@@ -664,11 +661,7 @@ mod tests {
                 let pod = mock_pod(
                     "test-pod-123",
                     "test-ns",
-                    Some(
-                        [("app".to_string(), "my-app".to_string())]
-                            .into_iter()
-                            .collect(),
-                    ),
+                    Some(std::iter::once(("app".to_string(), "my-app".to_string())).collect()),
                     true,
                 );
                 let pod_list: List<Pod> = List {

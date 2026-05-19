@@ -95,7 +95,7 @@ impl SpdyCodec {
     }
 
     /// Update the max frame size (e.g. after receiving peer SETTINGS).
-    pub(crate) fn set_max_frame_size(&mut self, size: u32) {
+    pub(crate) const fn set_max_frame_size(&mut self, size: u32) {
         self.max_frame_size = size;
     }
 
@@ -881,7 +881,7 @@ mod tests {
     #[test]
     fn encode_decode_settings_roundtrip() {
         let mut codec = fresh_codec();
-        let entries = vec![(7, 131072), (4, 200)];
+        let entries = vec![(7, 131_072), (4, 200)];
         let encoded = codec.encode_settings(&entries);
         match decode_one(&mut codec, &encoded) {
             Frame::Settings {
@@ -889,7 +889,7 @@ mod tests {
                 max_concurrent_streams,
                 ..
             } => {
-                assert_eq!(initial_window_size, Some(131072));
+                assert_eq!(initial_window_size, Some(131_072));
                 assert_eq!(max_concurrent_streams, Some(200));
             }
             _ => panic!("expected Settings frame"),

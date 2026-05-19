@@ -80,7 +80,9 @@ impl McpTool for ListActivePortForwardsTool {
             .into_iter()
             .filter(|c| c.id.is_some_and(|id| running_config_ids.contains(&id)))
             .map(|c| ActivePortForward {
-                config_id: c.id.map_or("unknown".to_string(), |id| id.to_string()),
+                config_id: c
+                    .id
+                    .map_or_else(|| "unknown".to_string(), |id| id.to_string()),
                 service: c.service,
                 namespace: c.namespace,
                 local_port: c.local_port,
@@ -271,16 +273,12 @@ impl McpTool for StartPortForwardTool {
             }
         } else {
             // Create a new config
-            let namespace = match args.namespace {
-                Some(ns) => ns,
-                None => return CallToolResult::error("namespace is required for new port-forward"),
+            let Some(namespace) = args.namespace else {
+                return CallToolResult::error("namespace is required for new port-forward");
             };
 
-            let remote_port = match args.remote_port {
-                Some(p) => p,
-                None => {
-                    return CallToolResult::error("remote_port is required for new port-forward");
-                }
+            let Some(remote_port) = args.remote_port else {
+                return CallToolResult::error("remote_port is required for new port-forward");
             };
 
             let workload_type = args.workload_type.unwrap_or_else(|| "service".to_string());

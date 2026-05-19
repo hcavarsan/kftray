@@ -36,6 +36,9 @@ impl HostfileHelperClient {
         })
     }
 
+    // Callers already retry on failure and need to retain owned copies, so
+    // we let them move ownership in instead of forcing extra clones here.
+    #[allow(clippy::needless_pass_by_value)]
     pub fn add_host_entry(&self, id: String, entry: HostEntry) -> Result<(), HostfileHelperError> {
         debug!("Adding host entry via helper for ID {id}: {entry:?}");
 

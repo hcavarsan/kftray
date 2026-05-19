@@ -113,7 +113,6 @@ impl ProxyHandler for TcpProxy {
                                     return Ok(());
                                 }
                             }
-                            continue;
                         }
                     }
                 }
@@ -305,9 +304,8 @@ mod tests {
 
         tokio::spawn(async move {
             loop {
-                let (sock, _) = match http_listener.accept().await {
-                    Ok(v) => v,
-                    Err(_) => return,
+                let Ok((sock, _)) = http_listener.accept().await else {
+                    return;
                 };
                 tokio::spawn(async move {
                     let io = TokioIo::new(sock);

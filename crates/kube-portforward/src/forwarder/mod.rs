@@ -110,7 +110,9 @@ impl Forwarder {
             let session = self.ensure_session(target_port).await?;
             match session.connect().await {
                 Ok(s) => return Ok(s),
-                Err(Error::CapacityExhausted { .. }) => continue,
+                // Capacity exhaustion on this session means the pool is saturated;
+                // ensure_session() will pick a different one on the next iteration.
+                Err(Error::CapacityExhausted { .. }) => {}
                 Err(e) => return Err(e),
             }
         }

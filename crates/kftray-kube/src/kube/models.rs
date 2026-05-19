@@ -67,8 +67,8 @@ impl Target {
         }
     }
 
-    pub fn find(&self, pod: &Pod, port: Option<Port>) -> anyhow::Result<TargetPod> {
-        let port = port.as_ref().unwrap_or(&self.port);
+    pub fn find(&self, pod: &Pod, port: Option<&Port>) -> anyhow::Result<TargetPod> {
+        let port = port.unwrap_or(&self.port);
         let pod_name = pod.metadata.name.as_ref().context("Pod Name is None")?;
 
         let port_number = match port {
@@ -94,6 +94,9 @@ impl Target {
     }
 }
 
+// `Iterator::filter` hands us `&Item`, and we iterate over `&Pod`, so the
+// callback signature is fixed as `&&Pod`.
+#[allow(clippy::trivially_copy_pass_by_ref)]
 #[inline]
 fn is_pod_ready(pod: &&Pod) -> bool {
     let is_ready = pod
@@ -397,7 +400,7 @@ mod tests {
             "default",
         );
 
-        let result = target4.find(&pod, Some(Port::Number(5000)));
+        let result = target4.find(&pod, Some(&Port::Number(5000)));
         assert!(result.is_ok());
         let target_pod = result.unwrap();
         assert_eq!(target_pod.pod_name, "test-pod");

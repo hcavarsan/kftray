@@ -236,7 +236,7 @@ async fn open_spdy_session(
         tracing::info!(
             pool_opened = succeeded.len() + 1,
             pool_target = pool_size,
-            elapsed_ms = t_parallel.elapsed().as_millis() as u64,
+            elapsed_ms = u64::try_from(t_parallel.elapsed().as_millis()).unwrap_or(u64::MAX),
             "SPDY pool: parallel connections opened"
         );
         succeeded
@@ -265,7 +265,7 @@ async fn open_spdy_session(
     tracing::info!(
         pod = %pod,
         pool_healthy = spdy_session.capacity() > 0,
-        pool_init_ms = t_pool.elapsed().as_millis() as u64,
+        pool_init_ms = u64::try_from(t_pool.elapsed().as_millis()).unwrap_or(u64::MAX),
         protocol = %chosen_protocol,
         "SPDY session ready"
     );

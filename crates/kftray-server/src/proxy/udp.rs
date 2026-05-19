@@ -116,7 +116,10 @@ impl UdpProxy {
         match tokio::time::timeout(UDP_TIMEOUT, udp_socket.recv(&mut response)).await {
             Ok(Ok(n)) => {
                 debug!("Received {n} bytes from UDP");
-                tcp_stream.write_all(&(n as u32).to_be_bytes()).await?;
+                // UDP datagrams cap at 65507 bytes; the saturating cast is a
+                // belt-and-suspenders against a misconfigured buffer size.
+                let len_bytes = u32::try_from(n).unwrap_or(u32::MAX).to_be_bytes();
+                tcp_stream.write_all(&len_bytes).await?;
                 tcp_stream.write_all(&response[..n]).await?;
                 tcp_stream.flush().await?;
                 debug!("Sent response back to TCP client");
@@ -171,7 +174,6 @@ impl ProxyHandler for UdpProxy {
                                     return Ok(());
                                 }
                             }
-                            continue;
                         }
                     }
                 }
@@ -244,7 +246,8 @@ mod tests {
 
     async fn send_udp_packet(stream: &mut TcpStream, data: &[u8]) -> Result<Vec<u8>, ProxyError> {
         // Send packet size and data
-        stream.write_all(&(data.len() as u32).to_be_bytes()).await?;
+        let len_bytes = u32::try_from(data.len()).unwrap_or(u32::MAX).to_be_bytes();
+        stream.write_all(&len_bytes).await?;
         stream.write_all(data).await?;
         stream.flush().await?;
 

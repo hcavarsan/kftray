@@ -484,7 +484,7 @@ mod tests {
     #[tokio::test]
     async fn test_store_and_load_certificate() {
         let _lock = SSL_TEST_MUTEX.lock().await;
-        *TEST_SSL_VAULT.lock().unwrap() = Default::default();
+        *TEST_SSL_VAULT.lock().unwrap() = SslKeyVault::default();
 
         unsafe {
             std::env::set_var("KFTRAY_SKIP_CA_INSTALL", "1");
@@ -514,7 +514,7 @@ mod tests {
     #[tokio::test]
     async fn test_certificate_not_exists() {
         let _lock = SSL_TEST_MUTEX.lock().await;
-        *TEST_SSL_VAULT.lock().unwrap() = Default::default();
+        *TEST_SSL_VAULT.lock().unwrap() = SslKeyVault::default();
 
         let (store, _temp_dir) = create_test_store().await;
         assert!(!store.exists("non-existent").await);
@@ -523,7 +523,7 @@ mod tests {
     #[tokio::test]
     async fn test_remove_certificate() {
         let _lock = SSL_TEST_MUTEX.lock().await;
-        *TEST_SSL_VAULT.lock().unwrap() = Default::default();
+        *TEST_SSL_VAULT.lock().unwrap() = SslKeyVault::default();
 
         unsafe {
             std::env::set_var("KFTRAY_SKIP_CA_INSTALL", "1");

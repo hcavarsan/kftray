@@ -268,8 +268,13 @@ async fn find_process_by_port_internal(port: u16) -> Option<(i32, String)> {
             if local_port == port
                 && let Some(&pid) = socket.associated_pids.first()
             {
-                let process_name = get_process_name_by_pid(pid as i32);
-                return Some((pid as i32, process_name));
+                let process_name = get_process_name_by_pid(pid);
+                // PIDs above i32::MAX cannot exist on the platforms we
+                // target; saturating-cast keeps the public signature
+                // compatible with callers that already expect i32 PIDs
+                // for symmetry with Unix's pid_t.
+                let pid_i32 = i32::try_from(pid).unwrap_or(i32::MAX);
+                return Some((pid_i32, process_name));
             }
         }
     }
@@ -277,12 +282,12 @@ async fn find_process_by_port_internal(port: u16) -> Option<(i32, String)> {
     None // Return None if no process found on the port
 }
 
-fn get_process_name_by_pid(pid: i32) -> String {
+fn get_process_name_by_pid(pid: u32) -> String {
     let mut system = System::new();
     system.refresh_processes(sysinfo::ProcessesToUpdate::All, false);
 
     system
-        .process(Pid::from(pid as usize))
+        .process(Pid::from_u32(pid))
         .map(|process| process.name().to_string_lossy().into_owned())
         .unwrap_or_else(|| "unknown".to_string())
 }

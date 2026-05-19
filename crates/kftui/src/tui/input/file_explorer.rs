@@ -24,7 +24,7 @@ pub(crate) async fn handle_file_selection(
         if selected_path.extension().and_then(|s| s.to_str()) == Some("json") {
             match get_file_content(selected_path) {
                 Ok(content) => app.file_content = Some(content),
-                Err(e) => handle_file_error(app, e),
+                Err(e) => handle_file_error(app, &e),
             }
         } else {
             app.file_content = None;
@@ -35,7 +35,7 @@ pub(crate) async fn handle_file_selection(
     Ok(())
 }
 
-pub(crate) fn handle_file_error(app: &mut App, error: std::io::Error) {
+pub(crate) fn handle_file_error(app: &mut App, error: &std::io::Error) {
     let error_message = format!("Failed to read file content: {error}");
     app.file_content = None;
     app.import_export_message = Some(error_message.clone());

@@ -34,9 +34,8 @@ impl HealthChecker {
             return false;
         }
 
-        let local_port = match config.local_port {
-            Some(port) => port,
-            None => return false,
+        let Some(local_port) = config.local_port else {
+            return false;
         };
         let local_address = config.local_address.as_deref().unwrap_or("127.0.0.1");
 

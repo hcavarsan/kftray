@@ -281,8 +281,13 @@ impl ProxyRecoveryManager {
                     };
                 }
 
-                self.update_config_state_fields(true, true, Some(attempt as i32), None)
-                    .await;
+                self.update_config_state_fields(
+                    true,
+                    true,
+                    Some(i32::try_from(attempt).unwrap_or(i32::MAX)),
+                    None,
+                )
+                .await;
 
                 log::info!(
                     "Recovery attempt {}/{} for config {} (backoff {}s)",
@@ -332,7 +337,7 @@ impl ProxyRecoveryManager {
                         self.update_config_state_fields(
                             true,
                             true,
-                            Some(attempt as i32),
+                            Some(i32::try_from(attempt).unwrap_or(i32::MAX)),
                             Some(e.to_string()),
                         )
                         .await;

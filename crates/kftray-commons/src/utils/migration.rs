@@ -898,7 +898,7 @@ mod tests {
 
         assert_eq!(http_logs_config.get::<i64, _>("config_id"), config_id);
         assert!(!http_logs_config.get::<bool, _>("enabled"));
-        assert_eq!(http_logs_config.get::<i64, _>("max_file_size"), 10485760);
+        assert_eq!(http_logs_config.get::<i64, _>("max_file_size"), 10_485_760);
         assert_eq!(http_logs_config.get::<i64, _>("retention_days"), 7);
         assert!(http_logs_config.get::<bool, _>("auto_cleanup"));
 

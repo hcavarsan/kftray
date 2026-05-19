@@ -224,12 +224,12 @@ mod tests {
     fn test_draw_file_explorer_popup() {
         let backend = TestBackend::new(100, 50);
         let mut terminal = Terminal::new(backend).unwrap();
-        let mut app = create_test_app();
+        let app = create_test_app();
 
         terminal
             .draw(|frame| {
                 let area = Rect::new(0, 0, 100, 50);
-                draw_file_explorer_popup(frame, &mut app, area, true);
+                draw_file_explorer_popup(frame, &app, area, true);
             })
             .unwrap();
 
@@ -239,7 +239,7 @@ mod tests {
         terminal
             .draw(|frame| {
                 let area = Rect::new(0, 0, 100, 50);
-                draw_file_explorer_popup(frame, &mut app, area, false);
+                draw_file_explorer_popup(frame, &app, area, false);
             })
             .unwrap();
     }

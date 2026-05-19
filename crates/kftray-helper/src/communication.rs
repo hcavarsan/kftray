@@ -515,11 +515,9 @@ async fn handle_connection(
             Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                 debug!("Socket would block, waiting briefly");
                 std::thread::sleep(Duration::from_millis(50));
-                continue;
             }
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {
                 debug!("Socket read interrupted, continuing");
-                continue;
             }
             Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
                 debug!("Socket read timed out, ending read loop");

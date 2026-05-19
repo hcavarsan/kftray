@@ -7,6 +7,10 @@
 // the compiler cannot see those references. See `lib.rs` for the matching
 // allow on the cdylib side.
 #![allow(dead_code)]
+// `tauri::generate_context!()` expands into a closure with a multi-KB stack
+// frame populated by embedded asset bytes. There is no way to shrink the
+// macro's output; this is a known-and-accepted cost of the Tauri build.
+#![allow(clippy::large_stack_frames)]
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -525,9 +529,9 @@ mod tests {
         let runtime = Arc::new(Runtime::new().expect("Failed to create a Tokio runtime"));
 
         let app_state = AppState {
-            positioning_active: positioning_active,
-            pinned: pinned,
-            runtime: runtime,
+            positioning_active,
+            pinned,
+            runtime,
         };
 
         assert!(!app_state.positioning_active.load(Ordering::SeqCst));

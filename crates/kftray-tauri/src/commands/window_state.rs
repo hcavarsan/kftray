@@ -1,3 +1,7 @@
+// `#[tauri::command]` requires `State<T>` and `WebviewWindow<Wry>` to be
+// taken by value; the macro generates the dispatcher that constructs them.
+#![allow(clippy::needless_pass_by_value)]
+
 use std::sync::atomic::Ordering;
 
 use kftray_commons::models::window::AppState;

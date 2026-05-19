@@ -1,3 +1,15 @@
+// The test fixtures build synthetic configs and TUI layout snapshots that
+// mix integer types freely (i64 row ids reused as ports, usize indices
+// cast to terminal coordinates). The casts are deterministic and bounded
+// by the test inputs, so the pedantic cast/precision/wrap warnings are
+// noise in this module.
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss
+)]
+
 pub(crate) mod test_app;
 pub(crate) mod test_draw;
 pub(crate) mod test_file_explorer;

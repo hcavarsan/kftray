@@ -61,6 +61,10 @@ impl HostsFile {
         }
     }
 
+    // `S: ToString` is the standard idiom for "accept anything stringifiable
+    // by value", so we keep the move-in API even though `ToString` calls
+    // `to_string()` which clones internally.
+    #[allow(clippy::needless_pass_by_value)]
     pub fn add_entry<S: ToString>(&mut self, ip: IpAddr, hostname: S) -> &mut Self {
         self.entries
             .entry(ip)

@@ -89,10 +89,10 @@ pub fn format_alert_message(
         env::var("XDG_CONFIG_HOME").unwrap_or_else(|_| "Not set".to_string()),
         env::var("HOME").unwrap_or_else(|_| "Not set".to_string()),
         active_config_msg,
-        dirs::home_dir().map_or("<home_directory_not_found>".to_string(), |p| p
-            .join(".kftray")
-            .display()
-            .to_string())
+        dirs::home_dir().map_or_else(
+            || "<home_directory_not_found>".to_string(),
+            |p| p.join(".kftray").display().to_string(),
+        )
     )
 }
 
