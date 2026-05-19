@@ -30,8 +30,27 @@ impl LoggerInitializer for FileLoggerInitializer {
             .target(env_logger::Target::Pipe(Box::new(file)))
             .filter_level(config.level)
             .filter_module("sqlx::query", log::LevelFilter::Warn)
+            .parse_default_env()
             .init();
 
+        Ok(())
+    }
+}
+
+/// Lean stdout logger for non-interactive runs (CI, scripting, benchmarking).
+/// Honors `--log-level` and the `RUST_LOG` env var (the latter takes
+/// precedence for fine-grained per-module control). No background drain
+/// thread, no buffers — just synchronous writes to stdout.
+pub struct StdoutLoggerInitializer;
+
+impl LoggerInitializer for StdoutLoggerInitializer {
+    fn initialize(&self, config: &LogConfig) -> Result<(), Box<dyn std::error::Error>> {
+        env_logger::Builder::new()
+            .target(env_logger::Target::Stdout)
+            .filter_level(config.level)
+            .filter_module("sqlx::query", log::LevelFilter::Warn)
+            .parse_default_env()
+            .init();
         Ok(())
     }
 }

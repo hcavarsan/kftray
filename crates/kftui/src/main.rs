@@ -23,6 +23,7 @@ use crate::logging::{
     LogConfig,
     LoggerInitializer,
     LoggerState,
+    StdoutLoggerInitializer,
     TuiLoggerInitializer,
 };
 
@@ -41,10 +42,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let initializer: Box<dyn LoggerInitializer>;
 
+    // The tui-logger crate spawns a background hot-buffer drain thread that
+    // burns CPU even when no TUI is being rendered, preempting tokio
+    // workers handling port-forward traffic. Use it only when the TUI is
+    // actually shown.
+    //
+    // - --logs-to-file: explicit file output (env_logger -> file pipe)
+    // - --non-interactive: stdout (env_logger -> stdout, honors RUST_LOG)
+    // - default (TUI): in-memory ring buffer rendered by the TUI
     if cli.logs_to_file {
         let log_path = get_app_log_path()?;
         config = config.with_file_output(log_path);
         initializer = Box::new(FileLoggerInitializer);
+    } else if cli.non_interactive {
+        initializer = Box::new(StdoutLoggerInitializer);
     } else {
         initializer = Box::new(TuiLoggerInitializer);
     }

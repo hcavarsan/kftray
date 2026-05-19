@@ -6,6 +6,7 @@ pub use config::LogConfig;
 pub use initializer::{
     FileLoggerInitializer,
     LoggerInitializer,
+    StdoutLoggerInitializer,
     TuiLoggerInitializer,
 };
 pub use state::LoggerState;
