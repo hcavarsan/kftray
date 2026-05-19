@@ -5,7 +5,7 @@ pub mod models;
 pub mod operations;
 mod proxy;
 // proxy_recovery is now proxy::recovery; re-export for backward compat
-pub(crate) use proxy::recovery as proxy_recovery;
+pub use proxy::recovery as proxy_recovery;
 mod service;
 pub mod shared_client;
 mod start;
