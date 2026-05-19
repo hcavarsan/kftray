@@ -21,8 +21,6 @@ async-trait = { workspace = true }
 bytes = { workspace = true }
 clap = { workspace = true }
 env_logger = { workspace = true }
-futures = { workspace = true }
-http = { workspace = true }
 http-body-util = { workspace = true }
 hyper = { workspace = true, features = ["http1", "server"] }
 hyper-util = { workspace = true, features = ["server", "tokio"] }
@@ -35,7 +33,6 @@ log = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
-tokio-util = { workspace = true }
 uuid = { workspace = true }
 
 [dev-dependencies]

@@ -12,10 +12,7 @@ categories = ["network-programming", "asynchronous"]
 [dependencies]
 arc-swap = { workspace = true }
 base64 = { workspace = true }
-bytes = { workspace = true }
 crossbeam-queue = { workspace = true }
-fastwebsockets = { workspace = true }
-flate2 = { workspace = true, features = ["zlib-rs"] }
 futures = { workspace = true }
 http = { workspace = true }
 hyper = { workspace = true }
@@ -23,7 +20,6 @@ hyper-util = { workspace = true }
 k8s-openapi = { workspace = true }
 kube = { workspace = true }
 kube-runtime = { workspace = true }
-parking_lot = { workspace = true }
 quanta = { workspace = true }
 rand = { workspace = true }
 spdy-mux = { workspace = true }
