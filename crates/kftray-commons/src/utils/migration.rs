@@ -113,7 +113,7 @@ pub async fn migrate_configs(pool_opt: Option<&SqlitePool>) -> Result<(), String
     };
     let pool = pool_result.map_err(|e| {
         error!("Failed to get DB pool for migration: {e}");
-        e.to_string()
+        e
     })?;
 
     migrate_schema(&pool).await?;
@@ -241,7 +241,7 @@ async fn migrate_schema(pool: &SqlitePool) -> Result<(), String> {
     Ok(())
 }
 
-async fn migrate_http_logs_config_table(conn: &mut sqlx::SqliteConnection) -> Result<(), String> {
+async fn migrate_http_logs_config_table(conn: &mut SqliteConnection) -> Result<(), String> {
     info!("Running HTTP logs configuration table migration");
 
     let table_exists = sqlx::query(
@@ -315,7 +315,7 @@ async fn migrate_http_logs_config_table(conn: &mut sqlx::SqliteConnection) -> Re
     Ok(())
 }
 
-async fn migrate_shortcuts_table(conn: &mut sqlx::SqliteConnection) -> Result<(), String> {
+async fn migrate_shortcuts_table(conn: &mut SqliteConnection) -> Result<(), String> {
     info!("Running shortcuts table migration");
 
     let table_exists = sqlx::query(
@@ -406,7 +406,7 @@ async fn migrate_shortcuts_table(conn: &mut sqlx::SqliteConnection) -> Result<()
 
         if let Some(row) = existing_shortcut {
             let shortcut_key: String = row.get("value");
-            info!("Migrating existing global shortcut: {}", shortcut_key);
+            info!("Migrating existing global shortcut: {shortcut_key}");
 
             sqlx::query(
                 "INSERT INTO shortcuts (name, shortcut_key, action_type, enabled)
@@ -898,7 +898,7 @@ mod tests {
 
         assert_eq!(http_logs_config.get::<i64, _>("config_id"), config_id);
         assert!(!http_logs_config.get::<bool, _>("enabled"));
-        assert_eq!(http_logs_config.get::<i64, _>("max_file_size"), 10485760);
+        assert_eq!(http_logs_config.get::<i64, _>("max_file_size"), 10_485_760);
         assert_eq!(http_logs_config.get::<i64, _>("retention_days"), 7);
         assert!(http_logs_config.get::<bool, _>("auto_cleanup"));
 

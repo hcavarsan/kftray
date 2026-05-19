@@ -28,7 +28,7 @@ use serde::{
 };
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct ServerResource {
+pub(crate) struct ServerResource {
     pub resource_type: String,
     pub name: String,
     pub namespace: String,
@@ -39,19 +39,16 @@ pub struct ServerResource {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct NamespaceGroup {
+pub(crate) struct NamespaceGroup {
     pub namespace: String,
     pub resources: Vec<ServerResource>,
 }
 
 #[tauri::command]
-pub async fn list_all_kftray_resources(
+pub(crate) async fn list_all_kftray_resources(
     context_name: &str, kubeconfig: Option<String>,
 ) -> Result<Vec<NamespaceGroup>, String> {
-    info!(
-        "Listing all kftray-server resources for context: {}",
-        context_name
-    );
+    info!("Listing all kftray-server resources for context: {context_name}");
 
     let (client, _, _) = create_client_with_specific_context(kubeconfig, Some(context_name))
         .await
@@ -68,10 +65,7 @@ pub async fn list_all_kftray_resources(
         .filter(|c: &char| c.is_alphanumeric())
         .collect();
 
-    info!(
-        "Filtering kftray resources for user: {} in context: {}",
-        clean_username, context_name
-    );
+    info!("Filtering kftray resources for user: {clean_username} in context: {context_name}");
 
     let configs = kftray_commons::config::get_configs()
         .await
@@ -97,7 +91,7 @@ pub async fn list_all_kftray_resources(
         .map(|c| c.namespace.as_str())
         .collect::<std::collections::HashSet<_>>()
         .into_iter()
-        .map(|s| s.to_string())
+        .map(ToString::to_string)
         .collect();
 
     info!(
@@ -173,8 +167,8 @@ async fn list_pods_in_namespace(
         .await
         .map_err(|e| format!("Failed to list pods: {e}"))?;
 
-    let user_prefix_forward = format!("kftray-forward-{}", username);
-    let user_prefix_expose = format!("kftray-expose-{}", username);
+    let user_prefix_forward = format!("kftray-forward-{username}");
+    let user_prefix_expose = format!("kftray-expose-{username}");
 
     Ok(pods
         .items
@@ -188,7 +182,7 @@ async fn list_pods_in_namespace(
                 return None;
             }
 
-            let config_id = pod.labels().get("config_id").map(|s| s.to_string());
+            let config_id = pod.labels().get("config_id").cloned();
 
             let is_orphaned = config_id
                 .as_ref()
@@ -206,8 +200,8 @@ async fn list_pods_in_namespace(
                 .status
                 .as_ref()
                 .and_then(|s| s.phase.as_ref())
-                .unwrap_or(&"Unknown".to_string())
-                .clone();
+                .cloned()
+                .unwrap_or_else(|| "Unknown".to_string());
 
             Some(ServerResource {
                 resource_type: "pod".to_string(),
@@ -233,14 +227,14 @@ async fn list_deployments_in_namespace(
         .await
         .map_err(|e| format!("Failed to list deployments: {e}"))?;
 
-    let user_prefix = format!("kftray-expose-{}-", username);
+    let user_prefix = format!("kftray-expose-{username}-");
 
     Ok(deployments
         .items
         .into_iter()
         .filter(|deployment| deployment.name_any().starts_with(&user_prefix))
         .map(|deployment| {
-            let config_id = deployment.labels().get("config_id").map(|s| s.to_string());
+            let config_id = deployment.labels().get("config_id").cloned();
 
             let is_orphaned = config_id
                 .as_ref()
@@ -272,7 +266,7 @@ async fn list_deployments_in_namespace(
                 config_id,
                 is_orphaned,
                 age,
-                status: format!("{}/{} replicas", available_replicas, replicas),
+                status: format!("{available_replicas}/{replicas} replicas"),
             }
         })
         .collect())
@@ -293,7 +287,7 @@ async fn list_services_in_namespace(
         .items
         .into_iter()
         .filter_map(|service| {
-            let config_id = service.labels().get("config_id").map(|s| s.to_string());
+            let config_id = service.labels().get("config_id").cloned();
 
             if let Some(ref id) = config_id {
                 if !deployment_config_ids.contains(id) {
@@ -319,8 +313,8 @@ async fn list_services_in_namespace(
                 .spec
                 .as_ref()
                 .and_then(|s| s.cluster_ip.as_ref())
-                .unwrap_or(&"None".to_string())
-                .clone();
+                .cloned()
+                .unwrap_or_else(|| "None".to_string());
 
             Some(ServerResource {
                 resource_type: "service".to_string(),
@@ -350,7 +344,7 @@ async fn list_ingresses_in_namespace(
         .items
         .into_iter()
         .filter_map(|ingress| {
-            let config_id = ingress.labels().get("config_id").map(|s| s.to_string());
+            let config_id = ingress.labels().get("config_id").cloned();
 
             if let Some(ref id) = config_id {
                 if !deployment_config_ids.contains(id) {
@@ -409,24 +403,23 @@ fn calculate_age(creation_timestamp: &Time) -> String {
     let seconds = duration.get_seconds();
 
     if days > 0 {
-        format!("{}d", days)
+        format!("{days}d")
     } else if hours > 0 {
-        format!("{}h", hours)
+        format!("{hours}h")
     } else if minutes > 0 {
-        format!("{}m", minutes)
+        format!("{minutes}m")
     } else {
-        format!("{}s", seconds)
+        format!("{seconds}s")
     }
 }
 
 #[tauri::command]
-pub async fn delete_kftray_resource(
+pub(crate) async fn delete_kftray_resource(
     context_name: &str, namespace: &str, resource_type: &str, resource_name: &str,
     config_id: Option<String>, kubeconfig: Option<String>,
 ) -> Result<(), String> {
     info!(
-        "Deleting kftray resource: {} {} in namespace {} (config_id: {:?})",
-        resource_type, resource_name, namespace, config_id
+        "Deleting kftray resource: {resource_type} {resource_name} in namespace {namespace} (config_id: {config_id:?})"
     );
 
     if let Some(ref config_id_str) = config_id
@@ -441,16 +434,12 @@ pub async fn delete_kftray_resource(
 
             match workload_type {
                 "proxy" => {
-                    let _ = kftray_kube::stop_proxy_forward(
-                        id,
-                        namespace,
-                        resource_name.to_string(),
-                    )
-                    .await;
+                    let _ =
+                        kftray_kube::stop_proxy_forward(id, namespace, resource_name.to_string())
+                            .await;
                 }
                 "expose" => {
-                    let _ =
-                        kftray_expose::stop_expose(id, namespace, DatabaseMode::File).await;
+                    let _ = kftray_expose::stop_expose(id, namespace, DatabaseMode::File).await;
                 }
                 _ => {
                     let _ = kftray_kube::stop_port_forward_with_mode(
@@ -503,26 +492,20 @@ pub async fn delete_kftray_resource(
                 .map_err(|e| format!("Failed to delete ingress: {e}"))?;
         }
         _ => {
-            return Err(format!("Unsupported resource type: {}", resource_type));
+            return Err(format!("Unsupported resource type: {resource_type}"));
         }
     }
 
-    info!(
-        "Successfully deleted {} {} in namespace {}",
-        resource_type, resource_name, namespace
-    );
+    info!("Successfully deleted {resource_type} {resource_name} in namespace {namespace}");
 
     Ok(())
 }
 
 #[tauri::command]
-pub async fn cleanup_all_kftray_resources(
+pub(crate) async fn cleanup_all_kftray_resources(
     context_name: &str, kubeconfig: Option<String>,
 ) -> Result<String, String> {
-    info!(
-        "Cleaning up all kftray resources for context: {}",
-        context_name
-    );
+    info!("Cleaning up all kftray resources for context: {context_name}");
 
     let namespace_groups = list_all_kftray_resources(context_name, kubeconfig.clone()).await?;
 
@@ -541,7 +524,7 @@ pub async fn cleanup_all_kftray_resources(
             )
             .await
             {
-                Ok(_) => deleted_count += 1,
+                Ok(()) => deleted_count += 1,
                 Err(e) => {
                     error!("Failed to delete resource {}: {}", resource.name, e);
                     error_count += 1;
@@ -551,27 +534,21 @@ pub async fn cleanup_all_kftray_resources(
     }
 
     let message = if error_count > 0 {
-        format!(
-            "Deleted {} resources with {} errors",
-            deleted_count, error_count
-        )
+        format!("Deleted {deleted_count} resources with {error_count} errors")
     } else {
-        format!("Successfully deleted {} resources", deleted_count)
+        format!("Successfully deleted {deleted_count} resources")
     };
 
-    info!("{}", message);
+    info!("{message}");
 
     Ok(message)
 }
 
 #[tauri::command]
-pub async fn cleanup_orphaned_kftray_resources(
+pub(crate) async fn cleanup_orphaned_kftray_resources(
     context_name: &str, kubeconfig: Option<String>,
 ) -> Result<String, String> {
-    info!(
-        "Cleaning up orphaned kftray resources for context: {}",
-        context_name
-    );
+    info!("Cleaning up orphaned kftray resources for context: {context_name}");
 
     let namespace_groups = list_all_kftray_resources(context_name, kubeconfig.clone()).await?;
 
@@ -594,7 +571,7 @@ pub async fn cleanup_orphaned_kftray_resources(
             )
             .await
             {
-                Ok(_) => deleted_count += 1,
+                Ok(()) => deleted_count += 1,
                 Err(e) => {
                     error!(
                         "Failed to delete orphaned resource {}: {}",
@@ -607,15 +584,12 @@ pub async fn cleanup_orphaned_kftray_resources(
     }
 
     let message = if error_count > 0 {
-        format!(
-            "Deleted {} orphaned resources with {} errors",
-            deleted_count, error_count
-        )
+        format!("Deleted {deleted_count} orphaned resources with {error_count} errors")
     } else {
-        format!("Successfully deleted {} orphaned resources", deleted_count)
+        format!("Successfully deleted {deleted_count} orphaned resources")
     };
 
-    info!("{}", message);
+    info!("{message}");
 
     Ok(message)
 }

@@ -33,7 +33,7 @@ pub async fn retrieve_service_configs(
 }
 
 async fn retrieve_service_configs_direct(
-    context: &str, kubeconfig: Option<String>, client: &std::sync::Arc<kube::Client>,
+    context: &str, kubeconfig: Option<String>, client: &std::sync::Arc<Client>,
 ) -> Result<Vec<Config>, PortForwardError> {
     let annotation = "kftray.app/configs";
 
@@ -73,7 +73,7 @@ async fn retrieve_service_configs_direct(
                             &namespace,
                             &service_name,
                             &ports,
-                            kubeconfig.clone(),
+                            kubeconfig.as_deref(),
                         ));
                     } else {
                         namespace_configs.extend(create_default_configs(
@@ -81,7 +81,7 @@ async fn retrieve_service_configs_direct(
                             &namespace,
                             &service_name,
                             &ports,
-                            kubeconfig.clone(),
+                            kubeconfig.as_deref(),
                         ));
                     }
                 }
@@ -112,7 +112,7 @@ async fn retrieve_service_configs_direct(
 
 fn parse_configs(
     configs_str: &str, context: &str, namespace: &str, service_name: &str,
-    ports: &HashMap<String, i32>, kubeconfig: Option<String>,
+    ports: &HashMap<String, i32>, kubeconfig: Option<&str>,
 ) -> Vec<Config> {
     configs_str
         .split(',')
@@ -132,20 +132,21 @@ fn parse_configs(
                 }
             };
 
-            let target_port = parts[2]
+            let target_port: i32 = parts[2]
                 .parse()
                 .ok()
-                .or_else(|| ports.get(parts[2]).cloned())?;
+                .or_else(|| ports.get(parts[2]).copied())?;
+            let remote_port = u16::try_from(target_port).ok()?;
 
             Some(Config {
                 id: None,
                 context: Some(context.to_string()),
-                kubeconfig: kubeconfig.clone(),
+                kubeconfig: kubeconfig.map(String::from),
                 namespace: namespace.to_string(),
                 service: Some(service_name.to_string()),
                 alias: Some(alias),
                 local_port: Some(local_port),
-                remote_port: Some(target_port as u16),
+                remote_port: Some(remote_port),
                 protocol: "tcp".to_string(),
                 workload_type: Some("service".to_string()),
                 target: None,
@@ -170,36 +171,42 @@ fn parse_configs(
 
 fn create_default_configs(
     context: &str, namespace: &str, service_name: &str, ports: &HashMap<String, i32>,
-    kubeconfig: Option<String>,
+    kubeconfig: Option<&str>,
 ) -> Vec<Config> {
     ports
         .iter()
-        .map(|(_port_name, &port)| Config {
-            id: None,
-            context: Some(context.to_string()),
-            kubeconfig: kubeconfig.clone(),
-            namespace: namespace.to_string(),
-            service: Some(service_name.to_string()),
-            alias: Some(service_name.to_string()),
-            local_port: Some(port as u16),
-            remote_port: Some(port as u16),
-            protocol: "tcp".to_string(),
-            workload_type: Some("service".to_string()),
-            target: None,
-            local_address: None,
-            auto_loopback_address: false,
-            remote_address: None,
-            domain_enabled: None,
-            http_logs_enabled: None,
-            http_logs_max_file_size: None,
-            http_logs_retention_days: None,
-            http_logs_auto_cleanup: None,
-            exposure_type: None,
-            cert_manager_enabled: None,
-            cert_issuer: None,
-            cert_issuer_kind: None,
-            ingress_class: None,
-            ingress_annotations: None,
+        .filter_map(|(_port_name, &port)| {
+            // Service ports come from k8s as i32; TCP/UDP only have 16-bit
+            // ports. Silently skip anything outside u16 range rather than
+            // wrap-around to a bogus port.
+            let port = u16::try_from(port).ok()?;
+            Some(Config {
+                id: None,
+                context: Some(context.to_string()),
+                kubeconfig: kubeconfig.map(String::from),
+                namespace: namespace.to_string(),
+                service: Some(service_name.to_string()),
+                alias: Some(service_name.to_string()),
+                local_port: Some(port),
+                remote_port: Some(port),
+                protocol: "tcp".to_string(),
+                workload_type: Some("service".to_string()),
+                target: None,
+                local_address: None,
+                auto_loopback_address: false,
+                remote_address: None,
+                domain_enabled: None,
+                http_logs_enabled: None,
+                http_logs_max_file_size: None,
+                http_logs_retention_days: None,
+                http_logs_auto_cleanup: None,
+                exposure_type: None,
+                cert_manager_enabled: None,
+                cert_issuer: None,
+                cert_issuer_kind: None,
+                ingress_class: None,
+                ingress_annotations: None,
+            })
         })
         .collect()
 }
@@ -222,7 +229,7 @@ mod tests {
             "test-namespace",
             "test-service",
             &ports,
-            Some("/path/to/config".to_string()),
+            Some("/path/to/config"),
         );
 
         assert_eq!(configs.len(), 3);
@@ -298,7 +305,7 @@ mod tests {
             "test-namespace",
             "test-service",
             &ports,
-            Some("/path/to/config".to_string()),
+            Some("/path/to/config"),
         );
 
         assert_eq!(configs.len(), 2);

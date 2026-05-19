@@ -38,7 +38,7 @@ pub struct MacOSPlatform {
 impl MacOSPlatform {
     pub fn new(registry: Arc<Mutex<ActionRegistry>>) -> ShortcutResult<Self> {
         let manager = GlobalHotKeyManager::new().map_err(|e| {
-            crate::models::ShortcutError::PlatformError(format!("macOS hotkey init failed: {}", e))
+            crate::models::ShortcutError::PlatformError(format!("macOS hotkey init failed: {e}"))
         })?;
 
         Ok(Self {
@@ -66,7 +66,7 @@ impl MacOSPlatform {
         }
 
         let code = key_code.ok_or_else(|| {
-            crate::models::ShortcutError::InvalidShortcut(format!("No key found: {}", shortcut_key))
+            crate::models::ShortcutError::InvalidShortcut(format!("No key found: {shortcut_key}"))
         })?;
 
         Ok(HotKey::new(Some(modifiers), code))
@@ -139,8 +139,7 @@ impl MacOSPlatform {
             "right" => Code::ArrowRight,
             _ => {
                 return Err(crate::models::ShortcutError::InvalidShortcut(format!(
-                    "Unknown key: {}",
-                    key
+                    "Unknown key: {key}"
                 )));
             }
         };
@@ -158,7 +157,7 @@ impl PlatformManager for MacOSPlatform {
         let hotkey = self.parse_shortcut(&shortcut.shortcut_key)?;
 
         self.manager.register(hotkey).map_err(|e| {
-            crate::models::ShortcutError::PlatformError(format!("Register failed: {}", e))
+            crate::models::ShortcutError::PlatformError(format!("Register failed: {e}"))
         })?;
 
         let mut shortcuts = self.shortcuts.lock().await;
@@ -192,7 +191,7 @@ impl PlatformManager for MacOSPlatform {
                                     .execute_by_id(id, &context)
                                     .await
                                 {
-                                    error!("macOS shortcut execution failed: {}", e);
+                                    error!("macOS shortcut execution failed: {e}");
                                 }
                             }
                         }
@@ -213,11 +212,11 @@ impl PlatformManager for MacOSPlatform {
         let mut shortcuts = self.shortcuts.lock().await;
         if let Some(hotkey) = shortcuts.remove(&shortcut_id) {
             self.manager.unregister(hotkey).map_err(|e| {
-                crate::models::ShortcutError::PlatformError(format!("Unregister failed: {}", e))
+                crate::models::ShortcutError::PlatformError(format!("Unregister failed: {e}"))
             })?;
-            info!("macOS shortcut unregistered: {}", shortcut_id);
+            info!("macOS shortcut unregistered: {shortcut_id}");
         } else {
-            warn!("macOS shortcut not found: {}", shortcut_id);
+            warn!("macOS shortcut not found: {shortcut_id}");
         }
         Ok(())
     }

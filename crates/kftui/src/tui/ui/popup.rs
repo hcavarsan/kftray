@@ -1,3 +1,9 @@
+// ratatui uses `u16` for every terminal coordinate and dimension; mixing it
+// with `usize`-indexed slices and counters means layout math always casts
+// `usize as u16`. Values are bounded by terminal size, so the truncation
+// warnings are pure noise here.
+#![allow(clippy::cast_possible_truncation)]
+
 use std::borrow::Cow;
 
 use ratatui::prelude::*;
@@ -58,7 +64,7 @@ fn create_common_popup_style(title: &str, title_color: Color) -> Block<'_> {
         .style(Style::default().bg(BASE).fg(MAUVE))
 }
 
-pub fn create_bottom_right_shadow_layers(
+pub(crate) fn create_bottom_right_shadow_layers(
     area: Rect, shadow_layers: &[(Color, u16)],
 ) -> Vec<(Rect, Style)> {
     shadow_layers
@@ -71,14 +77,14 @@ pub fn create_bottom_right_shadow_layers(
         .collect()
 }
 
-pub fn render_shadow_layers(f: &mut Frame, shadow_layers: Vec<(Rect, Style)>) {
+pub(crate) fn render_shadow_layers(f: &mut Frame, shadow_layers: Vec<(Rect, Style)>) {
     for (shadow_area, style) in shadow_layers {
         let shadow_block = Block::default().style(style);
         f.render_widget(shadow_block, shadow_area);
     }
 }
 
-pub fn render_background_overlay(f: &mut Frame, area: Rect) {
+pub(crate) fn render_background_overlay(f: &mut Frame, area: Rect) {
     let overlay = Block::default().style(Style::default().bg(CRUST));
     f.render_widget(overlay, area);
 }
@@ -100,7 +106,7 @@ fn render_popup(
     render_shadow_layers(f, popup_shadow_layers);
 }
 
-pub fn render_input_prompt(f: &mut Frame, input_buffer: &str, area: Rect) {
+pub(crate) fn render_input_prompt(f: &mut Frame, input_buffer: &str, area: Rect) {
     let input_paragraph = Text::raw(input_buffer);
     render_popup(
         f,
@@ -112,8 +118,8 @@ pub fn render_input_prompt(f: &mut Frame, input_buffer: &str, area: Rect) {
     );
 }
 
-pub fn render_confirmation_popup(f: &mut Frame, message: &Option<String>, area: Rect) {
-    let message_text = message.as_deref().unwrap_or("");
+pub(crate) fn render_confirmation_popup(f: &mut Frame, message: Option<&str>, area: Rect) {
+    let message_text = message.unwrap_or("");
     let message_paragraph = Text::raw(message_text);
     render_popup(
         f,
@@ -134,7 +140,7 @@ pub fn render_confirmation_popup(f: &mut Frame, message: &Option<String>, area: 
     f.render_widget(close_button, button_area);
 }
 
-pub fn render_http_logs_config_popup(f: &mut Frame, app: &App, area: Rect) {
+pub(crate) fn render_http_logs_config_popup(f: &mut Frame, app: &App, area: Rect) {
     let (width_percent, height_percent) = if area.width < 60 {
         (95, 70)
     } else if area.width < 80 {
@@ -344,7 +350,7 @@ pub fn render_http_logs_config_popup(f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(instruction_paragraph, footer_area);
 }
 
-pub fn render_help_popup(f: &mut Frame, area: Rect) {
+pub(crate) fn render_help_popup(f: &mut Frame, area: Rect) {
     let help_message = vec![
         Line::from(Span::styled("Ctrl+C: Quit", Style::default().fg(YELLOW))),
         Line::from(Span::styled("↑/↓: Navigate", Style::default().fg(YELLOW))),
@@ -421,7 +427,7 @@ pub fn render_help_popup(f: &mut Frame, area: Rect) {
     f.render_widget(help_paragraph, area);
 }
 
-pub fn render_about_popup(f: &mut Frame, app: &crate::tui::input::App, area: Rect) {
+pub(crate) fn render_about_popup(f: &mut Frame, app: &App, area: Rect) {
     let (width_percent, height_percent) = match (area.width, area.height) {
         (w, h) if w < 40 || h < 10 => (90, 70),
         (w, h) if w < 60 || h < 15 => (80, 60),
@@ -482,7 +488,7 @@ pub fn render_about_popup(f: &mut Frame, app: &crate::tui::input::App, area: Rec
     let main_layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints(main_constraints)
-        .margin(if is_small { 0 } else { 1 })
+        .margin(u16::from(!is_small))
         .split(inner);
 
     if !is_small {
@@ -623,7 +629,9 @@ pub fn render_about_popup(f: &mut Frame, app: &crate::tui::input::App, area: Rec
     }
 }
 
-pub fn render_error_popup(f: &mut Frame, error_message: &str, area: Rect, top_padding: usize) {
+pub(crate) fn render_error_popup(
+    f: &mut Frame, error_message: &str, area: Rect, top_padding: usize,
+) {
     let (width_percent, height_percent) = if area.width < 80 {
         (95, 80)
     } else if area.width < 120 {
@@ -726,10 +734,10 @@ fn create_close_button() -> Paragraph<'static> {
         .alignment(Alignment::Center)
 }
 
-pub fn render_delete_confirmation_popup(
-    f: &mut Frame, message: &Option<String>, area: Rect, selected_button: DeleteButton,
+pub(crate) fn render_delete_confirmation_popup(
+    f: &mut Frame, message: Option<&str>, area: Rect, selected_button: DeleteButton,
 ) {
-    let message_text = message.as_deref().unwrap_or("");
+    let message_text = message.unwrap_or("");
     let message_paragraph = Text::raw(message_text);
     render_popup(
         f,
@@ -760,7 +768,7 @@ pub fn render_delete_confirmation_popup(
     f.render_widget(close_button, close_button_area);
 }
 
-pub fn create_button(label: &str, is_selected: bool) -> Paragraph<'_> {
+pub(crate) fn create_button(label: &str, is_selected: bool) -> Paragraph<'_> {
     let style = if is_selected {
         Style::default().fg(LAVENDER).add_modifier(Modifier::BOLD)
     } else {
@@ -776,7 +784,7 @@ pub fn create_button(label: &str, is_selected: bool) -> Paragraph<'_> {
         .alignment(Alignment::Center)
 }
 
-pub fn render_context_selection_popup(f: &mut Frame, app: &mut App, area: Rect) {
+pub(crate) fn render_context_selection_popup(f: &mut Frame, app: &mut App, area: Rect) {
     let main_chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -869,7 +877,7 @@ pub fn render_context_selection_popup(f: &mut Frame, app: &mut App, area: Rect) 
     f.render_widget(explanation_paragraph, explanation_area);
 }
 
-pub fn render_settings_popup(f: &mut Frame, app: &App, area: Rect) {
+pub(crate) fn render_settings_popup(f: &mut Frame, app: &App, area: Rect) {
     let (width_percent, height_percent) = if area.width < 50 {
         (98, 95)
     } else if area.width < 80 {
@@ -1224,6 +1232,7 @@ fn render_table_settings(
     }
 }
 
+#[derive(Copy, Clone)]
 struct RowState {
     is_selected: bool,
     is_editing: bool,
@@ -1358,7 +1367,7 @@ fn render_full_row(
     f.render_widget(value_para, layout[3]);
 }
 
-pub fn render_http_logs_viewer_popup(f: &mut Frame, app: &mut App, area: Rect) {
+pub(crate) fn render_http_logs_viewer_popup(f: &mut Frame, app: &mut App, area: Rect) {
     app.update_http_logs_viewer();
 
     let popup_area = centered_rect(90, 80, area);
@@ -1413,7 +1422,7 @@ pub fn render_http_logs_viewer_popup(f: &mut Frame, app: &mut App, area: Rect) {
     render_http_logs_footer(f, app, footer_area);
 }
 
-fn render_http_requests_list(f: &mut Frame, app: &mut App, area: Rect) {
+fn render_http_requests_list(f: &mut Frame, app: &App, area: Rect) {
     if app.http_logs_requests.is_empty() {
         let empty_message = Paragraph::new("No HTTP requests found in logs")
             .style(Style::default().fg(SUBTEXT0).italic())
@@ -1504,7 +1513,7 @@ fn render_http_requests_list(f: &mut Frame, app: &mut App, area: Rect) {
     f.render_stateful_widget(table, area, &mut table_state);
 }
 
-fn render_http_request_detail(f: &mut Frame, app: &mut App, area: Rect) {
+fn render_http_request_detail(f: &mut Frame, app: &App, area: Rect) {
     if let Some(entry) = &app.http_logs_selected_entry {
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
@@ -1572,7 +1581,7 @@ fn render_request_side(
 
     for header in &entry.request_headers {
         lines.push(Line::from(Span::styled(
-            format!("  {}", header),
+            format!("  {header}"),
             Style::default().fg(SUBTEXT0),
         )));
     }
@@ -1591,7 +1600,7 @@ fn render_request_side(
     } else {
         let formatted_body = format_body_content(&entry.request_body, &entry.request_headers);
         for line in formatted_body.lines() {
-            lines.push(Line::from(format!("  {}", line)));
+            lines.push(Line::from(format!("  {line}")));
         }
     }
 
@@ -1623,7 +1632,7 @@ fn render_response_side(
 
         for header in &entry.response_headers {
             lines.push(Line::from(Span::styled(
-                format!("  {}", header),
+                format!("  {header}"),
                 Style::default().fg(SUBTEXT0),
             )));
         }
@@ -1642,7 +1651,7 @@ fn render_response_side(
         } else {
             let formatted_body = format_body_content(&entry.response_body, &entry.response_headers);
             for line in formatted_body.lines() {
-                lines.push(Line::from(format!("  {}", line)));
+                lines.push(Line::from(format!("  {line}")));
             }
         }
     } else {
@@ -1667,7 +1676,7 @@ fn render_response_side(
         lines.push(Line::from(""));
         for error_line in replay_error.lines() {
             lines.push(Line::from(Span::styled(
-                format!("  {}", error_line),
+                format!("  {error_line}"),
                 Style::default().fg(RED),
             )));
         }
@@ -1708,7 +1717,7 @@ fn format_body_content(body: &str, headers: &[String]) -> String {
     body.to_string()
 }
 
-fn render_http_logs_footer(f: &mut Frame, app: &mut App, area: Rect) {
+fn render_http_logs_footer(f: &mut Frame, app: &App, area: Rect) {
     let instructions = if app.http_logs_detail_mode {
         "↑/↓: Scroll | PgUp/PgDn: Page | R: Replay Request | Esc: Back to List".to_string()
     } else {
@@ -1723,8 +1732,7 @@ fn render_http_logs_footer(f: &mut Frame, app: &mut App, area: Rect) {
             app.http_logs_requests.len().max(1)
         );
         format!(
-            "↑/↓: Select | Enter: View Details | A: Auto-scroll {} | Esc: Close | {}",
-            auto_scroll_status, list_info
+            "↑/↓: Select | Enter: View Details | A: Auto-scroll {auto_scroll_status} | Esc: Close | {list_info}"
         )
     };
 
@@ -1740,7 +1748,7 @@ fn render_http_logs_footer(f: &mut Frame, app: &mut App, area: Rect) {
     f.render_widget(instruction_paragraph, area);
 }
 
-pub fn render_update_confirmation_popup(
+pub(crate) fn render_update_confirmation_popup(
     f: &mut Frame, update_info: &UpdateInfo, area: Rect,
     selected_button: crate::tui::input::UpdateButton,
 ) {
@@ -1784,8 +1792,8 @@ pub fn render_update_confirmation_popup(
     f.render_widget(cancel_button, cancel_button_area);
 }
 
-pub fn render_update_progress_popup(f: &mut Frame, message: &Option<String>, area: Rect) {
-    let message_text = message.as_deref().unwrap_or("Downloading update...");
+pub(crate) fn render_update_progress_popup(f: &mut Frame, message: Option<&str>, area: Rect) {
+    let message_text = message.unwrap_or("Downloading update...");
     let message_paragraph = Text::raw(message_text);
     render_popup(
         f,
@@ -1797,7 +1805,7 @@ pub fn render_update_progress_popup(f: &mut Frame, message: &Option<String>, are
     );
 }
 
-pub fn render_restart_notification_popup(f: &mut Frame, area: Rect) {
+pub(crate) fn render_restart_notification_popup(f: &mut Frame, area: Rect) {
     let message_text = "Update completed successfully!\n\nPlease restart the application to apply the new version.";
     let message_paragraph = Text::raw(message_text);
     render_popup(

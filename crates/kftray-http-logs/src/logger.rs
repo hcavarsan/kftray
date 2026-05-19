@@ -15,7 +15,6 @@ use chrono::{
     Utc,
 };
 use dashmap::DashMap;
-use lazy_static::lazy_static;
 use tokio::fs::{
     File,
     OpenOptions,
@@ -49,11 +48,6 @@ pub struct TraceInfo {
 
 pub fn calculate_time_diff(start: DateTime<Utc>, end: DateTime<Utc>) -> i64 {
     (end - start).num_milliseconds()
-}
-
-lazy_static! {
-    static ref BUFFER_POOL: Arc<tokio::sync::Mutex<Vec<BytesMut>>> =
-        Arc::new(tokio::sync::Mutex::new(Vec::with_capacity(32)));
 }
 
 const CHANNEL_CAPACITY: usize = 256;
@@ -96,7 +90,7 @@ impl HttpLogger {
         let mut shutdown_rx_writer = shutdown_rx.clone();
 
         let writer_task = tokio::spawn({
-            let log_file = log_file.clone();
+            let log_file = log_file;
             async move {
                 let mut flush_interval =
                     tokio::time::interval(Duration::from_millis(FLUSH_INTERVAL_MS));
@@ -117,7 +111,7 @@ impl HttpLogger {
                             message_batch.push(log_message);
 
                             let now = Utc::now();
-                            let batch_too_old = now.signed_duration_since(last_flush).num_milliseconds() > FLUSH_INTERVAL_MS as i64;
+                            let batch_too_old = now.signed_duration_since(last_flush).num_milliseconds() > i64::try_from(FLUSH_INTERVAL_MS).unwrap_or(i64::MAX);
                             let force_write = message_batch.len() >= BATCH_SIZE_THRESHOLD || is_response || batch_too_old;
 
                             if force_write {
@@ -320,7 +314,7 @@ impl HttpLogger {
         };
 
         match self.log_sender.send(log_entry).await {
-            Ok(_) => debug!("Successfully sent request log message to channel"),
+            Ok(()) => debug!("Successfully sent request log message to channel"),
             Err(e) => error!("Failed to send log message: {:?}", e),
         }
 
@@ -354,7 +348,7 @@ impl HttpLogger {
 
         let message_size = log_entry.size();
         match self.log_sender.send(log_entry).await {
-            Ok(_) => debug!(
+            Ok(()) => debug!(
                 "Successfully sent response log message to channel (size: {}B)",
                 message_size
             ),
@@ -364,8 +358,7 @@ impl HttpLogger {
                     message_size, e
                 );
                 return Err(anyhow::anyhow!(
-                    "Failed to send response log message: {:?}",
-                    e
+                    "Failed to send response log message: {e:?}"
                 ));
             }
         }
@@ -376,7 +369,7 @@ impl HttpLogger {
     async fn send_preformatted_response_log(
         &self, buffer: Bytes, trace_id: String, timestamp: DateTime<Utc>, took_ms: i64,
     ) -> Result<()> {
-        let message = LogMessage::new_preformatted_response(trace_id, timestamp, took_ms, buffer);
+        let message = LogMessage::new_preformatted_response(&trace_id, timestamp, took_ms, &buffer);
 
         if let Err(e) = self.log_sender.send(message).await {
             error!("Failed to send preformatted response log message: {:?}", e);
@@ -416,7 +409,7 @@ impl HttpLogger {
         if response_count > 0 {
             debug!("Processing {} response messages in batch", response_count);
 
-            for message in messages.iter() {
+            for message in messages {
                 if message.is_response() {
                     let bytes = message.as_bytes();
                     combined_buffer.put_slice(bytes);
@@ -428,7 +421,7 @@ impl HttpLogger {
             }
         }
 
-        for message in messages.iter() {
+        for message in messages {
             if !message.is_response() {
                 combined_buffer.put_slice(message.as_bytes());
             }

@@ -31,7 +31,7 @@ struct HandleMetrics {
 }
 
 impl HandleMetrics {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self {
             // Seed with 1ms to avoid zero-cost bias before first measurement.
             rtt_ns: AtomicU64::new(1_000_000),
@@ -91,7 +91,7 @@ struct RttSample<'a> {
     start: Instant,
 }
 
-impl<'a> RttSample<'a> {
+impl RttSample<'_> {
     fn complete(self) {
         let elapsed_ns = self.start.elapsed().as_nanos();
         // Cap at u64::MAX (won't happen in practice but defensive).
@@ -291,8 +291,8 @@ impl Session {
         let seed = self.next.fetch_add(1, Ordering::Relaxed) as u64;
         let a = (seed % pool_size as u64) as usize;
         // LCG multiplier from Knuth's MMIX (also used by PCG family).
-        let b =
-            ((seed.wrapping_mul(6364136223846793005).wrapping_add(1)) % pool_size as u64) as usize;
+        let b = ((seed.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1)) % pool_size as u64)
+            as usize;
         if a == b {
             (a, (a + 1) % pool_size)
         } else {
@@ -314,12 +314,12 @@ impl Session {
         self.pool
             .iter()
             .filter(|m| !m.is_closed())
-            .map(|m| m.operating_capacity())
+            .map(MuxHandle::operating_capacity)
             .sum()
     }
 
     pub fn in_use(&self) -> usize {
-        self.pool.iter().map(|m| m.active_pairs()).sum()
+        self.pool.iter().map(MuxHandle::active_pairs).sum()
     }
 
     pub fn available(&self) -> usize {
@@ -334,7 +334,7 @@ impl Session {
 
     /// Returns true when all underlying WebSockets have closed.
     pub fn is_drained(&self) -> bool {
-        self.pool.iter().all(|m| m.is_closed())
+        self.pool.iter().all(MuxHandle::is_closed)
     }
 
     pub fn cancellation_token(&self) -> CancellationToken {

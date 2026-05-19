@@ -36,7 +36,7 @@ use crate::tui::ui::{
     YELLOW,
 };
 
-pub fn render_legend(f: &mut Frame, area: Rect, active_component: ActiveComponent) {
+pub(crate) fn render_legend(f: &mut Frame, area: Rect, active_component: ActiveComponent) {
     let common_legend = "ctrlc: quit | h: help | s: settings";
 
     let menu_legend = "←/→: navigate | enter: open | tab: switch to configs tab";
@@ -87,7 +87,7 @@ pub fn render_legend(f: &mut Frame, area: Rect, active_component: ActiveComponen
     f.render_widget(legend_paragraph, area);
 }
 
-fn calculate_center_constraints(percent: u16) -> [Constraint; 3] {
+const fn calculate_center_constraints(percent: u16) -> [Constraint; 3] {
     [
         Constraint::Percentage((100 - percent) / 2),
         Constraint::Percentage(percent),
@@ -95,7 +95,7 @@ fn calculate_center_constraints(percent: u16) -> [Constraint; 3] {
     ]
 }
 
-pub fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
+pub(crate) fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
     let popup_layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints(calculate_center_constraints(percent_y).as_ref())
@@ -110,7 +110,7 @@ pub fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
 
     horizontal_layout[1]
 }
-pub fn draw_file_explorer_popup(f: &mut Frame, app: &mut App, area: Rect, is_import: bool) {
+pub(crate) fn draw_file_explorer_popup(f: &mut Frame, app: &App, area: Rect, is_import: bool) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Percentage(90), Constraint::Percentage(10)].as_ref())
@@ -170,7 +170,7 @@ pub fn draw_file_explorer_popup(f: &mut Frame, app: &mut App, area: Rect, is_imp
     f.render_widget(help_widget, chunks[1]);
 }
 
-pub fn draw_configs_tab(
+pub(crate) fn draw_configs_tab(
     f: &mut Frame, app: &mut App, config_states: &[ConfigState], area: Rect, has_focus: bool,
 ) {
     let main_chunks = Layout::default()

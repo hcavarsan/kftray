@@ -5,9 +5,7 @@ use std::fs::{
 use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::Mutex;
 
-use lazy_static::lazy_static;
 use log::{
     error,
     info,
@@ -30,10 +28,6 @@ use crate::utils::manifests::{
     expose_service_manifest_exists,
     proxy_deployment_manifest_exists,
 };
-
-lazy_static! {
-    static ref ENV_TEST_MUTEX: Mutex<()> = Mutex::new(());
-}
 
 pub async fn init() -> Result<(), Box<dyn std::error::Error>> {
     if !db_file_exists() {
@@ -64,7 +58,7 @@ pub async fn init() -> Result<(), Box<dyn std::error::Error>> {
         create_expose_ingress_manifest()?;
     }
 
-    let pool = get_db_pool().await.map_err(|e| e.to_string())?;
+    let pool = get_db_pool().await?;
     create_db_table(&pool).await?;
 
     Ok(())
@@ -77,7 +71,7 @@ pub async fn get_db_pool() -> Result<Arc<SqlitePool>, String> {
         .get_or_try_init(|| async {
             let db_dir = get_db_file_path().map_err(|e| {
                 error!("Failed to get DB file path: {e}");
-                e.to_string()
+                e
             })?;
             let db_dir_str = db_dir.to_str().ok_or("Invalid DB path")?;
             info!("Database file path: {db_dir_str}");
@@ -289,7 +283,7 @@ fn create_db_file() -> Result<(), std::io::Error> {
         fs::create_dir_all(db_dir)?;
     }
 
-    fs::File::create(db_path)?;
+    File::create(db_path)?;
 
     Ok(())
 }
@@ -303,7 +297,6 @@ mod tests {
     };
     use std::sync::Mutex;
 
-    use lazy_static::lazy_static;
     use sqlx::SqlitePool;
     use tempfile::tempdir;
 
@@ -314,9 +307,8 @@ mod tests {
         get_pod_manifest_path,
     };
 
-    lazy_static! {
-        static ref ENV_TEST_MUTEX: Mutex<()> = Mutex::new(());
-    }
+    static ENV_TEST_MUTEX: std::sync::LazyLock<Mutex<()>> =
+        std::sync::LazyLock::new(|| Mutex::new(()));
 
     struct StrictEnvGuard {
         saved_vars: Vec<(String, Option<String>)>,
@@ -333,7 +325,7 @@ mod tests {
                 unsafe { env::remove_var(key) };
             }
 
-            StrictEnvGuard { saved_vars }
+            Self { saved_vars }
         }
     }
 
@@ -457,7 +449,7 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let temp_dir_path = temp_dir.path().to_str().unwrap().to_string();
 
-        let manifest_dir = std::path::Path::new(&temp_dir_path).join("manifest_dir");
+        let manifest_dir = Path::new(&temp_dir_path).join("manifest_dir");
         std::fs::create_dir_all(&manifest_dir).unwrap();
 
         let manifest_dir_str = manifest_dir.to_str().unwrap();

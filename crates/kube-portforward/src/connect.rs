@@ -238,7 +238,7 @@ pub(crate) async fn upgrade_spdy_tunnel(
     let upgraded = perform_ws_upgrade(kube_client, request).await?;
     tracing::debug!(
         pod = %pod,
-        elapsed_ms = t.elapsed().as_millis() as u64,
+        elapsed_ms = u64::try_from(t.elapsed().as_millis()).unwrap_or(u64::MAX),
         "upgrade_spdy_tunnel: upgrade complete"
     );
     Ok(SpdyUpgraded {
@@ -261,7 +261,7 @@ pub(crate) async fn upgrade_legacy_spdy(
     let upgraded = perform_legacy_spdy_upgrade(kube_client, request).await?;
     tracing::debug!(
         pod = %pod,
-        elapsed_ms = t.elapsed().as_millis() as u64,
+        elapsed_ms = u64::try_from(t.elapsed().as_millis()).unwrap_or(u64::MAX),
         "upgrade_legacy_spdy: upgrade complete"
     );
     Ok(SpdyUpgraded {
@@ -275,7 +275,7 @@ pub(crate) async fn upgrade_legacy_spdy(
 /// Fallback fires on apiserver-rejected upgrades (4xx / 5xx) and on
 /// subprotocol-echo mismatches. Real transport failures (Kube/Network/Io)
 /// propagate so callers see the actual reason.
-fn should_fallback(err: &Error) -> bool {
+const fn should_fallback(err: &Error) -> bool {
     matches!(
         err,
         Error::UpgradeFailed { .. } | Error::ProtocolViolation { .. }

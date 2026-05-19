@@ -31,10 +31,10 @@ use tokio::signal;
 use crate::cli::args::Cli;
 use crate::core;
 
-pub struct PortForwardRunner;
+pub(crate) struct PortForwardRunner;
 
 impl PortForwardRunner {
-    pub async fn auto_start_port_forwards(
+    pub(crate) async fn auto_start_port_forwards(
         cli: &Cli, mode: DatabaseMode, imported_config_ids: Vec<i64>,
     ) -> Result<Vec<i64>, Box<dyn std::error::Error>> {
         let config_ids = Self::get_config_ids_to_start(cli, mode, imported_config_ids).await?;
@@ -47,7 +47,7 @@ impl PortForwardRunner {
         Ok(successful_config_ids)
     }
 
-    pub async fn run_non_interactive_mode(
+    pub(crate) async fn run_non_interactive_mode(
         cli: &Cli, mode: DatabaseMode, imported_config_ids: Vec<i64>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if cli.auto_start {
@@ -254,12 +254,10 @@ impl PortForwardRunner {
                     .map(|_| ())
                     .map_err(|e| Box::new(std::io::Error::other(e)) as Box<dyn std::error::Error>)
             }
-            Some("expose") => {
-                kftray_expose::stop_expose(config_id, &config.namespace, mode)
-                    .await
-                    .map(|_| ())
-                    .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
-            }
+            Some("expose") => kftray_expose::stop_expose(config_id, &config.namespace, mode)
+                .await
+                .map(|_| ())
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error>),
             _ => stop_port_forward_with_mode(config_id.to_string(), mode)
                 .await
                 .map(|_| ())
@@ -286,17 +284,17 @@ impl PortForwardRunner {
 
         set_ssl_enabled(true)
             .await
-            .map_err(|e| format!("Failed to enable SSL: {}", e))?;
+            .map_err(|e| format!("Failed to enable SSL: {e}"))?;
         set_ssl_ca_auto_install(true)
             .await
-            .map_err(|e| format!("Failed to set CA auto install: {}", e))?;
+            .map_err(|e| format!("Failed to set CA auto install: {e}"))?;
         set_ssl_auto_regenerate(true)
             .await
-            .map_err(|e| format!("Failed to set SSL auto regenerate: {}", e))?;
+            .map_err(|e| format!("Failed to set SSL auto regenerate: {e}"))?;
 
         let settings = get_app_settings()
             .await
-            .map_err(|e| format!("Failed to get app settings: {}", e))?;
+            .map_err(|e| format!("Failed to get app settings: {e}"))?;
         let cert_manager = CertificateManager::new(&settings)?;
 
         let cert_result = match mode {
@@ -312,29 +310,29 @@ impl PortForwardRunner {
         };
 
         match cert_result {
-            Ok(_) => {
+            Ok(()) => {
                 info!("Generated SSL certificates for all configs");
 
                 match cert_manager.ensure_ca_installed_and_trusted().await {
-                    Ok(_) => {
+                    Ok(()) => {
                         info!("CA certificate installed and trusted");
                         println!("SSL/HTTPS enabled for port forwarding");
                         println!("CA certificate installed and trusted in system");
                         println!("You may need to restart your browser to take effect");
 
                         let example_url = Self::get_example_https_url(config_ids, mode).await;
-                        println!("Access your services via HTTPS (e.g., {})", example_url);
+                        println!("Access your services via HTTPS (e.g., {example_url})");
                     }
                     Err(e) => {
-                        warn!("Failed to install CA certificate: {}", e);
+                        warn!("Failed to install CA certificate: {e}");
                         println!("SSL enabled but CA certificate installation failed");
                         println!("You may need to manually trust the certificate in your browser");
                     }
                 }
             }
             Err(e) => {
-                warn!("Failed to generate SSL certificates: {}", e);
-                return Err(format!("Failed to generate SSL certificates: {}", e).into());
+                warn!("Failed to generate SSL certificates: {e}");
+                return Err(format!("Failed to generate SSL certificates: {e}").into());
             }
         }
 
@@ -346,11 +344,11 @@ impl PortForwardRunner {
     ) -> Result<bool, Box<dyn std::error::Error>> {
         let settings = get_app_settings()
             .await
-            .map_err(|e| format!("Failed to get app settings: {}", e))?;
+            .map_err(|e| format!("Failed to get app settings: {e}"))?;
         let cert_manager = CertificateManager::new(&settings)?;
 
-        let current_aliases: std::collections::HashSet<String> = {
-            let mut aliases = std::collections::HashSet::new();
+        let current_aliases: HashSet<String> = {
+            let mut aliases = HashSet::new();
             for &config_id in config_ids {
                 if let Ok(config) = get_config_with_mode(config_id, mode).await
                     && let Some(alias) = config.alias
@@ -371,7 +369,7 @@ impl PortForwardRunner {
                     return Ok(true);
                 }
 
-                let existing_domains: std::collections::HashSet<String> = cert_infos
+                let existing_domains: HashSet<String> = cert_infos
                     .into_iter()
                     .map(|cert_info| cert_info.domain)
                     .collect();
@@ -422,7 +420,7 @@ impl PortForwardRunner {
             if let Ok(config) = get_config_with_mode(config_id, mode).await
                 && let (Some(alias), Some(local_port)) = (config.alias, config.local_port)
             {
-                return format!("https://{}:{}", alias, local_port);
+                return format!("https://{alias}:{local_port}");
             }
         }
         "https://your-service:port".to_string()

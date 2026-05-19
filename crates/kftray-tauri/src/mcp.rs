@@ -10,7 +10,6 @@ use std::net::{
 };
 use std::sync::Arc;
 
-use lazy_static::lazy_static;
 use log::{
     error,
     info,
@@ -18,11 +17,8 @@ use log::{
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 
-lazy_static! {
-    /// Global state for the MCP server
-    static ref MCP_SERVER: Arc<RwLock<Option<McpServerState>>> =
-        Arc::new(RwLock::new(None));
-}
+static MCP_SERVER: std::sync::LazyLock<Arc<RwLock<Option<McpServerState>>>> =
+    std::sync::LazyLock::new(|| Arc::new(RwLock::new(None)));
 
 struct McpServerState {
     handle: JoinHandle<()>,
@@ -30,7 +26,7 @@ struct McpServerState {
 }
 
 /// Check if the MCP server is currently running
-pub async fn is_running() -> bool {
+pub(crate) async fn is_running() -> bool {
     let state = MCP_SERVER.read().await;
     if let Some(ref server) = *state {
         !server.handle.is_finished()
@@ -40,7 +36,7 @@ pub async fn is_running() -> bool {
 }
 
 /// Start the MCP server on the specified port
-pub async fn start(port: u16) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub(crate) async fn start(port: u16) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     use std::time::Duration;
 
     // Check if already running
@@ -50,7 +46,7 @@ pub async fn start(port: u16) -> Result<(), Box<dyn std::error::Error + Send + S
             && !server.handle.is_finished()
         {
             if server.port == port {
-                info!("MCP server already running on port {}", port);
+                info!("MCP server already running on port {port}");
                 return Ok(());
             } else {
                 // Different port, need to restart
@@ -62,11 +58,11 @@ pub async fn start(port: u16) -> Result<(), Box<dyn std::error::Error + Send + S
 
     let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), port);
 
-    info!("Starting MCP server on http://{}", addr);
+    info!("Starting MCP server on http://{addr}");
 
     let handle = tokio::spawn(async move {
         if let Err(e) = kftray_mcp::server::start_server(addr).await {
-            error!("MCP server error: {}", e);
+            error!("MCP server error: {e}");
         }
     });
 
@@ -87,16 +83,16 @@ pub async fn start(port: u16) -> Result<(), Box<dyn std::error::Error + Send + S
     }
 
     if healthy {
-        info!("MCP server started successfully on port {}", port);
+        info!("MCP server started successfully on port {port}");
     } else {
-        info!("MCP server started on port {} (health check pending)", port);
+        info!("MCP server started on port {port} (health check pending)");
     }
 
     Ok(())
 }
 
 /// Stop the MCP server if it's running
-pub async fn stop() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub(crate) async fn stop() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let mut state = MCP_SERVER.write().await;
 
     if let Some(server) = state.take() {
@@ -110,7 +106,7 @@ pub async fn stop() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
 /// Initialize the MCP server based on saved settings
 /// Call this during app startup
-pub async fn init_from_settings() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub(crate) async fn init_from_settings() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     use kftray_commons::utils::settings::{
         get_mcp_server_enabled,
         get_mcp_server_port,
@@ -120,7 +116,7 @@ pub async fn init_from_settings() -> Result<(), Box<dyn std::error::Error + Send
 
     if enabled {
         let port = get_mcp_server_port().await.unwrap_or(3000);
-        info!("MCP server enabled in settings, starting on port {}", port);
+        info!("MCP server enabled in settings, starting on port {port}");
         start(port).await?;
     } else {
         info!("MCP server disabled in settings");
@@ -130,13 +126,13 @@ pub async fn init_from_settings() -> Result<(), Box<dyn std::error::Error + Send
 }
 
 /// Check if the MCP server is healthy by attempting to connect to the port
-pub async fn health_check(port: u16) -> bool {
+pub(crate) async fn health_check(port: u16) -> bool {
     use std::time::Duration;
 
     use tokio::net::TcpStream;
     use tokio::time::timeout;
 
-    let addr = format!("127.0.0.1:{}", port);
+    let addr = format!("127.0.0.1:{port}");
 
     matches!(
         timeout(Duration::from_secs(2), TcpStream::connect(&addr)).await,

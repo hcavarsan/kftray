@@ -29,7 +29,7 @@ use sysinfo::{
 
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
-pub trait PortOperations: Send + Sync {
+pub(crate) trait PortOperations: Send + Sync {
     async fn get_configs_state(&self) -> Result<Vec<ConfigState>, String>;
     async fn get_config(&self, id: i64) -> Result<Config, String>;
     async fn update_config_state(&self, state: &ConfigState) -> Result<(), String>;
@@ -40,7 +40,7 @@ pub trait PortOperations: Send + Sync {
     async fn deploy_and_forward_pod(&self, configs: Vec<Config>) -> Result<Vec<String>, String>;
 }
 
-pub struct RealPortOperations;
+pub(crate) struct RealPortOperations;
 
 #[async_trait]
 impl PortOperations for RealPortOperations {
@@ -110,7 +110,9 @@ async fn fetch_configs_in_parallel(
     results
 }
 
-pub async fn check_and_manage_ports(port_ops: Arc<dyn PortOperations>) -> Result<(), String> {
+pub(crate) async fn check_and_manage_ports(
+    port_ops: Arc<dyn PortOperations>,
+) -> Result<(), String> {
     let running_configs = match port_ops.get_configs_state().await {
         Ok(states) => states
             .into_iter()
@@ -153,7 +155,7 @@ pub async fn check_and_manage_ports(port_ops: Arc<dyn PortOperations>) -> Result
 
     for task in port_tasks {
         match task.await {
-            Ok(_) => {}
+            Ok(()) => {}
             Err(e) => error!("Port forward task failed: {e}"),
         }
     }
@@ -222,18 +224,10 @@ async fn start_port_forwarding(
     let result = match config.workload_type.as_deref() {
         Some("proxy") => port_ops.deploy_and_forward_pod(configs).await,
         Some("expose") => {
-            kftray_expose::start_expose(
-                configs,
-                kftray_commons::utils::db_mode::DatabaseMode::File,
-            )
-            .await
-            .map(|responses| {
-                responses
-                    .into_iter()
-                    .map(|r| r.service)
-                    .collect()
-            })
-            .map_err(|e| e.to_string())
+            kftray_expose::start_expose(configs, kftray_commons::utils::db_mode::DatabaseMode::File)
+                .await
+                .map(|responses| responses.into_iter().map(|r| r.service).collect())
+                .map_err(|e| e.to_string())
         }
         _ => port_ops.start_port_forward(configs, protocol).await,
     };
@@ -274,8 +268,13 @@ async fn find_process_by_port_internal(port: u16) -> Option<(i32, String)> {
             if local_port == port
                 && let Some(&pid) = socket.associated_pids.first()
             {
-                let process_name = get_process_name_by_pid(pid as i32);
-                return Some((pid as i32, process_name));
+                let process_name = get_process_name_by_pid(pid);
+                // PIDs above i32::MAX cannot exist on the platforms we
+                // target; saturating-cast keeps the public signature
+                // compatible with callers that already expect i32 PIDs
+                // for symmetry with Unix's pid_t.
+                let pid_i32 = i32::try_from(pid).unwrap_or(i32::MAX);
+                return Some((pid_i32, process_name));
             }
         }
     }
@@ -283,12 +282,12 @@ async fn find_process_by_port_internal(port: u16) -> Option<(i32, String)> {
     None // Return None if no process found on the port
 }
 
-fn get_process_name_by_pid(pid: i32) -> String {
+fn get_process_name_by_pid(pid: u32) -> String {
     let mut system = System::new();
     system.refresh_processes(sysinfo::ProcessesToUpdate::All, false);
 
     system
-        .process(Pid::from(pid as usize))
+        .process(Pid::from_u32(pid))
         .map(|process| process.name().to_string_lossy().into_owned())
         .unwrap_or_else(|| "unknown".to_string())
 }

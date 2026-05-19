@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use kftray_http_logs::HttpLogger;
 use tokio::io::{
     AsyncReadExt,
     AsyncWriteExt,
@@ -7,8 +8,6 @@ use tokio::io::{
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 use tracing::debug;
-
-use kftray_http_logs::HttpLogger;
 
 use super::{
     BUFFER_SIZE,
@@ -27,7 +26,7 @@ pub(super) struct ResponseState {
 }
 
 impl ResponseState {
-    pub(super) fn new() -> Self {
+    pub(super) const fn new() -> Self {
         Self {
             buffer: Vec::new(),
             is_chunked: false,
@@ -132,7 +131,7 @@ impl TcpForwarder {
                                 };
 
                                 if http_logs_enabled {
-                                    match kftray_http_logs::HttpLogger::for_config(config_id, local_port).await {
+                                    match HttpLogger::for_config(config_id, local_port).await {
                                         Ok(new_logger) => {
                                             let mut guard = logger.lock().await;
                                             if guard.is_none() {
@@ -164,7 +163,7 @@ impl TcpForwarder {
                             }
                     }
                 },
-                _ = cancellation_token.cancelled() => break,
+                () = cancellation_token.cancelled() => break,
             }
         }
 
@@ -247,7 +246,7 @@ impl TcpForwarder {
                                 };
 
                                 if http_logs_enabled {
-                                    match kftray_http_logs::HttpLogger::for_config(config_id, local_port).await {
+                                    match HttpLogger::for_config(config_id, local_port).await {
                                         Ok(new_logger) => {
                                             let mut guard = logger.lock().await;
                                             if guard.is_none() {
@@ -279,7 +278,7 @@ impl TcpForwarder {
                             }
                     }
                 },
-                _ = cancellation_token.cancelled() => break,
+                () = cancellation_token.cancelled() => break,
             }
         }
 

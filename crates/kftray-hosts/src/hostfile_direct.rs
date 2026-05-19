@@ -141,6 +141,9 @@ impl DirectHostfileManager {
         }
     }
 
+    // `thread::spawn` requires owned `'static` Arcs, which is what the
+    // background writer thread receives here.
+    #[allow(clippy::needless_pass_by_value)]
     fn batch_writer_loop(
         entries: Arc<RwLock<HostEntriesMap>>, needs_update: Arc<Mutex<bool>>,
         writer_running: Arc<Mutex<bool>>,
@@ -351,7 +354,7 @@ mod tests {
         if can_write_hosts_file() {
             let manager = DirectHostfileManager::new();
             let _ = manager.add_host_entry(id1, entry.clone());
-            let _ = manager.add_host_entry(id2, entry.clone());
+            let _ = manager.add_host_entry(id2, entry);
 
             let result = manager.remove_all_host_entries();
             assert!(result.is_ok());

@@ -9,10 +9,13 @@ use tokio::time::sleep;
 
 use crate::utils::settings::get_disconnect_timeout;
 
-lazy_static::lazy_static! {
-    static ref TIMEOUT_HANDLES: Arc<RwLock<HashMap<i64, JoinHandle<()>>>> =
-        Arc::new(RwLock::new(HashMap::new()));
-}
+/// Map of `config_id` to the timeout task watching that forward. Kept behind
+/// an `Arc<RwLock<_>>` so spawn/stop callers can race against the timeout
+/// reaper without holding the lock across `.await`.
+type TimeoutHandles = Arc<RwLock<HashMap<i64, JoinHandle<()>>>>;
+
+static TIMEOUT_HANDLES: std::sync::LazyLock<TimeoutHandles> =
+    std::sync::LazyLock::new(|| Arc::new(RwLock::new(HashMap::new())));
 
 pub async fn start_timeout_for_forward(
     config_id: i64, stop_callback: Arc<dyn Fn(i64) + Send + Sync>,
@@ -22,7 +25,7 @@ pub async fn start_timeout_for_forward(
     {
         info!("Starting timeout for config_id {config_id} ({timeout_minutes} minutes)");
 
-        let timeout_duration = Duration::from_secs((timeout_minutes as u64) * 60);
+        let timeout_duration = Duration::from_secs(u64::from(timeout_minutes) * 60);
         let stop_callback_clone = stop_callback.clone();
 
         let timeout_handle = tokio::spawn(async move {
@@ -66,7 +69,6 @@ mod tests {
         Ordering,
     };
 
-    use lazy_static::lazy_static;
     use sqlx::SqlitePool;
     use tokio::sync::Mutex;
     use tokio::time::{
@@ -81,9 +83,7 @@ mod tests {
     };
     use crate::utils::settings::set_disconnect_timeout;
 
-    lazy_static! {
-        static ref TEST_MUTEX: Mutex<()> = Mutex::new(());
-    }
+    static TEST_MUTEX: std::sync::LazyLock<Mutex<()>> = std::sync::LazyLock::new(|| Mutex::new(()));
 
     async fn setup_test_db() {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();

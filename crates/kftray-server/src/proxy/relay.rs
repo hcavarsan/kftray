@@ -54,7 +54,7 @@ fn apply_keepalive(stream: &TcpStream) -> Result<(), std::io::Error> {
 
 /// Relay bytes between an inbound stream and a directly-connected outbound
 /// stream until either side reaches EOF or the cancellation token fires.
-pub async fn relay_direct(
+pub(crate) async fn relay_direct(
     mut inbound: TcpStream, config: &ProxyConfig, cancel: CancellationToken,
 ) -> Result<(), ProxyError> {
     let mut outbound = connect_to_target(config).await?;
@@ -64,7 +64,7 @@ pub async fn relay_direct(
             Err(e) if is_benign(&e) => Ok(()),
             Err(e) => Err(ProxyError::Connection(format!("relay: {e}"))),
         },
-        _ = cancel.cancelled() => Ok(()),
+        () = cancel.cancelled() => Ok(()),
     }
 }
 
@@ -123,7 +123,7 @@ mod tests {
         let cancel = CancellationToken::new();
         client.shutdown().await.unwrap();
         drop(client);
-        let res = tokio::time::timeout(
+        let res = timeout(
             Duration::from_secs(2),
             relay_direct(server_side, &cfg, cancel),
         )
@@ -138,7 +138,7 @@ mod tests {
         let cancel = CancellationToken::new();
         client.shutdown().await.unwrap();
         drop(client);
-        let res = tokio::time::timeout(
+        let res = timeout(
             Duration::from_secs(2),
             relay_direct(server_side, &cfg, cancel),
         )
@@ -156,7 +156,7 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(50)).await;
             cancel_clone.cancel();
         });
-        let res = tokio::time::timeout(
+        let res = timeout(
             Duration::from_secs(2),
             relay_direct(server_side, &cfg, cancel),
         )

@@ -142,7 +142,7 @@ async fn process_single_proxy_config(
         .filter(|c: &char| c.is_alphanumeric())
         .collect();
 
-    let protocol = config.protocol.to_string().to_lowercase();
+    let protocol = config.protocol.clone().to_lowercase();
 
     let hashed_name =
         format!("kftray-forward-{clean_username}-{protocol}-{timestamp}-{random_string}")
@@ -152,7 +152,7 @@ async fn process_single_proxy_config(
         .id
         .map_or_else(|| "default".into(), |id| id.to_string());
 
-    if config.remote_address.as_ref().is_none_or(|s| s.is_empty()) {
+    if config.remote_address.as_ref().is_none_or(String::is_empty) {
         config.remote_address.clone_from(&config.service);
     }
 
@@ -193,8 +193,11 @@ async fn process_single_proxy_config(
 
     let use_deployment = should_use_deployment_manifest().await;
 
+    // Both branches build very large futures (their state machines compose
+    // multi-step k8s API calls). Boxing keeps the parent future small enough
+    // to avoid blowing the tokio task stack on the spawn-site.
     if use_deployment {
-        process_deployment_proxy(
+        Box::pin(process_deployment_proxy(
             client,
             &mut config,
             &hashed_name,
@@ -203,10 +206,10 @@ async fn process_single_proxy_config(
             &protocol,
             mode,
             ssl_override,
-        )
+        ))
         .await
     } else {
-        process_pod_proxy(
+        Box::pin(process_pod_proxy(
             client,
             &mut config,
             &hashed_name,
@@ -214,7 +217,7 @@ async fn process_single_proxy_config(
             &protocol,
             mode,
             ssl_override,
-        )
+        ))
         .await
     }
 }
@@ -224,8 +227,7 @@ async fn process_deployment_proxy(
     client: Client, config: &mut Config, hashed_name: &str, config_id_str: &str,
     values: &HashMap<String, String>, protocol: &str, mode: DatabaseMode, ssl_override: bool,
 ) -> Result<CustomResponse, PortForwardError> {
-    let manifest_path = get_proxy_deployment_manifest_path()
-        .map_err(|e| PortForwardError::Internal(e.to_string()))?;
+    let manifest_path = get_proxy_deployment_manifest_path().map_err(PortForwardError::Internal)?;
     let contents = tokio::fs::read_to_string(&manifest_path)
         .await
         .map_err(PortForwardError::Io)?;
@@ -242,7 +244,7 @@ async fn process_deployment_proxy(
     {
         Ok(_) => {
             let pods: Api<Pod> = Api::namespaced(client.clone(), &config.namespace);
-            let label_selector = format!("app={},config_id={}", hashed_name, config_id_str);
+            let label_selector = format!("app={hashed_name},config_id={config_id_str}");
             let lp = ListParams::default().labels(&label_selector);
 
             let pod_name = wait_for_deployment_pod(&pods, &lp, hashed_name, &deployments).await?;
@@ -357,8 +359,7 @@ async fn process_pod_proxy(
     client: Client, config: &mut Config, hashed_name: &str, values: &HashMap<String, String>,
     protocol: &str, mode: DatabaseMode, ssl_override: bool,
 ) -> Result<CustomResponse, PortForwardError> {
-    let manifest_path =
-        get_pod_manifest_path().map_err(|e| PortForwardError::Internal(e.to_string()))?;
+    let manifest_path = get_pod_manifest_path().map_err(PortForwardError::Internal)?;
     let contents = tokio::fs::read_to_string(&manifest_path)
         .await
         .map_err(PortForwardError::Io)?;
@@ -445,8 +446,7 @@ async fn process_pod_proxy(
 }
 
 pub async fn stop_proxy_forward_with_mode(
-    config_id: i64, _namespace: &str, service_name: String,
-    mode: kftray_commons::utils::db_mode::DatabaseMode,
+    config_id: i64, _namespace: &str, service_name: String, mode: DatabaseMode,
 ) -> Result<CustomResponse, PortForwardError> {
     info!("Stopping proxy forward for service: {service_name}");
     crate::kube::stop::stop_port_forward_with_mode(config_id.to_string(), mode)
@@ -461,15 +461,12 @@ pub async fn stop_proxy_forward(
     config_id: i64, _namespace: &str, service_name: String,
 ) -> Result<CustomResponse, PortForwardError> {
     info!("Stopping proxy forward for service: {service_name}");
-    crate::kube::stop::stop_port_forward_with_mode(
-        config_id.to_string(),
-        kftray_commons::utils::db_mode::DatabaseMode::File,
-    )
-    .await
-    .map_err(|e| {
-        error!("Failed to stop port forwarding for service '{service_name}': {e}");
-        e
-    })
+    crate::kube::stop::stop_port_forward_with_mode(config_id.to_string(), DatabaseMode::File)
+        .await
+        .map_err(|e| {
+            error!("Failed to stop port forwarding for service '{service_name}': {e}");
+            e
+        })
 }
 
 async fn is_custom_pod_manifest() -> bool {
@@ -480,7 +477,7 @@ async fn is_custom_pod_manifest() -> bool {
                 Ok(contents) => {
                     let size = contents.len();
                     if !(520..=780).contains(&size) {
-                        debug!("Pod manifest appears customized (size: {} bytes)", size);
+                        debug!("Pod manifest appears customized (size: {size} bytes)");
                         return true;
                     }
                     if contents.contains("# Custom") || contents.contains("# Modified") {
@@ -515,7 +512,7 @@ async fn should_use_deployment_manifest() -> bool {
 fn render_json_template_owned(template: &str, values: &HashMap<String, String>) -> String {
     let mut rendered_template = template.to_string();
 
-    for (key, value) in values.iter() {
+    for (key, value) in values {
         rendered_template = rendered_template.replace(&format!("{{{key}}}"), value);
     }
 

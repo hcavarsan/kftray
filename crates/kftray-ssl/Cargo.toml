@@ -18,7 +18,6 @@ base64 = { workspace = true }
 dirs = { workspace = true }
 keyring-core = { workspace = true }
 kftray-commons = { workspace = true }
-lazy_static = { workspace = true }
 log = { workspace = true }
 pem = { workspace = true }
 rcgen = { workspace = true }
@@ -41,3 +40,6 @@ apple-native-keyring-store = { workspace = true }
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { workspace = true }
 windows-native-keyring-store = { workspace = true }
+
+[lints]
+workspace = true

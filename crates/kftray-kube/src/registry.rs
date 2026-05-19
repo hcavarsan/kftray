@@ -6,14 +6,14 @@ use std::time::{
 
 use dashmap::DashMap;
 use kube::Client;
-use once_cell::sync::Lazy;
 use tokio::sync::Mutex;
 
 use crate::kube::client::create_client_with_specific_context;
 use crate::kube::shared_client::ServiceClientKey;
 use crate::port_forward::PortForwardProcess;
 
-pub static PORT_FORWARD_REGISTRY: Lazy<PortForwardRegistry> = Lazy::new(PortForwardRegistry::new);
+pub static PORT_FORWARD_REGISTRY: std::sync::LazyLock<PortForwardRegistry> =
+    std::sync::LazyLock::new(PortForwardRegistry::new);
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct PortForwardKey {
@@ -35,7 +35,7 @@ impl PortForwardKey {
         }
     }
 
-    pub fn expose(config_id: i64) -> Self {
+    pub const fn expose(config_id: i64) -> Self {
         Self {
             config_id,
             slot: PortForwardSlot::Expose,
@@ -216,7 +216,7 @@ impl PortForwardRegistry {
             .processes
             .iter()
             .filter(|entry| entry.key().config_id == config_id)
-            .filter_map(|entry| entry.value().process.direct_forwarder.clone())
+            .filter_map(|entry| entry.value().process.forwarder())
             .collect();
 
         for forwarder in forwarders {

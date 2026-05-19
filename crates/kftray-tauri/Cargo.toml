@@ -21,7 +21,6 @@ anyhow = { workspace = true }
 mimalloc = { workspace = true }
 async-trait = { workspace = true }
 dirs = { workspace = true }
-env_logger = { workspace = true }
 fix-path-env = { workspace = true }
 flexi_logger = { workspace = true }
 jiff = { workspace = true }
@@ -36,9 +35,7 @@ kftray-kube = { workspace = true }
 kftray-ssl = { workspace = true }
 kftray-shortcuts = { workspace = true }
 kube = { workspace = true }
-lazy_static = { workspace = true }
 log = { workspace = true }
-tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 tracing-log = "0.2"
 netstat2 = { workspace = true }
@@ -89,3 +86,6 @@ custom-protocol = ["tauri/custom-protocol"]
 # when `tauri dev` runs it is executed with `cargo run --no-default-features` if `devPath` is an URL
 default = ["custom-protocol"]
 
+
+[lints]
+workspace = true

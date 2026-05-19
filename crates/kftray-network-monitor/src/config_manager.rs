@@ -4,10 +4,10 @@ use log::{
     info,
 };
 
-pub struct ConfigManager;
+pub(crate) struct ConfigManager;
 
 impl ConfigManager {
-    pub async fn get_active_configs()
+    pub(crate) async fn get_active_configs()
     -> Result<Vec<Config>, Box<dyn std::error::Error + Send + Sync>> {
         let config_states = kftray_commons::utils::config_state::get_configs_state().await?;
         let current_process_id = std::process::id();
@@ -45,7 +45,7 @@ impl ConfigManager {
         Ok(configs)
     }
 
-    pub async fn restart_port_forwards(configs: Vec<Config>) {
+    pub(crate) async fn restart_port_forwards(configs: Vec<Config>) {
         for protocol in ["tcp", "udp"] {
             let protocol_configs: Vec<Config> = configs
                 .iter()
@@ -81,8 +81,7 @@ impl ConfigManager {
 
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
-        let (proxy_configs, expose_configs, other_configs) =
-            partition_configs_by_workload(configs);
+        let (proxy_configs, expose_configs, other_configs) = partition_configs_by_workload(configs);
 
         if !other_configs.is_empty() {
             match kftray_kube::kube::start_port_forward(other_configs, protocol).await {
@@ -123,9 +122,8 @@ impl ConfigManager {
                             .contains_key(&config_id)
                     {
                         info!(
-                            "Skipping network monitor restart for config {} \
-                             \u{2014} recovery already in progress",
-                            config_id
+                            "Skipping network monitor restart for config {config_id} \
+                             \u{2014} recovery already in progress"
                         );
                         return false;
                     }
@@ -278,7 +276,8 @@ mod tests {
         let proxy_udp_config = make_config(1, "proxy", "udp");
         let service_udp_config = make_config(2, "service", "udp");
 
-        let (proxy, _expose, other) = partition_configs_by_workload(vec![proxy_udp_config, service_udp_config]);
+        let (proxy, _expose, other) =
+            partition_configs_by_workload(vec![proxy_udp_config, service_udp_config]);
 
         // Verify proxy UDP config is in the proxy partition (will go to
         // deploy_and_forward_pod)

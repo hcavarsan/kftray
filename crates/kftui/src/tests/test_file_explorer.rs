@@ -139,7 +139,7 @@ mod tests {
         let mut app = setup_file_explorer_app();
         let error = io::Error::new(io::ErrorKind::NotFound, "File not found");
 
-        handle_file_error(&mut app, error);
+        handle_file_error(&mut app, &error);
 
         assert_eq!(app.state, AppState::ShowErrorPopup);
         assert!(app.error_message.is_some());

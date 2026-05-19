@@ -4,7 +4,7 @@ use clap::Parser;
 #[command(name = "kftui")]
 #[command(about = "KFtray TUI - Manage kubectl port forward configurations")]
 #[command(version)]
-pub struct Cli {
+pub(crate) struct Cli {
     #[arg(
         short = 'c',
         long,
@@ -94,15 +94,15 @@ pub struct Cli {
 }
 
 impl Cli {
-    pub fn should_use_memory_mode(&self) -> bool {
+    pub(crate) const fn should_use_memory_mode(&self) -> bool {
         self.has_config_source() && !self.save
     }
 
-    pub fn is_github_import(&self) -> bool {
+    pub(crate) const fn is_github_import(&self) -> bool {
         self.github_url.is_some()
     }
 
-    pub fn has_config_source(&self) -> bool {
+    pub(crate) const fn has_config_source(&self) -> bool {
         self.configs_path.is_some()
             || self.github_url.is_some()
             || self.json.is_some()
@@ -110,25 +110,25 @@ impl Cli {
             || self.auto_discover
     }
 
-    pub fn get_config_path(&self) -> Option<&str> {
+    pub(crate) fn get_config_path(&self) -> Option<&str> {
         self.configs_path.as_deref()
     }
 
-    pub fn get_github_url(&self) -> Option<&str> {
+    pub(crate) fn get_github_url(&self) -> Option<&str> {
         self.github_url.as_deref()
     }
 
-    pub fn get_json(&self) -> Option<&str> {
+    pub(crate) fn get_json(&self) -> Option<&str> {
         self.json.as_deref()
     }
 
-    pub fn get_configs_path_with_default(&self) -> String {
+    pub(crate) fn get_configs_path_with_default(&self) -> String {
         self.configs_path
             .clone()
             .unwrap_or_else(|| "config.json".to_string())
     }
 
-    pub fn validate(&self) -> Result<(), String> {
+    pub(crate) fn validate(&self) -> Result<(), String> {
         if self.save && !self.has_config_source() {
             return Err(
                 "--save requires either --configs-path, --github-url, --json, --stdin, or --auto-discover"

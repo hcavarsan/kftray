@@ -1,6 +1,6 @@
 /// Configuration settings for a proxy instance
 #[derive(Debug, Clone)]
-pub struct ProxyConfig {
+pub(crate) struct ProxyConfig {
     /// Original hostname for Host headers (if target was hostname)
     pub target_host: String,
     /// Resolved IP address (if target was hostname), None if target was already
@@ -20,7 +20,7 @@ pub struct ProxyConfig {
 
 /// Builder pattern implementation for creating ProxyConfig instances
 #[derive(Default)]
-pub struct ProxyConfigBuilder {
+pub(crate) struct ProxyConfigBuilder {
     target_host: Option<String>,
     resolved_ip: Option<String>,
     target_port: Option<u16>,
@@ -31,46 +31,46 @@ pub struct ProxyConfigBuilder {
 }
 
 impl ProxyConfigBuilder {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self::default()
     }
 
-    pub fn target_host(mut self, host: String) -> Self {
+    pub(crate) fn target_host(mut self, host: String) -> Self {
         self.target_host = Some(host);
         self
     }
 
-    pub fn resolved_ip(mut self, ip: Option<String>) -> Self {
+    pub(crate) fn resolved_ip(mut self, ip: Option<String>) -> Self {
         self.resolved_ip = ip;
         self
     }
 
-    pub fn target_port(mut self, port: u16) -> Self {
+    pub(crate) const fn target_port(mut self, port: u16) -> Self {
         self.target_port = Some(port);
         self
     }
 
-    pub fn proxy_port(mut self, port: u16) -> Self {
+    pub(crate) const fn proxy_port(mut self, port: u16) -> Self {
         self.proxy_port = Some(port);
         self
     }
 
-    pub fn proxy_type(mut self, proxy_type: ProxyType) -> Self {
+    pub(crate) const fn proxy_type(mut self, proxy_type: ProxyType) -> Self {
         self.proxy_type = Some(proxy_type);
         self
     }
 
-    pub fn http_port(mut self, port: Option<u16>) -> Self {
+    pub(crate) const fn http_port(mut self, port: Option<u16>) -> Self {
         self.http_port = port;
         self
     }
 
-    pub fn websocket_port(mut self, port: Option<u16>) -> Self {
+    pub(crate) const fn websocket_port(mut self, port: Option<u16>) -> Self {
         self.websocket_port = port;
         self
     }
 
-    pub fn build(self) -> Result<ProxyConfig, String> {
+    pub(crate) fn build(self) -> Result<ProxyConfig, String> {
         let target_host = self
             .target_host
             .ok_or_else(|| "target_host is required".to_string())?;
@@ -97,14 +97,14 @@ impl ProxyConfigBuilder {
 }
 
 impl ProxyConfig {
-    pub fn builder() -> ProxyConfigBuilder {
+    pub(crate) fn builder() -> ProxyConfigBuilder {
         ProxyConfigBuilder::new()
     }
 }
 
 /// Supported proxy protocol types
 #[derive(Debug, Clone)]
-pub enum ProxyType {
+pub(crate) enum ProxyType {
     /// TCP proxy mode
     Tcp,
     /// UDP proxy mode

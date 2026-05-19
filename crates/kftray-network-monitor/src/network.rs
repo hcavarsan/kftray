@@ -6,16 +6,16 @@ use tokio::time::timeout;
 
 use crate::types::MonitorConfig;
 
-pub struct NetworkChecker {
+pub(crate) struct NetworkChecker {
     config: MonitorConfig,
 }
 
 impl NetworkChecker {
-    pub fn new(config: MonitorConfig) -> Self {
+    pub(crate) const fn new(config: MonitorConfig) -> Self {
         Self { config }
     }
 
-    pub async fn check_connectivity(&self) -> bool {
+    pub(crate) async fn check_connectivity(&self) -> bool {
         let mut futs: FuturesUnordered<_> = self
             .config
             .network_endpoints
@@ -44,7 +44,7 @@ impl NetworkChecker {
         success_count > 0 || total_count == 0
     }
 
-    pub async fn get_network_fingerprint(&self) -> String {
+    pub(crate) async fn get_network_fingerprint(&self) -> String {
         let mut fingerprint = Vec::new();
         let mut found_local_addr = false;
 
@@ -84,11 +84,11 @@ impl NetworkChecker {
     }
 }
 
-pub async fn is_port_listening(address: &str, port: u16) -> bool {
+pub(crate) async fn is_port_listening(address: &str, port: u16) -> bool {
     let addr = format!("{address}:{port}");
 
     matches!(
-        tokio::time::timeout(
+        timeout(
             std::time::Duration::from_millis(100),
             tokio::net::TcpStream::connect(&addr)
         )

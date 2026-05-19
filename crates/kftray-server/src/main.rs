@@ -45,19 +45,17 @@ fn load_config() -> Result<ProxyConfig, ProxyError> {
             .ok_or_else(|| ProxyError::Configuration("No host found in URL".into()))?
             .to_string()
     } else {
-        target_host.clone()
+        target_host
     };
 
     let resolved_ip = if original_host.parse::<std::net::IpAddr>().is_ok() {
         None
     } else {
-        match format!("{}:0", original_host).to_socket_addrs() {
+        match format!("{original_host}:0").to_socket_addrs() {
             Ok(mut addrs) => addrs.next().map(|addr| addr.ip().to_string()),
             Err(e) => {
                 log::warn!(
-                    "Failed to resolve hostname '{}': {}. Will use hostname directly.",
-                    original_host,
-                    e
+                    "Failed to resolve hostname '{original_host}': {e}. Will use hostname directly."
                 );
                 None
             }
@@ -150,7 +148,7 @@ async fn main() -> Result<(), ProxyError> {
             _ = signal::ctrl_c() => {
                 info!("Received Ctrl+C signal");
             }
-            _ = async {
+            () = async {
                 if let Ok(mut sigterm) = signal::unix::signal(signal::unix::SignalKind::terminate()) {
                     let _ = sigterm.recv().await;
                     info!("Received SIGTERM signal");
@@ -181,13 +179,10 @@ mod tests {
     use std::net::IpAddr;
     use std::sync::Mutex;
 
-    use lazy_static::lazy_static;
-
     use super::*;
 
-    lazy_static! {
-        static ref ENV_TEST_MUTEX: Mutex<()> = Mutex::new(());
-    }
+    static ENV_TEST_MUTEX: std::sync::LazyLock<Mutex<()>> =
+        std::sync::LazyLock::new(|| Mutex::new(()));
 
     struct EnvVarGuard {
         key: String,
@@ -199,7 +194,7 @@ mod tests {
             let key = key.to_string();
             let original_value = env::var(&key).ok();
             unsafe { env::set_var(&key, value) };
-            EnvVarGuard {
+            Self {
                 key,
                 original_value,
             }
@@ -209,7 +204,7 @@ mod tests {
             let key = key.to_string();
             let original_value = env::var(&key).ok();
             unsafe { env::remove_var(&key) };
-            EnvVarGuard {
+            Self {
                 key,
                 original_value,
             }

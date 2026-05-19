@@ -28,6 +28,8 @@
 //! `BytesMut::from(&payload[..])` to eliminate the second allocation inside
 //! fastwebsockets (mask in-place instead of allocate-copy-mask).
 
+use std::future::Future;
+
 use bytes::{
     Bytes,
     BytesMut,
@@ -110,22 +112,22 @@ pub trait WsFrameWriter: Send {
     /// encoded by the codec. The adapter wraps it in a WS binary frame.
     fn write_binary(
         &mut self, payload: Bytes,
-    ) -> impl std::future::Future<Output = Result<(), TransportError>> + Send;
+    ) -> impl Future<Output = Result<(), TransportError>> + Send;
 
     /// Write a WebSocket PONG frame in response to a peer PING.
     fn write_pong(
         &mut self, payload: Bytes,
-    ) -> impl std::future::Future<Output = Result<(), TransportError>> + Send;
+    ) -> impl Future<Output = Result<(), TransportError>> + Send;
 
     /// Flush all buffered data to the underlying transport.
     ///
     /// For tungstenite, flushes the Sink's internal buffer.
     /// For fastwebsockets, this is a no-op. See [`FastWsWriter::flush`]
     /// for the rationale.
-    fn flush(&mut self) -> impl std::future::Future<Output = Result<(), TransportError>> + Send;
+    fn flush(&mut self) -> impl Future<Output = Result<(), TransportError>> + Send;
 
     /// Send a WebSocket Close frame and shut down the write half.
-    fn close(&mut self) -> impl std::future::Future<Output = Result<(), TransportError>> + Send;
+    fn close(&mut self) -> impl Future<Output = Result<(), TransportError>> + Send;
 }
 
 /// Async reader for WebSocket frames.
@@ -144,7 +146,7 @@ pub trait WsFrameReader: Send {
     /// the adapter's loop and never returned.
     fn read_message(
         &mut self,
-    ) -> impl std::future::Future<Output = Option<Result<WsMessage, TransportError>>> + Send;
+    ) -> impl Future<Output = Option<Result<WsMessage, TransportError>>> + Send;
 }
 
 /// fastwebsockets write half adapter.
@@ -225,7 +227,7 @@ pub struct FastWsReader<S: AsyncRead + Unpin + Send> {
 }
 
 impl<S: AsyncRead + Unpin + Send> FastWsReader<S> {
-    pub fn new(ws: fastwebsockets::FragmentCollectorRead<S>) -> Self {
+    pub const fn new(ws: fastwebsockets::FragmentCollectorRead<S>) -> Self {
         Self { ws }
     }
 }
@@ -274,14 +276,13 @@ impl<S: AsyncRead + Unpin + Send> WsFrameReader for FastWsReader<S> {
                 // Skip-class: absorb and re-read. The mux reader's idle
                 // timer resets on any successful read_message() return,
                 // not on specific variants.
-                fastwebsockets::OpCode::Pong => continue,
+                fastwebsockets::OpCode::Pong => {}
                 fastwebsockets::OpCode::Text | fastwebsockets::OpCode::Continuation => {
                     tracing::warn!(
                         opcode = ?frame.opcode,
                         "fastwebsockets reader: unexpected opcode from K8s apiserver, \
                          absorbing (SPDY tunnel expects only Binary frames)"
                     );
-                    continue;
                 }
             }
         }
@@ -355,7 +356,7 @@ pub struct RawSpdyWriter<W: AsyncWrite + Unpin + Send> {
 }
 
 impl<W: AsyncWrite + Unpin + Send> RawSpdyWriter<W> {
-    pub fn new(inner: W) -> Self {
+    pub const fn new(inner: W) -> Self {
         Self { inner }
     }
 }

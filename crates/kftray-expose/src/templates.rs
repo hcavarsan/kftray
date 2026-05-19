@@ -10,10 +10,13 @@ use kftray_commons::utils::config_dir::{
 
 use crate::error::ExposeError;
 
+// `values` is built inline by the caller using the default hasher; no need
+// to generalize over `S: BuildHasher` for an internal helper.
+#[allow(clippy::implicit_hasher)]
 pub fn render_template(template: &str, values: &HashMap<&str, String>) -> String {
     let mut rendered = template.to_string();
     for (key, value) in values {
-        rendered = rendered.replace(&format!("{{{}}}", key), value);
+        rendered = rendered.replace(&format!("{{{key}}}"), value);
     }
     rendered
 }
@@ -24,10 +27,9 @@ fn load_template(
     let manifest_path = get_path().map_err(|e| ExposeError::Configuration {
         message: format!("Failed to get {kind} manifest path: {e}"),
     })?;
-    let mut file =
-        File::open(&manifest_path).map_err(|e| ExposeError::Configuration {
-            message: format!("Failed to open {kind} manifest at {manifest_path:?}: {e}"),
-        })?;
+    let mut file = File::open(&manifest_path).map_err(|e| ExposeError::Configuration {
+        message: format!("Failed to open {kind} manifest at {manifest_path:?}: {e}"),
+    })?;
     let mut contents = String::new();
     file.read_to_string(&mut contents)
         .map_err(|e| ExposeError::Configuration {
@@ -63,7 +65,7 @@ pub fn build_ingress_annotations(
             _ => "cert-manager.io/cluster-issuer",
         };
 
-        annotations.push(format!(r#""{}": "{}""#, annotation_key, issuer));
+        annotations.push(format!(r#""{annotation_key}": "{issuer}""#));
     }
 
     if let Some(json_str) = additional_annotations
@@ -73,7 +75,7 @@ pub fn build_ingress_annotations(
     {
         for (key, value) in obj {
             if let Some(val_str) = value.as_str() {
-                annotations.push(format!(r#""{}": "{}""#, key, val_str));
+                annotations.push(format!(r#""{key}": "{val_str}""#));
             }
         }
     }
@@ -98,16 +100,15 @@ pub fn build_tls_section(cert_manager_enabled: bool, domain: &str, config_id: &s
 
     format!(
         r#""tls": [{{
-      "hosts": ["{}"],
-      "secretName": "kftray-expose-tls-{}"
-    }}],"#,
-        domain, config_id
+      "hosts": ["{domain}"],
+      "secretName": "kftray-expose-tls-{config_id}"
+    }}],"#
     )
 }
 
 pub fn build_ingress_class_name(ingress_class: Option<&str>) -> String {
     if let Some(class) = ingress_class {
-        format!(r#""ingressClassName": "{}","#, class)
+        format!(r#""ingressClassName": "{class}","#)
     } else {
         String::new()
     }

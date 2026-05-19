@@ -1,5 +1,5 @@
-pub mod app;
-pub mod input;
-pub mod ui;
+pub(crate) mod app;
+pub(crate) mod input;
+pub(crate) mod ui;
 
-pub use app::run_tui;
+pub(crate) use app::run_tui;

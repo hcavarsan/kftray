@@ -5,11 +5,11 @@ use std::{
 
 use super::config::LogConfig;
 
-pub trait LoggerInitializer {
+pub(crate) trait LoggerInitializer {
     fn initialize(&self, config: &LogConfig) -> Result<(), Box<dyn std::error::Error>>;
 }
 
-pub struct FileLoggerInitializer;
+pub(crate) struct FileLoggerInitializer;
 
 impl LoggerInitializer for FileLoggerInitializer {
     fn initialize(&self, config: &LogConfig) -> Result<(), Box<dyn std::error::Error>> {
@@ -41,7 +41,7 @@ impl LoggerInitializer for FileLoggerInitializer {
 /// Honors `--log-level` and the `RUST_LOG` env var (the latter takes
 /// precedence for fine-grained per-module control). No background drain
 /// thread, no buffers — just synchronous writes to stdout.
-pub struct StdoutLoggerInitializer;
+pub(crate) struct StdoutLoggerInitializer;
 
 impl LoggerInitializer for StdoutLoggerInitializer {
     fn initialize(&self, config: &LogConfig) -> Result<(), Box<dyn std::error::Error>> {
@@ -55,7 +55,7 @@ impl LoggerInitializer for StdoutLoggerInitializer {
     }
 }
 
-pub struct TuiLoggerInitializer;
+pub(crate) struct TuiLoggerInitializer;
 
 impl LoggerInitializer for TuiLoggerInitializer {
     fn initialize(&self, config: &LogConfig) -> Result<(), Box<dyn std::error::Error>> {

@@ -39,7 +39,7 @@ async fn show_alert_dialog<R: Runtime>(
     .unwrap();
 }
 
-pub async fn alert_multiple_configs<R: Runtime>(app_handle: AppHandle<R>) {
+pub(crate) async fn alert_multiple_configs<R: Runtime>(app_handle: AppHandle<R>) {
     let (configs, active_config) = detect_multiple_configs();
     if configs.len() > 1 {
         show_alert_dialog(app_handle, configs, active_config).await;

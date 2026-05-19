@@ -1,18 +1,16 @@
+use kftray_commons::models::config_model::Config;
 use log::{
     debug,
     error,
     info,
     warn,
 };
-use once_cell::sync::Lazy;
 use tokio::sync::Mutex as TokioMutex;
-
-use kftray_commons::models::config_model::Config;
 
 use crate::port_forward_error::PortForwardError;
 
-pub(super) static FALLBACK_ALLOCATION_MUTEX: Lazy<TokioMutex<()>> =
-    Lazy::new(|| TokioMutex::new(()));
+pub(super) static FALLBACK_ALLOCATION_MUTEX: std::sync::LazyLock<TokioMutex<()>> =
+    std::sync::LazyLock::new(|| TokioMutex::new(()));
 
 pub(super) async fn allocate_local_address_for_config(
     config: &mut Config,
@@ -25,8 +23,7 @@ pub(super) async fn allocate_local_address_for_config(
 
         if kftray_hosts::loopback::is_custom_loopback_address(&address) {
             info!("Configuring custom loopback address: {address}");
-            if let Err(config_err) =
-                kftray_hosts::loopback::ensure_loopback_address(&address).await
+            if let Err(config_err) = kftray_hosts::loopback::ensure_loopback_address(&address).await
             {
                 let error_msg = config_err.to_string();
                 if error_msg.contains("cancelled") || error_msg.contains("canceled") {
@@ -34,9 +31,7 @@ pub(super) async fn allocate_local_address_for_config(
                         "Custom loopback address configuration cancelled: {error_msg}"
                     )));
                 }
-                warn!(
-                    "Failed to configure custom loopback address {address}: {config_err}"
-                );
+                warn!("Failed to configure custom loopback address {address}: {config_err}");
             }
         }
 
@@ -165,8 +160,7 @@ async fn try_allocate_address(service_name: &str) -> Result<String, PortForwardE
         Ok(Ok(inner)) => inner,
         Ok(Err(e)) => Err(e),
         Err(_) => Err(PortForwardError::AddressAllocation(format!(
-            "Address allocation timed out after {:?}",
-            ADDRESS_ALLOCATE_TIMEOUT
+            "Address allocation timed out after {ADDRESS_ALLOCATE_TIMEOUT:?}"
         ))),
     }
 }
@@ -202,17 +196,14 @@ async fn try_fallback_allocate_and_save(
     };
     // Lock released here
 
-    let address = match candidate {
-        Some(addr) => addr,
-        None => {
-            return Err(PortForwardError::AddressAllocation(
-                "No available addresses found in fallback allocation".to_string(),
-            ));
-        }
+    let Some(address) = candidate else {
+        return Err(PortForwardError::AddressAllocation(
+            "No available addresses found in fallback allocation".to_string(),
+        ));
     };
 
     match kftray_hosts::loopback::ensure_loopback_address(&address).await {
-        Ok(_) => {
+        Ok(()) => {
             debug!(
                 "Successfully allocated and configured fallback address: {address} for service: {service_name}"
             );
@@ -225,7 +216,7 @@ async fn try_fallback_allocate_and_save(
             );
 
             match save_allocated_address_to_db(config).await {
-                Ok(_) => {
+                Ok(()) => {
                     info!(
                         "Successfully updated database with fallback allocated address {} for config {}",
                         address,
@@ -244,8 +235,7 @@ async fn try_fallback_allocate_and_save(
                         kftray_hosts::loopback::remove_loopback_address(&address).await
                     {
                         error!(
-                            "Failed to cleanup address {} after DB save failure: {}",
-                            address, cleanup_err
+                            "Failed to cleanup address {address} after DB save failure: {cleanup_err}"
                         );
                     }
                     Err(PortForwardError::AddressAllocation(format!(
@@ -300,7 +290,7 @@ async fn save_allocated_address_to_db(config: &Config) -> Result<(), PortForward
     use kftray_commons::utils::config::update_config;
 
     match update_config(config.clone()).await {
-        Ok(_) => {
+        Ok(()) => {
             info!(
                 "Successfully saved allocated address to database for config {}",
                 config.id.unwrap_or_default()

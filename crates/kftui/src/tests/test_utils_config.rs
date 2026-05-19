@@ -29,7 +29,7 @@ mod tests {
         let result = export_configs_to_file(file_path_str, DatabaseMode::File).await;
 
         if let Err(e) = result {
-            println!("Export configs test skipped validation: {}", e);
+            println!("Export configs test skipped validation: {e}");
         } else {
             let metadata = fs::metadata(&file_path);
             assert!(

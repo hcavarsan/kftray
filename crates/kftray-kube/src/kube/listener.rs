@@ -101,7 +101,7 @@ impl AsyncRead for Upstream {
         mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
         match self.as_mut().get_mut() {
-            Upstream::Ws(s) => Pin::new(s).poll_read(cx, buf),
+            Self::Ws(s) => Pin::new(s).poll_read(cx, buf),
         }
     }
 }
@@ -111,17 +111,17 @@ impl AsyncWrite for Upstream {
         mut self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8],
     ) -> Poll<io::Result<usize>> {
         match self.as_mut().get_mut() {
-            Upstream::Ws(s) => Pin::new(s).poll_write(cx, buf),
+            Self::Ws(s) => Pin::new(s).poll_write(cx, buf),
         }
     }
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         match self.as_mut().get_mut() {
-            Upstream::Ws(s) => Pin::new(s).poll_flush(cx),
+            Self::Ws(s) => Pin::new(s).poll_flush(cx),
         }
     }
     fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
         match self.as_mut().get_mut() {
-            Upstream::Ws(s) => Pin::new(s).poll_shutdown(cx),
+            Self::Ws(s) => Pin::new(s).poll_shutdown(cx),
         }
     }
 }
@@ -206,7 +206,7 @@ impl PortForwarder {
             })
             .build()
             .await
-            .map_err(|e| anyhow!("failed to build forwarder: {}", e))?;
+            .map_err(|e| anyhow!("failed to build forwarder: {e}"))?;
 
         Ok(Self {
             forwarder: Arc::new(forwarder),
@@ -238,7 +238,7 @@ impl PortForwarder {
         match &target.port {
             Port::Number(port) => {
                 let requested = u16::try_from(*port)
-                    .map_err(|_| anyhow!("port number {} is out of range", port))?;
+                    .map_err(|_| anyhow!("port number {port} is out of range"))?;
                 // Translate via the service spec when this forward targets a
                 // service. For pod/proxy workloads, the user already specified
                 // the pod port directly — pass through.
@@ -268,12 +268,12 @@ impl PortForwarder {
                 let ready = self
                     .forwarder
                     .ready_pod()
-                    .ok_or_else(|| anyhow!("no ready pod to resolve port name '{}'", port_name))?;
+                    .ok_or_else(|| anyhow!("no ready pod to resolve port name '{port_name}'"))?;
                 let pod = self
                     .pod_api
                     .get(&ready)
                     .await
-                    .map_err(|e| anyhow!("failed to fetch pod {}: {}", ready, e))?;
+                    .map_err(|e| anyhow!("failed to fetch pod {ready}: {e}"))?;
                 extract_named_port(&pod, port_name)
             }
         }
@@ -307,7 +307,7 @@ impl PortForwarder {
             .forwarder
             .connect(target_port)
             .await
-            .map_err(|e| anyhow!("failed to open local channel: {}", e))?;
+            .map_err(|e| anyhow!("failed to open local channel: {e}"))?;
         Ok(Upstream::Ws(stream))
     }
 
@@ -339,7 +339,7 @@ impl PortForwarder {
                             debug!("Sync error for config {}: {}", config_id, e);
                         }
                     }
-                    _ = sync_cancel_token.cancelled() => {
+                    () = sync_cancel_token.cancelled() => {
                         break;
                     }
                 }
@@ -379,18 +379,17 @@ impl PortForwarder {
                         );
                         if consecutive_accept_errors >= MAX_ACCEPT_ERRORS {
                             return Err(anyhow!(
-                                "TCP listener failed after {} consecutive accept errors: {}",
-                                MAX_ACCEPT_ERRORS, e
+                                "TCP listener failed after {MAX_ACCEPT_ERRORS} consecutive accept errors: {e}"
                             ));
                         }
                         tokio::select! {
-                            _ = tokio::time::sleep(tokio::time::Duration::from_millis(backoff_ms)) => {}
-                            _ = cancel_token.cancelled() => break,
+                            () = tokio::time::sleep(tokio::time::Duration::from_millis(backoff_ms)) => {}
+                            () = cancel_token.cancelled() => break,
                         }
                         continue;
                     }
                 },
-                _ = cancel_token.cancelled() => break,
+                () = cancel_token.cancelled() => break,
             };
 
             let forwarder = Arc::clone(&forwarder_clone);
@@ -405,13 +404,11 @@ impl PortForwarder {
                 let mut client_conn = client_conn;
                 let upstream_stream = match forwarder.get_stream().await {
                     Ok(stream) => {
-                        stream_failures_clone.store(0, std::sync::atomic::Ordering::SeqCst);
+                        stream_failures_clone.store(0, Ordering::SeqCst);
                         stream
                     }
                     Err(e) => {
-                        let failures = stream_failures_clone
-                            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
-                            + 1;
+                        let failures = stream_failures_clone.fetch_add(1, Ordering::SeqCst) + 1;
                         if failures >= MAX_STREAM_FAILURES
                             && let Some(rm) =
                                 crate::kube::proxy_recovery::RECOVERY_MANAGERS.get(&config_id)
@@ -482,7 +479,7 @@ impl PortForwarder {
         if let Err(e) =
             kftray_hosts::loopback::ensure_loopback_address(&listener_config.local_address).await
         {
-            return Err(anyhow!("Network config failed: {}", e));
+            return Err(anyhow!("Network config failed: {e}"));
         }
 
         match listener_config.protocol {
@@ -524,18 +521,14 @@ impl PortForwarder {
         let addr = std::net::SocketAddr::new(ip, listener_config.local_port);
         let listener = TcpListener::bind(addr)
             .await
-            .map_err(|e| anyhow!("Failed to bind TCP listener to {}: {}", addr, e))?;
+            .map_err(|e| anyhow!("Failed to bind TCP listener to {addr}: {e}"))?;
         let port = listener.local_addr()?.port();
 
         // Eagerly validate upstream connectivity (same pattern as UDP).
         // The stream is dropped immediately; the underlying session and
         // spare-stream queue stay warm for real traffic.
         self.get_stream().await.map_err(|e| {
-            anyhow!(
-                "Failed to validate upstream connection for TCP port {}: {}",
-                port,
-                e
-            )
+            anyhow!("Failed to validate upstream connection for TCP port {port}: {e}")
         })?;
 
         let tls_acceptor = listener_config.tls_acceptor;
@@ -563,7 +556,7 @@ impl PortForwarder {
         let upstream_stream = self
             .get_stream()
             .await
-            .map_err(|e| anyhow!("Failed to get upstream connection for UDP: {}", e))?;
+            .map_err(|e| anyhow!("Failed to get upstream connection for UDP: {e}"))?;
         let signal_token = cancellation_token.clone();
         let (port, handle) = UdpForwarder::bind_and_forward(
             listener_config.local_address,
@@ -575,13 +568,12 @@ impl PortForwarder {
         let result_handle = tokio::spawn(async move {
             let result = handle
                 .await
-                .map_err(|e| anyhow!("UDP forwarding task failed: {}", e));
+                .map_err(|e| anyhow!("UDP forwarding task failed: {e}"));
             if !signal_token.is_cancelled()
                 && let Some(rm) = crate::kube::proxy_recovery::RECOVERY_MANAGERS.get(&config_id)
             {
                 log::info!(
-                    "UDP forwarder task completed, signaling recovery for config_id={}",
-                    config_id
+                    "UDP forwarder task completed, signaling recovery for config_id={config_id}"
                 );
                 rm.signal_recovery(crate::kube::proxy_recovery::RecoverySignal::StreamFailed);
             }
@@ -591,7 +583,7 @@ impl PortForwarder {
         Ok((port, result_handle))
     }
 
-    pub fn get_http_log_watcher(&self) -> &HttpLogStateWatcher {
+    pub const fn get_http_log_watcher(&self) -> &HttpLogStateWatcher {
         &self.http_log_watcher
     }
 
@@ -654,12 +646,12 @@ async fn resolve_label_selector(
             let svc = api
                 .get(name)
                 .await
-                .map_err(|e| anyhow!("service '{}' not found: {}", name, e))?;
+                .map_err(|e| anyhow!("service '{name}' not found: {e}"))?;
             let labels = svc
                 .spec
                 .as_ref()
                 .and_then(|s| s.selector.as_ref())
-                .ok_or_else(|| anyhow!("service '{}' has no selector", name))?;
+                .ok_or_else(|| anyhow!("service '{name}' has no selector"))?;
             let mut out = String::new();
             let mut first = true;
             for (k, v) in labels {
@@ -697,26 +689,27 @@ async fn resolve_service_target_port(
     let svc = api
         .get(name)
         .await
-        .map_err(|e| anyhow!("failed to fetch service {}: {}", name, e))?;
+        .map_err(|e| anyhow!("failed to fetch service {name}: {e}"))?;
     let spec = svc
         .spec
         .as_ref()
-        .ok_or_else(|| anyhow!("service {} has no spec", name))?;
+        .ok_or_else(|| anyhow!("service {name} has no spec"))?;
     let ports = spec
         .ports
         .as_ref()
-        .ok_or_else(|| anyhow!("service {} has no ports", name))?;
+        .ok_or_else(|| anyhow!("service {name} has no ports"))?;
 
     let matching = ports
         .iter()
-        .find(|p| p.port as u32 == requested as u32)
-        .ok_or_else(|| anyhow!("service {} has no port entry for {}", name, requested))?;
+        .find(|p| p.port == i32::from(requested))
+        .ok_or_else(|| anyhow!("service {name} has no port entry for {requested}"))?;
 
     let target_port = match matching.target_port.as_ref() {
         // Per Kubernetes API: omitted targetPort defaults to the service port.
         None => requested,
-        Some(IntOrString::Int(n)) => u16::try_from(*n)
-            .map_err(|_| anyhow!("service {} targetPort {} out of range", name, n))?,
+        Some(IntOrString::Int(n)) => {
+            u16::try_from(*n).map_err(|_| anyhow!("service {name} targetPort {n} out of range"))?
+        }
         Some(IntOrString::String(named)) => {
             // Named targetPort: look it up in a pod matching the service selector.
             // Get the pod api from the namespace path the service lives in.
@@ -724,13 +717,9 @@ async fn resolve_service_target_port(
                 .metadata
                 .namespace
                 .as_deref()
-                .ok_or_else(|| anyhow!("service {} has no namespace", name))?;
+                .ok_or_else(|| anyhow!("service {name} has no namespace"))?;
             let selector = spec.selector.as_ref().ok_or_else(|| {
-                anyhow!(
-                    "service {} has named targetPort {:?} but no selector",
-                    name,
-                    named
-                )
+                anyhow!("service {name} has named targetPort {named:?} but no selector")
             })?;
             let selector_str = selector
                 .iter()
@@ -741,18 +730,13 @@ async fn resolve_service_target_port(
             let pod_api: Api<Pod> = Api::namespaced(client, namespace);
             let lp = kube::api::ListParams::default().labels(&selector_str);
             let pods = pod_api.list(&lp).await.map_err(|e| {
-                anyhow!(
-                    "failed to list pods for service {} named targetPort {:?}: {}",
-                    name,
-                    named,
-                    e
-                )
+                anyhow!("failed to list pods for service {name} named targetPort {named:?}: {e}")
             })?;
             let pod = pods
                 .items
                 .into_iter()
                 .next()
-                .ok_or_else(|| anyhow!("no pods match service {} selector", name))?;
+                .ok_or_else(|| anyhow!("no pods match service {name} selector"))?;
             extract_named_port(&pod, named)?
         }
     };
@@ -777,9 +761,9 @@ fn extract_named_port(pod: &Pod, name: &str) -> anyhow::Result<u16> {
                 .filter_map(|c| c.ports.as_ref())
                 .flatten()
                 .find(|p| p.name.as_deref() == Some(name))
-                .map(|p| p.container_port as u16)
+                .and_then(|p| u16::try_from(p.container_port).ok())
         })
-        .ok_or_else(|| anyhow!("named port '{}' not found in pod", name))
+        .ok_or_else(|| anyhow!("named port '{name}' not found in pod"))
 }
 
 async fn is_http_request(client_conn: &TcpStream) -> bool {
@@ -795,7 +779,7 @@ async fn is_http_request(client_conn: &TcpStream) -> bool {
             let mut req = Request::new(&mut headers);
             matches!(
                 req.parse(&peek_buf),
-                Ok(httparse::Status::Complete(_)) | Ok(httparse::Status::Partial)
+                Ok(httparse::Status::Complete(_) | httparse::Status::Partial)
             )
         }
         _ => false,
@@ -807,22 +791,20 @@ async fn handle_http_redirect(mut stream: TcpStream, port: u16) -> anyhow::Resul
     let n = stream.read(&mut buffer).await?;
     let request = std::str::from_utf8(&buffer[..n])?;
     let mut lines = request.lines();
-    let request_line = match lines.next() {
-        Some(line) => line,
-        None => return Ok(()),
+    let Some(request_line) = lines.next() else {
+        return Ok(());
     };
     let path = request_line.split_whitespace().nth(1).unwrap_or("/");
     let host = lines
         .find(|line| line.to_lowercase().starts_with("host:"))
         .and_then(|line| line.split(':').nth(1))
-        .map(|h| h.trim())
+        .map(str::trim)
         .unwrap_or("localhost");
     let response = format!(
         "HTTP/1.1 301 Moved Permanently\r\n\
-        Location: https://{}:{}{}\r\n\
+        Location: https://{host}:{port}{path}\r\n\
         Content-Length: 0\r\n\
-        \r\n",
-        host, port, path
+        \r\n"
     );
     stream.write_all(response.as_bytes()).await?;
     Ok(())

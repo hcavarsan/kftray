@@ -1,3 +1,14 @@
+// Window-preset sizing bridges `u32` physical dimensions, `f64` scale factors,
+// and `f32` fill ratios. All values are bounded by screen resolution, so the
+// pedantic cast warnings just clutter readable math; see window.rs for the
+// matching justification.
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss
+)]
+
 use tauri::{
     WebviewWindow,
     Wry,
@@ -7,10 +18,10 @@ const BASE_WIDTH: u32 = 450;
 const BASE_HEIGHT: u32 = 500;
 const MONITOR_FILL_RATIO: f32 = 0.9;
 
-pub const SETTING_KEY: &str = "window_size_preset";
+pub(crate) const SETTING_KEY: &str = "window_size_preset";
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
-pub enum WindowSizePreset {
+pub(crate) enum WindowSizePreset {
     ExtraSmall,
     Small,
     #[default]
@@ -21,7 +32,7 @@ pub enum WindowSizePreset {
 }
 
 impl WindowSizePreset {
-    pub fn from_id(id: &str) -> Option<Self> {
+    pub(crate) fn from_id(id: &str) -> Option<Self> {
         match id {
             "xs" => Some(Self::ExtraSmall),
             "small" => Some(Self::Small),
@@ -33,7 +44,7 @@ impl WindowSizePreset {
         }
     }
 
-    pub fn as_id(self) -> &'static str {
+    pub(crate) const fn as_id(self) -> &'static str {
         match self {
             Self::ExtraSmall => "xs",
             Self::Small => "small",
@@ -44,7 +55,7 @@ impl WindowSizePreset {
         }
     }
 
-    pub fn scale(self) -> f32 {
+    pub(crate) const fn scale(self) -> f32 {
         match self {
             Self::ExtraSmall => 0.5,
             Self::Small => 0.75,
@@ -55,7 +66,7 @@ impl WindowSizePreset {
         }
     }
 
-    pub fn dimensions(self, window: &WebviewWindow<Wry>) -> (u32, u32) {
+    pub(crate) fn dimensions(self, window: &WebviewWindow<Wry>) -> (u32, u32) {
         let available_logical = window.current_monitor().ok().flatten().map(|monitor| {
             let logical = monitor.size().to_logical::<f64>(monitor.scale_factor());
             (logical.width, logical.height)
@@ -105,6 +116,9 @@ mod tests {
         assert_eq!(WindowSizePreset::from_id(""), None);
     }
 
+    // These scales are compile-time constants in `WindowSizePreset::scale`;
+    // direct equality is exactly what we want to check.
+    #[allow(clippy::float_cmp)]
     #[test]
     fn scales_match_ladder() {
         assert_eq!(WindowSizePreset::ExtraSmall.scale(), 0.5);

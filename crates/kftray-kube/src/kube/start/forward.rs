@@ -2,12 +2,24 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use kftray_commons::{
+    models::config_state_model::ConfigState,
+    utils::{
+        config_state::update_config_state_with_mode,
+        db_mode::DatabaseMode,
+        timeout_manager::start_timeout_for_forward,
+    },
+};
+use kftray_commons::{
     models::{
         config_model::Config,
         hostfile::HostEntry,
         response::CustomResponse,
     },
     utils::settings::get_app_settings,
+};
+use kftray_hosts::hostsfile::{
+    add_host_entry,
+    add_ssl_host_entry,
 };
 use log::{
     debug,
@@ -16,9 +28,9 @@ use log::{
     warn,
 };
 
-use kftray_hosts::hostsfile::{
-    add_host_entry,
-    add_ssl_host_entry,
+use super::timeout::{
+    clear_stopped_by_timeout,
+    create_static_timeout_callback,
 };
 use crate::{
     kube::models::{
@@ -33,19 +45,6 @@ use crate::{
         PORT_FORWARD_REGISTRY,
         PortForwardKey,
     },
-};
-use kftray_commons::{
-    models::config_state_model::ConfigState,
-    utils::{
-        config_state::update_config_state_with_mode,
-        db_mode::DatabaseMode,
-        timeout_manager::start_timeout_for_forward,
-    },
-};
-
-use super::timeout::{
-    clear_stopped_by_timeout,
-    create_static_timeout_callback,
 };
 
 pub(super) async fn build_tls_acceptor(
@@ -62,7 +61,7 @@ pub(super) async fn build_tls_acceptor(
             cert_pair.certificate.clone(),
             cert_pair.private_key.clone_key(),
         )
-        .map_err(|e| anyhow::anyhow!("Failed to create server config with certificate: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Failed to create server config with certificate: {e}"))?;
 
     Ok(tokio_rustls::TlsAcceptor::from(Arc::new(server_config)))
 }
@@ -79,7 +78,7 @@ pub(super) async fn update_hosts_with_ssl(config: &Config) -> Result<(), PortFor
     let port = config.local_port.unwrap_or(8080);
 
     add_ssl_host_entry(config_id, alias, port).map_err(|e| {
-        PortForwardError::HostsFile(format!("Failed to add HTTPS hosts entries: {}", e))
+        PortForwardError::HostsFile(format!("Failed to add HTTPS hosts entries: {e}"))
     })?;
 
     Ok(())
@@ -125,7 +124,7 @@ pub(super) async fn process_single_config_with_address(
         _ => TargetSelector::ServiceName(config.service.clone().unwrap_or_default()),
     };
 
-    let remote_port = Port::from(config.remote_port.unwrap_or_default() as i32);
+    let remote_port = Port::from(i32::from(config.remote_port.unwrap_or_default()));
     let context_name = Some(config.context.clone());
     let kubeconfig = Some(config.kubeconfig.clone());
     let namespace = config.namespace.clone();
@@ -207,12 +206,12 @@ pub(super) async fn process_single_config_with_address(
                     Ok(settings) => match build_tls_acceptor(&actual_config, &settings).await {
                         Ok(acceptor) => Some(acceptor),
                         Err(e) => {
-                            warn!("Failed to create TLS acceptor: {}", e);
+                            warn!("Failed to create TLS acceptor: {e}");
                             None
                         }
                     },
                     Err(e) => {
-                        warn!("Failed to get app settings for SSL: {}", e);
+                        warn!("Failed to get app settings for SSL: {e}");
                         None
                     }
                 }
@@ -225,7 +224,7 @@ pub(super) async fn process_single_config_with_address(
                 "tcp" => port_forward.clone().port_forward_tcp(tls_acceptor).await,
                 _ => {
                     error!("Unsupported protocol: {protocol}");
-                    Err(anyhow::anyhow!("Unsupported protocol: {}", protocol))
+                    Err(anyhow::anyhow!("Unsupported protocol: {protocol}"))
                 }
             };
 
@@ -280,7 +279,7 @@ pub(super) async fn process_single_config_with_address(
                         && protocol == "tcp"
                         && let Err(e) = update_hosts_with_ssl(&config).await
                     {
-                        warn!("Failed to update hosts file for SSL: {}", e);
+                        warn!("Failed to update hosts file for SSL: {e}");
                     }
 
                     SingleConfigResult::Success(CustomResponse {
@@ -327,8 +326,7 @@ pub(super) async fn process_single_config_with_address(
 
                     if let Err(cleanup_err) = port_forward.cleanup_resources().await {
                         error!(
-                            "Failed to cleanup resources for failed port forward: {}",
-                            cleanup_err
+                            "Failed to cleanup resources for failed port forward: {cleanup_err}"
                         );
                     }
 
@@ -362,8 +360,7 @@ pub(super) async fn process_single_config_with_address(
                     kftray_hosts::loopback::remove_loopback_address(local_addr).await
             {
                 error!(
-                    "Failed to cleanup loopback address {} after PortForward creation failure: {}",
-                    local_addr, cleanup_err
+                    "Failed to cleanup loopback address {local_addr} after PortForward creation failure: {cleanup_err}"
                 );
             }
 

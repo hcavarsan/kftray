@@ -33,7 +33,7 @@ pub async fn delete_config_with_pool(id: i64, pool: &SqlitePool) -> Result<(), D
 }
 
 pub async fn delete_config(id: i64) -> Result<(), String> {
-    let pool = get_db_pool().await.map_err(|e| e.to_string())?;
+    let pool = get_db_pool().await?;
     delete_config_with_pool(id, &pool)
         .await
         .map_err(|e| e.to_string())
@@ -55,7 +55,7 @@ pub async fn delete_configs_with_pool(ids: Vec<i64>, pool: &SqlitePool) -> Resul
 }
 
 pub async fn delete_configs(ids: Vec<i64>) -> Result<(), String> {
-    let pool = get_db_pool().await.map_err(|e| e.to_string())?;
+    let pool = get_db_pool().await?;
     delete_configs_with_pool(ids, &pool)
         .await
         .map_err(|e| e.to_string())
@@ -71,7 +71,7 @@ pub async fn delete_all_configs_with_pool(pool: &SqlitePool) -> Result<(), DbErr
 }
 
 pub async fn delete_all_configs() -> Result<(), String> {
-    let pool = get_db_pool().await.map_err(|e| e.to_string())?;
+    let pool = get_db_pool().await?;
     delete_all_configs_with_pool(&pool)
         .await
         .map_err(|e| e.to_string())
@@ -144,7 +144,7 @@ pub(crate) async fn insert_config_with_pool_and_mode(
     }
 }
 
-const MEMORY_ID_START: i64 = 100000;
+const MEMORY_ID_START: i64 = 100_000;
 
 async fn get_next_memory_id(pool: &SqlitePool) -> Result<i64, String> {
     let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
@@ -186,7 +186,7 @@ async fn get_next_memory_id(pool: &SqlitePool) -> Result<i64, String> {
 
 /// Insert a new config and return its assigned ID.
 pub async fn insert_config(config: Config) -> Result<i64, String> {
-    let pool = get_db_pool().await.map_err(|e| e.to_string())?;
+    let pool = get_db_pool().await?;
     insert_config_with_pool(config, &pool).await
 }
 
@@ -225,7 +225,7 @@ pub async fn read_configs_with_pool(pool: &SqlitePool) -> Result<Vec<Config>, St
 }
 
 pub async fn read_configs() -> Result<Vec<Config>, String> {
-    let pool = get_db_pool().await.map_err(|e| e.to_string())?;
+    let pool = get_db_pool().await?;
     read_configs_with_pool(&pool).await
 }
 
@@ -238,9 +238,7 @@ pub(crate) async fn clean_all_custom_hosts_entries_with_pool(
 async fn clean_all_custom_hosts_entries_with_pool_and_path(
     pool: &SqlitePool, custom_hosts_path: Option<&std::path::Path>,
 ) -> Result<(), String> {
-    let configs = read_configs_with_pool(pool)
-        .await
-        .map_err(|e| e.to_string())?;
+    let configs = read_configs_with_pool(pool).await?;
     for config in configs {
         let hostfile_comment = format!(
             "kftray custom host for {} - {}",
@@ -259,7 +257,7 @@ async fn clean_all_custom_hosts_entries_with_pool_and_path(
 }
 
 pub async fn clean_all_custom_hosts_entries() -> Result<(), String> {
-    let pool = get_db_pool().await.map_err(|e| e.to_string())?;
+    let pool = get_db_pool().await?;
     clean_all_custom_hosts_entries_with_pool(&pool).await
 }
 
@@ -288,7 +286,7 @@ pub(crate) async fn get_config_with_pool(id: i64, pool: &SqlitePool) -> Result<C
 }
 
 pub async fn get_config(id: i64) -> Result<Config, String> {
-    let pool = get_db_pool().await.map_err(|e| e.to_string())?;
+    let pool = get_db_pool().await?;
     get_config_with_pool(id, &pool).await
 }
 
@@ -313,23 +311,22 @@ pub(crate) async fn update_config_with_pool(
 }
 
 pub async fn update_config(config: Config) -> Result<(), String> {
-    let pool = get_db_pool().await.map_err(|e| e.to_string())?;
+    let pool = get_db_pool().await?;
     update_config_with_pool(config, &pool).await
 }
 
 pub(crate) async fn export_configs_with_pool(pool: &SqlitePool) -> Result<String, String> {
     let configs: Vec<Config> = read_configs_with_pool(pool)
-        .await
-        .map_err(|e| e.to_string())?
+        .await?
         .into_iter()
-        .map(|c| c.prepare_for_export())
+        .map(Config::prepare_for_export)
         .collect();
 
     serde_json::to_string_pretty(&configs).map_err(|e| e.to_string())
 }
 
 pub async fn export_configs() -> Result<String, String> {
-    let pool = get_db_pool().await.map_err(|e| e.to_string())?;
+    let pool = get_db_pool().await?;
     export_configs_with_pool(&pool).await
 }
 
@@ -580,7 +577,7 @@ pub(crate) async fn import_configs_with_pool_and_mode(
 }
 
 pub async fn import_configs(json: String) -> Result<(), String> {
-    let pool = get_db_pool().await.map_err(|e| e.to_string())?;
+    let pool = get_db_pool().await?;
     import_configs_with_pool(json, &pool).await
 }
 
@@ -760,7 +757,6 @@ async fn sync_http_logs_config_from_config(
 mod tests {
     use std::collections::BTreeMap;
 
-    use lazy_static::lazy_static;
     use serde_json::{
         Value,
         json,
@@ -770,9 +766,8 @@ mod tests {
 
     use super::*;
 
-    lazy_static! {
-        static ref IO_TEST_MUTEX: Mutex<()> = Mutex::new(());
-    }
+    static IO_TEST_MUTEX: std::sync::LazyLock<Mutex<()>> =
+        std::sync::LazyLock::new(|| Mutex::new(()));
 
     #[test]
     fn test_prepare_config_trims_fields() {
@@ -789,7 +784,7 @@ mod tests {
     #[test]
     fn test_prepare_config_sets_default_kubeconfig() {
         let config_empty = Config {
-            kubeconfig: Some("".to_string()),
+            kubeconfig: Some(String::new()),
             ..Config::default()
         };
         let prepared_empty = prepare_config(config_empty);
@@ -806,7 +801,7 @@ mod tests {
     #[test]
     fn test_prepare_config_sets_default_alias() {
         let config_empty = Config {
-            alias: Some("".to_string()),
+            alias: Some(String::new()),
             workload_type: Some("deployment".to_string()),
             protocol: "TCP".to_string(),
             local_port: Some(8080),
@@ -856,7 +851,7 @@ mod tests {
         create_db_table(&pool)
             .await
             .expect("Failed to create tables");
-        crate::migration::migrate_configs(Some(&pool))
+        migrate_configs(Some(&pool))
             .await
             .expect("Failed to run migrations");
         pool
@@ -1061,7 +1056,7 @@ mod tests {
         let config2 = Config {
             service: Some("export-service2".to_string()),
             namespace: "custom-ns".to_string(),
-            alias: Some("".to_string()),
+            alias: Some(String::new()),
             id: None,
             ..Config::default()
         };

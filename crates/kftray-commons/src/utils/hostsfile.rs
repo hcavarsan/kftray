@@ -32,9 +32,9 @@ pub enum HostsFileError {
 impl fmt::Display for HostsFileError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Self::Io(msg) => write!(f, "IO error: {}", msg),
-            Self::InvalidPath(msg) => write!(f, "Invalid path: {}", msg),
-            Self::InvalidData(msg) => write!(f, "Invalid data: {}", msg),
+            Self::Io(msg) => write!(f, "IO error: {msg}"),
+            Self::InvalidPath(msg) => write!(f, "Invalid path: {msg}"),
+            Self::InvalidData(msg) => write!(f, "Invalid data: {msg}"),
             Self::UnsupportedPlatform => write!(f, "Unsupported platform"),
         }
     }
@@ -61,6 +61,10 @@ impl HostsFile {
         }
     }
 
+    // `S: ToString` is the standard idiom for "accept anything stringifiable
+    // by value", so we keep the move-in API even though `ToString` calls
+    // `to_string()` which clones internally.
+    #[allow(clippy::needless_pass_by_value)]
     pub fn add_entry<S: ToString>(&mut self, ip: IpAddr, hostname: S) -> &mut Self {
         self.entries
             .entry(ip)
@@ -140,7 +144,7 @@ impl HostsSection {
         if cfg!(windows) {
             hostnames
                 .iter()
-                .map(|hostname| format!("{} {}", ip, hostname))
+                .map(|hostname| format!("{ip} {hostname}"))
                 .collect()
         } else {
             vec![format!("{} {}", ip, hostnames.join(" "))]
@@ -165,15 +169,15 @@ struct SectionBounds {
 }
 
 impl SectionBounds {
-    fn is_complete(&self) -> bool {
+    const fn is_complete(&self) -> bool {
         self.begin.is_some() && self.end.is_some()
     }
 
-    fn is_missing(&self) -> bool {
+    const fn is_missing(&self) -> bool {
         self.begin.is_none() && self.end.is_none()
     }
 
-    fn is_partial(&self) -> bool {
+    const fn is_partial(&self) -> bool {
         !self.is_complete() && !self.is_missing()
     }
 }
@@ -183,7 +187,7 @@ struct HostsFileWriter<'a> {
 }
 
 impl<'a> HostsFileWriter<'a> {
-    fn new(path: &'a Path) -> Self {
+    const fn new(path: &'a Path) -> Self {
         Self { path }
     }
 
@@ -276,7 +280,7 @@ impl<'a> HostsFileWriter<'a> {
     fn format_file_content(&self, lines: &[String]) -> Result<Vec<u8>> {
         let mut buffer = Vec::new();
         for line in lines {
-            writeln!(buffer, "{}", line)?;
+            writeln!(buffer, "{line}")?;
         }
         Ok(buffer)
     }
@@ -287,7 +291,7 @@ struct AtomicFileWriter<'a> {
 }
 
 impl<'a> AtomicFileWriter<'a> {
-    fn new(path: &'a Path) -> Self {
+    const fn new(path: &'a Path) -> Self {
         Self { target_path: path }
     }
 
@@ -378,8 +382,7 @@ fn get_platform_hosts_path() -> Result<PathBuf> {
             HostsFileError::InvalidPath("WinDir environment variable not found".to_string())
         })?;
         Ok(PathBuf::from(format!(
-            "{}\\System32\\Drivers\\Etc\\hosts",
-            windir
+            "{windir}\\System32\\Drivers\\Etc\\hosts"
         )))
     } else {
         Err(HostsFileError::UnsupportedPlatform)

@@ -2,16 +2,16 @@ mod config;
 mod initializer;
 mod state;
 
-pub use config::LogConfig;
-pub use initializer::{
+pub(crate) use config::LogConfig;
+pub(crate) use initializer::{
     FileLoggerInitializer,
     LoggerInitializer,
     StdoutLoggerInitializer,
     TuiLoggerInitializer,
 };
-pub use state::LoggerState;
+pub(crate) use state::LoggerState;
 
-pub fn parse_level(level: &str) -> log::LevelFilter {
+pub(crate) fn parse_level(level: &str) -> log::LevelFilter {
     match level.to_lowercase().as_str() {
         "error" => log::LevelFilter::Error,
         "warn" => log::LevelFilter::Warn,

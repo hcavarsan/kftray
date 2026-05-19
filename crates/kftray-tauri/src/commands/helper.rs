@@ -5,7 +5,7 @@ use log::{
 };
 
 #[tauri::command]
-pub async fn install_helper() -> Result<bool, String> {
+pub(crate) async fn install_helper() -> Result<bool, String> {
     info!("Installing helper sidecar");
     let app_id = "com.kftray.app".to_string();
     let client = HelperClient::new(app_id).map_err(|e| e.to_string())?;
@@ -17,7 +17,7 @@ pub async fn install_helper() -> Result<bool, String> {
 }
 
 #[tauri::command]
-pub async fn remove_helper() -> Result<bool, String> {
+pub(crate) async fn remove_helper() -> Result<bool, String> {
     info!("Removing helper sidecar");
     let app_id = "com.kftray.app".to_string();
     let client = HelperClient::new(app_id).map_err(|e| e.to_string())?;
@@ -29,7 +29,7 @@ pub async fn remove_helper() -> Result<bool, String> {
 }
 
 #[tauri::command]
-pub async fn allocate_local_address_cmd(service_name: String) -> Result<String, String> {
+pub(crate) async fn allocate_local_address_cmd(service_name: String) -> Result<String, String> {
     info!("Allocating local address for service: {service_name}");
     let app_id = "com.kftray.app".to_string();
     let client = HelperClient::new(app_id).map_err(|e| e.to_string())?;
@@ -47,7 +47,7 @@ pub async fn allocate_local_address_cmd(service_name: String) -> Result<String, 
 }
 
 #[tauri::command]
-pub async fn release_local_address_cmd(address: String) -> Result<(), String> {
+pub(crate) async fn release_local_address_cmd(address: String) -> Result<(), String> {
     info!("Releasing local address: {address}");
     let app_id = "com.kftray.app".to_string();
     let client = HelperClient::new(app_id).map_err(|e| e.to_string())?;

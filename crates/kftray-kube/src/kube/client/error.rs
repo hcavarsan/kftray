@@ -39,28 +39,28 @@ pub enum KubeClientError {
 impl fmt::Display for KubeClientError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            KubeClientError::ConfigError { message, .. } => {
+            Self::ConfigError { message, .. } => {
                 write!(f, "Configuration error: {message}")
             }
-            KubeClientError::ConnectionError { message, .. } => {
+            Self::ConnectionError { message, .. } => {
                 write!(f, "Connection error: {message}")
             }
-            KubeClientError::AuthError { message, .. } => {
+            Self::AuthError { message, .. } => {
                 write!(f, "Authentication error: {message}")
             }
-            KubeClientError::IoError(err) => write!(f, "IO error: {err}"),
-            KubeClientError::KubeError(err) => write!(f, "Kubernetes error: {err}"),
-            KubeClientError::ParseError { message, context } => {
+            Self::IoError(err) => write!(f, "IO error: {err}"),
+            Self::KubeError(err) => write!(f, "Kubernetes error: {err}"),
+            Self::ParseError { message, context } => {
                 if let Some(ctx) = context {
                     write!(f, "Parse error in {ctx}: {message}")
                 } else {
                     write!(f, "Parse error: {message}")
                 }
             }
-            KubeClientError::InvalidPath { path, reason } => {
+            Self::InvalidPath { path, reason } => {
                 write!(f, "Invalid path '{path}': {reason}")
             }
-            KubeClientError::StrategyFailed { strategy, attempts } => {
+            Self::StrategyFailed { strategy, attempts } => {
                 write!(
                     f,
                     "Strategy '{strategy}' failed after {} attempts: [{}]",
@@ -68,7 +68,7 @@ impl fmt::Display for KubeClientError {
                     attempts.join(", ")
                 )
             }
-            KubeClientError::ProxyError {
+            Self::ProxyError {
                 message, proxy_url, ..
             } => {
                 write!(f, "Proxy error for '{proxy_url}': {message}")
@@ -80,14 +80,14 @@ impl fmt::Display for KubeClientError {
 impl Error for KubeClientError {
     fn source(&self) -> Option<&(dyn Error + 'static)> {
         match self {
-            KubeClientError::ConfigError { source, .. }
-            | KubeClientError::ConnectionError { source, .. }
-            | KubeClientError::AuthError { source, .. }
-            | KubeClientError::ProxyError { source, .. } => {
+            Self::ConfigError { source, .. }
+            | Self::ConnectionError { source, .. }
+            | Self::AuthError { source, .. }
+            | Self::ProxyError { source, .. } => {
                 source.as_ref().map(|e| &**e as &(dyn Error + 'static))
             }
-            KubeClientError::IoError(err) => Some(err),
-            KubeClientError::KubeError(err) => Some(err),
+            Self::IoError(err) => Some(err),
+            Self::KubeError(err) => Some(err),
             _ => None,
         }
     }
@@ -95,13 +95,13 @@ impl Error for KubeClientError {
 
 impl From<std::io::Error> for KubeClientError {
     fn from(err: std::io::Error) -> Self {
-        KubeClientError::IoError(err)
+        Self::IoError(err)
     }
 }
 
 impl From<kube::Error> for KubeClientError {
     fn from(err: kube::Error) -> Self {
-        KubeClientError::KubeError(err)
+        Self::KubeError(err)
     }
 }
 
@@ -110,7 +110,7 @@ impl From<kube::Error> for KubeClientError {
 /// anyhow errors are rare and always originate from config-adjacent code paths.
 impl From<anyhow::Error> for KubeClientError {
     fn from(err: anyhow::Error) -> Self {
-        KubeClientError::ConfigError {
+        Self::ConfigError {
             message: err.to_string(),
             source: Some(err.into()),
         }
@@ -216,4 +216,4 @@ impl KubeClientError {
     }
 }
 
-pub type KubeResult<T> = std::result::Result<T, KubeClientError>;
+pub type KubeResult<T> = Result<T, KubeClientError>;

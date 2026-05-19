@@ -37,10 +37,10 @@ async fn regenerate_ssl_certificate_if_needed() -> Result<(), String> {
             match kftray_commons::utils::settings::get_app_settings().await {
                 Ok(settings) => {
                     let cert_manager = CertificateManager::new(&settings)
-                        .map_err(|e| format!("Failed to create certificate manager: {}", e))?;
+                        .map_err(|e| format!("Failed to create certificate manager: {e}"))?;
 
                     if let Err(e) = cert_manager.regenerate_certificate_for_all_configs().await {
-                        warn!("Failed to regenerate SSL certificate: {}", e);
+                        warn!("Failed to regenerate SSL certificate: {e}");
                         // Don't fail the config operation if certificate
                         // regeneration fails
                     } else {
@@ -54,10 +54,7 @@ async fn regenerate_ssl_certificate_if_needed() -> Result<(), String> {
                     }
                 }
                 Err(e) => {
-                    warn!(
-                        "Failed to get app settings for SSL certificate regeneration: {}",
-                        e
-                    );
+                    warn!("Failed to get app settings for SSL certificate regeneration: {e}");
                 }
             }
         }
@@ -65,10 +62,7 @@ async fn regenerate_ssl_certificate_if_needed() -> Result<(), String> {
             info!("SSL is disabled, skipping certificate regeneration");
         }
         Err(e) => {
-            warn!(
-                "Failed to check SSL status, skipping certificate regeneration: {}",
-                e
-            );
+            warn!("Failed to check SSL status, skipping certificate regeneration: {e}");
         }
     }
     Ok(())
@@ -86,7 +80,7 @@ async fn restart_ssl_proxies_if_running() -> Result<(), String> {
     // Get all currently running configs
     let config_states = get_configs_state()
         .await
-        .map_err(|e| format!("Failed to get config states: {}", e))?;
+        .map_err(|e| format!("Failed to get config states: {e}"))?;
 
     info!("Found {} total config states", config_states.len());
 
@@ -96,7 +90,7 @@ async fn restart_ssl_proxies_if_running() -> Result<(), String> {
         .map(|state| state.config_id)
         .collect();
 
-    info!("Running config IDs: {:?}", running_config_ids);
+    info!("Running config IDs: {running_config_ids:?}");
 
     if running_config_ids.is_empty() {
         info!("No running configs found, no SSL proxies to restart");
@@ -106,7 +100,7 @@ async fn restart_ssl_proxies_if_running() -> Result<(), String> {
     // Get all configs to filter for SSL-enabled ones
     let all_configs = get_configs()
         .await
-        .map_err(|e| format!("Failed to get configs: {}", e))?;
+        .map_err(|e| format!("Failed to get configs: {e}"))?;
 
     info!("Found {} total configs in database", all_configs.len());
 
@@ -149,10 +143,7 @@ async fn restart_ssl_proxies_if_running() -> Result<(), String> {
 
         // Stop the current port forward
         if let Err(e) = stop_port_forward(config_id.clone()).await {
-            warn!(
-                "Failed to stop port forward for config {}: {}",
-                config_id, e
-            );
+            warn!("Failed to stop port forward for config {config_id}: {e}");
             continue;
         }
 
@@ -161,12 +152,9 @@ async fn restart_ssl_proxies_if_running() -> Result<(), String> {
 
         // Restart with the same protocol (assuming TCP for SSL)
         if let Err(e) = start_port_forward(vec![config.clone()], "tcp").await {
-            warn!(
-                "Failed to restart port forward for config {}: {}",
-                config_id, e
-            );
+            warn!("Failed to restart port forward for config {config_id}: {e}");
         } else {
-            info!("Successfully restarted SSL proxy for config {}", config_id);
+            info!("Successfully restarted SSL proxy for config {config_id}");
         }
     }
 
@@ -204,7 +192,7 @@ async fn restart_ssl_proxies_with_retry() {
 }
 
 #[tauri::command]
-pub async fn delete_config_cmd(id: i64) -> Result<(), String> {
+pub(crate) async fn delete_config_cmd(id: i64) -> Result<(), String> {
     info!("Deleting config with id: {id}");
     clear_stopped_by_timeout(id);
     let result = delete_config(id).await;
@@ -215,7 +203,7 @@ pub async fn delete_config_cmd(id: i64) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn delete_configs_cmd(ids: Vec<i64>) -> Result<(), String> {
+pub(crate) async fn delete_configs_cmd(ids: Vec<i64>) -> Result<(), String> {
     info!("Deleting configs with ids: {ids:?}");
     for id in &ids {
         clear_stopped_by_timeout(*id);
@@ -228,7 +216,7 @@ pub async fn delete_configs_cmd(ids: Vec<i64>) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn delete_all_configs_cmd() -> Result<(), String> {
+pub(crate) async fn delete_all_configs_cmd() -> Result<(), String> {
     info!("Deleting all configs");
     let result = delete_all_configs().await;
     if result.is_ok() {
@@ -238,7 +226,7 @@ pub async fn delete_all_configs_cmd() -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn insert_config_cmd(config: Config) -> Result<(), String> {
+pub(crate) async fn insert_config_cmd(config: Config) -> Result<(), String> {
     validate_config(&config)?;
     let result = insert_config(config).await;
     if result.is_ok() {
@@ -248,20 +236,20 @@ pub async fn insert_config_cmd(config: Config) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn get_configs_cmd() -> Result<Vec<Config>, String> {
+pub(crate) async fn get_configs_cmd() -> Result<Vec<Config>, String> {
     info!("get_configs called");
     let configs = get_configs().await?;
     Ok(configs)
 }
 
 #[tauri::command]
-pub async fn get_config_cmd(id: i64) -> Result<Config, String> {
+pub(crate) async fn get_config_cmd(id: i64) -> Result<Config, String> {
     info!("get_config called with id: {id}");
     get_config(id).await
 }
 
 #[tauri::command]
-pub async fn update_config_cmd(config: Config) -> Result<(), String> {
+pub(crate) async fn update_config_cmd(config: Config) -> Result<(), String> {
     info!(
         "=== UPDATE_CONFIG_CMD CALLED with id={:?}, alias={:?} ===",
         config.id, config.alias
@@ -275,15 +263,15 @@ pub async fn update_config_cmd(config: Config) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn export_configs_cmd() -> Result<String, String> {
+pub(crate) async fn export_configs_cmd() -> Result<String, String> {
     export_configs().await
 }
 
 #[tauri::command]
-pub async fn import_configs_cmd(json: String) -> Result<(), String> {
+pub(crate) async fn import_configs_cmd(json: String) -> Result<(), String> {
     let result = import_configs(json).await;
     match &result {
-        Ok(_) => {
+        Ok(()) => {
             let _ = regenerate_ssl_certificate_if_needed().await;
         }
         Err(e) => {
@@ -300,15 +288,12 @@ pub async fn import_configs_cmd(json: String) -> Result<(), String> {
 mod tests {
     use std::sync::Arc;
 
-    use lazy_static::lazy_static;
     use sqlx::SqlitePool;
     use tokio::sync::Mutex;
 
     use super::*;
 
-    lazy_static! {
-        static ref TEST_MUTEX: Mutex<()> = Mutex::new(());
-    }
+    static TEST_MUTEX: std::sync::LazyLock<Mutex<()>> = std::sync::LazyLock::new(|| Mutex::new(()));
 
     async fn setup_isolated_test_db() -> Arc<SqlitePool> {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();

@@ -1,3 +1,9 @@
+// HTTP log entries are built by appending dozens of small `format!`-style
+// fragments onto a mutable `String`. Rewriting each `s.push_str(&format!(...))`
+// as a `write!` call against `s` would obscure the structure for negligible
+// gain; the formatter is not on a hot path.
+#![allow(clippy::format_push_string)]
+
 use std::io::Read;
 
 use anyhow::Result;
@@ -113,7 +119,7 @@ impl MessageFormatter {
                         for line in headers_str.lines() {
                             let line_lower = line.to_lowercase();
                             if line_lower.starts_with("content-type:") {
-                                content_type = line.split(':').nth(1).map(|s| s.trim());
+                                content_type = line.split(':').nth(1).map(str::trim);
                             }
                             if line_lower.starts_with("content-encoding:")
                                 && line_lower.contains("gzip")
@@ -410,7 +416,7 @@ impl MessageFormatter {
 
         let body_content = match Self::try_decompress_body(body, headers).await {
             Ok(content) => content,
-            Err(e) => Self::handle_decompression_error(body, headers, log_entry, e)?,
+            Err(e) => Self::handle_decompression_error(body, headers, log_entry, &e)?,
         };
 
         let content_type = Self::extract_content_type(headers);
@@ -431,7 +437,7 @@ impl MessageFormatter {
     }
 
     fn handle_decompression_error(
-        body: &[u8], headers: &[Header<'_>], log_entry: &mut String, error: anyhow::Error,
+        body: &[u8], headers: &[Header<'_>], log_entry: &mut String, error: &anyhow::Error,
     ) -> Result<Vec<u8>> {
         log_entry.push_str(&format!(
             "<!-- Debug: Failed to process content: {error} -->"
@@ -483,11 +489,7 @@ impl MessageFormatter {
 
         let mut current_data = body.to_vec();
 
-        let encodings: Vec<&str> = content_encoding
-            .split(',')
-            .map(|s| s.trim())
-            .rev()
-            .collect();
+        let encodings: Vec<&str> = content_encoding.split(',').map(str::trim).rev().collect();
 
         for encoding in encodings {
             match encoding {
@@ -619,7 +621,7 @@ impl MessageFormatter {
         None
     }
 
-    fn status_text(status: u16) -> &'static str {
+    const fn status_text(status: u16) -> &'static str {
         match status {
             100 => "Continue",
             101 => "Switching Protocols",
@@ -1126,7 +1128,7 @@ mod formatter_tests {
         let error = anyhow::anyhow!("Test decompression error");
 
         let result =
-            MessageFormatter::handle_decompression_error(body, &headers, &mut log_entry, error)
+            MessageFormatter::handle_decompression_error(body, &headers, &mut log_entry, &error)
                 .unwrap();
 
         assert!(log_entry.contains("Failed to process content: Test decompression error"));
@@ -1151,7 +1153,7 @@ mod formatter_tests {
             b"console.log('test')",
             &js_headers,
             &mut js_log_entry,
-            anyhow::anyhow!("JS error"),
+            &anyhow::anyhow!("JS error"),
         )
         .unwrap();
 
@@ -1169,7 +1171,7 @@ mod formatter_tests {
             binary_body,
             &bin_headers,
             &mut bin_log_entry,
-            anyhow::anyhow!("Binary error"),
+            &anyhow::anyhow!("Binary error"),
         )
         .unwrap();
 

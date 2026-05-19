@@ -18,20 +18,18 @@ use log::{
 // HTTP Log Management Commands (using direct database access)
 
 #[tauri::command]
-pub async fn set_http_logs_cmd(config_id: i64, enable: bool) -> Result<(), String> {
+pub(crate) async fn set_http_logs_cmd(config_id: i64, enable: bool) -> Result<(), String> {
     let mut config = match get_http_logs_config(config_id).await {
         Ok(config) => config,
         Err(_) => HttpLogsConfig::new(config_id),
     };
 
     config.enabled = enable;
-    update_http_logs_config(&config)
-        .await
-        .map_err(|e| e.to_string())
+    update_http_logs_config(&config).await
 }
 
 #[tauri::command]
-pub async fn get_http_logs_cmd(config_id: i64) -> Result<bool, String> {
+pub(crate) async fn get_http_logs_cmd(config_id: i64) -> Result<bool, String> {
     match get_http_logs_config(config_id).await {
         Ok(config) => Ok(config.enabled),
         Err(_) => Ok(false),
@@ -39,29 +37,25 @@ pub async fn get_http_logs_cmd(config_id: i64) -> Result<bool, String> {
 }
 
 #[tauri::command]
-pub async fn get_http_logs_config_cmd(config_id: i64) -> Result<HttpLogsConfig, String> {
-    get_http_logs_config(config_id)
-        .await
-        .map_err(|e| e.to_string())
+pub(crate) async fn get_http_logs_config_cmd(config_id: i64) -> Result<HttpLogsConfig, String> {
+    get_http_logs_config(config_id).await
 }
 
 #[tauri::command]
-pub async fn update_http_logs_config_cmd(config: HttpLogsConfig) -> Result<(), String> {
-    update_http_logs_config(&config)
-        .await
-        .map_err(|e| e.to_string())
+pub(crate) async fn update_http_logs_config_cmd(config: HttpLogsConfig) -> Result<(), String> {
+    update_http_logs_config(&config).await
 }
 
 // File System Operations
 
 #[tauri::command]
-pub async fn clear_http_logs() -> Result<(), String> {
+pub(crate) async fn clear_http_logs() -> Result<(), String> {
     let log_folder_path = get_and_validate_log_folder()?;
     delete_files_in_folder(&log_folder_path)
 }
 
 #[tauri::command]
-pub async fn get_http_log_size() -> Result<u64, String> {
+pub(crate) async fn get_http_log_size() -> Result<u64, String> {
     let log_folder_path = get_and_validate_log_folder()?;
     calculate_folder_size(&log_folder_path)
 }
@@ -98,7 +92,7 @@ fn delete_files_in_folder(path: &Path) -> Result<(), String> {
                 let file_path = entry.path();
                 if file_path.is_file() {
                     match fs::remove_file(&file_path) {
-                        Ok(_) => {
+                        Ok(()) => {
                             success_count += 1;
                         }
                         Err(e) => {
@@ -166,7 +160,7 @@ fn calculate_folder_size_with_depth(path: &Path, depth: usize) -> Result<u64, St
         .map_err(|e| format!("Failed to canonicalize path: {e}"))?;
 
     // Check if we've already visited this path (symlink loop detection)
-    if !visited_paths.insert(canonical_path.clone()) {
+    if !visited_paths.insert(canonical_path) {
         return Err(format!("Symlink loop detected at: {}", path.display()));
     }
 
@@ -189,7 +183,7 @@ fn calculate_folder_size_with_depth(path: &Path, depth: usize) -> Result<u64, St
 // File Opening Commands
 
 #[tauri::command]
-pub async fn open_log_file(log_file_name: String) -> Result<(), String> {
+pub(crate) async fn open_log_file(log_file_name: String) -> Result<(), String> {
     use std::env;
 
     use open::that_in_background;
@@ -241,13 +235,13 @@ pub async fn open_log_file(log_file_name: String) -> Result<(), String> {
     info!("Trying to open with detected default editor: {default_editor}");
 
     match open_with_editor(file_path_str, &default_editor) {
-        Ok(_) => Ok(()),
+        Ok(()) => Ok(()),
         Err(err) => {
             error!("Error opening with editor '{default_editor}': {err}. Trying default method...");
 
             // Try with the open crate's default method
             match that_in_background(&canonical_file_path).join() {
-                Ok(Ok(_)) => Ok(()),
+                Ok(Ok(())) => Ok(()),
                 Ok(Err(err)) => {
                     error!(
                         "Error opening log file with default method: {err}. Trying fallback methods..."
@@ -396,7 +390,7 @@ fn open_with_editor(file_path: &str, editor: &str) -> Result<(), String> {
             Ok(result) => {
                 // We got a result from the thread
                 return match result {
-                    Ok(Ok(_)) => Ok(()),
+                    Ok(Ok(())) => Ok(()),
                     Ok(Err(err)) => Err(format!("Failed to open with {editor_clone}: {err}")),
                     Err(_) => Err(format!("Thread panicked while opening with {editor_clone}")),
                 };
@@ -490,7 +484,7 @@ fn try_macos_fallbacks(file_path: &str) -> Result<(), String> {
         .or_else(|_| {
             // Final fallback - try plain open command
             match run_command("open", &[file_path]) {
-                Ok(_) => Ok(()),
+                Ok(()) => Ok(()),
                 Err(e) => {
                     error!("All macOS fallback methods failed. Last error: {e}");
                     Err(format!(
@@ -543,7 +537,7 @@ mod tests {
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let service_name = format!("test-service-{}", timestamp);
+        let service_name = format!("test-service-{timestamp}");
 
         let config = Config {
             service: Some(service_name.clone()),
@@ -567,21 +561,19 @@ mod tests {
             ..Default::default()
         };
 
-        kftray_commons::config::insert_config_with_mode(config, DatabaseMode::Memory)
-            .await
-            .map_err(|e| e.to_string())?;
+        kftray_commons::config::insert_config_with_mode(config, DatabaseMode::Memory).await?;
 
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
-        let configs = kftray_commons::config::get_configs_with_mode(DatabaseMode::Memory)
-            .await
-            .map_err(|e| e.to_string())?;
+        let configs = kftray_commons::config::get_configs_with_mode(DatabaseMode::Memory).await?;
         let inserted_config = configs
             .iter()
             .find(|c| c.service == Some(service_name.clone()))
             .ok_or("Failed to find inserted config")?;
 
-        inserted_config.id.ok_or("Config missing ID".to_string())
+        inserted_config
+            .id
+            .ok_or_else(|| "Config missing ID".to_string())
     }
 
     struct EnvGuard {
@@ -594,7 +586,7 @@ mod tests {
                 .iter()
                 .map(|&name| (name.to_string(), env::var(name).ok()))
                 .collect();
-            EnvGuard { vars }
+            Self { vars }
         }
     }
 
@@ -638,7 +630,7 @@ mod tests {
 
         for i in 1..5 {
             let file_path = temp_dir.path().join(format!("test_log_{i}.log"));
-            let mut file = std::fs::File::create(&file_path).unwrap();
+            let mut file = fs::File::create(&file_path).unwrap();
             writeln!(file, "Test log content {i}").unwrap();
         }
 
@@ -681,10 +673,10 @@ mod tests {
         assert!(size > 0, "Folder size should be greater than 0");
 
         let mut expected_size = 0;
-        for entry in std::fs::read_dir(temp_dir.path()).unwrap() {
+        for entry in fs::read_dir(temp_dir.path()).unwrap() {
             let entry = entry.unwrap();
             if entry.path().is_file() {
-                expected_size += std::fs::metadata(entry.path()).unwrap().len();
+                expected_size += fs::metadata(entry.path()).unwrap().len();
             }
         }
 
@@ -696,7 +688,7 @@ mod tests {
 
     #[test]
     fn test_calculate_folder_size_nonexistent() {
-        let path = std::path::Path::new("/this/path/does/not/exist");
+        let path = Path::new("/this/path/does/not/exist");
 
         let result = calculate_folder_size(path);
 
@@ -710,7 +702,7 @@ mod tests {
     fn test_calculate_folder_size_not_dir() {
         let temp_dir = tempfile::tempdir().unwrap();
         let file_path = temp_dir.path().join("test_file.txt");
-        std::fs::write(&file_path, "test content").unwrap();
+        fs::write(&file_path, "test content").unwrap();
 
         let result = calculate_folder_size(&file_path);
 
@@ -728,7 +720,7 @@ mod tests {
     fn test_delete_files_in_folder() {
         let temp_dir = create_test_log_folder();
 
-        let file_count_before = std::fs::read_dir(temp_dir.path()).unwrap().count();
+        let file_count_before = fs::read_dir(temp_dir.path()).unwrap().count();
         assert!(
             file_count_before > 0,
             "Should have test files before deletion"
@@ -738,13 +730,13 @@ mod tests {
 
         assert!(result.is_ok(), "Should successfully delete files");
 
-        let file_count_after = std::fs::read_dir(temp_dir.path()).unwrap().count();
+        let file_count_after = fs::read_dir(temp_dir.path()).unwrap().count();
         assert_eq!(file_count_after, 0, "All files should be deleted");
     }
 
     #[test]
     fn test_delete_files_in_nonexistent_folder() {
-        let path = std::path::Path::new("/this/path/does/not/exist");
+        let path = Path::new("/this/path/does/not/exist");
 
         let result = delete_files_in_folder(path);
 
@@ -764,9 +756,7 @@ mod tests {
             let valid_editors = ["code", "cursor", "vscode", "atom", "sublime_text", "open"];
             assert!(
                 valid_editors.contains(&editor.as_str()),
-                "Default editor on macOS should be one of: {:?}, got: {}",
-                valid_editors,
-                editor
+                "Default editor on macOS should be one of: {valid_editors:?}, got: {editor}"
             );
         }
 
@@ -811,7 +801,7 @@ mod tests {
     fn test_validate_file_exists() {
         let temp_dir = tempfile::tempdir().unwrap();
         let file_path = temp_dir.path().join("test_file.txt");
-        std::fs::write(&file_path, "test content").unwrap();
+        fs::write(&file_path, "test content").unwrap();
 
         // Test existing file
         let result = validate_file_exists(&file_path);
@@ -857,14 +847,14 @@ mod tests {
         let log_folder = temp_dir.path().join("http_logs");
 
         unsafe { env::set_var("KFTRAY_CONFIG", temp_dir.path().to_str().unwrap()) };
-        std::fs::create_dir_all(&log_folder).unwrap();
+        fs::create_dir_all(&log_folder).unwrap();
 
         let outside_dir = tempfile::tempdir().unwrap();
         let file_path = outside_dir.path().join("outside_logs.txt");
-        std::fs::write(&file_path, "test content").unwrap();
+        fs::write(&file_path, "test content").unwrap();
 
         match open_log_file(file_path.to_string_lossy().to_string()).await {
-            Ok(_) => panic!("Should fail for file outside log directory"),
+            Ok(()) => panic!("Should fail for file outside log directory"),
             Err(e) => {
                 let contains_outside =
                     e.contains("outside the log directory") || e.contains("Invalid log file path");
@@ -876,7 +866,7 @@ mod tests {
         }
 
         match open_log_file("invalid_utf8_\u{FFFF}".to_string()).await {
-            Ok(_) => panic!("Should fail for invalid UTF-8 path"),
+            Ok(()) => panic!("Should fail for invalid UTF-8 path"),
             Err(e) => assert!(
                 !e.is_empty(),
                 "Error message should not be empty for invalid UTF-8 path"

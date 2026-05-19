@@ -120,7 +120,7 @@ impl MuxHandle {
     /// Generic over the WebSocket transport. The caller provides pre-split
     /// writer and reader halves wrapped in the [`WsFrameWriter`] /
     /// [`WsFrameReader`] trait adapters.
-    pub async fn spawn<W, R>(
+    pub(crate) async fn spawn<W, R>(
         ws_write: W, ws_read: R, cancel: CancellationToken, config: MuxConfig,
     ) -> Result<Self, Error>
     where
@@ -335,7 +335,7 @@ impl MuxHandle {
     /// hard cap). If at cap, returns `Error::CapacityExhausted` immediately.
     /// Failures during the later realization step surface as I/O errors
     /// on `poll_write`.
-    pub async fn open_stream_pair(
+    pub(crate) async fn open_stream_pair(
         &self, error_headers: Vec<(String, String)>, data_headers: Vec<(String, String)>,
     ) -> Result<Stream, Error> {
         if self.closed.is_cancelled() {
@@ -576,35 +576,24 @@ impl MuxHandle {
                 .close_reg_tx_for(data_id)
                 .try_send(StreamRegistration::Close { stream_id: data_id });
         };
-        let ctrl_permit_error = match self.control_tx.clone().try_reserve_owned() {
-            Ok(p) => p,
-            Err(_) => {
-                cleanup_registration(self);
-                return Err(Error::MuxClosed);
-            }
+        let Ok(ctrl_permit_error) = self.control_tx.clone().try_reserve_owned() else {
+            cleanup_registration(self);
+            return Err(Error::MuxClosed);
         };
-        let ctrl_permit_data = match self.control_tx.clone().try_reserve_owned() {
-            Ok(p) => p,
-            Err(_) => {
-                cleanup_registration(self);
-                return Err(Error::MuxClosed);
-            }
+        let Ok(ctrl_permit_data) = self.control_tx.clone().try_reserve_owned() else {
+            cleanup_registration(self);
+            return Err(Error::MuxClosed);
         };
-        let close_reg_permit_error =
-            match self.close_reg_tx_for(error_id).clone().try_reserve_owned() {
-                Ok(p) => p,
-                Err(_) => {
-                    cleanup_registration(self);
-                    return Err(Error::MuxClosed);
-                }
-            };
-        let close_reg_permit_data = match self.close_reg_tx_for(data_id).clone().try_reserve_owned()
-        {
-            Ok(p) => p,
-            Err(_) => {
-                cleanup_registration(self);
-                return Err(Error::MuxClosed);
-            }
+        let Ok(close_reg_permit_error) =
+            self.close_reg_tx_for(error_id).clone().try_reserve_owned()
+        else {
+            cleanup_registration(self);
+            return Err(Error::MuxClosed);
+        };
+        let Ok(close_reg_permit_data) = self.close_reg_tx_for(data_id).clone().try_reserve_owned()
+        else {
+            cleanup_registration(self);
+            return Err(Error::MuxClosed);
         };
 
         drop(seq); // release sequencer
@@ -643,13 +632,13 @@ impl MuxHandle {
     }
 
     /// Remaining operating capacity (pairs that can still be opened).
-    pub fn operating_capacity(&self) -> usize {
+    pub(crate) fn operating_capacity(&self) -> usize {
         let limit = self.operating_limit() as usize;
         let active = self.active_pairs.load(Ordering::Relaxed);
         limit.saturating_sub(active)
     }
 
-    pub fn send_data_nonblocking(
+    pub(crate) fn send_data_nonblocking(
         &self, stream_id: u32, payload: Bytes, fin: bool,
     ) -> Result<(), Error> {
         self.cmd_tx

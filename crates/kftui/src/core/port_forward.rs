@@ -26,11 +26,11 @@ use crate::tui::input::{
     AppState,
 };
 
-pub async fn start_port_forwarding(app: &mut App, config: Config, mode: DatabaseMode) {
-    start_port_forwarding_with_ssl(app, config, mode, false).await
+pub(crate) async fn start_port_forwarding(app: &mut App, config: Config, mode: DatabaseMode) {
+    start_port_forwarding_with_ssl(app, config, mode, false).await;
 }
 
-pub async fn start_port_forwarding_with_ssl(
+pub(crate) async fn start_port_forwarding_with_ssl(
     app: &mut App, config: Config, mode: DatabaseMode, ssl_override: bool,
 ) {
     let _config_id = config.id.unwrap_or_default();
@@ -39,12 +39,10 @@ pub async fn start_port_forwarding_with_ssl(
         Some("proxy") => {
             deploy_and_forward_pod_with_mode(vec![config.clone()], mode, ssl_override).await
         }
-        Some("expose") => {
-            kftray_expose::start_expose(vec![config.clone()], mode)
-                .await
-                .map_err(|e| kftray_kube::PortForwardError::Expose(e.to_string()))
-        }
-        Some("service") | Some("pod") => match config.protocol.as_str() {
+        Some("expose") => kftray_expose::start_expose(vec![config.clone()], mode)
+            .await
+            .map_err(|e| kftray_kube::PortForwardError::Expose(e.to_string())),
+        Some("service" | "pod") => match config.protocol.as_str() {
             "tcp" => kube_start_port_forward(vec![config.clone()], "tcp", mode, ssl_override).await,
             "udp" => {
                 deploy_and_forward_pod_with_mode(vec![config.clone()], mode, ssl_override).await
@@ -62,7 +60,7 @@ pub async fn start_port_forwarding_with_ssl(
     }
 }
 
-pub async fn stop_port_forwarding(app: &mut App, config: Config, mode: DatabaseMode) {
+pub(crate) async fn stop_port_forwarding(app: &mut App, config: Config, mode: DatabaseMode) {
     let config_id = config.id.unwrap_or_default();
 
     let result = match config.workload_type.as_deref() {
@@ -75,14 +73,10 @@ pub async fn stop_port_forwarding(app: &mut App, config: Config, mode: DatabaseM
             )
             .await
         }
-        Some("expose") => {
-            kftray_expose::stop_expose(config_id, &config.namespace, mode)
-                .await
-                .map_err(|e| kftray_kube::PortForwardError::Expose(e.to_string()))
-        }
-        Some("service") | Some("pod") => {
-            stop_port_forward_with_mode(config_id.to_string(), mode).await
-        }
+        Some("expose") => kftray_expose::stop_expose(config_id, &config.namespace, mode)
+            .await
+            .map_err(|e| kftray_kube::PortForwardError::Expose(e.to_string())),
+        Some("service" | "pod") => stop_port_forward_with_mode(config_id.to_string(), mode).await,
         _ => return,
     };
 
@@ -94,7 +88,7 @@ pub async fn stop_port_forwarding(app: &mut App, config: Config, mode: DatabaseM
     }
 }
 
-pub async fn stop_all_port_forward_and_exit(app: &mut App, mode: DatabaseMode) {
+pub(crate) async fn stop_all_port_forward_and_exit(app: &mut App, mode: DatabaseMode) {
     log::debug!("Stopping all port forwards in mode: {mode:?}...");
     match stop_all_port_forward_with_mode(mode).await {
         Ok(responses) => {
@@ -125,7 +119,7 @@ pub async fn stop_all_port_forward_and_exit(app: &mut App, mode: DatabaseMode) {
     std::process::exit(0);
 }
 
-pub async fn start_port_forward(
+pub(crate) async fn start_port_forward(
     config_id: i64, mode: DatabaseMode, ssl_override: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config = get_config_with_mode(config_id, mode).await?;
@@ -139,7 +133,7 @@ pub async fn start_port_forward(
                 .await
                 .map_err(|e| -> Box<dyn std::error::Error> { Box::new(e) })?;
         }
-        Some("service") | Some("pod") => match config.protocol.as_str() {
+        Some("service" | "pod") => match config.protocol.as_str() {
             "tcp" => {
                 kube_start_port_forward(vec![config], "tcp", mode, ssl_override).await?;
             }

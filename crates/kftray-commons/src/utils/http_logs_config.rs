@@ -1,3 +1,9 @@
+// SQLite has no unsigned integer column type, so every `u64` field in
+// `HttpLogsConfig` (max file size, retention days) round-trips through `i64`
+// at the bind/read boundary. The values are bounded by physical limits, never
+// approach 2^63, and the casts run only on this trust boundary with the DB.
+#![allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
+
 use log::error;
 use sqlx::{
     Row,
@@ -59,7 +65,7 @@ pub(crate) async fn get_http_logs_config_with_pool(
 }
 
 pub async fn get_http_logs_config(config_id: i64) -> Result<HttpLogsConfig, String> {
-    let pool = get_db_pool().await.map_err(|e| e.to_string())?;
+    let pool = get_db_pool().await?;
     get_http_logs_config_with_pool(config_id, &pool).await
 }
 
@@ -120,7 +126,7 @@ pub(crate) async fn update_http_logs_config_with_pool(
 }
 
 pub async fn update_http_logs_config(config: &HttpLogsConfig) -> Result<(), String> {
-    let pool = get_db_pool().await.map_err(|e| e.to_string())?;
+    let pool = get_db_pool().await?;
     update_http_logs_config_with_pool(config, &pool).await
 }
 
@@ -142,7 +148,7 @@ pub(crate) async fn delete_http_logs_config_with_pool(
 }
 
 pub async fn delete_http_logs_config(config_id: i64) -> Result<(), String> {
-    let pool = get_db_pool().await.map_err(|e| e.to_string())?;
+    let pool = get_db_pool().await?;
     delete_http_logs_config_with_pool(config_id, &pool).await
 }
 
@@ -199,7 +205,7 @@ pub(crate) async fn read_all_http_logs_configs_with_pool(
 }
 
 pub async fn read_all_http_logs_configs() -> Result<Vec<HttpLogsConfig>, String> {
-    let pool = get_db_pool().await.map_err(|e| e.to_string())?;
+    let pool = get_db_pool().await?;
     read_all_http_logs_configs_with_pool(&pool).await
 }
 

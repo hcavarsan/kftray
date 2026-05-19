@@ -43,7 +43,7 @@ use tokio::time::sleep;
 type TrayPosition = Option<(PhysicalPosition<f64>, PhysicalSize<f64>)>;
 
 #[derive(Default)]
-pub struct TrayPositionState {
+pub(crate) struct TrayPositionState {
     pub position: Arc<Mutex<TrayPosition>>,
 }
 
@@ -62,7 +62,7 @@ use crate::window::{
 };
 
 #[cfg(not(target_os = "linux"))]
-pub const TRAY_ID: &str = "kftray-main";
+pub(crate) const TRAY_ID: &str = "kftray-main";
 
 #[cfg(target_os = "windows")]
 const TRAY_LIGHT_ICO: &[u8] = include_bytes!("../icons/tray-light.ico");
@@ -70,7 +70,7 @@ const TRAY_LIGHT_ICO: &[u8] = include_bytes!("../icons/tray-light.ico");
 const TRAY_DARK_ICO: &[u8] = include_bytes!("../icons/tray-dark.ico");
 
 #[cfg(not(target_os = "linux"))]
-fn current_tray_icon_bytes() -> &'static [u8] {
+const fn current_tray_icon_bytes() -> &'static [u8] {
     #[cfg(target_os = "windows")]
     {
         match crate::tray_theme::current() {
@@ -106,7 +106,7 @@ pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<(), tauri::Error> {
 }
 
 #[cfg(not(target_os = "linux"))]
-pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<(), tauri::Error> {
+pub(crate) fn create_tray_icon(app: &tauri::App<Wry>) -> Result<(), tauri::Error> {
     let quit = MenuItemBuilder::with_id("quit", "Quit")
         .accelerator("CmdOrCtrl+Shift+Q")
         .build(app)?;
@@ -253,7 +253,7 @@ pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<(), tauri::Error> {
                 }
             }
             "view_logs" => {
-                if let Err(e) = crate::commands::logs::open_log_viewer_window(app.clone()) {
+                if let Err(e) = crate::commands::logs::open_log_viewer_window(app) {
                     error!("Failed to open log viewer window: {e}");
                 }
             }
@@ -282,7 +282,7 @@ pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<(), tauri::Error> {
                     if let Some(tray_state) = tray.app_handle().try_state::<TrayPositionState>() {
                         let physical_position = match rect.position {
                             tauri::Position::Physical(pos) => {
-                                PhysicalPosition::new(pos.x as f64, pos.y as f64)
+                                PhysicalPosition::new(f64::from(pos.x), f64::from(pos.y))
                             }
                             tauri::Position::Logical(pos) => {
                                 let scale = tray
@@ -296,7 +296,7 @@ pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<(), tauri::Error> {
                         };
                         let physical_size = match rect.size {
                             tauri::Size::Physical(size) => {
-                                PhysicalSize::new(size.width as f64, size.height as f64)
+                                PhysicalSize::new(f64::from(size.width), f64::from(size.height))
                             }
                             tauri::Size::Logical(size) => {
                                 let scale = tray
@@ -310,8 +310,7 @@ pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<(), tauri::Error> {
                         };
 
                         info!(
-                            "Tray event captured - position: {:?}, size: {:?}",
-                            physical_position, physical_size
+                            "Tray event captured - position: {physical_position:?}, size: {physical_size:?}"
                         );
                         *tray_state.position.lock().unwrap() =
                             Some((physical_position, physical_size));
@@ -327,8 +326,7 @@ pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<(), tauri::Error> {
                     ..
                 } => {
                     info!(
-                        "Click event - button: {:?}, state: {:?}",
-                        button, button_state
+                        "Click event - button: {button:?}, state: {button_state:?}"
                     );
                     if button == MouseButton::Left && button_state == MouseButtonState::Up {
                         let app = tray.app_handle();
@@ -338,7 +336,7 @@ pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<(), tauri::Error> {
                     }
                 }
                 TrayIconEvent::DoubleClick { button, .. } => {
-                    info!("Double click event - button: {:?}", button);
+                    info!("Double click event - button: {button:?}");
                     if button == MouseButton::Left {
                         let app = tray.app_handle();
                         if let Some(window) = app.get_webview_window("main") {
@@ -355,13 +353,10 @@ pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<(), tauri::Error> {
     Ok(())
 }
 
-pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
-    let webview_window = match window.app_handle().get_webview_window(window.label()) {
-        Some(webview_window) => webview_window,
-        _ => {
-            error!("Failed to get webview window for label: {}", window.label());
-            return;
-        }
+pub(crate) fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
+    let Some(webview_window) = window.app_handle().get_webview_window(window.label()) else {
+        error!("Failed to get webview window for label: {}", window.label());
+        return;
     };
 
     if let WindowEvent::ScaleFactorChanged { new_inner_size, .. } = event {
@@ -376,7 +371,7 @@ pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
         refresh_tray_icon_for_theme(window.app_handle());
     }
 
-    info!("event: {:?}", event);
+    info!("event: {event:?}");
     let app_state = webview_window.state::<AppState>();
 
     if let WindowEvent::Focused(is_focused) = event
@@ -450,7 +445,7 @@ pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
                         save_window_position_async(WindowPosition { x, y }).await;
                     });
                 } else {
-                    warn!("Position ({}, {}) failed validation", x, y);
+                    warn!("Position ({x}, {y}) failed validation");
                 }
             }
         }
@@ -466,7 +461,9 @@ pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
     }
 }
 
-pub fn handle_run_event(app_handle: &tauri::AppHandle<Wry>, event: RunEvent) {
+// Signature is fixed by `App::run`'s callback contract.
+#[allow(clippy::needless_pass_by_value)]
+pub(crate) fn handle_run_event(app_handle: &tauri::AppHandle<Wry>, event: RunEvent) {
     match event {
         RunEvent::ExitRequested { ref api, .. } => {
             api.prevent_exit();

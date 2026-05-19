@@ -17,16 +17,16 @@ use crate::types::{
     MonitorConfig,
 };
 
-pub struct HealthChecker {
+pub(crate) struct HealthChecker {
     config: MonitorConfig,
 }
 
 impl HealthChecker {
-    pub fn new(config: MonitorConfig) -> Self {
+    pub(crate) const fn new(config: MonitorConfig) -> Self {
         Self { config }
     }
 
-    pub async fn check_port_health(
+    pub(crate) async fn check_port_health(
         &self, config: &Config, conn_timeout: Duration, task_timeout: Duration, attempts: usize,
         retry_delay: Duration,
     ) -> bool {
@@ -34,9 +34,8 @@ impl HealthChecker {
             return false;
         }
 
-        let local_port = match config.local_port {
-            Some(port) => port,
-            None => return false,
+        let Some(local_port) = config.local_port else {
+            return false;
         };
         let local_address = config.local_address.as_deref().unwrap_or("127.0.0.1");
 
@@ -74,7 +73,7 @@ impl HealthChecker {
         false
     }
 
-    pub async fn check_single_port_forward(&self, config: &Config) -> bool {
+    pub(crate) async fn check_single_port_forward(&self, config: &Config) -> bool {
         self.check_port_health(
             config,
             self.config.network_timeout,
@@ -85,7 +84,7 @@ impl HealthChecker {
         .await
     }
 
-    pub async fn check_single_port_forward_fast(&self, config: &Config) -> bool {
+    pub(crate) async fn check_single_port_forward_fast(&self, config: &Config) -> bool {
         self.check_port_health(
             config,
             self.config.sleep_down,
@@ -96,7 +95,7 @@ impl HealthChecker {
         .await
     }
 
-    pub async fn validate_port_forwards(&self, configs: &[Config]) -> Vec<Config> {
+    pub(crate) async fn validate_port_forwards(&self, configs: &[Config]) -> Vec<Config> {
         if configs.is_empty() {
             return Vec::new();
         }
@@ -136,7 +135,7 @@ impl HealthChecker {
         failed_configs
     }
 
-    pub async fn validate_port_forwards_fast(&self, configs: &[Config]) -> Vec<Config> {
+    pub(crate) async fn validate_port_forwards_fast(&self, configs: &[Config]) -> Vec<Config> {
         if configs.is_empty() {
             return Vec::new();
         }

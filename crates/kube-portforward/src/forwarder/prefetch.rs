@@ -35,6 +35,11 @@ impl Forwarder {
             return;
         }
         let in_use = session.in_use();
+        // `capacity` and `in_use` are bounded by `operating_max * pool_size`,
+        // well under 2^24 in every realistic deployment, so the f32 ratio
+        // comparison is precise. Going through integers here would just
+        // recompute the same threshold less readably.
+        #[allow(clippy::cast_precision_loss)]
         if (in_use as f32) < (capacity as f32) * self.config.prefetch_threshold {
             return;
         }
@@ -105,7 +110,7 @@ impl Forwarder {
             loop {
                 tokio::select! {
                     biased;
-                    _ = cancel.cancelled() => break,
+                    () = cancel.cancelled() => break,
                     _ = interval.tick() => {
                         prune_once(&sessions, idle_age).await;
                     }

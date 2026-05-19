@@ -112,7 +112,7 @@ pub fn install_service(_: &str) -> Result<(), HelperError> {
 
     let socket_path = get_default_socket_path()?;
 
-    let config_log_dir = config_dir_path.clone();
+    let config_log_dir = config_dir_path;
     let install_script = format!(
         r#"do shell script "
 mkdir -p '{0}' &&

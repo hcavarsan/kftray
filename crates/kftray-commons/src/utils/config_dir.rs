@@ -121,14 +121,12 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Mutex;
 
-    use lazy_static::lazy_static;
     use tempfile::TempDir;
 
     use super::*;
 
-    lazy_static! {
-        static ref ENV_TEST_MUTEX: Mutex<()> = Mutex::new(());
-    }
+    static ENV_TEST_MUTEX: std::sync::LazyLock<Mutex<()>> =
+        std::sync::LazyLock::new(|| Mutex::new(()));
 
     struct EnvVarGuard {
         key: String,
@@ -140,7 +138,7 @@ mod tests {
             let key = key.to_string();
             let original_value = env::var(&key).ok();
             unsafe { env::set_var(&key, value) };
-            EnvVarGuard {
+            Self {
                 key,
                 original_value,
             }
@@ -150,7 +148,7 @@ mod tests {
             let key = key.to_string();
             let original_value = env::var(&key).ok();
             unsafe { env::remove_var(&key) };
-            EnvVarGuard {
+            Self {
                 key,
                 original_value,
             }
@@ -188,7 +186,7 @@ mod tests {
     #[test]
     fn test_get_config_dir_default_home() {
         let _lock = ENV_TEST_MUTEX.lock().unwrap();
-        let temp_dir = tempfile::TempDir::new().unwrap();
+        let temp_dir = TempDir::new().unwrap();
         let fake_home = temp_dir.path().to_str().unwrap();
 
         let _guard1 = EnvVarGuard::remove("KFTRAY_CONFIG");
@@ -203,7 +201,7 @@ mod tests {
     #[test]
     fn test_get_config_dir_multiple_fallbacks() {
         let _lock = ENV_TEST_MUTEX.lock().unwrap();
-        let temp_dir = tempfile::TempDir::new().unwrap();
+        let temp_dir = TempDir::new().unwrap();
         let fake_xdg = temp_dir.path().join("xdg").to_str().unwrap().to_string();
         let fake_home = temp_dir.path().join("home").to_str().unwrap().to_string();
 
@@ -282,7 +280,7 @@ mod tests {
 
         let _guard_kube = EnvVarGuard::set("KUBECONFIG", custom_kubeconfig_path.to_str().unwrap());
         let kubeconfig_paths = get_kubeconfig_paths().unwrap();
-        assert_eq!(kubeconfig_paths, vec![custom_kubeconfig_path.clone()]);
+        assert_eq!(kubeconfig_paths, vec![custom_kubeconfig_path]);
 
         let _guard_kube2 = EnvVarGuard::remove("KUBECONFIG");
         let kube_dir = fake_home_dir.join(".kube");

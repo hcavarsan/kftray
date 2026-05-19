@@ -63,7 +63,7 @@ const STREAMING_INDICATOR: &str = "●";
 const LOGS_TITLE_PREFIX: &str = "Logs";
 const NAVIGATION_HINT: &str = "[PgUp/PgDn:navigate]";
 
-pub fn draw_ui(f: &mut Frame, app: &mut App, config_states: &[ConfigState]) {
+pub(crate) fn draw_ui(f: &mut Frame, app: &mut App, config_states: &[ConfigState]) {
     let size = f.area();
 
     let background = Block::default().style(Style::default().bg(BASE));
@@ -183,7 +183,7 @@ pub fn draw_ui(f: &mut Frame, app: &mut App, config_states: &[ConfigState]) {
         AppState::ShowConfirmationPopup => {
             let confirmation_area = centered_rect(50, 30, size);
             render_background_overlay(f, size);
-            render_confirmation_popup(f, &app.import_export_message, confirmation_area);
+            render_confirmation_popup(f, app.import_export_message.as_deref(), confirmation_area);
         }
         AppState::ShowErrorPopup => {
             if let Some(error_message) = &app.error_message {
@@ -197,7 +197,7 @@ pub fn draw_ui(f: &mut Frame, app: &mut App, config_states: &[ConfigState]) {
             render_background_overlay(f, size);
             render_delete_confirmation_popup(
                 f,
-                &app.delete_confirmation_message,
+                app.delete_confirmation_message.as_deref(),
                 delete_area,
                 app.selected_delete_button,
             );
@@ -235,18 +235,18 @@ pub fn draw_ui(f: &mut Frame, app: &mut App, config_states: &[ConfigState]) {
         AppState::ShowUpdateProgress => {
             let progress_area = centered_rect(50, 20, size);
             render_background_overlay(f, size);
-            render_update_progress_popup(f, &app.update_progress_message, progress_area);
+            render_update_progress_popup(f, app.update_progress_message.as_deref(), progress_area);
         }
         AppState::ShowRestartNotification => {
             let restart_area = centered_rect(50, 20, size);
             render_background_overlay(f, size);
             render_restart_notification_popup(f, restart_area);
         }
-        _ => {}
+        AppState::Normal => {}
     }
 }
 
-pub fn render_logs(f: &mut Frame, app: &mut App, area: Rect, has_focus: bool) {
+pub(crate) fn render_logs(f: &mut Frame, app: &App, area: Rect, has_focus: bool) {
     let focus_color = if has_focus { YELLOW } else { TEXT };
     let border_modifier = if has_focus {
         Modifier::BOLD
@@ -320,7 +320,7 @@ pub fn render_logs(f: &mut Frame, app: &mut App, area: Rect, has_focus: bool) {
         f.render_widget(logs_widget, area);
     }
 }
-pub fn draw_header(f: &mut Frame, app: &App, area: Rect) {
+pub(crate) fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     let menu_titles = [
         "Help",
         "Auto Import",

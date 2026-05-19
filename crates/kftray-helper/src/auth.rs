@@ -15,7 +15,7 @@ const VALID_APP_IDS: &[&str] = &["com.kftray.app", "com.hcavarsan.kftray"];
 
 const MAX_TIMESTAMP_SKEW_SECONDS: u64 = 300;
 
-pub fn validate_request(request: &HelperRequest) -> Result<(), HelperError> {
+pub(crate) fn validate_request(request: &HelperRequest) -> Result<(), HelperError> {
     validate_app_id(&request.app_id)?;
     validate_timestamp(request.timestamp)?;
     Ok(())
@@ -112,7 +112,7 @@ pub fn validate_peer_credentials(
 }
 
 #[cfg(target_os = "macos")]
-pub fn validate_peer_credentials(
+pub(crate) fn validate_peer_credentials(
     stream: &std::os::unix::net::UnixStream,
 ) -> Result<(), HelperError> {
     use std::os::fd::AsRawFd;
@@ -124,15 +124,17 @@ pub fn validate_peer_credentials(
         cr_ngroups: 0,
         cr_groups: [0; 16],
     };
-    let mut cred_len = std::mem::size_of::<libc::xucred>() as libc::socklen_t;
+    // `size_of::<xucred>()` is a compile-time constant well under `socklen_t::MAX`.
+    let mut cred_len =
+        libc::socklen_t::try_from(size_of::<libc::xucred>()).unwrap_or(libc::socklen_t::MAX);
 
     let result = unsafe {
         libc::getsockopt(
             socket_fd,
             0,
             1,
-            &mut cred as *mut _ as *mut libc::c_void,
-            &mut cred_len,
+            (&raw mut cred).cast::<libc::c_void>(),
+            &raw mut cred_len,
         )
     };
 

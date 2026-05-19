@@ -80,7 +80,9 @@ impl McpTool for ListActivePortForwardsTool {
             .into_iter()
             .filter(|c| c.id.is_some_and(|id| running_config_ids.contains(&id)))
             .map(|c| ActivePortForward {
-                config_id: c.id.map_or("unknown".to_string(), |id| id.to_string()),
+                config_id: c
+                    .id
+                    .map_or_else(|| "unknown".to_string(), |id| id.to_string()),
                 service: c.service,
                 namespace: c.namespace,
                 local_port: c.local_port,
@@ -213,7 +215,10 @@ impl McpTool for StartPortForwardTool {
                     let is_expose = config.workload_type.as_deref() == Some("expose");
                     let configs = vec![config];
 
-                    let result: Result<Vec<kftray_commons::models::response::CustomResponse>, String> = if is_expose {
+                    let result: Result<
+                        Vec<kftray_commons::models::response::CustomResponse>,
+                        String,
+                    > = if is_expose {
                         kftray_expose::start_expose(
                             configs,
                             kftray_commons::utils::db_mode::DatabaseMode::File,
@@ -268,16 +273,12 @@ impl McpTool for StartPortForwardTool {
             }
         } else {
             // Create a new config
-            let namespace = match args.namespace {
-                Some(ns) => ns,
-                None => return CallToolResult::error("namespace is required for new port-forward"),
+            let Some(namespace) = args.namespace else {
+                return CallToolResult::error("namespace is required for new port-forward");
             };
 
-            let remote_port = match args.remote_port {
-                Some(p) => p,
-                None => {
-                    return CallToolResult::error("remote_port is required for new port-forward");
-                }
+            let Some(remote_port) = args.remote_port else {
+                return CallToolResult::error("remote_port is required for new port-forward");
             };
 
             let workload_type = args.workload_type.unwrap_or_else(|| "service".to_string());
@@ -339,22 +340,23 @@ impl McpTool for StartPortForwardTool {
             let config_id = new_config.id;
             let configs = vec![new_config];
 
-            let result: Result<Vec<kftray_commons::models::response::CustomResponse>, String> = if is_expose {
-                kftray_expose::start_expose(
-                    configs,
-                    kftray_commons::utils::db_mode::DatabaseMode::File,
-                )
-                .await
-                .map_err(|e| e.to_string())
-            } else if protocol == "udp" {
-                kftray_kube::start_port_forward(configs, "udp")
+            let result: Result<Vec<kftray_commons::models::response::CustomResponse>, String> =
+                if is_expose {
+                    kftray_expose::start_expose(
+                        configs,
+                        kftray_commons::utils::db_mode::DatabaseMode::File,
+                    )
                     .await
                     .map_err(|e| e.to_string())
-            } else {
-                kftray_kube::start_port_forward(configs, "tcp")
-                    .await
-                    .map_err(|e| e.to_string())
-            };
+                } else if protocol == "udp" {
+                    kftray_kube::start_port_forward(configs, "udp")
+                        .await
+                        .map_err(|e| e.to_string())
+                } else {
+                    kftray_kube::start_port_forward(configs, "tcp")
+                        .await
+                        .map_err(|e| e.to_string())
+                };
 
             match result {
                 Ok(responses) => {
@@ -365,8 +367,7 @@ impl McpTool for StartPortForwardTool {
                                 kftray_commons::config::delete_config(inserted_id).await
                         {
                             log::debug!(
-                                "Failed to clean up config {} after port-forward failure: {del_err}",
-                                inserted_id
+                                "Failed to clean up config {inserted_id} after port-forward failure: {del_err}"
                             );
                         }
 
@@ -393,8 +394,7 @@ impl McpTool for StartPortForwardTool {
                             kftray_commons::config::delete_config(inserted_id).await
                         {
                             log::debug!(
-                                "Failed to clean up config {} after empty response: {del_err}",
-                                inserted_id
+                                "Failed to clean up config {inserted_id} after empty response: {del_err}"
                             );
                         }
                         CallToolResult::error("No response received from port-forward")
@@ -404,8 +404,7 @@ impl McpTool for StartPortForwardTool {
                     // Clean up the config on failure
                     if let Err(del_err) = kftray_commons::config::delete_config(inserted_id).await {
                         log::debug!(
-                            "Failed to clean up config {} after error: {del_err}",
-                            inserted_id
+                            "Failed to clean up config {inserted_id} after error: {del_err}"
                         );
                     }
                     CallToolResult::error(format!("Failed to start port-forward: {e}"))
@@ -469,9 +468,7 @@ impl McpTool for StopPortForwardTool {
                 .await
                 .map_err(|e| kftray_kube::PortForwardError::Expose(e.to_string()))
             }
-            _ => {
-                kftray_kube::stop_port_forward(args.config_id.to_string()).await
-            }
+            _ => kftray_kube::stop_port_forward(args.config_id.to_string()).await,
         };
 
         match stop_result {

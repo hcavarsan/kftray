@@ -15,15 +15,15 @@ use tracing::{
 };
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
-pub fn execute_command(cmd: &str, args: &[&str]) -> anyhow::Result<()> {
+pub fn execute_command(cmd: &str, args: &[&str]) -> Result<()> {
     let status = Command::new(cmd)
         .args(args)
         .status()
-        .map_err(|e| anyhow!("failed to spawn `{}`: {}", cmd, e))?;
+        .map_err(|e| anyhow!("failed to spawn `{cmd}`: {e}"))?;
     if status.success() {
         Ok(())
     } else {
-        Err(anyhow!("`{}` exited with {}", cmd, status))
+        Err(anyhow!("`{cmd}` exited with {status}"))
     }
 }
 
@@ -113,8 +113,7 @@ pub async fn ensure_loopback_address(addr: &str) -> Result<()> {
         Ok(())
     } else {
         Err(anyhow!(
-            "Failed to configure loopback address {} after all attempts",
-            addr
+            "Failed to configure loopback address {addr} after all attempts"
         ))
     }
 }
@@ -148,10 +147,7 @@ async fn configure_loopback_with_helper(addr: &str) -> Result<()> {
         }
         Err(e) => {
             error!("Helper failed to add loopback address: {}", e);
-            Err(anyhow!(
-                "Helper failed to configure loopback address: {}",
-                e
-            ))
+            Err(anyhow!("Helper failed to configure loopback address: {e}"))
         }
     }
 }
@@ -185,7 +181,7 @@ async fn remove_loopback_with_helper(addr: &str) -> Result<()> {
         }
         Err(e) => {
             error!("Helper failed to remove loopback address: {}", e);
-            Err(anyhow!("Helper failed to remove loopback address: {}", e))
+            Err(anyhow!("Helper failed to remove loopback address: {e}"))
         }
     }
 }
@@ -260,7 +256,7 @@ fn configure_loopback_macos(addr: &str) -> Result<()> {
     let check_output = Command::new("ifconfig")
         .args(["lo0"])
         .output()
-        .map_err(|e| anyhow!("Failed to check loopback interface: {}", e))?;
+        .map_err(|e| anyhow!("Failed to check loopback interface: {e}"))?;
 
     let output_str = String::from_utf8_lossy(&check_output.stdout);
     if output_str.contains(addr) {
@@ -297,10 +293,10 @@ fn configure_loopback_macos(addr: &str) -> Result<()> {
             {
                 Err(anyhow!("User cancelled loopback address configuration"))
             } else {
-                Err(anyhow!("Failed to configure loopback address: {}", stderr))
+                Err(anyhow!("Failed to configure loopback address: {stderr}"))
             }
         }
-        Err(e) => Err(anyhow!("Failed to execute osascript: {}", e)),
+        Err(e) => Err(anyhow!("Failed to execute osascript: {e}")),
     }
 }
 

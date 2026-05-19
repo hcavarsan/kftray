@@ -34,7 +34,7 @@ impl LogConfig {
         }
     }
 
-    pub fn builder(log_dir: PathBuf) -> LogConfigBuilder {
+    pub const fn builder(log_dir: PathBuf) -> LogConfigBuilder {
         LogConfigBuilder::new(log_dir)
     }
 
@@ -47,11 +47,11 @@ impl LogConfig {
         &self.log_dir
     }
 
-    pub fn max_log_size(&self) -> u64 {
+    pub const fn max_log_size(&self) -> u64 {
         self.max_log_size
     }
 
-    pub fn retention_days(&self) -> u64 {
+    pub const fn retention_days(&self) -> u64 {
         self.retention_days
     }
 
@@ -92,7 +92,7 @@ pub struct LogConfigBuilder {
 }
 
 impl LogConfigBuilder {
-    pub fn new(log_dir: PathBuf) -> Self {
+    pub const fn new(log_dir: PathBuf) -> Self {
         Self {
             log_dir,
             max_log_size: None,

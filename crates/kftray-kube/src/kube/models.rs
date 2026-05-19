@@ -67,8 +67,8 @@ impl Target {
         }
     }
 
-    pub fn find(&self, pod: &Pod, port: Option<Port>) -> anyhow::Result<TargetPod> {
-        let port = port.as_ref().unwrap_or(&self.port);
+    pub fn find(&self, pod: &Pod, port: Option<&Port>) -> anyhow::Result<TargetPod> {
+        let port = port.unwrap_or(&self.port);
         let pod_name = pod.metadata.name.as_ref().context("Pod Name is None")?;
 
         let port_number = match port {
@@ -94,6 +94,9 @@ impl Target {
     }
 }
 
+// `Iterator::filter` hands us `&Item`, and we iterate over `&Pod`, so the
+// callback signature is fixed as `&&Pod`.
+#[allow(clippy::trivially_copy_pass_by_ref)]
 #[inline]
 fn is_pod_ready(pod: &&Pod) -> bool {
     let is_ready = pod
@@ -168,29 +171,29 @@ pub struct PortForward {
     pub connection: Arc<Mutex<Option<tokio::net::TcpStream>>>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TargetSelector {
     ServiceName(String),
     PodLabel(String),
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Port {
     Number(i32),
     Name(String),
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Target {
     pub selector: TargetSelector,
     pub port: Port,
     pub namespace: NameSpace,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NameSpace(pub Option<String>);
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TargetPod {
     pub pod_name: String,
     pub port_number: u16,
@@ -208,8 +211,7 @@ pub struct AnyReady {}
 impl PodSelection for AnyReady {
     fn select<'p>(&self, pods: &'p [Pod], selector: &str) -> anyhow::Result<&'p Pod> {
         let pod = pods.iter().find(is_pod_ready).context(anyhow::anyhow!(
-            "No ready pods found matching the selector '{}'",
-            selector
+            "No ready pods found matching the selector '{selector}'"
         ))?;
 
         Ok(pod)
@@ -398,7 +400,7 @@ mod tests {
             "default",
         );
 
-        let result = target4.find(&pod, Some(Port::Number(5000)));
+        let result = target4.find(&pod, Some(&Port::Number(5000)));
         assert!(result.is_ok());
         let target_pod = result.unwrap();
         assert_eq!(target_pod.pod_name, "test-pod");
@@ -439,7 +441,7 @@ mod tests {
         let result = selector.select(&pods, "app=web");
         assert!(result.is_err());
 
-        let pods = vec![not_ready_pod, ready_pod.clone()];
+        let pods = vec![not_ready_pod, ready_pod];
         let result = selector.select(&pods, "app=web");
         assert!(result.is_ok());
         assert_eq!(result.unwrap().metadata.name, Some("ready-pod".to_string()));

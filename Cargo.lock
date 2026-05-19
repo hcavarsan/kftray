@@ -569,15 +569,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "block-buffer"
-version = "0.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cdd35008169921d80bc60d3d0ab416eecb028c4cd653352907921d95084790be"
-dependencies = [
- "hybrid-array",
-]
-
-[[package]]
 name = "block-padding"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -859,7 +850,7 @@ version = "0.4.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "773f3b9af64447d2ce9850330c473515014aa235e6a783b02db81ff39e4a3dad"
 dependencies = [
- "crypto-common 0.1.7",
+ "crypto-common",
  "inout",
 ]
 
@@ -1002,12 +993,6 @@ name = "const-oid"
 version = "0.9.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2459377285ad874054d797f3ccebf984978aa39129f6eafde5cdc8315b612f8"
-
-[[package]]
-name = "const-oid"
-version = "0.10.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a6ef517f0926dd24a1582492c791b6a4818a4d94e789a334894aa15b0d12f55c"
 
 [[package]]
 name = "convert_case"
@@ -1208,15 +1193,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "crypto-common"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "77727bb15fa921304124b128af125e7e3b968275d1b108b379190264f4423710"
-dependencies = [
- "hybrid-array",
-]
-
-[[package]]
 name = "csscolorparser"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1274,7 +1250,7 @@ dependencies = [
  "cfg-if",
  "cpufeatures 0.2.17",
  "curve25519-dalek-derive",
- "digest 0.10.7",
+ "digest",
  "fiat-crypto",
  "rustc_version",
  "subtle",
@@ -1403,7 +1379,7 @@ version = "0.7.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e7c1832837b905bbfb5101e07cc24c8deddf52f93225eee6ead5f4d63d53ddcb"
 dependencies = [
- "const-oid 0.9.6",
+ "const-oid",
  "zeroize",
 ]
 
@@ -1480,20 +1456,9 @@ version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9ed9a281f7bc9b7576e61468ba615a66a5c8cfdff42420a70aa82701a3b1e292"
 dependencies = [
- "block-buffer 0.10.4",
- "crypto-common 0.1.7",
+ "block-buffer",
+ "crypto-common",
  "subtle",
-]
-
-[[package]]
-name = "digest"
-version = "0.11.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1dd6dbb5841937940781866fa1281a1ff7bd3bf827091440879f9994983d5c2"
-dependencies = [
- "block-buffer 0.12.0",
- "const-oid 0.10.2",
- "crypto-common 0.2.1",
 ]
 
 [[package]]
@@ -2706,7 +2671,7 @@ version = "0.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c49c37c09c17a53d937dfbb742eb3a961d65a994e6bcdcf37e7399d0cc8ab5e"
 dependencies = [
- "digest 0.10.7",
+ "digest",
 ]
 
 [[package]]
@@ -2783,15 +2748,6 @@ name = "httpdate"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df3b46402a9d5adb4c86a0cf463f42e19994e3ee891101b1841f30a545cb49a9"
-
-[[package]]
-name = "hybrid-array"
-version = "0.4.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9155a582abd142abc056962c29e3ce5ff2ad5469f4246b537ed42c5deba857da"
-dependencies = [
- "typenum",
-]
 
 [[package]]
 name = "hyper"
@@ -3504,7 +3460,6 @@ dependencies = [
  "dirs",
  "futures",
  "git2",
- "lazy_static",
  "log",
  "serde",
  "serde_json",
@@ -3584,7 +3539,6 @@ dependencies = [
  "flate2",
  "httparse",
  "kftray-commons",
- "lazy_static",
  "mockall",
  "serde_json",
  "tempfile",
@@ -3598,24 +3552,18 @@ name = "kftray-kube"
 version = "0.27.30"
 dependencies = [
  "anyhow",
- "apple-native-keyring-store",
  "base64 0.22.1",
  "bytes",
- "core-foundation 0.10.1",
  "dashmap",
- "dbus-secret-service-keyring-store",
  "dirs",
- "env_logger",
  "futures",
  "http",
- "http-body-util",
  "httparse",
  "hyper",
  "hyper-openssl",
  "hyper-util",
  "jiff",
  "k8s-openapi",
- "keyring-core",
  "kftray-commons",
  "kftray-helper",
  "kftray-hosts",
@@ -3624,39 +3572,25 @@ dependencies = [
  "kube",
  "kube-portforward",
  "kube-runtime",
- "lazy_static",
- "libc",
- "linux-keyutils-keyring-store",
  "log",
  "once_cell",
  "openssl",
- "pem",
  "rand 0.10.1",
- "rcgen",
  "rustls",
- "rustls-native-certs",
- "schannel",
  "secrecy",
- "security-framework",
  "serde",
  "serde_json",
- "sha1 0.11.0",
  "socket2",
  "tempfile",
- "thiserror 2.0.18",
  "time",
  "tokio",
  "tokio-rustls",
- "tokio-tungstenite 0.29.0",
  "tokio-util",
  "tower",
  "tower-test",
  "tracing",
  "tracing-subscriber",
- "tungstenite 0.29.0",
  "whoami",
- "windows 0.62.2",
- "windows-native-keyring-store",
 ]
 
 [[package]]
@@ -3668,8 +3602,6 @@ dependencies = [
  "bytes",
  "clap",
  "env_logger",
- "futures",
- "http",
  "http-body-util",
  "hyper",
  "hyper-util",
@@ -3683,7 +3615,6 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
- "tokio-util",
  "uuid",
 ]
 
@@ -3706,11 +3637,9 @@ dependencies = [
  "async-trait",
  "bytes",
  "futures",
- "http",
  "http-body-util",
  "hyper",
  "hyper-util",
- "lazy_static",
  "log",
  "serde",
  "serde_json",
@@ -3729,7 +3658,6 @@ dependencies = [
 name = "kftray-shortcuts"
 version = "0.27.30"
 dependencies = [
- "anyhow",
  "async-trait",
  "chrono",
  "evdev",
@@ -3754,7 +3682,6 @@ dependencies = [
  "dirs",
  "keyring-core",
  "kftray-commons",
- "lazy_static",
  "linux-keyutils-keyring-store",
  "log",
  "pem",
@@ -3776,7 +3703,6 @@ dependencies = [
  "anyhow",
  "async-trait",
  "dirs",
- "env_logger",
  "fix-path-env",
  "flexi_logger",
  "inotify",
@@ -3793,7 +3719,6 @@ dependencies = [
  "kftray-ssl",
  "ksni",
  "kube",
- "lazy_static",
  "libc",
  "log",
  "mimalloc",
@@ -3820,7 +3745,6 @@ dependencies = [
  "tauri-plugin-updater",
  "tempfile",
  "tokio",
- "tracing",
  "tracing-log",
  "tracing-subscriber",
  "whoami",
@@ -3950,10 +3874,7 @@ version = "0.1.0"
 dependencies = [
  "arc-swap",
  "base64 0.22.1",
- "bytes",
  "crossbeam-queue",
- "fastwebsockets",
- "flate2",
  "futures",
  "http",
  "hyper",
@@ -3961,7 +3882,6 @@ dependencies = [
  "k8s-openapi",
  "kube",
  "kube-runtime",
- "parking_lot",
  "quanta",
  "rand 0.10.1",
  "spdy-mux",
@@ -6716,18 +6636,7 @@ checksum = "e3bf829a2d51ab4a5ddf1352d8470c140cadc8301b2ae1789db023f01cedd6ba"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.2.17",
- "digest 0.10.7",
-]
-
-[[package]]
-name = "sha1"
-version = "0.11.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aacc4cc499359472b4abe1bf11d0b12e688af9a805fa5e3016f9a386dc2d0214"
-dependencies = [
- "cfg-if",
- "cpufeatures 0.3.0",
- "digest 0.11.3",
+ "digest",
 ]
 
 [[package]]
@@ -6738,7 +6647,7 @@ checksum = "a7507d819769d01a365ab707794a4084392c824f54a7a6a7862f8c3d0892b283"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.2.17",
- "digest 0.10.7",
+ "digest",
 ]
 
 [[package]]
@@ -6815,7 +6724,7 @@ version = "2.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "77549399552de45a898a580c1b41d445bf730df867cc44e6c0233bbc4b8329de"
 dependencies = [
- "digest 0.10.7",
+ "digest",
  "rand_core 0.6.4",
 ]
 
@@ -8472,7 +8381,7 @@ dependencies = [
  "httparse",
  "log",
  "rand 0.9.4",
- "sha1 0.10.6",
+ "sha1",
  "thiserror 2.0.18",
  "utf-8",
 ]
@@ -8492,7 +8401,7 @@ dependencies = [
  "rand 0.9.4",
  "rustls",
  "rustls-pki-types",
- "sha1 0.10.6",
+ "sha1",
  "thiserror 2.0.18",
 ]
 
