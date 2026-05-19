@@ -17,6 +17,7 @@ bytes = "1.11"
 chrono = { version = "0.4.44", features = ["serde"] }
 clap = { version = "4.6.1", features = ["derive"] }
 core-foundation = "0.10.1"
+crossbeam-queue = "0.3"
 crossterm = { version = "0.29", optional = false }
 dashmap = "6.1"
 dbus-secret-service-keyring-store = { version = "1.0", features = [
@@ -26,6 +27,7 @@ dirs = "6.0"
 env_logger = "0.11"
 evdev = "0.13.2"
 fix-path-env = { git = "https://github.com/tauri-apps/fix-path-env-rs" }
+fastwebsockets = { version = "0.10", features = ["unstable-split"] }
 flate2 = "1.1"
 flexi_logger = "0.31"
 futures = "0.3"
@@ -60,6 +62,7 @@ kftray-network-monitor = { version = "0.27.30", path = "crates/kftray-network-mo
 kftray-portforward = { version = "0.27.30", path = "crates/kftray-portforward" }
 kftray-shortcuts = { version = "0.27.30", path = "crates/kftray-shortcuts" }
 kube-portforward = { version = "0.1", path = "crates/kube-portforward" }
+spdy-mux = { version = "0.1", path = "crates/spdy-mux" }
 kube = { version = "3.1.0", features = [
   "client",
   "config",

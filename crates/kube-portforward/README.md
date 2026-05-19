@@ -1,43 +1,46 @@
 # kube-portforward
 
-Production-ready Kubernetes port-forward over WebSocket with channel multiplexing.
+Kubernetes port-forward over SPDY/3.1 with kubectl-style fallback.
 
-Speaks `v5.channel.k8s.io` (preferred) and `v4.channel.k8s.io` (fallback) per
-[KEP-4006](https://github.com/kubernetes/enhancements/issues/4006). Multiplexes
-N concurrent local TCP connections over ONE WebSocket upgrade by encoding the
-target pod port N times in the URL.
+Speaks `SPDY/3.1+portforward.k8s.io` (SPDY frames tunnelled inside WebSocket
+binary messages, per [KEP-4006](https://github.com/kubernetes/enhancements/issues/4006))
+by default. When an apiserver rejects the WebSocket subprotocol — older
+clusters, `PortForwardWebsockets` disabled, fronted by a proxy that doesn't
+understand the subprotocol — the dialer transparently falls back to the
+legacy raw `Upgrade: SPDY/3.1` path (the original `kubectl port-forward`
+wire protocol).
+
+Both paths deliver the same SPDY/3.1 frames to the apiserver. The multiplexer
+(`spdy-mux`) opens a small pool of upgraded connections per session and
+distributes streams across them via power-of-two-choices with peak-EWMA
+load estimation.
 
 ## Why not `kube::Api::portforward`?
 
-| Feature                                | `kube::Api::portforward` | `kube-portforward` |
-|----------------------------------------|--------------------------|--------------------|
-| WebSocket transport                    | Yes                      | Yes                |
-| Channel multiplexing over one WS       | No (one upgrade per pair)| Yes (N pairs)      |
-| `v5.channel.k8s.io` half-close support | Limited                  | Yes (ID reuse)     |
-| Keepalive Ping + watchdog              | No                       | Yes (15s/30s)      |
-| Graceful shutdown drain                | No                       | Yes (configurable) |
-| Pre-1.30 detection with KEP-4006 hint  | Opaque `kube::Error`     | `ServerVersionTooOld` |
-| Structured `thiserror` errors          | No                       | Yes                |
-| Builder-pattern config                 | No                       | Yes                |
-| Pluggable recovery callback            | No                       | Yes                |
+| Feature                              | `kube::Api::portforward`  | `kube-portforward`   |
+|--------------------------------------|---------------------------|----------------------|
+| Stream multiplexing                  | No (one upgrade per pair) | Yes (single pool)    |
+| Keepalive Ping + watchdog            | No                        | Yes                  |
+| Graceful shutdown drain              | No                        | Yes                  |
+| Legacy SPDY fallback                 | No                        | Yes (automatic)      |
+| Structured `thiserror` errors        | No                        | Yes                  |
+| Builder-pattern config               | No                        | Yes                  |
+| Pluggable recovery callback          | No                        | Yes                  |
 
-## Option B Multiplexing
+## Fallback flow
 
-For each session, the URL encodes the target port N times:
+1. Send `GET .../portforward` with `Sec-WebSocket-Protocol: SPDY/3.1+portforward.k8s.io`.
+2. On `101 Switching Protocols` with the matching subprotocol echo, wrap the
+   upgraded connection in a WebSocket and feed SPDY frames in/out of binary
+   messages.
+3. On any non-network failure (HTTP 4xx/5xx, missing or mismatched
+   subprotocol header), retry with `POST .../portforward` carrying
+   `Connection: Upgrade`, `Upgrade: SPDY/3.1`, and
+   `X-Stream-Protocol-Version: portforward.k8s.io`. Write SPDY frames
+   directly to the upgraded connection — no WebSocket envelope.
 
-```
-?ports=9200&ports=9200&...&ports=9200
-```
-
-The apiserver and kubelet allocate 2N channel IDs at handshake (a data/error
-pair per URL occurrence). Channel pair `(2i, 2i+1)` corresponds to URL
-position `i`. The allocator hands pairs out in URL order — first call
-returns `(0, 1)`, second `(2, 3)`, and so on.
-
-On `v5`, the half-close signal `[0xFF, channel]` releases an ID pair back
-to the free-list, letting one session sustain a high turnover of short-lived
-local connections. On `v4`, released pairs stay reserved for the session
-lifetime.
+Real transport errors (TLS, DNS, connection refused) propagate without
+fallback so callers see the actual reason.
 
 ## Quick Start
 
@@ -54,9 +57,9 @@ session.close().await?;
 # Ok(()) }
 ```
 
-See `examples/` for end-to-end usage including multiplexing, custom keepalive
+See `examples/` for end-to-end usage including pool sizing, custom keepalive
 timings, and graceful shutdown.
 
 ## License
 
-Dual-licensed under MIT or Apache-2.0, at your option.
+GPL-3.0, matching the rest of the kftray project.

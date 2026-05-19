@@ -3,15 +3,19 @@ name = "kube-portforward"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
-description = "Production-ready Kubernetes port-forward over WebSocket with channel multiplexing"
-license = "MIT OR Apache-2.0"
+description = "Kubernetes port-forward over SPDY/3.1 with kubectl-style WebSocket with raw fallback"
+license = "GPL-3.0"
 repository = "https://github.com/hcavarsan/kftray"
-keywords = ["kubernetes", "portforward", "websocket", "async", "tokio"]
+keywords = ["kubernetes", "portforward", "spdy", "async", "tokio"]
 categories = ["network-programming", "asynchronous"]
 
 [dependencies]
 arc-swap = { workspace = true }
+base64 = { workspace = true }
 bytes = { workspace = true }
+crossbeam-queue = { workspace = true }
+fastwebsockets = { workspace = true }
+flate2 = { workspace = true, features = ["zlib-rs"] }
 futures = { workspace = true }
 http = { workspace = true }
 hyper = { workspace = true }
@@ -19,24 +23,17 @@ hyper-util = { workspace = true }
 k8s-openapi = { workspace = true }
 kube = { workspace = true }
 kube-runtime = { workspace = true }
-thiserror = { workspace = true }
-tokio = { workspace = true }
-tokio-tungstenite = { workspace = true }
-tokio-util = { workspace = true }
-tracing = { workspace = true }
-tungstenite = { workspace = true }
-dashmap = { workspace = true }
-flate2 = { workspace = true, optional = true, features = ["zlib-rs"] }
 parking_lot = { workspace = true }
 quanta = { workspace = true }
+rand = { workspace = true }
+spdy-mux = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+tracing = { workspace = true }
 
 [features]
 default = []
-# Built-in apiserver version cache (TTL 1h).
-# Off by default; consumers can implement their own caching strategy.
-version-cache = []
-# SPDY/3.1 tunnel backend for port-forward over a single WebSocket.
-spdy-tunnel = ["flate2"]
 
 [dev-dependencies]
 k8s-openapi = { workspace = true }

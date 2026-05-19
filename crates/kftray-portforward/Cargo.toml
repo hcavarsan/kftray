@@ -103,4 +103,3 @@ windows-native-keyring-store = { workspace = true }
 default = ["http-proxy", "socks5"]
 http-proxy = []
 socks5 = []
-spdy-tunnel = ["kube-portforward/spdy-tunnel"]

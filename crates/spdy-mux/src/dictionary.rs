@@ -1,8 +1,8 @@
 /// SPDY/3.1 predefined zlib dictionary (1423 bytes).
 ///
-/// This is the exact dictionary from the SPDY specification, also used by
-/// moby/spdystream and Kubernetes. The compressor and decompressor MUST use
-/// this dictionary for wire compatibility.
+/// The byte sequence is fixed by the SPDY/3.1 specification. The compressor
+/// and decompressor MUST use the same dictionary or the receiver fails to
+/// decode the header block.
 pub(crate) const SPDY_DICT: &[u8] = &[
     0x00, 0x00, 0x00, 0x07, 0x6f, 0x70, 0x74, 0x69, 0x6f, 0x6e, 0x73, 0x00, 0x00, 0x00, 0x04, 0x68,
     0x65, 0x61, 0x64, 0x00, 0x00, 0x00, 0x04, 0x70, 0x6f, 0x73, 0x74, 0x00, 0x00, 0x00, 0x03, 0x70,
