@@ -124,6 +124,12 @@ impl AsyncWrite for Upstream {
 pub struct PortForwarder {
     forwarder: Arc<Forwarder>,
     pod_api: Api<Pod>,
+    /// Service API for translating service-port to pod-targetPort. `None`
+    /// for non-service workloads (pod, proxy).
+    service_api: Option<Api<Service>>,
+    /// Service name to look up for port translation. `None` for
+    /// non-service workloads.
+    service_name: Option<String>,
     target_port: Option<u16>,
     http_log_watcher: HttpLogStateWatcher,
     initialized: Arc<AtomicBool>,
@@ -154,6 +160,20 @@ impl PortForwarder {
 
         let client = PORT_FORWARD_REGISTRY.acquire_client(client_key).await?;
         let pod_api: Api<Pod> = Api::namespaced((*client).clone(), namespace);
+
+        // Capture the service name (if any) up-front so we can translate
+        // a service-level port (e.g. 80) to the pod's targetPort (e.g.
+        // 8080) at initialize() time. Without this, the SPDY port-forward
+        // sends the service port to the kubelet, which dials the pod on
+        // that port and fails with "connection refused" because the pod
+        // listens on a different port.
+        let (service_api, service_name) = match &target.selector {
+            TargetSelector::ServiceName(name) => (
+                Some(Api::<Service>::namespaced((*client).clone(), namespace)),
+                Some(name.clone()),
+            ),
+            TargetSelector::PodLabel(_) => (None, None),
+        };
 
         let label_selector = resolve_label_selector(&client, namespace, &target.selector).await?;
 
@@ -186,6 +206,8 @@ impl PortForwarder {
         Ok(Self {
             forwarder: Arc::new(forwarder),
             pod_api,
+            service_api,
+            service_name,
             target_port: None,
             http_log_watcher: HttpLogStateWatcher::new(),
             initialized: Arc::new(AtomicBool::new(false)),
@@ -195,10 +217,47 @@ impl PortForwarder {
         })
     }
 
+    /// Resolve the requested user-facing port to the actual pod container
+    /// port that the kubelet should dial.
+    ///
+    /// Kubernetes port-forward operates on **pods**, not services. When the
+    /// user configures a forward against a service (e.g. `port: 80` on a
+    /// service that maps `targetPort: 8080`), we must translate the
+    /// service port to the pod's targetPort before sending it to the
+    /// kubelet. Otherwise the kubelet dials the pod on the service port
+    /// (which it doesn't listen on) and the connection is refused.
+    ///
+    /// `kubectl port-forward svc/<name> LOCAL:SERVICEPORT` performs this
+    /// translation internally; we replicate that here.
     async fn resolve_target_port(&self, target: &Target) -> anyhow::Result<u16> {
         match &target.port {
             Port::Number(port) => {
-                u16::try_from(*port).map_err(|_| anyhow!("port number {} is out of range", port))
+                let requested = u16::try_from(*port)
+                    .map_err(|_| anyhow!("port number {} is out of range", port))?;
+                // Translate via the service spec when this forward targets a
+                // service. For pod/proxy workloads, the user already specified
+                // the pod port directly — pass through.
+                if let (Some(api), Some(name)) =
+                    (self.service_api.as_ref(), self.service_name.as_ref())
+                {
+                    match resolve_service_target_port(api, name, requested).await {
+                        Ok(translated) => Ok(translated),
+                        Err(e) => {
+                            // Service lookup failed (deleted, RBAC, etc.):
+                            // fall back to the user-supplied port and let
+                            // the kubelet surface a clearer error.
+                            tracing::warn!(
+                                service = %name,
+                                requested,
+                                error = %e,
+                                "Failed to resolve service targetPort, using requested port as-is"
+                            );
+                            Ok(requested)
+                        }
+                    }
+                } else {
+                    Ok(requested)
+                }
             }
             Port::Name(port_name) => {
                 let ready = self
@@ -337,7 +396,7 @@ impl PortForwarder {
             let connection_tasks = Arc::clone(&self.connection_tasks);
             let stream_failures_clone = Arc::clone(&consecutive_stream_failures);
 
-            let handle = tokio::spawn(async move {
+            let handle = crate::dataplane_runtime::spawn_on_dataplane(async move {
                 let mut client_conn = client_conn;
                 let upstream_stream = match forwarder.get_stream().await {
                     Ok(stream) => {
@@ -462,6 +521,18 @@ impl PortForwarder {
             .await
             .map_err(|e| anyhow!("Failed to bind TCP listener to {}: {}", addr, e))?;
         let port = listener.local_addr()?.port();
+
+        // Eagerly validate upstream connectivity (same pattern as UDP).
+        // The stream is dropped immediately; the underlying session and
+        // spare-stream queue stay warm for real traffic.
+        self.get_stream().await.map_err(|e| {
+            anyhow!(
+                "Failed to validate upstream connection for TCP port {}: {}",
+                port,
+                e
+            )
+        })?;
+
         let tls_acceptor = listener_config.tls_acceptor;
         let handle = tokio::spawn(async move {
             self.handle_tcp_listener(
@@ -598,6 +669,98 @@ async fn resolve_label_selector(
             Ok(out)
         }
     }
+}
+
+/// Resolve `requested` (a Service `port`) to the pod container port it
+/// maps to (`targetPort`).
+///
+/// Matches `kubectl port-forward svc/<name>` translation. If the Service
+/// has a matching port entry:
+///   - numeric `targetPort` → return it directly
+///   - named `targetPort` → look it up in any pod matching the service selector
+///   - missing `targetPort` → falls back to the service `port` itself
+///     (Kubernetes default)
+///
+/// If no port entry matches, returns the requested port unchanged so the
+/// kubelet's eventual "connection refused" surfaces with a useful port
+/// number in its error message instead of being swallowed here.
+async fn resolve_service_target_port(
+    api: &Api<Service>, name: &str, requested: u16,
+) -> anyhow::Result<u16> {
+    use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
+
+    let svc = api
+        .get(name)
+        .await
+        .map_err(|e| anyhow!("failed to fetch service {}: {}", name, e))?;
+    let spec = svc
+        .spec
+        .as_ref()
+        .ok_or_else(|| anyhow!("service {} has no spec", name))?;
+    let ports = spec
+        .ports
+        .as_ref()
+        .ok_or_else(|| anyhow!("service {} has no ports", name))?;
+
+    let matching = ports
+        .iter()
+        .find(|p| p.port as u32 == requested as u32)
+        .ok_or_else(|| anyhow!("service {} has no port entry for {}", name, requested))?;
+
+    let target_port = match matching.target_port.as_ref() {
+        // Per Kubernetes API: omitted targetPort defaults to the service port.
+        None => requested,
+        Some(IntOrString::Int(n)) => u16::try_from(*n)
+            .map_err(|_| anyhow!("service {} targetPort {} out of range", name, n))?,
+        Some(IntOrString::String(named)) => {
+            // Named targetPort: look it up in a pod matching the service selector.
+            // Get the pod api from the namespace path the service lives in.
+            let namespace = svc
+                .metadata
+                .namespace
+                .as_deref()
+                .ok_or_else(|| anyhow!("service {} has no namespace", name))?;
+            let selector = spec.selector.as_ref().ok_or_else(|| {
+                anyhow!(
+                    "service {} has named targetPort {:?} but no selector",
+                    name,
+                    named
+                )
+            })?;
+            let selector_str = selector
+                .iter()
+                .map(|(k, v)| format!("{k}={v}"))
+                .collect::<Vec<_>>()
+                .join(",");
+            let client = api.clone().into_client();
+            let pod_api: Api<Pod> = Api::namespaced(client, namespace);
+            let lp = kube::api::ListParams::default().labels(&selector_str);
+            let pods = pod_api.list(&lp).await.map_err(|e| {
+                anyhow!(
+                    "failed to list pods for service {} named targetPort {:?}: {}",
+                    name,
+                    named,
+                    e
+                )
+            })?;
+            let pod = pods
+                .items
+                .into_iter()
+                .next()
+                .ok_or_else(|| anyhow!("no pods match service {} selector", name))?;
+            extract_named_port(&pod, named)?
+        }
+    };
+
+    if target_port != requested {
+        tracing::info!(
+            service = %name,
+            service_port = requested,
+            target_port,
+            "Resolved service port to pod targetPort"
+        );
+    }
+    Ok(target_port)
 }
 
 fn extract_named_port(pod: &Pod, name: &str) -> anyhow::Result<u16> {
