@@ -8,15 +8,15 @@ use k8s_openapi::api::core::v1::{
 };
 use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
 use kftray_commons::config_model::Config;
-use kftray_portforward::kube::client::create_client_with_specific_context;
-use kftray_portforward::kube::models::{
+use kftray_kube::kube::client::create_client_with_specific_context;
+use kftray_kube::kube::models::{
     KubeContextInfo,
     KubeNamespaceInfo,
     KubeServiceInfo,
     KubeServicePortInfo,
     PodInfo,
 };
-use kftray_portforward::kube::retrieve_service_configs;
+use kftray_kube::kube::retrieve_service_configs;
 use kube::Resource;
 use kube::{
     ResourceExt,

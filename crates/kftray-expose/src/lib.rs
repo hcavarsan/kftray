@@ -13,8 +13,8 @@ use kftray_commons::models::{
 };
 use kftray_commons::utils::config_state::update_config_state_with_mode;
 use kftray_commons::utils::db_mode::DatabaseMode;
-use kftray_portforward::kube::shared_client::ServiceClientKey;
-use kftray_portforward::registry::{
+use kftray_kube::kube::shared_client::ServiceClientKey;
+use kftray_kube::registry::{
     PORT_FORWARD_REGISTRY,
     PortForwardKey,
 };
@@ -44,7 +44,7 @@ async fn start_single_expose(
 ) -> Result<CustomResponse, ExposeError> {
     use self::kubernetes::create_expose_resources;
     use self::websocket::WebSocketTunnelClient;
-    use kftray_portforward::kube::models::{
+    use kftray_kube::kube::models::{
         NameSpace,
         Port,
         PortForward,

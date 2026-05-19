@@ -58,7 +58,7 @@ impl McpTool for ListKubeContextsTool {
             None => ListKubeContextsArgs { kubeconfig: None },
         };
 
-        match kftray_portforward::list_kube_contexts(args.kubeconfig).await {
+        match kftray_kube::list_kube_contexts(args.kubeconfig).await {
             Ok(contexts) => {
                 let context_names: Vec<String> = contexts.into_iter().map(|c| c.name).collect();
                 let response = KubeContextResponse {
@@ -120,14 +120,14 @@ impl McpTool for ListNamespacesTool {
         };
 
         // Create a Kubernetes client for the specified context
-        match kftray_portforward::create_client_with_specific_context(
+        match kftray_kube::create_client_with_specific_context(
             args.kubeconfig,
             Some(&args.context),
         )
         .await
         {
             Ok((Some(client), _, _)) => {
-                match kftray_portforward::list_all_namespaces(client).await {
+                match kftray_kube::list_all_namespaces(client).await {
                     Ok(namespaces) => {
                         let response = NamespacesResponse { namespaces };
                         CallToolResult::json(&response).unwrap_or_else(|e| {
@@ -204,7 +204,7 @@ impl McpTool for ListServicesTool {
             api::ListParams,
         };
 
-        match kftray_portforward::create_client_with_specific_context(
+        match kftray_kube::create_client_with_specific_context(
             args.kubeconfig,
             Some(&args.context),
         )
@@ -303,7 +303,7 @@ impl McpTool for ListPodsTool {
             api::ListParams,
         };
 
-        match kftray_portforward::create_client_with_specific_context(
+        match kftray_kube::create_client_with_specific_context(
             args.kubeconfig,
             Some(&args.context),
         )
@@ -439,7 +439,7 @@ impl McpTool for ListPortsTool {
             api::ListParams,
         };
 
-        match kftray_portforward::create_client_with_specific_context(
+        match kftray_kube::create_client_with_specific_context(
             args.kubeconfig,
             Some(&args.context),
         )

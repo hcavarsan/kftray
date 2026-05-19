@@ -3524,7 +3524,7 @@ dependencies = [
  "hyper-util",
  "k8s-openapi",
  "kftray-commons",
- "kftray-portforward",
+ "kftray-kube",
  "kube",
  "kube-runtime",
  "log",
@@ -3594,47 +3594,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "kftray-mcp"
-version = "0.27.30"
-dependencies = [
- "anyhow",
- "async-trait",
- "bytes",
- "clap",
- "env_logger",
- "futures",
- "http",
- "http-body-util",
- "hyper",
- "hyper-util",
- "k8s-openapi",
- "kftray-commons",
- "kftray-expose",
- "kftray-portforward",
- "kube",
- "log",
- "serde",
- "serde_json",
- "tempfile",
- "tokio",
- "tokio-util",
- "uuid",
-]
-
-[[package]]
-name = "kftray-network-monitor"
-version = "0.27.30"
-dependencies = [
- "futures",
- "kftray-commons",
- "kftray-expose",
- "kftray-portforward",
- "log",
- "tokio",
-]
-
-[[package]]
-name = "kftray-portforward"
+name = "kftray-kube"
 version = "0.27.30"
 dependencies = [
  "anyhow",
@@ -3697,6 +3657,46 @@ dependencies = [
  "whoami",
  "windows 0.62.2",
  "windows-native-keyring-store",
+]
+
+[[package]]
+name = "kftray-mcp"
+version = "0.27.30"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "bytes",
+ "clap",
+ "env_logger",
+ "futures",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "k8s-openapi",
+ "kftray-commons",
+ "kftray-expose",
+ "kftray-kube",
+ "kube",
+ "log",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "uuid",
+]
+
+[[package]]
+name = "kftray-network-monitor"
+version = "0.27.30"
+dependencies = [
+ "futures",
+ "kftray-commons",
+ "kftray-expose",
+ "kftray-kube",
+ "log",
+ "tokio",
 ]
 
 [[package]]
@@ -3786,9 +3786,9 @@ dependencies = [
  "kftray-commons",
  "kftray-expose",
  "kftray-helper",
+ "kftray-kube",
  "kftray-mcp",
  "kftray-network-monitor",
- "kftray-portforward",
  "kftray-shortcuts",
  "kftray-ssl",
  "ksni",
@@ -3842,8 +3842,8 @@ dependencies = [
  "insta",
  "kftray-commons",
  "kftray-expose",
+ "kftray-kube",
  "kftray-network-monitor",
- "kftray-portforward",
  "kftray-ssl",
  "libc",
  "log",

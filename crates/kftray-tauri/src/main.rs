@@ -274,8 +274,8 @@ fn main() {
             tauri::async_runtime::spawn(async move {
                 use std::time::Duration;
 
-                use kftray_portforward::kube::cleanup_stale_timeout_entries;
-                use kftray_portforward::registry::PORT_FORWARD_REGISTRY;
+                use kftray_kube::kube::cleanup_stale_timeout_entries;
+                use kftray_kube::registry::PORT_FORWARD_REGISTRY;
 
                 let mut interval = tokio::time::interval(Duration::from_secs(3600));
                 loop {

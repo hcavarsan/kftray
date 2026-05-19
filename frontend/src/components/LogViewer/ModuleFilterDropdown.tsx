@@ -48,7 +48,7 @@ function ModuleFilterDropdownComponent({
 
   const formatModuleName = (module: string): string => {
     let formatted = module
-      .replace(/^kftray_portforward::/, '')
+      .replace(/^kftray_kube::/, '')
       .replace(/^kftray_tauri::/, '')
       .replace(/^kftray_/, '')
 
