@@ -1,3 +1,4 @@
+pub mod dataplane_runtime;
 pub mod expose;
 pub mod hostfile_direct;
 pub mod hostfile_helper;

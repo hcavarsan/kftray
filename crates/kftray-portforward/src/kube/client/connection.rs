@@ -43,7 +43,12 @@ use super::proxy::{
 type StrategyFuture<'a> = Pin<Box<dyn Future<Output = KubeResult<Client>> + Send + 'a>>;
 type Strategy<'a> = (&'static str, StrategyFuture<'a>);
 
-const POOL_MAX_IDLE_PER_HOST: usize = 5;
+// Apiserver connection pool depth per host. Typical users run multiple
+// port-forwards plus pod watchers, label resolutions, and version probes
+// against the same cluster; keeping more idle connections warm avoids
+// re-handshakes when the pool churns. TLS session resumption helps but a
+// fully-warm idle connection is still faster.
+const POOL_MAX_IDLE_PER_HOST: usize = 32;
 
 static HTTP_CONNECTOR: LazyLock<HttpConnector> = LazyLock::new(|| {
     let mut connector = HttpConnector::new();
@@ -159,9 +164,12 @@ async fn create_rustls_client(config: Config) -> KubeResult<Client> {
         return create_rustls_with_proxy(config, &proxy_url).await;
     }
 
-    let connector = config.rustls_https_connector().map_err(|e| {
-        KubeClientError::connection_error_with_source("Failed to create Rustls connector", e)
-    })?;
+    let http_connector = create_http_connector();
+    let connector = config
+        .rustls_https_connector_with_connector(http_connector)
+        .map_err(|e| {
+            KubeClientError::connection_error_with_source("Failed to create Rustls connector", e)
+        })?;
 
     let hyper_client =
         hyper_util::client::legacy::Client::builder(TokioExecutor::new()).build(connector);
@@ -250,10 +258,6 @@ async fn test_client_connection(client: &Client) -> KubeResult<()> {
     })?;
     Ok(())
 }
-
-// ── HTTP request/response logger ─────────────────────────────────────────────
-// Active only when RUST_LOG contains `kftray_portforward::kube::client` at
-// debug level or lower. Zero overhead otherwise (log::log_enabled! check).
 
 #[derive(Clone)]
 struct HttpLogLayer;
