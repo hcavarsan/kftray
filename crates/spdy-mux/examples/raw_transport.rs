@@ -1,11 +1,10 @@
-//! Open a paired SPDY/3.1 stream over a raw (non-WebSocket) transport.
+//! Paired spdy/3.1 stream over a raw (non-websocket) transport.
 //!
-//! Shape demo: this file will not connect to anything because the placeholder
-//! `tokio::io::duplex` has no SPDY peer on the other end. `Session::with_config`
-//! performs an initial PING and waits for a reply, so the example hangs
-//! against the loopback duplex. Swap the duplex pair for the
-//! `hyper::upgrade::Upgraded` your HTTP client returns after a successful
-//! upgrade handshake.
+//! this won't actually connect to anything: the `tokio::io::duplex` below
+//! has no spdy peer on the other end, and `Session::with_config` does an
+//! initial PING and waits for a reply, so the example hangs against the
+//! loopback. swap the duplex for the `hyper::upgrade::Upgraded` your http
+//! client returns after a successful upgrade handshake.
 
 use spdy_mux::{
     MuxConfig,
