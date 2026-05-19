@@ -24,10 +24,9 @@ fn load_template(
     let manifest_path = get_path().map_err(|e| ExposeError::Configuration {
         message: format!("Failed to get {kind} manifest path: {e}"),
     })?;
-    let mut file =
-        File::open(&manifest_path).map_err(|e| ExposeError::Configuration {
-            message: format!("Failed to open {kind} manifest at {manifest_path:?}: {e}"),
-        })?;
+    let mut file = File::open(&manifest_path).map_err(|e| ExposeError::Configuration {
+        message: format!("Failed to open {kind} manifest at {manifest_path:?}: {e}"),
+    })?;
     let mut contents = String::new();
     file.read_to_string(&mut contents)
         .map_err(|e| ExposeError::Configuration {

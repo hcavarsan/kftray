@@ -197,8 +197,6 @@ impl From<KubeClientError> for PortForwardError {
     }
 }
 
-
-
 impl PortForwardError {
     pub fn pod_lookup_failed(
         retry_count: usize, last_error: impl Into<String>, selector: impl Into<String>,

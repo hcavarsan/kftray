@@ -222,18 +222,10 @@ async fn start_port_forwarding(
     let result = match config.workload_type.as_deref() {
         Some("proxy") => port_ops.deploy_and_forward_pod(configs).await,
         Some("expose") => {
-            kftray_expose::start_expose(
-                configs,
-                kftray_commons::utils::db_mode::DatabaseMode::File,
-            )
-            .await
-            .map(|responses| {
-                responses
-                    .into_iter()
-                    .map(|r| r.service)
-                    .collect()
-            })
-            .map_err(|e| e.to_string())
+            kftray_expose::start_expose(configs, kftray_commons::utils::db_mode::DatabaseMode::File)
+                .await
+                .map(|responses| responses.into_iter().map(|r| r.service).collect())
+                .map_err(|e| e.to_string())
         }
         _ => port_ops.start_port_forward(configs, protocol).await,
     };

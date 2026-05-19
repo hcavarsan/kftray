@@ -3,6 +3,7 @@ mod logging;
 use std::sync::Arc;
 use std::time::Duration;
 
+use kftray_http_logs::HttpLogger;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpStream;
 use tokio::sync::Mutex;
@@ -11,8 +12,6 @@ use tracing::{
     debug,
     error,
 };
-
-use kftray_http_logs::HttpLogger;
 
 use crate::kube::http_log_watcher::HttpLogStateWatcher;
 

@@ -213,7 +213,10 @@ impl McpTool for StartPortForwardTool {
                     let is_expose = config.workload_type.as_deref() == Some("expose");
                     let configs = vec![config];
 
-                    let result: Result<Vec<kftray_commons::models::response::CustomResponse>, String> = if is_expose {
+                    let result: Result<
+                        Vec<kftray_commons::models::response::CustomResponse>,
+                        String,
+                    > = if is_expose {
                         kftray_expose::start_expose(
                             configs,
                             kftray_commons::utils::db_mode::DatabaseMode::File,
@@ -339,22 +342,23 @@ impl McpTool for StartPortForwardTool {
             let config_id = new_config.id;
             let configs = vec![new_config];
 
-            let result: Result<Vec<kftray_commons::models::response::CustomResponse>, String> = if is_expose {
-                kftray_expose::start_expose(
-                    configs,
-                    kftray_commons::utils::db_mode::DatabaseMode::File,
-                )
-                .await
-                .map_err(|e| e.to_string())
-            } else if protocol == "udp" {
-                kftray_kube::start_port_forward(configs, "udp")
+            let result: Result<Vec<kftray_commons::models::response::CustomResponse>, String> =
+                if is_expose {
+                    kftray_expose::start_expose(
+                        configs,
+                        kftray_commons::utils::db_mode::DatabaseMode::File,
+                    )
                     .await
                     .map_err(|e| e.to_string())
-            } else {
-                kftray_kube::start_port_forward(configs, "tcp")
-                    .await
-                    .map_err(|e| e.to_string())
-            };
+                } else if protocol == "udp" {
+                    kftray_kube::start_port_forward(configs, "udp")
+                        .await
+                        .map_err(|e| e.to_string())
+                } else {
+                    kftray_kube::start_port_forward(configs, "tcp")
+                        .await
+                        .map_err(|e| e.to_string())
+                };
 
             match result {
                 Ok(responses) => {
@@ -469,9 +473,7 @@ impl McpTool for StopPortForwardTool {
                 .await
                 .map_err(|e| kftray_kube::PortForwardError::Expose(e.to_string()))
             }
-            _ => {
-                kftray_kube::stop_port_forward(args.config_id.to_string()).await
-            }
+            _ => kftray_kube::stop_port_forward(args.config_id.to_string()).await,
         };
 
         match stop_result {

@@ -39,11 +39,9 @@ pub async fn start_port_forwarding_with_ssl(
         Some("proxy") => {
             deploy_and_forward_pod_with_mode(vec![config.clone()], mode, ssl_override).await
         }
-        Some("expose") => {
-            kftray_expose::start_expose(vec![config.clone()], mode)
-                .await
-                .map_err(|e| kftray_kube::PortForwardError::Expose(e.to_string()))
-        }
+        Some("expose") => kftray_expose::start_expose(vec![config.clone()], mode)
+            .await
+            .map_err(|e| kftray_kube::PortForwardError::Expose(e.to_string())),
         Some("service") | Some("pod") => match config.protocol.as_str() {
             "tcp" => kube_start_port_forward(vec![config.clone()], "tcp", mode, ssl_override).await,
             "udp" => {
@@ -75,11 +73,9 @@ pub async fn stop_port_forwarding(app: &mut App, config: Config, mode: DatabaseM
             )
             .await
         }
-        Some("expose") => {
-            kftray_expose::stop_expose(config_id, &config.namespace, mode)
-                .await
-                .map_err(|e| kftray_kube::PortForwardError::Expose(e.to_string()))
-        }
+        Some("expose") => kftray_expose::stop_expose(config_id, &config.namespace, mode)
+            .await
+            .map_err(|e| kftray_kube::PortForwardError::Expose(e.to_string())),
         Some("service") | Some("pod") => {
             stop_port_forward_with_mode(config_id.to_string(), mode).await
         }

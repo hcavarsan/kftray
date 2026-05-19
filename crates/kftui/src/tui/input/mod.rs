@@ -1736,9 +1736,7 @@ pub async fn handle_settings_input(
                                 .await
                                 {
                                     Ok(settings) => {
-                                        match kftray_ssl::CertificateManager::new(
-                                            &settings,
-                                        ) {
+                                        match kftray_ssl::CertificateManager::new(&settings) {
                                             Ok(cert_manager) => {
                                                 if let Err(e) = cert_manager
                                                     .ensure_ca_installed_and_trusted()

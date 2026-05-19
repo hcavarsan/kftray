@@ -17,6 +17,11 @@ use kftray_commons::{
         timeout_manager::cancel_timeout_for_forward,
     },
 };
+use kftray_hosts::hostsfile::{
+    remove_all_host_entries,
+    remove_host_entry,
+    remove_ssl_host_entry,
+};
 use tracing::{
     debug,
     error,
@@ -24,20 +29,14 @@ use tracing::{
     warn,
 };
 
-use kftray_hosts::hostsfile::{
-    remove_all_host_entries,
-    remove_host_entry,
-    remove_ssl_host_entry,
-};
-use crate::kube::shared_client::ServiceClientKey;
-use crate::port_forward_error::PortForwardError;
-use crate::registry::PORT_FORWARD_REGISTRY;
-
 use super::address::release_address_with_fallback;
 use super::cleanup::{
     delete_proxy_cluster_resources,
     load_configs,
 };
+use crate::kube::shared_client::ServiceClientKey;
+use crate::port_forward_error::PortForwardError;
+use crate::registry::PORT_FORWARD_REGISTRY;
 
 pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, PortForwardError> {
     stop_all_port_forward_with_mode(DatabaseMode::File).await

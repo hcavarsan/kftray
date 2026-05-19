@@ -1,3 +1,4 @@
+use kftray_commons::models::config_model::Config;
 use log::{
     debug,
     error,
@@ -6,8 +7,6 @@ use log::{
 };
 use once_cell::sync::Lazy;
 use tokio::sync::Mutex as TokioMutex;
-
-use kftray_commons::models::config_model::Config;
 
 use crate::port_forward_error::PortForwardError;
 
@@ -25,8 +24,7 @@ pub(super) async fn allocate_local_address_for_config(
 
         if kftray_hosts::loopback::is_custom_loopback_address(&address) {
             info!("Configuring custom loopback address: {address}");
-            if let Err(config_err) =
-                kftray_hosts::loopback::ensure_loopback_address(&address).await
+            if let Err(config_err) = kftray_hosts::loopback::ensure_loopback_address(&address).await
             {
                 let error_msg = config_err.to_string();
                 if error_msg.contains("cancelled") || error_msg.contains("canceled") {
@@ -34,9 +32,7 @@ pub(super) async fn allocate_local_address_for_config(
                         "Custom loopback address configuration cancelled: {error_msg}"
                     )));
                 }
-                warn!(
-                    "Failed to configure custom loopback address {address}: {config_err}"
-                );
+                warn!("Failed to configure custom loopback address {address}: {config_err}");
             }
         }
 

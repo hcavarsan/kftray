@@ -81,8 +81,7 @@ impl ConfigManager {
 
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
-        let (proxy_configs, expose_configs, other_configs) =
-            partition_configs_by_workload(configs);
+        let (proxy_configs, expose_configs, other_configs) = partition_configs_by_workload(configs);
 
         if !other_configs.is_empty() {
             match kftray_kube::kube::start_port_forward(other_configs, protocol).await {
@@ -278,7 +277,8 @@ mod tests {
         let proxy_udp_config = make_config(1, "proxy", "udp");
         let service_udp_config = make_config(2, "service", "udp");
 
-        let (proxy, _expose, other) = partition_configs_by_workload(vec![proxy_udp_config, service_udp_config]);
+        let (proxy, _expose, other) =
+            partition_configs_by_workload(vec![proxy_udp_config, service_udp_config]);
 
         // Verify proxy UDP config is in the proxy partition (will go to
         // deploy_and_forward_pod)

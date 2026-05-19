@@ -9,6 +9,10 @@ use kftray_commons::{
         timeout_manager::cancel_timeout_for_forward,
     },
 };
+use kftray_hosts::hostsfile::{
+    remove_host_entry,
+    remove_ssl_host_entry,
+};
 use tracing::{
     debug,
     error,
@@ -16,19 +20,14 @@ use tracing::{
     warn,
 };
 
-use kftray_hosts::hostsfile::{
-    remove_host_entry,
-    remove_ssl_host_entry,
-};
-use crate::kube::shared_client::ServiceClientKey;
-use crate::port_forward_error::PortForwardError;
-use crate::registry::PORT_FORWARD_REGISTRY;
-
 use super::address::release_address_with_fallback;
 use super::cleanup::{
     delete_proxy_cluster_resources,
     load_configs,
 };
+use crate::kube::shared_client::ServiceClientKey;
+use crate::port_forward_error::PortForwardError;
+use crate::registry::PORT_FORWARD_REGISTRY;
 
 pub async fn stop_port_forward(config_id: String) -> Result<CustomResponse, PortForwardError> {
     stop_port_forward_with_mode(config_id, DatabaseMode::File).await
@@ -51,7 +50,8 @@ pub async fn stop_port_forward_with_mode(
         && config.workload_type.as_deref() == Some("expose")
     {
         return Err(PortForwardError::ConfigurationError {
-            message: "expose workload_type must be stopped via kftray_expose, not kftray_kube".to_string(),
+            message: "expose workload_type must be stopped via kftray_expose, not kftray_kube"
+                .to_string(),
         });
     }
 

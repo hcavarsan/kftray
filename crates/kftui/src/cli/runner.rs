@@ -254,12 +254,10 @@ impl PortForwardRunner {
                     .map(|_| ())
                     .map_err(|e| Box::new(std::io::Error::other(e)) as Box<dyn std::error::Error>)
             }
-            Some("expose") => {
-                kftray_expose::stop_expose(config_id, &config.namespace, mode)
-                    .await
-                    .map(|_| ())
-                    .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
-            }
+            Some("expose") => kftray_expose::stop_expose(config_id, &config.namespace, mode)
+                .await
+                .map(|_| ())
+                .map_err(|e| Box::new(e) as Box<dyn std::error::Error>),
             _ => stop_port_forward_with_mode(config_id.to_string(), mode)
                 .await
                 .map(|_| ())

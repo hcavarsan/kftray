@@ -44,8 +44,7 @@ pub(super) async fn handle_timeout_callback(id: i64) {
     }
 }
 
-pub(super) fn create_static_timeout_callback()
--> std::sync::Arc<dyn Fn(i64) + Send + Sync> {
+pub(super) fn create_static_timeout_callback() -> std::sync::Arc<dyn Fn(i64) + Send + Sync> {
     std::sync::Arc::new(move |id: i64| {
         let handle = tokio::spawn(async move {
             handle_timeout_callback(id).await;

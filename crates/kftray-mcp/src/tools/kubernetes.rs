@@ -120,23 +120,18 @@ impl McpTool for ListNamespacesTool {
         };
 
         // Create a Kubernetes client for the specified context
-        match kftray_kube::create_client_with_specific_context(
-            args.kubeconfig,
-            Some(&args.context),
-        )
-        .await
+        match kftray_kube::create_client_with_specific_context(args.kubeconfig, Some(&args.context))
+            .await
         {
-            Ok((Some(client), _, _)) => {
-                match kftray_kube::list_all_namespaces(client).await {
-                    Ok(namespaces) => {
-                        let response = NamespacesResponse { namespaces };
-                        CallToolResult::json(&response).unwrap_or_else(|e| {
-                            CallToolResult::error(format!("Failed to serialize response: {e}"))
-                        })
-                    }
-                    Err(e) => CallToolResult::error(format!("Failed to list namespaces: {e}")),
+            Ok((Some(client), _, _)) => match kftray_kube::list_all_namespaces(client).await {
+                Ok(namespaces) => {
+                    let response = NamespacesResponse { namespaces };
+                    CallToolResult::json(&response).unwrap_or_else(|e| {
+                        CallToolResult::error(format!("Failed to serialize response: {e}"))
+                    })
                 }
-            }
+                Err(e) => CallToolResult::error(format!("Failed to list namespaces: {e}")),
+            },
             Ok((None, _, _)) => CallToolResult::error(format!(
                 "Could not create client for context: {}",
                 args.context
@@ -204,11 +199,8 @@ impl McpTool for ListServicesTool {
             api::ListParams,
         };
 
-        match kftray_kube::create_client_with_specific_context(
-            args.kubeconfig,
-            Some(&args.context),
-        )
-        .await
+        match kftray_kube::create_client_with_specific_context(args.kubeconfig, Some(&args.context))
+            .await
         {
             Ok((Some(client), _, _)) => {
                 let api: Api<Service> = Api::namespaced(client, &args.namespace);
@@ -303,11 +295,8 @@ impl McpTool for ListPodsTool {
             api::ListParams,
         };
 
-        match kftray_kube::create_client_with_specific_context(
-            args.kubeconfig,
-            Some(&args.context),
-        )
-        .await
+        match kftray_kube::create_client_with_specific_context(args.kubeconfig, Some(&args.context))
+            .await
         {
             Ok((Some(client), _, _)) => {
                 let api: Api<Pod> = Api::namespaced(client, &args.namespace);
@@ -439,11 +428,8 @@ impl McpTool for ListPortsTool {
             api::ListParams,
         };
 
-        match kftray_kube::create_client_with_specific_context(
-            args.kubeconfig,
-            Some(&args.context),
-        )
-        .await
+        match kftray_kube::create_client_with_specific_context(args.kubeconfig, Some(&args.context))
+            .await
         {
             Ok((Some(client), _, _)) => {
                 let api: Api<Service> = Api::namespaced(client.clone(), &args.namespace);

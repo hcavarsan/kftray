@@ -4,8 +4,10 @@ pub mod models;
 pub mod templates;
 pub mod websocket;
 
-pub use error::{ExposeError, ExposeResult};
-
+pub use error::{
+    ExposeError,
+    ExposeResult,
+};
 use kftray_commons::models::{
     config_model::Config,
     config_state_model::ConfigState,
@@ -42,8 +44,6 @@ pub async fn start_expose(
 async fn start_single_expose(
     config: Config, mode: DatabaseMode,
 ) -> Result<CustomResponse, ExposeError> {
-    use self::kubernetes::create_expose_resources;
-    use self::websocket::WebSocketTunnelClient;
     use kftray_kube::kube::models::{
         NameSpace,
         Port,
@@ -52,11 +52,12 @@ async fn start_single_expose(
         TargetSelector,
     };
 
-    let config_id = config
-        .id
-        .ok_or_else(|| ExposeError::Configuration {
-            message: "Config has no ID".to_string(),
-        })?;
+    use self::kubernetes::create_expose_resources;
+    use self::websocket::WebSocketTunnelClient;
+
+    let config_id = config.id.ok_or_else(|| ExposeError::Configuration {
+        message: "Config has no ID".to_string(),
+    })?;
 
     let client_key = ServiceClientKey::new(config.context.clone(), config.kubeconfig.clone());
     let client = PORT_FORWARD_REGISTRY
