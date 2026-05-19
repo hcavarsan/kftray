@@ -1,10 +1,6 @@
 pub mod dataplane_runtime;
 pub mod expose;
-pub mod hostfile_direct;
-pub mod hostfile_helper;
-pub mod hostsfile;
 pub mod kube;
-pub mod network_utils;
 pub mod port_forward;
 pub mod port_forward_error;
 pub mod registry;

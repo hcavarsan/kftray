@@ -475,7 +475,7 @@ impl PortForwarder {
         cancellation_token: CancellationToken,
     ) -> anyhow::Result<(u16, JoinHandle<anyhow::Result<()>>)> {
         if let Err(e) =
-            crate::network_utils::ensure_loopback_address(&listener_config.local_address).await
+            kftray_hosts::loopback::ensure_loopback_address(&listener_config.local_address).await
         {
             return Err(anyhow!("Network config failed: {}", e));
         }
