@@ -3702,6 +3702,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "kftray-ssl"
+version = "0.27.30"
+
+[[package]]
 name = "kftray-tauri"
 version = "0.27.30"
 dependencies = [

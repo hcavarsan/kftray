@@ -61,6 +61,7 @@ kftray-mcp = { version = "0.27.30", path = "crates/kftray-mcp" }
 kftray-network-monitor = { version = "0.27.30", path = "crates/kftray-network-monitor" }
 kftray-portforward = { version = "0.27.30", path = "crates/kftray-portforward" }
 kftray-shortcuts = { version = "0.27.30", path = "crates/kftray-shortcuts" }
+kftray-ssl = { version = "0.27.30", path = "crates/kftray-ssl" }
 kube-portforward = { version = "0.1", path = "crates/kube-portforward" }
 spdy-mux = { version = "0.1", path = "crates/spdy-mux" }
 kube = { version = "3.1.0", features = [
