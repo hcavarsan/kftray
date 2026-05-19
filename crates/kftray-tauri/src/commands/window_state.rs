@@ -11,17 +11,17 @@ use tauri::{
 };
 
 #[tauri::command]
-pub fn open_save_dialog(state: State<SaveDialogState>) {
+pub(crate) fn open_save_dialog(state: State<SaveDialogState>) {
     state.is_open.store(true, Ordering::SeqCst);
 }
 
 #[tauri::command]
-pub fn close_save_dialog(state: State<SaveDialogState>) {
+pub(crate) fn close_save_dialog(state: State<SaveDialogState>) {
     state.is_open.store(false, Ordering::SeqCst);
 }
 
 #[tauri::command]
-pub fn toggle_pin_state(app_state: tauri::State<AppState>, window: WebviewWindow<Wry>) {
+pub(crate) fn toggle_pin_state(app_state: State<AppState>, window: WebviewWindow<Wry>) {
     let new_pin_state = !app_state.pinned.load(Ordering::SeqCst);
     app_state.pinned.store(new_pin_state, Ordering::SeqCst);
 
@@ -266,7 +266,7 @@ mod tests {
         }
 
         fn emit<T: serde::Serialize + Clone>(&self, event: &str, payload: T) -> Result<(), String> {
-            if let Ok(payload) = serde_json::to_value(payload.clone())
+            if let Ok(payload) = serde_json::to_value(payload)
                 && let Ok(payload_bool) = serde_json::from_value::<bool>(payload)
             {
                 self.emitted_events

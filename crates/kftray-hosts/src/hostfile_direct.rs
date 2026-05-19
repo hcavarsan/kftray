@@ -351,7 +351,7 @@ mod tests {
         if can_write_hosts_file() {
             let manager = DirectHostfileManager::new();
             let _ = manager.add_host_entry(id1, entry.clone());
-            let _ = manager.add_host_entry(id2, entry.clone());
+            let _ = manager.add_host_entry(id2, entry);
 
             let result = manager.remove_all_host_entries();
             assert!(result.is_ok());

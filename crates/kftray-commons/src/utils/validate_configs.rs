@@ -8,8 +8,8 @@ pub struct ConfigLocation {
 }
 
 impl ConfigLocation {
-    fn new(path: PathBuf, origin: String) -> Self {
-        ConfigLocation { path, origin }
+    const fn new(path: PathBuf, origin: String) -> Self {
+        Self { path, origin }
     }
 }
 
@@ -20,7 +20,7 @@ pub fn detect_multiple_configs() -> (Vec<ConfigLocation>, Option<ConfigLocation>
     if let Ok(config_dir) = env::var("KFTRAY_CONFIG") {
         let path = PathBuf::from(&config_dir);
         if path.is_dir() {
-            let config = ConfigLocation::new(path.clone(), "KFTRAY_CONFIG".into());
+            let config = ConfigLocation::new(path, "KFTRAY_CONFIG".into());
             config_locations.push(config.clone());
             active_config = Some(config);
         }
@@ -179,7 +179,7 @@ mod tests {
                 unsafe { env::remove_var(key) };
             }
 
-            StrictEnvGuard { saved_vars }
+            Self { saved_vars }
         }
     }
 
@@ -213,9 +213,9 @@ mod tests {
                     unsafe { env::remove_var(var) };
                 }
 
-                let temp_dir = tempfile::tempdir().unwrap();
+                let temp_dir = tempdir().unwrap();
 
-                IsolatedEnvGuard {
+                Self {
                     saved_vars: vars,
                     _temp_dir: temp_dir,
                 }
@@ -261,11 +261,11 @@ mod tests {
         let _lock = ENV_TEST_MUTEX.lock().unwrap();
         let _env_guard = StrictEnvGuard::new(&["KFTRAY_CONFIG", "XDG_CONFIG_HOME", "HOME"]);
 
-        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir = tempdir().unwrap();
         let kftray_dir = temp_dir.path().join("kftray_only_test");
-        std::fs::create_dir_all(&kftray_dir).unwrap();
+        fs::create_dir_all(&kftray_dir).unwrap();
 
-        let home_temp_dir = tempfile::tempdir().unwrap();
+        let home_temp_dir = tempdir().unwrap();
 
         unsafe { env::set_var("KFTRAY_CONFIG", kftray_dir.to_str().unwrap()) };
 
@@ -294,12 +294,12 @@ mod tests {
         let _lock = ENV_TEST_MUTEX.lock().unwrap();
         let _env_guard = StrictEnvGuard::new(&["KFTRAY_CONFIG", "XDG_CONFIG_HOME", "HOME"]);
 
-        let xdg_temp_dir = tempfile::tempdir().unwrap();
-        let home_temp_dir = tempfile::tempdir().unwrap();
+        let xdg_temp_dir = tempdir().unwrap();
+        let home_temp_dir = tempdir().unwrap();
 
         let xdg_path = xdg_temp_dir.path();
         let kftray_dir = xdg_path.join("kftray");
-        std::fs::create_dir_all(&kftray_dir).unwrap();
+        fs::create_dir_all(&kftray_dir).unwrap();
 
         unsafe { env::set_var("XDG_CONFIG_HOME", xdg_path.to_str().unwrap()) };
 
@@ -469,7 +469,7 @@ mod tests {
 
         let _guard = StrictEnvGuard::new(&["KFTRAY_CONFIG", "XDG_CONFIG_HOME", "HOME"]);
 
-        let temp_dir = tempfile::tempdir().unwrap();
+        let temp_dir = tempdir().unwrap();
         let non_existent_path = temp_dir.path().join("non_existent");
 
         let (configs_before, _) = detect_multiple_configs();

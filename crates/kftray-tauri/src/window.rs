@@ -23,7 +23,7 @@ use tauri_plugin_positioner::{
 };
 use tokio::time::sleep;
 
-pub async fn save_window_position_async(position_data: WindowPosition) {
+pub(crate) async fn save_window_position_async(position_data: WindowPosition) {
     let position_json = match serde_json::to_string(&position_data) {
         Ok(json) => json,
         Err(e) => {
@@ -56,7 +56,7 @@ pub async fn save_window_position_async(position_data: WindowPosition) {
     }
 }
 
-pub async fn load_window_position() -> Option<WindowPosition> {
+pub(crate) async fn load_window_position() -> Option<WindowPosition> {
     match get_window_state_path() {
         Ok(home_path) => {
             if !home_path.exists() {
@@ -110,7 +110,7 @@ async fn handle_corrupted_file(path: &Path, error: impl std::fmt::Display) {
     }
 }
 
-pub fn toggle_window_visibility(window: &WebviewWindow<Wry>) {
+pub(crate) fn toggle_window_visibility(window: &WebviewWindow<Wry>) {
     let app_state = window.state::<AppState>();
     let is_visible = window.is_visible().unwrap_or(false);
 
@@ -186,7 +186,7 @@ pub fn toggle_window_visibility(window: &WebviewWindow<Wry>) {
     }
 }
 
-pub fn set_position_before_show(window: WebviewWindow<Wry>) {
+pub(crate) fn set_position_before_show(window: WebviewWindow<Wry>) {
     let (positioning_active, runtime) = {
         let app_state = window.state::<AppState>();
         app_state.positioning_active.store(true, Ordering::SeqCst);
@@ -196,7 +196,7 @@ pub fn set_position_before_show(window: WebviewWindow<Wry>) {
         )
     };
 
-    let window_clone = window.clone();
+    let window_clone = window;
 
     runtime.spawn(async move {
         apply_saved_window_size(&window_clone).await;
@@ -207,7 +207,7 @@ pub fn set_position_before_show(window: WebviewWindow<Wry>) {
                     position.x, position.y
                 );
                 let _ = window_clone.set_position(tauri::Position::Physical(
-                    tauri::PhysicalPosition::new(position.x, position.y),
+                    PhysicalPosition::new(position.x, position.y),
                 ));
                 tokio::spawn({
                     let positioning_active = positioning_active.clone();
@@ -225,7 +225,7 @@ pub fn set_position_before_show(window: WebviewWindow<Wry>) {
     });
 }
 
-pub async fn load_saved_window_size_preset() -> crate::window_size::WindowSizePreset {
+pub(crate) async fn load_saved_window_size_preset() -> crate::window_size::WindowSizePreset {
     match kftray_commons::utils::settings::get_setting(crate::window_size::SETTING_KEY).await {
         Ok(Some(value)) => {
             crate::window_size::WindowSizePreset::from_id(&value).unwrap_or_default()
@@ -272,7 +272,8 @@ async fn apply_window_size_on_main_thread(
         }
 
         match window_clone.set_size(tauri::Size::Logical(tauri::LogicalSize::new(
-            w as f64, h as f64,
+            f64::from(w),
+            f64::from(h),
         ))) {
             Ok(()) => {
                 let _ = tx.send(true);
@@ -292,12 +293,12 @@ async fn apply_window_size_on_main_thread(
     rx.await.unwrap_or(false)
 }
 
-pub async fn apply_saved_window_size(window: &WebviewWindow<Wry>) {
+pub(crate) async fn apply_saved_window_size(window: &WebviewWindow<Wry>) {
     let preset = load_saved_window_size_preset().await;
     apply_window_size_on_main_thread(window, preset).await;
 }
 
-pub async fn apply_window_size_preset(
+pub(crate) async fn apply_window_size_preset(
     window: &WebviewWindow<Wry>, preset: crate::window_size::WindowSizePreset,
 ) {
     if !apply_window_size_on_main_thread(window, preset).await {
@@ -321,7 +322,7 @@ pub async fn apply_window_size_preset(
     }
 }
 
-pub fn is_valid_position(window: &WebviewWindow<Wry>, x: i32, y: i32) -> bool {
+pub(crate) fn is_valid_position(window: &WebviewWindow<Wry>, x: i32, y: i32) -> bool {
     if let Ok(monitors) = window.available_monitors() {
         for monitor in monitors {
             let monitor_position = monitor.position();
@@ -349,7 +350,7 @@ pub fn is_valid_position(window: &WebviewWindow<Wry>, x: i32, y: i32) -> bool {
                 return true;
             }
         }
-        warn!("Position ({}, {}) is outside all monitor bounds", x, y);
+        warn!("Position ({x}, {y}) is outside all monitor bounds");
         if let Ok(monitors) = window.available_monitors() {
             for (i, monitor) in monitors.iter().enumerate() {
                 let pos = monitor.position();
@@ -380,7 +381,7 @@ fn use_saved_or_center(window: &WebviewWindow<Wry>) {
                             position.x, position.y
                         );
                         match window_clone.set_position(tauri::Position::Physical(
-                            tauri::PhysicalPosition::new(position.x, position.y),
+                            PhysicalPosition::new(position.x, position.y),
                         )) {
                             Ok(()) => {}
                             Err(e) => {
@@ -400,7 +401,7 @@ fn use_saved_or_center(window: &WebviewWindow<Wry>) {
                         center_on_primary_monitor(&window_clone);
                     }
                 }
-            })
+            });
         });
     } else {
         let app_state = window.state::<AppState>();
@@ -413,7 +414,7 @@ fn use_saved_or_center(window: &WebviewWindow<Wry>) {
                         position.x, position.y
                     );
                     match window_clone.set_position(tauri::Position::Physical(
-                        tauri::PhysicalPosition::new(position.x, position.y),
+                        PhysicalPosition::new(position.x, position.y),
                     )) {
                         Ok(()) => {}
                         Err(e) => {
@@ -454,18 +455,18 @@ fn position_from_tray(window: &WebviewWindow<Wry>) {
         return;
     };
 
-    info!("Tray position: {:?}, size: {:?}", tray_pos, tray_size);
+    info!("Tray position: {tray_pos:?}, size: {tray_size:?}");
 
     let monitor = find_tray_monitor(window, tray_pos);
 
     match monitor {
         Some(monitor) => {
             info!("Found tray monitor: {:?}", monitor.name());
-            position_window(window, &monitor, tray_pos, tray_size)
+            position_window(window, &monitor, tray_pos, tray_size);
         }
         None => {
             warn!("Could not find tray monitor, trying saved position");
-            use_saved_or_center(window)
+            use_saved_or_center(window);
         }
     }
 }
@@ -475,10 +476,7 @@ fn find_tray_monitor(
 ) -> Option<tauri::Monitor> {
     let monitors = window.available_monitors().ok()?;
 
-    info!(
-        "Searching for tray monitor. Tray physical position: {:?}",
-        tray_pos
-    );
+    info!("Searching for tray monitor. Tray physical position: {tray_pos:?}");
 
     for monitor in &monitors {
         let monitor_pos = monitor.position();
@@ -529,9 +527,9 @@ fn position_window(
             (500.0 * scale).round() as u32,
         )
     });
-    let window_size = tauri::PhysicalSize {
-        width: current_size.width as f64,
-        height: current_size.height as f64,
+    let window_size = PhysicalSize {
+        width: f64::from(current_size.width),
+        height: f64::from(current_size.height),
     };
     let position = calculate_position(monitor, tray_pos, tray_size, window_size);
 
@@ -551,9 +549,9 @@ fn position_window(
     let app_state = window.state::<AppState>();
     app_state.positioning_active.store(true, Ordering::SeqCst);
 
-    let position_result = window.set_position(tauri::Position::Physical(
-        tauri::PhysicalPosition::new(position.0, position.1),
-    ));
+    let position_result = window.set_position(tauri::Position::Physical(PhysicalPosition::new(
+        position.0, position.1,
+    )));
 
     match position_result {
         Ok(()) => {
@@ -576,7 +574,7 @@ fn position_window(
 
 fn calculate_position(
     monitor: &tauri::Monitor, tray_pos: PhysicalPosition<f64>, tray_size: PhysicalSize<f64>,
-    window_size: tauri::PhysicalSize<f64>,
+    window_size: PhysicalSize<f64>,
 ) -> (i32, i32) {
     let monitor_pos = monitor.position();
     let monitor_size = monitor.size();
@@ -631,7 +629,7 @@ fn schedule_position_verification(
     let positioning_active = app_state.positioning_active.clone();
 
     runtime.spawn(async move {
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        sleep(Duration::from_millis(50)).await;
 
         if let Ok(actual_pos) = window.outer_position() {
             let actual_x = actual_pos.x;
@@ -639,28 +637,26 @@ fn schedule_position_verification(
 
             if (actual_x - expected_x).abs() > 5 || (actual_y - expected_y).abs() > 5 {
                 info!(
-                    "Position verification failed: expected ({}, {}), got ({}, {}), correcting...",
-                    expected_x, expected_y, actual_x, actual_y
+                    "Position verification failed: expected ({expected_x}, {expected_y}), got ({actual_x}, {actual_y}), correcting..."
                 );
 
                 let scale_factor = monitor.scale_factor();
                 if scale_factor > 1.5 {
-                    let logical_x = expected_x as f64 / scale_factor;
-                    let logical_y = expected_y as f64 / scale_factor;
+                    let logical_x = f64::from(expected_x) / scale_factor;
+                    let logical_y = f64::from(expected_y) / scale_factor;
                     let _ = window.set_position(tauri::Position::Logical(
                         tauri::LogicalPosition::new(logical_x, logical_y),
                     ));
                 } else {
                     let _ = window.set_position(tauri::Position::Physical(
-                        tauri::PhysicalPosition::new(expected_x, expected_y),
+                        PhysicalPosition::new(expected_x, expected_y),
                     ));
                 }
 
-                tokio::time::sleep(Duration::from_millis(200)).await;
+                sleep(Duration::from_millis(200)).await;
             } else {
                 info!(
-                    "Position verification passed: window at ({}, {})",
-                    actual_x, actual_y
+                    "Position verification passed: window at ({actual_x}, {actual_y})"
                 );
             }
         }
@@ -687,10 +683,10 @@ fn center_on_specific_monitor(window: &WebviewWindow<Wry>, monitor: &tauri::Moni
         .saturating_add(monitor_size.height as i32 / 2)
         .saturating_sub(window_size.height as i32 / 2);
 
-    match window.set_position(tauri::Position::Physical(tauri::PhysicalPosition::new(
+    match window.set_position(tauri::Position::Physical(PhysicalPosition::new(
         center_x, center_y,
     ))) {
-        Ok(()) => info!("Window centered at ({}, {})", center_x, center_y),
+        Ok(()) => info!("Window centered at ({center_x}, {center_y})"),
         Err(e) => warn!("Failed to center window: {e}"),
     }
 }
@@ -710,7 +706,7 @@ fn center_on_primary_monitor(window: &WebviewWindow<Wry>) {
     center_on_specific_monitor(window, &monitor);
 }
 
-pub fn reset_window_position(window: WebviewWindow<Wry>) {
+pub(crate) fn reset_window_position(window: WebviewWindow<Wry>) {
     let (positioning_active, runtime) = {
         let app_state = window.state::<AppState>();
         app_state.positioning_active.store(true, Ordering::SeqCst);
@@ -720,7 +716,7 @@ pub fn reset_window_position(window: WebviewWindow<Wry>) {
         )
     };
 
-    let window_clone = window.clone();
+    let window_clone = window;
 
     runtime.spawn(async move {
         remove_position_file().await;
@@ -758,7 +754,7 @@ async fn remove_position_file() {
     }
 }
 
-pub fn set_window_position(window: &WebviewWindow<Wry>, position: Position) {
+pub(crate) fn set_window_position(window: &WebviewWindow<Wry>, position: Position) {
     if let Err(e) = window.move_window(position) {
         warn!("Failed to move window: {e}");
     }

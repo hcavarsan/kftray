@@ -48,27 +48,27 @@ pub struct AppSettings {
     pub mcp_server_port: u16,
 }
 
-fn default_network_monitor() -> bool {
+const fn default_network_monitor() -> bool {
     true
 }
 
-fn default_http_logs_max_file_size() -> u64 {
+const fn default_http_logs_max_file_size() -> u64 {
     10 * 1024 * 1024 // 10MB
 }
 
-fn default_http_logs_retention_days() -> u64 {
+const fn default_http_logs_retention_days() -> u64 {
     7
 }
 
-fn default_auto_update_enabled() -> bool {
+const fn default_auto_update_enabled() -> bool {
     true
 }
 
-fn default_cert_validity() -> u16 {
+const fn default_cert_validity() -> u16 {
     365
 }
 
-fn default_ssl_auto_regenerate() -> bool {
+const fn default_ssl_auto_regenerate() -> bool {
     true
 }
 
@@ -79,7 +79,7 @@ fn default_global_shortcut() -> String {
     return "Ctrl+Shift+F1".to_string();
 }
 
-fn default_mcp_server_port() -> u16 {
+const fn default_mcp_server_port() -> u16 {
     3000
 }
 
@@ -106,7 +106,7 @@ impl Default for AppSettings {
 
 impl AppSettings {
     pub fn from_settings_manager(settings: &std::collections::HashMap<String, String>) -> Self {
-        let mut app_settings = AppSettings::default();
+        let mut app_settings = Self::default();
 
         if let Some(value) = settings.get("disconnect_timeout_minutes") {
             app_settings.disconnect_timeout_minutes = value.parse().unwrap_or(0);

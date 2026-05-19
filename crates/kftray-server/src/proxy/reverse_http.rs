@@ -28,28 +28,28 @@ use uuid::Uuid;
 use super::websocket_server::WebSocketTunnelServer;
 use crate::models::tunnel_protocol::TunnelMessage;
 
-pub struct ReverseHttpProxy {
+pub(crate) struct ReverseHttpProxy {
     tunnel_server: Arc<WebSocketTunnelServer>,
     http_port: u16,
 }
 
 impl ReverseHttpProxy {
-    pub fn new(tunnel_server: Arc<WebSocketTunnelServer>, http_port: u16) -> Self {
+    pub(crate) const fn new(tunnel_server: Arc<WebSocketTunnelServer>, http_port: u16) -> Self {
         Self {
             tunnel_server,
             http_port,
         }
     }
 
-    pub async fn start(&self, shutdown: Arc<Notify>) -> Result<(), String> {
+    pub(crate) async fn start(&self, shutdown: Arc<Notify>) -> Result<(), String> {
         let addr = SocketAddr::from(([0, 0, 0, 0], self.http_port));
         let tunnel_server = self.tunnel_server.clone();
 
         let listener = TcpListener::bind(addr)
             .await
-            .map_err(|e| format!("Failed to bind HTTP server: {}", e))?;
+            .map_err(|e| format!("Failed to bind HTTP server: {e}"))?;
 
-        info!("HTTP reverse proxy listening on {}", addr);
+        info!("HTTP reverse proxy listening on {addr}");
 
         loop {
             tokio::select! {
@@ -70,16 +70,16 @@ impl ReverseHttpProxy {
                                     )
                                     .await
                                 {
-                                    error!("Error serving connection: {:?}", err);
+                                    error!("Error serving connection: {err:?}");
                                 }
                             });
                         }
                         Err(e) => {
-                            error!("Failed to accept connection: {}", e);
+                            error!("Failed to accept connection: {e}");
                         }
                     }
                 }
-                _ = shutdown.notified() => {
+                () = shutdown.notified() => {
                     info!("HTTP reverse proxy shutting down");
                     break;
                 }
@@ -117,12 +117,11 @@ impl ReverseHttpProxy {
         let body_bytes = match req.into_body().collect().await {
             Ok(collected) => collected.to_bytes(),
             Err(e) => {
-                error!("Failed to read request body: {}", e);
+                error!("Failed to read request body: {e}");
                 return Ok(Response::builder()
                     .status(StatusCode::BAD_REQUEST)
                     .body(Full::new(Bytes::from(format!(
-                        "Failed to read request body: {}",
-                        e
+                        "Failed to read request body: {e}"
                     ))))
                     .unwrap());
             }
@@ -159,25 +158,25 @@ impl ReverseHttpProxy {
                 Ok(response)
             }
             Ok(TunnelMessage::Error { message, .. }) => {
-                error!("Tunnel error for {} {}: {}", method, path, message);
+                error!("Tunnel error for {method} {path}: {message}");
                 Ok(Response::builder()
                     .status(StatusCode::BAD_GATEWAY)
-                    .body(Full::new(Bytes::from(format!("Tunnel error: {}", message))))
+                    .body(Full::new(Bytes::from(format!("Tunnel error: {message}"))))
                     .unwrap())
             }
             Ok(_) => {
                 // Unexpected message type
-                error!("Unexpected tunnel response for {} {}", method, path);
+                error!("Unexpected tunnel response for {method} {path}");
                 Ok(Response::builder()
                     .status(StatusCode::INTERNAL_SERVER_ERROR)
                     .body(Full::new(Bytes::from("Unexpected tunnel response")))
                     .unwrap())
             }
             Err(e) => {
-                error!("Tunnel error for {} {}: {}", method, path, e);
+                error!("Tunnel error for {method} {path}: {e}");
                 Ok(Response::builder()
                     .status(StatusCode::BAD_GATEWAY)
-                    .body(Full::new(Bytes::from(format!("Tunnel error: {}", e))))
+                    .body(Full::new(Bytes::from(format!("Tunnel error: {e}"))))
                     .unwrap())
             }
         }
@@ -198,7 +197,7 @@ mod tests {
     #[tokio::test]
     async fn http_proxy_should_stop_accepting_when_shutdown_signaled() {
         let tunnel_server = Arc::new(WebSocketTunnelServer::new(0));
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
         drop(listener);
 
@@ -208,7 +207,7 @@ mod tests {
 
         let proxy_handle = tokio::spawn(async move { http_proxy.start(shutdown_clone).await });
 
-        let addr = format!("127.0.0.1:{}", port).parse().unwrap();
+        let addr = format!("127.0.0.1:{port}").parse().unwrap();
         assert!(
             test_utils::wait_for_port(addr).await,
             "HTTP proxy failed to start"

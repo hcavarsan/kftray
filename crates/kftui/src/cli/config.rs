@@ -17,10 +17,10 @@ use kftray_kube::kube::{
 use crate::cli::args::Cli;
 use crate::stdin;
 
-pub struct ConfigImporter;
+pub(crate) struct ConfigImporter;
 
 impl ConfigImporter {
-    pub async fn import_configs(cli: &Cli, mode: DatabaseMode) -> Result<(), String> {
+    pub(crate) async fn import_configs(cli: &Cli, mode: DatabaseMode) -> Result<(), String> {
         Self::handle_flush_if_needed(cli, mode).await?;
         Self::print_import_start_message(cli, mode);
 

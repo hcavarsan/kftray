@@ -94,7 +94,7 @@ impl UdpForwarder {
                                 }
                             }
                         }
-                        _ = cancel_token.cancelled() => {
+                        () = cancel_token.cancelled() => {
                             info!("UDP forwarder cancelled, shutting down");
                             break;
                         }

@@ -12,7 +12,7 @@ use crate::proxy::{
 /// concrete proxy types. This trait enables a common interface for different
 /// proxy implementations (TCP, UDP).
 #[async_trait]
-pub trait ProxyHandler: Send + Sync {
+pub(crate) trait ProxyHandler: Send + Sync {
     /// Starts the proxy server with the given configuration and shutdown
     /// signal.
     ///

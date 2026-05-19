@@ -59,7 +59,7 @@ pub(super) async fn release_address_with_fallback(address: &str) {
     .await;
 
     match result {
-        Ok(Ok(Ok(_))) => {
+        Ok(Ok(Ok(()))) => {
             info!("Successfully released address via helper: {}", address);
         }
         Ok(Ok(Err(e))) => {

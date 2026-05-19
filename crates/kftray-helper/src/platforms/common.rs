@@ -89,7 +89,7 @@ pub(crate) async fn run_communication_server(
     )
     .await
     {
-        Ok(_) => {
+        Ok(()) => {
             println!("Communication server exited successfully");
             Ok(())
         }

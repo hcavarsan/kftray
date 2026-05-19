@@ -105,7 +105,7 @@ impl Forwarder {
             loop {
                 tokio::select! {
                     biased;
-                    _ = cancel.cancelled() => break,
+                    () = cancel.cancelled() => break,
                     _ = interval.tick() => {
                         prune_once(&sessions, idle_age).await;
                     }

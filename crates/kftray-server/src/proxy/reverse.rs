@@ -18,10 +18,10 @@ use crate::proxy::{
 };
 
 #[derive(Clone)]
-pub struct ReverseProxy;
+pub(crate) struct ReverseProxy;
 
 impl ReverseProxy {
-    pub fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self
     }
 }
@@ -38,10 +38,7 @@ impl ProxyHandler for ReverseProxy {
         let ws_port = config.websocket_port.unwrap_or(9999);
         let http_port = config.http_port.unwrap_or(8080);
 
-        info!(
-            "Starting reverse proxy: HTTP on port {}, WebSocket on port {}",
-            http_port, ws_port
-        );
+        info!("Starting reverse proxy: HTTP on port {http_port}, WebSocket on port {ws_port}");
 
         let tunnel_server = Arc::new(WebSocketTunnelServer::new(ws_port));
         let tunnel_clone = tunnel_server.clone();
@@ -49,7 +46,7 @@ impl ProxyHandler for ReverseProxy {
         let shutdown_clone = shutdown.clone();
         let mut ws_handle = tokio::spawn(async move {
             if let Err(e) = tunnel_clone.start(shutdown_clone).await {
-                error!("WebSocket server error: {}", e);
+                error!("WebSocket server error: {e}");
             }
         });
 
@@ -57,7 +54,7 @@ impl ProxyHandler for ReverseProxy {
         let shutdown_http = shutdown.clone();
         let mut http_handle = tokio::spawn(async move {
             if let Err(e) = http_proxy.start(shutdown_http).await {
-                error!("HTTP proxy error: {}", e);
+                error!("HTTP proxy error: {e}");
             }
         });
 
@@ -71,7 +68,7 @@ impl ProxyHandler for ReverseProxy {
                 _ = &mut ws_handle => {
                     info!("WebSocket task completed gracefully");
                 }
-                _ = tokio::time::sleep(Duration::from_secs(5)) => {
+                () = tokio::time::sleep(Duration::from_secs(5)) => {
                     warn!("WebSocket task did not shut down within 5s, aborting");
                     ws_handle.abort();
                 }
@@ -82,7 +79,7 @@ impl ProxyHandler for ReverseProxy {
                 _ = &mut http_handle => {
                     info!("HTTP proxy task completed gracefully");
                 }
-                _ = tokio::time::sleep(Duration::from_secs(5)) => {
+                () = tokio::time::sleep(Duration::from_secs(5)) => {
                     warn!("HTTP proxy task did not shut down within 5s, aborting");
                     http_handle.abort();
                 }
@@ -123,7 +120,7 @@ mod tests {
                 completed_gracefully = true;
                 assert!(result.is_ok(), "task should complete successfully");
             }
-            _ = tokio::time::sleep(Duration::from_secs(5)) => {
+            () = tokio::time::sleep(Duration::from_secs(5)) => {
                 handle.abort();
                 completed_gracefully = false;
             }
@@ -155,7 +152,7 @@ mod tests {
             _ = &mut handle => {
                 was_aborted = false;
             }
-            _ = tokio::time::sleep(Duration::from_millis(200)) => {
+            () = tokio::time::sleep(Duration::from_millis(200)) => {
                 handle.abort();
                 was_aborted = true;
             }

@@ -27,14 +27,14 @@ fn get_current_timestamp() -> i64 {
 }
 
 #[command]
-pub async fn check_for_updates(app: AppHandle) -> Result<String, String> {
+pub(crate) async fn check_for_updates(app: AppHandle) -> Result<String, String> {
     info!("Checking for application updates...");
 
     let updater = match app.updater() {
         Ok(updater) => updater,
         Err(e) => {
-            error!("Failed to get updater: {}", e);
-            return Err(format!("Failed to get updater: {}", e));
+            error!("Failed to get updater: {e}");
+            return Err(format!("Failed to get updater: {e}"));
         }
     };
 
@@ -73,7 +73,7 @@ pub async fn check_for_updates(app: AppHandle) -> Result<String, String> {
                     )
                     .await
                 {
-                    Ok(_) => {
+                    Ok(()) => {
                         info!("Update installed successfully");
 
                         let _ = app
@@ -93,16 +93,16 @@ pub async fn check_for_updates(app: AppHandle) -> Result<String, String> {
                         std::process::exit(0);
                     }
                     Err(e) => {
-                        error!("Failed to download or install update: {}", e);
+                        error!("Failed to download or install update: {e}");
 
                         let _ = app
                             .dialog()
-                            .message(format!("Failed to install update: {}", e))
+                            .message(format!("Failed to install update: {e}"))
                             .title("Update Failed")
                             .kind(MessageDialogKind::Error)
                             .blocking_show();
 
-                        Err(format!("Failed to install update: {}", e))
+                        Err(format!("Failed to install update: {e}"))
                     }
                 }
             } else {
@@ -123,29 +123,29 @@ pub async fn check_for_updates(app: AppHandle) -> Result<String, String> {
             Ok("Application is up to date".to_string())
         }
         Err(e) => {
-            error!("Failed to check for updates: {}", e);
+            error!("Failed to check for updates: {e}");
 
             let _ = app
                 .dialog()
-                .message(format!("Failed to check for updates: {}", e))
+                .message(format!("Failed to check for updates: {e}"))
                 .title("Update Check Failed")
                 .kind(MessageDialogKind::Error)
                 .blocking_show();
 
-            Err(format!("Failed to check for updates: {}", e))
+            Err(format!("Failed to check for updates: {e}"))
         }
     }
 }
 
 #[command]
-pub async fn check_for_updates_silent(app: AppHandle) -> Result<bool, String> {
+pub(crate) async fn check_for_updates_silent(app: AppHandle) -> Result<bool, String> {
     info!("Silently checking for application updates...");
 
     let updater = match app.updater() {
         Ok(updater) => updater,
         Err(e) => {
-            error!("Failed to get updater: {}", e);
-            return Err(format!("Failed to get updater: {}", e));
+            error!("Failed to get updater: {e}");
+            return Err(format!("Failed to get updater: {e}"));
         }
     };
 
@@ -164,21 +164,21 @@ pub async fn check_for_updates_silent(app: AppHandle) -> Result<bool, String> {
             Ok(false)
         }
         Err(e) => {
-            error!("Failed to check for updates (silent): {}", e);
-            Err(format!("Failed to check for updates: {}", e))
+            error!("Failed to check for updates (silent): {e}");
+            Err(format!("Failed to check for updates: {e}"))
         }
     }
 }
 
 #[command]
-pub async fn install_update_silent(app: AppHandle) -> Result<String, String> {
+pub(crate) async fn install_update_silent(app: AppHandle) -> Result<String, String> {
     info!("Installing update silently...");
 
     let updater = match app.updater() {
         Ok(updater) => updater,
         Err(e) => {
-            error!("Failed to get updater: {}", e);
-            return Err(format!("Failed to get updater: {}", e));
+            error!("Failed to get updater: {e}");
+            return Err(format!("Failed to get updater: {e}"));
         }
     };
 
@@ -198,7 +198,7 @@ pub async fn install_update_silent(app: AppHandle) -> Result<String, String> {
                 )
                 .await
             {
-                Ok(_) => {
+                Ok(()) => {
                     info!("Update installed successfully, restarting app");
 
                     // Use process restart instead of app.restart() for more reliable restart
@@ -209,8 +209,8 @@ pub async fn install_update_silent(app: AppHandle) -> Result<String, String> {
                     std::process::exit(0);
                 }
                 Err(e) => {
-                    error!("Failed to download or install update: {}", e);
-                    Err(format!("Failed to install update: {}", e))
+                    error!("Failed to download or install update: {e}");
+                    Err(format!("Failed to install update: {e}"))
                 }
             }
         }
@@ -219,14 +219,14 @@ pub async fn install_update_silent(app: AppHandle) -> Result<String, String> {
             Err("No update available".to_string())
         }
         Err(e) => {
-            error!("Failed to check for updates: {}", e);
-            Err(format!("Failed to check for updates: {}", e))
+            error!("Failed to check for updates: {e}");
+            Err(format!("Failed to check for updates: {e}"))
         }
     }
 }
 
 #[command]
-pub async fn get_version_info(
+pub(crate) async fn get_version_info(
     app: AppHandle,
 ) -> Result<std::collections::HashMap<String, String>, String> {
     let mut info = std::collections::HashMap::new();
@@ -239,7 +239,7 @@ pub async fn get_version_info(
     let updater = match app.updater() {
         Ok(updater) => updater,
         Err(e) => {
-            error!("Failed to get updater: {}", e);
+            error!("Failed to get updater: {e}");
             info.insert("update_available".to_string(), "unknown".to_string());
             info.insert("latest_version".to_string(), "unknown".to_string());
             return Ok(info);
@@ -254,7 +254,7 @@ pub async fn get_version_info(
     match updater.check().await {
         Ok(Some(update)) => {
             info.insert("update_available".to_string(), "true".to_string());
-            info.insert("latest_version".to_string(), update.version.to_string());
+            info.insert("latest_version".to_string(), update.version);
         }
         Ok(None) => {
             info.insert("update_available".to_string(), "false".to_string());
@@ -264,7 +264,7 @@ pub async fn get_version_info(
             );
         }
         Err(e) => {
-            error!("Failed to check for updates: {}", e);
+            error!("Failed to check for updates: {e}");
             info.insert("update_available".to_string(), "error".to_string());
             info.insert("latest_version".to_string(), "unknown".to_string());
         }

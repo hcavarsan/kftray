@@ -187,7 +187,7 @@ impl Forwarder {
             loop {
                 tokio::select! {
                     biased;
-                    _ = cancel.cancelled() => break,
+                    () = cancel.cancelled() => break,
                     ev = rx.recv() => match ev {
                         Ok(PodChange::Died(name)) => {
                             debug!("forwarder: pod {} died, draining sessions", name);

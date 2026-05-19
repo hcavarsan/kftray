@@ -80,7 +80,7 @@ impl RequestParser {
             ParseStatus::Complete(_) => Ok((
                 req.method,
                 req.path,
-                req.version.map(|v| v as u16),
+                req.version.map(u16::from),
                 req.headers.to_vec(),
             )),
             ParseStatus::Partial => Ok((None, None, None, Vec::new())),
@@ -107,7 +107,7 @@ impl RequestParser {
     pub fn get_content_encoding<'a>(headers: &'a [Header<'_>]) -> Option<&'a str> {
         for header in headers {
             if header.name.eq_ignore_ascii_case("content-encoding")
-                && let Ok(value) = std::str::from_utf8(header.value)
+                && let Ok(value) = str::from_utf8(header.value)
             {
                 return Some(value.trim());
             }
@@ -194,7 +194,7 @@ impl RequestParser {
                     if let Some(data) = chunk_data {
                         last_incomplete_data = Some(data);
                         if let Some(chunk_line_end) = data.windows(2).position(|w| w == b"\r\n")
-                            && let Ok(size_str) = std::str::from_utf8(&data[..chunk_line_end])
+                            && let Ok(size_str) = str::from_utf8(&data[..chunk_line_end])
                             && let Ok(size) = usize::from_str_radix(size_str.trim(), 16)
                         {
                             last_chunk_size = Some(size);
@@ -258,7 +258,7 @@ impl RequestParser {
             return Ok(ChunkParseResult::Skip { consumed: 2 });
         }
 
-        let hex_str = match std::str::from_utf8(&chunk_data[..line_end]) {
+        let hex_str = match str::from_utf8(&chunk_data[..line_end]) {
             Ok(s) => s.trim(),
             Err(_) => {
                 return Ok(ChunkParseResult::Skip {
@@ -399,7 +399,7 @@ impl BodyParser {
     pub fn get_content_encoding<'a>(headers: &'a [Header<'_>]) -> Option<&'a str> {
         for header in headers {
             if header.name.eq_ignore_ascii_case("content-encoding")
-                && let Ok(value) = std::str::from_utf8(header.value)
+                && let Ok(value) = str::from_utf8(header.value)
             {
                 return Some(value.trim());
             }
@@ -622,7 +622,7 @@ impl BodyParser {
     }
 
     fn bytes_to_utf8_string(bytes: &[u8]) -> String {
-        if let Ok(s) = std::str::from_utf8(bytes) {
+        if let Ok(s) = str::from_utf8(bytes) {
             return s.to_string();
         }
 
@@ -766,7 +766,7 @@ impl BodyParser {
                     e
                 );
 
-                if let Ok(text) = std::str::from_utf8(&processed_body) {
+                if let Ok(text) = str::from_utf8(&processed_body) {
                     debug!("Direct string conversion succeeded");
                     Ok(text.to_string())
                 } else {
@@ -794,7 +794,7 @@ impl BodyParser {
                         .collect();
                     format!("\n# Preview: {} ", bytes.join(" "))
                 } else {
-                    "".to_string()
+                    String::new()
                 };
                 format!(
                     "# <binary data: {} format, {} bytes>{}",
@@ -978,7 +978,7 @@ impl BodyParser {
                 let type_info = if let Some(ct) = content_type {
                     format!(" of type {ct}")
                 } else {
-                    "".to_string()
+                    String::new()
                 };
 
                 if content_type.is_some()
@@ -994,7 +994,7 @@ impl BodyParser {
         Ok(result)
     }
 
-    pub fn is_content_too_large(content_length: usize) -> bool {
+    pub const fn is_content_too_large(content_length: usize) -> bool {
         content_length > 100 * 1024 * 1024
     }
 }
@@ -1015,7 +1015,7 @@ mod tests {
         assert_eq!(headers.len(), 2);
         assert_eq!(headers[0].name, "Host");
         assert_eq!(
-            std::str::from_utf8(headers[0].value).unwrap(),
+            str::from_utf8(headers[0].value).unwrap(),
             "example.com"
         );
     }
@@ -1253,7 +1253,7 @@ mod tests {
         assert_eq!(headers.len(), 2);
         assert_eq!(headers[0].name, "Content-Type");
         assert_eq!(
-            std::str::from_utf8(headers[0].value).unwrap(),
+            str::from_utf8(headers[0].value).unwrap(),
             "application/json"
         );
     }

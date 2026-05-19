@@ -72,7 +72,7 @@ pub enum PortForwardError {
 impl fmt::Display for PortForwardError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            PortForwardError::PodLookupFailed {
+            Self::PodLookupFailed {
                 retry_count,
                 last_error,
                 selector,
@@ -80,14 +80,14 @@ impl fmt::Display for PortForwardError {
                 f,
                 "Pod lookup failed for selector '{selector}' after {retry_count} retries: {last_error}"
             ),
-            PortForwardError::ClientDisconnected { peer_addr, stage } => {
+            Self::ClientDisconnected { peer_addr, stage } => {
                 if let Some(addr) = peer_addr {
                     write!(f, "Client {addr} disconnected during {stage}")
                 } else {
                     write!(f, "Client disconnected during {stage}")
                 }
             }
-            PortForwardError::StreamCreationFailed {
+            Self::StreamCreationFailed {
                 pod_name,
                 port,
                 error,
@@ -95,7 +95,7 @@ impl fmt::Display for PortForwardError {
                 f,
                 "Failed to create stream to pod '{pod_name}' port {port}: {error}"
             ),
-            PortForwardError::NetworkError {
+            Self::NetworkError {
                 message,
                 recoverable,
             } => {
@@ -105,10 +105,10 @@ impl fmt::Display for PortForwardError {
                     write!(f, "Network error: {message}")
                 }
             }
-            PortForwardError::ConfigurationError { message } => {
+            Self::ConfigurationError { message } => {
                 write!(f, "Configuration error: {message}")
             }
-            PortForwardError::ResourceExhausted {
+            Self::ResourceExhausted {
                 resource_type,
                 current_usage,
                 limit,
@@ -124,39 +124,39 @@ impl fmt::Display for PortForwardError {
                 }
                 (None, None) => write!(f, "Resource exhausted: {resource_type}"),
             },
-            PortForwardError::TimeoutError {
+            Self::TimeoutError {
                 operation,
                 timeout_duration,
             } => write!(
                 f,
                 "Operation '{operation}' timed out after {timeout_duration:?}"
             ),
-            PortForwardError::WebsocketUpgradeFailed { status, message } => {
+            Self::WebsocketUpgradeFailed { status, message } => {
                 if *status == 0 {
                     write!(f, "WebSocket upgrade failed: {message}")
                 } else {
                     write!(f, "WebSocket upgrade failed (HTTP {status}): {message}")
                 }
             }
-            PortForwardError::SubprotocolNegotiationFailed { offered, returned } => write!(
+            Self::SubprotocolNegotiationFailed { offered, returned } => write!(
                 f,
                 "Subprotocol negotiation failed: offered '{offered}', server returned {returned:?}"
             ),
-            PortForwardError::KeepaliveTimeout { last_pong_age_ms } => write!(
+            Self::KeepaliveTimeout { last_pong_age_ms } => write!(
                 f,
                 "WebSocket keepalive timed out: last Pong was {last_pong_age_ms}ms ago"
             ),
-            PortForwardError::WebsocketProtocolViolation { context, detail } => {
+            Self::WebsocketProtocolViolation { context, detail } => {
                 write!(f, "WebSocket protocol violation in {context}: {detail}")
             }
-            PortForwardError::Internal(msg) => write!(f, "{msg}"),
-            PortForwardError::Io(err) => write!(f, "IO error: {err}"),
-            PortForwardError::KubeClient(err) => write!(f, "{err}"),
-            PortForwardError::KubeApi(msg) => write!(f, "Kubernetes API error: {msg}"),
-            PortForwardError::HostsFile(msg) => write!(f, "Hosts file error: {msg}"),
-            PortForwardError::Ssl(msg) => write!(f, "SSL error: {msg}"),
-            PortForwardError::Expose(msg) => write!(f, "Expose error: {msg}"),
-            PortForwardError::AddressAllocation(msg) => {
+            Self::Internal(msg) => write!(f, "{msg}"),
+            Self::Io(err) => write!(f, "IO error: {err}"),
+            Self::KubeClient(err) => write!(f, "{err}"),
+            Self::KubeApi(msg) => write!(f, "Kubernetes API error: {msg}"),
+            Self::HostsFile(msg) => write!(f, "Hosts file error: {msg}"),
+            Self::Ssl(msg) => write!(f, "SSL error: {msg}"),
+            Self::Expose(msg) => write!(f, "Expose error: {msg}"),
+            Self::AddressAllocation(msg) => {
                 write!(f, "Address allocation error: {msg}")
             }
         }
@@ -166,8 +166,8 @@ impl fmt::Display for PortForwardError {
 impl std::error::Error for PortForwardError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            PortForwardError::Io(err) => Some(err),
-            PortForwardError::KubeClient(err) => Some(err),
+            Self::Io(err) => Some(err),
+            Self::KubeClient(err) => Some(err),
             _ => None,
         }
     }
@@ -175,25 +175,25 @@ impl std::error::Error for PortForwardError {
 
 impl From<String> for PortForwardError {
     fn from(s: String) -> Self {
-        PortForwardError::Internal(s)
+        Self::Internal(s)
     }
 }
 
 impl From<&str> for PortForwardError {
     fn from(s: &str) -> Self {
-        PortForwardError::Internal(s.to_owned())
+        Self::Internal(s.to_owned())
     }
 }
 
 impl From<std::io::Error> for PortForwardError {
     fn from(err: std::io::Error) -> Self {
-        PortForwardError::Io(err)
+        Self::Io(err)
     }
 }
 
 impl From<KubeClientError> for PortForwardError {
     fn from(err: KubeClientError) -> Self {
-        PortForwardError::KubeClient(err)
+        Self::KubeClient(err)
     }
 }
 
@@ -264,36 +264,36 @@ impl PortForwardError {
         }
     }
 
-    pub fn is_recoverable(&self) -> bool {
+    pub const fn is_recoverable(&self) -> bool {
         match self {
-            PortForwardError::PodLookupFailed { .. } => true,
-            PortForwardError::ClientDisconnected { .. } => true,
-            PortForwardError::StreamCreationFailed { .. } => true,
-            PortForwardError::NetworkError { recoverable, .. } => *recoverable,
-            PortForwardError::ConfigurationError { .. } => false,
-            PortForwardError::ResourceExhausted { .. } => true,
-            PortForwardError::TimeoutError { .. } => true,
-            PortForwardError::WebsocketUpgradeFailed { .. } => true,
-            PortForwardError::SubprotocolNegotiationFailed { .. } => false,
-            PortForwardError::KeepaliveTimeout { .. } => true,
-            PortForwardError::WebsocketProtocolViolation { .. } => true,
-            PortForwardError::Io(_) => true,
-            PortForwardError::KubeClient(_) => true,
-            PortForwardError::KubeApi(_) => true,
-            PortForwardError::AddressAllocation(_) => true,
-            PortForwardError::HostsFile(_) => false,
-            PortForwardError::Ssl(_) => false,
-            PortForwardError::Expose(_) => true,
-            PortForwardError::Internal(_) => false,
+            Self::PodLookupFailed { .. } => true,
+            Self::ClientDisconnected { .. } => true,
+            Self::StreamCreationFailed { .. } => true,
+            Self::NetworkError { recoverable, .. } => *recoverable,
+            Self::ConfigurationError { .. } => false,
+            Self::ResourceExhausted { .. } => true,
+            Self::TimeoutError { .. } => true,
+            Self::WebsocketUpgradeFailed { .. } => true,
+            Self::SubprotocolNegotiationFailed { .. } => false,
+            Self::KeepaliveTimeout { .. } => true,
+            Self::WebsocketProtocolViolation { .. } => true,
+            Self::Io(_) => true,
+            Self::KubeClient(_) => true,
+            Self::KubeApi(_) => true,
+            Self::AddressAllocation(_) => true,
+            Self::HostsFile(_) => false,
+            Self::Ssl(_) => false,
+            Self::Expose(_) => true,
+            Self::Internal(_) => false,
         }
     }
 
     pub fn should_stop_server(&self) -> bool {
         match self {
-            PortForwardError::ConfigurationError { .. } => true,
-            PortForwardError::NetworkError { recoverable, .. } => !recoverable,
-            PortForwardError::SubprotocolNegotiationFailed { .. } => true,
-            PortForwardError::Ssl(_) => true,
+            Self::ConfigurationError { .. } => true,
+            Self::NetworkError { recoverable, .. } => !recoverable,
+            Self::SubprotocolNegotiationFailed { .. } => true,
+            Self::Ssl(_) => true,
             _ => false,
         }
     }

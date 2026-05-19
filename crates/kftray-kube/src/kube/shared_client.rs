@@ -9,7 +9,7 @@ pub struct ServiceClientKey {
 }
 
 impl ServiceClientKey {
-    pub fn new(context_name: Option<String>, kubeconfig_path: Option<String>) -> Self {
+    pub const fn new(context_name: Option<String>, kubeconfig_path: Option<String>) -> Self {
         Self {
             context_name,
             kubeconfig_path,

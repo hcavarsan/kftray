@@ -32,10 +32,10 @@ use crate::proxy::{
 };
 
 #[derive(Clone)]
-pub struct TcpProxy;
+pub(crate) struct TcpProxy;
 
 impl TcpProxy {
-    pub fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self
     }
 
@@ -102,12 +102,12 @@ impl ProxyHandler for TcpProxy {
                             });
                         }
                         Err(e) => {
-                            warn!("Accept error (retrying in {}ms): {}", backoff_ms, e);
+                            warn!("Accept error (retrying in {backoff_ms}ms): {e}");
                             tokio::select! {
-                                _ = tokio::time::sleep(Duration::from_millis(backoff_ms)) => {
+                                () = tokio::time::sleep(Duration::from_millis(backoff_ms)) => {
                                     backoff_ms = (backoff_ms * 2).min(5000);
                                 }
-                                _ = cancel.cancelled() => {
+                                () = cancel.cancelled() => {
                                     info!("Shutdown signal received during backoff, stopping TCP proxy");
                                     bridge.abort();
                                     return Ok(());
@@ -117,7 +117,7 @@ impl ProxyHandler for TcpProxy {
                         }
                     }
                 }
-                _ = cancel.cancelled() => {
+                () = cancel.cancelled() => {
                     info!("Shutdown signal received, stopping TCP proxy");
                     break;
                 }

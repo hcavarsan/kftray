@@ -1,5 +1,5 @@
-pub mod file_explorer;
-pub mod navigation;
+pub(crate) mod file_explorer;
+pub(crate) mod navigation;
 mod popup;
 
 use std::collections::HashSet;
@@ -17,13 +17,13 @@ use crossterm::event::{
     KeyModifiers,
 };
 use crossterm::terminal::size;
-pub use file_explorer::*;
+pub(crate) use file_explorer::*;
 use kftray_commons::models::{
     config_model::Config,
     config_state_model::ConfigState,
 };
 use kftray_commons::utils::db_mode::DatabaseMode;
-pub use popup::*;
+pub(crate) use popup::*;
 use ratatui::widgets::ListState;
 use ratatui::widgets::TableState;
 use ratatui_explorer::{
@@ -44,13 +44,13 @@ type UpdateInfo = crate::updater::UpdateInfo;
 
 #[cfg(debug_assertions)]
 #[derive(Debug, Clone)]
-pub struct UpdateInfo {
+pub(crate) struct UpdateInfo {
     pub current_version: String,
     pub latest_version: String,
     pub has_update: bool,
 }
 #[derive(Debug, Clone)]
-pub struct HttpLogEntry {
+pub(crate) struct HttpLogEntry {
     pub trace_id: String,
     pub request_timestamp: String,
     pub response_timestamp: Option<String>,
@@ -65,7 +65,7 @@ pub struct HttpLogEntry {
 }
 
 impl HttpLogEntry {
-    pub async fn replay(&self, base_url: &str) -> Result<HttpLogEntry, String> {
+    pub(crate) async fn replay(&self, base_url: &str) -> Result<Self, String> {
         let url = if self.path.starts_with("http") {
             self.path.clone()
         } else {
@@ -87,7 +87,7 @@ impl HttpLogEntry {
             .default_headers(reqwest::header::HeaderMap::new())
             .http1_only()
             .build()
-            .map_err(|e| format!("Failed to build HTTP client: {}", e))?;
+            .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
 
         let mut request_builder = client.request(method.clone(), &url);
 
@@ -106,11 +106,11 @@ impl HttpLogEntry {
                 }
 
                 if value.is_empty() {
-                    log::debug!("Skipping truly empty header: {}", name);
+                    log::debug!("Skipping truly empty header: {name}");
                     continue;
                 }
 
-                log::debug!("Adding header: {} = '{}'", name, value_trimmed);
+                log::debug!("Adding header: {name} = '{value_trimmed}'");
 
                 if let (Ok(header_name), Ok(header_value)) = (
                     reqwest::header::HeaderName::from_bytes(name.as_bytes()),
@@ -129,12 +129,7 @@ impl HttpLogEntry {
             request_builder = request_builder.body(self.request_body.clone());
         }
 
-        log::debug!(
-            "Sending request: {} {} with {} headers",
-            method,
-            url,
-            added_headers
-        );
+        log::debug!("Sending request: {method} {url} with {added_headers} headers");
 
         match request_builder.send().await {
             Ok(response) => {
@@ -151,7 +146,7 @@ impl HttpLogEntry {
                         let uuid_str = uuid::Uuid::new_v4().to_string();
                         let trace_id = format!("replay-{}", &uuid_str[..8]);
 
-                        let replay_entry = HttpLogEntry {
+                        let replay_entry = Self {
                             trace_id,
                             request_timestamp: now.format("%Y-%m-%d %H:%M:%S").to_string(),
                             response_timestamp: Some(now.format("%Y-%m-%d %H:%M:%S").to_string()),
@@ -167,28 +162,28 @@ impl HttpLogEntry {
 
                         Ok(replay_entry)
                     }
-                    Err(e) => Err(format!("Failed to read response body: {}", e)),
+                    Err(e) => Err(format!("Failed to read response body: {e}")),
                 }
             }
-            Err(e) => Err(format!("Request failed: {}", e)),
+            Err(e) => Err(format!("Request failed: {e}")),
         }
     }
 }
 
-#[derive(PartialEq, Clone, Copy, Debug)]
-pub enum DeleteButton {
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+pub(crate) enum DeleteButton {
     Confirm,
     Close,
 }
 
-#[derive(PartialEq, Clone, Copy, Debug)]
-pub enum UpdateButton {
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+pub(crate) enum UpdateButton {
     Update,
     Cancel,
 }
 
-#[derive(PartialEq, Clone, Copy, Debug)]
-pub enum ActiveComponent {
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+pub(crate) enum ActiveComponent {
     Menu,
     SearchBar,
     StoppedTable,
@@ -197,14 +192,14 @@ pub enum ActiveComponent {
     Logs,
 }
 
-#[derive(PartialEq, Clone, Copy, Debug)]
-pub enum ActiveTable {
+#[derive(PartialEq, Eq, Clone, Copy, Debug)]
+pub(crate) enum ActiveTable {
     Stopped,
     Running,
 }
 
-#[derive(PartialEq, Debug)]
-pub enum AppState {
+#[derive(PartialEq, Eq, Debug)]
+pub(crate) enum AppState {
     Normal,
     ShowErrorPopup,
     ShowConfirmationPopup,
@@ -226,7 +221,7 @@ pub enum AppState {
     ShowRestartNotification,
 }
 
-pub struct App {
+pub(crate) struct App {
     pub details_scroll_offset: usize,
     pub details_scroll_max_offset: usize,
     pub selected_rows_stopped: HashSet<usize>,
@@ -305,7 +300,7 @@ impl Default for App {
 }
 
 impl App {
-    pub fn new(logger_state: LoggerState) -> Self {
+    pub(crate) fn new(logger_state: LoggerState) -> Self {
         let theme = Theme::default().add_default_title();
         let import_file_explorer = FileExplorerBuilder::build_with_theme(theme.clone()).unwrap();
         let export_file_explorer = FileExplorerBuilder::build_with_theme(theme).unwrap();
@@ -416,7 +411,7 @@ impl App {
                 .is_some_and(|port| port.to_string().contains(query_lower))
     }
 
-    pub fn update_filtered_configs(&mut self) {
+    pub(crate) fn update_filtered_configs(&mut self) {
         if self.search_query.is_empty() {
             self.filtered_stopped_configs = self.stopped_configs.clone();
             self.filtered_running_configs = self.running_configs.clone();
@@ -458,11 +453,11 @@ impl App {
         }
     }
 
-    pub fn update_http_logs_viewer(&mut self) {
+    pub(crate) fn update_http_logs_viewer(&mut self) {
         if let Some(file_path) = &self.http_logs_viewer_file_path
             && let Ok(content) = std::fs::read_to_string(file_path)
         {
-            let new_lines: Vec<String> = content.lines().map(|line| line.to_string()).collect();
+            let new_lines: Vec<String> = content.lines().map(ToString::to_string).collect();
             let old_len = self.http_logs_viewer_content.len();
 
             if new_lines.len() != old_len || new_lines != self.http_logs_viewer_content {
@@ -527,7 +522,7 @@ impl App {
                                 body.push('\n');
                             }
                             body.push_str(line);
-                        } else if !line.trim().starts_with("#") && line.contains(':') {
+                        } else if !line.trim().starts_with('#') && line.contains(':') {
                             headers.push(line.trim().to_string());
                         }
                         j += 1;
@@ -575,7 +570,7 @@ impl App {
                                     body.push('\n');
                                 }
                                 body.push_str(line);
-                            } else if !line.trim().starts_with("#") && line.contains(':') {
+                            } else if !line.trim().starts_with('#') && line.contains(':') {
                                 headers.push(line.trim().to_string());
                             }
                             j += 1;
@@ -602,7 +597,7 @@ impl App {
         entries
     }
 
-    pub async fn load_http_logs_states(&mut self, configs: &[Config], mode: DatabaseMode) {
+    pub(crate) async fn load_http_logs_states(&mut self, configs: &[Config], mode: DatabaseMode) {
         for config in configs {
             if let Some(config_id) = config.id {
                 match kftray_commons::utils::http_logs_config::get_http_logs_config_with_mode(
@@ -622,7 +617,7 @@ impl App {
         }
     }
 
-    pub async fn load_active_pods(&mut self, config_states: &[ConfigState]) {
+    pub(crate) async fn load_active_pods(&mut self, config_states: &[ConfigState]) {
         use kftray_kube::registry::PORT_FORWARD_REGISTRY;
 
         for config_state in config_states {
@@ -637,11 +632,11 @@ impl App {
         }
     }
 
-    pub fn update_visible_rows(&mut self, terminal_height: u16) {
+    pub(crate) const fn update_visible_rows(&mut self, terminal_height: u16) {
         self.visible_rows = (terminal_height.saturating_sub(19)) as usize;
     }
 
-    pub fn update_configs(&mut self, configs: &[Config], config_states: &[ConfigState]) {
+    pub(crate) fn update_configs(&mut self, configs: &[Config], config_states: &[ConfigState]) {
         self.stopped_configs = configs
             .iter()
             .filter(|config| {
@@ -690,7 +685,7 @@ impl App {
         }
     }
 
-    pub fn scroll_up(&mut self) {
+    pub(crate) const fn scroll_up(&mut self) {
         match self.active_table {
             ActiveTable::Stopped => {
                 let configs = if self.search_query.is_empty() {
@@ -723,7 +718,7 @@ impl App {
         }
     }
 
-    pub fn scroll_down(&mut self) {
+    pub(crate) const fn scroll_down(&mut self) {
         match self.active_table {
             ActiveTable::Stopped => {
                 let configs = if self.search_query.is_empty() {
@@ -765,7 +760,7 @@ impl App {
     }
 }
 
-pub fn toggle_select_all(app: &mut App) {
+pub(crate) fn toggle_select_all(app: &mut App) {
     let (selected_rows, configs) = match app.active_table {
         ActiveTable::Stopped => (&mut app.selected_rows_stopped, &app.stopped_configs),
         ActiveTable::Running => (&mut app.selected_rows_running, &app.running_configs),
@@ -781,7 +776,7 @@ pub fn toggle_select_all(app: &mut App) {
     }
 }
 
-pub async fn handle_input(app: &mut App, mode: DatabaseMode) -> io::Result<bool> {
+pub(crate) async fn handle_input(app: &mut App, mode: DatabaseMode) -> io::Result<bool> {
     if event::poll(std::time::Duration::from_millis(100))? {
         if let Event::Key(key) = event::read()? {
             log::debug!("Key pressed: {key:?}");
@@ -867,7 +862,7 @@ pub async fn handle_input(app: &mut App, mode: DatabaseMode) -> io::Result<bool>
     Ok(false)
 }
 
-pub async fn handle_normal_input(
+pub(crate) async fn handle_normal_input(
     app: &mut App, key: KeyCode, mode: DatabaseMode,
 ) -> io::Result<()> {
     if handle_common_hotkeys(app, key, mode).await? {
@@ -913,7 +908,7 @@ pub async fn handle_normal_input(
     Ok(())
 }
 
-pub fn scroll_page_up(app: &mut App) {
+pub(crate) const fn scroll_page_up(app: &mut App) {
     match app.active_component {
         ActiveComponent::StoppedTable => {
             let rows_to_scroll = app.visible_rows;
@@ -946,7 +941,7 @@ pub fn scroll_page_up(app: &mut App) {
     }
 }
 
-pub fn scroll_page_down(app: &mut App) {
+pub(crate) const fn scroll_page_down(app: &mut App) {
     match app.active_component {
         ActiveComponent::StoppedTable => {
             let configs = if app.search_query.is_empty() {
@@ -989,7 +984,7 @@ pub fn scroll_page_down(app: &mut App) {
     }
 }
 
-pub fn select_first_row(app: &mut App) {
+pub(crate) const fn select_first_row(app: &mut App) {
     match app.active_table {
         ActiveTable::Stopped => {
             let configs = if app.search_query.is_empty() {
@@ -1016,7 +1011,7 @@ pub fn select_first_row(app: &mut App) {
     }
 }
 
-pub fn clear_selection(app: &mut App) {
+pub(crate) fn clear_selection(app: &mut App) {
     match app.active_table {
         ActiveTable::Stopped => {
             app.selected_rows_stopped.clear();
@@ -1037,7 +1032,9 @@ pub fn clear_selection(app: &mut App) {
     }
 }
 
-pub async fn handle_menu_input(app: &mut App, key: KeyCode, mode: DatabaseMode) -> io::Result<()> {
+pub(crate) async fn handle_menu_input(
+    app: &mut App, key: KeyCode, mode: DatabaseMode,
+) -> io::Result<()> {
     if handle_common_hotkeys(app, key, mode).await? {
         return Ok(());
     }
@@ -1097,7 +1094,7 @@ pub async fn handle_menu_input(app: &mut App, key: KeyCode, mode: DatabaseMode) 
     Ok(())
 }
 
-pub async fn handle_stopped_table_input(
+pub(crate) async fn handle_stopped_table_input(
     app: &mut App, key: KeyCode, mode: DatabaseMode,
 ) -> io::Result<()> {
     if handle_common_hotkeys(app, key, mode).await? {
@@ -1147,7 +1144,7 @@ pub async fn handle_stopped_table_input(
     Ok(())
 }
 
-pub async fn handle_running_table_input(
+pub(crate) async fn handle_running_table_input(
     app: &mut App, key: KeyCode, mode: DatabaseMode,
 ) -> io::Result<()> {
     if handle_common_hotkeys(app, key, mode).await? {
@@ -1202,7 +1199,7 @@ pub async fn handle_running_table_input(
     Ok(())
 }
 
-pub async fn handle_details_input(
+pub(crate) async fn handle_details_input(
     app: &mut App, key: KeyCode, mode: DatabaseMode,
 ) -> io::Result<()> {
     if handle_common_hotkeys(app, key, mode).await? {
@@ -1239,7 +1236,7 @@ pub async fn handle_details_input(
     Ok(())
 }
 
-pub async fn handle_logs_input(app: &mut App, key: KeyCode) -> io::Result<()> {
+pub(crate) async fn handle_logs_input(app: &mut App, key: KeyCode) -> io::Result<()> {
     match key {
         KeyCode::Left => app.active_component = ActiveComponent::Details,
         KeyCode::Up => {
@@ -1255,7 +1252,7 @@ pub async fn handle_logs_input(app: &mut App, key: KeyCode) -> io::Result<()> {
     Ok(())
 }
 
-pub async fn handle_common_hotkeys(
+pub(crate) async fn handle_common_hotkeys(
     app: &mut App, key: KeyCode, mode: DatabaseMode,
 ) -> io::Result<bool> {
     match key {
@@ -1328,7 +1325,7 @@ pub async fn handle_common_hotkeys(
     }
 }
 
-pub fn handle_search_input(app: &mut App, key: KeyCode) -> io::Result<()> {
+pub(crate) fn handle_search_input(app: &mut App, key: KeyCode) -> io::Result<()> {
     match key {
         KeyCode::Esc => {
             app.active_component = ActiveComponent::StoppedTable;
@@ -1372,7 +1369,7 @@ pub fn handle_search_input(app: &mut App, key: KeyCode) -> io::Result<()> {
     Ok(())
 }
 
-pub fn toggle_row_selection(app: &mut App) {
+pub(crate) fn toggle_row_selection(app: &mut App) {
     match app.active_table {
         ActiveTable::Running => {
             if let Some(selected) = app.table_state_running.selected() {
@@ -1397,7 +1394,7 @@ pub fn toggle_row_selection(app: &mut App) {
     }
 }
 
-pub async fn handle_port_forwarding(app: &mut App, mode: DatabaseMode) -> io::Result<()> {
+pub(crate) async fn handle_port_forwarding(app: &mut App, mode: DatabaseMode) -> io::Result<()> {
     let (selected_rows, configs, selected_row) = match app.active_table {
         ActiveTable::Stopped => (
             &mut app.selected_rows_stopped,
@@ -1503,7 +1500,7 @@ pub async fn handle_port_forwarding(app: &mut App, mode: DatabaseMode) -> io::Re
     Ok(())
 }
 
-pub fn show_delete_confirmation(app: &mut App) {
+pub(crate) fn show_delete_confirmation(app: &mut App) {
     if !app.selected_rows_stopped.is_empty() {
         app.state = AppState::ShowDeleteConfirmation;
         app.delete_confirmation_message =
@@ -1511,7 +1508,7 @@ pub fn show_delete_confirmation(app: &mut App) {
     }
 }
 
-pub async fn handle_delete_confirmation_input(
+pub(crate) async fn handle_delete_confirmation_input(
     app: &mut App, key: KeyCode, mode: DatabaseMode,
 ) -> io::Result<()> {
     match key {
@@ -1540,7 +1537,7 @@ pub async fn handle_delete_confirmation_input(
                 )
                 .await
                 {
-                    Ok(_) => {
+                    Ok(()) => {
                         app.delete_confirmation_message =
                             Some("Configs deleted successfully.".to_string());
                         app.stopped_configs.retain(|config| {
@@ -1562,38 +1559,36 @@ pub async fn handle_delete_confirmation_input(
     Ok(())
 }
 
-pub fn open_import_file_explorer(app: &mut App) {
+pub(crate) fn open_import_file_explorer(app: &mut App) {
     app.state = AppState::ImportFileExplorerOpen;
     app.selected_file_path = std::env::current_dir().ok();
 }
 
-pub fn open_export_file_explorer(app: &mut App) {
+pub(crate) fn open_export_file_explorer(app: &mut App) {
     app.state = AppState::ExportFileExplorerOpen;
     app.selected_file_path = std::env::current_dir().ok();
 }
 
-pub async fn handle_context_selection_input(
+pub(crate) async fn handle_context_selection_input(
     app: &mut App, key: KeyCode, mode: DatabaseMode,
 ) -> io::Result<()> {
-    if let KeyCode::Enter = key {
+    if key == KeyCode::Enter {
         if let Some(selected_context) = app.contexts.get(app.selected_context_index).cloned() {
             handle_context_selection(app, &selected_context, mode).await;
         }
-    } else if let KeyCode::Up = key {
+    } else if key == KeyCode::Up {
         if app.selected_context_index > 0 {
             app.selected_context_index -= 1;
             app.context_list_state
                 .select(Some(app.selected_context_index));
         }
-    } else if let KeyCode::Esc = key {
+    } else if key == KeyCode::Esc {
         app.state = AppState::Normal;
-    } else if let KeyCode::Char('a') = key {
+    } else if key == KeyCode::Char('a') {
         app.auto_import_alias_as_domain = !app.auto_import_alias_as_domain;
-    } else if let KeyCode::Char('d') = key {
+    } else if key == KeyCode::Char('d') {
         app.auto_import_auto_loopback = !app.auto_import_auto_loopback;
-    } else if let KeyCode::Down = key
-        && app.selected_context_index < app.contexts.len() - 1
-    {
+    } else if key == KeyCode::Down && app.selected_context_index < app.contexts.len() - 1 {
         app.selected_context_index += 1;
         app.context_list_state
             .select(Some(app.selected_context_index));
@@ -1601,7 +1596,7 @@ pub async fn handle_context_selection_input(
     Ok(())
 }
 
-pub async fn handle_settings_input(
+pub(crate) async fn handle_settings_input(
     app: &mut App, key: KeyCode, mode: DatabaseMode,
 ) -> io::Result<()> {
     match key {
@@ -1893,7 +1888,7 @@ async fn handle_http_logs_toggle(app: &mut App, mode: DatabaseMode) -> io::Resul
                 ));
             }
             Err(e) => {
-                app.error_message = Some(format!("Failed to toggle HTTP logs: {}", e));
+                app.error_message = Some(format!("Failed to toggle HTTP logs: {e}"));
                 app.state = AppState::ShowErrorPopup;
             }
         }
@@ -1934,7 +1929,7 @@ async fn handle_view_http_logs(app: &mut App, mode: DatabaseMode) -> io::Result<
                 return Ok(());
             }
 
-            let log_file_name = format!("{}_{}.http", config_id, local_port);
+            let log_file_name = format!("{config_id}_{local_port}.http");
 
             match kftray_commons::utils::config_dir::get_log_folder_path() {
                 Ok(log_folder_path) => {
@@ -1952,7 +1947,7 @@ async fn handle_view_http_logs(app: &mut App, mode: DatabaseMode) -> io::Result<
                     match std::fs::read_to_string(&log_file_path) {
                         Ok(content) => {
                             app.http_logs_viewer_content =
-                                content.lines().map(|line| line.to_string()).collect();
+                                content.lines().map(ToString::to_string).collect();
                             app.http_logs_requests =
                                 App::parse_http_logs(&app.http_logs_viewer_content);
                             app.http_logs_viewer_scroll = if app.http_logs_viewer_content.is_empty()
@@ -1967,14 +1962,13 @@ async fn handle_view_http_logs(app: &mut App, mode: DatabaseMode) -> io::Result<
                             app.state = AppState::ShowHttpLogsViewer;
                         }
                         Err(e) => {
-                            app.error_message =
-                                Some(format!("Failed to read HTTP log file: {}", e));
+                            app.error_message = Some(format!("Failed to read HTTP log file: {e}"));
                             app.state = AppState::ShowErrorPopup;
                         }
                     }
                 }
                 Err(e) => {
-                    app.error_message = Some(format!("Failed to get log folder path: {}", e));
+                    app.error_message = Some(format!("Failed to get log folder path: {e}"));
                     app.state = AppState::ShowErrorPopup;
                 }
             }
@@ -2091,15 +2085,15 @@ async fn handle_open_http_logs(app: &mut App, _mode: DatabaseMode) -> io::Result
 
     if let Some((config_id, local_port)) = config_info {
         if let (Some(id), Some(port)) = (config_id, local_port) {
-            let log_file_name = format!("{}_{}.http", id, port);
+            let log_file_name = format!("{id}_{port}.http");
 
             match open_http_log_file(&log_file_name).await {
                 Ok(()) => {
                     app.import_export_message =
-                        Some(format!("Opened HTTP log file: {}", log_file_name));
+                        Some(format!("Opened HTTP log file: {log_file_name}"));
                 }
                 Err(err) => {
-                    app.error_message = Some(format!("Failed to open HTTP log file: {}", err));
+                    app.error_message = Some(format!("Failed to open HTTP log file: {err}"));
                     app.state = AppState::ShowErrorPopup;
                 }
             }
@@ -2319,7 +2313,7 @@ async fn auto_save_http_logs_config(app: &mut App, mode: DatabaseMode) {
                 app.import_export_message = Some("✅ HTTP logs configuration saved".to_string());
             }
             Err(e) => {
-                app.error_message = Some(format!("Failed to save HTTP logs configuration: {}", e));
+                app.error_message = Some(format!("Failed to save HTTP logs configuration: {e}"));
                 app.state = AppState::ShowErrorPopup;
             }
         }
@@ -2403,10 +2397,10 @@ async fn handle_http_logs_viewer_input(app: &mut App, key: KeyCode) -> io::Resul
                 app.http_logs_list_selected = app.http_logs_requests.len() - 1;
             }
         }
-        KeyCode::Char('a') | KeyCode::Char('A') if !app.http_logs_detail_mode => {
+        KeyCode::Char('a' | 'A') if !app.http_logs_detail_mode => {
             app.http_logs_viewer_auto_scroll = !app.http_logs_viewer_auto_scroll;
         }
-        KeyCode::Char('r') | KeyCode::Char('R') => {
+        KeyCode::Char('r' | 'R') => {
             if app.http_logs_detail_mode
                 && app.http_logs_selected_entry.is_some()
                 && let Some(entry) = &app.http_logs_selected_entry
@@ -2419,7 +2413,7 @@ async fn handle_http_logs_viewer_input(app: &mut App, key: KeyCode) -> io::Resul
                         .find(|c| c.id == Some(config_id))
                         .and_then(|c| c.local_port)
                         .unwrap_or(8080);
-                    format!("http://localhost:{}", local_port)
+                    format!("http://localhost:{local_port}")
                 } else {
                     "http://localhost:8080".to_string()
                 };
@@ -2460,7 +2454,7 @@ async fn handle_http_logs_viewer_input(app: &mut App, key: KeyCode) -> io::Resul
     Ok(())
 }
 
-pub async fn handle_update_confirmation_input(
+pub(crate) async fn handle_update_confirmation_input(
     app: &mut App, key: KeyCode, _mode: DatabaseMode,
 ) -> io::Result<()> {
     match key {
@@ -2512,7 +2506,7 @@ pub async fn handle_update_confirmation_input(
     Ok(())
 }
 
-pub fn handle_restart_notification_input(app: &mut App, key: KeyCode) -> io::Result<()> {
+pub(crate) fn handle_restart_notification_input(app: &mut App, key: KeyCode) -> io::Result<()> {
     match key {
         KeyCode::Enter | KeyCode::Esc => {
             app.state = AppState::Normal;
@@ -2524,7 +2518,7 @@ pub fn handle_restart_notification_input(app: &mut App, key: KeyCode) -> io::Res
     Ok(())
 }
 
-pub fn handle_help_input(app: &mut App, key: KeyCode) -> io::Result<()> {
+pub(crate) const fn handle_help_input(app: &mut App, key: KeyCode) -> io::Result<()> {
     match key {
         KeyCode::Esc | KeyCode::Enter | KeyCode::Char('h') => {
             app.state = AppState::Normal;
@@ -2534,7 +2528,7 @@ pub fn handle_help_input(app: &mut App, key: KeyCode) -> io::Result<()> {
     Ok(())
 }
 
-pub fn handle_about_input(app: &mut App, key: KeyCode) -> io::Result<()> {
+pub(crate) const fn handle_about_input(app: &mut App, key: KeyCode) -> io::Result<()> {
     match key {
         KeyCode::Esc | KeyCode::Char('q') => {
             app.state = AppState::Normal;
@@ -2560,7 +2554,7 @@ pub fn handle_about_input(app: &mut App, key: KeyCode) -> io::Result<()> {
     Ok(())
 }
 
-pub fn handle_error_popup_input(app: &mut App, key: KeyCode) -> io::Result<()> {
+pub(crate) fn handle_error_popup_input(app: &mut App, key: KeyCode) -> io::Result<()> {
     match key {
         KeyCode::Esc | KeyCode::Enter => {
             app.state = AppState::Normal;

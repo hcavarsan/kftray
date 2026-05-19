@@ -4,10 +4,10 @@ use log::{
     info,
 };
 
-pub struct ConfigManager;
+pub(crate) struct ConfigManager;
 
 impl ConfigManager {
-    pub async fn get_active_configs()
+    pub(crate) async fn get_active_configs()
     -> Result<Vec<Config>, Box<dyn std::error::Error + Send + Sync>> {
         let config_states = kftray_commons::utils::config_state::get_configs_state().await?;
         let current_process_id = std::process::id();
@@ -45,7 +45,7 @@ impl ConfigManager {
         Ok(configs)
     }
 
-    pub async fn restart_port_forwards(configs: Vec<Config>) {
+    pub(crate) async fn restart_port_forwards(configs: Vec<Config>) {
         for protocol in ["tcp", "udp"] {
             let protocol_configs: Vec<Config> = configs
                 .iter()
@@ -122,9 +122,8 @@ impl ConfigManager {
                             .contains_key(&config_id)
                     {
                         info!(
-                            "Skipping network monitor restart for config {} \
-                             \u{2014} recovery already in progress",
-                            config_id
+                            "Skipping network monitor restart for config {config_id} \
+                             \u{2014} recovery already in progress"
                         );
                         return false;
                     }

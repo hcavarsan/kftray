@@ -11,7 +11,7 @@ use crate::db::{
     get_db_pool,
 };
 
-#[derive(Debug, Clone, PartialEq, Default, Copy)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Copy)]
 pub enum DatabaseMode {
     #[default]
     File,
@@ -32,7 +32,7 @@ impl DatabaseManager {
     pub async fn get_context(mode: DatabaseMode) -> Result<DatabaseContext, String> {
         match mode {
             DatabaseMode::File => {
-                let pool = get_db_pool().await.map_err(|e| e.to_string())?;
+                let pool = get_db_pool().await?;
                 Ok(DatabaseContext { pool, mode })
             }
             DatabaseMode::Memory => {
@@ -54,9 +54,7 @@ impl DatabaseManager {
                         .map_err(|e| e.to_string())?,
                 );
                 create_db_table(&pool).await.map_err(|e| e.to_string())?;
-                crate::utils::migration::migrate_configs(Some(&pool))
-                    .await
-                    .map_err(|e| e.to_string())?;
+                crate::utils::migration::migrate_configs(Some(&pool)).await?;
 
                 {
                     let mut pool_guard = MEMORY_DB_POOL.lock().unwrap();

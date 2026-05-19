@@ -83,7 +83,7 @@ async fn main() -> anyhow::Result<()> {
         "Protocol version: {}",
         kftray_mcp::protocol::MCP_PROTOCOL_VERSION
     );
-    info!("Listening on http://{}", addr);
+    info!("Listening on http://{addr}");
     info!("");
     info!("Available tools:");
     for tool in kftray_mcp::tools::get_all_tools() {

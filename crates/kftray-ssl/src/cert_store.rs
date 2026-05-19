@@ -73,12 +73,11 @@ impl CertificateStore {
 
     pub async fn store(&self, alias: &str, cert_pair: &CertificatePair) -> Result<()> {
         info!(
-            "Storing certificate for alias: {} (certificate on disk, private key in keychain)",
-            alias
+            "Storing certificate for alias: {alias} (certificate on disk, private key in keychain)"
         );
 
-        let cert_file = self.store_path.join(format!("{}.crt", alias));
-        let metadata_file = self.store_path.join(format!("{}.json", alias));
+        let cert_file = self.store_path.join(format!("{alias}.crt"));
+        let metadata_file = self.store_path.join(format!("{alias}.json"));
 
         let cert_pem = self.certificate_to_pem(&cert_pair.certificate)?;
         let key_pem = self.private_key_to_pem(&cert_pair.private_key)?;
@@ -110,21 +109,17 @@ impl CertificateStore {
             );
         }
 
-        info!(
-            "Successfully stored certificate and private key securely for alias: {}",
-            alias
-        );
+        info!("Successfully stored certificate and private key securely for alias: {alias}");
         Ok(())
     }
 
     pub async fn load(&self, alias: &str) -> Result<CertificatePair> {
         debug!(
-            "Loading certificate for alias: {} (certificate from disk, private key from keychain)",
-            alias
+            "Loading certificate for alias: {alias} (certificate from disk, private key from keychain)"
         );
 
-        let cert_file = self.store_path.join(format!("{}.crt", alias));
-        let metadata_file = self.store_path.join(format!("{}.json", alias));
+        let cert_file = self.store_path.join(format!("{alias}.crt"));
+        let metadata_file = self.store_path.join(format!("{alias}.json"));
 
         let cert_pem = async_fs::read_to_string(cert_file)
             .await
@@ -145,31 +140,30 @@ impl CertificateStore {
                             let domain = metadata["domain"].as_str().unwrap_or(alias).to_string();
                             let local_domain = metadata["local_domain"]
                                 .as_str()
-                                .unwrap_or(&format!("{}.local", alias))
+                                .unwrap_or(&format!("{alias}.local"))
                                 .to_string();
                             let subject_alt_names = metadata["subject_alt_names"]
                                 .as_array()
                                 .map(|arr| {
                                     arr.iter()
-                                        .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                                        .filter_map(|v| {
+                                            v.as_str().map(ToString::to_string)
+                                        })
                                         .collect()
                                 })
                                 .unwrap_or_else(Vec::new);
                             (domain, local_domain, subject_alt_names)
                         }
-                        Err(_) => (alias.to_string(), format!("{}.local", alias), vec![]),
+                        Err(_) => (alias.to_string(), format!("{alias}.local"), vec![]),
                     }
                 }
-                Err(_) => (alias.to_string(), format!("{}.local", alias), vec![]),
+                Err(_) => (alias.to_string(), format!("{alias}.local"), vec![]),
             }
         } else {
-            (alias.to_string(), format!("{}.local", alias), vec![])
+            (alias.to_string(), format!("{alias}.local"), vec![])
         };
 
-        debug!(
-            "Successfully loaded certificate and private key for alias: {}",
-            alias
-        );
+        debug!("Successfully loaded certificate and private key for alias: {alias}");
 
         Ok(CertificatePair {
             certificate,
@@ -181,7 +175,7 @@ impl CertificateStore {
     }
 
     pub async fn exists(&self, alias: &str) -> bool {
-        let cert_file = self.store_path.join(format!("{}.crt", alias));
+        let cert_file = self.store_path.join(format!("{alias}.crt"));
         let key_exists = self.private_key_exists_in_keychain(alias).await;
 
         cert_file.exists() && key_exists
@@ -200,10 +194,10 @@ impl CertificateStore {
     }
 
     pub async fn remove(&self, alias: &str) -> Result<()> {
-        info!("Removing certificate and private key for alias: {}", alias);
+        info!("Removing certificate and private key for alias: {alias}");
 
-        let cert_file = self.store_path.join(format!("{}.crt", alias));
-        let metadata_file = self.store_path.join(format!("{}.json", alias));
+        let cert_file = self.store_path.join(format!("{alias}.crt"));
+        let metadata_file = self.store_path.join(format!("{alias}.json"));
 
         if cert_file.exists() {
             async_fs::remove_file(cert_file)
@@ -221,10 +215,7 @@ impl CertificateStore {
             .await
             .context("Failed to remove private key from keychain")?;
 
-        info!(
-            "Successfully removed certificate and private key for alias: {}",
-            alias
-        );
+        info!("Successfully removed certificate and private key for alias: {alias}");
         Ok(())
     }
 
@@ -313,7 +304,7 @@ impl CertificateStore {
     async fn store_private_key_in_keychain(
         &self, alias: &str, private_key_pem: &str,
     ) -> Result<()> {
-        debug!("Storing private key in SSL vault for alias: {}", alias);
+        debug!("Storing private key in SSL vault for alias: {alias}");
 
         let mut vault = self.load_ssl_vault().await?.unwrap_or_default();
         vault
@@ -337,7 +328,7 @@ impl CertificateStore {
     }
 
     async fn retrieve_private_key_from_keychain(&self, alias: &str) -> Result<String> {
-        debug!("Retrieving private key from SSL vault for alias: {}", alias);
+        debug!("Retrieving private key from SSL vault for alias: {alias}");
 
         let vault = self
             .load_ssl_vault()
@@ -348,7 +339,7 @@ impl CertificateStore {
             .certificate_keys
             .get(alias)
             .cloned()
-            .ok_or_else(|| anyhow::anyhow!("Private key not found for alias: {}", alias))
+            .ok_or_else(|| anyhow::anyhow!("Private key not found for alias: {alias}"))
     }
 
     async fn private_key_exists_in_keychain(&self, alias: &str) -> bool {
@@ -368,8 +359,7 @@ impl CertificateStore {
             #[cfg(test)]
             {
                 debug!(
-                    "Test mode: no vault found when checking key for alias {}",
-                    alias
+                    "Test mode: no vault found when checking key for alias {alias}"
                 );
             }
             false
@@ -377,7 +367,7 @@ impl CertificateStore {
     }
 
     pub async fn remove_private_key_from_keychain(&self, alias: &str) -> Result<()> {
-        debug!("Removing private key from SSL vault for alias: {}", alias);
+        debug!("Removing private key from SSL vault for alias: {alias}");
 
         let mut vault = self.load_ssl_vault().await?.unwrap_or_default();
         vault.certificate_keys.remove(alias);
@@ -403,10 +393,7 @@ impl CertificateStore {
                 if self.private_key_exists_in_keychain(alias).await {
                     certificates.push(alias.to_string());
                 } else {
-                    warn!(
-                        "Found certificate file without corresponding keychain entry: {}",
-                        alias
-                    );
+                    warn!("Found certificate file without corresponding keychain entry: {alias}");
                 }
             }
         }
@@ -476,7 +463,7 @@ impl CertificateStore {
             .context("Failed to create SSL vault keychain entry")?;
 
         match entry.delete_credential() {
-            Ok(_) => info!("Successfully removed SSL vault from keychain"),
+            Ok(()) => info!("Successfully removed SSL vault from keychain"),
             Err(_) => debug!("SSL vault not found in keychain (already removed)"),
         }
 

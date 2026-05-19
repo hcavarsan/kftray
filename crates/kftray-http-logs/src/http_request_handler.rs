@@ -13,7 +13,7 @@ pub struct HttpRequestHandler {
 }
 
 impl HttpRequestHandler {
-    pub fn new(config_id: i64) -> Self {
+    pub const fn new(config_id: i64) -> Self {
         Self { config_id }
     }
 

@@ -536,7 +536,7 @@ async fn handle_connection(
 
     if buffer.is_empty() {
         debug!("Empty request received, will wait for more data");
-        std::thread::sleep(std::time::Duration::from_millis(500));
+        std::thread::sleep(Duration::from_millis(500));
 
         match stream.read(&mut tmp_buf) {
             Ok(0) => {
@@ -613,7 +613,7 @@ async fn handle_connection(
         response_bytes.len()
     );
     match stream.write_all(&response_bytes) {
-        Ok(_) => debug!("Response written successfully"),
+        Ok(()) => debug!("Response written successfully"),
         Err(e) => {
             error!("Failed to write response: {e}");
             if e.kind() == std::io::ErrorKind::BrokenPipe {
@@ -628,7 +628,7 @@ async fn handle_connection(
 
     debug!("Flushing socket output");
     match stream.flush() {
-        Ok(_) => debug!("Response flushed successfully"),
+        Ok(()) => debug!("Response flushed successfully"),
         Err(e) => {
             error!("Failed to flush response: {e}");
             if e.kind() == std::io::ErrorKind::BrokenPipe {
@@ -641,7 +641,7 @@ async fn handle_connection(
         }
     }
 
-    std::thread::sleep(std::time::Duration::from_millis(100));
+    std::thread::sleep(Duration::from_millis(100));
 
     info!("Connection handled successfully");
     Ok(())
@@ -948,7 +948,7 @@ async fn process_request(
             NetworkCommand::Add { address } => {
                 debug!("Processing Add request for address: {address}");
                 match network_manager.add_loopback_address(&address).await {
-                    Ok(_) => {
+                    Ok(()) => {
                         info!("Add request successful for address: {address}");
                         Ok(HelperResponse::success(request_id))
                     }
@@ -962,7 +962,7 @@ async fn process_request(
                 debug!("Processing Remove request for address: {address}");
 
                 let result = match network_manager.remove_loopback_address(&address).await {
-                    Ok(_) => {
+                    Ok(()) => {
                         info!("Remove request successful for address: {address}");
                         info!("Successfully removed loopback address: {address}");
                         HelperResponse::success(request_id.clone())
@@ -1028,7 +1028,7 @@ async fn process_request(
                         );
 
                         match network_manager.add_loopback_address(&address).await {
-                            Ok(_) => {
+                            Ok(()) => {
                                 info!(
                                     "Network interface addition successful for address: {address}"
                                 );
@@ -1067,13 +1067,13 @@ async fn process_request(
 
                 let pool_result = pool_manager.release_address(&address).await;
                 match pool_result {
-                    Ok(_) => info!("Address pool release successful for address: {address}"),
+                    Ok(()) => info!("Address pool release successful for address: {address}"),
                     Err(e) => error!("Address pool release failed for address {address}: {e}"),
                 }
 
                 let network_result = network_manager.remove_loopback_address(&address).await;
                 match network_result {
-                    Ok(_) => {
+                    Ok(()) => {
                         info!("Network interface removal successful for address: {address}");
                         Ok(HelperResponse::success(request_id))
                     }
@@ -1127,7 +1127,7 @@ async fn process_request(
 
                 // Schedule shutdown after a short delay to allow response to be sent
                 tokio::spawn(async {
-                    tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                    tokio::time::sleep(Duration::from_millis(100)).await;
                     info!("Shutting down helper service");
                     std::process::exit(0);
                 });
@@ -1143,7 +1143,7 @@ async fn process_request(
             HostCommand::Add { id, entry } => {
                 debug!("Processing Host Add request for ID: {id}");
                 match hostfile_manager.add_entry(id, entry) {
-                    Ok(_) => {
+                    Ok(()) => {
                         info!("Host Add request successful");
                         Ok(HelperResponse::success(request_id))
                     }
@@ -1156,7 +1156,7 @@ async fn process_request(
             HostCommand::Remove { id } => {
                 debug!("Processing Host Remove request for ID: {id}");
                 match hostfile_manager.remove_entry(&id) {
-                    Ok(_) => {
+                    Ok(()) => {
                         info!("Host Remove request successful");
                         Ok(HelperResponse::success(request_id))
                     }
@@ -1169,7 +1169,7 @@ async fn process_request(
             HostCommand::RemoveAll => {
                 debug!("Processing Host RemoveAll request");
                 match hostfile_manager.remove_all_entries() {
-                    Ok(_) => {
+                    Ok(()) => {
                         info!("Host RemoveAll request successful");
                         Ok(HelperResponse::success(request_id))
                     }

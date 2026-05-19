@@ -47,8 +47,7 @@ impl ActionRegistry {
         match self.handlers.get(action_type) {
             Some(handler) => handler.execute(context).await,
             None => Err(ShortcutError::ActionExecutionFailed(format!(
-                "Unknown action type: {}",
-                action_type
+                "Unknown action type: {action_type}"
             ))),
         }
     }
@@ -56,12 +55,11 @@ impl ActionRegistry {
     pub async fn execute_by_id(
         &self, shortcut_id: i64, context: &ActionContext,
     ) -> ShortcutResult<()> {
-        log::info!("Executing action for shortcut ID: {}", shortcut_id);
+        log::info!("Executing action for shortcut ID: {shortcut_id}");
 
         let definition = self.shortcut_definitions.get(&shortcut_id).ok_or_else(|| {
             ShortcutError::ActionExecutionFailed(format!(
-                "No shortcut definition found for ID: {}",
-                shortcut_id
+                "No shortcut definition found for ID: {shortcut_id}"
             ))
         })?;
 

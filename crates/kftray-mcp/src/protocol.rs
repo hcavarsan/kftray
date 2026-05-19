@@ -26,7 +26,7 @@ pub const SERVER_VERSION: &str = env!("CARGO_PKG_VERSION");
 // ============================================================================
 
 /// JSON-RPC Request ID - can be string, number, or null
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(untagged)]
 pub enum RequestId {
     String(String),
@@ -437,8 +437,7 @@ mod tests {
         let json = serde_json::to_string(&response).unwrap();
         assert!(
             json.contains(r#""id":null"#),
-            "id should serialize as null, got: {}",
-            json
+            "id should serialize as null, got: {json}"
         );
     }
 
@@ -449,8 +448,7 @@ mod tests {
         let json = serde_json::to_string(&response).unwrap();
         assert!(
             json.contains(r#""id":42"#),
-            "id should serialize as 42, got: {}",
-            json
+            "id should serialize as 42, got: {json}"
         );
     }
 
@@ -464,8 +462,7 @@ mod tests {
         let json = serde_json::to_string(&response).unwrap();
         assert!(
             json.contains(r#""id":"req-1""#),
-            "id should serialize as string, got: {}",
-            json
+            "id should serialize as string, got: {json}"
         );
     }
 
@@ -643,7 +640,7 @@ mod tests {
         let roots = RootsCapability { list_changed: true };
         let value = serde_json::to_value(&roots).unwrap();
         assert_eq!(
-            value.get("listChanged").and_then(|v| v.as_bool()),
+            value.get("listChanged").and_then(serde_json::Value::as_bool),
             Some(true)
         );
         assert!(value.get("list_changed").is_none());
@@ -654,7 +651,7 @@ mod tests {
         let tools = ToolsCapability { list_changed: true };
         let value = serde_json::to_value(&tools).unwrap();
         assert_eq!(
-            value.get("listChanged").and_then(|v| v.as_bool()),
+            value.get("listChanged").and_then(serde_json::Value::as_bool),
             Some(true)
         );
         assert!(value.get("list_changed").is_none());
@@ -699,8 +696,7 @@ mod tests {
         let json = serde_json::to_string(&request).unwrap();
         assert!(
             !json.contains("params"),
-            "params should be omitted when None, got: {}",
-            json
+            "params should be omitted when None, got: {json}"
         );
     }
 
@@ -713,8 +709,7 @@ mod tests {
         let json = serde_json::to_string(&params).unwrap();
         assert!(
             !json.contains("arguments"),
-            "arguments should be omitted when None, got: {}",
-            json
+            "arguments should be omitted when None, got: {json}"
         );
     }
 }

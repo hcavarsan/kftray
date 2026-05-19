@@ -3,7 +3,7 @@ use serde::{
     Serialize,
 };
 
-#[derive(Clone, Deserialize, PartialEq, Serialize, Debug, Default)]
+#[derive(Clone, Deserialize, PartialEq, Eq, Serialize, Debug, Default)]
 pub struct ConfigState {
     pub id: Option<i64>,
     pub config_id: i64,
@@ -30,7 +30,7 @@ impl ConfigState {
         }
     }
 
-    pub fn new_without_process(config_id: i64, is_running: bool) -> Self {
+    pub const fn new_without_process(config_id: i64, is_running: bool) -> Self {
         Self {
             id: None,
             config_id,

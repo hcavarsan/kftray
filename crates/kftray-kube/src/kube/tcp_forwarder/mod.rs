@@ -45,7 +45,7 @@ pub struct TcpForwarder {
 }
 
 impl TcpForwarder {
-    pub fn new(config_id: i64, workload_type: String) -> Self {
+    pub const fn new(config_id: i64, workload_type: String) -> Self {
         Self {
             config_id,
             workload_type,
@@ -53,11 +53,11 @@ impl TcpForwarder {
         }
     }
 
-    pub fn is_logging_enabled(&self) -> bool {
+    pub const fn is_logging_enabled(&self) -> bool {
         self.logger.is_some()
     }
 
-    pub fn apply_socket_optimizations(stream: &tokio::net::TcpStream) {
+    pub fn apply_socket_optimizations(stream: &TcpStream) {
         use socket2::SockRef;
 
         if let Err(e) = stream.set_nodelay(true) {
@@ -89,7 +89,7 @@ impl TcpForwarder {
 
     #[allow(clippy::too_many_arguments)]
     pub async fn forward_streams(
-        &mut self, client_stream: tokio::net::TcpStream,
+        &mut self, client_stream: TcpStream,
         upstream_stream: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
         client_address: std::net::SocketAddr, cancellation_token: CancellationToken,
         http_log_watcher: Arc<HttpLogStateWatcher>, local_port: u16,
@@ -135,8 +135,7 @@ impl TcpForwarder {
                     "Initializing HTTP logger for config_id {} on port {}",
                     self.config_id, local_port
                 );
-                let logger =
-                    kftray_http_logs::HttpLogger::for_config(self.config_id, local_port).await?;
+                let logger = HttpLogger::for_config(self.config_id, local_port).await?;
                 self.logger = Some(logger);
             }
         } else if self.logger.is_some() {
@@ -236,11 +235,11 @@ impl TcpForwarder {
 
             self.logger = Arc::try_unwrap(shared_logger)
                 .ok()
-                .and_then(|mutex| mutex.into_inner())
+                .and_then(Mutex::into_inner)
                 .and_then(|arc_logger| Arc::try_unwrap(arc_logger).ok());
 
             match result {
-                Ok(_) => {
+                Ok(()) => {
                     debug!("HTTP-aware connection closed normally");
                 }
                 Err(e) => {
@@ -298,7 +297,7 @@ impl TcpForwarder {
                         return Err(e.into());
                     }
                 },
-                _ = cancellation_token.cancelled() => debug!("connection cancelled"),
+                () = cancellation_token.cancelled() => debug!("connection cancelled"),
             }
         }
 
@@ -308,7 +307,7 @@ impl TcpForwarder {
     pub async fn forward_tls_streams(
         &self, client: tokio_rustls::server::TlsStream<TcpStream>,
         upstream: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
-        cancellation_token: tokio_util::sync::CancellationToken,
+        cancellation_token: CancellationToken,
     ) -> anyhow::Result<()> {
         Self::apply_socket_optimizations(client.get_ref().0);
 
@@ -353,7 +352,7 @@ impl TcpForwarder {
                     return Err(e.into());
                 }
             },
-            _ = cancellation_token.cancelled() => {
+            () = cancellation_token.cancelled() => {
                 debug!("TLS connection canceled");
                 return Err(anyhow::anyhow!("TLS connection canceled"));
             }
@@ -482,7 +481,7 @@ mod tests {
             stream
         });
 
-        let mut client_side = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let mut client_side = TcpStream::connect(addr).await.unwrap();
         let server_side = accept_task.await.unwrap();
 
         let (upstream_local, mut upstream_remote) = tokio::io::duplex(1024);

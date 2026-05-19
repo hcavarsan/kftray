@@ -1,5 +1,4 @@
 pub mod commands;
-pub use commands::*;
 pub mod glibc_detector;
 pub mod init_check;
 pub mod mcp;

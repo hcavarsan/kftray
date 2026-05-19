@@ -13,7 +13,7 @@ pub struct ParsedShortcut {
 }
 
 impl ParsedShortcut {
-    pub fn new(modifiers: u8, key: u16, display_string: String) -> Self {
+    pub const fn new(modifiers: u8, key: u16, display_string: String) -> Self {
         Self {
             modifiers,
             key,
@@ -21,19 +21,19 @@ impl ParsedShortcut {
         }
     }
 
-    pub fn has_ctrl(&self) -> bool {
+    pub const fn has_ctrl(&self) -> bool {
         self.modifiers & 1 != 0
     }
 
-    pub fn has_shift(&self) -> bool {
+    pub const fn has_shift(&self) -> bool {
         self.modifiers & 2 != 0
     }
 
-    pub fn has_alt(&self) -> bool {
+    pub const fn has_alt(&self) -> bool {
         self.modifiers & 4 != 0
     }
 
-    pub fn has_super(&self) -> bool {
+    pub const fn has_super(&self) -> bool {
         self.modifiers & 8 != 0
     }
 }
@@ -133,7 +133,7 @@ impl ShortcutParser {
     }
 
     pub fn parse(&self, shortcut_str: &str) -> ShortcutResult<ParsedShortcut> {
-        let parts: Vec<&str> = shortcut_str.split('+').map(|p| p.trim()).collect();
+        let parts: Vec<&str> = shortcut_str.split('+').map(str::trim).collect();
 
         if parts.is_empty() {
             return Err(ShortcutError::InvalidShortcut(
@@ -168,16 +168,14 @@ impl ShortcutParser {
                     if let Some(&code) = self.key_mappings.get(&part_lower) {
                         if key_code.is_some() {
                             return Err(ShortcutError::InvalidShortcut(format!(
-                                "Multiple keys specified: {}",
-                                shortcut_str
+                                "Multiple keys specified: {shortcut_str}"
                             )));
                         }
                         key_code = Some(code);
                         processed_parts.push(self.format_key_display(&part_lower));
                     } else {
                         return Err(ShortcutError::InvalidShortcut(format!(
-                            "Unknown key: {}",
-                            part
+                            "Unknown key: {part}"
                         )));
                     }
                 }

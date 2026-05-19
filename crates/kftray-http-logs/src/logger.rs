@@ -96,7 +96,7 @@ impl HttpLogger {
         let mut shutdown_rx_writer = shutdown_rx.clone();
 
         let writer_task = tokio::spawn({
-            let log_file = log_file.clone();
+            let log_file = log_file;
             async move {
                 let mut flush_interval =
                     tokio::time::interval(Duration::from_millis(FLUSH_INTERVAL_MS));
@@ -320,7 +320,7 @@ impl HttpLogger {
         };
 
         match self.log_sender.send(log_entry).await {
-            Ok(_) => debug!("Successfully sent request log message to channel"),
+            Ok(()) => debug!("Successfully sent request log message to channel"),
             Err(e) => error!("Failed to send log message: {:?}", e),
         }
 
@@ -354,7 +354,7 @@ impl HttpLogger {
 
         let message_size = log_entry.size();
         match self.log_sender.send(log_entry).await {
-            Ok(_) => debug!(
+            Ok(()) => debug!(
                 "Successfully sent response log message to channel (size: {}B)",
                 message_size
             ),
@@ -364,8 +364,7 @@ impl HttpLogger {
                     message_size, e
                 );
                 return Err(anyhow::anyhow!(
-                    "Failed to send response log message: {:?}",
-                    e
+                    "Failed to send response log message: {e:?}"
                 ));
             }
         }
@@ -416,7 +415,7 @@ impl HttpLogger {
         if response_count > 0 {
             debug!("Processing {} response messages in batch", response_count);
 
-            for message in messages.iter() {
+            for message in messages {
                 if message.is_response() {
                     let bytes = message.as_bytes();
                     combined_buffer.put_slice(bytes);
@@ -428,7 +427,7 @@ impl HttpLogger {
             }
         }
 
-        for message in messages.iter() {
+        for message in messages {
             if !message.is_response() {
                 combined_buffer.put_slice(message.as_bytes());
             }

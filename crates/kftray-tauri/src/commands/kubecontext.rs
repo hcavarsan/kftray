@@ -28,7 +28,7 @@ use kube::{
 use log::info;
 
 #[tauri::command]
-pub async fn list_kube_contexts(
+pub(crate) async fn list_kube_contexts(
     kubeconfig: Option<String>,
 ) -> Result<Vec<KubeContextInfo>, String> {
     info!("list_kube_contexts {}", kubeconfig.as_deref().unwrap_or(""));
@@ -58,7 +58,7 @@ pub async fn list_kube_contexts(
 }
 
 #[tauri::command]
-pub async fn list_pods(
+pub(crate) async fn list_pods(
     context_name: &str, namespace: &str, kubeconfig: Option<String>,
 ) -> Result<Vec<PodInfo>, String> {
     if namespace.trim().is_empty() {
@@ -95,7 +95,7 @@ pub async fn list_pods(
 }
 
 #[tauri::command]
-pub async fn list_namespaces(
+pub(crate) async fn list_namespaces(
     context_name: &str, kubeconfig: Option<String>,
 ) -> Result<Vec<KubeNamespaceInfo>, String> {
     let (client, _, _) = create_client_with_specific_context(kubeconfig, Some(context_name))
@@ -120,7 +120,7 @@ pub async fn list_namespaces(
 }
 
 #[tauri::command]
-pub async fn list_services(
+pub(crate) async fn list_services(
     context_name: &str, namespace: &str, kubeconfig: Option<String>,
 ) -> Result<Vec<KubeServiceInfo>, String> {
     if namespace.trim().is_empty() {
@@ -149,7 +149,7 @@ pub async fn list_services(
 }
 
 #[tauri::command]
-pub async fn list_ports(
+pub(crate) async fn list_ports(
     context_name: &str, namespace: &str, service_name: &str, kubeconfig: Option<String>,
 ) -> Result<Vec<KubeServicePortInfo>, String> {
     let (client, _, _) = create_client_with_specific_context(kubeconfig, Some(context_name))
@@ -247,7 +247,7 @@ pub async fn list_ports(
 }
 
 #[tauri::command]
-pub async fn get_services_with_annotations(
+pub(crate) async fn get_services_with_annotations(
     context_name: String, kubeconfig_path: Option<String>,
 ) -> Result<Vec<Config>, String> {
     info!(
@@ -404,7 +404,7 @@ mod tests {
             "test-ns",
             "test-pod-1",
             app_labels.clone(),
-            container_ports.clone(),
+            container_ports,
         );
 
         mock_client.add_service(

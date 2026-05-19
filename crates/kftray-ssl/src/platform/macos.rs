@@ -14,7 +14,7 @@ pub async fn install_ca_certificate(ca_cert_der: &[u8]) -> Result<()> {
     let cert_path = get_permanent_cert_path();
 
     if let Some(parent) = cert_path.parent() {
-        tokio::fs::create_dir_all(parent).await.ok();
+        fs::create_dir_all(parent).await.ok();
     }
 
     let pem_data = format!(
@@ -36,7 +36,7 @@ async fn install_to_keychain(cert_path: &std::path::Path) -> Result<()> {
 
     let install_script = format!(
         r#"do shell script "security add-cert -k /Library/Keychains/System.keychain '{}'" with administrator privileges with prompt "KFtray needs administrator privileges to install the SSL certificate to the System keychain for secure HTTPS connections.""#,
-        cert_path_str.replace("'", "'\\''")
+        cert_path_str.replace('\'', "'\\''")
     );
 
     let install_output = Command::new("osascript")
@@ -131,7 +131,7 @@ pub async fn remove_ca_certificate(_ca_cert_der: &[u8]) -> Result<()> {
     if output.status.success() || stderr.contains("not found") {
         info!("CA certificate removed");
         let cert_path = get_permanent_cert_path();
-        let _ = tokio::fs::remove_file(&cert_path).await;
+        let _ = fs::remove_file(&cert_path).await;
         Ok(())
     } else {
         warn!("Failed to remove certificate: {}", stderr.trim());

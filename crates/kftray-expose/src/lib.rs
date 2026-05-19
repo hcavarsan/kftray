@@ -63,10 +63,10 @@ async fn start_single_expose(
     let client = PORT_FORWARD_REGISTRY
         .acquire_client(client_key.clone())
         .await
-        .map_err(|e| ExposeError::KubeApi(format!("Failed to get K8s client: {}", e)))?;
+        .map_err(|e| ExposeError::KubeApi(format!("Failed to get K8s client: {e}")))?;
     let client = (*client).clone();
 
-    info!("Creating expose resources for config {}", config_id);
+    info!("Creating expose resources for config {config_id}");
     let resources = create_expose_resources(client.clone(), &config).await?;
 
     info!(
@@ -74,7 +74,7 @@ async fn start_single_expose(
         resources.deployment_name, resources.service_name, resources.pod_name
     );
 
-    let label_selector = format!("app=kftray-expose,config_id={}", config_id);
+    let label_selector = format!("app=kftray-expose,config_id={config_id}");
     let target = Target {
         selector: TargetSelector::PodLabel(label_selector),
         port: Port::Number(9999),
@@ -91,17 +91,14 @@ async fn start_single_expose(
         "expose".to_string(),
     )
     .await
-    .map_err(|e| ExposeError::Expose(format!("Failed to create port-forward: {}", e)))?;
+    .map_err(|e| ExposeError::Expose(format!("Failed to create port-forward: {e}")))?;
 
     let (websocket_port, pf_process) = port_forward
         .port_forward_tcp(None)
         .await
-        .map_err(|e| ExposeError::Expose(format!("Failed to start port-forward: {}", e)))?;
+        .map_err(|e| ExposeError::Expose(format!("Failed to start port-forward: {e}")))?;
 
-    info!(
-        "Port-forward established: localhost:{} → pod:9999",
-        websocket_port
-    );
+    info!("Port-forward established: localhost:{websocket_port} → pod:9999");
 
     let ws_cancel = pf_process.cancellation_token.clone();
     let pf_key = PortForwardKey::expose(config_id);
@@ -119,13 +116,12 @@ async fn start_single_expose(
     );
 
     info!(
-        "Starting WebSocket tunnel: pod → localhost:{} → {}:{}",
-        websocket_port, local_service_address, local_service_port
+        "Starting WebSocket tunnel: pod → localhost:{websocket_port} → {local_service_address}:{local_service_port}"
     );
 
     let ws_handle = tokio::spawn(async move {
         if let Err(e) = ws_client.start(ws_cancel).await {
-            error!("WebSocket client error: {}", e);
+            error!("WebSocket client error: {e}");
         }
     });
 
@@ -145,9 +141,9 @@ async fn start_single_expose(
     };
     update_config_state_with_mode(&config_state, mode)
         .await
-        .map_err(|e| ExposeError::Expose(format!("Failed to update config state: {}", e)))?;
+        .map_err(|e| ExposeError::Expose(format!("Failed to update config state: {e}")))?;
 
-    info!("Expose tunnel fully established for config {}", config_id);
+    info!("Expose tunnel fully established for config {config_id}");
 
     Ok(CustomResponse {
         id: Some(config_id),
@@ -170,15 +166,15 @@ pub async fn stop_expose(
 
     use self::kubernetes::delete_expose_resources;
 
-    info!("Stopping expose for config {}", config_id);
+    info!("Stopping expose for config {config_id}");
 
     let config = get_config_with_mode(config_id, mode)
         .await
-        .map_err(|e| ExposeError::Expose(format!("Failed to get config: {}", e)))?;
+        .map_err(|e| ExposeError::Expose(format!("Failed to get config: {e}")))?;
 
     let pf_key = PortForwardKey::expose(config_id);
     if let Some(entry) = PORT_FORWARD_REGISTRY.remove_process(&pf_key) {
-        info!("Cleaning up port-forward for config {}", config_id);
+        info!("Cleaning up port-forward for config {config_id}");
         entry.process.cleanup_and_abort().await;
     }
 
@@ -186,7 +182,7 @@ pub async fn stop_expose(
     let client = PORT_FORWARD_REGISTRY
         .acquire_client(client_key)
         .await
-        .map_err(|e| ExposeError::KubeApi(format!("Failed to get K8s client: {}", e)))?;
+        .map_err(|e| ExposeError::KubeApi(format!("Failed to get K8s client: {e}")))?;
     let client = (*client).clone();
 
     delete_expose_resources(client, namespace, &config_id.to_string()).await?;
@@ -202,9 +198,9 @@ pub async fn stop_expose(
     };
     update_config_state_with_mode(&config_state, mode)
         .await
-        .map_err(|e| ExposeError::Expose(format!("Failed to update config state: {}", e)))?;
+        .map_err(|e| ExposeError::Expose(format!("Failed to update config state: {e}")))?;
 
-    info!("Expose stopped for config {}", config_id);
+    info!("Expose stopped for config {config_id}");
 
     Ok(CustomResponse {
         id: Some(config_id),

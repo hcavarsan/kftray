@@ -60,8 +60,8 @@ fn try_connect_socket(socket_path: &Path) -> bool {
         Err(e) => {
             debug!("Socket exists at {socket_path:?} but connection failed: {e}");
 
-            if e.kind() == std::io::ErrorKind::PermissionDenied
-                || e.kind() == std::io::ErrorKind::ConnectionRefused
+            if e.kind() == io::ErrorKind::PermissionDenied
+                || e.kind() == io::ErrorKind::ConnectionRefused
             {
                 debug!("Detected stale or inaccessible socket");
 
@@ -127,7 +127,7 @@ pub fn send_request(
 
         debug!("Sending request ({} bytes)", request_bytes.len());
         match io::Write::write_all(&mut stream, &request_bytes) {
-            Ok(_) => debug!("Request sent successfully"),
+            Ok(()) => debug!("Request sent successfully"),
             Err(e) => {
                 return Err(HelperError::Communication(format!(
                     "Failed to write request: {e}"
@@ -136,7 +136,7 @@ pub fn send_request(
         }
 
         match io::Write::flush(&mut stream) {
-            Ok(_) => debug!("Socket flushed successfully"),
+            Ok(()) => debug!("Socket flushed successfully"),
             Err(e) => {
                 return Err(HelperError::Communication(format!(
                     "Failed to flush socket: {e}"
@@ -237,8 +237,7 @@ fn read_unix_response(mut stream: UnixStream) -> Result<HelperResponse, HelperEr
                 }
             }
             Err(e)
-                if e.kind() == std::io::ErrorKind::WouldBlock
-                    || e.kind() == std::io::ErrorKind::TimedOut =>
+                if e.kind() == io::ErrorKind::WouldBlock || e.kind() == io::ErrorKind::TimedOut =>
             {
                 if buffer.is_empty() {
                     debug!("No data received yet, waiting...");
@@ -259,7 +258,7 @@ fn read_unix_response(mut stream: UnixStream) -> Result<HelperResponse, HelperEr
                 std::thread::sleep(Duration::from_millis(200));
                 continue;
             }
-            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => {
                 debug!("Read interrupted, retrying...");
                 continue;
             }

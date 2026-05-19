@@ -29,7 +29,7 @@ pub async fn update_config_state_with_pool(
 }
 
 pub async fn update_config_state(config_state: &ConfigState) -> Result<(), String> {
-    let pool = get_db_pool().await.map_err(|e| e.to_string())?;
+    let pool = get_db_pool().await?;
     update_config_state_with_pool(config_state, &pool).await
 }
 
@@ -94,7 +94,7 @@ pub async fn get_configs_state_with_pool(pool: &SqlitePool) -> Result<Vec<Config
 }
 
 pub async fn get_configs_state() -> Result<Vec<ConfigState>, String> {
-    let pool = get_db_pool().await.map_err(|e| e.to_string())?;
+    let pool = get_db_pool().await?;
     get_configs_state_with_pool(&pool).await
 }
 
@@ -126,7 +126,7 @@ pub async fn get_configs_state_with_mode(mode: DatabaseMode) -> Result<Vec<Confi
 
 pub async fn cleanup_current_process_config_states() -> Result<(), String> {
     let current_process_id = std::process::id();
-    let pool = get_db_pool().await.map_err(|e| e.to_string())?;
+    let pool = get_db_pool().await?;
     let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
 
     let affected_rows = sqlx::query(

@@ -59,34 +59,34 @@ impl ForwarderBuilder {
         self
     }
 
-    pub fn max_sessions(mut self, n: usize) -> Self {
+    pub const fn max_sessions(mut self, n: usize) -> Self {
         self.config.max_sessions = n;
         self
     }
 
-    pub fn session_capacity(mut self, n: usize) -> Self {
+    pub const fn session_capacity(mut self, n: usize) -> Self {
         self.config.session_capacity = n;
         self
     }
 
-    pub fn keepalive(mut self, ping: Duration, watchdog: Duration) -> Self {
+    pub const fn keepalive(mut self, ping: Duration, watchdog: Duration) -> Self {
         self.config.ping_interval = ping;
         self.config.watchdog_timeout = watchdog;
         self
     }
 
-    pub fn shutdown_grace(mut self, drain: Duration) -> Self {
+    pub const fn shutdown_grace(mut self, drain: Duration) -> Self {
         self.config.shutdown_grace = drain;
         self
     }
 
-    pub fn prune(mut self, interval: Duration, idle_age: Duration) -> Self {
+    pub const fn prune(mut self, interval: Duration, idle_age: Duration) -> Self {
         self.config.prune_interval = interval;
         self.config.prune_idle_age = idle_age;
         self
     }
 
-    pub fn prefetch_threshold(mut self, ratio: f32) -> Self {
+    pub const fn prefetch_threshold(mut self, ratio: f32) -> Self {
         self.config.prefetch_threshold = ratio.clamp(0.0, 1.0);
         self
     }

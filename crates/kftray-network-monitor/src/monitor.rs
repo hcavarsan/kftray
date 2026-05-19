@@ -25,14 +25,14 @@ use crate::types::{
 static TASK_STATE: tokio::sync::OnceCell<Arc<Mutex<TaskState>>> =
     tokio::sync::OnceCell::const_new();
 
-pub struct NetworkMonitor {
+pub(crate) struct NetworkMonitor {
     config: MonitorConfig,
     network_checker: NetworkChecker,
     health_checker: HealthChecker,
 }
 
 impl NetworkMonitor {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let config = MonitorConfig::default();
         Self {
             network_checker: NetworkChecker::new(config.clone()),
@@ -41,7 +41,7 @@ impl NetworkMonitor {
         }
     }
 
-    pub async fn start(self) {
+    pub(crate) async fn start(self) {
         info!("Starting network monitor");
 
         let initial_configs = match ConfigManager::get_active_configs().await {
@@ -197,7 +197,7 @@ impl NetworkMonitor {
         }
     }
 
-    fn get_sleep_duration(&self, network_up: bool, failure_count: u32) -> Duration {
+    const fn get_sleep_duration(&self, network_up: bool, failure_count: u32) -> Duration {
         match (network_up, failure_count) {
             (true, 0) => self.config.sleep_up,
             (true, _) => self.config.network_timeout,
@@ -425,7 +425,7 @@ impl Clone for NetworkMonitor {
     }
 }
 
-pub async fn start_network_monitor() {
+pub(crate) async fn start_network_monitor() {
     let monitor = NetworkMonitor::new();
     monitor.start().await;
 }

@@ -113,7 +113,7 @@ impl MessageFormatter {
                         for line in headers_str.lines() {
                             let line_lower = line.to_lowercase();
                             if line_lower.starts_with("content-type:") {
-                                content_type = line.split(':').nth(1).map(|s| s.trim());
+                                content_type = line.split(':').nth(1).map(str::trim);
                             }
                             if line_lower.starts_with("content-encoding:")
                                 && line_lower.contains("gzip")
@@ -483,11 +483,7 @@ impl MessageFormatter {
 
         let mut current_data = body.to_vec();
 
-        let encodings: Vec<&str> = content_encoding
-            .split(',')
-            .map(|s| s.trim())
-            .rev()
-            .collect();
+        let encodings: Vec<&str> = content_encoding.split(',').map(str::trim).rev().collect();
 
         for encoding in encodings {
             match encoding {
@@ -619,7 +615,7 @@ impl MessageFormatter {
         None
     }
 
-    fn status_text(status: u16) -> &'static str {
+    const fn status_text(status: u16) -> &'static str {
         match status {
             100 => "Continue",
             101 => "Switching Protocols",

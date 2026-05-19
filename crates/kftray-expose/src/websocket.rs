@@ -39,7 +39,7 @@ pub struct WebSocketTunnelClient {
 }
 
 impl WebSocketTunnelClient {
-    pub fn new(
+    pub const fn new(
         websocket_port: u16, local_service_address: String, local_service_port: u16,
     ) -> Self {
         Self {
@@ -68,17 +68,17 @@ impl WebSocketTunnelClient {
             );
 
             tokio::select! {
-                _ = cancel.cancelled() => {
+                () = cancel.cancelled() => {
                     info!("WebSocket tunnel cancelled during connect");
                     break;
                 }
                 result = self.connect_and_run(&ws_url) => {
                     match result {
-                        Ok(_) => {
+                        Ok(()) => {
                             info!("WebSocket tunnel disconnected gracefully");
                         }
                         Err(e) => {
-                            error!("WebSocket tunnel error: {}", e);
+                            error!("WebSocket tunnel error: {e}");
                         }
                     }
                 }
@@ -87,23 +87,19 @@ impl WebSocketTunnelClient {
             retry_count += 1;
             if retry_count >= max_retries {
                 return Err(ExposeError::Expose(format!(
-                    "Max reconnection attempts ({}) reached",
-                    max_retries
+                    "Max reconnection attempts ({max_retries}) reached"
                 )));
             }
 
             let backoff_secs = std::cmp::min(2_u64.pow(retry_count.min(4)), 30);
-            warn!(
-                "WebSocket disconnected. Reconnecting in {} seconds...",
-                backoff_secs
-            );
+            warn!("WebSocket disconnected. Reconnecting in {backoff_secs} seconds...");
 
             tokio::select! {
-                _ = cancel.cancelled() => {
+                () = cancel.cancelled() => {
                     info!("WebSocket tunnel cancelled during backoff");
                     break;
                 }
-                _ = tokio::time::sleep(tokio::time::Duration::from_secs(backoff_secs)) => {}
+                () = tokio::time::sleep(tokio::time::Duration::from_secs(backoff_secs)) => {}
             }
         }
 
@@ -114,7 +110,7 @@ impl WebSocketTunnelClient {
         // Connect to the port-forwarded WebSocket endpoint
         let (ws_stream, _) = connect_async(ws_url)
             .await
-            .map_err(|e| ExposeError::Expose(format!("Failed to connect to WebSocket: {}", e)))?;
+            .map_err(|e| ExposeError::Expose(format!("Failed to connect to WebSocket: {e}")))?;
 
         info!("WebSocket tunnel connected");
 
@@ -135,7 +131,7 @@ impl WebSocketTunnelClient {
                         headers,
                         body,
                     }) => {
-                        debug!("Received HTTP request: {} {}", method, path);
+                        debug!("Received HTTP request: {method} {path}");
 
                         let response_msg = self
                             .forward_to_local_service(
@@ -153,12 +149,12 @@ impl WebSocketTunnelClient {
                                 if let Err(e) =
                                     ws_write.send(Message::Binary(response_data.into())).await
                                 {
-                                    error!("Failed to send response through WebSocket: {}", e);
+                                    error!("Failed to send response through WebSocket: {e}");
                                     break;
                                 }
                             }
                             Err(e) => {
-                                error!("Failed to serialize response: {}", e);
+                                error!("Failed to serialize response: {e}");
                             }
                         }
                     }
@@ -173,7 +169,7 @@ impl WebSocketTunnelClient {
                         warn!("Received unexpected message type from pod");
                     }
                     Err(e) => {
-                        error!("Failed to deserialize tunnel message: {}", e);
+                        error!("Failed to deserialize tunnel message: {e}");
                     }
                 },
                 Ok(Message::Ping(_)) => {
@@ -184,7 +180,7 @@ impl WebSocketTunnelClient {
                     break;
                 }
                 Err(e) => {
-                    error!("WebSocket error: {}", e);
+                    error!("WebSocket error: {e}");
                     break;
                 }
                 _ => {}
@@ -202,17 +198,14 @@ impl WebSocketTunnelClient {
             "http://{}:{}{}",
             self.local_service_address, self.local_service_port, path
         );
-        debug!(
-            "Forwarding {} {} to local service at {}",
-            method, path, uri_str
-        );
+        debug!("Forwarding {method} {path} to local service at {uri_str}");
         let uri: Uri = match uri_str.parse() {
             Ok(u) => u,
             Err(e) => {
-                error!("Invalid URI {}: {}", uri_str, e);
+                error!("Invalid URI {uri_str}: {e}");
                 return TunnelMessage::Error {
                     id: Some(request_id),
-                    message: format!("Invalid URI: {}", e),
+                    message: format!("Invalid URI: {e}"),
                 };
             }
         };
@@ -226,10 +219,10 @@ impl WebSocketTunnelClient {
             "HEAD" => Method::HEAD,
             "OPTIONS" => Method::OPTIONS,
             _ => {
-                error!("Unsupported HTTP method: {}", method);
+                error!("Unsupported HTTP method: {method}");
                 return TunnelMessage::Error {
                     id: Some(request_id),
-                    message: format!("Unsupported method: {}", method),
+                    message: format!("Unsupported method: {method}"),
                 };
             }
         };
@@ -247,10 +240,10 @@ impl WebSocketTunnelClient {
         let request = match req_builder.body(Full::new(Bytes::from(body))) {
             Ok(req) => req,
             Err(e) => {
-                error!("Failed to build HTTP request: {}", e);
+                error!("Failed to build HTTP request: {e}");
                 return TunnelMessage::Error {
                     id: Some(request_id),
-                    message: format!("Failed to build request: {}", e),
+                    message: format!("Failed to build request: {e}"),
                 };
             }
         };
@@ -258,13 +251,13 @@ impl WebSocketTunnelClient {
         let service_addr = format!("{}:{}", self.local_service_address, self.local_service_port);
         match tokio::net::TcpStream::connect(&service_addr).await {
             Ok(_stream) => {
-                debug!("TCP connection to {} successful", service_addr);
+                debug!("TCP connection to {service_addr} successful");
             }
             Err(e) => {
-                error!("Cannot establish TCP connection to {}: {}", service_addr, e);
+                error!("Cannot establish TCP connection to {service_addr}: {e}");
                 return TunnelMessage::Error {
                     id: Some(request_id),
-                    message: format!("Cannot connect to local service at {}: {}", service_addr, e),
+                    message: format!("Cannot connect to local service at {service_addr}: {e}"),
                 };
             }
         }
@@ -282,7 +275,7 @@ impl WebSocketTunnelClient {
                 match response.into_body().collect().await {
                     Ok(collected) => {
                         let body_bytes = collected.to_bytes();
-                        debug!("Forwarded request successfully, status: {}", status);
+                        debug!("Forwarded request successfully, status: {status}");
                         TunnelMessage::HttpResponse {
                             id: request_id,
                             status,
@@ -291,10 +284,10 @@ impl WebSocketTunnelClient {
                         }
                     }
                     Err(e) => {
-                        error!("Failed to read response body: {}", e);
+                        error!("Failed to read response body: {e}");
                         TunnelMessage::Error {
                             id: Some(request_id),
-                            message: format!("Failed to read response body: {}", e),
+                            message: format!("Failed to read response body: {e}"),
                         }
                     }
                 }

@@ -10,7 +10,7 @@ use tokio::net::TcpStream;
 
 /// Result of sniffing the first bytes of a freshly accepted TCP connection.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Protocol {
+pub(crate) enum Protocol {
     /// HTTP/1.x request (detected by a known method token).
     Http1,
     /// HTTP/2 cleartext preface (`PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n`).
@@ -35,7 +35,7 @@ const HTTP2_PREFACE: &[u8] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 ///
 /// Returns the detected protocol. The stream is not consumed; the caller may
 /// hand the same `TcpStream` to hyper or to a raw relay without any wrapper.
-pub async fn classify(stream: &TcpStream) -> io::Result<Protocol> {
+pub(crate) async fn classify(stream: &TcpStream) -> io::Result<Protocol> {
     let mut buf = [0u8; PEEK_LEN];
     let n = stream.peek(&mut buf).await?;
     let kind = classify_bytes(&buf[..n]);

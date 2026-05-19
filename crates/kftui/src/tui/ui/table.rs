@@ -51,7 +51,7 @@ use crate::tui::ui::{
 };
 
 #[allow(clippy::too_many_arguments)]
-pub fn draw_configs_table(
+pub(crate) fn draw_configs_table(
     frame: &mut Frame, area: Rect, configs: &[Config], config_states: &[ConfigState],
     state: &mut TableState, title: &str, has_focus: bool, selected_rows: &HashSet<usize>,
     configs_being_processed: &std::collections::HashMap<i64, (Arc<AtomicBool>, std::time::Instant)>,
@@ -110,7 +110,7 @@ pub fn draw_configs_table(
                 Cell::from(
                     config
                         .local_port
-                        .map_or_else(|| "".to_string(), |port| port.to_string()),
+                        .map_or_else(String::new, |port| port.to_string()),
                 ),
                 Cell::from(config.context.clone().unwrap_or_default()),
             ])
@@ -186,7 +186,7 @@ pub fn draw_configs_table(
     frame.render_stateful_widget(scrollbar, scrollbar_area, &mut scrollbar_state);
 }
 
-pub fn render_details(
+pub(crate) fn render_details(
     f: &mut Frame, app: &mut App, config: &Config, config_states: &[ConfigState], area: Rect,
     has_focus: bool,
 ) {
@@ -222,7 +222,7 @@ pub fn render_details(
         && let Some(config_id) = config.id
         && let Some(local_port) = config.local_port
     {
-        let log_file_name = format!("{}_{}.http", config_id, local_port);
+        let log_file_name = format!("{config_id}_{local_port}.http");
         if let Ok(log_folder_path) = kftray_commons::utils::config_dir::get_log_folder_path() {
             let log_file_path = log_folder_path.join(&log_file_name);
             details.push(Line::from(vec![
@@ -290,7 +290,7 @@ pub fn render_details(
             Span::raw(
                 config
                     .local_port
-                    .map_or_else(|| "".to_string(), |port| port.to_string()),
+                    .map_or_else(String::new, |port| port.to_string()),
             ),
         ]),
         Line::from(vec![
@@ -308,7 +308,7 @@ pub fn render_details(
             Span::raw(
                 config
                     .remote_port
-                    .map_or_else(|| "".to_string(), |port| port.to_string()),
+                    .map_or_else(String::new, |port| port.to_string()),
             ),
         ]),
         Line::from(vec![
@@ -391,6 +391,6 @@ pub fn render_details(
     f.render_stateful_widget(scrollbar, scrollbar_area, &mut scrollbar_state);
 }
 
-pub fn style_bold() -> Style {
+pub(crate) fn style_bold() -> Style {
     Style::default().add_modifier(Modifier::BOLD)
 }

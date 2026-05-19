@@ -76,7 +76,7 @@ async fn execute_strategies(strategies: Vec<Strategy<'_>>) -> Option<Client> {
         info!("Attempting strategy: {description}");
 
         let result = match strategy.await {
-            Ok(client) => test_client_connection(&client).await.map(|_| client),
+            Ok(client) => test_client_connection(&client).await.map(|()| client),
             Err(e) => Err(e),
         };
 
@@ -309,7 +309,7 @@ where
                         r.version(),
                         r.headers(),
                     ),
-                    Err(e) => log::debug!("HTTP ← error: {:?}", e),
+                    Err(e) => log::debug!("HTTP ← error: {e:?}"),
                 }
             }
             res

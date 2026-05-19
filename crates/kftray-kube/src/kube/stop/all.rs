@@ -98,7 +98,7 @@ pub async fn stop_all_port_forward_with_mode(
                     crate::registry::PortForwardSlot::Expose => "expose".to_string(),
                 };
 
-                let config_option = config_map_ref.get(&config_id_parsed).cloned();
+                let config_option = config_map_ref.get(&config_id_parsed).copied();
 
                 if let Some(config) = &config_option {
                     if config.domain_enabled.unwrap_or_default() {

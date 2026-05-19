@@ -275,7 +275,7 @@ pub(crate) async fn upgrade_legacy_spdy(
 /// Fallback fires on apiserver-rejected upgrades (4xx / 5xx) and on
 /// subprotocol-echo mismatches. Real transport failures (Kube/Network/Io)
 /// propagate so callers see the actual reason.
-fn should_fallback(err: &Error) -> bool {
+const fn should_fallback(err: &Error) -> bool {
     matches!(
         err,
         Error::UpgradeFailed { .. } | Error::ProtocolViolation { .. }

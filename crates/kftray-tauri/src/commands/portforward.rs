@@ -67,7 +67,7 @@ use tokio::time::{
     interval,
 };
 
-pub async fn check_and_emit_changes(app_handle: AppHandle<Wry>) {
+pub(crate) async fn check_and_emit_changes(app_handle: AppHandle<Wry>) {
     let mut interval = interval(Duration::from_millis(500));
     let previous_config_states = Arc::new(Mutex::new(Vec::new()));
     let previous_configs = Arc::new(Mutex::new(Vec::new()));
@@ -162,33 +162,29 @@ fn config_compare_changes<T: PartialEq>(prev: &[T], current: &[T]) -> bool {
 }
 
 #[tauri::command]
-pub async fn start_port_forward_udp_cmd(
-    configs: Vec<Config>, _app_handle: tauri::AppHandle<Wry>,
+pub(crate) async fn start_port_forward_udp_cmd(
+    configs: Vec<Config>, _app_handle: AppHandle<Wry>,
 ) -> Result<Vec<CustomResponse>, String> {
-    start_with_expose_dispatch(configs, "udp")
-        .await
-        .map_err(|e| e.to_string())
+    start_with_expose_dispatch(configs, "udp").await
 }
 
 #[tauri::command]
-pub async fn start_port_forward_tcp_cmd(
-    configs: Vec<Config>, _app_handle: tauri::AppHandle<Wry>,
+pub(crate) async fn start_port_forward_tcp_cmd(
+    configs: Vec<Config>, _app_handle: AppHandle<Wry>,
 ) -> Result<Vec<CustomResponse>, String> {
-    start_with_expose_dispatch(configs, "tcp")
-        .await
-        .map_err(|e| e.to_string())
+    start_with_expose_dispatch(configs, "tcp").await
 }
 
 #[tauri::command]
-pub async fn stop_all_port_forward_cmd(
-    _app_handle: tauri::AppHandle<Wry>,
+pub(crate) async fn stop_all_port_forward_cmd(
+    _app_handle: AppHandle<Wry>,
 ) -> Result<Vec<CustomResponse>, String> {
     stop_all_port_forward().await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub async fn stop_port_forward_cmd(
-    config_id: String, _app_handle: tauri::AppHandle<Wry>,
+pub(crate) async fn stop_port_forward_cmd(
+    config_id: String, _app_handle: AppHandle<Wry>,
 ) -> Result<CustomResponse, String> {
     stop_port_forward(config_id.clone())
         .await
@@ -196,8 +192,8 @@ pub async fn stop_port_forward_cmd(
 }
 
 #[tauri::command]
-pub async fn deploy_and_forward_pod_cmd(
-    configs: Vec<Config>, _app_handle: tauri::AppHandle<Wry>,
+pub(crate) async fn deploy_and_forward_pod_cmd(
+    configs: Vec<Config>, _app_handle: AppHandle<Wry>,
 ) -> Result<Vec<CustomResponse>, String> {
     deploy_and_forward_pod(configs.clone())
         .await
@@ -205,8 +201,8 @@ pub async fn deploy_and_forward_pod_cmd(
 }
 
 #[tauri::command]
-pub async fn stop_proxy_forward_cmd(
-    config_id: String, namespace: &str, service_name: String, _app_handle: tauri::AppHandle<Wry>,
+pub(crate) async fn stop_proxy_forward_cmd(
+    config_id: String, namespace: &str, service_name: String, _app_handle: AppHandle<Wry>,
 ) -> Result<CustomResponse, String> {
     let config_id = config_id
         .parse::<i64>()
@@ -218,7 +214,7 @@ pub async fn stop_proxy_forward_cmd(
 }
 
 #[tauri::command]
-pub async fn get_active_pod_cmd(config_id: String) -> Result<Option<String>, String> {
+pub(crate) async fn get_active_pod_cmd(config_id: String) -> Result<Option<String>, String> {
     use kftray_kube::registry::PORT_FORWARD_REGISTRY;
 
     let config_id_parsed = config_id
@@ -229,7 +225,7 @@ pub async fn get_active_pod_cmd(config_id: String) -> Result<Option<String>, Str
 }
 
 #[tauri::command]
-pub async fn handle_exit_app(app_handle: tauri::AppHandle<Wry>) {
+pub(crate) async fn handle_exit_app(app_handle: AppHandle<Wry>) {
     match app_handle.get_webview_window("main") {
         Some(window) => {
             let config_states = match get_configs_state().await {
@@ -259,40 +255,37 @@ pub async fn handle_exit_app(app_handle: tauri::AppHandle<Wry>) {
             .title("Exit Kftray")
             .buttons(MessageDialogButtons::YesNo)
             .show(move |response| {
-                match response {
-                    true => {
-                        // User clicked "Yes" - stop all port forwards
-                        info!("User chose to stop all port forwards before closing.");
-                        tauri::async_runtime::spawn(async move {
-                            match stop_all_port_forward().await {
-                                Ok(responses) => {
-                                    info!("Successfully stopped all port forwards: {responses:?}");
-                                }
-                                Err(err) => {
-                                    error!("Failed to stop port forwards: {err:?}");
-                                }
+                if response {
+                    // User clicked "Yes" - stop all port forwards
+                    info!("User chose to stop all port forwards before closing.");
+                    tauri::async_runtime::spawn(async move {
+                        match stop_all_port_forward().await {
+                            Ok(responses) => {
+                                info!("Successfully stopped all port forwards: {responses:?}");
                             }
-                            if let Err(e) = cleanup_current_process_config_states().await {
-                                error!("Failed to cleanup config states: {e}");
+                            Err(err) => {
+                                error!("Failed to stop port forwards: {err:?}");
                             }
-                            // Stop MCP server if running
-                            if let Err(e) = crate::mcp::stop().await {
-                                error!("Failed to stop MCP server: {e}");
-                            }
-                            std::process::exit(0);
-                        });
-                    }
-                    false => {
-                        // User clicked "No" - leave port forwards running and just exit
-                        info!("User chose to leave all port-forwards running.");
+                        }
+                        if let Err(e) = cleanup_current_process_config_states().await {
+                            error!("Failed to cleanup config states: {e}");
+                        }
                         // Stop MCP server if running
-                        tauri::async_runtime::spawn(async move {
-                            if let Err(e) = crate::mcp::stop().await {
-                                error!("Failed to stop MCP server: {e}");
-                            }
-                            std::process::exit(0);
-                        });
-                    }
+                        if let Err(e) = crate::mcp::stop().await {
+                            error!("Failed to stop MCP server: {e}");
+                        }
+                        std::process::exit(0);
+                    });
+                } else {
+                    // User clicked "No" - leave port forwards running and just exit
+                    info!("User chose to leave all port-forwards running.");
+                    // Stop MCP server if running
+                    tauri::async_runtime::spawn(async move {
+                        if let Err(e) = crate::mcp::stop().await {
+                            error!("Failed to stop MCP server: {e}");
+                        }
+                        std::process::exit(0);
+                    });
                 }
             });
         }

@@ -39,7 +39,7 @@ impl Default for ResponseLoggingState {
 }
 
 impl ResponseLoggingState {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             complete_response: Vec::new(),
             already_logged: false,
@@ -59,7 +59,9 @@ pub struct ResponseChunkContext {
 }
 
 impl ResponseChunkContext {
-    pub fn new(response_logged: Arc<Mutex<bool>>, request_id: Arc<Mutex<Option<String>>>) -> Self {
+    pub const fn new(
+        response_logged: Arc<Mutex<bool>>, request_id: Arc<Mutex<Option<String>>>,
+    ) -> Self {
         Self {
             complete_response: Vec::new(),
             is_chunked: false,
@@ -115,7 +117,7 @@ impl HttpResponseHandler {
         }
     }
 
-    pub fn config(&self) -> &ResponseHandlerConfig {
+    pub const fn config(&self) -> &ResponseHandlerConfig {
         &self.config
     }
 
@@ -587,7 +589,7 @@ impl HttpResponseHandler {
                     )
                     .await
                     {
-                        Ok(_) => {
+                        Ok(()) => {
                             debug!(
                                 "Final response ({}B) successfully logged (connection end)",
                                 response_size
@@ -970,6 +972,6 @@ mod tests {
 
         assert!(!formatted.is_empty());
 
-        assert!(formatted.contains("empty") || formatted.contains("#") || !formatted.is_empty());
+        assert!(formatted.contains("empty") || formatted.contains('#') || !formatted.is_empty());
     }
 }
