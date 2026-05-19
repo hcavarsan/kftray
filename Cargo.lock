@@ -1909,6 +1909,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9f1f227452a390804cdb637b74a86990f2a7d7ba4b7d5693aac9b4dd6defd8d6"
 
 [[package]]
+name = "fastwebsockets"
+version = "0.10.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "305d3ba574508e27190906d11707dad683e0494e6b85eae9b044cb2734a5e422"
+dependencies = [
+ "bytes",
+ "rand 0.8.6",
+ "simdutf8",
+ "thiserror 1.0.69",
+ "tokio",
+ "utf-8",
+]
+
+[[package]]
 name = "fax"
 version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3867,8 +3881,10 @@ name = "kube-portforward"
 version = "0.1.0"
 dependencies = [
  "arc-swap",
+ "base64 0.22.1",
  "bytes",
- "dashmap",
+ "crossbeam-queue",
+ "fastwebsockets",
  "flate2",
  "futures",
  "http",
@@ -3879,13 +3895,13 @@ dependencies = [
  "kube-runtime",
  "parking_lot",
  "quanta",
+ "rand 0.10.1",
+ "spdy-mux",
  "thiserror 2.0.18",
  "tokio",
- "tokio-tungstenite 0.29.0",
  "tokio-util",
  "tracing",
  "tracing-subscriber",
- "tungstenite 0.29.0",
 ]
 
 [[package]]
@@ -5722,6 +5738,8 @@ version = "0.8.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5ca0ecfa931c29007047d1bc58e623ab12e5590e8c7cc53200d5202b69266d8a"
 dependencies = [
+ "libc",
+ "rand_chacha 0.3.1",
  "rand_core 0.6.4",
 ]
 
@@ -5731,7 +5749,7 @@ version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "44c5af06bb1b7d3216d91932aed5265164bf384dc89cd6ba05cf59a35f5f76ea"
 dependencies = [
- "rand_chacha",
+ "rand_chacha 0.9.0",
  "rand_core 0.9.5",
 ]
 
@@ -5744,6 +5762,16 @@ dependencies = [
  "chacha20",
  "getrandom 0.4.2",
  "rand_core 0.10.1",
+]
+
+[[package]]
+name = "rand_chacha"
+version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e6c10a63a0fa32252be49d21e7709d4d4baf8d231c2dbce1eaa8141b9b127d88"
+dependencies = [
+ "ppv-lite86",
+ "rand_core 0.6.4",
 ]
 
 [[package]]
@@ -6836,6 +6864,21 @@ dependencies = [
  "gobject-sys",
  "libc",
  "system-deps",
+]
+
+[[package]]
+name = "spdy-mux"
+version = "0.1.0"
+dependencies = [
+ "bytes",
+ "fastwebsockets",
+ "flate2",
+ "futures",
+ "parking_lot",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-util",
+ "tracing",
 ]
 
 [[package]]

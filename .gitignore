@@ -56,3 +56,4 @@ fuzz/corpus/**/crash-*
 fuzz/corpus/**/leak-*
 fuzz/corpus/**/timeout-*
 .omc/
+bench/

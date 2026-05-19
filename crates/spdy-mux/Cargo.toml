@@ -1,0 +1,24 @@
+[package]
+name = "spdy-mux"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "SPDY/3.1 stream multiplexer over WebSocket transports"
+license = "GPL-3.0"
+repository = "https://github.com/hcavarsan/kftray"
+keywords = ["spdy", "multiplexer", "websocket", "async", "tokio"]
+categories = ["network-programming", "asynchronous"]
+
+[dependencies]
+bytes = { workspace = true }
+flate2 = { workspace = true, features = ["zlib-rs"] }
+fastwebsockets = { workspace = true }
+futures = { workspace = true }
+parking_lot = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+tracing = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["full"] }

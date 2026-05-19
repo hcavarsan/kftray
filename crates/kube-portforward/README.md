@@ -1,45 +1,40 @@
 # kube-portforward
 
-Production-ready Kubernetes port-forward over WebSocket with channel multiplexing.
+Kubernetes port-forward over a multiplexed SPDY/3.1 connection, with the legacy upgrade as a fallback.
 
-Speaks `v5.channel.k8s.io` (preferred) and `v4.channel.k8s.io` (fallback) per
-[KEP-4006](https://github.com/kubernetes/enhancements/issues/4006). Multiplexes
-N concurrent local TCP connections over ONE WebSocket upgrade by encoding the
-target pod port N times in the URL.
+## Why
 
-## Why not `kube::Api::portforward`?
+A naive port-forward against a real cluster from a desktop client opens one TCP upgrade per local connection. Every new client triggers a fresh TLS handshake to the API server. At 30 concurrent connections you spend half your time in handshakes.
 
-| Feature                                | `kube::Api::portforward` | `kube-portforward` |
-|----------------------------------------|--------------------------|--------------------|
-| WebSocket transport                    | Yes                      | Yes                |
-| Channel multiplexing over one WS       | No (one upgrade per pair)| Yes (N pairs)      |
-| `v5.channel.k8s.io` half-close support | Limited                  | Yes (ID reuse)     |
-| Keepalive Ping + watchdog              | No                       | Yes (15s/30s)      |
-| Graceful shutdown drain                | No                       | Yes (configurable) |
-| Pre-1.30 detection with KEP-4006 hint  | Opaque `kube::Error`     | `ServerVersionTooOld` |
-| Structured `thiserror` errors          | No                       | Yes                |
-| Builder-pattern config                 | No                       | Yes                |
-| Pluggable recovery callback            | No                       | Yes                |
+This crate opens one upgrade per session, or a small pool, and multiplexes every local TCP connection through it. The primary wire format is `SPDY/3.1+portforward.k8s.io`, the WebSocket-tunneled SPDY from KEP-4006 (Beta since Kubernetes 1.31). Against older clusters that reject the subprotocol, the dialer falls back to the original `Upgrade: SPDY/3.1` wire format kubectl has used since the beginning.
 
-## Option B Multiplexing
+Both paths carry the same SPDY frames. The difference is the envelope.
 
-For each session, the URL encodes the target port N times:
+## What's in it
 
-```
-?ports=9200&ports=9200&...&ports=9200
-```
+A small pool of upgrades per session instead of one upgrade per stream. A PING watchdog that catches API server idle timeouts before they silently kill the connection. Automatic fallback to the legacy `Upgrade: SPDY/3.1` path for clusters that reject the modern subprotocol. Typed errors. A forwarder layer with pod watching, graceful drain, and recovery callbacks.
 
-The apiserver and kubelet allocate 2N channel IDs at handshake (a data/error
-pair per URL occurrence). Channel pair `(2i, 2i+1)` corresponds to URL
-position `i`. The allocator hands pairs out in URL order — first call
-returns `(0, 1)`, second `(2, 3)`, and so on.
+The streams implement `tokio::io::AsyncRead + AsyncWrite`, so `tokio::io::copy_bidirectional` works as the local TCP relay loop without any glue code.
 
-On `v5`, the half-close signal `[0xFF, channel]` releases an ID pair back
-to the free-list, letting one session sustain a high turnover of short-lived
-local connections. On `v4`, released pairs stay reserved for the session
-lifetime.
+## Tradeoffs
 
-## Quick Start
+SPDY is on its way out. The whole stack sits on SPDY/3.1, which Kubernetes is migrating off (KEP-4006). WebSocket-to-kubelet went Beta in 1.36 and is on track for GA. When that completes, the codec underneath becomes redundant. The WebSocket transport, the pool, the keepalive, and the fallback dialer survive. The codec does not. Plan accordingly.
+
+Only kubectl-shaped peers work. The wire pattern is the kubectl one: `SYN_STREAM(error)`, `SYN_STREAM(data)`, `DATA+FIN(error)`, in that order. It matches what the kubelet expects. Pointing this at a non-kubelet peer that interprets stream pairs differently will not work.
+
+This is a streaming layer, not a Kubernetes client. You bring your own Kubernetes client to handle auth and kubeconfig, then pass in the resulting cluster URL.
+
+## The story
+
+I was building a desktop port-forward tool. Under wrk and vegeta load it fell over, and I wanted to find out why.
+
+For one or two concurrent connections per pod, anything works. At 30+ concurrent connections, the cost of a fresh TLS handshake on every new local TCP client dominates everything else. The structural fix is to stop opening one upgrade per stream. SPDY/3.1 was designed for exactly this kind of multiplexing.
+
+Implementing it took longer than I expected. Zlib header compression with the standard SPDY dictionary is annoying to debug; mostly wire traces and hex dumps. The hardest bug was a wire-order quirk: the kubelet only takes the success path if you emit `SYN_STREAM(error)`, then `SYN_STREAM(data)`, then an empty `DATA+FIN` on the error stream, in that exact order. Set `fin=true` on the SYN_STREAM directly and the kubelet rejects the forwarding with an error message written back on the error stream. Matching kubectl's exact pattern was the difference between "works" and "mysteriously fails halfway through the first request".
+
+This is not the right shape forever. Once Kubernetes finishes the migration to WebSockets through the entire path, half of this code becomes redundant. The plan is to port the multiplexer and pool on top of a pure WebSocket transport and delete the codec.
+
+## Quick start
 
 ```rust,no_run
 use kube_portforward::Client;
@@ -54,9 +49,14 @@ session.close().await?;
 # Ok(()) }
 ```
 
-See `examples/` for end-to-end usage including multiplexing, custom keepalive
-timings, and graceful shutdown.
+## What's underneath
+
+The multiplexer lives in a separate crate, `spdy-mux`. It does not know anything about Kubernetes. This crate adds the Kubernetes part: upgrade negotiation, header construction, fallback, and the forwarder layer.
+
+## Examples
+
+See `examples/` for end-to-end usage. You will need a real cluster to run them.
 
 ## License
 
-Dual-licensed under MIT or Apache-2.0, at your option.
+GPL-3.0.
