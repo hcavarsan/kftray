@@ -105,9 +105,9 @@ fn create_static_timeout_callback() -> Arc<dyn Fn(i64) + Send + Sync> {
 async fn build_tls_acceptor(
     _config: &Config, settings: &kftray_commons::models::settings_model::AppSettings,
 ) -> Result<tokio_rustls::TlsAcceptor> {
-    crate::ssl::ensure_crypto_provider_installed();
+    kftray_ssl::ensure_crypto_provider_installed();
 
-    let cert_manager = crate::ssl::CertificateManager::new(settings)?;
+    let cert_manager = kftray_ssl::CertificateManager::new(settings)?;
     let cert_pair = cert_manager.load_global_certificate().await?;
 
     let server_config = rustls::ServerConfig::builder()

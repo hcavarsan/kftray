@@ -40,6 +40,7 @@ jiff = { workspace = true }
 k8s-openapi = { workspace = true }
 keyring-core = { workspace = true }
 kftray-commons = { workspace = true }
+kftray-ssl = { workspace = true }
 kftray-helper = { workspace = true }
 kftray-http-logs = { workspace = true }
 kube = { workspace = true }

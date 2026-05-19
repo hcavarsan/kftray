@@ -3619,6 +3619,7 @@ dependencies = [
  "kftray-commons",
  "kftray-helper",
  "kftray-http-logs",
+ "kftray-ssl",
  "kube",
  "kube-portforward",
  "kube-runtime",
@@ -3704,6 +3705,28 @@ dependencies = [
 [[package]]
 name = "kftray-ssl"
 version = "0.27.30"
+dependencies = [
+ "anyhow",
+ "apple-native-keyring-store",
+ "base64 0.22.1",
+ "dbus-secret-service-keyring-store",
+ "dirs",
+ "keyring-core",
+ "kftray-commons",
+ "lazy_static",
+ "linux-keyutils-keyring-store",
+ "log",
+ "pem",
+ "rcgen",
+ "rustls",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "time",
+ "tokio",
+ "windows 0.62.2",
+ "windows-native-keyring-store",
+]
 
 [[package]]
 name = "kftray-tauri"
@@ -3725,6 +3748,7 @@ dependencies = [
  "kftray-network-monitor",
  "kftray-portforward",
  "kftray-shortcuts",
+ "kftray-ssl",
  "ksni",
  "kube",
  "lazy_static",
@@ -3777,6 +3801,7 @@ dependencies = [
  "kftray-commons",
  "kftray-network-monitor",
  "kftray-portforward",
+ "kftray-ssl",
  "libc",
  "log",
  "mimalloc",
