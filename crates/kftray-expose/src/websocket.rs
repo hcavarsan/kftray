@@ -30,7 +30,7 @@ use tokio_tungstenite::{
 };
 use tokio_util::sync::CancellationToken;
 
-use crate::port_forward_error::PortForwardError;
+use crate::error::ExposeError;
 
 pub struct WebSocketTunnelClient {
     websocket_port: u16,
@@ -49,7 +49,7 @@ impl WebSocketTunnelClient {
         }
     }
 
-    pub async fn start(&self, cancel: CancellationToken) -> Result<(), PortForwardError> {
+    pub async fn start(&self, cancel: CancellationToken) -> Result<(), ExposeError> {
         let ws_url = format!("ws://127.0.0.1:{}", self.websocket_port);
         let max_retries = 100;
         let mut retry_count = 0;
@@ -86,7 +86,7 @@ impl WebSocketTunnelClient {
 
             retry_count += 1;
             if retry_count >= max_retries {
-                return Err(PortForwardError::Expose(format!(
+                return Err(ExposeError::Expose(format!(
                     "Max reconnection attempts ({}) reached",
                     max_retries
                 )));
@@ -110,10 +110,10 @@ impl WebSocketTunnelClient {
         Ok(())
     }
 
-    async fn connect_and_run(&self, ws_url: &str) -> Result<(), PortForwardError> {
+    async fn connect_and_run(&self, ws_url: &str) -> Result<(), ExposeError> {
         // Connect to the port-forwarded WebSocket endpoint
         let (ws_stream, _) = connect_async(ws_url).await.map_err(|e| {
-            PortForwardError::Expose(format!("Failed to connect to WebSocket: {}", e))
+            ExposeError::Expose(format!("Failed to connect to WebSocket: {}", e))
         })?;
 
         info!("WebSocket tunnel connected");

@@ -28,6 +28,7 @@ jiff = { workspace = true }
 k8s-openapi = { workspace = true }
 keyring-core = { workspace = true }
 kftray-commons = { workspace = true }
+kftray-expose = { workspace = true }
 kftray-helper = { workspace = true }
 kftray-mcp = { workspace = true }
 kftray-network-monitor = { workspace = true }

@@ -3514,6 +3514,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "kftray-expose"
+version = "0.27.30"
+dependencies = [
+ "bytes",
+ "futures",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "k8s-openapi",
+ "kftray-commons",
+ "kftray-portforward",
+ "kube",
+ "kube-runtime",
+ "log",
+ "rand 0.10.1",
+ "serde_json",
+ "tokio",
+ "tokio-tungstenite 0.29.0",
+ "tokio-util",
+ "whoami",
+]
+
+[[package]]
 name = "kftray-helper"
 version = "0.27.30"
 dependencies = [
@@ -3586,6 +3609,7 @@ dependencies = [
  "hyper-util",
  "k8s-openapi",
  "kftray-commons",
+ "kftray-expose",
  "kftray-portforward",
  "kube",
  "log",
@@ -3603,6 +3627,7 @@ version = "0.27.30"
 dependencies = [
  "futures",
  "kftray-commons",
+ "kftray-expose",
  "kftray-portforward",
  "log",
  "tokio",
@@ -3759,6 +3784,7 @@ dependencies = [
  "k8s-openapi",
  "keyring-core",
  "kftray-commons",
+ "kftray-expose",
  "kftray-helper",
  "kftray-mcp",
  "kftray-network-monitor",
@@ -3815,6 +3841,7 @@ dependencies = [
  "futures",
  "insta",
  "kftray-commons",
+ "kftray-expose",
  "kftray-network-monitor",
  "kftray-portforward",
  "kftray-ssl",

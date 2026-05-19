@@ -1,7 +1,10 @@
+pub mod error;
 pub mod kubernetes;
 pub mod models;
 pub mod templates;
-pub mod websocket_client;
+pub mod websocket;
+
+pub use error::{ExposeError, ExposeResult};
 
 use kftray_commons::models::{
     config_model::Config,
@@ -10,22 +13,20 @@ use kftray_commons::models::{
 };
 use kftray_commons::utils::config_state::update_config_state_with_mode;
 use kftray_commons::utils::db_mode::DatabaseMode;
+use kftray_portforward::kube::shared_client::ServiceClientKey;
+use kftray_portforward::registry::{
+    PORT_FORWARD_REGISTRY,
+    PortForwardKey,
+};
 use log::{
     error,
     info,
 };
 
-use crate::kube::shared_client::ServiceClientKey;
-use crate::port_forward_error::PortForwardError;
-use crate::registry::{
-    PORT_FORWARD_REGISTRY,
-    PortForwardKey,
-};
-
 /// Start expose for given configs
 pub async fn start_expose(
     configs: Vec<Config>, mode: DatabaseMode,
-) -> Result<Vec<CustomResponse>, PortForwardError> {
+) -> Result<Vec<CustomResponse>, ExposeError> {
     let mut responses = Vec::new();
 
     for config in configs {
@@ -40,10 +41,10 @@ pub async fn start_expose(
 
 async fn start_single_expose(
     config: Config, mode: DatabaseMode,
-) -> Result<CustomResponse, PortForwardError> {
+) -> Result<CustomResponse, ExposeError> {
     use self::kubernetes::create_expose_resources;
-    use self::websocket_client::WebSocketTunnelClient;
-    use crate::kube::models::{
+    use self::websocket::WebSocketTunnelClient;
+    use kftray_portforward::kube::models::{
         NameSpace,
         Port,
         PortForward,
@@ -53,7 +54,7 @@ async fn start_single_expose(
 
     let config_id = config
         .id
-        .ok_or_else(|| PortForwardError::ConfigurationError {
+        .ok_or_else(|| ExposeError::Configuration {
             message: "Config has no ID".to_string(),
         })?;
 
@@ -61,7 +62,7 @@ async fn start_single_expose(
     let client = PORT_FORWARD_REGISTRY
         .acquire_client(client_key.clone())
         .await
-        .map_err(|e| PortForwardError::KubeApi(format!("Failed to get K8s client: {}", e)))?;
+        .map_err(|e| ExposeError::KubeApi(format!("Failed to get K8s client: {}", e)))?;
     let client = (*client).clone();
 
     info!("Creating expose resources for config {}", config_id);
@@ -89,12 +90,12 @@ async fn start_single_expose(
         "expose".to_string(),
     )
     .await
-    .map_err(|e| PortForwardError::Expose(format!("Failed to create port-forward: {}", e)))?;
+    .map_err(|e| ExposeError::Expose(format!("Failed to create port-forward: {}", e)))?;
 
     let (websocket_port, pf_process) = port_forward
         .port_forward_tcp(None)
         .await
-        .map_err(|e| PortForwardError::Expose(format!("Failed to start port-forward: {}", e)))?;
+        .map_err(|e| ExposeError::Expose(format!("Failed to start port-forward: {}", e)))?;
 
     info!(
         "Port-forward established: localhost:{} → pod:9999",
@@ -141,7 +142,9 @@ async fn start_single_expose(
         retry_count: None,
         last_error: None,
     };
-    update_config_state_with_mode(&config_state, mode).await?;
+    update_config_state_with_mode(&config_state, mode)
+        .await
+        .map_err(|e| ExposeError::Expose(format!("Failed to update config state: {}", e)))?;
 
     info!("Expose tunnel fully established for config {}", config_id);
 
@@ -161,14 +164,16 @@ async fn start_single_expose(
 
 pub async fn stop_expose(
     config_id: i64, namespace: &str, mode: DatabaseMode,
-) -> Result<CustomResponse, PortForwardError> {
+) -> Result<CustomResponse, ExposeError> {
     use kftray_commons::utils::config::get_config_with_mode;
 
     use self::kubernetes::delete_expose_resources;
 
     info!("Stopping expose for config {}", config_id);
 
-    let config = get_config_with_mode(config_id, mode).await?;
+    let config = get_config_with_mode(config_id, mode)
+        .await
+        .map_err(|e| ExposeError::Expose(format!("Failed to get config: {}", e)))?;
 
     let pf_key = PortForwardKey::expose(config_id);
     if let Some(entry) = PORT_FORWARD_REGISTRY.remove_process(&pf_key) {
@@ -180,7 +185,7 @@ pub async fn stop_expose(
     let client = PORT_FORWARD_REGISTRY
         .acquire_client(client_key)
         .await
-        .map_err(|e| PortForwardError::KubeApi(format!("Failed to get K8s client: {}", e)))?;
+        .map_err(|e| ExposeError::KubeApi(format!("Failed to get K8s client: {}", e)))?;
     let client = (*client).clone();
 
     delete_expose_resources(client, namespace, &config_id.to_string()).await?;
@@ -194,7 +199,9 @@ pub async fn stop_expose(
         retry_count: None,
         last_error: None,
     };
-    update_config_state_with_mode(&config_state, mode).await?;
+    update_config_state_with_mode(&config_state, mode)
+        .await
+        .map_err(|e| ExposeError::Expose(format!("Failed to update config state: {}", e)))?;
 
     info!("Expose stopped for config {}", config_id);
 

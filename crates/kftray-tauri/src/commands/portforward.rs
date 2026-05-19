@@ -17,6 +17,39 @@ use kftray_portforward::kube::{
 };
 use log::error;
 use log::info;
+
+/// Partition configs by workload_type and dispatch expose configs to
+/// kftray_expose, regular configs to kftray_portforward.
+async fn start_with_expose_dispatch(
+    configs: Vec<Config>, protocol: &str,
+) -> Result<Vec<CustomResponse>, String> {
+    let (expose_configs, regular_configs): (Vec<_>, Vec<_>) = configs
+        .into_iter()
+        .partition(|c| c.workload_type.as_deref() == Some("expose"));
+
+    let mut responses = Vec::new();
+
+    if !expose_configs.is_empty() {
+        match kftray_expose::start_expose(
+            expose_configs,
+            kftray_commons::utils::db_mode::DatabaseMode::File,
+        )
+        .await
+        {
+            Ok(r) => responses.extend(r),
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+
+    if !regular_configs.is_empty() {
+        match start_port_forward(regular_configs, protocol).await {
+            Ok(r) => responses.extend(r),
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+
+    Ok(responses)
+}
 use serde_json::json;
 use tauri::{
     AppHandle,
@@ -132,7 +165,7 @@ fn config_compare_changes<T: PartialEq>(prev: &[T], current: &[T]) -> bool {
 pub async fn start_port_forward_udp_cmd(
     configs: Vec<Config>, _app_handle: tauri::AppHandle<Wry>,
 ) -> Result<Vec<CustomResponse>, String> {
-    start_port_forward(configs.clone(), "udp")
+    start_with_expose_dispatch(configs, "udp")
         .await
         .map_err(|e| e.to_string())
 }
@@ -141,7 +174,7 @@ pub async fn start_port_forward_udp_cmd(
 pub async fn start_port_forward_tcp_cmd(
     configs: Vec<Config>, _app_handle: tauri::AppHandle<Wry>,
 ) -> Result<Vec<CustomResponse>, String> {
-    start_port_forward(configs.clone(), "tcp")
+    start_with_expose_dispatch(configs, "tcp")
         .await
         .map_err(|e| e.to_string())
 }
