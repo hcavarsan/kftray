@@ -32,11 +32,11 @@ use log::{
 use once_cell::sync::Lazy;
 use tokio::sync::Mutex as TokioMutex;
 
+use kftray_hosts::hostsfile::{
+    add_host_entry,
+    add_ssl_host_entry,
+};
 use crate::{
-    hostsfile::{
-        add_host_entry,
-        add_ssl_host_entry,
-    },
     kube::models::{
         Port,
         PortForward,
@@ -158,9 +158,9 @@ async fn allocate_local_address_for_config(
             .clone()
             .unwrap_or_else(|| "127.0.0.1".to_string());
 
-        if crate::network_utils::is_custom_loopback_address(&address) {
+        if kftray_hosts::loopback::is_custom_loopback_address(&address) {
             info!("Configuring custom loopback address: {address}");
-            if let Err(config_err) = crate::network_utils::ensure_loopback_address(&address).await {
+            if let Err(config_err) = kftray_hosts::loopback::ensure_loopback_address(&address).await {
                 let error_msg = config_err.to_string();
                 if error_msg.contains("cancelled") || error_msg.contains("canceled") {
                     return Err(PortForwardError::AddressAllocation(format!(
@@ -321,7 +321,7 @@ async fn try_fallback_allocate_and_save(
                 continue;
             }
 
-            if crate::network_utils::is_address_accessible(&address).await {
+            if kftray_hosts::loopback::is_address_accessible(&address).await {
                 debug!("Address {address} is already in use on system, skipping");
                 continue;
             }
@@ -342,7 +342,7 @@ async fn try_fallback_allocate_and_save(
         }
     };
 
-    match crate::network_utils::ensure_loopback_address(&address).await {
+    match kftray_hosts::loopback::ensure_loopback_address(&address).await {
         Ok(_) => {
             debug!(
                 "Successfully allocated and configured fallback address: {address} for service: {service_name}"
@@ -372,7 +372,7 @@ async fn try_fallback_allocate_and_save(
                         e
                     );
                     if let Err(cleanup_err) =
-                        crate::network_utils::remove_loopback_address(&address).await
+                        kftray_hosts::loopback::remove_loopback_address(&address).await
                     {
                         error!(
                             "Failed to cleanup address {} after DB save failure: {}",
@@ -410,7 +410,7 @@ async fn get_allocated_loopback_addresses() -> std::collections::HashSet<String>
     if let Ok(configs) = kftray_commons::config::get_configs().await {
         for config in configs {
             if let Some(addr) = &config.local_address
-                && crate::network_utils::is_custom_loopback_address(addr)
+                && kftray_hosts::loopback::is_custom_loopback_address(addr)
                 && config.auto_loopback_address
             {
                 allocated.insert(addr.clone());
@@ -719,9 +719,9 @@ async fn process_single_config_with_address(
             error!("{}", &error_message);
 
             if let Some(local_addr) = &config.local_address
-                && crate::network_utils::is_custom_loopback_address(local_addr)
+                && kftray_hosts::loopback::is_custom_loopback_address(local_addr)
                 && let Err(cleanup_err) =
-                    crate::network_utils::remove_loopback_address(local_addr).await
+                    kftray_hosts::loopback::remove_loopback_address(local_addr).await
             {
                 error!(
                     "Failed to cleanup loopback address {} after PortForward creation failure: {}",

@@ -8,7 +8,6 @@ use log::{
 
 use crate::hostfile_direct::DirectHostfileManager;
 use crate::hostfile_helper::HostfileHelperClient;
-use crate::port_forward_error::PortForwardError;
 
 static HOSTFILE_MANAGER: LazyLock<HostfileManager> = LazyLock::new(HostfileManager::new);
 
@@ -120,42 +119,6 @@ pub fn remove_ssl_host_entry(config_id: &str) -> std::io::Result<()> {
 
     let _ = remove_host_entry(&format!("{}-https-local", config_id));
 
-    Ok(())
-}
-
-pub fn update_hosts_with_ssl_from_config(
-    config: &kftray_commons::models::config_model::Config,
-) -> Result<(), PortForwardError> {
-    let alias = config.alias.as_ref().ok_or_else(|| {
-        PortForwardError::HostsFile("Alias required for SSL hosts entry".to_string())
-    })?;
-
-    let config_id = config.id.unwrap_or(-1).to_string();
-    let port = config.local_port.unwrap_or(8080);
-
-    add_ssl_host_entry(&config_id, alias, port).map_err(|e| {
-        PortForwardError::HostsFile(format!("Failed to add HTTPS hosts entry: {}", e))
-    })?;
-
-    log::info!(
-        "Added HTTPS hosts entries: {} and {}.local -> 127.0.0.1:{}",
-        alias,
-        alias,
-        port
-    );
-    Ok(())
-}
-
-pub fn remove_ssl_host_entry_from_config(
-    config: &kftray_commons::models::config_model::Config,
-) -> Result<(), PortForwardError> {
-    let config_id = config.id.unwrap_or(-1).to_string();
-
-    remove_ssl_host_entry(&config_id).map_err(|e| {
-        PortForwardError::HostsFile(format!("Failed to remove HTTPS hosts entry: {}", e))
-    })?;
-
-    log::info!("Removed HTTPS hosts entry for config: {}", config_id);
     Ok(())
 }
 

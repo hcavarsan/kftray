@@ -157,9 +157,9 @@ impl PortForward {
     #[instrument(skip(self), fields(config_id = self.config_id))]
     pub async fn cleanup_resources(&self) -> anyhow::Result<()> {
         if let Some(addr) = &self.local_address
-            && crate::network_utils::is_custom_loopback_address(addr)
+            && kftray_hosts::loopback::is_custom_loopback_address(addr)
         {
-            let _ = crate::network_utils::remove_loopback_address(addr).await;
+            let _ = kftray_hosts::loopback::remove_loopback_address(addr).await;
         }
         Ok(())
     }

@@ -38,7 +38,7 @@ use tracing::{
     warn,
 };
 
-use crate::hostsfile::{
+use kftray_hosts::hostsfile::{
     remove_all_host_entries,
     remove_host_entry,
     remove_ssl_host_entry,
@@ -283,7 +283,7 @@ pub async fn stop_all_port_forward_with_mode(
                 if let Some(config) = &config_option {
                     info!("stop_all: Found config {} with local_address: {:?} and auto_loopback_address: {}",
                           config_id_str, config.local_address, config.auto_loopback_address);
-                    if let Some(local_addr) = &config.local_address && crate::network_utils::is_custom_loopback_address(local_addr) {
+                    if let Some(local_addr) = &config.local_address && kftray_hosts::loopback::is_custom_loopback_address(local_addr) {
                         info!(
                             "Cleaning up loopback address for config {config_id_str}: {local_addr}"
                         );
@@ -354,7 +354,7 @@ pub async fn stop_all_port_forward_with_mode(
         .filter(|config| running_configs_state.contains(&config.id.unwrap_or_default()))
         .filter_map(|config| {
             if let Some(local_addr) = &config.local_address {
-                if crate::network_utils::is_custom_loopback_address(local_addr) {
+                if kftray_hosts::loopback::is_custom_loopback_address(local_addr) {
                     Some(async move {
                         info!(
                             "Releasing loopback address for config {}: {} (auto_allocated: {})",
@@ -435,7 +435,7 @@ pub async fn stop_port_forward_with_mode(
                 config_id, config.local_address, config.auto_loopback_address
             );
             if let Some(local_addr) = &config.local_address
-                && crate::network_utils::is_custom_loopback_address(local_addr)
+                && kftray_hosts::loopback::is_custom_loopback_address(local_addr)
             {
                 info!(
                     "Cleaning up loopback address for config {config_id}: {local_addr} (auto_allocated: {})",

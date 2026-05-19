@@ -13,4 +13,16 @@ name = "kftray_hosts"
 path = "src/lib.rs"
 
 [dependencies]
-# Filled in 2.2 after moving code
+anyhow = { workspace = true }
+kftray-commons = { workspace = true }
+kftray-helper = { workspace = true }
+log = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+env_logger = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libc = { workspace = true }
