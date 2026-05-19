@@ -26,3 +26,6 @@ env_logger = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 libc = { workspace = true }
+
+[lints]
+workspace = true

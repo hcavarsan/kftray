@@ -41,3 +41,6 @@ log = { workspace = true }
 # Misc
 rand = { workspace = true }
 whoami = { workspace = true }
+
+[lints]
+workspace = true

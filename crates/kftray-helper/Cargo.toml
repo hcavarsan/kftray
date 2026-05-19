@@ -24,3 +24,6 @@ windows-service = { workspace = true }
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true }
 windows-core = { workspace = true }
+
+[lints]
+workspace = true

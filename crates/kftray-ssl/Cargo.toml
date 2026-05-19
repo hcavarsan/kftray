@@ -41,3 +41,6 @@ apple-native-keyring-store = { workspace = true }
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { workspace = true }
 windows-native-keyring-store = { workspace = true }
+
+[lints]
+workspace = true
