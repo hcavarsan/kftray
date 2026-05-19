@@ -26,14 +26,14 @@ fn get_asset_name_for_platform() -> &'static str {
 
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
-pub struct UpdateInfo {
+pub(crate) struct UpdateInfo {
     pub current_version: String,
     pub latest_version: String,
     pub has_update: bool,
 }
 
 #[allow(dead_code)]
-pub async fn check_for_updates() -> Result<UpdateInfo, Box<dyn Error>> {
+pub(crate) async fn check_for_updates() -> Result<UpdateInfo, Box<dyn Error>> {
     let current_version = cargo_crate_version!();
     let asset_name = get_asset_name_for_platform();
 
@@ -50,7 +50,7 @@ pub async fn check_for_updates() -> Result<UpdateInfo, Box<dyn Error>> {
             .any(|asset| asset.name == asset_name);
 
         if !asset_exists {
-            return Err(format!("Asset {} not found for the latest release", asset_name).into());
+            return Err(format!("Asset {asset_name} not found for the latest release").into());
         }
 
         let current_ver = semver::Version::parse(current_version)?;
@@ -68,7 +68,7 @@ pub async fn check_for_updates() -> Result<UpdateInfo, Box<dyn Error>> {
 }
 
 #[allow(dead_code)]
-pub async fn perform_update() -> Result<String, Box<dyn Error>> {
+pub(crate) async fn perform_update() -> Result<String, Box<dyn Error>> {
     let asset_name = get_asset_name_for_platform();
 
     let releases = ReleaseList::configure()
@@ -129,7 +129,7 @@ pub async fn perform_update() -> Result<String, Box<dyn Error>> {
                 asset.name.strip_suffix(".tar.gz").unwrap_or(&asset.name);
 
             let new_exe = if cfg!(windows) {
-                extract_dir.join(format!("{}.exe", archive_name_without_ext))
+                extract_dir.join(format!("{archive_name_without_ext}.exe"))
             } else {
                 extract_dir.join(archive_name_without_ext)
             };
@@ -138,19 +138,18 @@ pub async fn perform_update() -> Result<String, Box<dyn Error>> {
                 self_update::self_replace::self_replace(new_exe)?;
             } else {
                 let entries: Vec<_> = std::fs::read_dir(&extract_dir)?
-                    .filter_map(|e| e.ok())
+                    .filter_map(std::result::Result::ok)
                     .map(|e| e.file_name())
                     .collect();
                 return Err(format!(
-                    "Could not find {} executable in archive. Found files: {:?}",
-                    archive_name_without_ext, entries
+                    "Could not find {archive_name_without_ext} executable in archive. Found files: {entries:?}"
                 )
                 .into());
             }
 
             Ok(latest_release.version.clone())
         } else {
-            Err(format!("Asset {} not found for the latest release", asset_name).into())
+            Err(format!("Asset {asset_name} not found for the latest release").into())
         }
     } else {
         Err("No releases found".into())

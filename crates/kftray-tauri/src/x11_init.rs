@@ -55,6 +55,6 @@ fn is_wayland() -> bool {
 
 /// No-op on non-Linux platforms.
 #[cfg(not(target_os = "linux"))]
-pub fn init_x11_threads() {
+pub(crate) const fn init_x11_threads() {
     // Nothing to do on non-Linux platforms
 }

@@ -30,7 +30,7 @@ impl HostfileManager {
             && helper.is_available()
         {
             match helper.add_host_entry(id.clone(), entry.clone()) {
-                Ok(_) => {
+                Ok(()) => {
                     debug!("Successfully added host entry via helper for ID: {id}");
                     return Ok(());
                 }
@@ -48,7 +48,7 @@ impl HostfileManager {
             && helper.is_available()
         {
             match helper.remove_host_entry(id) {
-                Ok(_) => {
+                Ok(()) => {
                     debug!("Successfully removed host entry via helper for ID: {id}");
                     return Ok(());
                 }
@@ -66,7 +66,7 @@ impl HostfileManager {
             && helper.is_available()
         {
             match helper.remove_all_host_entries() {
-                Ok(_) => {
+                Ok(()) => {
                     debug!("Successfully removed all host entries via helper");
                     return Ok(());
                 }
@@ -103,21 +103,21 @@ pub fn add_ssl_host_entry(config_id: &str, alias: &str, _https_port: u16) -> std
         ip: "127.0.0.1".parse().unwrap(),
         hostname: alias.to_string(),
     };
-    add_host_entry(format!("{}-https", config_id), https_entry)?;
+    add_host_entry(format!("{config_id}-https"), https_entry)?;
 
     let local_entry = HostEntry {
         ip: "127.0.0.1".parse().unwrap(),
-        hostname: format!("{}.local", alias),
+        hostname: format!("{alias}.local"),
     };
-    add_host_entry(format!("{}-https-local", config_id), local_entry)?;
+    add_host_entry(format!("{config_id}-https-local"), local_entry)?;
 
     Ok(())
 }
 
 pub fn remove_ssl_host_entry(config_id: &str) -> std::io::Result<()> {
-    let _ = remove_host_entry(&format!("{}-https", config_id));
+    let _ = remove_host_entry(&format!("{config_id}-https"));
 
-    let _ = remove_host_entry(&format!("{}-https-local", config_id));
+    let _ = remove_host_entry(&format!("{config_id}-https-local"));
 
     Ok(())
 }
@@ -155,7 +155,7 @@ mod tests {
         let id = "test-id-1".to_string();
         let entry = get_test_entry();
 
-        let result = add_host_entry(id.clone(), entry.clone());
+        let result = add_host_entry(id.clone(), entry);
         assert!(result.is_ok());
 
         let result = remove_host_entry(&id);

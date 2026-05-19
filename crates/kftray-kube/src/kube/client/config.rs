@@ -161,7 +161,7 @@ mod tests {
         } else {
             format!("/path1{separator}/path2")
         };
-        let explicit_paths = get_kubeconfig_paths_from_option(Some(test_paths.clone())).unwrap();
+        let explicit_paths = get_kubeconfig_paths_from_option(Some(test_paths)).unwrap();
         assert_eq!(explicit_paths.len(), 2);
         if cfg!(windows) {
             assert_eq!(explicit_paths[0], std::path::Path::new("C:\\path1"));
@@ -211,7 +211,7 @@ mod tests {
             env::set_var(
                 "KUBECONFIG",
                 temp_dir.path().join("nonexistent_file").to_str().unwrap(),
-            )
+            );
         };
 
         let error_result = get_kubeconfig_paths_from_option(None);
@@ -319,7 +319,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let kubeconfig_path = temp_dir.path().join("kubeconfig");
 
-        let kubeconfig_content = r#"
+        let kubeconfig_content = r"
 apiVersion: v1
 kind: Config
 clusters:
@@ -337,7 +337,7 @@ users:
 - name: test-user
   user:
     token: test-token
-"#;
+";
 
         std::fs::write(&kubeconfig_path, kubeconfig_content).unwrap();
 
@@ -356,7 +356,7 @@ users:
         let temp_dir = TempDir::new().unwrap();
         let kubeconfig_path = temp_dir.path().join("kubeconfig");
 
-        let kubeconfig_content = r#"
+        let kubeconfig_content = r"
 apiVersion: v1
 kind: Config
 clusters:
@@ -374,7 +374,7 @@ users:
 - name: test-user
   user:
     token: test-token
-"#;
+";
 
         std::fs::write(&kubeconfig_path, kubeconfig_content).unwrap();
 
@@ -393,7 +393,7 @@ users:
         let temp_dir = TempDir::new().unwrap();
         let kubeconfig_path = temp_dir.path().join("kubeconfig");
 
-        let kubeconfig_content = r#"
+        let kubeconfig_content = r"
 apiVersion: v1
 kind: Config
 clusters:
@@ -410,7 +410,7 @@ users:
 - name: test-user
   user:
     token: test-token
-"#;
+";
 
         std::fs::write(&kubeconfig_path, kubeconfig_content).unwrap();
 
@@ -429,7 +429,7 @@ users:
         let temp_dir = TempDir::new().unwrap();
         let kubeconfig_path = temp_dir.path().join("kubeconfig");
 
-        let kubeconfig_content = r#"
+        let kubeconfig_content = r"
 apiVersion: v1
 kind: Config
 clusters:
@@ -454,7 +454,7 @@ users:
 - name: test-user
   user:
     token: test-token
-"#;
+";
 
         std::fs::write(&kubeconfig_path, kubeconfig_content).unwrap();
 

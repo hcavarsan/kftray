@@ -10,7 +10,7 @@ pub fn uninstall_helper(helper_path: &Path) -> Result<(), HelperError> {
         let output = Command::new(helper_path).args(["uninstall"]).output();
 
         if let Err(_e) = output {
-            let escaped_path = helper_path.to_string_lossy().replace("'", "'\\''");
+            let escaped_path = helper_path.to_string_lossy().replace('\'', "'\\''");
             let script = format!(
                 r#"do shell script "'{escaped_path}' uninstall" with administrator privileges"#
             );

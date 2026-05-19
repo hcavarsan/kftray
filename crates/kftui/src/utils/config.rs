@@ -4,7 +4,9 @@ use kftray_commons::utils::config::{
 };
 use kftray_commons::utils::db_mode::DatabaseMode;
 
-pub async fn import_configs_from_file(file_path: &str, mode: DatabaseMode) -> Result<(), String> {
+pub(crate) async fn import_configs_from_file(
+    file_path: &str, mode: DatabaseMode,
+) -> Result<(), String> {
     log::debug!("Starting import of configs from file: {file_path}");
     let json = std::fs::read_to_string(file_path).map_err(|e| {
         let err_msg = format!("Failed to read file {file_path}: {e}");
@@ -22,7 +24,9 @@ pub async fn import_configs_from_file(file_path: &str, mode: DatabaseMode) -> Re
     Ok(())
 }
 
-pub async fn export_configs_to_file(file_path: &str, mode: DatabaseMode) -> Result<(), String> {
+pub(crate) async fn export_configs_to_file(
+    file_path: &str, mode: DatabaseMode,
+) -> Result<(), String> {
     log::debug!("Starting export of configs to file: {file_path}");
     let json = export_configs_with_mode(mode).await.map_err(|e| {
         let err_msg = format!("Failed to export configs: {e}");

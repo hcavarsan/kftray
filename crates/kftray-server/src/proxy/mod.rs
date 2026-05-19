@@ -1,15 +1,15 @@
-pub mod config;
-pub mod error;
-pub mod http_proxy;
-pub mod relay;
-pub mod reverse;
-pub mod reverse_http;
-pub mod server;
-pub mod sniff;
-pub mod tcp;
-pub mod traits;
-pub mod udp;
-pub mod websocket_server;
+pub(crate) mod config;
+pub(crate) mod error;
+pub(crate) mod http_proxy;
+pub(crate) mod relay;
+pub(crate) mod reverse;
+pub(crate) mod reverse_http;
+pub(crate) mod server;
+pub(crate) mod sniff;
+pub(crate) mod tcp;
+pub(crate) mod traits;
+pub(crate) mod udp;
+pub(crate) mod websocket_server;
 
 #[cfg(test)]
 mod test_utils;

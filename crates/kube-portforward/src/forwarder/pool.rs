@@ -214,7 +214,6 @@ impl Forwarder {
     }
 
     pub(super) fn next_call_id(&self) -> u64 {
-        self.call_counter
-            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        self.call_counter.fetch_add(1, Ordering::Relaxed)
     }
 }

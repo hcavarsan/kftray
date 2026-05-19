@@ -10,7 +10,7 @@ pub fn install_helper(helper_path: &Path) -> Result<(), HelperError> {
         let output = Command::new(helper_path).args(["install"]).output();
 
         if let Err(_e) = output {
-            let escaped_path = helper_path.to_string_lossy().replace("\"", "\\\"");
+            let escaped_path = helper_path.to_string_lossy().replace('"', "\\\"");
             let script = format!(
                 r#"do shell script "{escaped_path} install" with administrator privileges"#
             );

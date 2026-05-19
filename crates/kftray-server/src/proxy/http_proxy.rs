@@ -65,7 +65,7 @@ type ResponseBody = BoxBody<Bytes, hyper::Error>;
 
 /// Cheap-to-clone HTTP reverse proxy with a shared, pooled upstream client.
 #[derive(Clone)]
-pub struct HttpProxy {
+pub(crate) struct HttpProxy {
     inner: Arc<Inner>,
 }
 
@@ -76,7 +76,7 @@ struct Inner {
 
 impl HttpProxy {
     /// Build a new proxy for the given target. Initialises the pooled client.
-    pub fn new(config: &ProxyConfig) -> Self {
+    pub(crate) fn new(config: &ProxyConfig) -> Self {
         let mut connector = HttpConnector::new();
         connector.set_nodelay(true);
         connector.set_connect_timeout(Some(Duration::from_secs(5)));
@@ -104,7 +104,7 @@ impl HttpProxy {
     }
 
     /// Serve a single inbound HTTP/1.x connection until close or cancellation.
-    pub async fn serve_http1(
+    pub(crate) async fn serve_http1(
         self, inbound: TcpStream, cancel: CancellationToken,
     ) -> Result<(), ProxyError> {
         let peer_addr = inbound
@@ -130,12 +130,12 @@ impl HttpProxy {
 
         tokio::select! {
             res = conn => res.map_err(|e| ProxyError::Connection(format!("http1 serve: {e}"))),
-            _ = cancel.cancelled() => Ok(()),
+            () = cancel.cancelled() => Ok(()),
         }
     }
 
     /// Serve a single inbound HTTP/2 (cleartext h2c) connection.
-    pub async fn serve_http2(
+    pub(crate) async fn serve_http2(
         self, inbound: TcpStream, cancel: CancellationToken,
     ) -> Result<(), ProxyError> {
         let peer_addr = inbound
@@ -159,7 +159,7 @@ impl HttpProxy {
 
         tokio::select! {
             res = conn => res.map_err(|e| ProxyError::Connection(format!("http2 serve: {e}"))),
-            _ = cancel.cancelled() => Ok(()),
+            () = cancel.cancelled() => Ok(()),
         }
     }
 
@@ -229,7 +229,7 @@ fn rewrite_request(req: &mut Request<Incoming>, authority: &str) -> Result<(), P
     let path_and_query = req
         .uri()
         .path_and_query()
-        .map(|p| p.as_str())
+        .map(hyper::http::uri::PathAndQuery::as_str)
         .unwrap_or("/")
         .to_string();
     let new_uri: Uri = format!("http://{authority}{path_and_query}")
@@ -303,7 +303,7 @@ fn rewrite_response_location(
 
     let path_and_query = location_uri
         .path_and_query()
-        .map(|pq| pq.as_str())
+        .map(hyper::http::uri::PathAndQuery::as_str)
         .unwrap_or("/");
     let scheme = location_uri.scheme_str().unwrap_or("http");
 

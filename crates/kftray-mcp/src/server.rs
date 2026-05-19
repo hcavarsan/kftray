@@ -114,7 +114,7 @@ impl Default for ServerState {
 /// Start the MCP HTTP server
 pub async fn start_server(addr: SocketAddr) -> anyhow::Result<()> {
     let listener = TcpListener::bind(addr).await?;
-    info!("MCP server listening on http://{}", addr);
+    info!("MCP server listening on http://{addr}");
 
     let state = Arc::new(ServerState::new());
 
@@ -132,7 +132,7 @@ pub async fn start_server(addr: SocketAddr) -> anyhow::Result<()> {
             if let Err(err) = http1::Builder::new().serve_connection(io, service).await
                 && !err.is_incomplete_message()
             {
-                error!("Error serving connection from {}: {:?}", remote_addr, err);
+                error!("Error serving connection from {remote_addr}: {err:?}");
             }
         });
     }
@@ -145,7 +145,7 @@ async fn handle_request(
     let method = req.method().clone();
     let path = req.uri().path().to_string();
 
-    debug!("Request: {} {}", method, path);
+    debug!("Request: {method} {path}");
 
     let response = match (method, path.as_str()) {
         (Method::POST, "/mcp") => handle_mcp_post(req, state).await,
@@ -230,7 +230,7 @@ async fn handle_mcp_get(req: Request<Incoming>, state: Arc<ServerState>) -> Resp
             if state.get_session(id).await.is_some() {
                 // For now, return a simple SSE response that keeps connection open
                 // In a full implementation, this would stream events
-                let sse_body = format!("event: connected\ndata: {{\"sessionId\":\"{}\"}}\n\n", id);
+                let sse_body = format!("event: connected\ndata: {{\"sessionId\":\"{id}\"}}\n\n");
 
                 Response::builder()
                     .status(StatusCode::OK)
@@ -363,7 +363,7 @@ async fn handle_json_rpc_request(
     let method = request.method.as_str();
     let id = request.id.clone();
 
-    debug!("Handling method: {}", method);
+    debug!("Handling method: {method}");
 
     match method {
         "initialize" => handle_initialize(request, session_id, state).await,
@@ -380,7 +380,7 @@ async fn handle_json_rpc_request(
             JsonRpcResponse::success(id, serde_json::json!({}))
         }
         _ => {
-            warn!("Unknown method: {}", method);
+            warn!("Unknown method: {method}");
             JsonRpcResponse::error(
                 id,
                 error_codes::METHOD_NOT_FOUND,

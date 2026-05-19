@@ -11,11 +11,11 @@ pub enum ExposeError {
 impl fmt::Display for ExposeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            ExposeError::Configuration { message } => {
-                write!(f, "Configuration error: {}", message)
+            Self::Configuration { message } => {
+                write!(f, "Configuration error: {message}")
             }
-            ExposeError::KubeApi(msg) => write!(f, "Kubernetes API error: {}", msg),
-            ExposeError::Expose(msg) => write!(f, "Expose error: {}", msg),
+            Self::KubeApi(msg) => write!(f, "Kubernetes API error: {msg}"),
+            Self::Expose(msg) => write!(f, "Expose error: {msg}"),
         }
     }
 }
@@ -24,7 +24,7 @@ impl std::error::Error for ExposeError {}
 
 impl From<String> for ExposeError {
     fn from(s: String) -> Self {
-        ExposeError::Expose(s)
+        Self::Expose(s)
     }
 }
 

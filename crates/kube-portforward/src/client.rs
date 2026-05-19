@@ -29,7 +29,7 @@ pub struct Client {
 }
 
 impl Client {
-    pub fn new(kube_client: kube::Client, cluster_url: http::Uri) -> Self {
+    pub const fn new(kube_client: kube::Client, cluster_url: http::Uri) -> Self {
         Self {
             kube: kube_client,
             cluster_url,
@@ -40,9 +40,9 @@ impl Client {
         ClientBuilder::default()
     }
 
-    pub fn session<'c>(
-        &'c self, namespace: impl Into<String>, pod: impl Into<String>, port: u16,
-    ) -> SessionBuilder<'c> {
+    pub fn session(
+        &self, namespace: impl Into<String>, pod: impl Into<String>, port: u16,
+    ) -> SessionBuilder<'_> {
         SessionBuilder {
             client: self,
             namespace: namespace.into(),
@@ -57,11 +57,11 @@ impl Client {
         }
     }
 
-    pub fn kube_client(&self) -> &kube::Client {
+    pub const fn kube_client(&self) -> &kube::Client {
         &self.kube
     }
 
-    pub fn cluster_url(&self) -> &http::Uri {
+    pub const fn cluster_url(&self) -> &http::Uri {
         &self.cluster_url
     }
 }
@@ -111,22 +111,22 @@ pub struct SessionBuilder<'c> {
     spdy_pool_size: usize,
 }
 
-impl<'c> SessionBuilder<'c> {
+impl SessionBuilder<'_> {
     /// Accepted for API stability; SPDY multiplexing has no notion of a
     /// pre-allocated channel pair pool.
-    pub fn capacity(self, _n: usize) -> Self {
+    pub const fn capacity(self, _n: usize) -> Self {
         self
     }
 
     /// Accepted for API stability. The SPDY multiplexer manages its own
     /// keepalive schedule based on idle time.
-    pub fn keepalive(mut self, ping: Duration, watchdog: Duration) -> Self {
+    pub const fn keepalive(mut self, ping: Duration, watchdog: Duration) -> Self {
         self.ping_interval = ping;
         self.watchdog_timeout = watchdog;
         self
     }
 
-    pub fn shutdown_grace(mut self, drain: Duration) -> Self {
+    pub const fn shutdown_grace(mut self, drain: Duration) -> Self {
         self.drain_timeout = drain;
         self
     }

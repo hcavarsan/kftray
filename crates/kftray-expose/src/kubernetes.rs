@@ -53,8 +53,7 @@ pub async fn create_expose_resources(
 
     if let Some(resources) = existing {
         info!(
-            "Resources already exist for config {}: {:?}. Cleaning up before recreating",
-            config_id_str, resources
+            "Resources already exist for config {config_id_str}: {resources:?}. Cleaning up before recreating"
         );
         let _ = delete_expose_resources(client.clone(), &config.namespace, &config_id_str).await;
 
@@ -85,10 +84,7 @@ pub async fn create_expose_resources(
         .filter(|c: &char| c.is_alphanumeric())
         .collect();
 
-    let deployment_name = format!(
-        "kftray-expose-{}-{}-{}",
-        clean_username, timestamp, random_string
-    );
+    let deployment_name = format!("kftray-expose-{clean_username}-{timestamp}-{random_string}");
 
     // For public exposure, use the first part of the domain (before the first dot)
     // as the resource name. E.g. "testelocal.ideia.totvs.io" -> "testelocal"
@@ -176,12 +172,12 @@ async fn create_deployment(
     let rendered = templates::render_template(&template, &values);
 
     let deployment: Deployment = serde_json::from_str(&rendered)
-        .map_err(|e| ExposeError::Expose(format!("Failed to parse deployment: {}", e)))?;
+        .map_err(|e| ExposeError::Expose(format!("Failed to parse deployment: {e}")))?;
 
     deployments
         .create(&PostParams::default(), &deployment)
         .await
-        .map_err(|e| ExposeError::Expose(format!("Failed to create deployment: {}", e)))?;
+        .map_err(|e| ExposeError::Expose(format!("Failed to create deployment: {e}")))?;
 
     info!("Deployment created successfully");
     Ok(())
@@ -191,14 +187,14 @@ async fn wait_for_pod_ready(
     client: &Client, namespace: &str, config_id: &str,
 ) -> Result<String, ExposeError> {
     let pods: Api<Pod> = Api::namespaced(client.clone(), namespace);
-    let lp = ListParams::default().labels(&format!("app=kftray-expose,config_id={}", config_id));
+    let lp = ListParams::default().labels(&format!("app=kftray-expose,config_id={config_id}"));
 
     tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
 
     let pod_list = pods
         .list(&lp)
         .await
-        .map_err(|e| ExposeError::Expose(format!("Failed to list pods: {}", e)))?;
+        .map_err(|e| ExposeError::Expose(format!("Failed to list pods: {e}")))?;
 
     let pod = pod_list
         .items
@@ -213,9 +209,9 @@ async fn wait_for_pod_ready(
 
     kube_runtime::wait::await_condition(pods.clone(), &pod_name, conditions::is_pod_running())
         .await
-        .map_err(|e| ExposeError::Expose(format!("Pod not ready: {}", e)))?;
+        .map_err(|e| ExposeError::Expose(format!("Pod not ready: {e}")))?;
 
-    info!("Pod ready: {}", pod_name);
+    info!("Pod ready: {pod_name}");
     Ok(pod_name)
 }
 
@@ -226,7 +222,7 @@ async fn get_pod_ip(
     let pod = pods
         .get(pod_name)
         .await
-        .map_err(|e| ExposeError::Expose(format!("Failed to get pod: {}", e)))?;
+        .map_err(|e| ExposeError::Expose(format!("Failed to get pod: {e}")))?;
 
     let pod_ip = pod
         .status
@@ -251,12 +247,12 @@ async fn create_service(
     let rendered = templates::render_template(&template, &values);
 
     let service: Service = serde_json::from_str(&rendered)
-        .map_err(|e| ExposeError::Expose(format!("Failed to parse service: {}", e)))?;
+        .map_err(|e| ExposeError::Expose(format!("Failed to parse service: {e}")))?;
 
     services
         .create(&PostParams::default(), &service)
         .await
-        .map_err(|e| ExposeError::Expose(format!("Failed to create service: {}", e)))?;
+        .map_err(|e| ExposeError::Expose(format!("Failed to create service: {e}")))?;
 
     info!("Service created successfully");
     Ok(())
@@ -305,12 +301,12 @@ async fn create_ingress(
     let rendered = templates::render_template(&template, &values);
 
     let ingress: Ingress = serde_json::from_str(&rendered)
-        .map_err(|e| ExposeError::Expose(format!("Failed to parse ingress: {}", e)))?;
+        .map_err(|e| ExposeError::Expose(format!("Failed to parse ingress: {e}")))?;
 
     ingresses
         .create(&PostParams::default(), &ingress)
         .await
-        .map_err(|e| ExposeError::Expose(format!("Failed to create ingress: {}", e)))?;
+        .map_err(|e| ExposeError::Expose(format!("Failed to create ingress: {e}")))?;
 
     info!("Created ingress");
     Ok(())
@@ -319,7 +315,7 @@ async fn create_ingress(
 async fn check_existing_resources(
     client: &Client, namespace: &str, config_id: &str,
 ) -> Option<Vec<String>> {
-    let label_selector = format!("app=kftray-expose,config_id={}", config_id);
+    let label_selector = format!("app=kftray-expose,config_id={config_id}");
 
     let deployments: Api<Deployment> = Api::namespaced(client.clone(), namespace);
     let deployment_lp = ListParams::default().labels(&label_selector);
@@ -331,10 +327,7 @@ async fn check_existing_resources(
                 .iter()
                 .filter_map(|d| d.metadata.name.clone())
                 .collect();
-            debug!(
-                "Found existing deployments for config {}: {:?}",
-                config_id, names
-            );
+            debug!("Found existing deployments for config {config_id}: {names:?}");
             Some(names)
         }
         _ => None,
@@ -344,22 +337,16 @@ async fn check_existing_resources(
 pub async fn delete_expose_resources(
     client: Client, namespace: &str, config_id_label: &str,
 ) -> Result<(), ExposeError> {
-    let label_selector = format!("app=kftray-expose,config_id={}", config_id_label);
+    let label_selector = format!("app=kftray-expose,config_id={config_id_label}");
     let lp = ListParams::default().labels(&label_selector);
 
-    info!(
-        "Deleting expose resources for config_id label '{}'",
-        config_id_label
-    );
+    info!("Deleting expose resources for config_id label '{config_id_label}'");
 
     delete_ingresses(&client, namespace, &lp).await?;
     delete_services(&client, namespace, &lp).await?;
     delete_deployments(&client, namespace, &lp).await?;
 
-    info!(
-        "Successfully deleted expose resources for config_id label '{}'",
-        config_id_label
-    );
+    info!("Successfully deleted expose resources for config_id label '{config_id_label}'");
     Ok(())
 }
 
@@ -371,7 +358,7 @@ async fn delete_ingresses(
     let items = match api.list(lp).await {
         Ok(list) => list,
         Err(e) => {
-            info!("No ingresses to delete or error listing: {}", e);
+            info!("No ingresses to delete or error listing: {e}");
             return Ok(());
         }
     };
@@ -383,10 +370,10 @@ async fn delete_ingresses(
 
     for ingress in items.items {
         if let Some(name) = &ingress.metadata.name {
-            info!("Deleting ingress: {}", name);
+            info!("Deleting ingress: {name}");
             match api.delete(name, &DeleteParams::default()).await {
-                Ok(_) => info!("Ingress {} deleted successfully", name),
-                Err(e) => error!("Failed to delete ingress {}: {}", name, e),
+                Ok(_) => info!("Ingress {name} deleted successfully"),
+                Err(e) => error!("Failed to delete ingress {name}: {e}"),
             }
         }
     }
@@ -401,7 +388,7 @@ async fn delete_services(
     let items = match api.list(lp).await {
         Ok(list) => list,
         Err(e) => {
-            info!("No services to delete or error listing: {}", e);
+            info!("No services to delete or error listing: {e}");
             return Ok(());
         }
     };
@@ -413,10 +400,10 @@ async fn delete_services(
 
     for service in items.items {
         if let Some(name) = &service.metadata.name {
-            info!("Deleting service: {}", name);
+            info!("Deleting service: {name}");
             match api.delete(name, &DeleteParams::default()).await {
-                Ok(_) => info!("Service {} deleted successfully", name),
-                Err(e) => error!("Failed to delete service {}: {}", name, e),
+                Ok(_) => info!("Service {name} deleted successfully"),
+                Err(e) => error!("Failed to delete service {name}: {e}"),
             }
         }
     }
@@ -431,7 +418,7 @@ async fn delete_deployments(
     let items = match api.list(lp).await {
         Ok(list) => list,
         Err(e) => {
-            info!("No deployments to delete or error listing: {}", e);
+            info!("No deployments to delete or error listing: {e}");
             return Ok(());
         }
     };
@@ -443,10 +430,10 @@ async fn delete_deployments(
 
     for deployment in items.items {
         if let Some(name) = &deployment.metadata.name {
-            info!("Deleting deployment: {}", name);
+            info!("Deleting deployment: {name}");
             match api.delete(name, &DeleteParams::default()).await {
-                Ok(_) => info!("Deployment {} deleted successfully", name),
-                Err(e) => error!("Failed to delete deployment {}: {}", name, e),
+                Ok(_) => info!("Deployment {name} deleted successfully"),
+                Err(e) => error!("Failed to delete deployment {name}: {e}"),
             }
         }
     }

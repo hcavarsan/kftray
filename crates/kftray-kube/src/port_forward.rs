@@ -51,7 +51,7 @@ impl PortForwardProcess {
         }
     }
 
-    pub fn direct(
+    pub const fn direct(
         handle: JoinHandle<anyhow::Result<()>>, forwarder: Arc<PortForwarder>, config_id: String,
         cancellation_token: CancellationToken,
     ) -> Self {
@@ -164,10 +164,9 @@ impl PortForwardProcess {
 
     pub async fn get_current_active_pod(&self) -> Option<String> {
         match &self.kind {
-            Some(PortForwardKind::Direct(forwarder))
-            | Some(PortForwardKind::Expose { forwarder, .. }) => {
-                forwarder.get_current_active_pod().await
-            }
+            Some(
+                PortForwardKind::Direct(forwarder) | PortForwardKind::Expose { forwarder, .. },
+            ) => forwarder.get_current_active_pod().await,
             None => None,
         }
     }
@@ -406,9 +405,7 @@ mod tests {
                 labels,
                 ..Default::default()
             },
-            spec: Some(PodSpec {
-                ..Default::default()
-            }),
+            spec: Some(Default::default()),
             status,
         }
     }
@@ -471,7 +468,7 @@ mod tests {
         };
 
         struct DummyFuture;
-        impl std::future::Future for DummyFuture {
+        impl Future for DummyFuture {
             type Output = anyhow::Result<()>;
             fn poll(self: Pin<&mut Self>, _: &mut Context<'_>) -> Poll<Self::Output> {
                 Poll::Ready(Ok(()))
@@ -488,8 +485,8 @@ mod tests {
 
         let task = tokio::spawn(async move {
             tokio::select! {
-                _ = cancellation_token.cancelled() => true,
-                _ = tokio::time::sleep(std::time::Duration::from_millis(100)) => false,
+                () = cancellation_token.cancelled() => true,
+                () = tokio::time::sleep(std::time::Duration::from_millis(100)) => false,
             }
         });
 
@@ -527,12 +524,12 @@ mod tests {
         assert_eq!(pf_with_port.local_address(), Some("127.0.0.1".to_string()));
 
         let pf_defaults = PortForward {
-            target: target.clone(),
+            target: target,
             local_port: Some(0),
             local_address: None,
             pod_api: Api::namespaced(client.clone(), "default"),
             svc_api: Api::namespaced(client.clone(), "default"),
-            client: client.clone(),
+            client: client,
             context_name: None,
             kubeconfig: None,
             config_id: 2,
@@ -563,7 +560,7 @@ mod tests {
             local_address: None,
             pod_api: Api::namespaced(client.clone(), "default"),
             svc_api: Api::namespaced(client.clone(), "default"),
-            client: client.clone(),
+            client: client,
             context_name: context_name.clone(),
             kubeconfig: None,
             config_id: 1,
@@ -615,7 +612,7 @@ mod tests {
             info!("Mock server: Expecting request {}", i + 1);
 
             let result =
-                tokio::time::timeout(Duration::from_millis(100), handle.next_request()).await;
+                timeout(Duration::from_millis(100), handle.next_request()).await;
 
             let (request, send) = match result {
                 Ok(Some((req, send))) => (req, send),
@@ -768,7 +765,7 @@ mod tests {
             }
         });
 
-        let connect_result = tokio::time::timeout(Duration::from_secs(1), connect_task).await;
+        let connect_result = timeout(Duration::from_secs(1), connect_task).await;
         match connect_result {
             Ok(Ok(Ok(()))) => {
                 info!("Client connection succeeded");
@@ -787,7 +784,7 @@ mod tests {
 
         info!("Waiting for mock server task");
         let mock_server_result =
-            tokio::time::timeout(Duration::from_secs(5), mock_server_task).await;
+            timeout(Duration::from_secs(5), mock_server_task).await;
         assert!(mock_server_result.is_ok(), "Mock server task timed out");
         assert!(
             mock_server_result.unwrap().is_ok(),
@@ -812,7 +809,7 @@ mod tests {
         });
 
         info!("Calling port_forward_udp");
-        let result = tokio::time::timeout(Duration::from_secs(5), pf.port_forward_udp()).await;
+        let result = timeout(Duration::from_secs(5), pf.port_forward_udp()).await;
         info!("port_forward_udp call returned");
 
         info!("Waiting for mock server task");

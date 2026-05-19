@@ -1,2 +1,2 @@
-pub mod config;
-pub mod file;
+pub(crate) mod config;
+pub(crate) mod file;

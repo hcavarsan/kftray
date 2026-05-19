@@ -29,7 +29,7 @@ use crate::tui::input::{
 };
 use crate::tui::ui::draw_ui;
 
-pub async fn run_tui(
+pub(crate) async fn run_tui(
     mode: DatabaseMode, logger_state: LoggerState,
 ) -> Result<(), Box<dyn std::error::Error>> {
     enable_raw_mode()?;
@@ -76,11 +76,11 @@ pub async fn run_tui(
     Ok(())
 }
 
-pub async fn run_app<B: ratatui::backend::Backend>(
+pub(crate) async fn run_app<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>, app: &mut App, mode: DatabaseMode,
 ) -> io::Result<()>
 where
-    std::io::Error: From<B::Error>,
+    io::Error: From<B::Error>,
 {
     let mut interval = time::interval(Duration::from_millis(100));
 

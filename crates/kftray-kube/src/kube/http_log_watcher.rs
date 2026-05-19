@@ -20,7 +20,7 @@ use tracing::{
     error,
     info,
 };
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HttpLogStateEvent {
     pub config_id: i64,
     pub enabled: bool,
@@ -99,7 +99,7 @@ impl HttpLogStateWatcher {
         let processor_task = tokio::spawn(async move {
             loop {
                 tokio::select! {
-                    _ = token_clone.cancelled() => {
+                    () = token_clone.cancelled() => {
                         info!("HTTP log watcher processor task cancelled");
                         break;
                     }
@@ -142,7 +142,7 @@ impl HttpLogStateWatcher {
         let event = HttpLogStateEvent::new(config_id, enabled);
         self.event_sender
             .send(event)
-            .map_err(|e| anyhow!("Failed to publish HTTP log state change: {}", e))?;
+            .map_err(|e| anyhow!("Failed to publish HTTP log state change: {e}"))?;
         Ok(())
     }
 
@@ -152,7 +152,7 @@ impl HttpLogStateWatcher {
         let event = HttpLogStateEvent::with_metadata(config_id, enabled, metadata);
         self.event_sender
             .send(event)
-            .map_err(|e| anyhow!("Failed to publish HTTP log state change: {}", e))?;
+            .map_err(|e| anyhow!("Failed to publish HTTP log state change: {e}"))?;
         Ok(())
     }
 

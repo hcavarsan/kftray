@@ -142,7 +142,7 @@ pub async fn start_port_forward_with_mode(
     if !responses.is_empty() {
         if !errors.is_empty() {
             for error in errors {
-                warn!("Partial failure: {}", error);
+                warn!("Partial failure: {error}");
             }
         }
         Ok(responses)

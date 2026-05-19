@@ -63,7 +63,7 @@ const STREAMING_INDICATOR: &str = "●";
 const LOGS_TITLE_PREFIX: &str = "Logs";
 const NAVIGATION_HINT: &str = "[PgUp/PgDn:navigate]";
 
-pub fn draw_ui(f: &mut Frame, app: &mut App, config_states: &[ConfigState]) {
+pub(crate) fn draw_ui(f: &mut Frame, app: &mut App, config_states: &[ConfigState]) {
     let size = f.area();
 
     let background = Block::default().style(Style::default().bg(BASE));
@@ -246,7 +246,7 @@ pub fn draw_ui(f: &mut Frame, app: &mut App, config_states: &[ConfigState]) {
     }
 }
 
-pub fn render_logs(f: &mut Frame, app: &mut App, area: Rect, has_focus: bool) {
+pub(crate) fn render_logs(f: &mut Frame, app: &mut App, area: Rect, has_focus: bool) {
     let focus_color = if has_focus { YELLOW } else { TEXT };
     let border_modifier = if has_focus {
         Modifier::BOLD
@@ -320,7 +320,7 @@ pub fn render_logs(f: &mut Frame, app: &mut App, area: Rect, has_focus: bool) {
         f.render_widget(logs_widget, area);
     }
 }
-pub fn draw_header(f: &mut Frame, app: &App, area: Rect) {
+pub(crate) fn draw_header(f: &mut Frame, app: &App, area: Rect) {
     let menu_titles = [
         "Help",
         "Auto Import",

@@ -17,12 +17,12 @@ pub enum NetworkMonitorError {
 impl fmt::Display for NetworkMonitorError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            NetworkMonitorError::AlreadyRunning => write!(f, "Network monitor is already running"),
-            NetworkMonitorError::NotRunning => write!(f, "Network monitor is not running"),
-            NetworkMonitorError::StartupFailed(err) => {
+            Self::AlreadyRunning => write!(f, "Network monitor is already running"),
+            Self::NotRunning => write!(f, "Network monitor is not running"),
+            Self::StartupFailed(err) => {
                 write!(f, "Failed to start network monitor: {err}")
             }
-            NetworkMonitorError::ShutdownFailed(err) => {
+            Self::ShutdownFailed(err) => {
                 write!(f, "Failed to stop network monitor: {err}")
             }
         }
@@ -56,7 +56,7 @@ impl Default for MonitorConfig {
     }
 }
 
-pub struct TaskState {
+pub(crate) struct TaskState {
     pub reconnect_in_progress: bool,
     pub health_check_in_progress: bool,
     pub last_reconnect: Option<Instant>,
@@ -83,14 +83,14 @@ impl Default for TaskState {
 }
 
 impl TaskState {
-    pub fn should_health_check(&self) -> bool {
+    pub(crate) fn should_health_check(&self) -> bool {
         !self.health_check_in_progress
             && self
                 .last_health_check
                 .is_none_or(|last| last.elapsed() > Duration::from_secs(2))
     }
 
-    pub fn update_network_state(&mut self, is_up: bool) {
+    pub(crate) fn update_network_state(&mut self, is_up: bool) {
         if is_up != self.last_network_state {
             self.last_network_state = is_up;
             if is_up {
@@ -102,31 +102,31 @@ impl TaskState {
         }
     }
 
-    pub fn can_reconnect(&self) -> bool {
+    pub(crate) const fn can_reconnect(&self) -> bool {
         self.reconnect_attempts < self.max_reconnect_attempts
     }
 
-    pub fn start_reconnect(&mut self) {
+    pub(crate) fn start_reconnect(&mut self) {
         self.reconnect_in_progress = true;
         self.last_reconnect = Some(Instant::now());
         self.reconnect_attempts += 1;
     }
 
-    pub fn finish_reconnect(&mut self) {
+    pub(crate) const fn finish_reconnect(&mut self) {
         self.reconnect_in_progress = false;
     }
 
-    pub fn start_health_check(&mut self) {
+    pub(crate) fn start_health_check(&mut self) {
         self.health_check_in_progress = true;
         self.last_health_check = Some(Instant::now());
     }
 
-    pub fn finish_health_check(&mut self) {
+    pub(crate) const fn finish_health_check(&mut self) {
         self.health_check_in_progress = false;
     }
 }
 
-pub struct HealthCheckResult {
+pub(crate) struct HealthCheckResult {
     pub config: Config,
     pub is_healthy: bool,
 }

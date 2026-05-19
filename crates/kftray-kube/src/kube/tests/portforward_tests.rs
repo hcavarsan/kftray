@@ -440,7 +440,7 @@ async fn test_port_forward_udp_success() -> Result<()> {
                 entry.process.abort();
             }
         }
-        Ok(Ok(Err(_))) | Ok(Err(_)) | Err(_) => {
+        Ok(Ok(Err(_)) | Err(_)) | Err(_) => {
             println!("UDP Port forwarding failed as expected in test environment");
         }
     }
@@ -536,7 +536,7 @@ async fn test_start_port_forward_mock_components() -> Result<()> {
 
     let target = Target::new(
         TargetSelector::ServiceName(test_config.service.clone().unwrap_or_default()),
-        test_config.remote_port.unwrap_or_default() as i32,
+        i32::from(test_config.remote_port.unwrap_or_default()),
         test_config.namespace.clone(),
     );
 
@@ -642,7 +642,7 @@ async fn test_start_port_forward_mock_components_udp() -> Result<()> {
 
     let target = Target::new(
         TargetSelector::ServiceName(test_config.service.clone().unwrap_or_default()),
-        test_config.remote_port.unwrap_or_default() as i32,
+        i32::from(test_config.remote_port.unwrap_or_default()),
         test_config.namespace.clone(),
     );
 

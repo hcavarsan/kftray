@@ -19,7 +19,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     stream.write_all(b"GET / HTTP/1.0\r\n\r\n").await?;
     let mut buf = vec![0u8; 4096];
     let n = stream.read(&mut buf).await?;
-    println!("got {} bytes back", n);
+    println!("got {n} bytes back");
 
     session.close().await?;
     Ok(())

@@ -16,7 +16,7 @@ use crate::proxy::{
 };
 
 /// Main proxy server that manages the lifecycle of proxy connections
-pub struct ProxyServer {
+pub(crate) struct ProxyServer {
     /// Server configuration
     config: ProxyConfig,
     /// Shutdown signal notifier
@@ -30,7 +30,7 @@ impl ProxyServer {
     ///
     /// # Parameters
     /// * `config` - Server configuration including proxy type and port settings
-    pub fn new(config: ProxyConfig) -> Self {
+    pub(crate) fn new(config: ProxyConfig) -> Self {
         let handler: Box<dyn ProxyHandler> = match config.proxy_type {
             ProxyType::Tcp => Box::new(TcpProxy::new()),
             ProxyType::Udp => Box::new(UdpProxy::new()),
@@ -49,14 +49,14 @@ impl ProxyServer {
     /// # Returns
     /// * `Result<(), ProxyError>` - Success if server runs and shuts down
     ///   cleanly
-    pub async fn run(&self) -> Result<(), ProxyError> {
+    pub(crate) async fn run(&self) -> Result<(), ProxyError> {
         self.handler
             .start(self.config.clone(), self.shutdown.clone())
             .await
     }
 
     /// Initiates a graceful shutdown of the proxy server
-    pub fn shutdown(&self) {
+    pub(crate) fn shutdown(&self) {
         info!("Initiating server shutdown");
         self.shutdown.notify_waiters();
     }

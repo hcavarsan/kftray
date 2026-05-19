@@ -37,8 +37,8 @@ use crate::commands::{
 
 static GLOBAL_MANAGER: OnceCell<Arc<Mutex<ShortcutManager>>> = OnceCell::const_new();
 
-pub async fn setup_shortcut_integration(
-    app: tauri::AppHandle,
+pub(crate) async fn setup_shortcut_integration(
+    app: AppHandle,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let pool = kftray_commons::utils::db::get_db_pool().await?;
     let mut registry = ActionRegistry::new();
@@ -67,7 +67,7 @@ pub async fn setup_shortcut_integration(
     let mut manager =
         kftray_shortcuts::create_manager_with_registry(pool.as_ref().clone(), registry)
             .await
-            .map_err(|e| format!("Failed to create shortcut manager: {}", e))?;
+            .map_err(|e| format!("Failed to create shortcut manager: {e}"))?;
     manager.initialize().await?;
 
     manager.start_event_loop().await;
@@ -80,7 +80,7 @@ pub async fn setup_shortcut_integration(
     Ok(())
 }
 
-pub async fn get_manager() -> Result<Arc<Mutex<ShortcutManager>>, String> {
+pub(crate) async fn get_manager() -> Result<Arc<Mutex<ShortcutManager>>, String> {
     GLOBAL_MANAGER
         .get()
         .cloned()
@@ -92,7 +92,7 @@ struct ToggleWindowAction {
 }
 
 impl ToggleWindowAction {
-    fn new(app_handle: AppHandle) -> Self {
+    const fn new(app_handle: AppHandle) -> Self {
         Self { app_handle }
     }
 }
@@ -112,16 +112,16 @@ impl ActionHandler for ToggleWindowAction {
         Ok(())
     }
 
-    fn action_type(&self) -> &str {
+    fn action_type(&self) -> &'static str {
         "toggle_window"
     }
 
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "Toggle main application window visibility"
     }
 }
 
-pub struct ConfigAction;
+pub(crate) struct ConfigAction;
 
 #[async_trait]
 impl ActionHandler for ConfigAction {
@@ -136,26 +136,20 @@ impl ActionHandler for ConfigAction {
             if let Ok(data) = serde_json::from_str::<serde_json::Value>(action_data)
                 && let Some(action) = data.get("action").and_then(|v| v.as_str())
             {
-                info!(
-                    "Executing config action '{}' for config ID: {}",
-                    action, config_id
-                );
+                info!("Executing config action '{action}' for config ID: {config_id}");
             }
         } else {
-            info!(
-                "Executing default config action for config ID: {}",
-                config_id
-            );
+            info!("Executing default config action for config ID: {config_id}");
         }
 
         Ok(())
     }
 
-    fn action_type(&self) -> &str {
+    fn action_type(&self) -> &'static str {
         "config_action"
     }
 
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "Execute action related to a specific configuration"
     }
 }
@@ -165,7 +159,7 @@ struct StartAllPortForwardAction {
 }
 
 impl StartAllPortForwardAction {
-    fn new(app_handle: AppHandle) -> Self {
+    const fn new(app_handle: AppHandle) -> Self {
         Self { app_handle }
     }
 }
@@ -178,9 +172,9 @@ impl ActionHandler for StartAllPortForwardAction {
         let configs = match get_configs_cmd().await {
             Ok(configs) => configs,
             Err(e) => {
-                error!("Failed to get configs: {}", e);
+                error!("Failed to get configs: {e}");
                 return Err(kftray_shortcuts::ShortcutError::ActionExecutionFailed(
-                    format!("Failed to get configs: {}", e),
+                    format!("Failed to get configs: {e}"),
                 ));
             }
         };
@@ -188,9 +182,9 @@ impl ActionHandler for StartAllPortForwardAction {
         let config_states = match get_config_states().await {
             Ok(states) => states,
             Err(e) => {
-                error!("Failed to get config states: {}", e);
+                error!("Failed to get config states: {e}");
                 return Err(kftray_shortcuts::ShortcutError::ActionExecutionFailed(
-                    format!("Failed to get config states: {}", e),
+                    format!("Failed to get config states: {e}"),
                 ));
             }
         };
@@ -259,11 +253,11 @@ impl ActionHandler for StartAllPortForwardAction {
         Ok(())
     }
 
-    fn action_type(&self) -> &str {
+    fn action_type(&self) -> &'static str {
         "start_all_port_forward"
     }
 
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "Start all port forwards"
     }
 }
@@ -273,7 +267,7 @@ struct StopAllPortForwardAction {
 }
 
 impl StopAllPortForwardAction {
-    fn new(app_handle: AppHandle) -> Self {
+    const fn new(app_handle: AppHandle) -> Self {
         Self { app_handle }
     }
 }
@@ -299,19 +293,19 @@ impl ActionHandler for StopAllPortForwardAction {
                 Ok(())
             }
             Err(e) => {
-                error!("Failed to stop all port forwards: {}", e);
+                error!("Failed to stop all port forwards: {e}");
                 Err(kftray_shortcuts::ShortcutError::ActionExecutionFailed(
-                    format!("Failed to stop all port forwards: {}", e),
+                    format!("Failed to stop all port forwards: {e}"),
                 ))
             }
         }
     }
 
-    fn action_type(&self) -> &str {
+    fn action_type(&self) -> &'static str {
         "stop_all_port_forward"
     }
 
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "Stop all port forwards"
     }
 }
@@ -321,7 +315,7 @@ struct StartPortForwardAction {
 }
 
 impl StartPortForwardAction {
-    fn new(app_handle: AppHandle) -> Self {
+    const fn new(app_handle: AppHandle) -> Self {
         Self { app_handle }
     }
 }
@@ -335,7 +329,9 @@ impl ActionHandler for StartPortForwardAction {
             match serde_json::from_str::<serde_json::Value>(action_data) {
                 Ok(data) => {
                     if let Some(ids) = data.get("config_ids").and_then(|v| v.as_array()) {
-                        ids.iter().filter_map(|v| v.as_i64()).collect::<Vec<i64>>()
+                        ids.iter()
+                            .filter_map(serde_json::Value::as_i64)
+                            .collect::<Vec<i64>>()
                     } else {
                         return Err(kftray_shortcuts::ShortcutError::ActionExecutionFailed(
                             "No config_ids found in action data".to_string(),
@@ -344,7 +340,7 @@ impl ActionHandler for StartPortForwardAction {
                 }
                 Err(e) => {
                     return Err(kftray_shortcuts::ShortcutError::ActionExecutionFailed(
-                        format!("Failed to parse action data: {}", e),
+                        format!("Failed to parse action data: {e}"),
                     ));
                 }
             }
@@ -357,9 +353,9 @@ impl ActionHandler for StartPortForwardAction {
         let all_configs = match get_configs_cmd().await {
             Ok(configs) => configs,
             Err(e) => {
-                error!("Failed to get configs: {}", e);
+                error!("Failed to get configs: {e}");
                 return Err(kftray_shortcuts::ShortcutError::ActionExecutionFailed(
-                    format!("Failed to get configs: {}", e),
+                    format!("Failed to get configs: {e}"),
                 ));
             }
         };
@@ -367,9 +363,9 @@ impl ActionHandler for StartPortForwardAction {
         let config_states = match get_config_states().await {
             Ok(states) => states,
             Err(e) => {
-                error!("Failed to get config states: {}", e);
+                error!("Failed to get config states: {e}");
                 return Err(kftray_shortcuts::ShortcutError::ActionExecutionFailed(
-                    format!("Failed to get config states: {}", e),
+                    format!("Failed to get config states: {e}"),
                 ));
             }
         };
@@ -441,11 +437,11 @@ impl ActionHandler for StartPortForwardAction {
         Ok(())
     }
 
-    fn action_type(&self) -> &str {
+    fn action_type(&self) -> &'static str {
         "start_port_forward"
     }
 
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "Start specific port forwards"
     }
 }
@@ -455,7 +451,7 @@ struct StopPortForwardAction {
 }
 
 impl StopPortForwardAction {
-    fn new(app_handle: AppHandle) -> Self {
+    const fn new(app_handle: AppHandle) -> Self {
         Self { app_handle }
     }
 }
@@ -469,7 +465,9 @@ impl ActionHandler for StopPortForwardAction {
             match serde_json::from_str::<serde_json::Value>(action_data) {
                 Ok(data) => {
                     if let Some(ids) = data.get("config_ids").and_then(|v| v.as_array()) {
-                        ids.iter().filter_map(|v| v.as_i64()).collect::<Vec<i64>>()
+                        ids.iter()
+                            .filter_map(serde_json::Value::as_i64)
+                            .collect::<Vec<i64>>()
                     } else {
                         return Err(kftray_shortcuts::ShortcutError::ActionExecutionFailed(
                             "No config_ids found in action data".to_string(),
@@ -478,7 +476,7 @@ impl ActionHandler for StopPortForwardAction {
                 }
                 Err(e) => {
                     return Err(kftray_shortcuts::ShortcutError::ActionExecutionFailed(
-                        format!("Failed to parse action data: {}", e),
+                        format!("Failed to parse action data: {e}"),
                     ));
                 }
             }
@@ -491,9 +489,9 @@ impl ActionHandler for StopPortForwardAction {
         let all_configs = match get_configs_cmd().await {
             Ok(configs) => configs,
             Err(e) => {
-                error!("Failed to get configs: {}", e);
+                error!("Failed to get configs: {e}");
                 return Err(kftray_shortcuts::ShortcutError::ActionExecutionFailed(
-                    format!("Failed to get configs: {}", e),
+                    format!("Failed to get configs: {e}"),
                 ));
             }
         };
@@ -501,9 +499,9 @@ impl ActionHandler for StopPortForwardAction {
         let config_states = match get_config_states().await {
             Ok(states) => states,
             Err(e) => {
-                error!("Failed to get config states: {}", e);
+                error!("Failed to get config states: {e}");
                 return Err(kftray_shortcuts::ShortcutError::ActionExecutionFailed(
-                    format!("Failed to get config states: {}", e),
+                    format!("Failed to get config states: {e}"),
                 ));
             }
         };
@@ -589,11 +587,11 @@ impl ActionHandler for StopPortForwardAction {
         Ok(())
     }
 
-    fn action_type(&self) -> &str {
+    fn action_type(&self) -> &'static str {
         "stop_port_forward"
     }
 
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "Stop specific port forwards"
     }
 }
@@ -603,7 +601,7 @@ struct TogglePortForwardAction {
 }
 
 impl TogglePortForwardAction {
-    fn new(app_handle: AppHandle) -> Self {
+    const fn new(app_handle: AppHandle) -> Self {
         Self { app_handle }
     }
 }
@@ -617,7 +615,9 @@ impl ActionHandler for TogglePortForwardAction {
             match serde_json::from_str::<serde_json::Value>(action_data) {
                 Ok(data) => {
                     if let Some(ids) = data.get("config_ids").and_then(|v| v.as_array()) {
-                        ids.iter().filter_map(|v| v.as_i64()).collect::<Vec<i64>>()
+                        ids.iter()
+                            .filter_map(serde_json::Value::as_i64)
+                            .collect::<Vec<i64>>()
                     } else {
                         return Err(kftray_shortcuts::ShortcutError::ActionExecutionFailed(
                             "No config_ids found in action data".to_string(),
@@ -626,7 +626,7 @@ impl ActionHandler for TogglePortForwardAction {
                 }
                 Err(e) => {
                     return Err(kftray_shortcuts::ShortcutError::ActionExecutionFailed(
-                        format!("Failed to parse action data: {}", e),
+                        format!("Failed to parse action data: {e}"),
                     ));
                 }
             }
@@ -639,9 +639,9 @@ impl ActionHandler for TogglePortForwardAction {
         let all_configs = match get_configs_cmd().await {
             Ok(configs) => configs,
             Err(e) => {
-                error!("Failed to get configs: {}", e);
+                error!("Failed to get configs: {e}");
                 return Err(kftray_shortcuts::ShortcutError::ActionExecutionFailed(
-                    format!("Failed to get configs: {}", e),
+                    format!("Failed to get configs: {e}"),
                 ));
             }
         };
@@ -649,9 +649,9 @@ impl ActionHandler for TogglePortForwardAction {
         let config_states = match get_config_states().await {
             Ok(states) => states,
             Err(e) => {
-                error!("Failed to get config states: {}", e);
+                error!("Failed to get config states: {e}");
                 return Err(kftray_shortcuts::ShortcutError::ActionExecutionFailed(
-                    format!("Failed to get config states: {}", e),
+                    format!("Failed to get config states: {e}"),
                 ));
             }
         };
@@ -766,7 +766,7 @@ impl ActionHandler for TogglePortForwardAction {
                     if started == 1 { "" } else { "s" }
                 ),
                 (started, stopped) => {
-                    format!("Started {}, stopped {} port forwards", started, stopped)
+                    format!("Started {started}, stopped {stopped} port forwards")
                 }
             };
             let _ = self
@@ -783,11 +783,11 @@ impl ActionHandler for TogglePortForwardAction {
         Ok(())
     }
 
-    fn action_type(&self) -> &str {
+    fn action_type(&self) -> &'static str {
         "toggle_port_forward"
     }
 
-    fn description(&self) -> &str {
+    fn description(&self) -> &'static str {
         "Toggle specific port forwards"
     }
 }

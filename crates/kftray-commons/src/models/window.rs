@@ -13,7 +13,7 @@ pub struct SaveDialogState {
 
 impl Default for SaveDialogState {
     fn default() -> Self {
-        SaveDialogState {
+        Self {
             is_open: AtomicBool::new(false),
         }
     }

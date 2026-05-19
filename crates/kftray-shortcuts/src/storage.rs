@@ -15,7 +15,7 @@ pub struct ShortcutStorage {
 }
 
 impl ShortcutStorage {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub const fn new(pool: SqlitePool) -> Self {
         Self { pool }
     }
 
@@ -194,7 +194,7 @@ impl ShortcutStorage {
             return Err(ShortcutError::NotFound(id.to_string()));
         }
 
-        info!("Updated shortcut ID: {}", id);
+        info!("Updated shortcut ID: {id}");
         Ok(())
     }
 
@@ -211,7 +211,7 @@ impl ShortcutStorage {
             return Err(ShortcutError::NotFound(id.to_string()));
         }
 
-        info!("Deleted shortcut ID: {}", id);
+        info!("Deleted shortcut ID: {id}");
         Ok(())
     }
 
@@ -224,10 +224,7 @@ impl ShortcutStorage {
             .await?
             .rows_affected();
 
-        info!(
-            "Deleted {} shortcuts for config ID: {}",
-            rows_affected, config_id
-        );
+        info!("Deleted {rows_affected} shortcuts for config ID: {config_id}");
         Ok(rows_affected)
     }
 
@@ -244,7 +241,7 @@ impl ShortcutStorage {
             return Err(ShortcutError::NotFound(id.to_string()));
         }
 
-        info!("Enabled shortcut ID: {}", id);
+        info!("Enabled shortcut ID: {id}");
         Ok(())
     }
 
@@ -261,7 +258,7 @@ impl ShortcutStorage {
             return Err(ShortcutError::NotFound(id.to_string()));
         }
 
-        info!("Disabled shortcut ID: {}", id);
+        info!("Disabled shortcut ID: {id}");
         Ok(())
     }
 

@@ -53,7 +53,7 @@ impl CertificateManager {
         })
     }
 
-    pub fn with_components(
+    pub const fn with_components(
         generator: CertificateGenerator, store: CertificateStore, settings: AppSettings,
     ) -> Self {
         Self {
@@ -67,16 +67,16 @@ impl CertificateManager {
         if self.store.is_valid(alias).await {
             match self.store.load(alias).await {
                 Ok(cert_pair) => {
-                    info!("Using existing SSL certificate for alias: {}", alias);
+                    info!("Using existing SSL certificate for alias: {alias}");
                     return Ok(cert_pair);
                 }
                 Err(e) => {
-                    info!("Failed to load existing certificate for {}: {}", alias, e);
+                    info!("Failed to load existing certificate for {alias}: {e}");
                 }
             }
         }
 
-        info!("Generating SSL certificate for alias: {}", alias);
+        info!("Generating SSL certificate for alias: {alias}");
 
         let cert_pair = self
             .generator
@@ -89,10 +89,7 @@ impl CertificateManager {
             .await
             .context("Failed to store certificate")?;
 
-        info!(
-            "SSL certificate generated and stored successfully for: {}",
-            alias
-        );
+        info!("SSL certificate generated and stored successfully for: {alias}");
         Ok(cert_pair)
     }
 
@@ -112,22 +109,16 @@ impl CertificateManager {
                         info!("Using existing global SSL certificate (all domains covered)");
                         return Ok(cert_pair);
                     } else {
-                        info!(
-                            "Certificate missing domains: {:?}, regenerating",
-                            missing_domains
-                        );
+                        info!("Certificate missing domains: {missing_domains:?}, regenerating");
                     }
                 }
                 Err(e) => {
-                    info!("Failed to load existing global certificate: {}", e);
+                    info!("Failed to load existing global certificate: {e}");
                 }
             }
         }
 
-        info!(
-            "Generating global SSL certificate for domains: {:?}",
-            domains
-        );
+        info!("Generating global SSL certificate for domains: {domains:?}");
 
         let cert_pair = self
             .generator
@@ -183,10 +174,10 @@ impl CertificateManager {
             .context("Failed to write domains hash")
     }
 
-    fn get_domains_hash_path(&self, cert_name: &str) -> std::path::PathBuf {
+    fn get_domains_hash_path(&self, cert_name: &str) -> PathBuf {
         self.store
             .get_store_path()
-            .join(format!("{}.domains_hash", cert_name))
+            .join(format!("{cert_name}.domains_hash"))
     }
 
     pub async fn domains_changed(&self, domains: &[String]) -> bool {
@@ -210,8 +201,8 @@ impl CertificateManager {
         let mut cleanup_errors = Vec::new();
 
         if let Err(e) = Self::cleanup_system_ca_certificate().await {
-            warn!("Failed to cleanup system CA certificate: {}", e);
-            cleanup_errors.push(format!("system CA certificate: {}", e));
+            warn!("Failed to cleanup system CA certificate: {e}");
+            cleanup_errors.push(format!("system CA certificate: {e}"));
         }
 
         let base_dir = if let Ok(config_dir) = std::env::var("KFTRAY_CONFIG") {
@@ -228,10 +219,10 @@ impl CertificateManager {
             let ssl_certs_dir = base_dir.join("ssl-certs");
             if ssl_certs_dir.exists() {
                 match tokio::fs::remove_dir_all(&ssl_certs_dir).await {
-                    Ok(_) => info!("Removed SSL certificates directory: {:?}", ssl_certs_dir),
+                    Ok(()) => info!("Removed SSL certificates directory: {ssl_certs_dir:?}"),
                     Err(e) => {
-                        warn!("Failed to remove SSL certificates directory: {}", e);
-                        cleanup_errors.push(format!("certificates directory: {}", e));
+                        warn!("Failed to remove SSL certificates directory: {e}");
+                        cleanup_errors.push(format!("certificates directory: {e}"));
                     }
                 }
             }
@@ -239,40 +230,37 @@ impl CertificateManager {
             let ssl_ca_dir = base_dir.join("ssl-ca");
             if ssl_ca_dir.exists() {
                 match tokio::fs::remove_dir_all(&ssl_ca_dir).await {
-                    Ok(_) => info!("Removed SSL CA directory: {:?}", ssl_ca_dir),
+                    Ok(()) => info!("Removed SSL CA directory: {ssl_ca_dir:?}"),
                     Err(e) => {
-                        warn!("Failed to remove SSL CA directory: {}", e);
-                        cleanup_errors.push(format!("CA directory: {}", e));
+                        warn!("Failed to remove SSL CA directory: {e}");
+                        cleanup_errors.push(format!("CA directory: {e}"));
                     }
                 }
             }
         }
 
-        if let Ok(store) = super::cert_store::CertificateStore::new()
+        if let Ok(store) = CertificateStore::new()
             && let Err(e) = Self::cleanup_keychain_entries(&store).await
         {
-            warn!("Failed to cleanup keychain entries: {}", e);
-            cleanup_errors.push(format!("keychain entries: {}", e));
+            warn!("Failed to cleanup keychain entries: {e}");
+            cleanup_errors.push(format!("keychain entries: {e}"));
         }
 
         if cleanup_errors.is_empty() {
             info!("Successfully cleaned up all SSL artifacts");
             Ok(())
         } else {
-            warn!(
-                "SSL cleanup completed with some errors: {:?}",
-                cleanup_errors
-            );
+            warn!("SSL cleanup completed with some errors: {cleanup_errors:?}");
 
             Ok(())
         }
     }
 
-    async fn cleanup_keychain_entries(store: &super::cert_store::CertificateStore) -> Result<()> {
+    async fn cleanup_keychain_entries(store: &CertificateStore) -> Result<()> {
         info!("Cleaning up SSL vault from keychain");
 
         if let Err(e) = store.cleanup_ssl_vault().await {
-            warn!("Failed to cleanup SSL vault: {}", e);
+            warn!("Failed to cleanup SSL vault: {e}");
             return Err(e);
         }
 
@@ -299,16 +287,13 @@ impl CertificateManager {
                     let ca_cert_der = ca_der_vec.contents();
 
                     match super::platform::remove_ca_certificate(ca_cert_der).await {
-                        Ok(_) => {
+                        Ok(()) => {
                             info!(
                                 "Successfully removed kftray CA certificate from system trust store"
                             );
                         }
                         Err(e) => {
-                            warn!(
-                                "Failed to remove CA certificate from system trust store: {}",
-                                e
-                            );
+                            warn!("Failed to remove CA certificate from system trust store: {e}");
                         }
                     }
                 } else {
@@ -316,7 +301,7 @@ impl CertificateManager {
                 }
             }
             Err(e) => {
-                warn!("Failed to read CA certificate file for removal: {}", e);
+                warn!("Failed to read CA certificate file for removal: {e}");
             }
         }
 
@@ -329,18 +314,15 @@ impl CertificateManager {
         let cert_name = "global-ssl-cert";
         let domains_hash = self.compute_domains_hash(domains);
 
-        info!(
-            "Force regenerating global SSL certificate for domains: {:?}",
-            domains
-        );
+        info!("Force regenerating global SSL certificate for domains: {domains:?}");
 
         if let Err(e) = self.store.remove(cert_name).await {
-            warn!("Failed to remove existing certificate: {}", e);
+            warn!("Failed to remove existing certificate: {e}");
         }
 
         let hash_file = self.get_domains_hash_path(cert_name);
         if let Err(e) = tokio::fs::remove_file(&hash_file).await {
-            warn!("Failed to remove existing domains hash file: {}", e);
+            warn!("Failed to remove existing domains hash file: {e}");
         }
 
         let cert_pair = self
@@ -365,7 +347,7 @@ impl CertificateManager {
     }
 
     pub async fn regenerate_certificate(&self, alias: &str) -> Result<CertificatePair> {
-        info!("Regenerating SSL certificate for alias: {}", alias);
+        info!("Regenerating SSL certificate for alias: {alias}");
 
         let cert_pair = self
             .generator
@@ -378,7 +360,7 @@ impl CertificateManager {
             .await
             .context("Failed to store regenerated certificate")?;
 
-        info!("SSL certificate regenerated successfully for: {}", alias);
+        info!("SSL certificate regenerated successfully for: {alias}");
         Ok(cert_pair)
     }
 
@@ -390,7 +372,7 @@ impl CertificateManager {
             let expected_domain = if alias.contains('.') {
                 alias.to_string()
             } else {
-                format!("{}.local", alias)
+                format!("{alias}.local")
             };
 
             return Ok(CertificateInfo {
@@ -408,7 +390,7 @@ impl CertificateManager {
             if alias.contains('.') {
                 alias.to_string()
             } else {
-                format!("{}.local", alias)
+                format!("{alias}.local")
             }
         };
 
@@ -416,7 +398,7 @@ impl CertificateManager {
             domain,
             expires_at: None,
             is_valid,
-            file_path: Some(format!("~/.config/kftray/ssl-certs/{}.crt", alias)),
+            file_path: Some(format!("~/.config/kftray/ssl-certs/{alias}.crt")),
         })
     }
 
@@ -463,7 +445,7 @@ impl CertificateManager {
             .await
             .context("Failed to remove certificate")?;
 
-        info!("SSL certificate removed for alias: {}", alias);
+        info!("SSL certificate removed for alias: {alias}");
         Ok(())
     }
 
@@ -512,7 +494,7 @@ impl CertificateManager {
                         info!("CA file exists but not installed in system trust store");
                     }
                     Err(e) => {
-                        warn!("Failed to check CA installation status: {}", e);
+                        warn!("Failed to check CA installation status: {e}");
                     }
                 }
             }
@@ -524,13 +506,13 @@ impl CertificateManager {
                     let ca_cert_der = ca_der_vec.contents();
 
                     match super::platform::install_ca_certificate(ca_cert_der, &ca_pem).await {
-                        Ok(_) => {
+                        Ok(()) => {
                             info!(
                                 "Successfully installed existing CA certificate to system trust store"
                             );
                         }
                         Err(e) => {
-                            warn!("Failed to install existing CA certificate: {}", e);
+                            warn!("Failed to install existing CA certificate: {e}");
                             return Err(e);
                         }
                     }
@@ -556,13 +538,13 @@ impl CertificateManager {
                     let ca_cert_der = ca_der_vec.contents();
 
                     match super::platform::install_ca_certificate(ca_cert_der, &ca_pem).await {
-                        Ok(_) => {
+                        Ok(()) => {
                             info!(
                                 "Successfully installed new CA certificate to system trust store"
                             );
                         }
                         Err(e) => {
-                            warn!("Failed to install new CA certificate: {}", e);
+                            warn!("Failed to install new CA certificate: {e}");
                             return Err(e);
                         }
                     }
@@ -590,7 +572,7 @@ impl CertificateManager {
                     return Ok(cert_pair);
                 }
                 Err(e) => {
-                    info!("Failed to load existing wildcard certificate: {}", e);
+                    info!("Failed to load existing wildcard certificate: {e}");
                 }
             }
         }
@@ -639,22 +621,16 @@ impl CertificateManager {
                         if !alias.is_empty() && !domains.contains(alias) {
                             domains.push(alias.clone());
                         }
-                        let local_domain = format!("{}.local", alias);
+                        let local_domain = format!("{alias}.local");
                         if !domains.contains(&local_domain) {
                             domains.push(local_domain);
                         }
                     }
                 }
-                info!(
-                    "Collected domains from {} configs: {:?}",
-                    config_count, domains
-                );
+                info!("Collected domains from {config_count} configs: {domains:?}");
             }
             Err(e) => {
-                warn!(
-                    "Failed to get configs for domain collection, using defaults: {}",
-                    e
-                );
+                warn!("Failed to get configs for domain collection, using defaults: {e}");
             }
         }
 
@@ -699,18 +675,15 @@ impl CertificateManager {
                         .collect();
 
                     if !missing_domains.is_empty() {
-                        info!(
-                            "Certificate missing domains: {:?}, regenerating",
-                            missing_domains
-                        );
+                        info!("Certificate missing domains: {missing_domains:?}, regenerating");
                         info!(
                             "Current certificate domains: {:?}",
                             cert_pair.subject_alt_names
                         );
-                        info!("Required domains: {:?}", current_domains);
+                        info!("Required domains: {current_domains:?}");
 
                         if let Err(e) = self.store.remove(cert_name).await {
-                            warn!("Failed to remove corrupted certificate: {}", e);
+                            warn!("Failed to remove corrupted certificate: {e}");
                         }
 
                         return self.ensure_global_certificate_for_all_configs().await;
@@ -721,7 +694,7 @@ impl CertificateManager {
                 Ok(cert_pair)
             }
             Err(e) => {
-                warn!("Failed to load global certificate, regenerating: {}", e);
+                warn!("Failed to load global certificate, regenerating: {e}");
                 self.ensure_global_certificate_for_all_configs().await
             }
         }
@@ -742,12 +715,12 @@ mod tests {
 
         let temp_dir = TempDir::new().unwrap();
 
-        let settings = kftray_commons::models::settings_model::AppSettings {
+        let settings = AppSettings {
             ssl_enabled: true,
             ..Default::default()
         };
         let generator = CertificateGenerator::for_testing(temp_dir.path());
-        let store = super::CertificateStore::with_path(temp_dir.path().to_path_buf()).unwrap();
+        let store = CertificateStore::with_path(temp_dir.path().to_path_buf()).unwrap();
 
         let manager = CertificateManager::with_components(generator, store, settings);
 

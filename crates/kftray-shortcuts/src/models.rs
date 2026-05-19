@@ -17,7 +17,7 @@ pub struct ShortcutDefinition {
 }
 
 impl ShortcutDefinition {
-    pub fn new(name: String, shortcut_key: String, action_type: String) -> Self {
+    pub const fn new(name: String, shortcut_key: String, action_type: String) -> Self {
         Self {
             id: None,
             name,
@@ -29,7 +29,7 @@ impl ShortcutDefinition {
         }
     }
 
-    pub fn with_config_id(mut self, config_id: i64) -> Self {
+    pub const fn with_config_id(mut self, config_id: i64) -> Self {
         self.config_id = Some(config_id);
         self
     }
@@ -67,7 +67,7 @@ impl ActionContext {
         }
     }
 
-    pub fn with_config_id(mut self, config_id: i64) -> Self {
+    pub const fn with_config_id(mut self, config_id: i64) -> Self {
         self.config_id = Some(config_id);
         self
     }
@@ -92,7 +92,7 @@ pub enum ShortcutPlatform {
 }
 
 impl ShortcutPlatform {
-    pub fn current() -> Self {
+    pub const fn current() -> Self {
         #[cfg(target_os = "linux")]
         return Self::Linux;
 

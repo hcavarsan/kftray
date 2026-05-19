@@ -5,7 +5,7 @@ use serde::{
     Serialize,
 };
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HostEntry {
     pub ip: IpAddr,
     pub hostname: String,

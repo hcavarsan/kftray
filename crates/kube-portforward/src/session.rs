@@ -136,7 +136,7 @@ impl Session {
         self.spare_count() <= SPARE_STREAM_LOW_WATERMARK
     }
 
-    pub fn protocol(&self) -> Subprotocol {
+    pub const fn protocol(&self) -> Subprotocol {
         self.protocol
     }
 

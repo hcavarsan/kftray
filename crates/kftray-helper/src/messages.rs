@@ -92,35 +92,37 @@ impl HelperRequest {
 }
 
 impl HelperResponse {
-    pub fn success(request_id: String) -> Self {
+    pub const fn success(request_id: String) -> Self {
         Self {
             request_id,
             result: RequestResult::Success,
         }
     }
 
-    pub fn string_success(request_id: String, result: String) -> Self {
+    pub const fn string_success(request_id: String, result: String) -> Self {
         Self {
             request_id,
             result: RequestResult::StringSuccess(result),
         }
     }
 
-    pub fn list_success(request_id: String, result: Vec<String>) -> Self {
+    pub const fn list_success(request_id: String, result: Vec<String>) -> Self {
         Self {
             request_id,
             result: RequestResult::ListSuccess(result),
         }
     }
 
-    pub fn allocations_success(request_id: String, result: Vec<(String, String)>) -> Self {
+    pub const fn allocations_success(request_id: String, result: Vec<(String, String)>) -> Self {
         Self {
             request_id,
             result: RequestResult::AllocationsSuccess(result),
         }
     }
 
-    pub fn host_entries_success(request_id: String, result: Vec<(String, HostEntry)>) -> Self {
+    pub const fn host_entries_success(
+        request_id: String, result: Vec<(String, HostEntry)>,
+    ) -> Self {
         Self {
             request_id,
             result: RequestResult::HostEntriesSuccess(result),

@@ -8,7 +8,5 @@ pub mod tui;
 pub mod updater;
 pub mod utils;
 
-pub use tui::app::run_tui;
-
 #[cfg(test)]
 mod tests;

@@ -3,7 +3,6 @@ use std::time::Duration;
 
 use dashmap::DashMap;
 use kftray_commons::models::config_model::Config;
-use once_cell::sync::Lazy;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -25,7 +24,7 @@ pub const MAX_BACKOFF_SECS: u64 = 32;
 pub const POD_READY_TIMEOUT_SECS: u64 = 30;
 
 /// Represents the current state of a proxy recovery operation
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RecoveryState {
     /// No recovery in progress
     Idle,
@@ -50,7 +49,7 @@ pub enum RecoveryState {
 }
 
 /// Type of proxy workload being recovered
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProxyType {
     /// Direct pod forwarding (bare pod)
     BarePod,
@@ -59,7 +58,7 @@ pub enum ProxyType {
 }
 
 /// Signal that triggers recovery logic
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RecoverySignal {
     /// Pod was terminated or deleted
     PodDied,
@@ -77,12 +76,13 @@ pub enum RecoverySignal {
 ///
 /// Prevents race conditions between pod watcher and network monitor.
 /// Each config_id gets its own Mutex to serialize recovery attempts.
-pub static RECOVERY_LOCKS: Lazy<DashMap<i64, Arc<Mutex<()>>>> = Lazy::new(DashMap::new);
+pub static RECOVERY_LOCKS: std::sync::LazyLock<DashMap<i64, Arc<Mutex<()>>>> =
+    std::sync::LazyLock::new(DashMap::new);
 
 /// Global map of active recovery managers, keyed by config_id.
 /// Used to cancel recovery when user stops a port forward.
-pub static RECOVERY_MANAGERS: Lazy<DashMap<i64, Arc<ProxyRecoveryManager>>> =
-    Lazy::new(DashMap::new);
+pub static RECOVERY_MANAGERS: std::sync::LazyLock<DashMap<i64, Arc<ProxyRecoveryManager>>> =
+    std::sync::LazyLock::new(DashMap::new);
 
 /// Spawn a recovery manager for the given config and proxy type.
 ///
@@ -106,19 +106,16 @@ pub fn spawn_recovery_manager(config: Config, proxy_type: ProxyType) {
         if let Ok(mut guard) = manager.task_handle.try_lock() {
             *guard = Some(handle);
         } else {
-            log::warn!(
-                "Could not store task handle for recovery manager config {}",
-                config_id
-            );
+            log::warn!("Could not store task handle for recovery manager config {config_id}");
         }
         spawned = true;
         manager
     });
 
     if spawned {
-        log::info!("Spawned recovery manager for proxy config {}", config_id);
+        log::info!("Spawned recovery manager for proxy config {config_id}");
     } else {
-        log::debug!("Recovery manager already active for config {}", config_id);
+        log::debug!("Recovery manager already active for config {config_id}");
     }
 }
 
@@ -249,7 +246,7 @@ impl ProxyRecoveryManager {
                         }
                     }
                 }
-                _ = self.cancel_token.cancelled() => {
+                () = self.cancel_token.cancelled() => {
                     let mut s = self.state.write().await;
                     *s = RecoveryState::Cancelled;
                     log::debug!("Recovery loop cancelled for config {}", self.config_id);
@@ -297,8 +294,8 @@ impl ProxyRecoveryManager {
 
                 // Sleep before acquiring the lock so the guard isn't held during backoff
                 tokio::select! {
-                    _ = tokio::time::sleep(Duration::from_secs(backoff)) => {}
-                    _ = self.cancel_token.cancelled() => {
+                    () = tokio::time::sleep(Duration::from_secs(backoff)) => {}
+                    () = self.cancel_token.cancelled() => {
                         all_attempts_exhausted = false;
                         break;
                     }
@@ -349,7 +346,7 @@ impl ProxyRecoveryManager {
                     "Recovery failed after {} attempts for config {}",
                     MAX_RECOVERY_ATTEMPTS, self.config_id
                 );
-                log::error!("{}", final_error);
+                log::error!("{final_error}");
                 {
                     let mut s = self.state.write().await;
                     *s = RecoveryState::Failed {
@@ -378,7 +375,7 @@ impl ProxyRecoveryManager {
         let client = crate::registry::PORT_FORWARD_REGISTRY
             .acquire_client(client_key)
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to get K8s client: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to get K8s client: {e}"))?;
         let client = kube::Client::clone(&client);
 
         match self.proxy_type {
@@ -463,7 +460,7 @@ pub async fn recover_bare_pod(config: &Config, client: &kube::Client) -> anyhow:
     // Result<T, String> public surface).
     super::lifecycle::deploy_and_forward_pod(vec![config.clone()])
         .await
-        .map_err(|e| anyhow::anyhow!("Re-deployment failed: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Re-deployment failed: {e}"))?;
 
     Ok(())
 }
@@ -496,13 +493,11 @@ pub async fn recover_deployment(config: &Config, client: &kube::Client) -> anyho
     let deployment = deployments
         .get_opt(hashed_name)
         .await
-        .map_err(|e| anyhow::anyhow!("Failed to query deployment {}: {}", hashed_name, e))?;
+        .map_err(|e| anyhow::anyhow!("Failed to query deployment {hashed_name}: {e}"))?;
 
     if deployment.is_none() {
         log::warn!(
-            "Deployment {} not found, falling back to bare pod recovery for config {}",
-            hashed_name,
-            config_id
+            "Deployment {hashed_name} not found, falling back to bare pod recovery for config {config_id}"
         );
         return recover_bare_pod(config, client).await;
     }
@@ -511,25 +506,22 @@ pub async fn recover_deployment(config: &Config, client: &kube::Client) -> anyho
     // POD_READY_TIMEOUT_SECS) Use label selector to find the pod
     let pods: kube::Api<k8s_openapi::api::core::v1::Pod> =
         kube::Api::namespaced(client.clone(), namespace);
-    let label_selector = format!("app={},config_id={}", hashed_name, config_id);
+    let label_selector = format!("app={hashed_name},config_id={config_id}");
     let lp = kube::api::ListParams::default().labels(&label_selector);
 
-    let deadline =
-        tokio::time::Instant::now() + tokio::time::Duration::from_secs(POD_READY_TIMEOUT_SECS);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(POD_READY_TIMEOUT_SECS);
 
     loop {
         if tokio::time::Instant::now() >= deadline {
             return Err(anyhow::anyhow!(
-                "Timed out waiting for replacement pod for deployment {} (config {})",
-                hashed_name,
-                config_id
+                "Timed out waiting for replacement pod for deployment {hashed_name} (config {config_id})"
             ));
         }
 
         let pod_list = pods
             .list(&lp)
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to list pods: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to list pods: {e}"))?;
 
         let ready_pod = pod_list.items.iter().find(|pod| {
             pod.status
@@ -544,23 +536,19 @@ pub async fn recover_deployment(config: &Config, client: &kube::Client) -> anyho
         });
 
         if ready_pod.is_some() {
-            log::info!(
-                "Replacement pod ready for deployment {} (config {})",
-                hashed_name,
-                config_id
-            );
+            log::info!("Replacement pod ready for deployment {hashed_name} (config {config_id})");
             // TCP: the existing pod_watcher will detect the new pod and reconnect
             // UDP: the stream is single-shot, so we need to restart the port forward
             if config.protocol.eq_ignore_ascii_case("udp") {
                 cleanup_child_processes_for_config(config_id).await;
                 crate::kube::start::start_port_forward(vec![config.clone()], "udp")
                     .await
-                    .map_err(|e| anyhow::anyhow!("Failed to restart UDP forward: {}", e))?;
+                    .map_err(|e| anyhow::anyhow!("Failed to restart UDP forward: {e}"))?;
             }
             return Ok(());
         }
 
-        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+        tokio::time::sleep(Duration::from_secs(2)).await;
     }
 }
 
@@ -650,7 +638,7 @@ mod tests {
     async fn test_recovery_loop_cancels_cleanly() {
         use std::time::Duration;
 
-        let config = kftray_commons::models::config_model::Config {
+        let config = Config {
             id: Some(9999),
             service: Some("test-svc".to_string()),
             namespace: "default".to_string(),
@@ -679,8 +667,8 @@ mod tests {
     // T14: ProxyRecoveryManager + retry logic tests
     // ====================================================================
 
-    fn make_test_config(id: i64) -> kftray_commons::models::config_model::Config {
-        kftray_commons::models::config_model::Config {
+    fn make_test_config(id: i64) -> Config {
+        Config {
             id: Some(id),
             kubeconfig: Some("/nonexistent/path/kubeconfig".to_string()),
             namespace: "default".to_string(),
@@ -700,8 +688,7 @@ mod tests {
             );
             assert_eq!(
                 backoff, expected_secs,
-                "Backoff for attempt {} should be {}s, got {}s",
-                attempt, expected_secs, backoff
+                "Backoff for attempt {attempt} should be {expected_secs}s, got {backoff}s"
             );
         }
 
@@ -713,8 +700,7 @@ mod tests {
             );
             assert_eq!(
                 backoff, MAX_BACKOFF_SECS,
-                "Backoff for attempt {} should be capped at {}s",
-                attempt, MAX_BACKOFF_SECS
+                "Backoff for attempt {attempt} should be capped at {MAX_BACKOFF_SECS}s"
             );
         }
     }
@@ -737,7 +723,7 @@ mod tests {
         manager.signal_recovery(RecoverySignal::PodDied);
         // Poll until state is Failed. Each iteration advances virtual time
         // (for backoff sleeps) and yields for async I/O processing.
-        let wall_deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        let wall_deadline = std::time::Instant::now() + Duration::from_secs(30);
         loop {
             tokio::time::advance(Duration::from_millis(500)).await;
             for _ in 0..50 {
@@ -760,13 +746,11 @@ mod tests {
             RecoveryState::Failed { total_attempts, .. } => {
                 assert_eq!(
                     *total_attempts, MAX_RECOVERY_ATTEMPTS,
-                    "Should have exhausted all {} attempts",
-                    MAX_RECOVERY_ATTEMPTS
+                    "Should have exhausted all {MAX_RECOVERY_ATTEMPTS} attempts"
                 );
             }
             other => panic!(
-                "Expected Failed state after exhausting retries, got {:?}",
-                other
+                "Expected Failed state after exhausting retries, got {other:?}"
             ),
         }
         drop(state);

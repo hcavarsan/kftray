@@ -91,10 +91,7 @@ impl CertificateGenerator {
                     return Ok(ca);
                 }
                 Err(e) => {
-                    warn!(
-                        "Failed to load existing CA certificate, creating new one: {}",
-                        e
-                    );
+                    warn!("Failed to load existing CA certificate, creating new one: {e}");
                 }
             }
         }
@@ -211,10 +208,10 @@ impl CertificateGenerator {
             if alias.ends_with(".local") {
                 (alias.to_string(), alias.to_string())
             } else {
-                (alias.to_string(), format!("{}.local", alias))
+                (alias.to_string(), format!("{alias}.local"))
             }
         } else {
-            let local_domain = format!("{}.local", alias);
+            let local_domain = format!("{alias}.local");
             (local_domain.clone(), local_domain)
         };
 
@@ -253,15 +250,12 @@ impl CertificateGenerator {
 
         let now = OffsetDateTime::now_utc();
         cert_params.not_before = now - Duration::minutes(1);
-        cert_params.not_after = now + Duration::days(validity_days as i64);
+        cert_params.not_after = now + Duration::days(i64::from(validity_days));
 
         let (cert_der, ca_cert_der, private_key) =
             Self::sign_certificate(ca_cert, ca_key_pair, cert_params).await?;
 
-        info!(
-            "Generated SSL certificate for {} (valid for {} days)",
-            alias, validity_days
-        );
+        info!("Generated SSL certificate for {alias} (valid for {validity_days} days)");
 
         Ok(CertificatePair {
             certificate: vec![cert_der, ca_cert_der],
@@ -286,11 +280,11 @@ impl CertificateGenerator {
         let local_domain = if primary_domain.ends_with(".local") {
             primary_domain.clone()
         } else {
-            format!("{}.local", primary_domain)
+            format!("{primary_domain}.local")
         };
 
         let mut san_names = vec!["localhost".to_string(), "127.0.0.1".to_string()];
-        let mut seen_domains = std::collections::HashSet::new();
+        let mut seen_domains = HashSet::new();
 
         let mut cert_params = CertificateParams::new(vec!["localhost".to_string()])
             .context("Failed to create certificate params")?;
@@ -306,19 +300,19 @@ impl CertificateGenerator {
                 let dns_name = domain
                     .as_str()
                     .try_into()
-                    .with_context(|| format!("Invalid domain: {}", domain))?;
+                    .with_context(|| format!("Invalid domain: {domain}"))?;
                 cert_params
                     .subject_alt_names
                     .push(rcgen::SanType::DnsName(dns_name));
                 san_names.push(domain.clone());
 
                 if !domain.ends_with(".local") {
-                    let local_domain = format!("{}.local", domain);
+                    let local_domain = format!("{domain}.local");
                     if seen_domains.insert(local_domain.clone()) {
                         let local_dns_name = local_domain
                             .as_str()
                             .try_into()
-                            .with_context(|| format!("Invalid domain: {}", local_domain))?;
+                            .with_context(|| format!("Invalid domain: {local_domain}"))?;
                         cert_params
                             .subject_alt_names
                             .push(rcgen::SanType::DnsName(local_dns_name));
@@ -340,14 +334,13 @@ impl CertificateGenerator {
 
         let now = OffsetDateTime::now_utc();
         cert_params.not_before = now - Duration::minutes(1);
-        cert_params.not_after = now + Duration::days(validity_days as i64);
+        cert_params.not_after = now + Duration::days(i64::from(validity_days));
 
         let (cert_der, ca_cert_der, private_key) =
             Self::sign_certificate(ca_cert, ca_key_pair, cert_params).await?;
 
         info!(
-            "Generated SSL certificate for domains: {:?} (valid for {} days)",
-            domains, validity_days
+            "Generated SSL certificate for domains: {domains:?} (valid for {validity_days} days)"
         );
 
         Ok(CertificatePair {
@@ -366,13 +359,13 @@ impl CertificateGenerator {
 
         let (ca_cert, ca_key_pair) = self.get_or_create_ca().await?;
 
-        let wildcard_domain = format!("*.{}", base_domain);
+        let wildcard_domain = format!("*.{base_domain}");
         let (local_domain, wildcard_local) = if base_domain.ends_with(".local") {
-            (base_domain.to_string(), format!("*.{}", base_domain))
+            (base_domain.to_string(), format!("*.{base_domain}"))
         } else {
             (
-                format!("{}.local", base_domain),
-                format!("*.{}.local", base_domain),
+                format!("{base_domain}.local"),
+                format!("*.{base_domain}.local"),
             )
         };
 
@@ -417,14 +410,13 @@ impl CertificateGenerator {
 
         let now = OffsetDateTime::now_utc();
         cert_params.not_before = now - Duration::minutes(1);
-        cert_params.not_after = now + Duration::days(validity_days as i64);
+        cert_params.not_after = now + Duration::days(i64::from(validity_days));
 
         let (cert_der, ca_cert_der, private_key) =
             Self::sign_certificate(ca_cert, ca_key_pair, cert_params).await?;
 
         info!(
-            "Generated wildcard SSL certificate for *.{} (valid for {} days)",
-            base_domain, validity_days
+            "Generated wildcard SSL certificate for *.{base_domain} (valid for {validity_days} days)"
         );
 
         Ok(CertificatePair {
@@ -484,7 +476,7 @@ impl CertificateGenerator {
                 parsed
                     .contents()
                     .iter()
-                    .fold(0u32, |acc, &b| acc.wrapping_add(b as u32))
+                    .fold(0u32, |acc, &b| acc.wrapping_add(u32::from(b)))
             ),
             installed,
         }))

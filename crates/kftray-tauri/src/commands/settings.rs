@@ -25,7 +25,7 @@ use log::{
 use serde::Serialize;
 
 #[tauri::command]
-pub async fn get_settings() -> Result<HashMap<String, String>, String> {
+pub(crate) async fn get_settings() -> Result<HashMap<String, String>, String> {
     let mut settings = HashMap::new();
 
     match get_disconnect_timeout().await {
@@ -85,7 +85,7 @@ pub async fn get_settings() -> Result<HashMap<String, String>, String> {
 }
 
 #[tauri::command]
-pub async fn update_disconnect_timeout(minutes: u32) -> Result<(), String> {
+pub(crate) async fn update_disconnect_timeout(minutes: u32) -> Result<(), String> {
     info!("Updating disconnect timeout to {minutes} minutes");
 
     set_disconnect_timeout(minutes).await.map_err(|e| {
@@ -98,7 +98,7 @@ pub async fn update_disconnect_timeout(minutes: u32) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn get_setting_value(key: String) -> Result<Option<String>, String> {
+pub(crate) async fn get_setting_value(key: String) -> Result<Option<String>, String> {
     get_setting(&key).await.map_err(|e| {
         error!("Failed to get setting {key}: {e}");
         format!("Failed to get setting: {e}")
@@ -106,7 +106,7 @@ pub async fn get_setting_value(key: String) -> Result<Option<String>, String> {
 }
 
 #[tauri::command]
-pub async fn set_setting_value(key: String, value: String) -> Result<(), String> {
+pub(crate) async fn set_setting_value(key: String, value: String) -> Result<(), String> {
     info!("Setting {key} = {value}");
 
     set_setting(&key, &value).await.map_err(|e| {
@@ -119,7 +119,7 @@ pub async fn set_setting_value(key: String, value: String) -> Result<(), String>
 }
 
 #[tauri::command]
-pub async fn update_network_monitor(enabled: bool) -> Result<(), String> {
+pub(crate) async fn update_network_monitor(enabled: bool) -> Result<(), String> {
     info!("Updating network monitor to {enabled}");
 
     set_network_monitor(enabled).await.map_err(|e| {
@@ -144,7 +144,7 @@ pub async fn update_network_monitor(enabled: bool) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn update_auto_update_enabled(enabled: bool) -> Result<(), String> {
+pub(crate) async fn update_auto_update_enabled(enabled: bool) -> Result<(), String> {
     info!("Updating auto update enabled to {enabled}");
 
     set_auto_update_enabled(enabled).await.map_err(|e| {
@@ -157,7 +157,7 @@ pub async fn update_auto_update_enabled(enabled: bool) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn get_auto_update_status() -> Result<HashMap<String, String>, String> {
+pub(crate) async fn get_auto_update_status() -> Result<HashMap<String, String>, String> {
     let mut status = HashMap::new();
 
     match get_auto_update_enabled().await {
@@ -187,7 +187,7 @@ pub async fn get_auto_update_status() -> Result<HashMap<String, String>, String>
 }
 
 #[derive(Serialize)]
-pub struct DiagnosticResult {
+pub(crate) struct DiagnosticResult {
     pub name: String,
     pub status: String,
     pub value: String,
@@ -195,7 +195,7 @@ pub struct DiagnosticResult {
 }
 
 #[derive(Serialize)]
-pub struct DiagnosticsReport {
+pub(crate) struct DiagnosticsReport {
     pub checks: Vec<DiagnosticResult>,
     pub overall_status: String,
 }
@@ -219,7 +219,7 @@ fn get_command_path(cmd: &str) -> Option<String> {
 }
 
 #[tauri::command]
-pub async fn run_diagnostics() -> Result<DiagnosticsReport, String> {
+pub(crate) async fn run_diagnostics() -> Result<DiagnosticsReport, String> {
     let mut checks = Vec::new();
     let mut has_errors = false;
 
@@ -273,7 +273,7 @@ pub async fn run_diagnostics() -> Result<DiagnosticsReport, String> {
     let kubeconfig = std::env::var("KUBECONFIG");
     let default_kubeconfig = home
         .as_ref()
-        .map(|h| format!("{}/.kube/config", h))
+        .map(|h| format!("{h}/.kube/config"))
         .unwrap_or_default();
     let kubeconfig_exists = kubeconfig
         .as_ref()
@@ -286,7 +286,7 @@ pub async fn run_diagnostics() -> Result<DiagnosticsReport, String> {
         } else {
             "warning".into()
         },
-        value: kubeconfig.unwrap_or_else(|_| format!("{} (default)", default_kubeconfig)),
+        value: kubeconfig.unwrap_or_else(|_| format!("{default_kubeconfig} (default)")),
         hint: if !kubeconfig_exists {
             "Kubeconfig file not found".into()
         } else {
@@ -322,7 +322,7 @@ pub async fn run_diagnostics() -> Result<DiagnosticsReport, String> {
         value: get_command_path("aws")
             .map(|p| {
                 if let Some(ref profile) = aws_profile {
-                    format!("{} (profile: {})", p, profile)
+                    format!("{p} (profile: {profile})")
                 } else {
                     p
                 }
@@ -383,7 +383,7 @@ pub async fn run_diagnostics() -> Result<DiagnosticsReport, String> {
 }
 
 #[tauri::command]
-pub async fn get_mcp_server_status() -> Result<HashMap<String, String>, String> {
+pub(crate) async fn get_mcp_server_status() -> Result<HashMap<String, String>, String> {
     let mut status = HashMap::new();
 
     match get_mcp_server_enabled().await {
@@ -414,7 +414,7 @@ pub async fn get_mcp_server_status() -> Result<HashMap<String, String>, String> 
 }
 
 #[tauri::command]
-pub async fn update_mcp_server_enabled(enabled: bool) -> Result<(), String> {
+pub(crate) async fn update_mcp_server_enabled(enabled: bool) -> Result<(), String> {
     info!("Updating MCP server enabled to {enabled}");
 
     set_mcp_server_enabled(enabled).await.map_err(|e| {
@@ -440,7 +440,7 @@ pub async fn update_mcp_server_enabled(enabled: bool) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn update_mcp_server_port(port: u16) -> Result<(), String> {
+pub(crate) async fn update_mcp_server_port(port: u16) -> Result<(), String> {
     info!("Updating MCP server port to {port}");
 
     // Validate port range (1-65535, with 0 being invalid)

@@ -146,7 +146,7 @@ fn try_shell_path(shell: &str, home: &str) -> Option<String> {
             Ok(None) if start.elapsed() > timeout => {
                 let _ = child.kill();
                 let _ = child.wait();
-                warn!("try_shell_path: {} timed out", shell);
+                warn!("try_shell_path: {shell} timed out");
                 return None;
             }
             Ok(None) => std::thread::sleep(Duration::from_millis(50)),

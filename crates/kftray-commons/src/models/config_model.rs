@@ -17,7 +17,7 @@ where
 
     struct BoolOrStringVisitor;
 
-    impl<'de> Visitor<'de> for BoolOrStringVisitor {
+    impl Visitor<'_> for BoolOrStringVisitor {
         type Value = Option<bool>;
 
         fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
@@ -38,7 +38,7 @@ where
             match value {
                 "true" => Ok(Some(true)),
                 "false" => Ok(Some(false)),
-                _ => Err(E::custom(format!("Invalid boolean string: {}", value))),
+                _ => Err(E::custom(format!("Invalid boolean string: {value}"))),
             }
         }
 
@@ -64,11 +64,11 @@ fn is_false(value: &bool) -> bool {
     !value
 }
 
-fn is_empty_string(value: &str) -> bool {
+const fn is_empty_string(value: &str) -> bool {
     value.is_empty()
 }
 
-#[derive(Clone, Deserialize, PartialEq, Serialize, Debug)]
+#[derive(Clone, Deserialize, PartialEq, Eq, Serialize, Debug)]
 pub struct Config {
     #[serde(default)]
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -147,7 +147,7 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        Config {
+        Self {
             id: None,
             service: Some("default-service".to_string()),
             namespace: "default-namespace".to_string(),
@@ -332,7 +332,7 @@ mod tests {
         }"#;
 
         let result = serde_json::from_str::<Config>(test_json);
-        println!("Deserialization result: {:?}", result);
+        println!("Deserialization result: {result:?}");
 
         match result {
             Ok(config) => {
@@ -341,7 +341,7 @@ mod tests {
                 assert_eq!(config.namespace, "import-test-namespace".to_string());
             }
             Err(e) => {
-                panic!("Failed to deserialize config: {}", e);
+                panic!("Failed to deserialize config: {e}");
             }
         }
     }
@@ -358,7 +358,7 @@ mod tests {
         }]"#;
 
         let result = serde_json::from_str::<Vec<Config>>(test_json);
-        println!("Array deserialization result: {:?}", result);
+        println!("Array deserialization result: {result:?}");
 
         match result {
             Ok(configs) => {
@@ -367,7 +367,7 @@ mod tests {
                 assert_eq!(configs[0].service, Some("import-test-service".to_string()));
             }
             Err(e) => {
-                panic!("Failed to deserialize config array: {}", e);
+                panic!("Failed to deserialize config array: {e}");
             }
         }
     }

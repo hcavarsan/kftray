@@ -50,7 +50,7 @@ pub async fn create_platform_manager(
                 }
             }
             Err(e) => {
-                log::error!("Failed to initialize macOS platform: {}", e);
+                log::error!("Failed to initialize macOS platform: {e}");
             }
         }
     }

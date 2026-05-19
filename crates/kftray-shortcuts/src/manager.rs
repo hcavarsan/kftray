@@ -41,7 +41,7 @@ impl ShortcutManager {
         let platform_manager = create_platform_manager(action_registry.clone())
             .await
             .map_err(|e| {
-                error!("Failed to create platform manager: {}", e);
+                error!("Failed to create platform manager: {e}");
                 error!("Shortcuts will not be functional on this system");
                 e
             })?;
@@ -72,7 +72,7 @@ impl ShortcutManager {
         let platform_manager = create_platform_manager(action_registry.clone())
             .await
             .map_err(|e| {
-                error!("Failed to create platform manager: {}", e);
+                error!("Failed to create platform manager: {e}");
                 error!("Shortcuts will not be functional on this system");
                 e
             })?;
@@ -117,10 +117,7 @@ impl ShortcutManager {
 
     pub async fn start_event_loop(&self) {
         let platform_name = self.platform_manager.platform_name().await;
-        info!(
-            "Starting shortcut event loop for platform: {}",
-            platform_name
-        );
+        info!("Starting shortcut event loop for platform: {platform_name}");
         info!("Platform-specific event loops are handled by each platform manager");
     }
 
@@ -139,12 +136,9 @@ impl ShortcutManager {
         if shortcut.enabled
             && let Err(e) = self.register_platform_shortcut(&shortcut).await
         {
-            error!("Failed to register platform shortcut after creation: {}", e);
+            error!("Failed to register platform shortcut after creation: {e}");
             if let Err(cleanup_err) = self.storage.delete_shortcut(shortcut_id).await {
-                error!(
-                    "Failed to cleanup shortcut after registration failure: {}",
-                    cleanup_err
-                );
+                error!("Failed to cleanup shortcut after registration failure: {cleanup_err}");
             }
             return Err(e);
         }
@@ -203,7 +197,7 @@ impl ShortcutManager {
         }
 
         self.storage.update_shortcut(&shortcut).await?;
-        info!("Updated shortcut ID: {}", shortcut_id);
+        info!("Updated shortcut ID: {shortcut_id}");
         Ok(())
     }
 
@@ -218,7 +212,7 @@ impl ShortcutManager {
             .await
             .unregister_shortcut_definition(id);
         self.storage.delete_shortcut(id).await?;
-        info!("Deleted shortcut ID: {}", id);
+        info!("Deleted shortcut ID: {id}");
         Ok(())
     }
 
@@ -230,10 +224,7 @@ impl ShortcutManager {
                 && self.registered_shortcuts.contains_key(&id)
             {
                 if let Err(e) = self.platform_manager.unregister_shortcut(id).await {
-                    error!(
-                        "Failed to unregister shortcut {} during config deletion: {}",
-                        id, e
-                    );
+                    error!("Failed to unregister shortcut {id} during config deletion: {e}");
                 }
                 self.registered_shortcuts.remove(&id);
                 self.action_registry
@@ -244,10 +235,7 @@ impl ShortcutManager {
         }
 
         let deleted_count = self.storage.delete_shortcuts_by_config(config_id).await?;
-        info!(
-            "Deleted {} shortcuts for config ID: {}",
-            deleted_count, config_id
-        );
+        info!("Deleted {deleted_count} shortcuts for config ID: {config_id}");
         Ok(deleted_count)
     }
 
@@ -263,7 +251,7 @@ impl ShortcutManager {
             let mut enabled_shortcut = shortcut;
             enabled_shortcut.enabled = true;
             self.register_platform_shortcut(&enabled_shortcut).await?;
-            info!("Enabled shortcut ID: {}", id);
+            info!("Enabled shortcut ID: {id}");
         }
 
         Ok(())
@@ -280,7 +268,7 @@ impl ShortcutManager {
             .await
             .unregister_shortcut_definition(id);
         self.storage.disable_shortcut(id).await?;
-        info!("Disabled shortcut ID: {}", id);
+        info!("Disabled shortcut ID: {id}");
         Ok(())
     }
 
@@ -406,16 +394,13 @@ impl ShortcutManager {
 
     pub async fn shutdown(&mut self) -> ShortcutResult<()> {
         info!("Shutting down shortcut manager");
-        for &shortcut_id in self.registered_shortcuts.keys().collect::<Vec<_>>().iter() {
+        for &shortcut_id in &self.registered_shortcuts.keys().collect::<Vec<_>>() {
             if let Err(e) = self
                 .platform_manager
                 .unregister_shortcut(*shortcut_id)
                 .await
             {
-                error!(
-                    "Failed to unregister shortcut {} during shutdown: {}",
-                    shortcut_id, e
-                );
+                error!("Failed to unregister shortcut {shortcut_id} during shutdown: {e}");
             }
         }
         self.registered_shortcuts.clear();

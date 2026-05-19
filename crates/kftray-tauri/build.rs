@@ -6,7 +6,7 @@ use std::path::{
 };
 
 fn main() {
-    let target_triple = std::env::var("TARGET").unwrap();
+    let target_triple = env::var("TARGET").unwrap();
 
     println!("cargo:warning=Building for target: {target_triple}");
 

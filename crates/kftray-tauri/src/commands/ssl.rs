@@ -20,7 +20,7 @@ use log::{
 use tauri::command;
 
 #[command]
-pub async fn get_ssl_settings() -> Result<serde_json::Value, String> {
+pub(crate) async fn get_ssl_settings() -> Result<serde_json::Value, String> {
     // Ensure crypto provider is initialized
     kftray_ssl::ensure_crypto_provider_installed();
 
@@ -39,13 +39,12 @@ pub async fn get_ssl_settings() -> Result<serde_json::Value, String> {
 }
 
 #[command]
-pub async fn set_ssl_settings(
+pub(crate) async fn set_ssl_settings(
     ssl_enabled: bool, ssl_cert_validity_days: u16, ssl_auto_regenerate: bool,
     ssl_ca_auto_install: bool,
 ) -> Result<String, String> {
     info!(
-        "Setting SSL configuration: enabled={}, validity_days={}, auto_regenerate={}, ca_auto_install={}",
-        ssl_enabled, ssl_cert_validity_days, ssl_auto_regenerate, ssl_ca_auto_install
+        "Setting SSL configuration: enabled={ssl_enabled}, validity_days={ssl_cert_validity_days}, auto_regenerate={ssl_auto_regenerate}, ca_auto_install={ssl_ca_auto_install}"
     );
 
     if let Err(e) = set_ssl_enabled(ssl_enabled).await {
@@ -85,7 +84,7 @@ pub async fn set_ssl_settings(
                         if ssl_ca_auto_install {
                             info!("Auto-installing CA certificate to system trust store");
                             match cert_manager.ensure_ca_installed_and_trusted().await {
-                                Ok(_) => info!(
+                                Ok(()) => info!(
                                     "Successfully installed CA certificate to system trust store"
                                 ),
                                 Err(e) => warn!("Failed to install CA certificate: {e}"),
@@ -107,7 +106,7 @@ pub async fn set_ssl_settings(
         // Clean up all SSL artifacts when SSL is being disabled
         info!("Cleaning up SSL artifacts due to SSL being disabled");
         if let Err(e) = CertificateManager::cleanup_all_ssl_artifacts().await {
-            warn!("Failed to cleanup SSL artifacts: {}", e);
+            warn!("Failed to cleanup SSL artifacts: {e}");
             // Don't fail the settings update due to cleanup issues
         } else {
             info!("Successfully cleaned up all SSL artifacts");
@@ -119,8 +118,8 @@ pub async fn set_ssl_settings(
 }
 
 #[command]
-pub async fn regenerate_certificate(alias: String) -> Result<String, String> {
-    info!("Regenerating SSL certificate for alias: {}", alias);
+pub(crate) async fn regenerate_certificate(alias: String) -> Result<String, String> {
+    info!("Regenerating SSL certificate for alias: {alias}");
 
     let settings = get_app_settings()
         .await
@@ -134,12 +133,12 @@ pub async fn regenerate_certificate(alias: String) -> Result<String, String> {
         .await
         .map_err(|e| format!("Failed to regenerate certificate: {e}"))?;
 
-    info!("Certificate regenerated successfully for: {}", alias);
-    Ok(format!("Certificate regenerated for: {}", alias))
+    info!("Certificate regenerated successfully for: {alias}");
+    Ok(format!("Certificate regenerated for: {alias}"))
 }
 
 #[command]
-pub async fn get_certificate_info(alias: String) -> Result<CertificateInfo, String> {
+pub(crate) async fn get_certificate_info(alias: String) -> Result<CertificateInfo, String> {
     let settings = get_app_settings()
         .await
         .map_err(|e| format!("Failed to get app settings: {e}"))?;
@@ -154,7 +153,7 @@ pub async fn get_certificate_info(alias: String) -> Result<CertificateInfo, Stri
 }
 
 #[command]
-pub async fn list_certificates() -> Result<Vec<CertificateInfo>, String> {
+pub(crate) async fn list_certificates() -> Result<Vec<CertificateInfo>, String> {
     let settings = get_app_settings()
         .await
         .map_err(|e| format!("Failed to get app settings: {e}"))?;
@@ -169,8 +168,8 @@ pub async fn list_certificates() -> Result<Vec<CertificateInfo>, String> {
 }
 
 #[command]
-pub async fn remove_certificate(alias: String) -> Result<String, String> {
-    info!("Removing SSL certificate for alias: {}", alias);
+pub(crate) async fn remove_certificate(alias: String) -> Result<String, String> {
+    info!("Removing SSL certificate for alias: {alias}");
 
     let settings = get_app_settings()
         .await
@@ -184,19 +183,19 @@ pub async fn remove_certificate(alias: String) -> Result<String, String> {
         .await
         .map_err(|e| format!("Failed to remove certificate: {e}"))?;
 
-    info!("Certificate removed successfully for: {}", alias);
-    Ok(format!("Certificate removed for: {}", alias))
+    info!("Certificate removed successfully for: {alias}");
+    Ok(format!("Certificate removed for: {alias}"))
 }
 
 #[command]
-pub async fn is_ssl_enabled() -> Result<bool, String> {
+pub(crate) async fn is_ssl_enabled() -> Result<bool, String> {
     get_ssl_enabled()
         .await
         .map_err(|e| format!("Failed to get SSL enabled status: {e}"))
 }
 
 #[command]
-pub async fn enable_ssl() -> Result<String, String> {
+pub(crate) async fn enable_ssl() -> Result<String, String> {
     info!("Enabling SSL");
 
     set_ssl_enabled(true)
@@ -216,7 +215,7 @@ pub async fn enable_ssl() -> Result<String, String> {
 
                     // Always try to install CA when SSL is enabled via this command
                     match cert_manager.ensure_ca_installed_and_trusted().await {
-                        Ok(_) => info!("Successfully ensured CA certificate installation"),
+                        Ok(()) => info!("Successfully ensured CA certificate installation"),
                         Err(e) => warn!("Failed to ensure CA certificate installation: {e}"),
                     }
                 }
@@ -237,7 +236,7 @@ pub async fn enable_ssl() -> Result<String, String> {
 }
 
 #[command]
-pub async fn disable_ssl() -> Result<String, String> {
+pub(crate) async fn disable_ssl() -> Result<String, String> {
     info!("Disabling SSL");
 
     set_ssl_enabled(false)
@@ -247,7 +246,7 @@ pub async fn disable_ssl() -> Result<String, String> {
     // Clean up all SSL artifacts when SSL is disabled
     info!("Cleaning up SSL artifacts due to SSL being disabled");
     if let Err(e) = CertificateManager::cleanup_all_ssl_artifacts().await {
-        warn!("Failed to cleanup SSL artifacts: {}", e);
+        warn!("Failed to cleanup SSL artifacts: {e}");
         // Don't fail the disable operation due to cleanup issues
     } else {
         info!("Successfully cleaned up all SSL artifacts");
@@ -258,39 +257,39 @@ pub async fn disable_ssl() -> Result<String, String> {
 }
 
 #[command]
-pub async fn get_ssl_cert_validity() -> Result<u16, String> {
+pub(crate) async fn get_ssl_cert_validity() -> Result<u16, String> {
     get_ssl_cert_validity_days()
         .await
         .map_err(|e| format!("Failed to get SSL certificate validity: {e}"))
 }
 
 #[command]
-pub async fn set_ssl_cert_validity(days: u16) -> Result<String, String> {
-    info!("Setting SSL certificate validity to {} days", days);
+pub(crate) async fn set_ssl_cert_validity(days: u16) -> Result<String, String> {
+    info!("Setting SSL certificate validity to {days} days");
 
     set_ssl_cert_validity_days(days)
         .await
         .map_err(|e| format!("Failed to set SSL certificate validity: {e}"))?;
 
-    info!("SSL certificate validity set to {} days", days);
-    Ok(format!("SSL certificate validity set to {} days", days))
+    info!("SSL certificate validity set to {days} days");
+    Ok(format!("SSL certificate validity set to {days} days"))
 }
 
 #[command]
-pub async fn get_ssl_auto_regenerate() -> Result<bool, String> {
+pub(crate) async fn get_ssl_auto_regenerate() -> Result<bool, String> {
     get_ssl_auto_regen()
         .await
         .map_err(|e| format!("Failed to get SSL auto regenerate status: {e}"))
 }
 
 #[command]
-pub async fn set_ssl_auto_regenerate(enabled: bool) -> Result<String, String> {
-    info!("Setting SSL auto regenerate to: {}", enabled);
+pub(crate) async fn set_ssl_auto_regenerate(enabled: bool) -> Result<String, String> {
+    info!("Setting SSL auto regenerate to: {enabled}");
 
     set_ssl_auto_regen(enabled)
         .await
         .map_err(|e| format!("Failed to set SSL auto regenerate: {e}"))?;
 
-    info!("SSL auto regenerate set to: {}", enabled);
-    Ok(format!("SSL auto regenerate set to: {}", enabled))
+    info!("SSL auto regenerate set to: {enabled}");
+    Ok(format!("SSL auto regenerate set to: {enabled}"))
 }

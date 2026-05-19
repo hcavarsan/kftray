@@ -33,10 +33,10 @@ const UDP_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_UDP_PAYLOAD_SIZE: usize = 65507;
 
 #[derive(Clone)]
-pub struct UdpProxy;
+pub(crate) struct UdpProxy;
 
 impl UdpProxy {
-    pub fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self
     }
 
@@ -161,12 +161,12 @@ impl ProxyHandler for UdpProxy {
                             });
                         }
                         Err(e) => {
-                            warn!("Accept error (retrying in {}ms): {}", backoff_ms, e);
+                            warn!("Accept error (retrying in {backoff_ms}ms): {e}");
                             tokio::select! {
-                                _ = tokio::time::sleep(Duration::from_millis(backoff_ms)) => {
+                                () = tokio::time::sleep(Duration::from_millis(backoff_ms)) => {
                                     backoff_ms = (backoff_ms * 2).min(5000);
                                 }
-                                _ = shutdown.notified() => {
+                                () = shutdown.notified() => {
                                     info!("Shutdown signal received during backoff, stopping UDP proxy");
                                     return Ok(());
                                 }
@@ -175,7 +175,7 @@ impl ProxyHandler for UdpProxy {
                         }
                     }
                 }
-                _ = shutdown.notified() => {
+                () = shutdown.notified() => {
                     info!("Shutdown signal received, stopping UDP proxy");
                     break;
                 }

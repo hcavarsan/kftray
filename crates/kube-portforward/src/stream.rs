@@ -59,7 +59,7 @@ impl AsyncBufRead for Stream {
     }
 
     fn consume(self: Pin<&mut Self>, amt: usize) {
-        Pin::new(&mut self.get_mut().inner).consume(amt)
+        Pin::new(&mut self.get_mut().inner).consume(amt);
     }
 }
 
@@ -97,7 +97,7 @@ impl AsyncBufRead for DataStream {
     }
 
     fn consume(self: Pin<&mut Self>, amt: usize) {
-        Pin::new(&mut self.get_mut().inner).consume(amt)
+        Pin::new(&mut self.get_mut().inner).consume(amt);
     }
 }
 
@@ -130,7 +130,7 @@ impl AsyncRead for ErrorStream {
 }
 
 const _ASSERT_TRAITS: fn() = || {
-    fn assert<T: AsyncRead + AsyncWrite + Unpin + Send + 'static>() {}
+    const fn assert<T: AsyncRead + AsyncWrite + Unpin + Send + 'static>() {}
     assert::<Stream>();
     assert::<DataStream>();
 };

@@ -187,7 +187,7 @@ impl SettingsManager {
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let settings_map = app_settings.to_settings_map();
 
-        for (key, value) in settings_map.iter() {
+        for (key, value) in &settings_map {
             self.set_setting(key, value).await?;
         }
 
@@ -506,7 +506,7 @@ pub async fn set_app_settings(
     let pool = get_db_pool().await?;
     let settings_map = app_settings.to_settings_map();
 
-    for (key, value) in settings_map.iter() {
+    for (key, value) in &settings_map {
         upsert_setting(&pool, key, value).await?;
     }
 

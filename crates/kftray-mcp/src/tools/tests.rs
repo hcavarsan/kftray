@@ -49,8 +49,7 @@ fn test_get_all_tools_returns_expected_tools() {
     for expected in expected_tools {
         assert!(
             tool_names.contains(&expected),
-            "Should have {} tool",
-            expected
+            "Should have {expected} tool"
         );
     }
 }
@@ -138,8 +137,7 @@ async fn test_create_config_validation_service_required() {
     if let Some(ToolContent::Text { text }) = result.content.first() {
         assert!(
             text.contains("service") && text.contains("required"),
-            "Error should mention service is required, got: {}",
-            text
+            "Error should mention service is required, got: {text}"
         );
     }
 }
@@ -163,8 +161,7 @@ async fn test_create_config_validation_target_required_for_pod() {
     if let Some(ToolContent::Text { text }) = result.content.first() {
         assert!(
             text.contains("target") && text.contains("required"),
-            "Error should mention target is required, got: {}",
-            text
+            "Error should mention target is required, got: {text}"
         );
     }
 }
@@ -188,8 +185,7 @@ async fn test_create_config_validation_remote_address_required_for_proxy() {
     if let Some(ToolContent::Text { text }) = result.content.first() {
         assert!(
             text.contains("remote_address") && text.contains("required"),
-            "Error should mention remote_address is required, got: {}",
-            text
+            "Error should mention remote_address is required, got: {text}"
         );
     }
 }
@@ -210,8 +206,7 @@ async fn test_start_port_forward_validation() {
     if let Some(ToolContent::Text { text }) = result.content.first() {
         assert!(
             text.contains("namespace") || text.contains("required"),
-            "Error should mention missing required field, got: {}",
-            text
+            "Error should mention missing required field, got: {text}"
         );
     }
 }
@@ -234,8 +229,7 @@ async fn test_start_port_forward_service_validation() {
     if let Some(ToolContent::Text { text }) = result.content.first() {
         assert!(
             text.contains("service") && text.contains("required"),
-            "Error should mention service is required, got: {}",
-            text
+            "Error should mention service is required, got: {text}"
         );
     }
 }
@@ -258,8 +252,7 @@ async fn test_start_port_forward_pod_validation() {
     if let Some(ToolContent::Text { text }) = result.content.first() {
         assert!(
             text.contains("target") && text.contains("required"),
-            "Error should mention target is required, got: {}",
-            text
+            "Error should mention target is required, got: {text}"
         );
     }
 }
@@ -272,8 +265,7 @@ async fn test_stop_port_forward_missing_config_id() {
     if let Some(ToolContent::Text { text }) = result.content.first() {
         assert!(
             text.contains("config_id"),
-            "Error should mention missing config_id, got: {}",
-            text
+            "Error should mention missing config_id, got: {text}"
         );
     }
 }
@@ -286,8 +278,7 @@ async fn test_update_config_missing_config_id() {
     if let Some(ToolContent::Text { text }) = result.content.first() {
         assert!(
             text.contains("config_id"),
-            "Error should mention missing config_id, got: {}",
-            text
+            "Error should mention missing config_id, got: {text}"
         );
     }
 }
@@ -300,8 +291,7 @@ async fn test_delete_config_missing_config_id() {
     if let Some(ToolContent::Text { text }) = result.content.first() {
         assert!(
             text.contains("config_id"),
-            "Error should mention missing config_id, got: {}",
-            text
+            "Error should mention missing config_id, got: {text}"
         );
     }
 }
@@ -314,8 +304,7 @@ async fn test_import_configs_missing_json() {
     if let Some(ToolContent::Text { text }) = result.content.first() {
         assert!(
             text.contains("configs_json"),
-            "Error should mention missing configs_json, got: {}",
-            text
+            "Error should mention missing configs_json, got: {text}"
         );
     }
 }
@@ -328,8 +317,7 @@ async fn test_list_namespaces_missing_context() {
     if let Some(ToolContent::Text { text }) = result.content.first() {
         assert!(
             text.contains("context"),
-            "Error should mention missing context, got: {}",
-            text
+            "Error should mention missing context, got: {text}"
         );
     }
 }
@@ -342,8 +330,7 @@ async fn test_list_services_missing_required() {
     if let Some(ToolContent::Text { text }) = result.content.first() {
         assert!(
             text.contains("context") || text.contains("namespace"),
-            "Error should mention missing required field, got: {}",
-            text
+            "Error should mention missing required field, got: {text}"
         );
     }
 }
@@ -356,8 +343,7 @@ async fn test_list_pods_missing_required() {
     if let Some(ToolContent::Text { text }) = result.content.first() {
         assert!(
             text.contains("context") || text.contains("namespace"),
-            "Error should mention missing required field, got: {}",
-            text
+            "Error should mention missing required field, got: {text}"
         );
     }
 }
@@ -370,8 +356,7 @@ async fn test_list_ports_missing_required() {
     if let Some(ToolContent::Text { text }) = result.content.first() {
         assert!(
             text.contains("context") || text.contains("namespace") || text.contains("service"),
-            "Error should mention missing required field, got: {}",
-            text
+            "Error should mention missing required field, got: {text}"
         );
     }
 }

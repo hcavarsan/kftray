@@ -3,7 +3,7 @@ use serde::{
     Serialize,
 };
 
-#[derive(Clone, Deserialize, PartialEq, Serialize, Debug)]
+#[derive(Clone, Deserialize, PartialEq, Eq, Serialize, Debug)]
 pub struct HttpLogsConfig {
     pub config_id: i64,
     #[serde(default)]
@@ -18,7 +18,7 @@ pub struct HttpLogsConfig {
 
 impl Default for HttpLogsConfig {
     fn default() -> Self {
-        HttpLogsConfig {
+        Self {
             config_id: 0,
             enabled: false,
             max_file_size: default_max_file_size(),
@@ -30,22 +30,22 @@ impl Default for HttpLogsConfig {
 
 impl HttpLogsConfig {
     pub fn new(config_id: i64) -> Self {
-        HttpLogsConfig {
+        Self {
             config_id,
             ..Default::default()
         }
     }
 }
 
-fn default_max_file_size() -> u64 {
+const fn default_max_file_size() -> u64 {
     10 * 1024 * 1024 // 10MB
 }
 
-fn default_retention_days() -> u64 {
+const fn default_retention_days() -> u64 {
     7 // 7 days
 }
 
-fn default_auto_cleanup() -> bool {
+const fn default_auto_cleanup() -> bool {
     true
 }
 

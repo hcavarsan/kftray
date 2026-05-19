@@ -168,29 +168,29 @@ pub struct PortForward {
     pub connection: Arc<Mutex<Option<tokio::net::TcpStream>>>,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TargetSelector {
     ServiceName(String),
     PodLabel(String),
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Port {
     Number(i32),
     Name(String),
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Target {
     pub selector: TargetSelector,
     pub port: Port,
     pub namespace: NameSpace,
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NameSpace(pub Option<String>);
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TargetPod {
     pub pod_name: String,
     pub port_number: u16,
@@ -208,8 +208,7 @@ pub struct AnyReady {}
 impl PodSelection for AnyReady {
     fn select<'p>(&self, pods: &'p [Pod], selector: &str) -> anyhow::Result<&'p Pod> {
         let pod = pods.iter().find(is_pod_ready).context(anyhow::anyhow!(
-            "No ready pods found matching the selector '{}'",
-            selector
+            "No ready pods found matching the selector '{selector}'"
         ))?;
 
         Ok(pod)
@@ -439,7 +438,7 @@ mod tests {
         let result = selector.select(&pods, "app=web");
         assert!(result.is_err());
 
-        let pods = vec![not_ready_pod, ready_pod.clone()];
+        let pods = vec![not_ready_pod, ready_pod];
         let result = selector.select(&pods, "app=web");
         assert!(result.is_ok());
         assert_eq!(result.unwrap().metadata.name, Some("ready-pod".to_string()));

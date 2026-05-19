@@ -20,29 +20,27 @@ pub enum CustomError {
 
 impl From<KeyringError> for CustomError {
     fn from(error: KeyringError) -> Self {
-        CustomError::Keyring(error)
+        Self::Keyring(error)
     }
 }
 
 impl From<TauriError> for CustomError {
     fn from(error: TauriError) -> Self {
-        CustomError::Tauri(error)
+        Self::Tauri(error)
     }
 }
 
 impl From<CustomError> for InvokeError {
     fn from(error: CustomError) -> Self {
         match error {
-            CustomError::Keyring(err) => InvokeError::from(format!("Keyring error: {err:?}")),
-            CustomError::Tauri(err) => InvokeError::from(format!("Tauri error: {err:?}")),
+            CustomError::Keyring(err) => Self::from(format!("Keyring error: {err:?}")),
+            CustomError::Tauri(err) => Self::from(format!("Tauri error: {err:?}")),
         }
     }
 }
 
 #[tauri::command]
-pub fn store_key(
-    service: &str, name: &str, password: &str,
-) -> std::result::Result<(), CustomError> {
+pub(crate) fn store_key(service: &str, name: &str, password: &str) -> Result<(), CustomError> {
     let entry = Entry::new(service, name).map_err(CustomError::from)?;
 
     entry.set_password(password).map_err(CustomError::from)?;
@@ -51,7 +49,7 @@ pub fn store_key(
 }
 
 #[tauri::command]
-pub fn get_key(service: &str, name: &str) -> std::result::Result<String, CustomError> {
+pub(crate) fn get_key(service: &str, name: &str) -> Result<String, CustomError> {
     let entry = Entry::new(service, name).map_err(CustomError::from)?;
 
     let password = entry.get_password().map_err(CustomError::from)?;
@@ -60,7 +58,7 @@ pub fn get_key(service: &str, name: &str) -> std::result::Result<String, CustomE
 }
 
 #[tauri::command]
-pub fn delete_key(service: &str, name: &str) -> std::result::Result<(), CustomError> {
+pub(crate) fn delete_key(service: &str, name: &str) -> Result<(), CustomError> {
     let entry = Entry::new(service, name).map_err(CustomError::from)?;
 
     entry.delete_credential().map_err(CustomError::from)?;
@@ -73,7 +71,7 @@ pub fn delete_key(service: &str, name: &str) -> std::result::Result<(), CustomEr
 // Removed functions - now handled in commons
 
 #[tauri::command]
-pub async fn import_configs_from_github(
+pub(crate) async fn import_configs_from_github(
     repo_url: String, config_path: String, use_system_credentials: bool, flush: bool,
     github_token: Option<String>,
 ) -> Result<(), String> {
@@ -102,7 +100,7 @@ mod tests {
     fn use_mock_keyring() -> MutexGuard<'static, ()> {
         let guard = KEYRING_TEST_LOCK
             .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         keyring_core::set_default_store(keyring_core::mock::Store::new().unwrap());
         guard
     }

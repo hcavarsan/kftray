@@ -14,14 +14,14 @@ use crate::logging::LoggerState;
 use crate::stdin;
 use crate::tui::run_tui;
 
-pub struct CliHandler {
+pub(crate) struct CliHandler {
     cli: Cli,
     mode: DatabaseMode,
     logger_state: LoggerState,
 }
 
 impl CliHandler {
-    pub fn new(cli: Cli, logger_state: LoggerState) -> Self {
+    pub(crate) fn new(cli: Cli, logger_state: LoggerState) -> Self {
         let mode = Self::determine_database_mode(&cli);
         Self {
             cli,
@@ -30,7 +30,7 @@ impl CliHandler {
         }
     }
 
-    pub async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
+    pub(crate) async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
         self.validate_args()?;
         self.initialize_database().await?;
 

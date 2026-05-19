@@ -18,8 +18,8 @@ use super::error::{
 
 pub async fn create_rustls_with_proxy(config: Config, proxy_url: &Uri) -> KubeResult<Client> {
     match proxy_url.scheme_str() {
-        Some("http") | Some("https") => create_rustls_http_proxy(config, proxy_url).await,
-        Some("socks5") | Some("socks5h") => create_rustls_socks5_proxy(config, proxy_url).await,
+        Some("http" | "https") => create_rustls_http_proxy(config, proxy_url).await,
+        Some("socks5" | "socks5h") => create_rustls_socks5_proxy(config, proxy_url).await,
         _ => Err(KubeClientError::proxy_error(
             format!("Unsupported proxy scheme: {:?}", proxy_url.scheme_str()),
             proxy_url.to_string(),
@@ -32,10 +32,10 @@ pub async fn create_openssl_with_proxy(
     proxy_url: &Uri,
 ) -> KubeResult<Client> {
     match proxy_url.scheme_str() {
-        Some("http") | Some("https") => {
+        Some("http" | "https") => {
             create_openssl_http_proxy(config, ssl_builder, http_connector, proxy_url).await
         }
-        Some("socks5") | Some("socks5h") => {
+        Some("socks5" | "socks5h") => {
             create_openssl_socks5_proxy(config, ssl_builder, http_connector, proxy_url).await
         }
         _ => Err(KubeClientError::proxy_error(
@@ -49,10 +49,10 @@ pub async fn create_insecure_with_proxy(
     config: Config, http_connector: HttpConnector, proxy_url: &Uri,
 ) -> KubeResult<Client> {
     match proxy_url.scheme_str() {
-        Some("http") | Some("https") => {
+        Some("http" | "https") => {
             create_insecure_http_proxy(config, http_connector, proxy_url).await
         }
-        Some("socks5") | Some("socks5h") => {
+        Some("socks5" | "socks5h") => {
             create_insecure_socks5_proxy(config, http_connector, proxy_url).await
         }
         _ => Err(KubeClientError::proxy_error(

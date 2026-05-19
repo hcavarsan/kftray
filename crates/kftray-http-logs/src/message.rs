@@ -30,40 +30,37 @@ pub enum LogMessage {
 }
 
 impl LogMessage {
-    pub fn as_bytes(&self) -> &[u8] {
+    pub const fn as_bytes(&self) -> &[u8] {
         match self {
-            LogMessage::Request(log) => log.as_bytes(),
-            LogMessage::Response(log) => log.as_bytes(),
-            LogMessage::PreformattedResponse(log) => log.as_bytes(),
-            LogMessage::TriggerFlush => &[],
+            Self::Request(log) => log.as_bytes(),
+            Self::Response(log) => log.as_bytes(),
+            Self::PreformattedResponse(log) => log.as_bytes(),
+            Self::TriggerFlush => &[],
         }
     }
 
-    pub fn size(&self) -> usize {
+    pub const fn size(&self) -> usize {
         match self {
-            LogMessage::TriggerFlush => 0,
+            Self::TriggerFlush => 0,
             _ => self.as_bytes().len(),
         }
     }
 
-    pub fn message_type(&self) -> &'static str {
+    pub const fn message_type(&self) -> &'static str {
         match self {
-            LogMessage::Request(_) => "Request",
-            LogMessage::Response(_) => "Response",
-            LogMessage::PreformattedResponse(_) => "PreformattedResponse",
-            LogMessage::TriggerFlush => "TriggerFlush",
+            Self::Request(_) => "Request",
+            Self::Response(_) => "Response",
+            Self::PreformattedResponse(_) => "PreformattedResponse",
+            Self::TriggerFlush => "TriggerFlush",
         }
     }
 
-    pub fn is_response(&self) -> bool {
-        matches!(
-            self,
-            LogMessage::Response(_) | LogMessage::PreformattedResponse(_)
-        )
+    pub const fn is_response(&self) -> bool {
+        matches!(self, Self::Response(_) | Self::PreformattedResponse(_))
     }
 
-    pub fn is_flush_trigger(&self) -> bool {
-        matches!(self, LogMessage::TriggerFlush)
+    pub const fn is_flush_trigger(&self) -> bool {
+        matches!(self, Self::TriggerFlush)
     }
 
     pub fn new_preformatted_response(
@@ -72,7 +69,7 @@ impl LogMessage {
         let formatted =
             MessageFormatter::format_preformatted_response(&trace_id, timestamp, took_ms, &buffer);
 
-        LogMessage::PreformattedResponse(formatted)
+        Self::PreformattedResponse(formatted)
     }
 }
 

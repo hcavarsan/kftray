@@ -7,9 +7,9 @@ use log::{
     warn,
 };
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(dead_code)]
-pub struct GlibcVersion {
+pub(crate) struct GlibcVersion {
     pub major: u32,
     pub minor: u32,
     pub patch: u32,
@@ -17,7 +17,7 @@ pub struct GlibcVersion {
 
 impl GlibcVersion {
     #[allow(dead_code)]
-    pub fn new(major: u32, minor: u32, patch: u32) -> Self {
+    pub(crate) const fn new(major: u32, minor: u32, patch: u32) -> Self {
         Self {
             major,
             minor,
@@ -26,7 +26,7 @@ impl GlibcVersion {
     }
 
     #[allow(dead_code)]
-    pub fn is_older_than(&self, other: &GlibcVersion) -> bool {
+    pub(crate) const fn is_older_than(&self, other: &Self) -> bool {
         if self.major != other.major {
             return self.major < other.major;
         }
@@ -71,7 +71,7 @@ pub fn detect_glibc_version() -> Option<GlibcVersion> {
 
 #[cfg(not(target_os = "linux"))]
 #[allow(dead_code)]
-pub fn detect_glibc_version() -> Option<GlibcVersion> {
+pub(crate) const fn detect_glibc_version() -> Option<GlibcVersion> {
     None
 }
 
@@ -219,7 +219,7 @@ pub fn get_updater_target_platform() -> String {
 
 #[cfg(not(target_os = "linux"))]
 #[allow(dead_code)]
-pub fn get_updater_target_platform() -> String {
+pub(crate) fn get_updater_target_platform() -> String {
     "default".to_string()
 }
 
@@ -248,8 +248,8 @@ pub fn get_updater_target_suffix() -> String {
 
 #[cfg(not(target_os = "linux"))]
 #[allow(dead_code)]
-pub fn get_updater_target_suffix() -> String {
-    "".to_string()
+pub(crate) const fn get_updater_target_suffix() -> String {
+    String::new()
 }
 
 #[cfg(test)]

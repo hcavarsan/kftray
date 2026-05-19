@@ -29,7 +29,7 @@ use sysinfo::{
 
 #[cfg_attr(test, mockall::automock)]
 #[async_trait]
-pub trait PortOperations: Send + Sync {
+pub(crate) trait PortOperations: Send + Sync {
     async fn get_configs_state(&self) -> Result<Vec<ConfigState>, String>;
     async fn get_config(&self, id: i64) -> Result<Config, String>;
     async fn update_config_state(&self, state: &ConfigState) -> Result<(), String>;
@@ -40,7 +40,7 @@ pub trait PortOperations: Send + Sync {
     async fn deploy_and_forward_pod(&self, configs: Vec<Config>) -> Result<Vec<String>, String>;
 }
 
-pub struct RealPortOperations;
+pub(crate) struct RealPortOperations;
 
 #[async_trait]
 impl PortOperations for RealPortOperations {
@@ -110,7 +110,9 @@ async fn fetch_configs_in_parallel(
     results
 }
 
-pub async fn check_and_manage_ports(port_ops: Arc<dyn PortOperations>) -> Result<(), String> {
+pub(crate) async fn check_and_manage_ports(
+    port_ops: Arc<dyn PortOperations>,
+) -> Result<(), String> {
     let running_configs = match port_ops.get_configs_state().await {
         Ok(states) => states
             .into_iter()
@@ -153,7 +155,7 @@ pub async fn check_and_manage_ports(port_ops: Arc<dyn PortOperations>) -> Result
 
     for task in port_tasks {
         match task.await {
-            Ok(_) => {}
+            Ok(()) => {}
             Err(e) => error!("Port forward task failed: {e}"),
         }
     }

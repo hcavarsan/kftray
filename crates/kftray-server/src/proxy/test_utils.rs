@@ -14,24 +14,24 @@ use tokio::{
     sync::oneshot,
 };
 
-pub const TEST_BUFFER_SIZE: usize = 1024;
+pub(super) const TEST_BUFFER_SIZE: usize = 1024;
 
-pub struct TestServer {
+pub(super) struct TestServer {
     pub addr: SocketAddr,
     shutdown_tx: oneshot::Sender<()>,
 }
 
 impl TestServer {
-    pub fn addr(&self) -> SocketAddr {
+    pub(super) fn addr(&self) -> SocketAddr {
         self.addr
     }
 
-    pub fn shutdown(self) {
+    pub(super) fn shutdown(self) {
         let _ = self.shutdown_tx.send(());
     }
 }
 
-pub async fn wait_for_port(addr: SocketAddr) -> bool {
+pub(super) async fn wait_for_port(addr: SocketAddr) -> bool {
     for _ in 0..50 {
         if let Ok(stream) = TcpStream::connect(addr).await {
             drop(stream);
@@ -42,7 +42,7 @@ pub async fn wait_for_port(addr: SocketAddr) -> bool {
     false
 }
 
-pub async fn setup_test_tcp_echo_server() -> TestServer {
+pub(super) async fn setup_test_tcp_echo_server() -> TestServer {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let (shutdown_tx, mut shutdown_rx) = oneshot::channel();
@@ -71,7 +71,7 @@ pub async fn setup_test_tcp_echo_server() -> TestServer {
     TestServer { addr, shutdown_tx }
 }
 
-pub async fn setup_test_udp_echo_server() -> TestServer {
+pub(super) async fn setup_test_udp_echo_server() -> TestServer {
     let socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
     let addr = socket.local_addr().unwrap();
     let (shutdown_tx, mut shutdown_rx) = oneshot::channel();

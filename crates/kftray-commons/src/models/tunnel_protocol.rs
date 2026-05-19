@@ -41,7 +41,7 @@ impl TunnelMessage {
 }
 
 #[allow(dead_code)]
-pub fn create_http_request(
+pub const fn create_http_request(
     id: String, method: String, path: String, headers: HashMap<String, String>, body: Vec<u8>,
 ) -> TunnelMessage {
     TunnelMessage::HttpRequest {
@@ -54,7 +54,7 @@ pub fn create_http_request(
 }
 
 #[allow(dead_code)]
-pub fn create_http_response(
+pub const fn create_http_response(
     id: String, status: u16, headers: HashMap<String, String>, body: Vec<u8>,
 ) -> TunnelMessage {
     TunnelMessage::HttpResponse {
@@ -66,7 +66,7 @@ pub fn create_http_response(
 }
 
 #[allow(dead_code)]
-pub fn create_error(id: Option<String>, message: String) -> TunnelMessage {
+pub const fn create_error(id: Option<String>, message: String) -> TunnelMessage {
     TunnelMessage::Error { id, message }
 }
 

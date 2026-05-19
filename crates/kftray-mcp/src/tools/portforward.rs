@@ -369,8 +369,7 @@ impl McpTool for StartPortForwardTool {
                                 kftray_commons::config::delete_config(inserted_id).await
                         {
                             log::debug!(
-                                "Failed to clean up config {} after port-forward failure: {del_err}",
-                                inserted_id
+                                "Failed to clean up config {inserted_id} after port-forward failure: {del_err}"
                             );
                         }
 
@@ -397,8 +396,7 @@ impl McpTool for StartPortForwardTool {
                             kftray_commons::config::delete_config(inserted_id).await
                         {
                             log::debug!(
-                                "Failed to clean up config {} after empty response: {del_err}",
-                                inserted_id
+                                "Failed to clean up config {inserted_id} after empty response: {del_err}"
                             );
                         }
                         CallToolResult::error("No response received from port-forward")
@@ -408,8 +406,7 @@ impl McpTool for StartPortForwardTool {
                     // Clean up the config on failure
                     if let Err(del_err) = kftray_commons::config::delete_config(inserted_id).await {
                         log::debug!(
-                            "Failed to clean up config {} after error: {del_err}",
-                            inserted_id
+                            "Failed to clean up config {inserted_id} after error: {del_err}"
                         );
                     }
                     CallToolResult::error(format!("Failed to start port-forward: {e}"))

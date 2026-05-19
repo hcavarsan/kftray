@@ -22,14 +22,14 @@ use super::settings::{
 };
 
 #[derive(Serialize)]
-pub struct LogInfo {
+pub(crate) struct LogInfo {
     pub log_path: String,
     pub log_size: u64,
     pub exists: bool,
 }
 
 #[derive(Serialize, Clone)]
-pub struct LogEntry {
+pub(crate) struct LogEntry {
     pub id: usize,
     pub raw: String,
     pub timestamp: Option<String>,
@@ -58,7 +58,7 @@ impl LogEntry {
 }
 
 #[derive(Serialize, Clone)]
-pub struct LogFileInfo {
+pub(crate) struct LogFileInfo {
     pub filename: String,
     pub path: String,
     pub size: u64,
@@ -68,7 +68,7 @@ pub struct LogFileInfo {
 }
 
 #[derive(Serialize, Deserialize, Clone)]
-pub struct LogSettings {
+pub(crate) struct LogSettings {
     pub retention_count: u32,
     pub retention_days: u32,
 }
@@ -125,7 +125,7 @@ fn parse_log_line(id: usize, line: &str) -> LogEntry {
         raw: line.to_string(),
         date: Some(date.to_string()),
         time: Some(time.to_string()),
-        timestamp: Some(format!("{} {}", date, time)),
+        timestamp: Some(format!("{date} {time}")),
         level: Some(level.to_string()),
         module: Some(module.to_string()),
         message: message.to_string(),
@@ -152,7 +152,7 @@ fn parse_log_file_timestamp(filename: &str) -> Option<String> {
         let date_part = &without_suffix[0..10];
         let time_part = &without_suffix[11..];
         let time_formatted = time_part.replace('-', ":");
-        Some(format!("{} {}", date_part, time_formatted))
+        Some(format!("{date_part} {time_formatted}"))
     } else {
         None
     }
@@ -186,13 +186,13 @@ fn get_log_file_path(app: &AppHandle, filename: Option<&str>) -> Option<PathBuf>
 fn find_current_log_file(log_dir: &PathBuf) -> Option<PathBuf> {
     let mut log_files: Vec<_> = fs::read_dir(log_dir)
         .ok()?
-        .filter_map(|entry| entry.ok())
+        .filter_map(Result::ok)
         .filter(|entry| entry.file_name().to_str().is_some_and(is_kftray_log_file))
         .collect();
 
     log_files.sort_by_key(|b| std::cmp::Reverse(b.file_name()));
 
-    log_files.first().map(|entry| entry.path())
+    log_files.first().map(fs::DirEntry::path)
 }
 
 fn list_all_log_files(log_dir: &PathBuf) -> Vec<(PathBuf, String)> {
@@ -200,7 +200,7 @@ fn list_all_log_files(log_dir: &PathBuf) -> Vec<(PathBuf, String)> {
         .ok()
         .map(|entries| {
             entries
-                .filter_map(|entry| entry.ok())
+                .filter_map(Result::ok)
                 .filter_map(|entry| {
                     let filename = entry.file_name().to_string_lossy().to_string();
                     if is_kftray_log_file(&filename) {
@@ -215,7 +215,9 @@ fn list_all_log_files(log_dir: &PathBuf) -> Vec<(PathBuf, String)> {
 }
 
 #[tauri::command]
-pub async fn get_log_info(app: AppHandle, filename: Option<String>) -> Result<LogInfo, String> {
+pub(crate) async fn get_log_info(
+    app: AppHandle, filename: Option<String>,
+) -> Result<LogInfo, String> {
     let log_path =
         get_log_file_path(&app, filename.as_deref()).ok_or("Could not determine log path")?;
 
@@ -234,7 +236,7 @@ pub async fn get_log_info(app: AppHandle, filename: Option<String>) -> Result<Lo
 }
 
 #[tauri::command]
-pub async fn get_log_contents(
+pub(crate) async fn get_log_contents(
     app: AppHandle, lines: Option<usize>, filename: Option<String>,
 ) -> Result<String, String> {
     let log_path =
@@ -256,7 +258,7 @@ pub async fn get_log_contents(
 }
 
 #[tauri::command]
-pub async fn get_log_contents_json(
+pub(crate) async fn get_log_contents_json(
     app: AppHandle, lines: Option<usize>, filename: Option<String>,
 ) -> Result<Vec<LogEntry>, String> {
     let log_path =
@@ -283,7 +285,7 @@ pub async fn get_log_contents_json(
 }
 
 #[tauri::command]
-pub async fn clear_logs(app: AppHandle, filename: Option<String>) -> Result<(), String> {
+pub(crate) async fn clear_logs(app: AppHandle, filename: Option<String>) -> Result<(), String> {
     let log_path =
         get_log_file_path(&app, filename.as_deref()).ok_or("Could not determine log path")?;
 
@@ -295,7 +297,7 @@ pub async fn clear_logs(app: AppHandle, filename: Option<String>) -> Result<(), 
 }
 
 #[tauri::command]
-pub async fn list_log_files(app: AppHandle) -> Result<Vec<LogFileInfo>, String> {
+pub(crate) async fn list_log_files(app: AppHandle) -> Result<Vec<LogFileInfo>, String> {
     let log_dir = get_log_dir(&app).ok_or("Could not determine log directory")?;
 
     let current_log = find_current_log_file(&log_dir);
@@ -334,7 +336,7 @@ pub async fn list_log_files(app: AppHandle) -> Result<Vec<LogFileInfo>, String> 
 }
 
 #[tauri::command]
-pub async fn cleanup_old_logs(app: AppHandle) -> Result<u32, String> {
+pub(crate) async fn cleanup_old_logs(app: AppHandle) -> Result<u32, String> {
     let settings = get_log_settings_internal().await?;
     cleanup_logs_with_settings(&app, &settings).await
 }
@@ -349,7 +351,7 @@ async fn cleanup_logs_with_settings(
         .as_ref()
         .and_then(|p| p.file_name())
         .and_then(|n| n.to_str())
-        .map(|s| s.to_string());
+        .map(ToString::to_string);
 
     let mut log_files = list_all_log_files(&log_dir);
 
@@ -373,9 +375,9 @@ async fn cleanup_logs_with_settings(
 
         if exceeds_count && exceeds_age && is_beyond_count_limit {
             if let Err(e) = fs::remove_file(path) {
-                log::warn!("Failed to delete old log file {}: {}", filename, e);
+                log::warn!("Failed to delete old log file {filename}: {e}");
             } else {
-                info!("Deleted old log file: {}", filename);
+                info!("Deleted old log file: {filename}");
                 deleted_count += 1;
             }
         }
@@ -384,18 +386,18 @@ async fn cleanup_logs_with_settings(
     Ok(deleted_count)
 }
 
-pub async fn cleanup_old_logs_on_startup(app: AppHandle) -> Result<u32, String> {
+pub(crate) async fn cleanup_old_logs_on_startup(app: AppHandle) -> Result<u32, String> {
     info!("Running log cleanup on startup");
     let settings = get_log_settings_internal().await?;
     let deleted = cleanup_logs_with_settings(&app, &settings).await?;
     if deleted > 0 {
-        info!("Cleaned up {} old log files on startup", deleted);
+        info!("Cleaned up {deleted} old log files on startup");
     }
     Ok(deleted)
 }
 
 #[tauri::command]
-pub async fn delete_log_file(app: AppHandle, filename: String) -> Result<(), String> {
+pub(crate) async fn delete_log_file(app: AppHandle, filename: String) -> Result<(), String> {
     let log_dir = get_log_dir(&app).ok_or("Could not determine log directory")?;
 
     if filename.contains('/') || filename.contains('\\') || !is_kftray_log_file(&filename) {
@@ -418,7 +420,7 @@ pub async fn delete_log_file(app: AppHandle, filename: String) -> Result<(), Str
     }
 
     fs::remove_file(&file_path).map_err(|e| format!("Failed to delete log file: {e}"))?;
-    info!("Deleted log file: {}", filename);
+    info!("Deleted log file: {filename}");
 
     Ok(())
 }
@@ -443,12 +445,12 @@ async fn get_log_settings_internal() -> Result<LogSettings, String> {
 }
 
 #[tauri::command]
-pub async fn get_log_settings() -> Result<LogSettings, String> {
+pub(crate) async fn get_log_settings() -> Result<LogSettings, String> {
     get_log_settings_internal().await
 }
 
 #[tauri::command]
-pub async fn set_log_settings(settings: LogSettings) -> Result<(), String> {
+pub(crate) async fn set_log_settings(settings: LogSettings) -> Result<(), String> {
     if settings.retention_count < 1 || settings.retention_count > 100 {
         return Err("Retention count must be between 1 and 100".into());
     }
@@ -479,7 +481,7 @@ pub async fn set_log_settings(settings: LogSettings) -> Result<(), String> {
 }
 
 #[derive(Serialize)]
-pub struct DiagnosticReport {
+pub(crate) struct DiagnosticReport {
     pub generated_at: String,
     pub app_version: String,
     pub platform: PlatformInfo,
@@ -489,13 +491,13 @@ pub struct DiagnosticReport {
 }
 
 #[derive(Serialize)]
-pub struct PlatformInfo {
+pub(crate) struct PlatformInfo {
     pub os: String,
     pub arch: String,
 }
 
 #[derive(Serialize)]
-pub struct EnvironmentInfo {
+pub(crate) struct EnvironmentInfo {
     pub home: Option<String>,
     pub path: Option<String>,
     pub kubeconfig: Option<String>,
@@ -503,7 +505,7 @@ pub struct EnvironmentInfo {
 }
 
 #[tauri::command]
-pub async fn generate_diagnostic_report(app: AppHandle) -> Result<String, String> {
+pub(crate) async fn generate_diagnostic_report(app: AppHandle) -> Result<String, String> {
     let diagnostics = run_diagnostics().await?;
 
     let logs = get_log_contents(app.clone(), Some(200), None)
@@ -539,7 +541,7 @@ pub async fn generate_diagnostic_report(app: AppHandle) -> Result<String, String
 }
 
 #[tauri::command]
-pub async fn open_log_directory(app: AppHandle) -> Result<(), String> {
+pub(crate) async fn open_log_directory(app: AppHandle) -> Result<(), String> {
     let log_dir = get_log_dir(&app).ok_or("Could not determine log directory")?;
 
     open::that(&log_dir).map_err(|e| format!("Failed to open log directory: {e}"))?;
@@ -548,11 +550,11 @@ pub async fn open_log_directory(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn open_log_viewer_window_cmd(app: AppHandle) -> Result<(), String> {
+pub(crate) async fn open_log_viewer_window_cmd(app: AppHandle) -> Result<(), String> {
     open_log_viewer_window(app)
 }
 
-pub fn open_log_viewer_window(app: AppHandle) -> Result<(), String> {
+pub(crate) fn open_log_viewer_window(app: AppHandle) -> Result<(), String> {
     info!("Opening log viewer window");
 
     if let Some(window) = app.get_webview_window("logs") {
@@ -578,16 +580,13 @@ pub fn open_log_viewer_window(app: AppHandle) -> Result<(), String> {
         .map(|m| {
             let size = m.size();
             let sf = m.scale_factor();
-            let w = (size.width as f64 / sf * 0.75).clamp(800.0, 1800.0);
-            let h = (size.height as f64 / sf * 0.80).clamp(500.0, 1200.0);
+            let w = (f64::from(size.width) / sf * 0.75).clamp(800.0, 1800.0);
+            let h = (f64::from(size.height) / sf * 0.80).clamp(500.0, 1200.0);
             (w, h, sf)
         })
         .unwrap_or((1200.0, 800.0, 1.0));
 
-    info!(
-        "Creating logs window: logical size {}x{}, scale factor {}",
-        width, height, scale_factor
-    );
+    info!("Creating logs window: logical size {width}x{height}, scale factor {scale_factor}");
 
     let mut builder = WebviewWindowBuilder::new(&app, "logs", WebviewUrl::App("logs.html".into()))
         .title("KFtray - Logs")
@@ -603,9 +602,11 @@ pub fn open_log_viewer_window(app: AppHandle) -> Result<(), String> {
         let mon_pos = m.position();
         let mon_size = m.size();
 
-        let x = (mon_pos.x as f64 + (mon_size.width as f64 - width * scale_factor) / 2.0)
+        let x = (f64::from(mon_pos.x)
+            + width.mul_add(-scale_factor, f64::from(mon_size.width)) / 2.0)
             / scale_factor;
-        let y = (mon_pos.y as f64 + (mon_size.height as f64 - height * scale_factor) / 2.0)
+        let y = (f64::from(mon_pos.y)
+            + height.mul_add(-scale_factor, f64::from(mon_size.height)) / 2.0)
             / scale_factor;
 
         info!(

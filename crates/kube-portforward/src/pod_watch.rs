@@ -72,7 +72,7 @@ pub struct ReadyPod {
 
 impl ReadyPod {
     /// Create a new `ReadyPod` snapshot.
-    pub fn new(name: String, uid: Option<String>) -> Self {
+    pub const fn new(name: String, uid: Option<String>) -> Self {
         Self { name, uid }
     }
 }
@@ -146,7 +146,7 @@ impl PodWatcher {
             loop {
                 tokio::select! {
                     biased;
-                    _ = reflector_cancel.cancelled() => break,
+                    () = reflector_cancel.cancelled() => break,
                     next = stream.next() => match next {
                         Some(Ok(watcher::Event::Delete(pod))) => {
                             let name = pod.name_any();
@@ -166,8 +166,8 @@ impl PodWatcher {
                             error!("pod reflector error: {}", e);
                             tokio::select! {
                                 biased;
-                                _ = reflector_cancel.cancelled() => break,
-                                _ = tokio::time::sleep(Duration::from_secs(1)) => {}
+                                () = reflector_cancel.cancelled() => break,
+                                () = tokio::time::sleep(Duration::from_secs(1)) => {}
                             }
                         }
                         None => break,
@@ -186,7 +186,7 @@ impl PodWatcher {
             loop {
                 tokio::select! {
                     biased;
-                    _ = subscriber_cancel.cancelled() => break,
+                    () = subscriber_cancel.cancelled() => break,
                     next = stream.next() => match next {
                         Some(pod) => {
                             update_latest(
@@ -264,7 +264,7 @@ impl PodWatcher {
         loop {
             tokio::select! {
                 biased;
-                _ = &mut deadline => return None,
+                () = &mut deadline => return None,
                 ev = rx.recv() => {
                     match ev {
                         Ok(PodChange::Ready(_)) => {

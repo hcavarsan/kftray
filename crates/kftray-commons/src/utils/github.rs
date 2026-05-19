@@ -55,7 +55,7 @@ impl GitHubRepository {
         let mut callbacks = RemoteCallbacks::new();
 
         if use_system_credentials || github_token.is_some() {
-            let token = github_token.clone();
+            let token = github_token;
             let attempts = std::sync::atomic::AtomicUsize::new(0);
 
             callbacks.credentials(move |url, username_from_url, allowed_types| {

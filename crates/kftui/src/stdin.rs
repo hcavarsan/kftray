@@ -22,7 +22,7 @@ use std::process::Command;
 use crossterm::tty::IsTty;
 
 #[cfg(target_os = "macos")]
-pub fn get_controlling_terminal() -> Result<String, Box<dyn std::error::Error>> {
+pub(crate) fn get_controlling_terminal() -> Result<String, Box<dyn std::error::Error>> {
     let output = Command::new("tty")
         .stdin(std::process::Stdio::inherit())
         .stderr(std::process::Stdio::null())
@@ -49,7 +49,7 @@ pub fn get_controlling_terminal() -> Result<String, Box<dyn std::error::Error>> 
                     format!("/dev/tty{tty_short}")
                 };
 
-                if std::fs::File::open(&tty_path).is_ok() {
+                if File::open(&tty_path).is_ok() {
                     return Ok(tty_path);
                 }
             }
@@ -71,7 +71,7 @@ pub fn get_controlling_terminal() -> Result<String, Box<dyn std::error::Error>> 
 }
 
 #[cfg(target_os = "macos")]
-pub fn redirect_stdin_to_tty() -> Result<(), Box<dyn std::error::Error>> {
+pub(crate) fn redirect_stdin_to_tty() -> Result<(), Box<dyn std::error::Error>> {
     match get_controlling_terminal() {
         Ok(tty_path) => {
             use std::fs::OpenOptions;
@@ -95,7 +95,7 @@ pub fn redirect_stdin_to_tty() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
-pub fn read_stdin_content() -> Result<String, String> {
+pub(crate) fn read_stdin_content() -> Result<String, String> {
     if io::stdin().is_tty() {
         return Err("Cannot read from stdin when it's connected to a terminal. Use --json for inline JSON or pipe data to stdin.".to_string());
     }

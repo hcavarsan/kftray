@@ -8,7 +8,7 @@ use crate::tui::input::{
     AppState,
 };
 
-pub async fn handle_auto_add_configs(app: &mut App) {
+pub(crate) async fn handle_auto_add_configs(app: &mut App) {
     let contexts = match list_kube_contexts(None).await {
         Ok(context_infos) => context_infos.into_iter().map(|info| info.name).collect(),
         Err(e) => {
@@ -24,7 +24,7 @@ pub async fn handle_auto_add_configs(app: &mut App) {
     app.context_list_state.select(Some(0));
 }
 
-pub async fn handle_context_selection(app: &mut App, context: &str, mode: DatabaseMode) {
+pub(crate) async fn handle_context_selection(app: &mut App, context: &str, mode: DatabaseMode) {
     let mut configs = match retrieve_service_configs(context, None).await {
         Ok(configs) => configs,
         Err(e) => {

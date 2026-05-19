@@ -35,7 +35,7 @@ const WS_PONG_TIMEOUT: Duration = Duration::from_secs(10);
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
-pub struct WebSocketTunnelServer {
+pub(crate) struct WebSocketTunnelServer {
     tunnel: Arc<RwLock<Option<TunnelConnection>>>,
     ws_port: u16,
 }
@@ -46,38 +46,38 @@ struct TunnelConnection {
 }
 
 impl WebSocketTunnelServer {
-    pub fn new(ws_port: u16) -> Self {
+    pub(crate) fn new(ws_port: u16) -> Self {
         Self {
             tunnel: Arc::new(RwLock::new(None)),
             ws_port,
         }
     }
 
-    pub async fn start(&self, shutdown: Arc<Notify>) -> Result<(), String> {
+    pub(crate) async fn start(&self, shutdown: Arc<Notify>) -> Result<(), String> {
         let addr = format!("0.0.0.0:{}", self.ws_port);
         let listener = TcpListener::bind(&addr)
             .await
-            .map_err(|e| format!("Failed to bind WebSocket server: {}", e))?;
+            .map_err(|e| format!("Failed to bind WebSocket server: {e}"))?;
 
-        info!("WebSocket tunnel server listening on {}", addr);
+        info!("WebSocket tunnel server listening on {addr}");
 
         loop {
             tokio::select! {
                 accept_result = listener.accept() => {
                     match accept_result {
                         Ok((stream, addr)) => {
-                            info!("WebSocket connection from {}", addr);
+                            info!("WebSocket connection from {addr}");
                             let tunnel = self.tunnel.clone();
                             tokio::spawn(async move {
                                 if let Err(e) = Self::handle_tunnel_connection(tunnel, stream).await {
-                                    error!("Tunnel connection error: {}", e);
+                                    error!("Tunnel connection error: {e}");
                                 }
                             });
                         }
-                        Err(e) => error!("Failed to accept WebSocket connection: {}", e),
+                        Err(e) => error!("Failed to accept WebSocket connection: {e}"),
                     }
                 }
-                _ = shutdown.notified() => {
+                () = shutdown.notified() => {
                     info!("WebSocket server shutting down");
                     break;
                 }
@@ -105,7 +105,7 @@ impl WebSocketTunnelServer {
     ) -> Result<(), String> {
         let ws_stream = accept_async(stream)
             .await
-            .map_err(|e| format!("WebSocket handshake failed: {}", e))?;
+            .map_err(|e| format!("WebSocket handshake failed: {e}"))?;
 
         info!("WebSocket tunnel established");
 
@@ -138,7 +138,7 @@ impl WebSocketTunnelServer {
                         Some(Ok(Message::Binary(data))) => {
                             match TunnelMessage::deserialize(&data) {
                                 Ok(tunnel_msg) => {
-                                    debug!("Received tunnel message: {:?}", tunnel_msg);
+                                    debug!("Received tunnel message: {tunnel_msg:?}");
 
                                     match &tunnel_msg {
                                         TunnelMessage::HttpResponse { id, .. } => {
@@ -150,14 +150,12 @@ impl WebSocketTunnelServer {
                                             {
                                                 if sender.send(tunnel_msg).is_err() {
                                                     warn!(
-                                                        "Failed to send response to waiting handler for request {}",
-                                                        id_clone
+                                                        "Failed to send response to waiting handler for request {id_clone}"
                                                     );
                                                 }
                                             } else {
                                                 warn!(
-                                                    "Received response for unknown request ID: {}",
-                                                    id_clone
+                                                    "Received response for unknown request ID: {id_clone}"
                                                 );
                                             }
                                         }
@@ -167,7 +165,7 @@ impl WebSocketTunnelServer {
                                             debug!("Received application-level pong");
                                         }
                                         TunnelMessage::Error { id, .. } => {
-                                            error!("Tunnel error for request {:?}", id);
+                                            error!("Tunnel error for request {id:?}");
                                             if let Some(id_val) = id {
                                                 let id_clone = id_val.clone();
                                                 let mut pending =
@@ -186,8 +184,7 @@ impl WebSocketTunnelServer {
                                 }
                                 Err(e) => {
                                     error!(
-                                        "Failed to deserialize tunnel message: {}",
-                                        e
+                                        "Failed to deserialize tunnel message: {e}"
                                     );
                                 }
                             }
@@ -202,7 +199,7 @@ impl WebSocketTunnelServer {
                             break;
                         }
                         Some(Err(e)) => {
-                            error!("WebSocket error: {}", e);
+                            error!("WebSocket error: {e}");
                             break;
                         }
                         None => {
@@ -219,14 +216,13 @@ impl WebSocketTunnelServer {
                                 ws_write.send(Message::Binary(data.into())).await
                             {
                                 error!(
-                                    "Failed to send message through WebSocket: {}",
-                                    e
+                                    "Failed to send message through WebSocket: {e}"
                                 );
                                 break;
                             }
                         }
                         Err(e) => {
-                            error!("Failed to serialize message: {}", e);
+                            error!("Failed to serialize message: {e}");
                         }
                     }
                 }
@@ -244,7 +240,7 @@ impl WebSocketTunnelServer {
                     if let Err(e) =
                         ws_write.send(Message::Ping(vec![].into())).await
                     {
-                        error!("Failed to send WebSocket Ping: {}", e);
+                        error!("Failed to send WebSocket Ping: {e}");
                         break;
                     }
                     debug!("Sent WebSocket Ping keepalive");
@@ -253,7 +249,7 @@ impl WebSocketTunnelServer {
                         tokio::time::Instant::now() + pong_timeout_duration,
                     );
                 }
-                _ = &mut pong_timeout, if awaiting_pong => {
+                () = &mut pong_timeout, if awaiting_pong => {
                     warn!(
                         "WebSocket Pong not received within {}s — closing tunnel",
                         pong_timeout_duration.as_secs()
@@ -280,17 +276,14 @@ impl WebSocketTunnelServer {
                 });
             }
             if count > 0 {
-                info!(
-                    "Drained {} pending response(s) with tunnel-closed error",
-                    count
-                );
+                info!("Drained {count} pending response(s) with tunnel-closed error");
             }
         }
 
         Ok(())
     }
 
-    pub async fn send_request(
+    pub(crate) async fn send_request(
         &self, id: String, method: String, path: String, headers: HashMap<String, String>,
         body: Vec<u8>,
     ) -> Result<TunnelMessage, String> {
@@ -315,7 +308,7 @@ impl WebSocketTunnelServer {
         tunnel
             .request_tx
             .send(request_msg)
-            .map_err(|e| format!("Failed to send request: {}", e))?;
+            .map_err(|e| format!("Failed to send request: {e}"))?;
 
         match tokio::time::timeout(REQUEST_TIMEOUT, response_rx).await {
             Ok(Ok(response)) => Ok(response),
@@ -328,7 +321,7 @@ impl WebSocketTunnelServer {
         }
     }
 
-    pub async fn is_connected(&self) -> bool {
+    pub(crate) async fn is_connected(&self) -> bool {
         self.tunnel.read().await.is_some()
     }
 }

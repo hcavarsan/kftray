@@ -22,7 +22,7 @@ pub async fn start_timeout_for_forward(
     {
         info!("Starting timeout for config_id {config_id} ({timeout_minutes} minutes)");
 
-        let timeout_duration = Duration::from_secs((timeout_minutes as u64) * 60);
+        let timeout_duration = Duration::from_secs(u64::from(timeout_minutes) * 60);
         let stop_callback_clone = stop_callback.clone();
 
         let timeout_handle = tokio::spawn(async move {

@@ -112,7 +112,7 @@ impl HttpResponseAnalyzer {
     pub fn is_ready_for_logging(
         response_data: &[u8], is_chunked: bool, found_end_marker: bool,
     ) -> bool {
-        HttpResponseAnalyzer::default().is_ready_for_logging_with_config(
+        Self::default().is_ready_for_logging_with_config(
             response_data,
             is_chunked,
             found_end_marker,

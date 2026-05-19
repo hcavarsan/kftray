@@ -75,8 +75,7 @@ pub fn extract_ports_from_service(service: &Service) -> HashMap<String, i32> {
                     Some(p) => p,
                     None => {
                         log::warn!(
-                            "Named port '{}' could not be resolved, falling back to port 0",
-                            name
+                            "Named port '{name}' could not be resolved, falling back to port 0"
                         );
                         0
                     }
@@ -143,9 +142,9 @@ mod tests {
 
     #[test]
     fn test_extract_ports_from_service() {
-        let mut service = k8s_openapi::api::core::v1::Service::default();
+        let mut service = Service::default();
 
-        let spec = k8s_openapi::api::core::v1::ServiceSpec {
+        let spec = ServiceSpec {
             ports: Some(vec![
                 k8s_openapi::api::core::v1::ServicePort {
                     name: Some("http".to_string()),
@@ -181,7 +180,7 @@ mod tests {
             ..Default::default()
         };
 
-        service.spec = Some(spec.clone());
+        service.spec = Some(spec);
 
         let ports = extract_ports_from_service(&service);
 
@@ -199,7 +198,7 @@ mod tests {
 
     #[test]
     fn test_resolve_named_port() {
-        let spec = k8s_openapi::api::core::v1::ServiceSpec {
+        let spec = ServiceSpec {
             ports: Some(vec![
                 k8s_openapi::api::core::v1::ServicePort {
                     name: Some("http".to_string()),
@@ -219,13 +218,13 @@ mod tests {
         assert_eq!(resolve_named_port(&spec, "https"), Some(443));
         assert_eq!(resolve_named_port(&spec, "nonexistent"), None);
 
-        let empty_spec = k8s_openapi::api::core::v1::ServiceSpec {
+        let empty_spec = ServiceSpec {
             ports: None,
             ..Default::default()
         };
         assert_eq!(resolve_named_port(&empty_spec, "http"), None);
 
-        let spec_no_names = k8s_openapi::api::core::v1::ServiceSpec {
+        let spec_no_names = ServiceSpec {
             ports: Some(vec![k8s_openapi::api::core::v1::ServicePort {
                 name: None,
                 port: 80,
@@ -238,7 +237,7 @@ mod tests {
 
     #[test]
     fn test_get_services_with_annotation_filter() {
-        let mut service = k8s_openapi::api::core::v1::Service::default();
+        let mut service = Service::default();
         let mut metadata = k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta::default();
 
         let mut annotations = std::collections::BTreeMap::new();
@@ -248,7 +247,7 @@ mod tests {
         metadata.annotations = Some(annotations);
         service.metadata = metadata;
 
-        service.spec = Some(k8s_openapi::api::core::v1::ServiceSpec {
+        service.spec = Some(ServiceSpec {
             ports: Some(vec![k8s_openapi::api::core::v1::ServicePort {
                 name: Some("http".to_string()),
                 port: 80,

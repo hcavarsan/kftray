@@ -4,9 +4,9 @@ use log::{
     error,
     info,
 };
-use once_cell::sync::Lazy;
 
-pub static STOPPED_BY_TIMEOUT: Lazy<DashSet<i64>> = Lazy::new(DashSet::new);
+pub(crate) static STOPPED_BY_TIMEOUT: std::sync::LazyLock<DashSet<i64>> =
+    std::sync::LazyLock::new(DashSet::new);
 
 pub fn clear_stopped_by_timeout(config_id: i64) {
     STOPPED_BY_TIMEOUT.remove(&config_id);

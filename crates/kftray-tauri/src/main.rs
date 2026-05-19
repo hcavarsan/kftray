@@ -193,15 +193,15 @@ fn main() {
         .manage(SaveDialogState::default())
         .manage(TrayPositionState::default())
         .manage(AppState {
-            positioning_active: positioning_active.clone(),
+            positioning_active: positioning_active,
             pinned: pinned.clone(),
-            runtime: runtime.clone(),
+            runtime: runtime,
         })
         .setup(move |app| {
             let app_handle = app.app_handle().clone();
             tauri::async_runtime::spawn(async move {
                 if let Err(e) = setup_shortcut_integration(app_handle).await {
-                    error!("Failed to setup shortcut integration: {}", e);
+                    error!("Failed to setup shortcut integration: {e}");
                 }
             });
 
@@ -234,9 +234,7 @@ fn main() {
 
             let app_handle_logs = app_handle.clone();
             tauri::async_runtime::spawn(async move {
-                if let Err(e) =
-                    crate::commands::logs::cleanup_old_logs_on_startup(app_handle_logs).await
-                {
+                if let Err(e) = commands::logs::cleanup_old_logs_on_startup(app_handle_logs).await {
                     log::warn!("Failed to cleanup old logs on startup: {e}");
                 }
             });
@@ -266,7 +264,7 @@ fn main() {
             });
 
             tauri::async_runtime::spawn(async move {
-                if let Err(e) = crate::mcp::init_from_settings().await {
+                if let Err(e) = mcp::init_from_settings().await {
                     error!("Failed to initialize MCP server: {e}");
                 }
             });

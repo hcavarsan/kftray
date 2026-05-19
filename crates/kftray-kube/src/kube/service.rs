@@ -33,7 +33,7 @@ pub async fn retrieve_service_configs(
 }
 
 async fn retrieve_service_configs_direct(
-    context: &str, kubeconfig: Option<String>, client: &std::sync::Arc<kube::Client>,
+    context: &str, kubeconfig: Option<String>, client: &std::sync::Arc<Client>,
 ) -> Result<Vec<Config>, PortForwardError> {
     let annotation = "kftray.app/configs";
 
@@ -135,7 +135,7 @@ fn parse_configs(
             let target_port = parts[2]
                 .parse()
                 .ok()
-                .or_else(|| ports.get(parts[2]).cloned())?;
+                .or_else(|| ports.get(parts[2]).copied())?;
 
             Some(Config {
                 id: None,

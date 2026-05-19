@@ -22,7 +22,7 @@ pub struct CreateShortcutRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ShortcutResponse {
+pub(crate) struct ShortcutResponse {
     pub id: i64,
     pub name: String,
     pub shortcut_key: String,
@@ -61,7 +61,7 @@ impl From<CreateShortcutRequest> for ShortcutDefinition {
 }
 
 #[tauri::command]
-pub async fn create_shortcut(
+pub(crate) async fn create_shortcut(
     _app: AppHandle, request: CreateShortcutRequest,
 ) -> Result<i64, String> {
     info!("Creating shortcut: {}", request.name);
@@ -74,7 +74,7 @@ pub async fn create_shortcut(
 }
 
 #[tauri::command]
-pub async fn get_shortcuts(_app: AppHandle) -> Result<Vec<ShortcutResponse>, String> {
+pub(crate) async fn get_shortcuts(_app: AppHandle) -> Result<Vec<ShortcutResponse>, String> {
     let manager = get_manager().await?;
     let manager = manager.lock().await;
     let shortcuts = manager
@@ -85,10 +85,10 @@ pub async fn get_shortcuts(_app: AppHandle) -> Result<Vec<ShortcutResponse>, Str
 }
 
 #[tauri::command]
-pub async fn update_shortcut(
+pub(crate) async fn update_shortcut(
     _app: AppHandle, id: i64, request: CreateShortcutRequest,
 ) -> Result<(), String> {
-    info!("Updating shortcut ID: {}", id);
+    info!("Updating shortcut ID: {id}");
     let manager = get_manager().await?;
     let mut manager = manager.lock().await;
     let mut shortcut = ShortcutDefinition::from(request);
@@ -100,15 +100,17 @@ pub async fn update_shortcut(
 }
 
 #[tauri::command]
-pub async fn delete_shortcut(_app: AppHandle, id: i64) -> Result<(), String> {
-    info!("Deleting shortcut ID: {}", id);
+pub(crate) async fn delete_shortcut(_app: AppHandle, id: i64) -> Result<(), String> {
+    info!("Deleting shortcut ID: {id}");
     let manager = get_manager().await?;
     let mut manager = manager.lock().await;
     manager.delete_shortcut(id).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub async fn validate_shortcut_key(_app: AppHandle, shortcut_key: String) -> Result<bool, String> {
+pub(crate) async fn validate_shortcut_key(
+    _app: AppHandle, shortcut_key: String,
+) -> Result<bool, String> {
     let manager = get_manager().await?;
     let manager = manager.lock().await;
     manager
@@ -117,7 +119,7 @@ pub async fn validate_shortcut_key(_app: AppHandle, shortcut_key: String) -> Res
 }
 
 #[tauri::command]
-pub async fn get_available_actions() -> Result<Vec<ActionInfo>, String> {
+pub(crate) async fn get_available_actions() -> Result<Vec<ActionInfo>, String> {
     Ok(vec![
         ActionInfo {
             action_type: "toggle_window".to_string(),
@@ -133,20 +135,17 @@ pub async fn get_available_actions() -> Result<Vec<ActionInfo>, String> {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ActionInfo {
+pub(crate) struct ActionInfo {
     pub action_type: String,
     pub description: String,
     pub requires_config: bool,
 }
 
 #[tauri::command]
-pub async fn create_config_shortcut(
+pub(crate) async fn create_config_shortcut(
     _app: AppHandle, config_id: i64, name: String, shortcut_key: String, action: String,
 ) -> Result<i64, String> {
-    info!(
-        "Creating config shortcut for config {}: {} -> {}",
-        config_id, name, shortcut_key
-    );
+    info!("Creating config shortcut for config {config_id}: {name} -> {shortcut_key}");
 
     let action_data = serde_json::json!({"action": action, "config_id": config_id});
     let shortcut = ShortcutDefinition {
@@ -168,7 +167,7 @@ pub async fn create_config_shortcut(
 }
 
 #[tauri::command]
-pub async fn get_shortcuts_by_config(
+pub(crate) async fn get_shortcuts_by_config(
     _app: AppHandle, config_id: i64,
 ) -> Result<Vec<ShortcutResponse>, String> {
     let manager = get_manager().await?;
@@ -181,13 +180,13 @@ pub async fn get_shortcuts_by_config(
 }
 
 #[tauri::command]
-pub async fn test_shortcut_format_v2(shortcut_str: String) -> Result<bool, String> {
+pub(crate) async fn test_shortcut_format_v2(shortcut_str: String) -> Result<bool, String> {
     let parser = kftray_shortcuts::ShortcutParser::new();
     Ok(parser.validate_shortcut(&shortcut_str).unwrap_or(false))
 }
 
 #[tauri::command]
-pub async fn normalize_shortcut_key(shortcut_str: String) -> Result<String, String> {
+pub(crate) async fn normalize_shortcut_key(shortcut_str: String) -> Result<String, String> {
     let parser = kftray_shortcuts::ShortcutParser::new();
     parser
         .normalize_shortcut(&shortcut_str)
@@ -195,7 +194,7 @@ pub async fn normalize_shortcut_key(shortcut_str: String) -> Result<String, Stri
 }
 
 #[tauri::command]
-pub async fn check_shortcut_conflicts(
+pub(crate) async fn check_shortcut_conflicts(
     _app: AppHandle, shortcut_key: String, exclude_id: Option<i64>,
 ) -> Result<Vec<ShortcutResponse>, String> {
     let manager = get_manager().await?;
@@ -218,7 +217,7 @@ pub async fn check_shortcut_conflicts(
 }
 
 #[tauri::command]
-pub async fn get_platform_status(
+pub(crate) async fn get_platform_status(
     app: AppHandle,
 ) -> Result<kftray_shortcuts::models::PlatformStatus, String> {
     let manager = get_manager().await?;
@@ -232,7 +231,7 @@ pub async fn get_platform_status(
 }
 
 #[tauri::command]
-pub async fn try_fix_platform_permissions(app: AppHandle) -> Result<String, String> {
+pub(crate) async fn try_fix_platform_permissions(app: AppHandle) -> Result<String, String> {
     let manager = get_manager().await?;
     let manager = manager.lock().await;
     let result = manager.try_fix_permissions().map_err(|e| e.to_string());
