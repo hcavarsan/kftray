@@ -144,9 +144,8 @@ mod tests {
 
         use tempfile::TempDir;
 
-        lazy_static::lazy_static! {
-            static ref ENV_LOCK: Mutex<()> = Mutex::new(());
-        }
+        static ENV_LOCK: std::sync::LazyLock<Mutex<()>> =
+            std::sync::LazyLock::new(|| Mutex::new(()));
         let _env_guard = ENV_LOCK.lock().unwrap();
 
         let original_kubeconfig = env::var("KUBECONFIG").ok();

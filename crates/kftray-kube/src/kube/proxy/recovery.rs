@@ -749,9 +749,7 @@ mod tests {
                     "Should have exhausted all {MAX_RECOVERY_ATTEMPTS} attempts"
                 );
             }
-            other => panic!(
-                "Expected Failed state after exhausting retries, got {other:?}"
-            ),
+            other => panic!("Expected Failed state after exhausting retries, got {other:?}"),
         }
         drop(state);
 

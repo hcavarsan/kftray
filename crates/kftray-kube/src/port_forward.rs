@@ -610,8 +610,7 @@ mod tests {
         for i in 0..10 {
             info!("Mock server: Expecting request {}", i + 1);
 
-            let result =
-                timeout(Duration::from_millis(100), handle.next_request()).await;
+            let result = timeout(Duration::from_millis(100), handle.next_request()).await;
 
             let (request, send) = match result {
                 Ok(Some((req, send))) => (req, send),
@@ -782,8 +781,7 @@ mod tests {
         info!("Client connection simulated");
 
         info!("Waiting for mock server task");
-        let mock_server_result =
-            timeout(Duration::from_secs(5), mock_server_task).await;
+        let mock_server_result = timeout(Duration::from_secs(5), mock_server_task).await;
         assert!(mock_server_result.is_ok(), "Mock server task timed out");
         assert!(
             mock_server_result.unwrap().is_ok(),

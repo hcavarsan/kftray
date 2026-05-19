@@ -342,11 +342,7 @@ mod tests {
     use std::sync::Arc;
     use sqlx::SqlitePool;
     use tokio::sync::Mutex as AsyncMutex;
-    use lazy_static::lazy_static;
-
-    lazy_static! {
-        static ref TEST_MUTEX: AsyncMutex<()> = AsyncMutex::new(());
-    }
+    static TEST_MUTEX: std::sync::LazyLock<AsyncMutex<()>> = std::sync::LazyLock::new(|| AsyncMutex::new(()));
 
     async fn setup_isolated_test_db() -> Arc<SqlitePool> {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();

@@ -121,14 +121,12 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Mutex;
 
-    use lazy_static::lazy_static;
     use tempfile::TempDir;
 
     use super::*;
 
-    lazy_static! {
-        static ref ENV_TEST_MUTEX: Mutex<()> = Mutex::new(());
-    }
+    static ENV_TEST_MUTEX: std::sync::LazyLock<Mutex<()>> =
+        std::sync::LazyLock::new(|| Mutex::new(()));
 
     struct EnvVarGuard {
         key: String,

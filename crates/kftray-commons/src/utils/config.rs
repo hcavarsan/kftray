@@ -757,7 +757,6 @@ async fn sync_http_logs_config_from_config(
 mod tests {
     use std::collections::BTreeMap;
 
-    use lazy_static::lazy_static;
     use serde_json::{
         Value,
         json,
@@ -767,9 +766,8 @@ mod tests {
 
     use super::*;
 
-    lazy_static! {
-        static ref IO_TEST_MUTEX: Mutex<()> = Mutex::new(());
-    }
+    static IO_TEST_MUTEX: std::sync::LazyLock<Mutex<()>> =
+        std::sync::LazyLock::new(|| Mutex::new(()));
 
     #[test]
     fn test_prepare_config_trims_fields() {
