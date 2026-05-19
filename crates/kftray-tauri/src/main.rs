@@ -2,6 +2,11 @@
     all(not(debug_assertions), target_os = "windows"),
     windows_subsystem = "windows"
 )]
+// Tauri command handlers and command-payload types are registered/consumed
+// at runtime via `tauri::generate_handler!` and the JS-to-Rust IPC bridge;
+// the compiler cannot see those references. See `lib.rs` for the matching
+// allow on the cdylib side.
+#![allow(dead_code)]
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
@@ -193,9 +198,9 @@ fn main() {
         .manage(SaveDialogState::default())
         .manage(TrayPositionState::default())
         .manage(AppState {
-            positioning_active: positioning_active,
+            positioning_active,
             pinned: pinned.clone(),
-            runtime: runtime,
+            runtime,
         })
         .setup(move |app| {
             let app_handle = app.app_handle().clone();
@@ -520,9 +525,9 @@ mod tests {
         let runtime = Arc::new(Runtime::new().expect("Failed to create a Tokio runtime"));
 
         let app_state = AppState {
-            positioning_active: positioning_active.clone(),
-            pinned: pinned.clone(),
-            runtime: runtime.clone(),
+            positioning_active: positioning_active,
+            pinned: pinned,
+            runtime: runtime,
         };
 
         assert!(!app_state.positioning_active.load(Ordering::SeqCst));

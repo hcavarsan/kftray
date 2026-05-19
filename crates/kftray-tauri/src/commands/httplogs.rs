@@ -562,14 +562,12 @@ mod tests {
         };
 
         kftray_commons::config::insert_config_with_mode(config, DatabaseMode::Memory)
-            .await
-            .map_err(|e| e)?;
+            .await?;
 
         tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
 
         let configs = kftray_commons::config::get_configs_with_mode(DatabaseMode::Memory)
-            .await
-            .map_err(|e| e)?;
+            .await?;
         let inserted_config = configs
             .iter()
             .find(|c| c.service == Some(service_name.clone()))
