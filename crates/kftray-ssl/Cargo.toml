@@ -1,0 +1,16 @@
+[package]
+name = "kftray-ssl"
+version = "0.27.30"
+authors = ["Henrique Cavarsan <hencavarsan@gmail.com>"]
+edition = "2024"
+description = "Local CA + leaf certificate generation and OS-native trust store integration for kftray"
+homepage = "https://kftray.app"
+repository = "https://github.com/hcavarsan/kftray"
+license = "GPL-3.0"
+
+[lib]
+name = "kftray_ssl"
+path = "src/lib.rs"
+
+[dependencies]
+# Filled in 1.2 after moving code
