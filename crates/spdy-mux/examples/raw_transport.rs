@@ -45,7 +45,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         ("requestid".into(), "0".into()),
     ];
 
-    let mut stream = session.open_stream_pair(error_headers, data_headers).await?;
+    let mut stream = session
+        .open_stream_pair(error_headers, data_headers)
+        .await?;
     stream
         .write_all(b"GET /health HTTP/1.0\r\nHost: peer\r\n\r\n")
         .await?;
