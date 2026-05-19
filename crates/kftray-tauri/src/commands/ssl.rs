@@ -8,7 +8,7 @@ use kftray_commons::utils::settings::{
     set_ssl_cert_validity_days,
     set_ssl_enabled,
 };
-use kftray_portforward::ssl::{
+use kftray_ssl::{
     CertificateInfo,
     CertificateManager,
 };
@@ -22,7 +22,7 @@ use tauri::command;
 #[command]
 pub async fn get_ssl_settings() -> Result<serde_json::Value, String> {
     // Ensure crypto provider is initialized
-    kftray_portforward::ssl::ensure_crypto_provider_installed();
+    kftray_ssl::ensure_crypto_provider_installed();
 
     match get_app_settings().await {
         Ok(settings) => Ok(serde_json::json!({

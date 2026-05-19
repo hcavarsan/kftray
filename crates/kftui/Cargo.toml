@@ -27,6 +27,7 @@ futures = { workspace = true }
 kftray-commons = { workspace = true }
 kftray-network-monitor = { workspace = true }
 kftray-portforward = { workspace = true }
+kftray-ssl = { workspace = true }
 libc = { workspace = true }
 log = { workspace = true }
 ratatui = { workspace = true }

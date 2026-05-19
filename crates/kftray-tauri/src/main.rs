@@ -182,8 +182,8 @@ fn main() {
         unsafe { std::env::set_var("HOME", home) };
     }
 
-    kftray_portforward::ssl::install_default_keyring_store();
-    kftray_portforward::ssl::ensure_crypto_provider_installed();
+    kftray_ssl::install_default_keyring_store();
+    kftray_ssl::ensure_crypto_provider_installed();
 
     let positioning_active = Arc::new(AtomicBool::new(false));
     let pinned = Arc::new(AtomicBool::new(false));

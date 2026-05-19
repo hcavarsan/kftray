@@ -12,7 +12,7 @@ use kftray_commons::config::{
 use kftray_commons::models::config_model::Config;
 use kftray_commons::utils::settings::get_ssl_enabled;
 use kftray_portforward::kube::clear_stopped_by_timeout;
-use kftray_portforward::ssl::cert_manager::CertificateManager;
+use kftray_ssl::CertificateManager;
 use log::{
     error,
     info,

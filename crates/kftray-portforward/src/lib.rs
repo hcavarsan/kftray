@@ -8,7 +8,6 @@ pub mod network_utils;
 pub mod port_forward;
 pub mod port_forward_error;
 pub mod registry;
-pub mod ssl;
 
 pub use expose::{
     start_expose,

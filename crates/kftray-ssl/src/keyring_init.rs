@@ -1,7 +1,7 @@
 use std::sync::Once;
 
 #[cfg(target_os = "linux")]
-use crate::ssl::composite_store::LinuxCompositeStore;
+use crate::composite_store::LinuxCompositeStore;
 
 static INSTALL: Once = Once::new();
 

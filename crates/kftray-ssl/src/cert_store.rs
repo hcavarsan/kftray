@@ -489,7 +489,7 @@ mod tests {
     use tempfile::TempDir;
 
     use super::*;
-    use crate::ssl::cert_generator::CertificateGenerator;
+    use crate::cert_generator::CertificateGenerator;
 
     async fn create_test_store() -> (CertificateStore, TempDir) {
         unsafe {

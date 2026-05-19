@@ -1736,7 +1736,7 @@ pub async fn handle_settings_input(
                                 .await
                                 {
                                     Ok(settings) => {
-                                        match kftray_portforward::ssl::CertificateManager::new(
+                                        match kftray_ssl::CertificateManager::new(
                                             &settings,
                                         ) {
                                             Ok(cert_manager) => {
