@@ -457,10 +457,6 @@ enum SingleConfigResult {
         message: String,
         failed_handle: Option<String>,
     },
-    ExposeResult {
-        responses: Vec<CustomResponse>,
-        error: Option<String>,
-    },
 }
 
 async fn process_single_config_with_address(
@@ -745,27 +741,6 @@ async fn process_single_config_with_address(
     }
 }
 
-async fn process_expose_config(config: Config, mode: DatabaseMode) -> SingleConfigResult {
-    match crate::expose::start_expose(vec![config.clone()], mode).await {
-        Ok(responses) => SingleConfigResult::ExposeResult {
-            responses,
-            error: None,
-        },
-        Err(e) => {
-            let error_message = format!(
-                "Failed to start expose for config {}: {}",
-                config.id.unwrap_or_default(),
-                e
-            );
-            error!("{}", &error_message);
-            SingleConfigResult::ExposeResult {
-                responses: vec![],
-                error: Some(error_message),
-            }
-        }
-    }
-}
-
 pub async fn start_port_forward_with_mode(
     configs: Vec<Config>, protocol: &str, mode: DatabaseMode, ssl_override: bool,
 ) -> Result<Vec<CustomResponse>, PortForwardError> {
@@ -773,9 +748,17 @@ pub async fn start_port_forward_with_mode(
     let mut errors = Vec::new();
     let mut failed_handles = Vec::new();
 
-    let (expose_configs, regular_configs): (Vec<_>, Vec<_>) = configs
-        .into_iter()
-        .partition(|c| c.workload_type.as_deref() == Some("expose"));
+    // Expose configs must be dispatched by callers via kftray_expose, not here.
+    let has_expose = configs
+        .iter()
+        .any(|c| c.workload_type.as_deref() == Some("expose"));
+    if has_expose {
+        return Err(PortForwardError::ConfigurationError {
+            message: "expose workload_type must be dispatched via kftray_expose, not kftray_portforward".to_string(),
+        });
+    }
+
+    let regular_configs = configs;
 
     let mut regular_configs_with_addresses = Vec::with_capacity(regular_configs.len());
     for mut config in regular_configs {
@@ -809,10 +792,6 @@ pub async fn start_port_forward_with_mode(
     let mut futures: FuturesUnordered<BoxFuture<'static, SingleConfigResult>> =
         FuturesUnordered::new();
 
-    for config in expose_configs {
-        futures.push(Box::pin(process_expose_config(config, mode)));
-    }
-
     let protocol_owned = protocol.to_string();
     for config in regular_configs_with_addresses {
         let proto = protocol_owned.clone();
@@ -836,15 +815,6 @@ pub async fn start_port_forward_with_mode(
                 errors.push(message);
                 if let Some(handle) = failed_handle {
                     failed_handles.push(handle);
-                }
-            }
-            SingleConfigResult::ExposeResult {
-                responses: expose_responses,
-                error,
-            } => {
-                responses.extend(expose_responses);
-                if let Some(e) = error {
-                    errors.push(e);
                 }
             }
         }

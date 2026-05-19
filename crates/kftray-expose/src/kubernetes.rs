@@ -29,11 +29,11 @@ use log::{
     info,
 };
 
-use crate::expose::{
+use crate::{
     models::ExposeResources,
     templates,
 };
-use crate::port_forward_error::PortForwardError;
+use crate::error::ExposeError;
 
 /// Extracts the first part of a domain name (before the first dot) to use as a
 /// DNS-1035 compliant name For example: "testelocal.ideia.totvs.io" ->
@@ -44,7 +44,7 @@ fn extract_subdomain(domain: &str) -> String {
 
 pub async fn create_expose_resources(
     client: Client, config: &Config,
-) -> Result<ExposeResources, PortForwardError> {
+) -> Result<ExposeResources, ExposeError> {
     let config_id_str = config
         .id
         .map_or_else(|| "default".to_string(), |id| id.to_string());
@@ -63,7 +63,7 @@ pub async fn create_expose_resources(
 
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_err(|e| PortForwardError::Expose(e.to_string()))?
+        .map_err(|e| ExposeError::Expose(e.to_string()))?
         .as_secs();
 
     let random_string: String = {
@@ -161,7 +161,7 @@ pub async fn create_expose_resources(
 
 async fn create_deployment(
     client: &Client, namespace: &str, deployment_name: &str, config_id: &str, config: &Config,
-) -> Result<(), PortForwardError> {
+) -> Result<(), ExposeError> {
     let deployments: Api<Deployment> = Api::namespaced(client.clone(), namespace);
 
     let local_port = config.local_port.unwrap_or(8080).to_string();
@@ -176,12 +176,12 @@ async fn create_deployment(
     let rendered = templates::render_template(&template, &values);
 
     let deployment: Deployment = serde_json::from_str(&rendered)
-        .map_err(|e| PortForwardError::Expose(format!("Failed to parse deployment: {}", e)))?;
+        .map_err(|e| ExposeError::Expose(format!("Failed to parse deployment: {}", e)))?;
 
     deployments
         .create(&PostParams::default(), &deployment)
         .await
-        .map_err(|e| PortForwardError::Expose(format!("Failed to create deployment: {}", e)))?;
+        .map_err(|e| ExposeError::Expose(format!("Failed to create deployment: {}", e)))?;
 
     info!("Deployment created successfully");
     Ok(())
@@ -189,7 +189,7 @@ async fn create_deployment(
 
 async fn wait_for_pod_ready(
     client: &Client, namespace: &str, config_id: &str,
-) -> Result<String, PortForwardError> {
+) -> Result<String, ExposeError> {
     let pods: Api<Pod> = Api::namespaced(client.clone(), namespace);
     let lp = ListParams::default().labels(&format!("app=kftray-expose,config_id={}", config_id));
 
@@ -198,22 +198,22 @@ async fn wait_for_pod_ready(
     let pod_list = pods
         .list(&lp)
         .await
-        .map_err(|e| PortForwardError::Expose(format!("Failed to list pods: {}", e)))?;
+        .map_err(|e| ExposeError::Expose(format!("Failed to list pods: {}", e)))?;
 
     let pod = pod_list
         .items
         .first()
-        .ok_or_else(|| PortForwardError::Expose("No pod found".to_string()))?;
+        .ok_or_else(|| ExposeError::Expose("No pod found".to_string()))?;
 
     let pod_name = pod
         .metadata
         .name
         .clone()
-        .ok_or_else(|| PortForwardError::Expose("Pod has no name".to_string()))?;
+        .ok_or_else(|| ExposeError::Expose("Pod has no name".to_string()))?;
 
     kube_runtime::wait::await_condition(pods.clone(), &pod_name, conditions::is_pod_running())
         .await
-        .map_err(|e| PortForwardError::Expose(format!("Pod not ready: {}", e)))?;
+        .map_err(|e| ExposeError::Expose(format!("Pod not ready: {}", e)))?;
 
     info!("Pod ready: {}", pod_name);
     Ok(pod_name)
@@ -221,24 +221,24 @@ async fn wait_for_pod_ready(
 
 async fn get_pod_ip(
     client: &Client, namespace: &str, pod_name: &str,
-) -> Result<String, PortForwardError> {
+) -> Result<String, ExposeError> {
     let pods: Api<Pod> = Api::namespaced(client.clone(), namespace);
     let pod = pods
         .get(pod_name)
         .await
-        .map_err(|e| PortForwardError::Expose(format!("Failed to get pod: {}", e)))?;
+        .map_err(|e| ExposeError::Expose(format!("Failed to get pod: {}", e)))?;
 
     let pod_ip = pod
         .status
         .and_then(|s| s.pod_ip)
-        .ok_or_else(|| PortForwardError::Expose("Pod has no IP".to_string()))?;
+        .ok_or_else(|| ExposeError::Expose("Pod has no IP".to_string()))?;
 
     Ok(pod_ip)
 }
 
 async fn create_service(
     client: &Client, namespace: &str, service_name: &str, config_id: &str, local_port: u16,
-) -> Result<(), PortForwardError> {
+) -> Result<(), ExposeError> {
     let services: Api<Service> = Api::namespaced(client.clone(), namespace);
 
     let mut values = HashMap::new();
@@ -251,12 +251,12 @@ async fn create_service(
     let rendered = templates::render_template(&template, &values);
 
     let service: Service = serde_json::from_str(&rendered)
-        .map_err(|e| PortForwardError::Expose(format!("Failed to parse service: {}", e)))?;
+        .map_err(|e| ExposeError::Expose(format!("Failed to parse service: {}", e)))?;
 
     services
         .create(&PostParams::default(), &service)
         .await
-        .map_err(|e| PortForwardError::Expose(format!("Failed to create service: {}", e)))?;
+        .map_err(|e| ExposeError::Expose(format!("Failed to create service: {}", e)))?;
 
     info!("Service created successfully");
     Ok(())
@@ -264,13 +264,13 @@ async fn create_service(
 
 async fn create_ingress(
     client: &Client, namespace: &str, ingress_name: &str, service_name: &str, config: &Config,
-) -> Result<(), PortForwardError> {
+) -> Result<(), ExposeError> {
     let ingresses: Api<Ingress> = Api::namespaced(client.clone(), namespace);
 
     let domain = config
         .alias
         .as_ref()
-        .ok_or_else(|| PortForwardError::ConfigurationError {
+        .ok_or_else(|| ExposeError::Configuration {
             message: "Domain not configured for public exposure (set alias field)".to_string(),
         })?;
 
@@ -305,12 +305,12 @@ async fn create_ingress(
     let rendered = templates::render_template(&template, &values);
 
     let ingress: Ingress = serde_json::from_str(&rendered)
-        .map_err(|e| PortForwardError::Expose(format!("Failed to parse ingress: {}", e)))?;
+        .map_err(|e| ExposeError::Expose(format!("Failed to parse ingress: {}", e)))?;
 
     ingresses
         .create(&PostParams::default(), &ingress)
         .await
-        .map_err(|e| PortForwardError::Expose(format!("Failed to create ingress: {}", e)))?;
+        .map_err(|e| ExposeError::Expose(format!("Failed to create ingress: {}", e)))?;
 
     info!("Created ingress");
     Ok(())
@@ -343,7 +343,7 @@ async fn check_existing_resources(
 
 pub async fn delete_expose_resources(
     client: Client, namespace: &str, config_id_label: &str,
-) -> Result<(), PortForwardError> {
+) -> Result<(), ExposeError> {
     let label_selector = format!("app=kftray-expose,config_id={}", config_id_label);
     let lp = ListParams::default().labels(&label_selector);
 
@@ -365,7 +365,7 @@ pub async fn delete_expose_resources(
 
 async fn delete_ingresses(
     client: &Client, namespace: &str, lp: &ListParams,
-) -> Result<(), PortForwardError> {
+) -> Result<(), ExposeError> {
     let api: Api<Ingress> = Api::namespaced(client.clone(), namespace);
 
     let items = match api.list(lp).await {
@@ -395,7 +395,7 @@ async fn delete_ingresses(
 
 async fn delete_services(
     client: &Client, namespace: &str, lp: &ListParams,
-) -> Result<(), PortForwardError> {
+) -> Result<(), ExposeError> {
     let api: Api<Service> = Api::namespaced(client.clone(), namespace);
 
     let items = match api.list(lp).await {
@@ -425,7 +425,7 @@ async fn delete_services(
 
 async fn delete_deployments(
     client: &Client, namespace: &str, lp: &ListParams,
-) -> Result<(), PortForwardError> {
+) -> Result<(), ExposeError> {
     let api: Api<Deployment> = Api::namespaced(client.clone(), namespace);
 
     let items = match api.list(lp).await {

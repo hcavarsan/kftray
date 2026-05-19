@@ -25,6 +25,7 @@ env_logger = { workspace = true }
 flate2 = { workspace = true }
 futures = { workspace = true }
 kftray-commons = { workspace = true }
+kftray-expose = { workspace = true }
 kftray-network-monitor = { workspace = true }
 kftray-portforward = { workspace = true }
 kftray-ssl = { workspace = true }

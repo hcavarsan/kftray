@@ -1,0 +1,43 @@
+[package]
+name = "kftray-expose"
+version = "0.27.30"
+authors = ["Henrique Cavarsan <hencavarsan@gmail.com>"]
+edition = "2024"
+description = "Reverse tunnel feature for kftray: K8s Deployment/Service/Ingress plus WebSocket tunnel"
+homepage = "https://kftray.app"
+repository = "https://github.com/hcavarsan/kftray"
+license = "GPL-3.0"
+
+[lib]
+name = "kftray_expose"
+path = "src/lib.rs"
+
+[dependencies]
+# Internal crates
+kftray-commons = { workspace = true }
+kftray-portforward = { workspace = true }
+
+# Kubernetes
+k8s-openapi = { workspace = true }
+kube = { workspace = true }
+kube-runtime = { workspace = true }
+
+# Async / networking
+bytes = { workspace = true }
+futures = { workspace = true }
+http-body-util = { workspace = true }
+hyper = { workspace = true }
+hyper-util = { workspace = true }
+tokio = { workspace = true }
+tokio-tungstenite = { workspace = true }
+tokio-util = { workspace = true }
+
+# Serialization
+serde_json = { workspace = true }
+
+# Logging
+log = { workspace = true }
+
+# Misc
+rand = { workspace = true }
+whoami = { workspace = true }
