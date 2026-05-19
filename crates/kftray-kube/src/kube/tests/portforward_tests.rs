@@ -291,8 +291,7 @@ async fn test_port_forward_tcp_success() -> Result<()> {
         tokio::time::sleep(Duration::from_secs(3)).await;
     });
 
-    let config = setup_test_config();
-    let _configs = [config];
+    let _config = setup_test_config();
 
     let port_forward = PortForward {
         target,

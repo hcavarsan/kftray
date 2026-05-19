@@ -1,3 +1,14 @@
+// Window-preset sizing bridges `u32` physical dimensions, `f64` scale factors,
+// and `f32` fill ratios. All values are bounded by screen resolution, so the
+// pedantic cast warnings just clutter readable math; see window.rs for the
+// matching justification.
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss
+)]
+
 use tauri::{
     WebviewWindow,
     Wry,
@@ -105,6 +116,9 @@ mod tests {
         assert_eq!(WindowSizePreset::from_id(""), None);
     }
 
+    // These scales are compile-time constants in `WindowSizePreset::scale`;
+    // direct equality is exactly what we want to check.
+    #[allow(clippy::float_cmp)]
     #[test]
     fn scales_match_ladder() {
         assert_eq!(WindowSizePreset::ExtraSmall.scale(), 0.5);

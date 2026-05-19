@@ -196,13 +196,10 @@ async fn try_fallback_allocate_and_save(
     };
     // Lock released here
 
-    let address = match candidate {
-        Some(addr) => addr,
-        None => {
-            return Err(PortForwardError::AddressAllocation(
-                "No available addresses found in fallback allocation".to_string(),
-            ));
-        }
+    let Some(address) = candidate else {
+        return Err(PortForwardError::AddressAllocation(
+            "No available addresses found in fallback allocation".to_string(),
+        ));
     };
 
     match kftray_hosts::loopback::ensure_loopback_address(&address).await {

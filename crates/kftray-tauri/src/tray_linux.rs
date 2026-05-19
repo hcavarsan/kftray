@@ -124,7 +124,7 @@ impl ksni::Tray for KftrayTray {
             StandardItem {
                 label: "View Logs".into(),
                 activate: Box::new(|t: &mut Self| {
-                    if let Err(e) = crate::commands::logs::open_log_viewer_window(t.app.clone()) {
+                    if let Err(e) = crate::commands::logs::open_log_viewer_window(&t.app) {
                         error!("Failed to open log viewer window: {e}");
                     }
                 }),

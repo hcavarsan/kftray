@@ -12,7 +12,7 @@ use tracing::{
     info,
 };
 
-const BUFFER_SIZE: usize = 131072;
+const BUFFER_SIZE: usize = 131_072;
 
 pub struct UdpForwarder;
 
@@ -42,7 +42,9 @@ impl UdpForwarder {
         let handle = tokio::spawn({
             let cancel_token = cancellation_token.clone();
             async move {
-                let mut udp_buffer = [0u8; BUFFER_SIZE];
+                // 128 KiB on the future's state machine blows the tokio task
+                // stack; allocate the buffer on the heap.
+                let mut udp_buffer = vec![0u8; BUFFER_SIZE];
                 let mut tcp_read = tcp_read;
                 let mut tcp_write = tcp_write;
                 let mut peer_addr: Option<std::net::SocketAddr> = None;
@@ -54,7 +56,10 @@ impl UdpForwarder {
                                 Ok((len, src)) => {
                                     peer_addr = Some(src);
 
-                                    let packet_len = (len as u32).to_be_bytes();
+                                    // UDP datagrams cap at 65507 bytes per the
+                                    // protocol, so this never reaches u32::MAX.
+                                    let packet_len =
+                                        u32::try_from(len).unwrap_or(u32::MAX).to_be_bytes();
                                     if let Err(e) = tcp_write.write_all(&packet_len).await {
                                         error!("Failed to write packet length to TCP stream: {:?}", e);
                                         break;
@@ -149,7 +154,7 @@ mod tests {
         let (mut reader, mut writer) = duplex(1024);
 
         let packet = b"hello world";
-        let len = packet.len() as u32;
+        let len = u32::try_from(packet.len()).unwrap();
         let len_bytes = len.to_be_bytes();
 
         writer.write_all(&len_bytes).await.unwrap();
@@ -211,7 +216,7 @@ mod tests {
         let (mut reader, mut writer) = duplex(1024);
 
         let packet = b"hello world";
-        let len = packet.len() as u32;
+        let len = u32::try_from(packet.len()).unwrap();
         let len_bytes = len.to_be_bytes();
 
         writer.write_all(&len_bytes).await.unwrap();

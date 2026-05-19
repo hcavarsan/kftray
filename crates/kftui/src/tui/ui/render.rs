@@ -110,7 +110,7 @@ pub(crate) fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
 
     horizontal_layout[1]
 }
-pub(crate) fn draw_file_explorer_popup(f: &mut Frame, app: &mut App, area: Rect, is_import: bool) {
+pub(crate) fn draw_file_explorer_popup(f: &mut Frame, app: &App, area: Rect, is_import: bool) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([Constraint::Percentage(90), Constraint::Percentage(10)].as_ref())

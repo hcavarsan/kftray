@@ -111,7 +111,7 @@ impl HttpLogger {
                             message_batch.push(log_message);
 
                             let now = Utc::now();
-                            let batch_too_old = now.signed_duration_since(last_flush).num_milliseconds() > FLUSH_INTERVAL_MS as i64;
+                            let batch_too_old = now.signed_duration_since(last_flush).num_milliseconds() > i64::try_from(FLUSH_INTERVAL_MS).unwrap_or(i64::MAX);
                             let force_write = message_batch.len() >= BATCH_SIZE_THRESHOLD || is_response || batch_too_old;
 
                             if force_write {
@@ -369,7 +369,7 @@ impl HttpLogger {
     async fn send_preformatted_response_log(
         &self, buffer: Bytes, trace_id: String, timestamp: DateTime<Utc>, took_ms: i64,
     ) -> Result<()> {
-        let message = LogMessage::new_preformatted_response(trace_id, timestamp, took_ms, buffer);
+        let message = LogMessage::new_preformatted_response(&trace_id, timestamp, took_ms, &buffer);
 
         if let Err(e) = self.log_sender.send(message).await {
             error!("Failed to send preformatted response log message: {:?}", e);

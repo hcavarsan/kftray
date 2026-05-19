@@ -5,7 +5,6 @@ use std::fs::{
 use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
-use std::sync::Mutex;
 
 use log::{
     error,

@@ -731,10 +731,11 @@ mod tests {
     async fn test_ensure_certificate_generation() {
         use crate::cert_store::{
             SSL_TEST_MUTEX,
+            SslKeyVault,
             TEST_SSL_VAULT,
         };
         let _lock = SSL_TEST_MUTEX.lock().await;
-        *TEST_SSL_VAULT.lock().unwrap() = Default::default();
+        *TEST_SSL_VAULT.lock().unwrap() = SslKeyVault::default();
 
         let (manager, _temp_dir) = create_test_manager().await;
 
@@ -747,10 +748,11 @@ mod tests {
     async fn test_regenerate_certificate() {
         use crate::cert_store::{
             SSL_TEST_MUTEX,
+            SslKeyVault,
             TEST_SSL_VAULT,
         };
         let _lock = SSL_TEST_MUTEX.lock().await;
-        *TEST_SSL_VAULT.lock().unwrap() = Default::default();
+        *TEST_SSL_VAULT.lock().unwrap() = SslKeyVault::default();
 
         let (manager, _temp_dir) = create_test_manager().await;
 
@@ -769,10 +771,11 @@ mod tests {
     async fn test_certificate_info() {
         use crate::cert_store::{
             SSL_TEST_MUTEX,
+            SslKeyVault,
             TEST_SSL_VAULT,
         };
         let _lock = SSL_TEST_MUTEX.lock().await;
-        *TEST_SSL_VAULT.lock().unwrap() = Default::default();
+        *TEST_SSL_VAULT.lock().unwrap() = SslKeyVault::default();
 
         let (manager, _temp_dir) = create_test_manager().await;
 
@@ -789,10 +792,11 @@ mod tests {
     async fn test_certificate_existence() {
         use crate::cert_store::{
             SSL_TEST_MUTEX,
+            SslKeyVault,
             TEST_SSL_VAULT,
         };
         let _lock = SSL_TEST_MUTEX.lock().await;
-        *TEST_SSL_VAULT.lock().unwrap() = Default::default();
+        *TEST_SSL_VAULT.lock().unwrap() = SslKeyVault::default();
 
         let (manager, _temp_dir) = create_test_manager().await;
 
@@ -807,10 +811,11 @@ mod tests {
     async fn test_remove_certificate() {
         use crate::cert_store::{
             SSL_TEST_MUTEX,
+            SslKeyVault,
             TEST_SSL_VAULT,
         };
         let _lock = SSL_TEST_MUTEX.lock().await;
-        *TEST_SSL_VAULT.lock().unwrap() = Default::default();
+        *TEST_SSL_VAULT.lock().unwrap() = SslKeyVault::default();
 
         let (manager, _temp_dir) = create_test_manager().await;
 
@@ -825,10 +830,11 @@ mod tests {
     async fn test_cleanup_ssl_artifacts() {
         use crate::cert_store::{
             SSL_TEST_MUTEX,
+            SslKeyVault,
             TEST_SSL_VAULT,
         };
         let _lock = SSL_TEST_MUTEX.lock().await;
-        *TEST_SSL_VAULT.lock().unwrap() = Default::default();
+        *TEST_SSL_VAULT.lock().unwrap() = SslKeyVault::default();
 
         unsafe {
             std::env::set_var("KFTRAY_SKIP_CA_INSTALL", "1");
@@ -845,13 +851,13 @@ mod tests {
     async fn test_domains_change_detection() {
         use crate::cert_store::{
             SSL_TEST_MUTEX,
+            SslKeyVault,
             TEST_SSL_VAULT,
         };
         let _lock = SSL_TEST_MUTEX.lock().await;
-        *TEST_SSL_VAULT.lock().unwrap() = Default::default();
+        *TEST_SSL_VAULT.lock().unwrap() = SslKeyVault::default();
 
-        let (_manager, _temp_dir) = create_test_manager().await;
-        let manager = &_manager;
+        let (manager, _temp_dir) = create_test_manager().await;
 
         let domains1 = vec!["localhost".to_string(), "127.0.0.1".to_string()];
         let domains2 = vec!["localhost".to_string(), "test.local".to_string()];
@@ -872,13 +878,13 @@ mod tests {
     async fn test_load_global_certificate() {
         use crate::cert_store::{
             SSL_TEST_MUTEX,
+            SslKeyVault,
             TEST_SSL_VAULT,
         };
         let _lock = SSL_TEST_MUTEX.lock().await;
-        *TEST_SSL_VAULT.lock().unwrap() = Default::default();
+        *TEST_SSL_VAULT.lock().unwrap() = SslKeyVault::default();
 
-        let (_manager, _temp_dir) = create_test_manager().await;
-        let manager = &_manager;
+        let (manager, _temp_dir) = create_test_manager().await;
 
         let result = manager.store.load("global-ssl-cert").await;
         assert!(result.is_err());
@@ -916,13 +922,13 @@ mod tests {
     async fn test_ensure_global_certificate_for_all_configs() {
         use crate::cert_store::{
             SSL_TEST_MUTEX,
+            SslKeyVault,
             TEST_SSL_VAULT,
         };
         let _lock = SSL_TEST_MUTEX.lock().await;
-        *TEST_SSL_VAULT.lock().unwrap() = Default::default();
+        *TEST_SSL_VAULT.lock().unwrap() = SslKeyVault::default();
 
-        let (_manager, _temp_dir) = create_test_manager().await;
-        let manager = &_manager;
+        let (manager, _temp_dir) = create_test_manager().await;
 
         let cert_pair = manager
             .ensure_global_certificate_for_all_configs()

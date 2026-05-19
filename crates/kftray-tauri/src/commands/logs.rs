@@ -551,10 +551,10 @@ pub(crate) async fn open_log_directory(app: AppHandle) -> Result<(), String> {
 
 #[tauri::command]
 pub(crate) async fn open_log_viewer_window_cmd(app: AppHandle) -> Result<(), String> {
-    open_log_viewer_window(app)
+    open_log_viewer_window(&app)
 }
 
-pub(crate) fn open_log_viewer_window(app: AppHandle) -> Result<(), String> {
+pub(crate) fn open_log_viewer_window(app: &AppHandle) -> Result<(), String> {
     info!("Opening log viewer window");
 
     if let Some(window) = app.get_webview_window("logs") {
@@ -588,7 +588,7 @@ pub(crate) fn open_log_viewer_window(app: AppHandle) -> Result<(), String> {
 
     info!("Creating logs window: logical size {width}x{height}, scale factor {scale_factor}");
 
-    let mut builder = WebviewWindowBuilder::new(&app, "logs", WebviewUrl::App("logs.html".into()))
+    let mut builder = WebviewWindowBuilder::new(app, "logs", WebviewUrl::App("logs.html".into()))
         .title("KFtray - Logs")
         .inner_size(width, height)
         .min_inner_size(800.0, 500.0)

@@ -193,8 +193,11 @@ async fn process_single_proxy_config(
 
     let use_deployment = should_use_deployment_manifest().await;
 
+    // Both branches build very large futures (their state machines compose
+    // multi-step k8s API calls). Boxing keeps the parent future small enough
+    // to avoid blowing the tokio task stack on the spawn-site.
     if use_deployment {
-        process_deployment_proxy(
+        Box::pin(process_deployment_proxy(
             client,
             &mut config,
             &hashed_name,
@@ -203,10 +206,10 @@ async fn process_single_proxy_config(
             &protocol,
             mode,
             ssl_override,
-        )
+        ))
         .await
     } else {
-        process_pod_proxy(
+        Box::pin(process_pod_proxy(
             client,
             &mut config,
             &hashed_name,
@@ -214,7 +217,7 @@ async fn process_single_proxy_config(
             &protocol,
             mode,
             ssl_override,
-        )
+        ))
         .await
     }
 }

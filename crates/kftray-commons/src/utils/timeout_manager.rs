@@ -9,7 +9,12 @@ use tokio::time::sleep;
 
 use crate::utils::settings::get_disconnect_timeout;
 
-static TIMEOUT_HANDLES: std::sync::LazyLock<Arc<RwLock<HashMap<i64, JoinHandle<()>>>>> =
+/// Map of `config_id` to the timeout task watching that forward. Kept behind
+/// an `Arc<RwLock<_>>` so spawn/stop callers can race against the timeout
+/// reaper without holding the lock across `.await`.
+type TimeoutHandles = Arc<RwLock<HashMap<i64, JoinHandle<()>>>>;
+
+static TIMEOUT_HANDLES: std::sync::LazyLock<TimeoutHandles> =
     std::sync::LazyLock::new(|| Arc::new(RwLock::new(HashMap::new())));
 
 pub async fn start_timeout_for_forward(

@@ -1,3 +1,17 @@
+// Tauri exposes monitor/window positions as `PhysicalPosition<i32>` and
+// physical sizes as `PhysicalSize<u32>` (per the OS window-manager APIs).
+// Mixing the two for hit-testing, clamping into monitor bounds, and computing
+// tray-anchored offsets means every coordinate-math expression has to bridge
+// `u32 <-> i32`, sometimes via `f64` for HiDPI scale factors. Every cast here
+// is over a value bounded by screen resolution (well under 2^31), so the
+// pedantic cast warnings just produce noise on otherwise-correct math.
+#![allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_possible_wrap,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss
+)]
+
 use std::io::ErrorKind;
 use std::path::Path;
 use std::sync::atomic::Ordering;

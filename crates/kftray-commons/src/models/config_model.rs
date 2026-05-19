@@ -60,6 +60,9 @@ where
     deserializer.deserialize_any(BoolOrStringVisitor)
 }
 
+// `serde(skip_serializing_if = "...")` requires a `fn(&T) -> bool`
+// signature, so passing by ref here is mandatory.
+#[allow(clippy::trivially_copy_pass_by_ref)]
 fn is_false(value: &bool) -> bool {
     !value
 }

@@ -229,9 +229,8 @@ impl NetworkMonitor {
     }
 
     async fn check_health(&self) {
-        let active_configs = match ConfigManager::get_active_configs().await {
-            Ok(configs) => configs,
-            Err(_) => return,
+        let Ok(active_configs) = ConfigManager::get_active_configs().await else {
+            return;
         };
 
         if active_configs.is_empty() {
@@ -273,9 +272,8 @@ impl NetworkMonitor {
     }
 
     async fn check_health_fast(&self) -> Vec<kftray_commons::models::config_model::Config> {
-        let active_configs = match ConfigManager::get_active_configs().await {
-            Ok(configs) => configs,
-            Err(_) => return Vec::new(),
+        let Ok(active_configs) = ConfigManager::get_active_configs().await else {
+            return Vec::new();
         };
 
         if active_configs.is_empty() {

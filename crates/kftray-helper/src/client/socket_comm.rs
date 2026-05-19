@@ -221,7 +221,6 @@ fn read_unix_response(mut stream: UnixStream) -> Result<HelperResponse, HelperEr
                 if buffer.is_empty() {
                     debug!("Socket closed without sending any data");
                     std::thread::sleep(Duration::from_millis(500));
-                    continue;
                 } else {
                     debug!("Socket closed after receiving data, breaking read loop");
                     break;
@@ -256,11 +255,9 @@ fn read_unix_response(mut stream: UnixStream) -> Result<HelperResponse, HelperEr
                 }
 
                 std::thread::sleep(Duration::from_millis(200));
-                continue;
             }
             Err(e) if e.kind() == io::ErrorKind::Interrupted => {
                 debug!("Read interrupted, retrying...");
-                continue;
             }
             Err(e) => {
                 debug!("Error reading from socket: {e}");

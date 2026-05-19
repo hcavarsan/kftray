@@ -228,7 +228,9 @@ mod tests {
         match connect_result {
             Ok(Ok(_)) => panic!("should not accept connections after shutdown"),
             Ok(Err(_)) => {}
-            Err(_) => panic!("connect timed out; proxy port may still be open after shutdown"),
+            Err(e) => {
+                panic!("connect timed out ({e}); proxy port may still be open after shutdown")
+            }
         }
     }
 }

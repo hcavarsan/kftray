@@ -576,35 +576,24 @@ impl MuxHandle {
                 .close_reg_tx_for(data_id)
                 .try_send(StreamRegistration::Close { stream_id: data_id });
         };
-        let ctrl_permit_error = match self.control_tx.clone().try_reserve_owned() {
-            Ok(p) => p,
-            Err(_) => {
-                cleanup_registration(self);
-                return Err(Error::MuxClosed);
-            }
+        let Ok(ctrl_permit_error) = self.control_tx.clone().try_reserve_owned() else {
+            cleanup_registration(self);
+            return Err(Error::MuxClosed);
         };
-        let ctrl_permit_data = match self.control_tx.clone().try_reserve_owned() {
-            Ok(p) => p,
-            Err(_) => {
-                cleanup_registration(self);
-                return Err(Error::MuxClosed);
-            }
+        let Ok(ctrl_permit_data) = self.control_tx.clone().try_reserve_owned() else {
+            cleanup_registration(self);
+            return Err(Error::MuxClosed);
         };
-        let close_reg_permit_error =
-            match self.close_reg_tx_for(error_id).clone().try_reserve_owned() {
-                Ok(p) => p,
-                Err(_) => {
-                    cleanup_registration(self);
-                    return Err(Error::MuxClosed);
-                }
-            };
-        let close_reg_permit_data = match self.close_reg_tx_for(data_id).clone().try_reserve_owned()
-        {
-            Ok(p) => p,
-            Err(_) => {
-                cleanup_registration(self);
-                return Err(Error::MuxClosed);
-            }
+        let Ok(close_reg_permit_error) =
+            self.close_reg_tx_for(error_id).clone().try_reserve_owned()
+        else {
+            cleanup_registration(self);
+            return Err(Error::MuxClosed);
+        };
+        let Ok(close_reg_permit_data) = self.close_reg_tx_for(data_id).clone().try_reserve_owned()
+        else {
+            cleanup_registration(self);
+            return Err(Error::MuxClosed);
         };
 
         drop(seq); // release sequencer

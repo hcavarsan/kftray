@@ -200,8 +200,8 @@ async fn list_pods_in_namespace(
                 .status
                 .as_ref()
                 .and_then(|s| s.phase.as_ref())
-                .unwrap_or(&"Unknown".to_string())
-                .clone();
+                .cloned()
+                .unwrap_or_else(|| "Unknown".to_string());
 
             Some(ServerResource {
                 resource_type: "pod".to_string(),
@@ -313,8 +313,8 @@ async fn list_services_in_namespace(
                 .spec
                 .as_ref()
                 .and_then(|s| s.cluster_ip.as_ref())
-                .unwrap_or(&"None".to_string())
-                .clone();
+                .cloned()
+                .unwrap_or_else(|| "None".to_string());
 
             Some(ServerResource {
                 resource_type: "service".to_string(),

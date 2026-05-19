@@ -64,10 +64,10 @@ impl LogMessage {
     }
 
     pub fn new_preformatted_response(
-        trace_id: String, timestamp: DateTime<Utc>, took_ms: i64, buffer: Bytes,
+        trace_id: &str, timestamp: DateTime<Utc>, took_ms: i64, buffer: &Bytes,
     ) -> Self {
         let formatted =
-            MessageFormatter::format_preformatted_response(&trace_id, timestamp, took_ms, &buffer);
+            MessageFormatter::format_preformatted_response(trace_id, timestamp, took_ms, buffer);
 
         Self::PreformattedResponse(formatted)
     }

@@ -1,3 +1,8 @@
+// The tunnel protocol structures hold serde-deserialized HTTP headers; the
+// default `RandomState` hasher matches how serde reconstructs them and
+// nothing here is hashed in hot paths.
+#![allow(clippy::implicit_hasher)]
+
 use std::collections::HashMap;
 
 use serde::{

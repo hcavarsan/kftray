@@ -30,7 +30,7 @@ impl Forwarder {
             .ok_or_else(|| Error::Configuration("no ready pod available".into()))?;
         tracing::info!(
             call_id,
-            elapsed_ms = t0.elapsed().as_millis() as u64,
+            elapsed_ms = u64::try_from(t0.elapsed().as_millis()).unwrap_or(u64::MAX),
             "ensure_session: ready_pod resolved"
         );
         let pod_uid = ready.uid.clone().unwrap_or_else(|| ready.name.clone());
@@ -133,7 +133,7 @@ impl Forwarder {
         let open_result = self.open_session(&ready.name, target_port).await;
         tracing::info!(
             call_id,
-            elapsed_ms = t_open.elapsed().as_millis() as u64,
+            elapsed_ms = u64::try_from(t_open.elapsed().as_millis()).unwrap_or(u64::MAX),
             outcome = if open_result.is_ok() { "ok" } else { "err" },
             "ensure_session: open_session done"
         );
@@ -159,7 +159,7 @@ impl Forwarder {
             .await;
         tracing::info!(
             call_id,
-            elapsed_ms = t_total.elapsed().as_millis() as u64,
+            elapsed_ms = u64::try_from(t_total.elapsed().as_millis()).unwrap_or(u64::MAX),
             "ensure_session: total"
         );
         Ok(session)

@@ -343,22 +343,22 @@ mod tests {
 
         // Test render_logs
         let mut terminal = setup_terminal();
-        let mut app = create_test_app();
+        let app = create_test_app();
         terminal
             .draw(|frame| {
                 let area = frame.area();
-                render_logs(frame, &mut app, area, true);
+                render_logs(frame, &app, area, true);
             })
             .unwrap();
         assert_snapshot!("render_logs_focused", terminal.backend());
 
         // Test render_logs unfocused
         let mut terminal = setup_terminal();
-        let mut app = create_test_app();
+        let app = create_test_app();
         terminal
             .draw(|frame| {
                 let area = frame.area();
-                render_logs(frame, &mut app, area, false);
+                render_logs(frame, &app, area, false);
             })
             .unwrap();
         assert_snapshot!("render_logs_unfocused", terminal.backend());
@@ -428,7 +428,7 @@ mod tests {
             .draw(|frame| {
                 let area = frame.area();
                 let message = Some("Confirmation test".to_string());
-                render_confirmation_popup(frame, &message, area);
+                render_confirmation_popup(frame, message.as_deref(), area);
             })
             .unwrap();
         assert_snapshot!("render_confirmation_popup", terminal.backend());
@@ -467,7 +467,12 @@ mod tests {
             .draw(|frame| {
                 let area = frame.area();
                 let message = Some("Delete confirmation test".to_string());
-                render_delete_confirmation_popup(frame, &message, area, DeleteButton::Confirm);
+                render_delete_confirmation_popup(
+                    frame,
+                    message.as_deref(),
+                    area,
+                    DeleteButton::Confirm,
+                );
             })
             .unwrap();
         assert_snapshot!(
@@ -480,7 +485,12 @@ mod tests {
             .draw(|frame| {
                 let area = frame.area();
                 let message = Some("Delete confirmation test".to_string());
-                render_delete_confirmation_popup(frame, &message, area, DeleteButton::Close);
+                render_delete_confirmation_popup(
+                    frame,
+                    message.as_deref(),
+                    area,
+                    DeleteButton::Close,
+                );
             })
             .unwrap();
         assert_snapshot!("render_delete_confirmation_popup_close", terminal.backend());

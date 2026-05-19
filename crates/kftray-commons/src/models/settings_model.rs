@@ -153,7 +153,7 @@ impl AppSettings {
         }
 
         if let Some(value) = settings.get("global_shortcut") {
-            app_settings.global_shortcut = value.clone();
+            app_settings.global_shortcut.clone_from(value);
         }
 
         if let Some(value) = settings.get("mcp_server_enabled") {

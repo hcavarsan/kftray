@@ -1,3 +1,8 @@
+// Mirror of `formatter.rs`: HTTP response payloads are assembled by appending
+// many small `format!` fragments to a mutable `String`. See that file for the
+// rationale; the same trade-off applies here.
+#![allow(clippy::format_push_string)]
+
 use std::sync::Arc;
 
 use anyhow::Result;

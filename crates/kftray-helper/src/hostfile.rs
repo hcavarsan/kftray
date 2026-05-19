@@ -150,6 +150,9 @@ impl HostfileManager {
         }
     }
 
+    // `thread::spawn` requires owned `'static` Arcs, which is what the
+    // background writer thread receives here.
+    #[allow(clippy::needless_pass_by_value)]
     fn batch_writer_loop(
         entries: Arc<RwLock<HostEntriesMap>>, needs_update: Arc<Mutex<bool>>,
         writer_running: Arc<Mutex<bool>>,

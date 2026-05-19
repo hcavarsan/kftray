@@ -571,7 +571,9 @@ mod tests {
             .find(|c| c.service == Some(service_name.clone()))
             .ok_or("Failed to find inserted config")?;
 
-        inserted_config.id.ok_or("Config missing ID".to_string())
+        inserted_config
+            .id
+            .ok_or_else(|| "Config missing ID".to_string())
     }
 
     struct EnvGuard {

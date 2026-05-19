@@ -144,7 +144,7 @@ pub(crate) async fn insert_config_with_pool_and_mode(
     }
 }
 
-const MEMORY_ID_START: i64 = 100000;
+const MEMORY_ID_START: i64 = 100_000;
 
 async fn get_next_memory_id(pool: &SqlitePool) -> Result<i64, String> {
     let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;

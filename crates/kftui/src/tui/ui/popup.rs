@@ -1,3 +1,9 @@
+// ratatui uses `u16` for every terminal coordinate and dimension; mixing it
+// with `usize`-indexed slices and counters means layout math always casts
+// `usize as u16`. Values are bounded by terminal size, so the truncation
+// warnings are pure noise here.
+#![allow(clippy::cast_possible_truncation)]
+
 use std::borrow::Cow;
 
 use ratatui::prelude::*;
@@ -112,8 +118,8 @@ pub(crate) fn render_input_prompt(f: &mut Frame, input_buffer: &str, area: Rect)
     );
 }
 
-pub(crate) fn render_confirmation_popup(f: &mut Frame, message: &Option<String>, area: Rect) {
-    let message_text = message.as_deref().unwrap_or("");
+pub(crate) fn render_confirmation_popup(f: &mut Frame, message: Option<&str>, area: Rect) {
+    let message_text = message.unwrap_or("");
     let message_paragraph = Text::raw(message_text);
     render_popup(
         f,
@@ -729,9 +735,9 @@ fn create_close_button() -> Paragraph<'static> {
 }
 
 pub(crate) fn render_delete_confirmation_popup(
-    f: &mut Frame, message: &Option<String>, area: Rect, selected_button: DeleteButton,
+    f: &mut Frame, message: Option<&str>, area: Rect, selected_button: DeleteButton,
 ) {
-    let message_text = message.as_deref().unwrap_or("");
+    let message_text = message.unwrap_or("");
     let message_paragraph = Text::raw(message_text);
     render_popup(
         f,
@@ -1226,6 +1232,7 @@ fn render_table_settings(
     }
 }
 
+#[derive(Copy, Clone)]
 struct RowState {
     is_selected: bool,
     is_editing: bool,
@@ -1415,7 +1422,7 @@ pub(crate) fn render_http_logs_viewer_popup(f: &mut Frame, app: &mut App, area: 
     render_http_logs_footer(f, app, footer_area);
 }
 
-fn render_http_requests_list(f: &mut Frame, app: &mut App, area: Rect) {
+fn render_http_requests_list(f: &mut Frame, app: &App, area: Rect) {
     if app.http_logs_requests.is_empty() {
         let empty_message = Paragraph::new("No HTTP requests found in logs")
             .style(Style::default().fg(SUBTEXT0).italic())
@@ -1506,7 +1513,7 @@ fn render_http_requests_list(f: &mut Frame, app: &mut App, area: Rect) {
     f.render_stateful_widget(table, area, &mut table_state);
 }
 
-fn render_http_request_detail(f: &mut Frame, app: &mut App, area: Rect) {
+fn render_http_request_detail(f: &mut Frame, app: &App, area: Rect) {
     if let Some(entry) = &app.http_logs_selected_entry {
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
@@ -1710,7 +1717,7 @@ fn format_body_content(body: &str, headers: &[String]) -> String {
     body.to_string()
 }
 
-fn render_http_logs_footer(f: &mut Frame, app: &mut App, area: Rect) {
+fn render_http_logs_footer(f: &mut Frame, app: &App, area: Rect) {
     let instructions = if app.http_logs_detail_mode {
         "↑/↓: Scroll | PgUp/PgDn: Page | R: Replay Request | Esc: Back to List".to_string()
     } else {
@@ -1785,8 +1792,8 @@ pub(crate) fn render_update_confirmation_popup(
     f.render_widget(cancel_button, cancel_button_area);
 }
 
-pub(crate) fn render_update_progress_popup(f: &mut Frame, message: &Option<String>, area: Rect) {
-    let message_text = message.as_deref().unwrap_or("Downloading update...");
+pub(crate) fn render_update_progress_popup(f: &mut Frame, message: Option<&str>, area: Rect) {
+    let message_text = message.unwrap_or("Downloading update...");
     let message_paragraph = Text::raw(message_text);
     render_popup(
         f,

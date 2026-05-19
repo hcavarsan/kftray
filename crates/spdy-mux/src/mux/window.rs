@@ -14,7 +14,7 @@ pub(crate) struct SendWindow {
 }
 
 impl SendWindow {
-    pub(crate) fn new(initial: u32) -> Self {
+    pub(crate) const fn new(initial: u32) -> Self {
         Self {
             remaining: AtomicI64::new(initial as i64),
             waker: AtomicWaker::new(),
@@ -37,12 +37,12 @@ impl SendWindow {
             if cur == i64::MIN {
                 return false; // poisoned: stream closed
             }
-            match self
+            if self
                 .remaining
                 .compare_exchange(cur, cur - n, Ordering::AcqRel, Ordering::Acquire)
+                .is_ok()
             {
-                Ok(_) => return true,
-                Err(_) => continue,
+                return true;
             }
         }
     }

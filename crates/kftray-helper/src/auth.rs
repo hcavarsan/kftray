@@ -124,7 +124,9 @@ pub(crate) fn validate_peer_credentials(
         cr_ngroups: 0,
         cr_groups: [0; 16],
     };
-    let mut cred_len = size_of::<libc::xucred>() as libc::socklen_t;
+    // `size_of::<xucred>()` is a compile-time constant well under `socklen_t::MAX`.
+    let mut cred_len =
+        libc::socklen_t::try_from(size_of::<libc::xucred>()).unwrap_or(libc::socklen_t::MAX);
 
     let result = unsafe {
         libc::getsockopt(

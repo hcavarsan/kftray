@@ -38,7 +38,7 @@ pub(super) struct StreamState {
 /// registrations) so teardown is never blocked by a burst of opens.
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn run_frame_worker(
-    _worker_id: usize, mut frame_rx: mpsc::Receiver<Frame>,
+    worker_id: usize, mut frame_rx: mpsc::Receiver<Frame>,
     mut reg_rx: mpsc::Receiver<StreamRegistration>,
     mut close_reg_rx: mpsc::Receiver<StreamRegistration>, control_tx: mpsc::Sender<MuxCommand>,
     window_tx: mpsc::Sender<MuxCommand>, cancel: CancellationToken, initial_window_size: u32,
@@ -59,7 +59,7 @@ pub(super) async fn run_frame_worker(
 
         tokio::select! {
             biased;
-            _ = cancel.cancelled() => break,
+            () = cancel.cancelled() => break,
             // Close registrations have priority over opens.
             reg = close_reg_rx.recv() => match reg {
                 Some(r) => apply_registration(r, &mut streams, &mut pending_replies, &control_tx),
@@ -85,7 +85,7 @@ pub(super) async fn run_frame_worker(
     let orphaned_replies = pending_replies.len();
     if orphaned_streams > 0 || orphaned_replies > 0 {
         tracing::debug!(
-            worker_id = _worker_id,
+            worker_id,
             orphaned_streams,
             orphaned_replies,
             "worker shutting down with in-flight streams"

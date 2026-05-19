@@ -10,6 +10,9 @@ use kftray_commons::utils::config_dir::{
 
 use crate::error::ExposeError;
 
+// `values` is built inline by the caller using the default hasher; no need
+// to generalize over `S: BuildHasher` for an internal helper.
+#[allow(clippy::implicit_hasher)]
 pub fn render_template(template: &str, values: &HashMap<&str, String>) -> String {
     let mut rendered = template.to_string();
     for (key, value) in values {

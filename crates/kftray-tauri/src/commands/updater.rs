@@ -20,10 +20,15 @@ use tauri_plugin_dialog::{
 use tauri_plugin_updater::UpdaterExt;
 
 fn get_current_timestamp() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64
+    // Unix seconds fit in i64 for the next ~292 billion years; saturate just
+    // so the cast is explicit about its bound rather than implicit `as`.
+    i64::try_from(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs(),
+    )
+    .unwrap_or(i64::MAX)
 }
 
 #[command]

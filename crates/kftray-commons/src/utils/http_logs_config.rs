@@ -1,3 +1,9 @@
+// SQLite has no unsigned integer column type, so every `u64` field in
+// `HttpLogsConfig` (max file size, retention days) round-trips through `i64`
+// at the bind/read boundary. The values are bounded by physical limits, never
+// approach 2^63, and the casts run only on this trust boundary with the DB.
+#![allow(clippy::cast_possible_wrap, clippy::cast_sign_loss)]
+
 use log::error;
 use sqlx::{
     Row,

@@ -701,7 +701,7 @@ async fn resolve_service_target_port(
 
     let matching = ports
         .iter()
-        .find(|p| p.port as u32 == u32::from(requested))
+        .find(|p| p.port == i32::from(requested))
         .ok_or_else(|| anyhow!("service {name} has no port entry for {requested}"))?;
 
     let target_port = match matching.target_port.as_ref() {
@@ -761,7 +761,7 @@ fn extract_named_port(pod: &Pod, name: &str) -> anyhow::Result<u16> {
                 .filter_map(|c| c.ports.as_ref())
                 .flatten()
                 .find(|p| p.name.as_deref() == Some(name))
-                .map(|p| p.container_port as u16)
+                .and_then(|p| u16::try_from(p.container_port).ok())
         })
         .ok_or_else(|| anyhow!("named port '{name}' not found in pod"))
 }
@@ -791,9 +791,8 @@ async fn handle_http_redirect(mut stream: TcpStream, port: u16) -> anyhow::Resul
     let n = stream.read(&mut buffer).await?;
     let request = std::str::from_utf8(&buffer[..n])?;
     let mut lines = request.lines();
-    let request_line = match lines.next() {
-        Some(line) => line,
-        None => return Ok(()),
+    let Some(request_line) = lines.next() else {
+        return Ok(());
     };
     let path = request_line.split_whitespace().nth(1).unwrap_or("/");
     let host = lines

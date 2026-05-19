@@ -114,7 +114,6 @@ impl HttpLogStateWatcher {
                             }
                             Err(broadcast::error::RecvError::Lagged(_)) => {
                                 error!("HTTP log watcher event channel lagged, continuing");
-                                continue;
                             }
                         }
                     }
