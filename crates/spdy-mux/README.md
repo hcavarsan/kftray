@@ -2,84 +2,97 @@
 
 SPDY/3.1 stream multiplexer over async transports.
 
-kftray uses this crate to multiplex Kubernetes port-forward streams through
-the apiserver. The codec, mux, and stream layers know nothing about
-Kubernetes; they speak SPDY/3.1 over any `AsyncRead + AsyncWrite` transport.
+The crate gives you a SPDY/3.1 codec, a connection pool with P2C
+load-balancing, flow control, an idle ping watchdog, and two transport
+adapters for the wire. It does not know what protocol your peer speaks
+on top of SPDY: you choose the SYN_STREAM headers, the codec sends them
+verbatim.
+
+kftray uses this to multiplex Kubernetes port-forward streams through
+the apiserver. Any SPDY/3.1 peer that uses paired data/error streams
+works the same way; the K8s headers (`streamtype`, `port`, `requestid`)
+are built by the caller, not the multiplexer.
 
 ## What you get
 
-- Full SPDY/3.1 frame codec (SYN_STREAM, SYN_REPLY, DATA, RST_STREAM, PING,
-  SETTINGS, GOAWAY, WINDOW_UPDATE) with the standard zlib header compression
-  dictionary
+- SPDY/3.1 frame codec (SYN_STREAM, SYN_REPLY, DATA, RST_STREAM, PING,
+  SETTINGS, GOAWAY, WINDOW_UPDATE) with the standard zlib header
+  compression dictionary
 - Connection pool with power-of-two-choices routing and peak-EWMA RTT
   tracking, so streams flow through the least-loaded socket
 - Flow control with per-stream and session-level send windows
 - Idle ping watchdog that tears down the session if the peer goes silent
 - Two ready-made transport adapters:
   - `FastWsReader` / `FastWsWriter`: SPDY frames carried inside WebSocket
-    binary messages (the `SPDY/3.1+portforward.k8s.io` path)
+    binary messages
   - `RawSpdyReader` / `RawSpdyWriter`: SPDY frames written directly to an
-    upgraded HTTP/1.1 connection (the legacy `Upgrade: SPDY/3.1` path)
+    upgraded HTTP/1.1 connection
 
 Plug in your own transport by implementing the `WsFrameReader` and
 `WsFrameWriter` traits.
 
-## When you want it
+## Stream shape
 
-You want this if you are talking to a Kubernetes apiserver and need
-real-world throughput on top of port-forward. `kube::Api::portforward`
-opens a fresh WebSocket per stream pair and gives you no PING/PONG. This
-crate keeps one upgrade alive and lets you fan dozens of concurrent local
-TCP connections through it.
+Each `Session::open_stream_pair` returns a `Stream` that is two SPDY
+streams glued together: a writable "data" stream plus an "error" stream
+the multiplexer half-closes at open time (empty `DATA + FIN` right after
+the two SYN_STREAMs hit the wire). The peer keeps the error stream's
+read direction open so it can deliver out-of-band error messages.
 
-If your only need is a single short-lived port-forward, `kube::Api::portforward`
-is enough.
+The pair shape exists because every paired-stream SPDY peer I know of
+uses it (Kubernetes port-forward, the old SPDY sub-resource RPCs). If
+your peer wants single streams, this crate is not for you.
 
 ## Quick start
 
 The crate consumes an already-upgraded transport. You bring the HTTP
-upgrade; `spdy-mux` takes it from there:
+upgrade; `spdy-mux` takes it from there.
 
 ```rust,no_run
 use spdy_mux::{MuxConfig, Session, split_raw_spdy};
 use tokio::io::AsyncWriteExt;
 use tokio_util::sync::CancellationToken;
 
-# async fn run<S>(upgraded: S, target_port: u16) -> Result<(), Box<dyn std::error::Error>>
+# async fn run<S>(upgraded: S) -> Result<(), Box<dyn std::error::Error>>
 # where S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static {
 let (writer, reader) = split_raw_spdy(upgraded);
 let cancel = CancellationToken::new();
 
-let session = Session::with_config(
-    vec![(writer, reader)],
-    target_port,
-    cancel,
-    MuxConfig::default(),
-)
-.await?;
+let session =
+    Session::with_config(vec![(writer, reader)], cancel, MuxConfig::default()).await?;
 
-let mut stream = session.connect().await?;
+// Headers are caller-supplied. The codec sends them verbatim.
+let error_headers = vec![
+    ("streamtype".into(), "error".into()),
+    ("port".into(), "8080".into()),
+    ("requestid".into(), "0".into()),
+];
+let data_headers = vec![
+    ("streamtype".into(), "data".into()),
+    ("port".into(), "8080".into()),
+    ("requestid".into(), "0".into()),
+];
+
+let mut stream = session.open_stream_pair(error_headers, data_headers).await?;
 stream.write_all(b"GET / HTTP/1.0\r\n\r\n").await?;
 # Ok(()) }
 ```
 
-To run the pool with several parallel upgraded connections, pass them
-all to `with_config`:
+For a parallel pool of connections, pass them all to `with_config`:
 
 ```rust,ignore
 let pairs: Vec<_> = upgrades.into_iter().map(split_raw_spdy).collect();
-let session = Session::with_config(pairs, port, cancel, MuxConfig::default()).await?;
+let session = Session::with_config(pairs, cancel, MuxConfig::default()).await?;
 ```
 
-Streams open round-robin across the pool with P2C load balancing on top.
-A dead pool member self-evicts; the session keeps serving from the
-survivors.
+Streams open via P2C across the pool. Dead pool members self-evict and
+the session keeps serving from the survivors.
 
 ## Architecture
 
 ```
 ┌──────────────────────────────────────────────────────────┐
-│  Session::connect()  ── opens a SPDY stream              │
+│  Session::open_stream_pair(error_headers, data_headers)  │
 └──────────────────────────────────────────────────────────┘
                             │
                             ▼
@@ -114,14 +127,23 @@ when any task exits unexpectedly.
 
 ## Transport contract
 
-When the underlying socket closes or errors, **every** stream on that
-pool member receives `BrokenPipe`. No transparent reconnection. The
-layer above (`kube-portforward::Forwarder` in our case) handles
-reconnection by opening a fresh session.
+When the underlying socket closes or errors, every stream on that pool
+member receives `BrokenPipe`. The session does not reconnect. The layer
+above (a forwarder, typically) opens a fresh session on transport
+failure.
+
+## Lazy open
+
+`open_stream_pair` reserves a slot and returns immediately, but the
+SYN_STREAM frames stay buffered until the consumer writes its first
+byte. Peers that dial an upstream connection eagerly on SYN_STREAM
+(Kubernetes kubelet does this) would otherwise close the idle upstream
+before the consumer can use it. Lazy open emits SYN_STREAM and the
+first DATA frame as one atomic batch.
 
 ## Examples
 
-See `examples/` for compile-checked setup demos:
+`examples/` has two compile-checked setup demos:
 
 - `websocket_transport.rs`: SPDY over a WebSocket upgrade
 - `raw_transport.rs`: SPDY over a raw HTTP/1.1 upgrade

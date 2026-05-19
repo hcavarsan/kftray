@@ -100,24 +100,23 @@ impl<'a> RttSample<'a> {
     }
 }
 
-/// SPDY/3.1 tunnel session: one or more WebSocket connections carrying
-/// dynamic SPDY stream pairs for port-forwarding.
+/// SPDY/3.1 session: one or more transport connections carrying paired
+/// streams to a SPDY peer.
 ///
-/// When `pool_size > 1`, each WebSocket gets its own reader/writer task pair
-/// and streams are distributed round-robin across the pool for parallel TLS
-/// writes at high concurrency. Pool size 1 preserves the original
-/// single-connection behavior.
+/// When `pool_size > 1`, each transport gets its own reader/writer task
+/// pair and streams are distributed via power-of-two-choices across the
+/// pool for parallel writes at high concurrency. Pool size 1 keeps the
+/// original single-connection behaviour.
 ///
 /// # Transport break contract
 ///
-/// When a WebSocket closes or errors, its streams receive `BrokenPipe`.
-/// There is no transparent reconnection. The `Forwarder` layer above handles
-/// reconnection by opening a new session.
+/// When a transport closes or errors, every stream on that handle
+/// receives `BrokenPipe`. The session does not reconnect. Layers above
+/// (typically a forwarder) open a fresh session on transport failure.
 pub struct Session {
     pool: Vec<MuxHandle>,
     metrics: Vec<HandleMetrics>,
     next: AtomicUsize,
-    port: u16,
     cancel: CancellationToken,
 }
 
@@ -136,7 +135,7 @@ impl Session {
     /// the session proceeds with the healthy subset. Only returns an error
     /// when ALL connections fail (or the input is empty).
     pub async fn with_config<W, R>(
-        connections: Vec<(W, R)>, port: u16, cancel: CancellationToken, config: MuxConfig,
+        connections: Vec<(W, R)>, cancel: CancellationToken, config: MuxConfig,
     ) -> Result<Self, Error>
     where
         W: WsFrameWriter + 'static,
@@ -182,21 +181,25 @@ impl Session {
             pool,
             metrics,
             next: AtomicUsize::new(0),
-            port,
             cancel,
         })
     }
 
-    /// Open a new port-forward stream pair using Power of Two Choices (P2C)
-    /// with Peak-EWMA load estimation.
+    /// Open a paired stream using power-of-two-choices with Peak-EWMA
+    /// load estimation.
     ///
-    /// Picks two random live handles, compares their cost (inflight × RTT
-    /// estimate), and opens a stream on the cheaper one. Falls back to
-    /// round-robin scan if P2C picks fail (capacity exhausted or closed).
-    pub async fn connect(&self) -> Result<Stream, Error> {
+    /// Picks two random live handles, compares their cost
+    /// (inflight × RTT estimate), and opens on the cheaper one. Falls back
+    /// to a round-robin scan when both picks are at capacity or closed.
+    ///
+    /// `error_headers` and `data_headers` are passed verbatim to the codec
+    /// as the SYN_STREAM header block for the respective stream. The
+    /// session does not interpret them.
+    pub async fn open_stream_pair(
+        &self, error_headers: Vec<(String, String)>, data_headers: Vec<(String, String)>,
+    ) -> Result<Stream, Error> {
         let pool_size = self.pool.len();
 
-        // P2C: pick least-loaded of two random handles.
         if pool_size >= 2 {
             let (a, b) = self.pick_two(pool_size);
             let preferred = if self.handle_cost(a) <= self.handle_cost(b) {
@@ -205,16 +208,21 @@ impl Session {
                 [b, a]
             };
             for &idx in &preferred {
-                if let Some(stream) = self.try_open(idx).await? {
+                if let Some(stream) = self
+                    .try_open(idx, error_headers.clone(), data_headers.clone())
+                    .await?
+                {
                     return Ok(stream);
                 }
             }
         }
 
-        // Fallback: sequential scan (handles P2C misses due to capacity).
         for attempt in 0..pool_size {
             let idx = self.next.fetch_add(1, Ordering::Relaxed) % pool_size;
-            if let Some(stream) = self.try_open(idx).await? {
+            if let Some(stream) = self
+                .try_open(idx, error_headers.clone(), data_headers.clone())
+                .await?
+            {
                 return Ok(stream);
             }
             tracing::debug!(
@@ -235,15 +243,19 @@ impl Session {
     /// at capacity, Err on fatal errors.
     ///
     /// RTT is measured per-call via [`RttSample`], only recorded on success
-    /// to avoid contaminating the load estimate with capacity-rejection latency
-    /// (which is fast and unrepresentative of actual stream-open cost).
-    async fn try_open(&self, idx: usize) -> Result<Option<Stream>, Error> {
+    /// to avoid contaminating the load estimate with capacity-rejection
+    /// latency (which is fast and unrepresentative of actual stream-open
+    /// cost).
+    async fn try_open(
+        &self, idx: usize, error_headers: Vec<(String, String)>,
+        data_headers: Vec<(String, String)>,
+    ) -> Result<Option<Stream>, Error> {
         let mux = &self.pool[idx];
         if mux.is_closed() {
             return Ok(None);
         }
         let sample = self.metrics[idx].start_sample();
-        match mux.open_portforward_pair(self.port).await {
+        match mux.open_stream_pair(error_headers, data_headers).await {
             Ok(stream) => {
                 sample.complete();
                 tracing::debug!(
