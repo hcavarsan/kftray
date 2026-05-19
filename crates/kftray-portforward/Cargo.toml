@@ -98,8 +98,3 @@ apple-native-keyring-store = { workspace = true }
 schannel = { workspace = true }
 windows = { workspace = true }
 windows-native-keyring-store = { workspace = true }
-
-[features]
-default = ["http-proxy", "socks5"]
-http-proxy = []
-socks5 = []
