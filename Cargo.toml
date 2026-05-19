@@ -186,6 +186,12 @@ windows-core = "0.62"
 windows-native-keyring-store = "1.0"
 windows-service = "0.8"
 
+[workspace.lints.clippy]
+duration_suboptimal_units = "allow"
+unnecessary_debug_formatting = "allow"
+ip_constant = "allow"
+case_sensitive_file_extension_comparisons = "allow"
+
 [profile.dev]
 incremental = true
 
