@@ -83,7 +83,7 @@ pub(crate) struct SpdyCodec {
 }
 
 impl SpdyCodec {
-    pub fn with_max_frame_size(max_frame_size: u32) -> Self {
+    pub(crate) fn with_max_frame_size(max_frame_size: u32) -> Self {
         Self {
             compressor: Compress::new(flate2::Compression::best(), true),
             decompressor: Decompress::new(true),
@@ -95,7 +95,7 @@ impl SpdyCodec {
     }
 
     /// Update the max frame size (e.g. after receiving peer SETTINGS).
-    pub fn set_max_frame_size(&mut self, size: u32) {
+    pub(crate) fn set_max_frame_size(&mut self, size: u32) {
         self.max_frame_size = size;
     }
 
@@ -104,7 +104,7 @@ impl SpdyCodec {
     /// Priority field is set to 0 for all port-forward streams.
     /// If heterogeneous priorities are needed in the future, the writer's
     /// cmd_tx should be replaced with a priority queue.
-    pub fn encode_syn_stream(
+    pub(crate) fn encode_syn_stream(
         &mut self, stream_id: u32, headers: &[(String, String)], fin: bool,
     ) -> Result<Vec<u8>, Error> {
         self.encode_syn_stream_with_priority(stream_id, headers, fin, 0)
@@ -112,7 +112,7 @@ impl SpdyCodec {
 
     /// Encode a SYN_STREAM control frame with configurable priority (0-7,
     /// lower = higher priority).
-    pub fn encode_syn_stream_with_priority(
+    pub(crate) fn encode_syn_stream_with_priority(
         &mut self, stream_id: u32, headers: &[(String, String)], fin: bool, priority: u8,
     ) -> Result<Vec<u8>, Error> {
         let compressed_headers = self.compress_headers(headers)?;
@@ -140,7 +140,7 @@ impl SpdyCodec {
 
     /// Encode a DATA frame. Does NOT split; the caller must ensure the
     /// payload fits within max_frame_size (see `split_data_frames`).
-    pub fn encode_data(&self, stream_id: u32, payload: &[u8], fin: bool) -> Vec<u8> {
+    pub(crate) fn encode_data(&self, stream_id: u32, payload: &[u8], fin: bool) -> Vec<u8> {
         let mut frame = Vec::with_capacity(8 + payload.len());
 
         // Data frame: stream_id with MSB=0
@@ -153,7 +153,7 @@ impl SpdyCodec {
     }
 
     /// Encode a RST_STREAM control frame.
-    pub fn encode_rst_stream(&self, stream_id: u32, status: u32) -> Vec<u8> {
+    pub(crate) fn encode_rst_stream(&self, stream_id: u32, status: u32) -> Vec<u8> {
         let mut frame = Vec::with_capacity(16);
 
         frame.extend_from_slice(&SPDY_VERSION.to_be_bytes());
@@ -167,7 +167,7 @@ impl SpdyCodec {
     }
 
     /// Encode a PING frame.
-    pub fn encode_ping(&self, id: u32) -> Vec<u8> {
+    pub(crate) fn encode_ping(&self, id: u32) -> Vec<u8> {
         let mut frame = Vec::with_capacity(12);
 
         frame.extend_from_slice(&SPDY_VERSION.to_be_bytes());
@@ -180,7 +180,7 @@ impl SpdyCodec {
     }
 
     /// Encode a WINDOW_UPDATE control frame.
-    pub fn encode_window_update(&self, stream_id: u32, delta: u32) -> Vec<u8> {
+    pub(crate) fn encode_window_update(&self, stream_id: u32, delta: u32) -> Vec<u8> {
         let mut frame = Vec::with_capacity(16);
 
         frame.extend_from_slice(&SPDY_VERSION.to_be_bytes());
@@ -194,7 +194,7 @@ impl SpdyCodec {
     }
 
     /// Encode a GOAWAY control frame.
-    pub fn encode_goaway(&self, last_good_stream_id: u32, status: u32) -> Vec<u8> {
+    pub(crate) fn encode_goaway(&self, last_good_stream_id: u32, status: u32) -> Vec<u8> {
         let mut frame = Vec::with_capacity(16);
 
         frame.extend_from_slice(&SPDY_VERSION.to_be_bytes());
@@ -212,7 +212,7 @@ impl SpdyCodec {
     /// SPDY/3.1 SETTINGS format:
     ///   4-byte entry count, then N entries of (flags:1 + id:3 + value:4) = 8
     /// bytes each.
-    pub fn encode_settings(&self, entries: &[(u32, u32)]) -> Vec<u8> {
+    pub(crate) fn encode_settings(&self, entries: &[(u32, u32)]) -> Vec<u8> {
         let payload_len = 4 + entries.len() * 8;
         let mut frame = Vec::with_capacity(8 + payload_len);
 
@@ -247,7 +247,7 @@ impl SpdyCodec {
     /// Returns `Ok(Some(frame))` when a complete frame is available (the
     /// consumed bytes are removed from `buf`), `Ok(None)` when more data is
     /// needed, or `Err` on a protocol error.
-    pub fn decode_frame(&mut self, buf: &mut BytesMut) -> Result<Option<Frame>, Error> {
+    pub(crate) fn decode_frame(&mut self, buf: &mut BytesMut) -> Result<Option<Frame>, Error> {
         if buf.len() < 8 {
             return Ok(None);
         }

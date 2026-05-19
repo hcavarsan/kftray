@@ -14,7 +14,7 @@ pub(crate) struct SendWindow {
 }
 
 impl SendWindow {
-    pub fn new(initial: u32) -> Self {
+    pub(crate) fn new(initial: u32) -> Self {
         Self {
             remaining: AtomicI64::new(initial as i64),
             waker: AtomicWaker::new(),
@@ -22,7 +22,7 @@ impl SendWindow {
     }
 
     /// Check available window. Returns 0 if exhausted.
-    pub fn available(&self) -> i64 {
+    pub(crate) fn available(&self) -> i64 {
         self.remaining.load(Ordering::Acquire)
     }
 
@@ -30,7 +30,7 @@ impl SendWindow {
     ///
     /// Returns `false` if the window was poisoned (stream closed) between
     /// the caller's `is_closed()` check and this call.
-    pub fn consume(&self, n: usize) -> bool {
+    pub(crate) fn consume(&self, n: usize) -> bool {
         let n = n as i64;
         loop {
             let cur = self.remaining.load(Ordering::Acquire);
@@ -48,13 +48,13 @@ impl SendWindow {
     }
 
     /// Add `delta` from a WINDOW_UPDATE and wake any blocked writer.
-    pub fn replenish(&self, delta: u32) {
+    pub(crate) fn replenish(&self, delta: u32) {
         self.remaining.fetch_add(delta as i64, Ordering::Release);
         self.waker.wake();
     }
 
     /// Apply a delta (positive or negative) for SETTINGS window resize.
-    pub fn apply_delta(&self, delta: i64) {
+    pub(crate) fn apply_delta(&self, delta: i64) {
         self.remaining.fetch_add(delta, Ordering::Release);
         if delta > 0 {
             self.waker.wake();
@@ -62,19 +62,19 @@ impl SendWindow {
     }
 
     /// Register a waker to be notified when window becomes available.
-    pub fn register_waker(&self, waker: &std::task::Waker) {
+    pub(crate) fn register_waker(&self, waker: &std::task::Waker) {
         self.waker.register(waker);
     }
 
     /// Poison the window so pending/future poll_write returns immediately
     /// with `BrokenPipe`.
-    pub fn close(&self) {
+    pub(crate) fn close(&self) {
         self.remaining.store(i64::MIN, Ordering::Release);
         self.waker.wake();
     }
 
     /// Check if the window has been poisoned (stream closed).
-    pub fn is_closed(&self) -> bool {
+    pub(crate) fn is_closed(&self) -> bool {
         self.remaining.load(Ordering::Acquire) == i64::MIN
     }
 }

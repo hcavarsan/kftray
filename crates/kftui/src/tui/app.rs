@@ -150,7 +150,7 @@ mod tests {
             let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(async {
                 match init().await {
-                    Ok(_) => DB_INITIALIZED.store(true, Ordering::SeqCst),
+                    Ok(()) => DB_INITIALIZED.store(true, Ordering::SeqCst),
                     Err(e) => panic!("Failed to initialize DB for test: {e:?}"),
                 }
             });

@@ -640,7 +640,7 @@ mod tests {
         let roots = RootsCapability { list_changed: true };
         let value = serde_json::to_value(&roots).unwrap();
         assert_eq!(
-            value.get("listChanged").and_then(serde_json::Value::as_bool),
+            value.get("listChanged").and_then(Value::as_bool),
             Some(true)
         );
         assert!(value.get("list_changed").is_none());
@@ -651,7 +651,7 @@ mod tests {
         let tools = ToolsCapability { list_changed: true };
         let value = serde_json::to_value(&tools).unwrap();
         assert_eq!(
-            value.get("listChanged").and_then(serde_json::Value::as_bool),
+            value.get("listChanged").and_then(Value::as_bool),
             Some(true)
         );
         assert!(value.get("list_changed").is_none());

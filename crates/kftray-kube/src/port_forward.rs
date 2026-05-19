@@ -353,7 +353,6 @@ mod tests {
     use k8s_openapi::api::core::v1::{
         Pod,
         PodCondition,
-        PodSpec,
         PodStatus,
         Service,
         ServicePort,
@@ -524,12 +523,12 @@ mod tests {
         assert_eq!(pf_with_port.local_address(), Some("127.0.0.1".to_string()));
 
         let pf_defaults = PortForward {
-            target: target,
+            target,
             local_port: Some(0),
             local_address: None,
             pod_api: Api::namespaced(client.clone(), "default"),
             svc_api: Api::namespaced(client.clone(), "default"),
-            client: client,
+            client,
             context_name: None,
             kubeconfig: None,
             config_id: 2,
@@ -560,7 +559,7 @@ mod tests {
             local_address: None,
             pod_api: Api::namespaced(client.clone(), "default"),
             svc_api: Api::namespaced(client.clone(), "default"),
-            client: client,
+            client,
             context_name: context_name.clone(),
             kubeconfig: None,
             config_id: 1,

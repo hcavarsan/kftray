@@ -21,7 +21,7 @@ pub(crate) struct CliHandler {
 }
 
 impl CliHandler {
-    pub(crate) fn new(cli: Cli, logger_state: LoggerState) -> Self {
+    pub(crate) const fn new(cli: Cli, logger_state: LoggerState) -> Self {
         let mode = Self::determine_database_mode(&cli);
         Self {
             cli,
@@ -49,7 +49,7 @@ impl CliHandler {
         self.handle_execution_mode(imported_config_ids).await
     }
 
-    fn determine_database_mode(cli: &Cli) -> DatabaseMode {
+    const fn determine_database_mode(cli: &Cli) -> DatabaseMode {
         if cli.has_config_source() && cli.should_use_memory_mode() {
             DatabaseMode::Memory
         } else {
