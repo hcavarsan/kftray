@@ -1,28 +1,25 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use spdy_mux::{
+    split_fastws,
+    split_raw_spdy,
+};
 use tokio_util::sync::CancellationToken;
 
-use crate::channel::connect::build_channel_session;
-use crate::channel::keepalive::{
-    RecoveryCallback,
-    RecoverySignal,
-};
-#[cfg(feature = "spdy-tunnel")]
-use crate::connect::upgrade_spdy_portforward;
-use crate::connect::{
-    KeepaliveConfig,
-    upgrade_portforward,
-};
+use crate::connect::upgrade_spdy_with_fallback;
 use crate::error::Error;
+use crate::recovery::RecoveryCallback;
 use crate::session::Session;
 use crate::subprotocol::Subprotocol;
 
-const DEFAULT_CAPACITY: usize = 64;
-const MAX_CAPACITY: usize = 127;
 const DEFAULT_PING: Duration = Duration::from_secs(15);
 const DEFAULT_WATCHDOG: Duration = Duration::from_secs(30);
 const DEFAULT_DRAIN: Duration = Duration::from_secs(2);
+
+/// Pool size for the SPDY multiplexer. Six parallel upgrades give each
+/// connection ~8 concurrent streams at the default operating cap of 64.
+const DEFAULT_SPDY_POOL_SIZE: usize = 6;
 
 /// Top-level entry point bundling a `kube::Client` with its cluster URL.
 #[derive(Clone)]
@@ -44,20 +41,18 @@ impl Client {
     }
 
     pub fn session<'c>(
-        &'c self, namespace: impl Into<String>, pod: impl Into<String>, port: u16,
+        &'c self, namespace: impl Into<String>, pod: impl Into<String>, _port: u16,
     ) -> SessionBuilder<'c> {
         SessionBuilder {
             client: self,
             namespace: namespace.into(),
             pod: pod.into(),
-            port,
-            capacity: DEFAULT_CAPACITY,
-            subprotocols: vec![Subprotocol::V5, Subprotocol::V4],
             ping_interval: DEFAULT_PING,
             watchdog_timeout: DEFAULT_WATCHDOG,
             drain_timeout: DEFAULT_DRAIN,
             cancel: None,
             recovery_callback: None,
+            spdy_pool_size: DEFAULT_SPDY_POOL_SIZE,
         }
     }
 
@@ -103,30 +98,26 @@ pub struct SessionBuilder<'c> {
     client: &'c Client,
     namespace: String,
     pod: String,
-    port: u16,
-    capacity: usize,
-    subprotocols: Vec<Subprotocol>,
+    #[allow(dead_code)] // accepted for API stability; spdy-mux owns its own keepalive schedule
     ping_interval: Duration,
+    #[allow(dead_code)] // accepted for API stability; spdy-mux owns its own watchdog
     watchdog_timeout: Duration,
+    #[allow(dead_code)] // accepted for API stability; spdy-mux drains on cancel
     drain_timeout: Duration,
     cancel: Option<CancellationToken>,
     recovery_callback: Option<RecoveryCallback>,
+    spdy_pool_size: usize,
 }
 
 impl<'c> SessionBuilder<'c> {
-    /// Number of pre-allocated channel pairs (default 64, max 127).
-    /// Cap is 127 because each pair uses (data, error) channel IDs and
-    /// 127 * 2 = 254 fits in the single-byte channel space (0xFF).
-    pub fn capacity(mut self, n: usize) -> Self {
-        self.capacity = n;
+    /// Accepted for API stability; SPDY multiplexing has no notion of a
+    /// pre-allocated channel pair pool.
+    pub fn capacity(self, _n: usize) -> Self {
         self
     }
 
-    pub fn subprotocols(mut self, prefs: &[Subprotocol]) -> Self {
-        self.subprotocols = prefs.to_vec();
-        self
-    }
-
+    /// Accepted for API stability. The SPDY multiplexer manages its own
+    /// keepalive schedule based on idle time.
     pub fn keepalive(mut self, ping: Duration, watchdog: Duration) -> Self {
         self.ping_interval = ping;
         self.watchdog_timeout = watchdog;
@@ -143,97 +134,137 @@ impl<'c> SessionBuilder<'c> {
         self
     }
 
+    /// Number of parallel upgraded connections in the SPDY pool. Each gets
+    /// its own reader/writer task pair; streams are distributed across the
+    /// pool by power-of-two-choices.
+    pub fn spdy_pool_size(mut self, n: usize) -> Self {
+        self.spdy_pool_size = n.max(1);
+        self
+    }
+
     pub fn on_recovery<F>(mut self, cb: F) -> Self
     where
-        F: Fn(RecoverySignal) + Send + Sync + 'static,
+        F: Fn(crate::recovery::RecoverySignal) + Send + Sync + 'static,
     {
         self.recovery_callback = Some(Arc::new(cb));
         self
     }
 
     pub async fn open(self) -> Result<Session, Error> {
-        if self.capacity == 0 {
-            return Err(Error::Configuration("capacity must be > 0".into()));
-        }
-        if self.capacity > MAX_CAPACITY {
-            return Err(Error::Configuration(format!(
-                "capacity {} exceeds maximum of {MAX_CAPACITY}",
-                self.capacity
-            )));
-        }
         let cancel = self.cancel.unwrap_or_default();
         let recovery_callback: RecoveryCallback = self
             .recovery_callback
             .unwrap_or_else(|| Arc::new(|_signal| {}));
 
-        // Try SPDY tunnel first (no ?ports= in URL, SPDY-only subprotocol).
-        // Falls back to channel protocol if the server rejects SPDY.
-        #[cfg(feature = "spdy-tunnel")]
-        {
-            match upgrade_spdy_portforward(
-                self.client.kube_client(),
-                self.client.cluster_url(),
-                &self.namespace,
-                &self.pod,
-                &recovery_callback,
-            )
-            .await
-            {
-                Ok(upgraded) => {
-                    match crate::spdy_tunnel::Session::new(
-                        upgraded.ws, self.port, cancel.clone(),
-                    )
-                    .await
-                    {
-                        Ok(spdy_session) => return Ok(Session::from_spdy(spdy_session)),
-                        Err(e) => {
-                            tracing::debug!("SPDY session init failed: {e}");
-                        }
-                    }
-                }
-                Err(e) => {
-                    tracing::debug!("SPDY upgrade failed, falling back to channel: {e}");
-                }
-            }
-        }
-
-        // Channel protocol path: ports in URL, v5/v4 subprotocols
-        let upgraded = upgrade_portforward(
-            self.client.kube_client(),
-            self.client.cluster_url(),
+        open_spdy_session(
+            self.client,
             &self.namespace,
             &self.pod,
-            self.port,
-            self.capacity,
-            &recovery_callback,
+            self.spdy_pool_size,
+            cancel,
+            recovery_callback,
         )
-        .await?;
+        .await
+    }
+}
 
-        let keepalive_config = KeepaliveConfig {
-            ping_interval: self.ping_interval,
-            watchdog_timeout: self.watchdog_timeout,
-        };
+/// Open a SPDY session: probe with the first upgrade, then fill the rest
+/// of the pool in parallel using the same transport the probe negotiated.
+///
+/// Pool members that fail their parallel upgrade are dropped; the session
+/// proceeds with whichever slots succeeded.
+async fn open_spdy_session(
+    client: &Client, namespace: &str, pod: &str, pool_size: usize, cancel: CancellationToken,
+    recovery_callback: RecoveryCallback,
+) -> Result<Session, Error> {
+    let first = upgrade_spdy_with_fallback(
+        client.kube_client(),
+        client.cluster_url(),
+        namespace,
+        pod,
+        &recovery_callback,
+    )
+    .await?;
+    let chosen_protocol = first.protocol;
+    let first_upgraded = first.upgraded;
 
-        match upgraded.protocol {
-            Subprotocol::V4 | Subprotocol::V5 => {
-                let channel_session = build_channel_session(
-                    upgraded,
-                    self.capacity,
-                    cancel,
-                    keepalive_config,
-                    self.drain_timeout,
-                    recovery_callback,
-                )
-                .await?;
-                Ok(Session::from_channel(channel_session))
-            }
-            #[cfg(feature = "spdy-tunnel")]
-            Subprotocol::Spdy31Tunnel => {
-                // Shouldn't happen since upgrade_portforward uses channel subprotocols,
-                // but handle it gracefully.
-                let spdy_session = crate::spdy_tunnel::Session::new(upgraded.ws, self.port, cancel).await?;
-                Ok(Session::from_spdy(spdy_session))
+    tracing::info!(
+        pod = %pod,
+        pool_size,
+        protocol = %chosen_protocol,
+        "SPDY tunnel: probe succeeded"
+    );
+
+    // Parallel pool openings reuse the path the probe chose so the mux
+    // sees a homogeneous transport. Failed slots are dropped silently;
+    // the session continues with whichever connections came up.
+    let extra_upgrades = if pool_size > 1 {
+        let t_parallel = std::time::Instant::now();
+        let mut join_set = tokio::task::JoinSet::new();
+        for i in 1..pool_size {
+            let kube = client.kube_client().clone();
+            let url = client.cluster_url().clone();
+            let ns = namespace.to_owned();
+            let pod_name = pod.to_owned();
+            join_set.spawn(async move {
+                let result = match chosen_protocol {
+                    Subprotocol::Spdy31Tunnel => {
+                        crate::connect::upgrade_spdy_tunnel(&kube, &url, &ns, &pod_name).await
+                    }
+                    Subprotocol::LegacySpdy => {
+                        crate::connect::upgrade_legacy_spdy(&kube, &url, &ns, &pod_name).await
+                    }
+                };
+                (i, result)
+            });
+        }
+        let mut succeeded = Vec::with_capacity(pool_size - 1);
+        while let Some(join_result) = join_set.join_next().await {
+            match join_result {
+                Ok((_, Ok(upgraded))) => succeeded.push(upgraded.upgraded),
+                Ok((i, Err(e))) => {
+                    tracing::debug!("SPDY pool: connection {i}/{pool_size} failed: {e}");
+                }
+                Err(e) => {
+                    tracing::debug!("SPDY pool: connection task panicked: {e}");
+                }
             }
         }
+        tracing::info!(
+            pool_opened = succeeded.len() + 1,
+            pool_target = pool_size,
+            elapsed_ms = t_parallel.elapsed().as_millis() as u64,
+            "SPDY pool: parallel connections opened"
+        );
+        succeeded
+    } else {
+        Vec::new()
+    };
+
+    let config = spdy_mux::MuxConfig {
+        pool_size: extra_upgrades.len() + 1,
+        ..Default::default()
+    };
+    let all_upgrades = std::iter::once(first_upgraded).chain(extra_upgrades);
+    let t_pool = std::time::Instant::now();
+    let spdy_session = match chosen_protocol {
+        Subprotocol::Spdy31Tunnel => {
+            let pairs: Vec<_> = all_upgrades.map(split_fastws).collect();
+            spdy_mux::Session::with_config(pairs, 0, cancel.clone(), config).await
+        }
+        Subprotocol::LegacySpdy => {
+            let pairs: Vec<_> = all_upgrades.map(split_raw_spdy).collect();
+            spdy_mux::Session::with_config(pairs, 0, cancel.clone(), config).await
+        }
     }
+    .map_err(Error::from)?;
+
+    tracing::info!(
+        pod = %pod,
+        pool_healthy = spdy_session.capacity() > 0,
+        pool_init_ms = t_pool.elapsed().as_millis() as u64,
+        protocol = %chosen_protocol,
+        "SPDY session ready"
+    );
+    Ok(Session::from_spdy(spdy_session, chosen_protocol))
 }

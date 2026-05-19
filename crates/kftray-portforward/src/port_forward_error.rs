@@ -46,10 +46,6 @@ pub enum PortForwardError {
     KeepaliveTimeout {
         last_pong_age_ms: u64,
     },
-    ServerVersionTooOld {
-        detected: String,
-        required: &'static str,
-    },
     WebsocketProtocolViolation {
         context: &'static str,
         detail: String,
@@ -149,10 +145,6 @@ impl fmt::Display for PortForwardError {
             PortForwardError::KeepaliveTimeout { last_pong_age_ms } => write!(
                 f,
                 "WebSocket keepalive timed out: last Pong was {last_pong_age_ms}ms ago"
-            ),
-            PortForwardError::ServerVersionTooOld { detected, required } => write!(
-                f,
-                "Kubernetes API server version {detected} does not support WebSocket port-forward; minimum required is {required} (KEP-4006). Upgrade the cluster to a compatible version."
             ),
             PortForwardError::WebsocketProtocolViolation { context, detail } => {
                 write!(f, "WebSocket protocol violation in {context}: {detail}")
@@ -284,7 +276,6 @@ impl PortForwardError {
             PortForwardError::WebsocketUpgradeFailed { .. } => true,
             PortForwardError::SubprotocolNegotiationFailed { .. } => false,
             PortForwardError::KeepaliveTimeout { .. } => true,
-            PortForwardError::ServerVersionTooOld { .. } => false,
             PortForwardError::WebsocketProtocolViolation { .. } => true,
             PortForwardError::Io(_) => true,
             PortForwardError::KubeClient(_) => true,
@@ -301,7 +292,6 @@ impl PortForwardError {
         match self {
             PortForwardError::ConfigurationError { .. } => true,
             PortForwardError::NetworkError { recoverable, .. } => !recoverable,
-            PortForwardError::ServerVersionTooOld { .. } => true,
             PortForwardError::SubprotocolNegotiationFailed { .. } => true,
             PortForwardError::Ssl(_) => true,
             _ => false,
