@@ -534,12 +534,7 @@ mod tests {
     #[test]
     fn rewrite_response_location_falls_back_to_path_only_without_client_authority() {
         let mut headers = headers_with_location("http://upstream:7000/dashboard?x=1");
-        rewrite_response_location(
-            &mut headers,
-            StatusCode::FOUND,
-            "upstream:7000",
-            None,
-        );
+        rewrite_response_location(&mut headers, StatusCode::FOUND, "upstream:7000", None);
         assert_eq!(headers.get(LOCATION).unwrap(), "/dashboard?x=1");
     }
 
