@@ -22,15 +22,19 @@ use hyper::body::{
 use hyper::header::{
     HOST,
     HeaderValue,
+    LOCATION,
 };
+use hyper::http::uri::Authority;
 use hyper::server::conn::{
     http1 as server_http1,
     http2 as server_http2,
 };
 use hyper::service::service_fn;
 use hyper::{
+    HeaderMap,
     Request,
     Response,
+    StatusCode,
     Uri,
 };
 use hyper_util::client::legacy::Client;
@@ -186,6 +190,16 @@ impl HttpProxy {
             return Ok(error_response(501, "Upgrade Not Implemented"));
         }
 
+        // Capture the client-facing authority (what the client used to reach
+        // us) before `rewrite_request` overwrites the inbound `Host` header
+        // with the upstream's authority. Needed by the response-side rewriter
+        // to repair absolute redirect URLs that leak the upstream address.
+        let client_facing_authority = req
+            .headers()
+            .get(HOST)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_owned);
+
         rewrite_request(&mut req, &self.inner.target_authority)?;
 
         tracing::debug!(target = %self.inner.target_authority, "forward: dispatching to upstream");
@@ -201,6 +215,12 @@ impl HttpProxy {
         for h in HOP_HEADERS {
             parts.headers.remove(*h);
         }
+        rewrite_response_location(
+            &mut parts.headers,
+            parts.status,
+            &self.inner.target_authority,
+            client_facing_authority.as_deref(),
+        );
         Ok(Response::from_parts(parts, body.boxed()))
     }
 }
@@ -227,6 +247,81 @@ fn rewrite_request(req: &mut Request<Incoming>, authority: &str) -> Result<(), P
     );
     *req.uri_mut() = new_uri;
     Ok(())
+}
+
+/// Repair upstream-generated absolute redirect URLs that leak the upstream's
+/// internal address.
+///
+/// Frameworks and admin UIs sometimes build `Location` headers from their own
+/// configured hostname instead of honouring forwarding hints. The address
+/// they emit is the one the proxy used to reach them, which a client outside
+/// the cluster cannot resolve. When such a `Location` is detected on a 3xx
+/// response, the upstream authority is swapped for the client-facing
+/// authority the client used to reach the proxy. Scheme and path are
+/// preserved.
+///
+/// Soft-fails on every error: malformed header, unparseable URI,
+/// non-redirect status, authority mismatch, or rewritten value that does not
+/// round-trip through `HeaderValue` all leave the header untouched. A proxy
+/// that mangles edge cases is worse than one that occasionally forwards an
+/// unmodified response.
+fn rewrite_response_location(
+    headers: &mut HeaderMap, status: StatusCode, upstream_authority: &str,
+    client_facing_authority: Option<&str>,
+) {
+    if !status.is_redirection() {
+        return;
+    }
+
+    let Some(location_hv) = headers.get(LOCATION) else {
+        return;
+    };
+    let Ok(location_str) = location_hv.to_str() else {
+        return;
+    };
+    let Ok(location_uri) = location_str.parse::<Uri>() else {
+        return;
+    };
+    let Some(location_authority) = location_uri.authority() else {
+        // Relative URI. Already resolved against the client's view of the
+        // proxy, so passing it through is correct.
+        return;
+    };
+
+    let Ok(upstream_auth) = upstream_authority.parse::<Authority>() else {
+        return;
+    };
+
+    let host_matches = location_authority
+        .host()
+        .eq_ignore_ascii_case(upstream_auth.host());
+    let port_matches = location_authority.port_u16() == upstream_auth.port_u16();
+    if !(host_matches && port_matches) {
+        // Cross-origin redirect (external SSO, CDN, etc.). Leave it alone.
+        return;
+    }
+
+    let path_and_query = location_uri
+        .path_and_query()
+        .map(|pq| pq.as_str())
+        .unwrap_or("/");
+    let scheme = location_uri.scheme_str().unwrap_or("http");
+
+    let new_value = match client_facing_authority {
+        Some(client_auth) => format!("{scheme}://{client_auth}{path_and_query}"),
+        None => path_and_query.to_string(),
+    };
+
+    let Ok(new_hv) = HeaderValue::from_str(&new_value) else {
+        return;
+    };
+
+    tracing::debug!(
+        original = %location_str,
+        rewritten = %new_value,
+        "forward: rewrote Location header"
+    );
+    headers.insert(LOCATION, new_hv);
 }
 
 fn error_response(status: u16, msg: &'static str) -> Response<ResponseBody> {
@@ -285,5 +380,190 @@ mod tests {
     fn error_response_has_status() {
         let r = error_response(502, "Bad Gateway");
         assert_eq!(r.status(), 502);
+    }
+
+    fn headers_with_location(value: &'static str) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        h.insert(LOCATION, HeaderValue::from_static(value));
+        h
+    }
+
+    #[test]
+    fn rewrite_response_location_swaps_upstream_for_client_authority_on_301() {
+        let mut headers = headers_with_location("http://10.0.0.5:8080/dashboard");
+        rewrite_response_location(
+            &mut headers,
+            StatusCode::MOVED_PERMANENTLY,
+            "10.0.0.5:8080",
+            Some("proxy.local:9000"),
+        );
+        assert_eq!(
+            headers.get(LOCATION).unwrap(),
+            "http://proxy.local:9000/dashboard"
+        );
+    }
+
+    #[test]
+    fn rewrite_response_location_handles_302() {
+        let mut headers = headers_with_location("http://upstream:7000/next");
+        rewrite_response_location(
+            &mut headers,
+            StatusCode::FOUND,
+            "upstream:7000",
+            Some("client.local:80"),
+        );
+        assert_eq!(
+            headers.get(LOCATION).unwrap(),
+            "http://client.local:80/next"
+        );
+    }
+
+    #[test]
+    fn rewrite_response_location_handles_307_and_308() {
+        for status in [
+            StatusCode::TEMPORARY_REDIRECT,
+            StatusCode::PERMANENT_REDIRECT,
+        ] {
+            let mut headers = headers_with_location("http://upstream:7000/x");
+            rewrite_response_location(
+                &mut headers,
+                status,
+                "upstream:7000",
+                Some("client.local:80"),
+            );
+            assert_eq!(headers.get(LOCATION).unwrap(), "http://client.local:80/x");
+        }
+    }
+
+    #[test]
+    fn rewrite_response_location_preserves_query_and_fragment() {
+        let mut headers = headers_with_location("http://upstream:7000/x?a=1&b=2");
+        rewrite_response_location(
+            &mut headers,
+            StatusCode::FOUND,
+            "upstream:7000",
+            Some("client.local:80"),
+        );
+        assert_eq!(
+            headers.get(LOCATION).unwrap(),
+            "http://client.local:80/x?a=1&b=2"
+        );
+    }
+
+    #[test]
+    fn rewrite_response_location_ignores_cross_origin_redirect() {
+        let mut headers = headers_with_location("https://sso.example.com/login");
+        rewrite_response_location(
+            &mut headers,
+            StatusCode::FOUND,
+            "upstream:7000",
+            Some("client.local:80"),
+        );
+        assert_eq!(
+            headers.get(LOCATION).unwrap(),
+            "https://sso.example.com/login"
+        );
+    }
+
+    #[test]
+    fn rewrite_response_location_ignores_relative_uri() {
+        let mut headers = headers_with_location("/already/relative?q=1");
+        rewrite_response_location(
+            &mut headers,
+            StatusCode::FOUND,
+            "upstream:7000",
+            Some("client.local:80"),
+        );
+        assert_eq!(headers.get(LOCATION).unwrap(), "/already/relative?q=1");
+    }
+
+    #[test]
+    fn rewrite_response_location_ignores_non_redirect_status() {
+        let mut headers = headers_with_location("http://upstream:7000/new-resource");
+        rewrite_response_location(
+            &mut headers,
+            StatusCode::CREATED,
+            "upstream:7000",
+            Some("client.local:80"),
+        );
+        assert_eq!(
+            headers.get(LOCATION).unwrap(),
+            "http://upstream:7000/new-resource"
+        );
+    }
+
+    #[test]
+    fn rewrite_response_location_ignores_200_with_location_header() {
+        let mut headers = headers_with_location("http://upstream:7000/x");
+        rewrite_response_location(
+            &mut headers,
+            StatusCode::OK,
+            "upstream:7000",
+            Some("client.local:80"),
+        );
+        assert_eq!(headers.get(LOCATION).unwrap(), "http://upstream:7000/x");
+    }
+
+    #[test]
+    fn rewrite_response_location_no_header_is_noop() {
+        let mut headers = HeaderMap::new();
+        rewrite_response_location(
+            &mut headers,
+            StatusCode::FOUND,
+            "upstream:7000",
+            Some("client.local:80"),
+        );
+        assert!(!headers.contains_key(LOCATION));
+    }
+
+    #[test]
+    fn rewrite_response_location_passes_through_malformed_uri() {
+        // ASCII control byte would be rejected by HeaderValue, so use a
+        // syntactically invalid URI instead (multiple colons, no scheme).
+        let mut headers = HeaderMap::new();
+        headers.insert(LOCATION, HeaderValue::from_static("http://:::/"));
+        rewrite_response_location(
+            &mut headers,
+            StatusCode::FOUND,
+            "upstream:7000",
+            Some("client.local:80"),
+        );
+        assert_eq!(headers.get(LOCATION).unwrap(), "http://:::/");
+    }
+
+    #[test]
+    fn rewrite_response_location_falls_back_to_path_only_without_client_authority() {
+        let mut headers = headers_with_location("http://upstream:7000/dashboard?x=1");
+        rewrite_response_location(
+            &mut headers,
+            StatusCode::FOUND,
+            "upstream:7000",
+            None,
+        );
+        assert_eq!(headers.get(LOCATION).unwrap(), "/dashboard?x=1");
+    }
+
+    #[test]
+    fn rewrite_response_location_matches_host_case_insensitively() {
+        let mut headers = headers_with_location("http://Upstream.Local:7000/x");
+        rewrite_response_location(
+            &mut headers,
+            StatusCode::FOUND,
+            "upstream.local:7000",
+            Some("client.local:80"),
+        );
+        assert_eq!(headers.get(LOCATION).unwrap(), "http://client.local:80/x");
+    }
+
+    #[test]
+    fn rewrite_response_location_leaves_mismatched_port_alone() {
+        let mut headers = headers_with_location("http://upstream:9999/x");
+        rewrite_response_location(
+            &mut headers,
+            StatusCode::FOUND,
+            "upstream:7000",
+            Some("client.local:80"),
+        );
+        assert_eq!(headers.get(LOCATION).unwrap(), "http://upstream:9999/x");
     }
 }
