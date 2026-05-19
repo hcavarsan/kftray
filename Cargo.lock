@@ -3534,6 +3534,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "kftray-hosts"
+version = "0.27.30"
+
+[[package]]
 name = "kftray-http-logs"
 version = "0.27.30"
 dependencies = [

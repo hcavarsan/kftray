@@ -56,6 +56,7 @@ keyring-core = "1.0"
 ksni = "0.3"
 kftray-commons = { version = "0.27.30", path = "crates/kftray-commons" }
 kftray-helper = { version = "0.27.30", path = "crates/kftray-helper" }
+kftray-hosts = { version = "0.27.30", path = "crates/kftray-hosts" }
 kftray-http-logs = { version = "0.27.30", path = "crates/kftray-http-logs" }
 kftray-mcp = { version = "0.27.30", path = "crates/kftray-mcp" }
 kftray-network-monitor = { version = "0.27.30", path = "crates/kftray-network-monitor" }
