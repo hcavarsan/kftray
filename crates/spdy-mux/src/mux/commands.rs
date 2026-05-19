@@ -10,26 +10,31 @@ use super::window::SendWindow;
 
 /// Command sent to the writer task via `cmd_tx`.
 pub(crate) enum MuxCommand {
-    /// Open a port-forward pair (error + data SYN_STREAM) and emit the
+    /// Open a paired stream (an "error" stream half-closed at open time +
+    /// a "data" stream that carries application bytes) and emit the
     /// first DATA frame on the data stream, all under a single writer
     /// command. Stream IDs are allocated by the caller under the open
     /// sequencer immediately before enqueuing this command, so the wire
-    /// sees `SYN_STREAM(error)`, `SYN_STREAM(data)`, then `DATA(data,
-    /// first_payload)` in monotonic ID order.
+    /// sees `SYN_STREAM(error)`, `SYN_STREAM(data)`, the empty
+    /// `DATA(error, fin=true)`, then `DATA(data, first_payload)` in
+    /// monotonic ID order.
     ///
-    /// This replaces the previous `SendSynStreams` command and exists to
-    /// support lazy stream allocation: pre-opened spare streams do not
-    /// allocate IDs or send any frames until the relay actually writes
-    /// the first client byte. This avoids the kubelet-creates-pod-TCP-
-    /// connection-immediately race that kills idle spares served by
-    /// fast-closing servers (e.g. static-web-server).
-    OpenPortForwardAndWrite {
+    /// Header content is caller-supplied; the codec does not interpret
+    /// the keys/values. This keeps the multiplexer agnostic to any
+    /// particular SPDY/3.1 peer (Kubernetes port-forward, custom RPC
+    /// servers, etc.).
+    ///
+    /// Lazy allocation: pre-opened spare streams do not allocate IDs
+    /// or send any frames until the consumer actually writes the first
+    /// byte. Useful for any peer that creates an upstream connection
+    /// eagerly on SYN_STREAM (idle pre-opens otherwise time out).
+    OpenStreamPairAndWrite {
         error_id: u32,
         data_id: u32,
-        port: u16,
-        request_id: u32,
+        error_headers: Vec<(String, String)>,
+        data_headers: Vec<(String, String)>,
         /// First chunk of application data to send on `data_id` after the
-        /// two SYN_STREAM frames. Always sent with fin=false; the relay
+        /// two SYN_STREAM frames. Always sent with fin=false; the consumer
         /// half-closes via `poll_shutdown` later if needed.
         first_payload: Bytes,
     },

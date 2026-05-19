@@ -41,12 +41,13 @@ impl Client {
     }
 
     pub fn session<'c>(
-        &'c self, namespace: impl Into<String>, pod: impl Into<String>, _port: u16,
+        &'c self, namespace: impl Into<String>, pod: impl Into<String>, port: u16,
     ) -> SessionBuilder<'c> {
         SessionBuilder {
             client: self,
             namespace: namespace.into(),
             pod: pod.into(),
+            port,
             ping_interval: DEFAULT_PING,
             watchdog_timeout: DEFAULT_WATCHDOG,
             drain_timeout: DEFAULT_DRAIN,
@@ -98,6 +99,7 @@ pub struct SessionBuilder<'c> {
     client: &'c Client,
     namespace: String,
     pod: String,
+    port: u16,
     #[allow(dead_code)] // accepted for API stability; spdy-mux owns its own keepalive schedule
     ping_interval: Duration,
     #[allow(dead_code)] // accepted for API stability; spdy-mux owns its own watchdog
@@ -160,6 +162,7 @@ impl<'c> SessionBuilder<'c> {
             self.client,
             &self.namespace,
             &self.pod,
+            self.port,
             self.spdy_pool_size,
             cancel,
             recovery_callback,
@@ -174,8 +177,8 @@ impl<'c> SessionBuilder<'c> {
 /// Pool members that fail their parallel upgrade are dropped; the session
 /// proceeds with whichever slots succeeded.
 async fn open_spdy_session(
-    client: &Client, namespace: &str, pod: &str, pool_size: usize, cancel: CancellationToken,
-    recovery_callback: RecoveryCallback,
+    client: &Client, namespace: &str, pod: &str, port: u16, pool_size: usize,
+    cancel: CancellationToken, recovery_callback: RecoveryCallback,
 ) -> Result<Session, Error> {
     let first = upgrade_spdy_with_fallback(
         client.kube_client(),
@@ -250,11 +253,11 @@ async fn open_spdy_session(
     let spdy_session = match chosen_protocol {
         Subprotocol::Spdy31Tunnel => {
             let pairs: Vec<_> = all_upgrades.map(split_fastws).collect();
-            spdy_mux::Session::with_config(pairs, 0, cancel.clone(), config).await
+            spdy_mux::Session::with_config(pairs, cancel.clone(), config).await
         }
         Subprotocol::LegacySpdy => {
             let pairs: Vec<_> = all_upgrades.map(split_raw_spdy).collect();
-            spdy_mux::Session::with_config(pairs, 0, cancel.clone(), config).await
+            spdy_mux::Session::with_config(pairs, cancel.clone(), config).await
         }
     }
     .map_err(Error::from)?;
@@ -266,5 +269,5 @@ async fn open_spdy_session(
         protocol = %chosen_protocol,
         "SPDY session ready"
     );
-    Ok(Session::from_spdy(spdy_session, chosen_protocol))
+    Ok(Session::from_spdy(spdy_session, chosen_protocol, port))
 }

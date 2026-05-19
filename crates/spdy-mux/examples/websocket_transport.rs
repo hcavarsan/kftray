@@ -1,9 +1,8 @@
-//! SPDY/3.1 frames carried inside WebSocket binary messages.
+//! Open paired SPDY/3.1 streams over a pool of WebSocket transports.
 //!
-//! Shape demo: like `raw_transport.rs`, this file will not connect to a
-//! real peer. Swap the duplex placeholder for the
-//! `hyper::upgrade::Upgraded` returned after a successful WebSocket
-//! handshake that negotiated `Sec-WebSocket-Protocol: SPDY/3.1+portforward.k8s.io`.
+//! Shape demo, same caveat as `raw_transport.rs`: replace the duplex
+//! placeholders with `hyper::upgrade::Upgraded` connections returned by
+//! your HTTP client after a successful WebSocket handshake.
 //!
 //! Pool sizing: pass several `(writer, reader)` pairs to
 //! `Session::with_config` to run multiple WebSocket connections behind
@@ -24,6 +23,14 @@ use tokio_util::sync::CancellationToken;
 
 const POOL_SIZE: usize = 4;
 
+fn headers_for(stream_kind: &str, request_id: u32) -> Vec<(String, String)> {
+    vec![
+        ("streamtype".into(), stream_kind.into()),
+        ("port".into(), "9090".into()),
+        ("requestid".into(), request_id.to_string()),
+    ]
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Open `POOL_SIZE` parallel WebSocket upgrades in your HTTP client,
@@ -36,11 +43,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     let cancel = CancellationToken::new();
-    let target_port: u16 = 9090;
 
     let session = Session::with_config(
         pairs,
-        target_port,
         cancel.clone(),
         MuxConfig {
             pool_size: POOL_SIZE,
@@ -49,15 +54,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     )
     .await?;
 
-    // Fan a handful of concurrent requests through the pool. Each
-    // `connect()` returns a fresh SPDY stream; the mux picks the
-    // least-loaded pool member for you.
+    // Fan a handful of concurrent paired streams through the pool. Each
+    // `open_stream_pair` picks the least-loaded pool member and emits
+    // SYN_STREAMs atomically.
     let mut tasks = Vec::new();
     for i in 0..8 {
         let session = &session;
         tasks.push(async move {
-            let mut stream = session.connect().await?;
-            let req = format!("GET /?q={i} HTTP/1.0\r\nHost: pod\r\n\r\n");
+            let mut stream = session
+                .open_stream_pair(headers_for("error", i), headers_for("data", i))
+                .await?;
+            let req = format!("GET /?q={i} HTTP/1.0\r\nHost: peer\r\n\r\n");
             stream.write_all(req.as_bytes()).await?;
             let mut buf = vec![0u8; 4096];
             let n = stream.read(&mut buf).await?;

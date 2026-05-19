@@ -72,7 +72,6 @@ pub(crate) struct MuxHandle {
     /// registrations so teardown is never blocked by a burst of opens.
     close_reg_txs: Arc<[mpsc::Sender<StreamRegistration>; FRAME_WORKERS]>,
     active_pairs: Arc<AtomicUsize>,
-    next_request_id: Arc<AtomicU32>,
     /// Per-handle open sequencer. Serializes stream-ID allocation +
     /// worker registration + SYN_STREAM enqueue to guarantee that
     /// SYN_STREAM frames appear on the wire in monotonically-increasing
@@ -182,7 +181,6 @@ impl MuxHandle {
             reg_txs: Arc::clone(&reg_txs),
             close_reg_txs: Arc::clone(&close_reg_txs),
             active_pairs: Arc::clone(&active_pairs),
-            next_request_id: Arc::new(AtomicU32::new(0)),
             open_seq: Arc::new(TokioMutex::new(OpenState { next_stream_id: 1 })),
             peer_initial_window: Arc::clone(&peer_initial_window),
             peer_max_concurrent: Arc::clone(&peer_max_concurrent),
@@ -297,40 +295,49 @@ impl MuxHandle {
 
     /// Open a port-forward stream pair lazily.
     ///
+    /// Reserve a paired stream (error + data) and return a lazy `Stream`
+    /// handle. Caller-supplied headers go on the wire when the consumer
+    /// actually writes its first byte.
+    ///
     /// # Lazy open contract
     ///
-    /// This call reserves a slot against `active_pairs` (so the session
-    /// admission control still works) and pre-creates the per-stream
-    /// `data_rx` / `error_rx` channels, but it does **not**:
+    /// This call reserves a slot against `active_pairs` and pre-creates
+    /// the per-stream `data_rx` / `error_rx` channels, but it does **not**:
     ///
     /// - allocate SPDY stream IDs
     /// - register the streams with frame workers
     /// - send any `SYN_STREAM` frame to the wire
     ///
     /// All of that happens later, on the first non-empty `poll_write` of
-    /// the returned `Stream`, via [`MuxHandle::realize_portforward_pair`].
+    /// the returned `Stream`, via [`MuxHandle::realize_stream_pair`].
     ///
-    /// # Why
+    /// # Why lazy
     ///
-    /// The previous design opened SPDY streams eagerly. The apiserver
-    /// then immediately asked kubelet to create a TCP connection to the
-    /// target pod. Fast-closing servers (e.g. `static-web-server`) close
-    /// idle TCP connections within a few milliseconds, so pre-opened
-    /// spare streams died before the relay could use them.
+    /// Some SPDY/3.1 peers create an upstream connection the moment they
+    /// see a `SYN_STREAM` (Kubernetes kubelet is the motivating example:
+    /// it dials the target pod TCP port immediately). Fast-closing
+    /// servers then close that idle connection within milliseconds, so
+    /// any pre-opened spare stream is dead before the consumer can use
+    /// it. Lazy open emits `SYN_STREAM` and the first `DATA` atomically,
+    /// at the exact moment the consumer has something to send.
     ///
-    /// Lazy open mirrors `kubectl port-forward`'s timing: `SYN_STREAM` and
-    /// the first `DATA` go out atomically, only after the local client
-    /// has produced its first byte. The pod-side TCP connection is created
-    /// at the exact moment we have something to send on it.
+    /// # Headers
+    ///
+    /// The `error_headers` and `data_headers` lists are passed to the
+    /// codec verbatim and become the SYN_STREAM header block for the
+    /// respective stream. The multiplexer does not interpret keys or
+    /// values.
     ///
     /// # Backpressure
     ///
-    /// Checks `active_pairs` against `operating_max_streams` first (scheduling
-    /// cap), then against `max_concurrent_streams` (protocol hard cap).
-    /// If at cap: returns `Error::CapacityExhausted` immediately. Failures
-    /// during the later realization step also surface as I/O errors on
-    /// `poll_write`.
-    pub async fn open_portforward_pair(&self, port: u16) -> Result<Stream, Error> {
+    /// Checks `active_pairs` against `operating_max_streams` first
+    /// (scheduling cap), then against `max_concurrent_streams` (protocol
+    /// hard cap). If at cap, returns `Error::CapacityExhausted` immediately.
+    /// Failures during the later realization step surface as I/O errors
+    /// on `poll_write`.
+    pub async fn open_stream_pair(
+        &self, error_headers: Vec<(String, String)>, data_headers: Vec<(String, String)>,
+    ) -> Result<Stream, Error> {
         if self.closed.is_cancelled() {
             return Err(Error::MuxClosed);
         }
@@ -369,7 +376,8 @@ impl MuxHandle {
         let max_frame = self.max_frame_size.load(Ordering::Acquire);
 
         Ok(Stream::new_unopened(crate::stream::UnopenedStreamParts {
-            port,
+            error_headers,
+            data_headers,
             mux: self.clone(),
             data_rx,
             error_rx,
@@ -379,11 +387,11 @@ impl MuxHandle {
         }))
     }
 
-    /// Realize a lazily-opened port-forward pair on the wire.
+    /// Realize a lazily-opened stream pair on the wire.
     ///
     /// Called from `Stream::poll_write` on the first non-empty write.
     /// Allocates stream IDs, registers both streams with their workers,
-    /// reserves drop permits, and enqueues `OpenPortForwardAndWrite` which
+    /// reserves drop permits, and enqueues `OpenStreamPairAndWrite` which
     /// emits `SYN_STREAM(error)`, `SYN_STREAM(data)`, and the first
     /// `DATA(data, first_payload)` atomically in monotonic ID order.
     ///
@@ -402,8 +410,9 @@ impl MuxHandle {
     /// `.await` while holding `open_seq`. Backpressure surfaces as
     /// `CapacityExhausted` / `MuxClosed` and propagates to the caller's
     /// `poll_write` as `BrokenPipe`.
-    pub(crate) async fn realize_portforward_pair(
-        &self, port: u16, first_payload: Bytes, pending_data_tx: mpsc::Sender<Bytes>,
+    pub(crate) async fn realize_stream_pair(
+        &self, error_headers: Vec<(String, String)>, data_headers: Vec<(String, String)>,
+        first_payload: Bytes, pending_data_tx: mpsc::Sender<Bytes>,
         pending_error_tx: mpsc::Sender<Bytes>,
     ) -> Result<OpenedStreamParts, Error> {
         if self.closed.is_cancelled() {
@@ -453,7 +462,7 @@ impl MuxHandle {
 
         // All sends below use `try_send`, not `send().await`, while
         // holding `open_seq`. See the rationale in the original
-        // `open_portforward_pair` body: awaiting a bounded-channel send
+        // `open_stream_pair` body: awaiting a bounded-channel send
         // under the mutex is a deadlock vector.
 
         // Register error stream with its partition's worker.
@@ -502,8 +511,6 @@ impl MuxHandle {
             }
         }
 
-        let request_id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
-
         // Eagerly debit the data send window for first_payload. The wire
         // command we're about to enqueue will emit the payload as part of
         // the atomic open+write batch, so flow-control accounting must
@@ -523,11 +530,11 @@ impl MuxHandle {
         }
 
         // Enqueue the atomic open+first-write command.
-        match self.cmd_tx.try_send(MuxCommand::OpenPortForwardAndWrite {
+        match self.cmd_tx.try_send(MuxCommand::OpenStreamPairAndWrite {
             error_id,
             data_id,
-            port,
-            request_id,
+            error_headers,
+            data_headers,
             first_payload,
         }) {
             Ok(()) => {}

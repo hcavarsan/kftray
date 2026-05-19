@@ -33,15 +33,17 @@ use crate::mux::{
     StreamRegistration,
 };
 
-/// Bidirectional SPDY port-forward stream backed by a (data, error) stream
-/// pair.
+/// Bidirectional SPDY/3.1 stream pair: a writable "data" stream plus an
+/// "error" stream half-closed at open time. The shape suits any peer that
+/// uses paired streams (Kubernetes port-forward is one such peer; the
+/// multiplexer treats the headers as opaque).
 ///
-/// Streams are **lazily opened on the wire**:
-/// `MuxHandle::open_portforward_pair` reserves a session slot and creates the
-/// per-stream channels, but no SPDY `SYN_STREAM` frame is sent until the relay
-/// actually writes its first byte. This avoids the idle-pod-TCP-close race for
-/// fast-closing target servers (e.g. `static-web-server`) while preserving the
-/// pre-opened spare-stream throughput optimization.
+/// Streams are **lazily opened on the wire**: `MuxHandle::open_stream_pair`
+/// reserves a session slot and creates the per-stream channels, but no
+/// SPDY `SYN_STREAM` frame is sent until the consumer actually writes its
+/// first byte. This avoids the idle-upstream-close race for peers that
+/// dial an upstream connection eagerly on `SYN_STREAM` while preserving
+/// the pre-opened spare-stream throughput optimization.
 ///
 /// Implements `AsyncRead + AsyncWrite` on the data half. The error half is
 /// available via `split()`.
@@ -54,7 +56,8 @@ enum StreamState {
     /// and no `SYN_STREAM` on the wire yet. Transitions to `Opened` on the
     /// first non-empty `poll_write`.
     Unopened {
-        port: u16,
+        error_headers: Vec<(String, String)>,
+        data_headers: Vec<(String, String)>,
         mux: MuxHandle,
         data_rx: mpsc::Receiver<Bytes>,
         error_rx: mpsc::Receiver<Bytes>,
@@ -189,7 +192,8 @@ impl Drop for StreamGuard {
 
 /// Runtime handles needed to construct a lazily-opened SPDY stream.
 pub(crate) struct UnopenedStreamParts {
-    pub port: u16,
+    pub error_headers: Vec<(String, String)>,
+    pub data_headers: Vec<(String, String)>,
     pub mux: MuxHandle,
     pub data_rx: mpsc::Receiver<Bytes>,
     pub error_rx: mpsc::Receiver<Bytes>,
@@ -213,7 +217,8 @@ pub(crate) struct OpenedStreamParts {
 impl Stream {
     pub(crate) fn new_unopened(parts: UnopenedStreamParts) -> Self {
         let UnopenedStreamParts {
-            port,
+            error_headers,
+            data_headers,
             mux,
             data_rx,
             error_rx,
@@ -224,7 +229,8 @@ impl Stream {
         let release_guard = PairReleaseGuard::new(mux.clone());
         Self {
             state: StreamState::Unopened {
-                port,
+                error_headers,
+                data_headers,
                 mux,
                 data_rx,
                 error_rx,
@@ -265,7 +271,8 @@ impl Stream {
     pub fn split(self) -> (DataStream, ErrorStream) {
         match self.state {
             StreamState::Unopened {
-                port,
+                error_headers,
+                data_headers,
                 mux,
                 data_rx,
                 error_rx,
@@ -279,7 +286,8 @@ impl Stream {
             } => {
                 let shared = Arc::new(parking_lot::Mutex::new(SharedSplitState::Unopened(
                     UnopenedShared {
-                        port,
+                        error_headers,
+                        data_headers,
                         mux: mux.clone(),
                         pending_data_tx,
                         pending_error_tx,
@@ -531,7 +539,8 @@ fn poll_write_via_sender(
 /// `clippy::too_many_arguments` threshold and the call sites read as one
 /// logical unit instead of six positional arguments.
 struct LazyOpenArgs<'a> {
-    port: u16,
+    error_headers: Vec<(String, String)>,
+    data_headers: Vec<(String, String)>,
     max_frame_size: u32,
     mux: &'a MuxHandle,
     pending_data_tx: &'a mut Option<mpsc::Sender<Bytes>>,
@@ -557,7 +566,8 @@ fn poll_lazy_open(
     args: LazyOpenArgs<'_>, cx: &mut Context<'_>, buf: &[u8],
 ) -> Poll<io::Result<(OpenedStreamParts, usize)>> {
     let LazyOpenArgs {
-        port,
+        error_headers,
+        data_headers,
         max_frame_size,
         mux,
         pending_data_tx,
@@ -582,7 +592,7 @@ fn poll_lazy_open(
         let mux_clone = mux.clone();
         let fut = async move {
             mux_clone
-                .realize_portforward_pair(port, first_payload, data_tx, error_tx)
+                .realize_stream_pair(error_headers, data_headers, first_payload, data_tx, error_tx)
                 .await
         };
         *open_in_progress = Some(Box::pin(fut));
@@ -675,7 +685,8 @@ impl AsyncWrite for Stream {
             // the receivers (they stay borrowed by the state).
             let (parts, n_consumed) = match &mut this.state {
                 StreamState::Unopened {
-                    port,
+                    error_headers,
+                    data_headers,
                     mux,
                     pending_data_tx,
                     pending_error_tx,
@@ -684,7 +695,8 @@ impl AsyncWrite for Stream {
                     ..
                 } => match poll_lazy_open(
                     LazyOpenArgs {
-                        port: *port,
+                        error_headers: std::mem::take(error_headers),
+                        data_headers: std::mem::take(data_headers),
                         max_frame_size: *max_frame_size,
                         mux,
                         pending_data_tx,
@@ -803,7 +815,8 @@ enum SharedSplitState {
 }
 
 struct UnopenedShared {
-    port: u16,
+    error_headers: Vec<(String, String)>,
+    data_headers: Vec<(String, String)>,
     mux: MuxHandle,
     pending_data_tx: Option<mpsc::Sender<Bytes>>,
     pending_error_tx: Option<mpsc::Sender<Bytes>>,
@@ -878,7 +891,8 @@ impl AsyncWrite for DataStream {
         if let SharedSplitState::Unopened(u) = &mut *guard {
             let res = poll_lazy_open(
                 LazyOpenArgs {
-                    port: u.port,
+                    error_headers: std::mem::take(&mut u.error_headers),
+                    data_headers: std::mem::take(&mut u.data_headers),
                     max_frame_size: this.max_frame_size,
                     mux: &u.mux,
                     pending_data_tx: &mut u.pending_data_tx,

@@ -1,5 +1,6 @@
 use std::sync::atomic::{
     AtomicBool,
+    AtomicU32,
     Ordering,
 };
 
@@ -22,6 +23,12 @@ const SPARE_STREAM_LOW_WATERMARK: usize = 8;
 pub struct Session {
     inner: spdy_mux::Session,
     protocol: Subprotocol,
+    /// Target pod port. The kubelet expects this in the SYN_STREAM
+    /// `port` header for every paired stream we open.
+    port: u16,
+    /// Monotonic request-id counter. The kubelet uses this header to
+    /// pair the data and error streams of one logical TCP connection.
+    next_request_id: AtomicU32,
     /// Pre-opened spare streams for instant connect(). Background task
     /// replenishes when count drops to or below `SPARE_STREAM_LOW_WATERMARK`.
     spare_streams: ArrayQueue<Stream>,
@@ -31,13 +38,37 @@ pub struct Session {
 }
 
 impl Session {
-    pub(crate) fn from_spdy(session: spdy_mux::Session, protocol: Subprotocol) -> Self {
+    pub(crate) fn from_spdy(session: spdy_mux::Session, protocol: Subprotocol, port: u16) -> Self {
         Self {
             spare_streams: ArrayQueue::new(SPARE_STREAM_CAP),
             replenishing: AtomicBool::new(false),
             inner: session,
             protocol,
+            port,
+            next_request_id: AtomicU32::new(0),
         }
+    }
+
+    /// Build the K8s `portforward.k8s.io v1` SYN_STREAM headers for one
+    /// stream-pair connection. Header names are lowercase to match
+    /// `kubectl client-go`'s wire format.
+    fn portforward_headers(&self) -> (Vec<(String, String)>, Vec<(String, String)>) {
+        let request_id = self
+            .next_request_id
+            .fetch_add(1, Ordering::Relaxed)
+            .to_string();
+        let port = self.port.to_string();
+        let error_headers = vec![
+            ("streamtype".to_string(), "error".to_string()),
+            ("port".to_string(), port.clone()),
+            ("requestid".to_string(), request_id.clone()),
+        ];
+        let data_headers = vec![
+            ("streamtype".to_string(), "data".to_string()),
+            ("port".to_string(), port),
+            ("requestid".to_string(), request_id),
+        ];
+        (error_headers, data_headers)
     }
 
     /// Allocate the next stream and return a bidirectional [`Stream`].
@@ -56,8 +87,9 @@ impl Session {
     }
 
     async fn open_new_stream(&self) -> Result<Stream, Error> {
+        let (error_headers, data_headers) = self.portforward_headers();
         self.inner
-            .connect()
+            .open_stream_pair(error_headers, data_headers)
             .await
             .map(Stream::from_spdy)
             .map_err(Error::from)

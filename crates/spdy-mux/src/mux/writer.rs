@@ -65,13 +65,13 @@ pub(super) struct WriterParts<W: WsFrameWriter> {
 /// Encode a non-inline `MuxCommand` into a binary payload (SPDY frame bytes)
 /// for a WebSocket binary frame.
 ///
-/// `OpenPortForwardAndWrite`, `SendWsPong`, and `CloseStream` are handled
+/// `OpenStreamPairAndWrite`, `SendWsPong`, and `CloseStream` are handled
 /// inline in `run_writer` because they require multiple writes or async
 /// operations that cannot be returned as a single `Bytes`.
 pub(super) fn encode_command(cmd: MuxCommand, codec: &mut SpdyCodec) -> Result<Bytes, Error> {
     match cmd {
-        MuxCommand::OpenPortForwardAndWrite { .. } => {
-            unreachable!("OpenPortForwardAndWrite must be handled inline in run_writer")
+        MuxCommand::OpenStreamPairAndWrite { .. } => {
+            unreachable!("OpenStreamPairAndWrite must be handled inline in run_writer")
         }
         MuxCommand::SendWsPong { .. } => {
             unreachable!("SendWsPong must be handled inline in run_writer")
@@ -462,7 +462,7 @@ pub(super) async fn process_writer_command<W: WsFrameWriter>(
 ) -> (bool, usize) {
     let mut bytes_written: usize = 0;
 
-    // OpenPortForwardAndWrite: encode both SYN_STREAM frames, the empty
+    // OpenStreamPairAndWrite: encode both SYN_STREAM frames, the empty
     // DATA+FIN that half-closes the error stream, and the first DATA
     // frame on the data stream inline. All four frames are emitted as one
     // atomic batch so the wire sees:
@@ -472,35 +472,27 @@ pub(super) async fn process_writer_command<W: WsFrameWriter>(
     //   DATA(error_id, empty, fin=true)
     //   DATA(data_id,  first_payload, fin=false)
     //
-    // in monotonic ID order. This mirrors the kubectl port-forward wire
-    // pattern EXACTLY:
+    // in monotonic ID order. Header content is whatever the caller built;
+    // the codec just encodes the (key, value) list with the standard
+    // SPDY/3.1 zlib dictionary.
     //
-    //   kubectl client-go calls `pf.streamConn.CreateStream(headers)` with
-    //   fin=false hard-coded, then `errorStream.Close()` which emits a
-    //   single empty DATA frame with fin=true.
-    //
-    // The previous implementation set `fin=true` on the error stream's
-    // SYN_STREAM. While spdystream technically handles that flag via
-    // `closeRemoteChannels()`, kubelet's portforward handler in some code
-    // paths still expects the kubectl-style sequence and fails the pod
-    // forwarding with an error message written to the error stream
-    // ("error forwarding port N to pod X: ..."). Matching kubectl's exact
-    // wire pattern makes the kubelet take the success path.
-    if let MuxCommand::OpenPortForwardAndWrite {
+    // The "error stream half-closed at open" pattern (empty DATA+FIN
+    // right after the SYN_STREAMs) is a common SPDY/3.1 idiom for
+    // "I will never write on this stream, but I want to read from it".
+    // Setting fin=true on the SYN_STREAM itself is allowed by the spec
+    // but some peers (notably Kubernetes kubelet) reject it; this
+    // implementation always uses the explicit DATA+FIN form so it works
+    // against the widest set of peers.
+    if let MuxCommand::OpenStreamPairAndWrite {
         error_id,
         data_id,
-        port,
-        request_id,
+        error_headers,
+        data_headers,
         first_payload,
     } = cmd
     {
-        let error_headers = vec![
-            ("streamtype".to_string(), "error".to_string()),
-            ("port".to_string(), port.to_string()),
-            ("requestid".to_string(), request_id.to_string()),
-        ];
-        // SYN_STREAM(error, fin=false) — matches kubectl: client-go always
-        // passes fin=false to spdystream.CreateStream.
+        // SYN_STREAM(error, fin=false). The half-close arrives as an
+        // explicit empty DATA+FIN below.
         match codec.encode_syn_stream(error_id, &error_headers, false) {
             Ok(frame_bytes) => {
                 let len = frame_bytes.len();
@@ -524,11 +516,6 @@ pub(super) async fn process_writer_command<W: WsFrameWriter>(
                 return (true, bytes_written);
             }
         }
-        let data_headers = vec![
-            ("streamtype".to_string(), "data".to_string()),
-            ("port".to_string(), port.to_string()),
-            ("requestid".to_string(), request_id.to_string()),
-        ];
         match codec.encode_syn_stream(data_id, &data_headers, false) {
             Ok(frame_bytes) => {
                 let len = frame_bytes.len();
@@ -552,9 +539,9 @@ pub(super) async fn process_writer_command<W: WsFrameWriter>(
                 return (true, bytes_written);
             }
         }
-        // DATA(error_id, empty, fin=true) — equivalent of kubectl's
-        // `errorStream.Close()` call right after CreateStream returns.
-        // Tells the kubelet we will never write on the error stream.
+        // DATA(error_id, empty, fin=true). Tells the peer we will never
+        // write on the error stream, while leaving the read direction open
+        // so the peer can send us error messages.
         {
             let frame_bytes = codec.encode_data(error_id, &[], true);
             let len = frame_bytes.len();
