@@ -3534,6 +3534,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "kftray-hosts"
+version = "0.27.30"
+dependencies = [
+ "anyhow",
+ "env_logger",
+ "kftray-commons",
+ "kftray-helper",
+ "libc",
+ "log",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "kftray-http-logs"
 version = "0.27.30"
 dependencies = [
@@ -3618,6 +3633,7 @@ dependencies = [
  "keyring-core",
  "kftray-commons",
  "kftray-helper",
+ "kftray-hosts",
  "kftray-http-logs",
  "kftray-ssl",
  "kube",
