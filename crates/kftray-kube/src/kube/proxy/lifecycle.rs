@@ -266,7 +266,7 @@ async fn process_deployment_proxy(
 
             let start_response = match protocol {
                 "udp" => {
-                    super::start::start_port_forward_with_mode(
+                    crate::kube::start::start_port_forward_with_mode(
                         vec![config.clone()],
                         "udp",
                         mode,
@@ -275,7 +275,7 @@ async fn process_deployment_proxy(
                     .await
                 }
                 "tcp" => {
-                    super::start::start_port_forward_with_mode(
+                    crate::kube::start::start_port_forward_with_mode(
                         vec![config.clone()],
                         "tcp",
                         mode,
@@ -297,9 +297,9 @@ async fn process_deployment_proxy(
                 Ok(mut port_forward_responses) => match port_forward_responses.pop() {
                     Some(response) => {
                         // Spawn recovery manager for deployment proxy
-                        crate::kube::proxy_recovery::spawn_recovery_manager(
+                        super::recovery::spawn_recovery_manager(
                             config.clone(),
-                            crate::kube::proxy_recovery::ProxyType::Deployment,
+                            super::recovery::ProxyType::Deployment,
                         );
                         Ok(response)
                     }
@@ -390,7 +390,7 @@ async fn process_pod_proxy(
 
             let start_response = match protocol {
                 "udp" => {
-                    super::start::start_port_forward_with_mode(
+                    crate::kube::start::start_port_forward_with_mode(
                         vec![config.clone()],
                         "udp",
                         mode,
@@ -399,7 +399,7 @@ async fn process_pod_proxy(
                     .await
                 }
                 "tcp" => {
-                    super::start::start_port_forward_with_mode(
+                    crate::kube::start::start_port_forward_with_mode(
                         vec![config.clone()],
                         "tcp",
                         mode,
@@ -419,9 +419,9 @@ async fn process_pod_proxy(
                 Ok(mut port_forward_responses) => match port_forward_responses.pop() {
                     Some(response) => {
                         // Spawn recovery manager for bare pod proxy
-                        crate::kube::proxy_recovery::spawn_recovery_manager(
+                        super::recovery::spawn_recovery_manager(
                             config.clone(),
-                            crate::kube::proxy_recovery::ProxyType::BarePod,
+                            super::recovery::ProxyType::BarePod,
                         );
                         Ok(response)
                     }
@@ -449,7 +449,7 @@ pub async fn stop_proxy_forward_with_mode(
     mode: kftray_commons::utils::db_mode::DatabaseMode,
 ) -> Result<CustomResponse, PortForwardError> {
     info!("Stopping proxy forward for service: {service_name}");
-    super::stop::stop_port_forward_with_mode(config_id.to_string(), mode)
+    crate::kube::stop::stop_port_forward_with_mode(config_id.to_string(), mode)
         .await
         .map_err(|e| {
             error!("Failed to stop port forwarding for service '{service_name}': {e}");
@@ -461,7 +461,7 @@ pub async fn stop_proxy_forward(
     config_id: i64, _namespace: &str, service_name: String,
 ) -> Result<CustomResponse, PortForwardError> {
     info!("Stopping proxy forward for service: {service_name}");
-    super::stop::stop_port_forward_with_mode(
+    crate::kube::stop::stop_port_forward_with_mode(
         config_id.to_string(),
         kftray_commons::utils::db_mode::DatabaseMode::File,
     )
