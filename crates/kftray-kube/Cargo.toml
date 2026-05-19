@@ -28,17 +28,14 @@ base64 = { workspace = true }
 bytes = { workspace = true }
 dashmap = { workspace = true }
 dirs = { workspace = true }
-env_logger = { workspace = true }
 futures = { workspace = true }
 http = { workspace = true }
-http-body-util = { workspace = true }
 httparse = { workspace = true }
 hyper = { workspace = true }
 hyper-openssl = { workspace = true }
 hyper-util = { workspace = true }
 jiff = { workspace = true }
 k8s-openapi = { workspace = true }
-keyring-core = { workspace = true }
 kftray-commons = { workspace = true }
 kftray-hosts = { workspace = true }
 kftray-ssl = { workspace = true }
@@ -48,29 +45,21 @@ kube = { workspace = true }
 kube-portforward = { workspace = true }
 kube-runtime = { workspace = true }
 lazy_static = { workspace = true }
-libc = { workspace = true }
 log = { workspace = true }
 once_cell = { workspace = true }
 openssl = { workspace = true }
-pem = { workspace = true }
 rand = { workspace = true }
-rcgen = { workspace = true }
 rustls = { workspace = true }
-rustls-native-certs = { workspace = true }
 secrecy = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-sha1 = { workspace = true }
 socket2 = { workspace = true }
-thiserror = { workspace = true }
 time = { workspace = true }
 tokio = { workspace = true }
 tokio-rustls = { workspace = true }
-tokio-tungstenite = { workspace = true }
 tokio-util = { workspace = true }
 tower = { workspace = true }
 tracing = { workspace = true }
-tungstenite = { workspace = true }
 whoami = { workspace = true }
 
 [dev-dependencies]
@@ -78,17 +67,3 @@ http = { workspace = true }
 tempfile = { workspace = true }
 tower-test = { workspace = true }
 tracing-subscriber = { workspace = true }
-
-[target.'cfg(target_os = "linux")'.dependencies]
-dbus-secret-service-keyring-store = { workspace = true }
-linux-keyutils-keyring-store = { workspace = true }
-
-[target.'cfg(target_os = "macos")'.dependencies]
-security-framework = { workspace = true }
-core-foundation = { workspace = true }
-apple-native-keyring-store = { workspace = true }
-
-[target.'cfg(target_os = "windows")'.dependencies]
-schannel = { workspace = true }
-windows = { workspace = true }
-windows-native-keyring-store = { workspace = true }
