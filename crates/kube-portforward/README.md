@@ -1,40 +1,40 @@
 # kube-portforward
 
-kubernetes port-forward over a multiplexed spdy/3.1 connection, with the legacy upgrade as a fallback.
+Kubernetes port-forward over a multiplexed SPDY/3.1 connection, with the legacy upgrade as a fallback.
 
-## why
+## Why
 
-if you do port-forward against a real cluster from a desktop client, the naive pattern (one tcp/tls upgrade per local connection) hurts. every new local client triggers a fresh tls handshake to the apiserver. with 30 concurrent connections you're spending half your time in handshakes. users notice.
+A naive port-forward against a real cluster from a desktop client opens one TCP upgrade per local connection. Every new client triggers a fresh TLS handshake to the API server. At 30 concurrent connections you spend half your time in handshakes.
 
-this crate opens one upgrade per session, or a small pool, and multiplexes every local tcp connection through it. behind the scenes it speaks `SPDY/3.1+portforward.k8s.io` (the websocket-tunneled spdy from KEP-4006, beta since kubernetes 1.31). against older clusters where that subprotocol gets rejected, it falls back to the original `Upgrade: SPDY/3.1` wire format kubectl has used forever.
+This crate opens one upgrade per session, or a small pool, and multiplexes every local TCP connection through it. The primary wire format is `SPDY/3.1+portforward.k8s.io`, the WebSocket-tunneled SPDY from KEP-4006 (Beta since Kubernetes 1.31). Against older clusters that reject the subprotocol, the dialer falls back to the original `Upgrade: SPDY/3.1` wire format kubectl has used since the beginning.
 
-both paths carry the same spdy frames. the difference is just the envelope.
+Both paths carry the same SPDY frames. The difference is the envelope.
 
-## what's in it
+## What's in it
 
-a small pool of upgrades per session instead of one upgrade per stream. a ping watchdog that catches apiserver idle timeouts before they silently kill the connection (this one bit me for a long time before i added it). automatic fallback to the legacy `Upgrade: SPDY/3.1` path for clusters that reject the modern subprotocol. typed errors. a forwarder layer with pod watching, graceful drain, recovery callbacks.
+A small pool of upgrades per session instead of one upgrade per stream. A PING watchdog that catches API server idle timeouts before they silently kill the connection. Automatic fallback to the legacy `Upgrade: SPDY/3.1` path for clusters that reject the modern subprotocol. Typed errors. A forwarder layer with pod watching, graceful drain, and recovery callbacks.
 
-the streams implement `tokio::io::AsyncRead + AsyncWrite`, so `tokio::io::copy_bidirectional` works as the local TCP relay loop without any glue code.
+The streams implement `tokio::io::AsyncRead + AsyncWrite`, so `tokio::io::copy_bidirectional` works as the local TCP relay loop without any glue code.
 
-## tradeoffs
+## Tradeoffs
 
-spdy is on its way out. the whole stack sits on spdy/3.1, which kubernetes is migrating off (KEP-4006). websocket-to-kubelet went beta in 1.36 and will probably go GA in a release or two. when that happens, the codec underneath turns into dead weight. the websocket transport, the pool, the keepalive, the fallback dialer all survive. the codec doesn't. plan accordingly.
+SPDY is on its way out. The whole stack sits on SPDY/3.1, which Kubernetes is migrating off (KEP-4006). WebSocket-to-kubelet went Beta in 1.36 and is on track for GA. When that completes, the codec underneath becomes redundant. The WebSocket transport, the pool, the keepalive, and the fallback dialer survive. The codec does not. Plan accordingly.
 
-only kubectl-shaped peers work. the wire pattern is the kubectl one: SYN_STREAM error first, then data, then empty DATA+FIN on the error stream. matches what the kubelet expects. point it at a non-kubelet peer that interprets stream pairs differently and it'll break.
+Only kubectl-shaped peers work. The wire pattern is the kubectl one: `SYN_STREAM(error)`, `SYN_STREAM(data)`, `DATA+FIN(error)`, in that order. It matches what the kubelet expects. Pointing this at a non-kubelet peer that interprets stream pairs differently will not work.
 
-it's a streaming layer, not a kube client. you bring your own kube client to handle auth and kubeconfig, and pass in the resulting cluster URL.
+This is a streaming layer, not a Kubernetes client. You bring your own Kubernetes client to handle auth and kubeconfig, then pass in the resulting cluster URL.
 
-## the story
+## The story
 
-i build a desktop port-forward tool. wrk and vegeta were destroying it under load and i wanted to figure out why.
+I was building a desktop port-forward tool. Under wrk and vegeta load it fell over, and I wanted to find out why.
 
-for one or two concurrent connections per pod anything works fine. the moment you get to 30+, the cost of a fresh tls handshake on every new local tcp client dominates everything else. that's the structural fix, you stop opening one upgrade per stream. spdy/3.1 was designed for exactly this kind of multiplexing back when browsers used it.
+For one or two concurrent connections per pod, anything works. At 30+ concurrent connections, the cost of a fresh TLS handshake on every new local TCP client dominates everything else. The structural fix is to stop opening one upgrade per stream. SPDY/3.1 was designed for exactly this kind of multiplexing.
 
-implementing it took longer than i expected. zlib header compression with the standard spdy dictionary is annoying to debug, mostly wire traces and hex dumps. the worst bug was a wire-order quirk: the kubelet only takes the success path if you emit SYN_STREAM(error), then SYN_STREAM(data), then an empty DATA+FIN on the error stream, in that exact order. set fin=true on the SYN_STREAM directly and the kubelet rejects the forwarding with an error message written back on the error stream. matching kubectl's exact pattern was the difference between "works" and "mysteriously fails halfway through the first request". i lost most of a weekend to that one.
+Implementing it took longer than I expected. Zlib header compression with the standard SPDY dictionary is annoying to debug; mostly wire traces and hex dumps. The hardest bug was a wire-order quirk: the kubelet only takes the success path if you emit `SYN_STREAM(error)`, then `SYN_STREAM(data)`, then an empty `DATA+FIN` on the error stream, in that exact order. Set `fin=true` on the SYN_STREAM directly and the kubelet rejects the forwarding with an error message written back on the error stream. Matching kubectl's exact pattern was the difference between "works" and "mysteriously fails halfway through the first request".
 
-i'm not under any illusion this is the right shape forever. once kubernetes finishes the migration to websockets-all-the-way-down, half of this code becomes a tribute act. the plan is to port the multiplexer and pool on top of a pure websocket transport and delete the codec. soon, but not yet.
+This is not the right shape forever. Once Kubernetes finishes the migration to WebSockets through the entire path, half of this code becomes redundant. The plan is to port the multiplexer and pool on top of a pure WebSocket transport and delete the codec.
 
-## quick start
+## Quick start
 
 ```rust,no_run
 use kube_portforward::Client;
@@ -49,14 +49,14 @@ session.close().await?;
 # Ok(()) }
 ```
 
-## what's underneath
+## What's underneath
 
-the multiplexer lives in a separate crate, `spdy-mux`. it doesn't know anything about kubernetes. this crate adds the kubernetes part: upgrade negotiation, header construction, fallback, the forwarder layer.
+The multiplexer lives in a separate crate, `spdy-mux`. It does not know anything about Kubernetes. This crate adds the Kubernetes part: upgrade negotiation, header construction, fallback, and the forwarder layer.
 
-## examples
+## Examples
 
-see `examples/` for end-to-end usage. you'll need a real cluster to run them.
+See `examples/` for end-to-end usage. You will need a real cluster to run them.
 
-## license
+## License
 
 GPL-3.0.
