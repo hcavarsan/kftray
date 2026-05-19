@@ -40,7 +40,9 @@ pub async fn start_port_forwarding_with_ssl(
             deploy_and_forward_pod_with_mode(vec![config.clone()], mode, ssl_override).await
         }
         Some("expose") => {
-            kube_start_port_forward(vec![config.clone()], "tcp", mode, ssl_override).await
+            kftray_expose::start_expose(vec![config.clone()], mode)
+                .await
+                .map_err(|e| kftray_portforward::PortForwardError::Expose(e.to_string()))
         }
         Some("service") | Some("pod") => match config.protocol.as_str() {
             "tcp" => kube_start_port_forward(vec![config.clone()], "tcp", mode, ssl_override).await,
@@ -73,7 +75,11 @@ pub async fn stop_port_forwarding(app: &mut App, config: Config, mode: DatabaseM
             )
             .await
         }
-        Some("expose") => stop_port_forward_with_mode(config_id.to_string(), mode).await,
+        Some("expose") => {
+            kftray_expose::stop_expose(config_id, &config.namespace, mode)
+                .await
+                .map_err(|e| kftray_portforward::PortForwardError::Expose(e.to_string()))
+        }
         Some("service") | Some("pod") => {
             stop_port_forward_with_mode(config_id.to_string(), mode).await
         }
@@ -129,7 +135,9 @@ pub async fn start_port_forward(
             deploy_and_forward_pod_with_mode(vec![config], mode, ssl_override).await?;
         }
         Some("expose") => {
-            kube_start_port_forward(vec![config], "tcp", mode, ssl_override).await?;
+            kftray_expose::start_expose(vec![config], mode)
+                .await
+                .map_err(|e| -> Box<dyn std::error::Error> { Box::new(e) })?;
         }
         Some("service") | Some("pod") => match config.protocol.as_str() {
             "tcp" => {

@@ -210,12 +210,24 @@ impl McpTool for StartPortForwardTool {
             match kftray_commons::config::get_config(config_id).await {
                 Ok(config) => {
                     let protocol = config.protocol.clone();
+                    let is_expose = config.workload_type.as_deref() == Some("expose");
                     let configs = vec![config];
 
-                    let result = if protocol == "udp" {
-                        kftray_portforward::start_port_forward(configs, "udp").await
+                    let result: Result<Vec<kftray_commons::models::response::CustomResponse>, String> = if is_expose {
+                        kftray_expose::start_expose(
+                            configs,
+                            kftray_commons::utils::db_mode::DatabaseMode::File,
+                        )
+                        .await
+                        .map_err(|e| e.to_string())
+                    } else if protocol == "udp" {
+                        kftray_portforward::start_port_forward(configs, "udp")
+                            .await
+                            .map_err(|e| e.to_string())
                     } else {
-                        kftray_portforward::start_port_forward(configs, "tcp").await
+                        kftray_portforward::start_port_forward(configs, "tcp")
+                            .await
+                            .map_err(|e| e.to_string())
                     };
 
                     match result {
@@ -323,13 +335,25 @@ impl McpTool for StartPortForwardTool {
             };
 
             let protocol = new_config.protocol.clone();
+            let is_expose = new_config.workload_type.as_deref() == Some("expose");
             let config_id = new_config.id;
             let configs = vec![new_config];
 
-            let result = if protocol == "udp" {
-                kftray_portforward::start_port_forward(configs, "udp").await
+            let result: Result<Vec<kftray_commons::models::response::CustomResponse>, String> = if is_expose {
+                kftray_expose::start_expose(
+                    configs,
+                    kftray_commons::utils::db_mode::DatabaseMode::File,
+                )
+                .await
+                .map_err(|e| e.to_string())
+            } else if protocol == "udp" {
+                kftray_portforward::start_port_forward(configs, "udp")
+                    .await
+                    .map_err(|e| e.to_string())
             } else {
-                kftray_portforward::start_port_forward(configs, "tcp").await
+                kftray_portforward::start_port_forward(configs, "tcp")
+                    .await
+                    .map_err(|e| e.to_string())
             };
 
             match result {
@@ -434,7 +458,23 @@ impl McpTool for StopPortForwardTool {
             None => return CallToolResult::error("Missing required argument: config_id"),
         };
 
-        match kftray_portforward::stop_port_forward(args.config_id.to_string()).await {
+        // Check if this is an expose config and dispatch accordingly
+        let stop_result = match kftray_commons::config::get_config(args.config_id).await {
+            Ok(config) if config.workload_type.as_deref() == Some("expose") => {
+                kftray_expose::stop_expose(
+                    args.config_id,
+                    &config.namespace,
+                    kftray_commons::utils::db_mode::DatabaseMode::File,
+                )
+                .await
+                .map_err(|e| kftray_portforward::PortForwardError::Expose(e.to_string()))
+            }
+            _ => {
+                kftray_portforward::stop_port_forward(args.config_id.to_string()).await
+            }
+        };
+
+        match stop_result {
             Ok(resp) => {
                 let response = StopPortForwardResponse {
                     success: resp.status == 0,

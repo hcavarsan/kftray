@@ -450,7 +450,7 @@ pub async fn delete_kftray_resource(
                 }
                 "expose" => {
                     let _ =
-                        kftray_portforward::stop_expose(id, namespace, DatabaseMode::File).await;
+                        kftray_expose::stop_expose(id, namespace, DatabaseMode::File).await;
                 }
                 _ => {
                     let _ = kftray_portforward::stop_port_forward_with_mode(

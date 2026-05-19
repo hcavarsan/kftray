@@ -8,7 +8,7 @@ use kftray_commons::utils::config_dir::{
     get_expose_service_manifest_path,
 };
 
-use crate::port_forward_error::PortForwardError;
+use crate::error::ExposeError;
 
 pub fn render_template(template: &str, values: &HashMap<&str, String>) -> String {
     let mut rendered = template.to_string();
@@ -20,31 +20,31 @@ pub fn render_template(template: &str, values: &HashMap<&str, String>) -> String
 
 fn load_template(
     get_path: fn() -> Result<std::path::PathBuf, String>, kind: &str,
-) -> Result<String, PortForwardError> {
-    let manifest_path = get_path().map_err(|e| PortForwardError::ConfigurationError {
+) -> Result<String, ExposeError> {
+    let manifest_path = get_path().map_err(|e| ExposeError::Configuration {
         message: format!("Failed to get {kind} manifest path: {e}"),
     })?;
     let mut file =
-        File::open(&manifest_path).map_err(|e| PortForwardError::ConfigurationError {
+        File::open(&manifest_path).map_err(|e| ExposeError::Configuration {
             message: format!("Failed to open {kind} manifest at {manifest_path:?}: {e}"),
         })?;
     let mut contents = String::new();
     file.read_to_string(&mut contents)
-        .map_err(|e| PortForwardError::ConfigurationError {
+        .map_err(|e| ExposeError::Configuration {
             message: format!("Failed to read {kind} manifest: {e}"),
         })?;
     Ok(contents)
 }
 
-pub fn load_deployment_template() -> Result<String, PortForwardError> {
+pub fn load_deployment_template() -> Result<String, ExposeError> {
     load_template(get_expose_deployment_manifest_path, "deployment")
 }
 
-pub fn load_service_template() -> Result<String, PortForwardError> {
+pub fn load_service_template() -> Result<String, ExposeError> {
     load_template(get_expose_service_manifest_path, "service")
 }
 
-pub fn load_ingress_template() -> Result<String, PortForwardError> {
+pub fn load_ingress_template() -> Result<String, ExposeError> {
     load_template(get_expose_ingress_manifest_path, "ingress")
 }
 

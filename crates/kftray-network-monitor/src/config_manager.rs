@@ -81,7 +81,8 @@ impl ConfigManager {
 
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
-        let (proxy_configs, other_configs) = partition_configs_by_workload(configs);
+        let (proxy_configs, expose_configs, other_configs) =
+            partition_configs_by_workload(configs);
 
         if !other_configs.is_empty() {
             match kftray_portforward::kube::start_port_forward(other_configs, protocol).await {
@@ -94,6 +95,20 @@ impl ConfigManager {
                     } else {
                         error!("Failed to restart {protocol} port forwards: {e}");
                     }
+                }
+            }
+        }
+
+        if !expose_configs.is_empty() {
+            match kftray_expose::start_expose(
+                expose_configs,
+                kftray_commons::utils::db_mode::DatabaseMode::File,
+            )
+            .await
+            {
+                Ok(_) => info!("Successfully restarted {protocol} expose forwards"),
+                Err(e) => {
+                    error!("Failed to restart {protocol} expose forwards: {e}");
                 }
             }
         }
@@ -130,10 +145,19 @@ impl ConfigManager {
     }
 }
 
-fn partition_configs_by_workload(configs: Vec<Config>) -> (Vec<Config>, Vec<Config>) {
-    configs
-        .into_iter()
-        .partition(|c| c.workload_type.as_deref() == Some("proxy"))
+/// Partition configs into (proxy, expose, other).
+fn partition_configs_by_workload(configs: Vec<Config>) -> (Vec<Config>, Vec<Config>, Vec<Config>) {
+    let mut proxy = Vec::new();
+    let mut expose = Vec::new();
+    let mut other = Vec::new();
+    for c in configs {
+        match c.workload_type.as_deref() {
+            Some("proxy") => proxy.push(c),
+            Some("expose") => expose.push(c),
+            _ => other.push(c),
+        }
+    }
+    (proxy, expose, other)
 }
 
 #[cfg(test)]
@@ -160,7 +184,7 @@ mod tests {
             make_config(2, "proxy", "udp"),
         ];
 
-        let (proxy, other) = partition_configs_by_workload(configs);
+        let (proxy, _expose, other) = partition_configs_by_workload(configs);
 
         assert_eq!(
             proxy.len(),
@@ -187,7 +211,7 @@ mod tests {
             make_config(3, "service", "udp"),
         ];
 
-        let (proxy, other) = partition_configs_by_workload(configs);
+        let (proxy, _expose, other) = partition_configs_by_workload(configs);
 
         assert!(
             proxy.is_empty(),
@@ -210,7 +234,7 @@ mod tests {
             make_config(5, "service", "udp"),
         ];
 
-        let (proxy, other) = partition_configs_by_workload(configs);
+        let (proxy, _expose, other) = partition_configs_by_workload(configs);
 
         assert_eq!(proxy.len(), 2);
         assert_eq!(other.len(), 3);
@@ -224,7 +248,7 @@ mod tests {
 
     #[test]
     fn empty_configs_should_produce_empty_partitions() {
-        let (proxy, other) = partition_configs_by_workload(Vec::new());
+        let (proxy, _expose, other) = partition_configs_by_workload(Vec::new());
         assert!(proxy.is_empty());
         assert!(other.is_empty());
     }
@@ -234,7 +258,7 @@ mod tests {
         let mut config = make_config(1, "service", "tcp");
         config.workload_type = None;
 
-        let (proxy, other) = partition_configs_by_workload(vec![config]);
+        let (proxy, _expose, other) = partition_configs_by_workload(vec![config]);
 
         assert!(proxy.is_empty());
         assert_eq!(other.len(), 1);
@@ -254,8 +278,7 @@ mod tests {
         let proxy_udp_config = make_config(1, "proxy", "udp");
         let service_udp_config = make_config(2, "service", "udp");
 
-        let (proxy, other) =
-            partition_configs_by_workload(vec![proxy_udp_config, service_udp_config]);
+        let (proxy, _expose, other) = partition_configs_by_workload(vec![proxy_udp_config, service_udp_config]);
 
         // Verify proxy UDP config is in the proxy partition (will go to
         // deploy_and_forward_pod)

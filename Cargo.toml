@@ -55,6 +55,7 @@ k8s-openapi = { version = "0.27.1", default-features = false, features = [
 keyring-core = "1.0"
 ksni = "0.3"
 kftray-commons = { version = "0.27.30", path = "crates/kftray-commons" }
+kftray-expose = { version = "0.27.30", path = "crates/kftray-expose" }
 kftray-helper = { version = "0.27.30", path = "crates/kftray-helper" }
 kftray-hosts = { version = "0.27.30", path = "crates/kftray-hosts" }
 kftray-http-logs = { version = "0.27.30", path = "crates/kftray-http-logs" }

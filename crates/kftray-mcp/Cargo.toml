@@ -28,6 +28,7 @@ hyper = { workspace = true, features = ["http1", "server"] }
 hyper-util = { workspace = true, features = ["server", "tokio"] }
 k8s-openapi = { workspace = true }
 kftray-commons = { workspace = true }
+kftray-expose = { workspace = true }
 kftray-portforward = { workspace = true }
 kube = { workspace = true }
 log = { workspace = true }

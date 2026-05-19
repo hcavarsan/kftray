@@ -1,14 +1,9 @@
 pub mod dataplane_runtime;
-pub mod expose;
 pub mod kube;
 pub mod port_forward;
 pub mod port_forward_error;
 pub mod registry;
 
-pub use expose::{
-    start_expose,
-    stop_expose,
-};
 pub use kube::client::create_client_with_specific_context;
 pub use kube::models::{
     KubeContextInfo,

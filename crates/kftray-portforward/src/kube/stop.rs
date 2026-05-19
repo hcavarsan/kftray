@@ -420,10 +420,13 @@ pub async fn stop_port_forward_with_mode(
 
     let configs = load_configs(mode).await;
 
+    // Expose configs must be stopped by callers via kftray_expose, not here.
     if let Some(config) = configs.iter().find(|c| c.id == Some(config_id_parsed))
         && config.workload_type.as_deref() == Some("expose")
     {
-        return crate::expose::stop_expose(config_id_parsed, &config.namespace, mode).await;
+        return Err(PortForwardError::ConfigurationError {
+            message: "expose workload_type must be stopped via kftray_expose, not kftray_portforward".to_string(),
+        });
     }
 
     let pf_key = PORT_FORWARD_REGISTRY.find_key_for_config(config_id_parsed);
