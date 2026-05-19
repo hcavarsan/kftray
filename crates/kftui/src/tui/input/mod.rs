@@ -623,7 +623,7 @@ impl App {
     }
 
     pub async fn load_active_pods(&mut self, config_states: &[ConfigState]) {
-        use kftray_portforward::registry::PORT_FORWARD_REGISTRY;
+        use kftray_kube::registry::PORT_FORWARD_REGISTRY;
 
         for config_state in config_states {
             if config_state.is_running {
@@ -1531,7 +1531,7 @@ pub async fn handle_delete_confirmation_input(
 
                 // Clean up timeout tracking for these configs to prevent memory leaks
                 for id in &ids_to_delete {
-                    kftray_portforward::kube::clear_stopped_by_timeout(*id);
+                    kftray_kube::kube::clear_stopped_by_timeout(*id);
                 }
 
                 match kftray_commons::utils::config::delete_configs_with_mode(

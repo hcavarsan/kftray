@@ -966,7 +966,7 @@ jobs:
             crates/kftray-commons
             crates/kftray-helper
             crates/kftray-http-logs
-            crates/kftray-portforward
+            crates/kftray-kube
             crates/kftray-network-monitor
             crates/kftui
 
@@ -1036,7 +1036,7 @@ jobs:
             "crates/kftray-commons"
             "crates/kftray-helper"
             "crates/kftray-http-logs"
-            "crates/kftray-portforward"
+            "crates/kftray-kube"
             "crates/kftray-network-monitor"
             "crates/kftui"
           )

@@ -61,7 +61,7 @@ kftray-hosts = { version = "0.27.30", path = "crates/kftray-hosts" }
 kftray-http-logs = { version = "0.27.30", path = "crates/kftray-http-logs" }
 kftray-mcp = { version = "0.27.30", path = "crates/kftray-mcp" }
 kftray-network-monitor = { version = "0.27.30", path = "crates/kftray-network-monitor" }
-kftray-portforward = { version = "0.27.30", path = "crates/kftray-portforward" }
+kftray-kube = { version = "0.27.30", path = "crates/kftray-kube" }
 kftray-shortcuts = { version = "0.27.30", path = "crates/kftray-shortcuts" }
 kftray-ssl = { version = "0.27.30", path = "crates/kftray-ssl" }
 kube-portforward = { version = "0.1", path = "crates/kube-portforward" }

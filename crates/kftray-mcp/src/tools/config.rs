@@ -522,7 +522,7 @@ impl McpTool for DeleteConfigTool {
         };
 
         // Try to stop if running (log errors but proceed with deletion)
-        if let Err(e) = kftray_portforward::stop_port_forward(args.config_id.to_string()).await {
+        if let Err(e) = kftray_kube::stop_port_forward(args.config_id.to_string()).await {
             log::debug!(
                 "Failed to stop port-forward for config {} before deletion: {e}",
                 args.config_id

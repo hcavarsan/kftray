@@ -94,7 +94,7 @@ function FilterChipsComponent({
       {selectedModules.map(module => {
         const formatModuleName = (mod: string): string => {
           const formatted = mod
-            .replace(/^kftray_portforward::/, '')
+            .replace(/^kftray_kube::/, '')
             .replace(/^kftray_tauri::/, '')
             .replace(/^kftray_/, '')
           const segments = formatted.split('::')

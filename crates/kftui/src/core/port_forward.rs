@@ -12,7 +12,7 @@ use kftray_commons::models::config_model::Config;
 use kftray_commons::utils::config::get_config_with_mode;
 use kftray_commons::utils::config_state::cleanup_current_process_config_states_with_mode;
 use kftray_commons::utils::db_mode::DatabaseMode;
-use kftray_portforward::kube::{
+use kftray_kube::kube::{
     deploy_and_forward_pod_with_mode,
     start_port_forward_with_mode as kube_start_port_forward,
     stop_all_port_forward_with_mode,
@@ -42,7 +42,7 @@ pub async fn start_port_forwarding_with_ssl(
         Some("expose") => {
             kftray_expose::start_expose(vec![config.clone()], mode)
                 .await
-                .map_err(|e| kftray_portforward::PortForwardError::Expose(e.to_string()))
+                .map_err(|e| kftray_kube::PortForwardError::Expose(e.to_string()))
         }
         Some("service") | Some("pod") => match config.protocol.as_str() {
             "tcp" => kube_start_port_forward(vec![config.clone()], "tcp", mode, ssl_override).await,
@@ -78,7 +78,7 @@ pub async fn stop_port_forwarding(app: &mut App, config: Config, mode: DatabaseM
         Some("expose") => {
             kftray_expose::stop_expose(config_id, &config.namespace, mode)
                 .await
-                .map_err(|e| kftray_portforward::PortForwardError::Expose(e.to_string()))
+                .map_err(|e| kftray_kube::PortForwardError::Expose(e.to_string()))
         }
         Some("service") | Some("pod") => {
             stop_port_forward_with_mode(config_id.to_string(), mode).await

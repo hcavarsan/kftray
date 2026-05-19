@@ -12,6 +12,6 @@ license = "GPL-3.0"
 futures = { workspace = true }
 kftray-commons = { workspace = true }
 kftray-expose = { workspace = true }
-kftray-portforward = { workspace = true }
+kftray-kube = { workspace = true }
 log = { workspace = true }
 tokio = { workspace = true }

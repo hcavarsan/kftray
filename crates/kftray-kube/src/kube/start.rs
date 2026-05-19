@@ -754,7 +754,7 @@ pub async fn start_port_forward_with_mode(
         .any(|c| c.workload_type.as_deref() == Some("expose"));
     if has_expose {
         return Err(PortForwardError::ConfigurationError {
-            message: "expose workload_type must be dispatched via kftray_expose, not kftray_portforward".to_string(),
+            message: "expose workload_type must be dispatched via kftray_expose, not kftray_kube".to_string(),
         });
     }
 
