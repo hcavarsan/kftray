@@ -14,8 +14,7 @@ pub use expose::{
     start_expose,
     stop_expose,
 };
-pub use kftray_http_logs::HttpLogger as Logger;
-pub use kube::client::*;
+pub use kube::client::create_client_with_specific_context;
 pub use kube::models::{
     KubeContextInfo,
     KubeNamespaceInfo,
@@ -23,7 +22,10 @@ pub use kube::models::{
     KubeServicePortInfo,
     PodInfo,
 };
-pub use kube::operations::*;
+pub use kube::operations::{
+    list_all_namespaces,
+    list_kube_contexts,
+};
 pub use kube::{
     deploy_and_forward_pod,
     retrieve_service_configs,
