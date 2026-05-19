@@ -21,40 +21,78 @@ use crate::kube::models::{
 use crate::kube::shared_client::ServiceClientKey;
 use crate::registry::PORT_FORWARD_REGISTRY;
 
+/// Distinguishes direct port-forward (with a local listener) from expose
+/// mode (direct + a WebSocket tunnel client back to the local service).
+pub enum PortForwardKind {
+    Direct(Arc<PortForwarder>),
+    Expose {
+        forwarder: Arc<PortForwarder>,
+        ws_handle: JoinHandle<()>,
+    },
+}
+
 pub struct PortForwardProcess {
     pub handle: JoinHandle<anyhow::Result<()>>,
-    pub direct_forwarder: Option<Arc<PortForwarder>>,
+    /// `None` only in unit-tests where no real forwarder is available.
+    pub kind: Option<PortForwardKind>,
     pub cancellation_token: CancellationToken,
     pub config_id: String,
-    pub ws_client_handle: Option<JoinHandle<()>>,
 }
 
 impl PortForwardProcess {
+    /// Test-only constructor: no forwarder, fresh cancellation token.
+    #[cfg(test)]
     pub fn new(handle: JoinHandle<anyhow::Result<()>>, config_id: String) -> Self {
         Self {
             handle,
-            direct_forwarder: None,
+            kind: None,
             cancellation_token: CancellationToken::new(),
             config_id,
-            ws_client_handle: None,
         }
     }
 
-    pub fn with_forwarder_and_token(
+    pub fn direct(
         handle: JoinHandle<anyhow::Result<()>>, forwarder: Arc<PortForwarder>, config_id: String,
         cancellation_token: CancellationToken,
     ) -> Self {
         Self {
             handle,
-            direct_forwarder: Some(forwarder),
+            kind: Some(PortForwardKind::Direct(forwarder)),
             cancellation_token,
             config_id,
-            ws_client_handle: None,
         }
     }
 
-    pub fn set_ws_client_handle(&mut self, ws_handle: JoinHandle<()>) {
-        self.ws_client_handle = Some(ws_handle);
+    /// Upgrade a `Direct` process to `Expose` by attaching the WebSocket
+    /// tunnel handle.  Panics if `kind` is not `Direct`.
+    pub fn upgrade_to_expose(&mut self, ws_handle: JoinHandle<()>) {
+        match self.kind.take() {
+            Some(PortForwardKind::Direct(forwarder)) => {
+                self.kind = Some(PortForwardKind::Expose {
+                    forwarder,
+                    ws_handle,
+                });
+            }
+            other => panic!(
+                "upgrade_to_expose called on non-Direct process (config {}), was {:?}",
+                self.config_id,
+                match other {
+                    Some(PortForwardKind::Expose { .. }) => "Expose",
+                    None => "None",
+                    _ => "unknown",
+                }
+            ),
+        }
+    }
+
+    /// Return a reference-counted handle to the forwarder (present in both
+    /// `Direct` and `Expose` variants).
+    pub fn forwarder(&self) -> Option<Arc<PortForwarder>> {
+        match &self.kind {
+            Some(PortForwardKind::Direct(f)) => Some(f.clone()),
+            Some(PortForwardKind::Expose { forwarder, .. }) => Some(forwarder.clone()),
+            None => None,
+        }
     }
 
     /// Cleanup and abort the port forward process.
@@ -70,29 +108,46 @@ impl PortForwardProcess {
         // Brief delay for cancellation to propagate (reduced from 1500ms)
         tokio::time::sleep(CANCEL_PROPAGATION_DELAY).await;
 
-        // Shutdown forwarder with timeout to prevent blocking
-        if let Some(forwarder) = &self.direct_forwarder {
-            tracing::info!(
-                "Cleaning up forwarder resources for config: {}",
-                self.config_id
-            );
-            if timeout(SHUTDOWN_TIMEOUT, forwarder.shutdown())
-                .await
-                .is_err()
-            {
-                tracing::warn!(
-                    "Forwarder shutdown timed out for config: {}, forcing abort",
+        match self.kind {
+            Some(PortForwardKind::Direct(ref forwarder)) => {
+                tracing::info!(
+                    "Cleaning up forwarder resources for config: {}",
                     self.config_id
                 );
+                if timeout(SHUTDOWN_TIMEOUT, forwarder.shutdown())
+                    .await
+                    .is_err()
+                {
+                    tracing::warn!(
+                        "Forwarder shutdown timed out for config: {}, forcing abort",
+                        self.config_id
+                    );
+                }
             }
-        }
-
-        if let Some(ws_handle) = self.ws_client_handle {
-            tracing::info!(
-                "Aborting WebSocket client task for config: {}",
-                self.config_id
-            );
-            ws_handle.abort();
+            Some(PortForwardKind::Expose {
+                ref forwarder,
+                ws_handle,
+            }) => {
+                tracing::info!(
+                    "Cleaning up forwarder resources for config: {}",
+                    self.config_id
+                );
+                if timeout(SHUTDOWN_TIMEOUT, forwarder.shutdown())
+                    .await
+                    .is_err()
+                {
+                    tracing::warn!(
+                        "Forwarder shutdown timed out for config: {}, forcing abort",
+                        self.config_id
+                    );
+                }
+                tracing::info!(
+                    "Aborting WebSocket client task for config: {}",
+                    self.config_id
+                );
+                ws_handle.abort();
+            }
+            None => {}
         }
 
         self.handle.abort();
@@ -108,10 +163,12 @@ impl PortForwardProcess {
     }
 
     pub async fn get_current_active_pod(&self) -> Option<String> {
-        if let Some(forwarder) = &self.direct_forwarder {
-            forwarder.get_current_active_pod().await
-        } else {
-            None
+        match &self.kind {
+            Some(PortForwardKind::Direct(forwarder))
+            | Some(PortForwardKind::Expose { forwarder, .. }) => {
+                forwarder.get_current_active_pod().await
+            }
+            None => None,
         }
     }
 }
@@ -216,7 +273,7 @@ impl PortForward {
             }
         };
 
-        let process = PortForwardProcess::with_forwarder_and_token(
+        let process = PortForwardProcess::direct(
             handle,
             forwarder_clone,
             self.config_id.to_string(),
@@ -274,7 +331,7 @@ impl PortForward {
             }
         };
 
-        let process = PortForwardProcess::with_forwarder_and_token(
+        let process = PortForwardProcess::direct(
             handle,
             forwarder_clone,
             self.config_id.to_string(),

@@ -128,9 +128,9 @@ async fn start_single_expose(
         }
     });
 
-    // Store the WebSocket client handle so it can be aborted when stopping
+    // Upgrade from Direct → Expose so cleanup aborts the WS tunnel too
     PORT_FORWARD_REGISTRY.with_process_mut(&pf_key, |entry| {
-        entry.process.set_ws_client_handle(ws_handle);
+        entry.process.upgrade_to_expose(ws_handle);
     });
 
     let config_state = ConfigState {

@@ -216,7 +216,7 @@ impl PortForwardRegistry {
             .processes
             .iter()
             .filter(|entry| entry.key().config_id == config_id)
-            .filter_map(|entry| entry.value().process.direct_forwarder.clone())
+            .filter_map(|entry| entry.value().process.forwarder())
             .collect();
 
         for forwarder in forwarders {
