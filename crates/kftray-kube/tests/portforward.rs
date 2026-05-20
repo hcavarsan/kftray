@@ -37,7 +37,7 @@ struct KubernetesMocker {
 }
 
 impl KubernetesMocker {
-    fn new(handle: mock::Handle<Request<Body>, Response<Body>>) -> Self {
+    const fn new(handle: mock::Handle<Request<Body>, Response<Body>>) -> Self {
         Self { handle }
     }
 
