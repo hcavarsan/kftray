@@ -10,7 +10,7 @@ use tokio::sync::Mutex;
 
 use crate::client::create_client_with_specific_context;
 use crate::shared_client::ServiceClientKey;
-use crate::port_forward::PortForwardProcess;
+use crate::portforward::process::PortForwardProcess;
 
 pub static PORT_FORWARD_REGISTRY: std::sync::LazyLock<PortForwardRegistry> =
     std::sync::LazyLock::new(PortForwardRegistry::new);

@@ -2,7 +2,6 @@ pub mod client;
 pub mod dataplane_runtime;
 pub mod http_log_watcher;
 pub mod portforward;
-pub mod port_forward;
 pub mod error;
 pub mod registry;
 pub mod shared_client;

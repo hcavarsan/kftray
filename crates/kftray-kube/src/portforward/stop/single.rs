@@ -201,7 +201,7 @@ pub async fn stop_port_forward_with_mode(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::port_forward::PortForwardProcess;
+    use crate::portforward::process::PortForwardProcess;
     use crate::registry::PortForwardKey;
 
     async fn create_dummy_handle() -> PortForwardProcess {
