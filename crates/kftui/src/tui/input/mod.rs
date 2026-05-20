@@ -1528,7 +1528,7 @@ pub(crate) async fn handle_delete_confirmation_input(
 
                 // Clean up timeout tracking for these configs to prevent memory leaks
                 for id in &ids_to_delete {
-                    kftray_kube::kube::clear_stopped_by_timeout(*id);
+                    kftray_kube::clear_stopped_by_timeout(*id);
                 }
 
                 match kftray_commons::utils::config::delete_configs_with_mode(
