@@ -53,7 +53,7 @@ use crate::kube::models::{
     TargetSelector,
 };
 use crate::kube::tcp::TcpForwarder;
-use crate::kube::udp_forwarder::UdpForwarder;
+use crate::kube::udp::UdpForwarder;
 use crate::registry::PORT_FORWARD_REGISTRY;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

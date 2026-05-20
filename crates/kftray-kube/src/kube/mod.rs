@@ -8,7 +8,7 @@ mod service;
 mod start;
 mod stop;
 pub mod tcp;
-pub mod udp_forwarder;
+pub mod udp;
 
 #[cfg(test)]
 mod tests;
