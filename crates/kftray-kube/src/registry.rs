@@ -294,7 +294,6 @@ impl PortForwardRegistry {
     }
 
     /// Clear all processes without decrementing refs (for tests).
-    #[cfg(test)]
     pub fn clear(&self) {
         self.processes.clear();
         self.clients.clear();

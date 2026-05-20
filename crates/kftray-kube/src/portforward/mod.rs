@@ -4,13 +4,10 @@ pub mod operations;
 pub mod process;
 pub mod proxy;
 mod service;
-mod start;
-mod stop;
+pub mod start;
+pub mod stop;
 pub mod tcp;
 pub mod udp;
-
-#[cfg(test)]
-mod tests;
 
 
 pub use listener::{
