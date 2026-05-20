@@ -1,6 +1,6 @@
 use std::fmt;
 
-use crate::kube::client::error::KubeClientError;
+use crate::client::error::KubeClientError;
 
 #[derive(Debug)]
 #[non_exhaustive]

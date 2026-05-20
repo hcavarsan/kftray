@@ -1,4 +1,3 @@
-pub mod client;
 pub mod http_log_watcher;
 pub mod listener;
 pub mod models;

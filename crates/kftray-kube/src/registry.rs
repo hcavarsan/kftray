@@ -8,7 +8,7 @@ use dashmap::DashMap;
 use kube::Client;
 use tokio::sync::Mutex;
 
-use crate::kube::client::create_client_with_specific_context;
+use crate::client::create_client_with_specific_context;
 use crate::kube::shared_client::ServiceClientKey;
 use crate::port_forward::PortForwardProcess;
 

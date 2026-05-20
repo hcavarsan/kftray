@@ -155,11 +155,11 @@ impl PortForwarder {
 
         let cluster_url = {
             let paths =
-                crate::kube::client::config::get_kubeconfig_paths_from_option(kubeconfig.clone())?;
-            let (merged, _ctxs, _errs) = crate::kube::client::config::merge_kubeconfigs(&paths)?;
+                crate::client::config::get_kubeconfig_paths_from_option(kubeconfig.clone())?;
+            let (merged, _ctxs, _errs) = crate::client::config::merge_kubeconfigs(&paths)?;
             let ctx_name = context_name.as_deref().unwrap_or("@current");
             let cfg =
-                crate::kube::client::config::create_config_with_context(&merged, ctx_name).await?;
+                crate::client::config::create_config_with_context(&merged, ctx_name).await?;
             cfg.cluster_url.clone()
         };
 

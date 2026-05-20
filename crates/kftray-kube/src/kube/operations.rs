@@ -14,8 +14,8 @@ use kube::{
 };
 use log::info;
 
-use super::client::create_client_with_specific_context;
-use super::client::error::{
+use crate::client::create_client_with_specific_context;
+use crate::client::error::{
     KubeClientError,
     KubeResult,
 };
