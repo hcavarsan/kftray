@@ -4,6 +4,7 @@ pub mod kube;
 pub mod port_forward;
 pub mod port_forward_error;
 pub mod registry;
+pub mod shared_client;
 
 pub use client::create_client_with_specific_context;
 pub use kube::models::{

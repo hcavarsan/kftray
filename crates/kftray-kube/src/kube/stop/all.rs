@@ -34,7 +34,7 @@ use super::cleanup::{
     delete_proxy_cluster_resources,
     load_configs,
 };
-use crate::kube::shared_client::ServiceClientKey;
+use crate::shared_client::ServiceClientKey;
 use crate::port_forward_error::PortForwardError;
 use crate::registry::PORT_FORWARD_REGISTRY;
 

@@ -373,7 +373,7 @@ impl ProxyRecoveryManager {
     /// - [`ProxyType::Deployment`] → stream reconnection via
     ///   [`recover_deployment()`]
     async fn do_recovery_attempt(&self) -> anyhow::Result<()> {
-        let client_key = crate::kube::shared_client::ServiceClientKey::new(
+        let client_key = crate::shared_client::ServiceClientKey::new(
             self.config.context.clone(),
             self.config.kubeconfig.clone(),
         );

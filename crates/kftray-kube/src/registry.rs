@@ -9,7 +9,7 @@ use kube::Client;
 use tokio::sync::Mutex;
 
 use crate::client::create_client_with_specific_context;
-use crate::kube::shared_client::ServiceClientKey;
+use crate::shared_client::ServiceClientKey;
 use crate::port_forward::PortForwardProcess;
 
 pub static PORT_FORWARD_REGISTRY: std::sync::LazyLock<PortForwardRegistry> =

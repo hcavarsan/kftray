@@ -39,7 +39,7 @@ use crate::{
         Target,
         TargetSelector,
     },
-    kube::shared_client::ServiceClientKey,
+    shared_client::ServiceClientKey,
     port_forward_error::PortForwardError,
     registry::{
         PORT_FORWARD_REGISTRY,

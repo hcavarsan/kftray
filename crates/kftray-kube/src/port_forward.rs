@@ -18,7 +18,7 @@ use crate::kube::models::{
     PortForward,
     Target,
 };
-use crate::kube::shared_client::ServiceClientKey;
+use crate::shared_client::ServiceClientKey;
 use crate::registry::PORT_FORWARD_REGISTRY;
 
 /// Distinguishes direct port-forward (with a local listener) from expose
@@ -433,7 +433,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_registry_process_insert_remove() {
-        use crate::kube::shared_client::ServiceClientKey;
+        use crate::shared_client::ServiceClientKey;
         use crate::registry::{
             PORT_FORWARD_REGISTRY,
             PortForwardKey,

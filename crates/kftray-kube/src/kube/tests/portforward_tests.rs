@@ -25,7 +25,7 @@ use crate::kube::models::{
     Target,
     TargetSelector,
 };
-use crate::kube::shared_client::ServiceClientKey;
+use crate::shared_client::ServiceClientKey;
 use crate::kube::start::start_port_forward;
 use crate::registry::{
     PORT_FORWARD_REGISTRY,

@@ -148,7 +148,7 @@ impl PortForwarder {
         namespace: &str, target: Target, context_name: Option<String>, kubeconfig: Option<String>,
         config_id: i64,
     ) -> anyhow::Result<Self> {
-        let client_key = crate::kube::shared_client::ServiceClientKey::new(
+        let client_key = crate::shared_client::ServiceClientKey::new(
             context_name.clone(),
             kubeconfig.clone(),
         );

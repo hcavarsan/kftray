@@ -25,7 +25,7 @@ use super::cleanup::{
     delete_proxy_cluster_resources,
     load_configs,
 };
-use crate::kube::shared_client::ServiceClientKey;
+use crate::shared_client::ServiceClientKey;
 use crate::port_forward_error::PortForwardError;
 use crate::registry::PORT_FORWARD_REGISTRY;
 
@@ -226,7 +226,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_stop_port_forward_with_handle() {
-        use crate::kube::shared_client::ServiceClientKey;
+        use crate::shared_client::ServiceClientKey;
 
         let dummy_handle = create_dummy_handle().await;
         let key = PortForwardKey::named(20100, "test-service");
@@ -250,7 +250,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_stop_port_forward_with_multiple_handles() {
-        use crate::kube::shared_client::ServiceClientKey;
+        use crate::shared_client::ServiceClientKey;
 
         let dummy_handle1 = create_dummy_handle().await;
         let dummy_handle2 = create_dummy_handle().await;

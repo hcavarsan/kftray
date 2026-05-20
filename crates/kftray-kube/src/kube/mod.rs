@@ -6,7 +6,6 @@ mod proxy;
 // proxy_recovery is now proxy::recovery; re-export for backward compat
 pub use proxy::recovery as proxy_recovery;
 mod service;
-pub mod shared_client;
 mod start;
 mod stop;
 pub mod tcp_forwarder;
