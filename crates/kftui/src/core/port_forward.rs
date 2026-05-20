@@ -12,7 +12,7 @@ use kftray_commons::models::config_model::Config;
 use kftray_commons::utils::config::get_config_with_mode;
 use kftray_commons::utils::config_state::cleanup_current_process_config_states_with_mode;
 use kftray_commons::utils::db_mode::DatabaseMode;
-use kftray_kube::{
+use kftray_kube::portforward::{
     deploy_and_forward_pod_with_mode,
     start_port_forward_with_mode as kube_start_port_forward,
     stop_all_port_forward_with_mode,

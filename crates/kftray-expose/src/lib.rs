@@ -15,7 +15,7 @@ use kftray_commons::models::{
 };
 use kftray_commons::utils::config_state::update_config_state_with_mode;
 use kftray_commons::utils::db_mode::DatabaseMode;
-use kftray_kube::kube::shared_client::ServiceClientKey;
+use kftray_kube::shared_client::ServiceClientKey;
 use kftray_kube::registry::{
     PORT_FORWARD_REGISTRY,
     PortForwardKey,
@@ -44,7 +44,7 @@ pub async fn start_expose(
 async fn start_single_expose(
     config: Config, mode: DatabaseMode,
 ) -> Result<CustomResponse, ExposeError> {
-    use kftray_kube::kube::models::{
+    use kftray_kube::portforward::models::{
         NameSpace,
         Port,
         PortForward,
