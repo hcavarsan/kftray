@@ -49,7 +49,7 @@ use rand::distr::{
 };
 
 use crate::shared_client::ServiceClientKey;
-use crate::port_forward_error::PortForwardError;
+use crate::error::PortForwardError;
 use crate::registry::PORT_FORWARD_REGISTRY;
 
 pub async fn deploy_and_forward_pod(

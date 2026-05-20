@@ -40,7 +40,7 @@ use crate::{
         TargetSelector,
     },
     shared_client::ServiceClientKey,
-    port_forward_error::PortForwardError,
+    error::PortForwardError,
     registry::{
         PORT_FORWARD_REGISTRY,
         PortForwardKey,

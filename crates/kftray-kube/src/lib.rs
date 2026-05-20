@@ -3,7 +3,7 @@ pub mod dataplane_runtime;
 pub mod http_log_watcher;
 pub mod kube;
 pub mod port_forward;
-pub mod port_forward_error;
+pub mod error;
 pub mod registry;
 pub mod shared_client;
 
@@ -30,7 +30,7 @@ pub use kube::{
     stop_proxy_forward,
     stop_proxy_forward_with_mode,
 };
-pub use port_forward_error::{
+pub use error::{
     PortForwardError,
     PortForwardResult,
 };

@@ -33,7 +33,7 @@ pub use timeout::{
 };
 
 use crate::{
-    port_forward_error::PortForwardError,
+    error::PortForwardError,
     registry::{
         PORT_FORWARD_REGISTRY,
         PortForwardKey,

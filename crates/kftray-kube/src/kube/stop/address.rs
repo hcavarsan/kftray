@@ -7,7 +7,7 @@ use tracing::{
     warn,
 };
 
-use crate::port_forward_error::PortForwardError;
+use crate::error::PortForwardError;
 
 /// Synchronous helper function to release address via helper service.
 /// Must be called from spawn_blocking to avoid blocking the tokio runtime.

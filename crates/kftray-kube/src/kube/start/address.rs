@@ -7,7 +7,7 @@ use log::{
 };
 use tokio::sync::Mutex as TokioMutex;
 
-use crate::port_forward_error::PortForwardError;
+use crate::error::PortForwardError;
 
 pub(super) static FALLBACK_ALLOCATION_MUTEX: std::sync::LazyLock<TokioMutex<()>> =
     std::sync::LazyLock::new(|| TokioMutex::new(()));

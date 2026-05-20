@@ -17,7 +17,7 @@ use crate::kube::operations::{
     list_all_namespaces,
 };
 use crate::shared_client::ServiceClientKey;
-use crate::port_forward_error::PortForwardError;
+use crate::error::PortForwardError;
 use crate::registry::PORT_FORWARD_REGISTRY;
 pub async fn retrieve_service_configs(
     context: &str, kubeconfig: Option<String>,

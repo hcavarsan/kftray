@@ -26,7 +26,7 @@ use super::cleanup::{
     load_configs,
 };
 use crate::shared_client::ServiceClientKey;
-use crate::port_forward_error::PortForwardError;
+use crate::error::PortForwardError;
 use crate::registry::PORT_FORWARD_REGISTRY;
 
 pub async fn stop_port_forward(config_id: String) -> Result<CustomResponse, PortForwardError> {
