@@ -67,7 +67,7 @@ impl ConfigManager {
             .filter_map(|config| {
                 config.id.map(|config_id| {
                     tokio::spawn(async move {
-                        kftray_kube::kube::stop_port_forward(config_id.to_string()).await
+                        kftray_kube::stop_port_forward(config_id.to_string()).await
                     })
                 })
             })
@@ -84,7 +84,7 @@ impl ConfigManager {
         let (proxy_configs, expose_configs, other_configs) = partition_configs_by_workload(configs);
 
         if !other_configs.is_empty() {
-            match kftray_kube::kube::start_port_forward(other_configs, protocol).await {
+            match kftray_kube::start_port_forward(other_configs, protocol).await {
                 Ok(_) => info!("Successfully restarted {protocol} port forwards"),
                 Err(e) => {
                     if protocol == "udp" && e.to_string().contains("No ready pods available") {
@@ -118,7 +118,7 @@ impl ConfigManager {
                 .into_iter()
                 .filter(|config| {
                     if let Some(config_id) = config.id
-                        && kftray_kube::kube::proxy_recovery::RECOVERY_LOCKS
+                        && kftray_kube::portforward::proxy::recovery::RECOVERY_LOCKS
                             .contains_key(&config_id)
                     {
                         info!(
@@ -132,7 +132,7 @@ impl ConfigManager {
                 .collect();
 
             if !configs_to_restart.is_empty() {
-                match kftray_kube::kube::deploy_and_forward_pod(configs_to_restart).await {
+                match kftray_kube::deploy_and_forward_pod(configs_to_restart).await {
                     Ok(_) => info!("Successfully restarted {protocol} proxy port forwards"),
                     Err(e) => {
                         error!("Failed to restart {protocol} proxy port forwards: {e}");
