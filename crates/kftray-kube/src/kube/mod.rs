@@ -7,7 +7,7 @@ pub use proxy::recovery as proxy_recovery;
 mod service;
 mod start;
 mod stop;
-pub mod tcp_forwarder;
+pub mod tcp;
 pub mod udp_forwarder;
 
 #[cfg(test)]

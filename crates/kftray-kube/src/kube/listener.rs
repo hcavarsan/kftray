@@ -52,7 +52,7 @@ use crate::kube::models::{
     Target,
     TargetSelector,
 };
-use crate::kube::tcp_forwarder::TcpForwarder;
+use crate::kube::tcp::TcpForwarder;
 use crate::kube::udp_forwarder::UdpForwarder;
 use crate::registry::PORT_FORWARD_REGISTRY;
 
