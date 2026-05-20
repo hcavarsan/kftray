@@ -3552,10 +3552,7 @@ name = "kftray-kube"
 version = "0.27.30"
 dependencies = [
  "anyhow",
- "base64 0.22.1",
- "bytes",
  "dashmap",
- "dirs",
  "futures",
  "http",
  "httparse",
