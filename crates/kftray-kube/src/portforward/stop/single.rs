@@ -80,13 +80,13 @@ pub async fn stop_port_forward_with_mode(
 
         // Cancel any in-progress recovery for this config
         if let Some((_, manager)) =
-            crate::portforward::proxy_recovery::RECOVERY_MANAGERS.remove(&config_id_parsed)
+            crate::portforward::proxy::recovery::RECOVERY_MANAGERS.remove(&config_id_parsed)
         {
             manager.cancel();
             info!("Cancelled recovery manager for config {}", config_id_parsed);
         }
         // Clean up recovery coordination lock
-        crate::portforward::proxy_recovery::remove_recovery_lock(config_id_parsed);
+        crate::portforward::proxy::recovery::remove_recovery_lock(config_id_parsed);
 
         if let Some(config) = configs.iter().find(|c| c.id == Some(config_id_parsed)) {
             let needs_cluster_cleanup =

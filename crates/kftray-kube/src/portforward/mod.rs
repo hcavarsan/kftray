@@ -2,9 +2,7 @@ pub mod listener;
 pub mod models;
 pub mod operations;
 pub mod process;
-mod proxy;
-// proxy_recovery is now proxy::recovery; re-export for backward compat
-pub use proxy::recovery as proxy_recovery;
+pub mod proxy;
 mod service;
 mod start;
 mod stop;
