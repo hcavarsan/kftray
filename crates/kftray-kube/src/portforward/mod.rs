@@ -3,18 +3,13 @@ pub mod models;
 pub mod operations;
 pub mod process;
 pub mod proxy;
-mod service;
 pub mod start;
 pub mod stop;
 pub mod tcp;
 pub mod udp;
+mod service;
 
-
-pub use listener::{
-    ListenerConfig,
-    PortForwarder,
-    Protocol,
-};
+pub use listener::{ListenerConfig, PortForwarder, Protocol};
 pub use proxy::{
     deploy_and_forward_pod,
     deploy_and_forward_pod_with_mode,
