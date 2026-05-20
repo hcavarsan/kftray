@@ -12,7 +12,7 @@ use log::{
     info,
 };
 
-use crate::kube::operations::{
+use crate::portforward::operations::{
     get_services_with_annotation,
     list_all_namespaces,
 };

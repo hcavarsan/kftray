@@ -9,12 +9,12 @@ use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 use tracing::instrument;
 
-use crate::kube::listener::{
+use crate::portforward::listener::{
     ListenerConfig,
     PortForwarder,
     Protocol,
 };
-use crate::kube::models::{
+use crate::portforward::models::{
     PortForward,
     Target,
 };
@@ -369,7 +369,7 @@ mod tests {
     use tracing_subscriber;
 
     use super::*;
-    use crate::kube::models::{
+    use crate::portforward::models::{
         NameSpace,
         Port,
         TargetSelector,

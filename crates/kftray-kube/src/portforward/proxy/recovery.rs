@@ -442,7 +442,7 @@ pub async fn recover_bare_pod(config: &Config, client: &kube::Client) -> anyhow:
         .ok_or_else(|| anyhow::anyhow!("Config has no ID"))?;
     let namespace = &config.namespace;
 
-    crate::kube::stop::delete_proxy_cluster_resources(client.clone(), namespace, config_id).await;
+    crate::portforward::stop::delete_proxy_cluster_resources(client.clone(), namespace, config_id).await;
     cleanup_child_processes_for_config(config_id).await;
 
     // Remove the current recovery manager BEFORE re-deploying.
@@ -546,7 +546,7 @@ pub async fn recover_deployment(config: &Config, client: &kube::Client) -> anyho
             // UDP: the stream is single-shot, so we need to restart the port forward
             if config.protocol.eq_ignore_ascii_case("udp") {
                 cleanup_child_processes_for_config(config_id).await;
-                crate::kube::start::start_port_forward(vec![config.clone()], "udp")
+                crate::portforward::start::start_port_forward(vec![config.clone()], "udp")
                     .await
                     .map_err(|e| anyhow::anyhow!("Failed to restart UDP forward: {e}"))?;
             }

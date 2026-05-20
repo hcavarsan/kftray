@@ -1,25 +1,25 @@
 pub mod client;
 pub mod dataplane_runtime;
 pub mod http_log_watcher;
-pub mod kube;
+pub mod portforward;
 pub mod port_forward;
 pub mod error;
 pub mod registry;
 pub mod shared_client;
 
 pub use client::create_client_with_specific_context;
-pub use kube::models::{
+pub use portforward::models::{
     KubeContextInfo,
     KubeNamespaceInfo,
     KubeServiceInfo,
     KubeServicePortInfo,
     PodInfo,
 };
-pub use kube::operations::{
+pub use portforward::operations::{
     list_all_namespaces,
     list_kube_contexts,
 };
-pub use kube::{
+pub use portforward::{
     deploy_and_forward_pod,
     retrieve_service_configs,
     start_port_forward,

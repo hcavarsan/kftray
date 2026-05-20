@@ -20,13 +20,13 @@ use tokio::net::TcpStream;
 use tokio::time::timeout;
 use tower_test::mock;
 
-use crate::kube::models::{
+use crate::portforward::models::{
     PortForward,
     Target,
     TargetSelector,
 };
 use crate::shared_client::ServiceClientKey;
-use crate::kube::start::start_port_forward;
+use crate::portforward::start::start_port_forward;
 use crate::registry::{
     PORT_FORWARD_REGISTRY,
     PortForwardKey,
@@ -684,7 +684,7 @@ async fn test_start_port_forward_mock_components_udp() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use crate::kube::operations::list_kube_contexts;
+    use crate::portforward::operations::list_kube_contexts;
 
     #[tokio::test]
     async fn test_list_kube_contexts_empty() {

@@ -33,7 +33,7 @@ use super::timeout::{
     create_static_timeout_callback,
 };
 use crate::{
-    kube::models::{
+    portforward::models::{
         Port,
         PortForward,
         Target,
@@ -389,7 +389,7 @@ mod tests {
         hostfile::HostEntry,
     };
 
-    use crate::kube::models::TargetSelector;
+    use crate::portforward::models::TargetSelector;
 
     fn setup_test_config() -> Config {
         Config {

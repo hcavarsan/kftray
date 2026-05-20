@@ -184,11 +184,11 @@ pub async fn stop_all_port_forward_with_mode(
     cluster_cleanup_tasks.collect::<Vec<_>>().await;
 
     // Cancel all recovery managers
-    for entry in crate::kube::proxy_recovery::RECOVERY_MANAGERS.iter() {
+    for entry in crate::portforward::proxy_recovery::RECOVERY_MANAGERS.iter() {
         entry.value().cancel();
     }
-    crate::kube::proxy_recovery::RECOVERY_MANAGERS.clear();
-    crate::kube::proxy_recovery::RECOVERY_LOCKS.clear();
+    crate::portforward::proxy_recovery::RECOVERY_MANAGERS.clear();
+    crate::portforward::proxy_recovery::RECOVERY_LOCKS.clear();
     info!("Cancelled and cleared all recovery managers");
 
     let address_cleanup_tasks: FuturesUnordered<_> = configs

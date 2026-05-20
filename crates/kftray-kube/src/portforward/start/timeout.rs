@@ -36,7 +36,7 @@ pub(super) async fn handle_timeout_callback(id: i64) {
 
     STOPPED_BY_TIMEOUT.insert(id);
 
-    if let Err(e) = crate::kube::stop::stop_port_forward(id.to_string()).await {
+    if let Err(e) = crate::portforward::stop::stop_port_forward(id.to_string()).await {
         error!("Failed to stop port forward {id} on timeout: {e}");
         STOPPED_BY_TIMEOUT.remove(&id);
     } else {

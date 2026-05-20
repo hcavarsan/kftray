@@ -268,7 +268,7 @@ async fn process_deployment_proxy(
 
             let start_response = match protocol {
                 "udp" => {
-                    crate::kube::start::start_port_forward_with_mode(
+                    crate::portforward::start::start_port_forward_with_mode(
                         vec![config.clone()],
                         "udp",
                         mode,
@@ -277,7 +277,7 @@ async fn process_deployment_proxy(
                     .await
                 }
                 "tcp" => {
-                    crate::kube::start::start_port_forward_with_mode(
+                    crate::portforward::start::start_port_forward_with_mode(
                         vec![config.clone()],
                         "tcp",
                         mode,
@@ -391,7 +391,7 @@ async fn process_pod_proxy(
 
             let start_response = match protocol {
                 "udp" => {
-                    crate::kube::start::start_port_forward_with_mode(
+                    crate::portforward::start::start_port_forward_with_mode(
                         vec![config.clone()],
                         "udp",
                         mode,
@@ -400,7 +400,7 @@ async fn process_pod_proxy(
                     .await
                 }
                 "tcp" => {
-                    crate::kube::start::start_port_forward_with_mode(
+                    crate::portforward::start::start_port_forward_with_mode(
                         vec![config.clone()],
                         "tcp",
                         mode,
@@ -449,7 +449,7 @@ pub async fn stop_proxy_forward_with_mode(
     config_id: i64, _namespace: &str, service_name: String, mode: DatabaseMode,
 ) -> Result<CustomResponse, PortForwardError> {
     info!("Stopping proxy forward for service: {service_name}");
-    crate::kube::stop::stop_port_forward_with_mode(config_id.to_string(), mode)
+    crate::portforward::stop::stop_port_forward_with_mode(config_id.to_string(), mode)
         .await
         .map_err(|e| {
             error!("Failed to stop port forwarding for service '{service_name}': {e}");
@@ -461,7 +461,7 @@ pub async fn stop_proxy_forward(
     config_id: i64, _namespace: &str, service_name: String,
 ) -> Result<CustomResponse, PortForwardError> {
     info!("Stopping proxy forward for service: {service_name}");
-    crate::kube::stop::stop_port_forward_with_mode(config_id.to_string(), DatabaseMode::File)
+    crate::portforward::stop::stop_port_forward_with_mode(config_id.to_string(), DatabaseMode::File)
         .await
         .map_err(|e| {
             error!("Failed to stop port forwarding for service '{service_name}': {e}");

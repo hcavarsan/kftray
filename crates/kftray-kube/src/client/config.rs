@@ -70,7 +70,7 @@ pub fn merge_kubeconfigs(paths: &[PathBuf]) -> Result<(Kubeconfig, Vec<String>, 
         match Kubeconfig::read_from(path) {
             Ok(kubeconfig) => {
                 info!("Successfully read kubeconfig from {path:?}");
-                let contexts = crate::kube::operations::list_contexts(&kubeconfig);
+                let contexts = crate::portforward::operations::list_contexts(&kubeconfig);
                 all_contexts.extend(contexts.clone());
                 info!("Available contexts in {path:?}: {contexts:?}");
                 match merged_kubeconfig.clone().merge(kubeconfig) {
@@ -258,7 +258,7 @@ mod tests {
             ..Default::default()
         };
 
-        let contexts = crate::kube::operations::list_contexts(&kubeconfig);
+        let contexts = crate::portforward::operations::list_contexts(&kubeconfig);
         assert_eq!(contexts.len(), 2);
         assert_eq!(contexts[0], "context1");
         assert_eq!(contexts[1], "context2");

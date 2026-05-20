@@ -19,7 +19,7 @@ use crate::client::error::{
     KubeClientError,
     KubeResult,
 };
-use crate::kube::models::KubeContextInfo;
+use crate::portforward::models::KubeContextInfo;
 
 pub type ServiceInfo = (String, HashMap<String, String>, HashMap<String, i32>);
 
