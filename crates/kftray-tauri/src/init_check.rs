@@ -8,7 +8,7 @@ use kftray_commons::config_state::{
 };
 use kftray_commons::config_state_model::ConfigState;
 use kftray_commons::models::config_model::Config;
-use kftray_kube::kube::deploy_and_forward_pod;
+use kftray_kube::deploy_and_forward_pod;
 use kftray_kube::start_port_forward;
 use log::{
     debug,

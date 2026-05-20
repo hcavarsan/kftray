@@ -8,7 +8,7 @@ use k8s_openapi::api::{
 };
 use k8s_openapi::apimachinery::pkg::apis::meta::v1::Time;
 use kftray_commons::utils::db_mode::DatabaseMode;
-use kftray_kube::kube::client::create_client_with_specific_context;
+use kftray_kube::create_client_with_specific_context;
 use kube::api::{
     Api,
     DeleteParams,

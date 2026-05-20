@@ -8,7 +8,7 @@ use kftray_commons::utils::config_state::{
     cleanup_current_process_config_states,
     get_configs_state,
 };
-use kftray_kube::kube::{
+use kftray_kube::{
     deploy_and_forward_pod,
     start_port_forward,
     stop_all_port_forward,
