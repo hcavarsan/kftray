@@ -1,5 +1,6 @@
 pub mod client;
 pub mod dataplane_runtime;
+pub mod http_log_watcher;
 pub mod kube;
 pub mod port_forward;
 pub mod port_forward_error;

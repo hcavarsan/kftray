@@ -13,7 +13,7 @@ use tracing::{
     error,
 };
 
-use crate::kube::http_log_watcher::HttpLogStateWatcher;
+use crate::http_log_watcher::HttpLogStateWatcher;
 
 // BufReader capacity for the bidirectional `copy_buf` loop. Larger
 // buffers reduce syscall count at high RPS on small responses. 128KB
@@ -374,7 +374,7 @@ mod tests {
     use tokio_util::sync::CancellationToken;
 
     use super::*;
-    use crate::kube::http_log_watcher::HttpLogStateWatcher;
+    use crate::http_log_watcher::HttpLogStateWatcher;
 
     #[tokio::test]
     async fn test_new() {

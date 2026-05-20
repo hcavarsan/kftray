@@ -46,7 +46,7 @@ use tracing::{
     info,
 };
 
-use crate::kube::http_log_watcher::HttpLogStateWatcher;
+use crate::http_log_watcher::HttpLogStateWatcher;
 use crate::kube::models::{
     Port,
     Target,

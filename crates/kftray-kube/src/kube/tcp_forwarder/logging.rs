@@ -68,7 +68,7 @@ impl TcpForwarder {
         upstream_writer: &'a mut (impl AsyncWriteExt + Unpin),
         request_id: Arc<Mutex<Option<String>>>, cancellation_token: CancellationToken,
         mut log_subscriber: tokio::sync::broadcast::Receiver<
-            crate::kube::http_log_watcher::HttpLogStateEvent,
+            crate::http_log_watcher::HttpLogStateEvent,
         >,
         local_port: u16,
     ) -> anyhow::Result<()> {
@@ -179,7 +179,7 @@ impl TcpForwarder {
         client_writer: &'a mut (impl AsyncWriteExt + Unpin),
         request_id: Arc<Mutex<Option<String>>>, cancellation_token: CancellationToken,
         mut log_subscriber: tokio::sync::broadcast::Receiver<
-            crate::kube::http_log_watcher::HttpLogStateEvent,
+            crate::http_log_watcher::HttpLogStateEvent,
         >,
         local_port: u16,
     ) -> anyhow::Result<()> {

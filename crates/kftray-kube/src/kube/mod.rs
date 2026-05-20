@@ -1,4 +1,3 @@
-pub mod http_log_watcher;
 pub mod listener;
 pub mod models;
 pub mod operations;
@@ -14,10 +13,7 @@ pub mod udp_forwarder;
 #[cfg(test)]
 mod tests;
 
-pub use http_log_watcher::{
-    HttpLogStateEvent,
-    HttpLogStateWatcher,
-};
+
 pub use listener::{
     ListenerConfig,
     PortForwarder,
