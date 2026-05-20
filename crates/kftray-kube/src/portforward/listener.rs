@@ -400,7 +400,7 @@ impl PortForwarder {
             let connection_tasks = Arc::clone(&self.connection_tasks);
             let stream_failures_clone = Arc::clone(&consecutive_stream_failures);
 
-            let handle = crate::dataplane_runtime::spawn_on_dataplane(async move {
+            let handle = crate::dataplane::spawn_on_dataplane(async move {
                 let mut client_conn = client_conn;
                 let upstream_stream = match forwarder.get_stream().await {
                     Ok(stream) => {

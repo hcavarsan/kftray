@@ -1,5 +1,5 @@
 pub mod client;
-pub mod dataplane_runtime;
+pub mod dataplane;
 pub mod http_log_watcher;
 pub mod portforward;
 pub mod error;
