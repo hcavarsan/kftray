@@ -12,13 +12,13 @@ use log::{
     info,
 };
 
+use crate::error::PortForwardError;
 use crate::portforward::operations::{
     get_services_with_annotation,
     list_all_namespaces,
 };
-use crate::shared_client::ServiceClientKey;
-use crate::error::PortForwardError;
 use crate::registry::PORT_FORWARD_REGISTRY;
+use crate::shared_client::ServiceClientKey;
 pub async fn retrieve_service_configs(
     context: &str, kubeconfig: Option<String>,
 ) -> Result<Vec<Config>, PortForwardError> {

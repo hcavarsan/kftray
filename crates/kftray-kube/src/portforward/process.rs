@@ -18,8 +18,8 @@ use crate::portforward::models::{
     PortForward,
     Target,
 };
-use crate::shared_client::ServiceClientKey;
 use crate::registry::PORT_FORWARD_REGISTRY;
+use crate::shared_client::ServiceClientKey;
 
 /// Distinguishes direct port-forward (with a local listener) from expose
 /// mode (direct + a WebSocket tunnel client back to the local service).
@@ -433,11 +433,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_registry_process_insert_remove() {
-        use crate::shared_client::ServiceClientKey;
         use crate::registry::{
             PORT_FORWARD_REGISTRY,
             PortForwardKey,
         };
+        use crate::shared_client::ServiceClientKey;
 
         PORT_FORWARD_REGISTRY.clear();
 

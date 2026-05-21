@@ -48,9 +48,9 @@ use rand::distr::{
     SampleString,
 };
 
-use crate::shared_client::ServiceClientKey;
 use crate::error::PortForwardError;
 use crate::registry::PORT_FORWARD_REGISTRY;
+use crate::shared_client::ServiceClientKey;
 
 pub async fn deploy_and_forward_pod(
     configs: Vec<Config>,

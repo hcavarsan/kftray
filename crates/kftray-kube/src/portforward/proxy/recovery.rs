@@ -442,7 +442,8 @@ pub async fn recover_bare_pod(config: &Config, client: &kube::Client) -> anyhow:
         .ok_or_else(|| anyhow::anyhow!("Config has no ID"))?;
     let namespace = &config.namespace;
 
-    crate::portforward::stop::delete_proxy_cluster_resources(client.clone(), namespace, config_id).await;
+    crate::portforward::stop::delete_proxy_cluster_resources(client.clone(), namespace, config_id)
+        .await;
     cleanup_child_processes_for_config(config_id).await;
 
     // Remove the current recovery manager BEFORE re-deploying.

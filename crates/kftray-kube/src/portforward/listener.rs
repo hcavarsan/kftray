@@ -148,18 +148,15 @@ impl PortForwarder {
         namespace: &str, target: Target, context_name: Option<String>, kubeconfig: Option<String>,
         config_id: i64,
     ) -> anyhow::Result<Self> {
-        let client_key = crate::shared_client::ServiceClientKey::new(
-            context_name.clone(),
-            kubeconfig.clone(),
-        );
+        let client_key =
+            crate::shared_client::ServiceClientKey::new(context_name.clone(), kubeconfig.clone());
 
         let cluster_url = {
             let paths =
                 crate::client::config::get_kubeconfig_paths_from_option(kubeconfig.clone())?;
             let (merged, _ctxs, _errs) = crate::client::config::merge_kubeconfigs(&paths)?;
             let ctx_name = context_name.as_deref().unwrap_or("@current");
-            let cfg =
-                crate::client::config::create_config_with_context(&merged, ctx_name).await?;
+            let cfg = crate::client::config::create_config_with_context(&merged, ctx_name).await?;
             cfg.cluster_url.clone()
         };
 
@@ -194,7 +191,9 @@ impl PortForwarder {
             )
             .shutdown_grace(std::time::Duration::from_secs(2))
             .on_recovery(move |signal: RecoverySignal| {
-                if let Some(rm) = crate::portforward::proxy::recovery::RECOVERY_MANAGERS.get(&config_id) {
+                if let Some(rm) =
+                    crate::portforward::proxy::recovery::RECOVERY_MANAGERS.get(&config_id)
+                {
                     let sig = match signal {
                         RecoverySignal::ServerClose => {
                             crate::portforward::proxy::recovery::RecoverySignal::PodDied
@@ -410,8 +409,8 @@ impl PortForwarder {
                     Err(e) => {
                         let failures = stream_failures_clone.fetch_add(1, Ordering::SeqCst) + 1;
                         if failures >= MAX_STREAM_FAILURES
-                            && let Some(rm) =
-                                crate::portforward::proxy::recovery::RECOVERY_MANAGERS.get(&config_id)
+                            && let Some(rm) = crate::portforward::proxy::recovery::RECOVERY_MANAGERS
+                                .get(&config_id)
                         {
                             rm.signal_recovery(
                                 crate::portforward::proxy::recovery::RecoverySignal::StreamFailed,
@@ -570,12 +569,15 @@ impl PortForwarder {
                 .await
                 .map_err(|e| anyhow!("UDP forwarding task failed: {e}"));
             if !signal_token.is_cancelled()
-                && let Some(rm) = crate::portforward::proxy::recovery::RECOVERY_MANAGERS.get(&config_id)
+                && let Some(rm) =
+                    crate::portforward::proxy::recovery::RECOVERY_MANAGERS.get(&config_id)
             {
                 log::info!(
                     "UDP forwarder task completed, signaling recovery for config_id={config_id}"
                 );
-                rm.signal_recovery(crate::portforward::proxy::recovery::RecoverySignal::StreamFailed);
+                rm.signal_recovery(
+                    crate::portforward::proxy::recovery::RecoverySignal::StreamFailed,
+                );
             }
             result?;
             Ok(())

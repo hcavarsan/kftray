@@ -15,11 +15,11 @@ use kftray_commons::models::{
 };
 use kftray_commons::utils::config_state::update_config_state_with_mode;
 use kftray_commons::utils::db_mode::DatabaseMode;
-use kftray_kube::shared_client::ServiceClientKey;
 use kftray_kube::registry::{
     PORT_FORWARD_REGISTRY,
     PortForwardKey,
 };
+use kftray_kube::shared_client::ServiceClientKey;
 use log::{
     error,
     info,

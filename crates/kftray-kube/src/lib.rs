@@ -7,7 +7,10 @@ pub mod registry;
 pub mod shared_client;
 
 pub use client::create_client_with_specific_context;
-pub use error::{PortForwardError, PortForwardResult};
+pub use error::{
+    PortForwardError,
+    PortForwardResult,
+};
 pub use portforward::models::{
     KubeContextInfo,
     KubeNamespaceInfo,
@@ -15,7 +18,10 @@ pub use portforward::models::{
     KubeServicePortInfo,
     PodInfo,
 };
-pub use portforward::operations::{list_all_namespaces, list_kube_contexts};
+pub use portforward::operations::{
+    list_all_namespaces,
+    list_kube_contexts,
+};
 pub use portforward::start::{
     cleanup_stale_timeout_entries,
     clear_stopped_by_timeout,
@@ -32,4 +38,8 @@ pub use portforward::{
     stop_proxy_forward,
     stop_proxy_forward_with_mode,
 };
-pub use registry::{PORT_FORWARD_REGISTRY, PortForwardKey, PortForwardSlot};
+pub use registry::{
+    PORT_FORWARD_REGISTRY,
+    PortForwardKey,
+    PortForwardSlot,
+};

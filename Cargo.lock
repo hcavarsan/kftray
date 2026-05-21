@@ -3570,7 +3570,6 @@ dependencies = [
  "kube-portforward",
  "kube-runtime",
  "log",
- "once_cell",
  "openssl",
  "rand 0.10.1",
  "rustls",

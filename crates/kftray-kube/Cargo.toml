@@ -32,7 +32,6 @@ kube = { workspace = true }
 kube-portforward = { workspace = true }
 kube-runtime = { workspace = true }
 log = { workspace = true }
-once_cell = { workspace = true }
 openssl = { workspace = true }
 rand = { workspace = true }
 rustls = { workspace = true }
