@@ -38,6 +38,7 @@ llvm-cov*
 TASKS.md
 .claude/*
 .sisyphus/
+.omo/
 TODO.md
 PR.md
 post.md
