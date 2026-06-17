@@ -62,7 +62,7 @@ kube = { version = "3.1.0", features = [
   "rustls-tls",
   "ws",
 ] }
-kube-core = "3.1"
+kube-core = "4.0"
 kube-runtime = { version = "3.1.0", features = ["unstable-runtime"] }
 lazy_static = "1.5"
 libc = "0.2.186"
