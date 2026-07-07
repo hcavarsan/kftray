@@ -290,14 +290,6 @@ impl TcpForwarder {
                     } else if should_log {
                         if let Some(ref mut req_buf) = request_buffer.as_mut() {
                             req_buf.extend_from_slice(&buffer[..n]);
-                            if Self::is_websocket_upgrade_request(req_buf) {
-                                websocket_tunnel_mode.store(true, Ordering::SeqCst);
-                                if let Err(e) = upstream_writer.write_all(req_buf).await {
-                                    return Err(e.into());
-                                }
-                                req_buf.clear();
-                                continue;
-                            }
                             let maybe_logger = {
                                 let guard = logger.lock().await;
                                 guard.clone()
@@ -609,22 +601,6 @@ impl TcpForwarder {
         false
     }
 
-    fn is_websocket_upgrade_request(request_data: &[u8]) -> bool {
-        let Ok(request) = std::str::from_utf8(request_data) else {
-            return false;
-        };
-
-        let headers = match request.split_once("\r\n\r\n") {
-            Some((headers, _)) => headers,
-            None => request,
-        }
-        .to_ascii_lowercase();
-
-        headers.contains("upgrade: websocket")
-            && headers.contains("connection: upgrade")
-            && headers.contains("sec-websocket-key:")
-    }
-
     fn can_clear_response_buffer_static(state: &ResponseState) -> bool {
         if state.is_chunked {
             state.found_end_marker
@@ -693,23 +669,6 @@ mod tests {
 
         let result = forwarder.initialize_logger(8080).await;
         assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_detect_websocket_upgrade_request() {
-        let request = concat!(
-            "GET /socket HTTP/1.1\r\n",
-            "Host: 127.0.0.1:18790\r\n",
-            "Connection: Upgrade\r\n",
-            "Upgrade: websocket\r\n",
-            "Sec-WebSocket-Key: test-key\r\n\r\n",
-        )
-        .as_bytes();
-
-        assert!(TcpForwarder::is_websocket_upgrade_request(request));
-        assert!(!TcpForwarder::is_websocket_upgrade_request(
-            b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"
-        ));
     }
 
     #[tokio::test]
@@ -809,6 +768,7 @@ mod tests {
         let (_, log_subscriber) = tokio::sync::broadcast::channel(1);
 
         let logger = Arc::new(Mutex::new(None));
+        let websocket_tunnel_mode = Arc::new(AtomicBool::new(false));
         let result = TcpForwarder::forward_client_to_upstream(
             logger,
             forwarder.config_id,
@@ -818,6 +778,7 @@ mod tests {
             cancellation_token,
             log_subscriber,
             8080,
+            websocket_tunnel_mode,
         )
         .await;
 
@@ -855,6 +816,7 @@ mod tests {
         let (_, log_subscriber) = tokio::sync::broadcast::channel(1);
 
         let logger = Arc::new(Mutex::new(None));
+        let websocket_tunnel_mode = Arc::new(AtomicBool::new(false));
         let result = TcpForwarder::forward_upstream_to_client(
             logger,
             forwarder.config_id,
@@ -864,6 +826,7 @@ mod tests {
             cancellation_token,
             log_subscriber,
             8080,
+            websocket_tunnel_mode,
         )
         .await;
 
