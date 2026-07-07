@@ -431,15 +431,17 @@ impl TcpForwarder {
                         continue;
                     }
 
-                    let is_websocket_upgrade_response = should_log
-                        && kftray_http_logs::http_response_analyzer::HttpResponseAnalyzer::is_websocket_upgrade(&buffer[..n]);
+                    let is_websocket_upgrade_response = if should_log
+                        && let Some(ref mut state) = response_state.as_mut() {
+                            Self::handle_response_logging_static(&buffer[..n], state, &logger, &request_id).await
+                        } else {
+                            false
+                        };
+
                     if is_websocket_upgrade_response {
                         websocket_tunnel_mode.store(true, Ordering::SeqCst);
                         response_state = None;
                         should_log = false;
-                    } else if should_log
-                        && let Some(ref mut state) = response_state.as_mut() {
-                            Self::handle_response_logging_static(&buffer[..n], state, &logger, &request_id).await;
                     }
 
                     if let Err(e) = client_writer.write_all(&buffer[..n]).await {
@@ -514,7 +516,7 @@ impl TcpForwarder {
     async fn handle_response_logging_static(
         buffer: &[u8], state: &mut ResponseState, logger: &Arc<Mutex<Option<Arc<Logger>>>>,
         request_id: &Arc<Mutex<Option<String>>>,
-    ) {
+    ) -> bool {
         let req_id_guard = request_id.lock().await;
         let current_req_id = req_id_guard.clone();
         drop(req_id_guard);
@@ -544,6 +546,9 @@ impl TcpForwarder {
         );
 
         state.buffer.extend_from_slice(buffer);
+        if kftray_http_logs::http_response_analyzer::HttpResponseAnalyzer::is_websocket_upgrade(&state.buffer) {
+            return true;
+        }
 
         if !state.current_response_logged {
             let maybe_logger = {
@@ -564,6 +569,8 @@ impl TcpForwarder {
                 }
             }
         }
+
+        false
     }
 
     fn should_log_response_static(state: &mut ResponseState) -> bool {
