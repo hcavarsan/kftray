@@ -1,4 +1,8 @@
 use std::sync::Arc;
+use std::sync::atomic::{
+    AtomicBool,
+    Ordering,
+};
 use std::time::Duration;
 
 use tokio::io::{
@@ -149,6 +153,7 @@ impl TcpForwarder {
                 Arc::new(Mutex::new(self.logger.take().map(Arc::new)));
 
             let request_id = Arc::new(Mutex::new(None));
+            let websocket_tunnel_mode = Arc::new(AtomicBool::new(false));
             let mut client_conn_guard = client_conn.lock().await;
             let (mut client_reader, mut client_writer) = tokio::io::split(&mut *client_conn_guard);
             let (mut upstream_reader, mut upstream_writer) = tokio::io::split(upstream_conn);
@@ -162,6 +167,7 @@ impl TcpForwarder {
                 cancellation_token.clone(),
                 log_subscriber.resubscribe(),
                 local_port,
+                Arc::clone(&websocket_tunnel_mode),
             );
 
             let upstream_to_client = Self::forward_upstream_to_client(
@@ -173,6 +179,7 @@ impl TcpForwarder {
                 cancellation_token.clone(),
                 log_subscriber,
                 local_port,
+                Arc::clone(&websocket_tunnel_mode),
             );
 
             let result = tokio::try_join!(client_to_upstream, upstream_to_client);
@@ -255,7 +262,7 @@ impl TcpForwarder {
         mut log_subscriber: tokio::sync::broadcast::Receiver<
             crate::kube::http_log_watcher::HttpLogStateEvent,
         >,
-        local_port: u16,
+        local_port: u16, websocket_tunnel_mode: Arc<AtomicBool>,
     ) -> anyhow::Result<()> {
         let mut buffer = [0; BUFFER_SIZE];
         let mut should_log = {
@@ -276,9 +283,21 @@ impl TcpForwarder {
                         break;
                     }
 
-                    if should_log {
+                    if websocket_tunnel_mode.load(Ordering::SeqCst) {
+                        if let Err(e) = upstream_writer.write_all(&buffer[..n]).await {
+                            return Err(e.into());
+                        }
+                    } else if should_log {
                         if let Some(ref mut req_buf) = request_buffer.as_mut() {
                             req_buf.extend_from_slice(&buffer[..n]);
+                            if Self::is_websocket_upgrade_request(req_buf) {
+                                websocket_tunnel_mode.store(true, Ordering::SeqCst);
+                                if let Err(e) = upstream_writer.write_all(req_buf).await {
+                                    return Err(e.into());
+                                }
+                                req_buf.clear();
+                                continue;
+                            }
                             let maybe_logger = {
                                 let guard = logger.lock().await;
                                 guard.clone()
@@ -363,7 +382,7 @@ impl TcpForwarder {
         mut log_subscriber: tokio::sync::broadcast::Receiver<
             crate::kube::http_log_watcher::HttpLogStateEvent,
         >,
-        local_port: u16,
+        local_port: u16, websocket_tunnel_mode: Arc<AtomicBool>,
     ) -> anyhow::Result<()> {
         let mut buffer = [0; BUFFER_SIZE];
         let mut should_log = {
@@ -396,6 +415,7 @@ impl TcpForwarder {
 
                     if n == 0 {
                         if should_log
+                            && !websocket_tunnel_mode.load(Ordering::SeqCst)
                             && let Some(ref mut state) = response_state.as_mut() {
                                 let maybe_logger = {
                                     let guard = logger.lock().await;
@@ -412,10 +432,23 @@ impl TcpForwarder {
                         break;
                     }
 
-                    if should_log
+                    if websocket_tunnel_mode.load(Ordering::SeqCst) {
+                        if let Err(e) = client_writer.write_all(&buffer[..n]).await {
+                            return Err(e.into());
+                        }
+                        continue;
+                    }
+
+                    let is_websocket_upgrade_response = should_log
+                        && kftray_http_logs::http_response_analyzer::HttpResponseAnalyzer::is_websocket_upgrade(&buffer[..n]);
+                    if is_websocket_upgrade_response {
+                        websocket_tunnel_mode.store(true, Ordering::SeqCst);
+                        response_state = None;
+                        should_log = false;
+                    } else if should_log
                         && let Some(ref mut state) = response_state.as_mut() {
                             Self::handle_response_logging_static(&buffer[..n], state, &logger, &request_id).await;
-                        }
+                    }
 
                     if let Err(e) = client_writer.write_all(&buffer[..n]).await {
                         return Err(e.into());
@@ -576,6 +609,22 @@ impl TcpForwarder {
         false
     }
 
+    fn is_websocket_upgrade_request(request_data: &[u8]) -> bool {
+        let Ok(request) = std::str::from_utf8(request_data) else {
+            return false;
+        };
+
+        let headers = match request.split_once("\r\n\r\n") {
+            Some((headers, _)) => headers,
+            None => request,
+        }
+        .to_ascii_lowercase();
+
+        headers.contains("upgrade: websocket")
+            && headers.contains("connection: upgrade")
+            && headers.contains("sec-websocket-key:")
+    }
+
     fn can_clear_response_buffer_static(state: &ResponseState) -> bool {
         if state.is_chunked {
             state.found_end_marker
@@ -644,6 +693,23 @@ mod tests {
 
         let result = forwarder.initialize_logger(8080).await;
         assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_detect_websocket_upgrade_request() {
+        let request = concat!(
+            "GET /socket HTTP/1.1\r\n",
+            "Host: 127.0.0.1:18790\r\n",
+            "Connection: Upgrade\r\n",
+            "Upgrade: websocket\r\n",
+            "Sec-WebSocket-Key: test-key\r\n\r\n",
+        )
+        .as_bytes();
+
+        assert!(TcpForwarder::is_websocket_upgrade_request(request));
+        assert!(!TcpForwarder::is_websocket_upgrade_request(
+            b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n"
+        ));
     }
 
     #[tokio::test]
