@@ -1,4 +1,8 @@
 use std::sync::Arc;
+use std::sync::atomic::{
+    AtomicBool,
+    Ordering,
+};
 use std::time::Duration;
 
 use tokio::io::{
@@ -149,6 +153,7 @@ impl TcpForwarder {
                 Arc::new(Mutex::new(self.logger.take().map(Arc::new)));
 
             let request_id = Arc::new(Mutex::new(None));
+            let websocket_tunnel_mode = Arc::new(AtomicBool::new(false));
             let mut client_conn_guard = client_conn.lock().await;
             let (mut client_reader, mut client_writer) = tokio::io::split(&mut *client_conn_guard);
             let (mut upstream_reader, mut upstream_writer) = tokio::io::split(upstream_conn);
@@ -162,6 +167,7 @@ impl TcpForwarder {
                 cancellation_token.clone(),
                 log_subscriber.resubscribe(),
                 local_port,
+                Arc::clone(&websocket_tunnel_mode),
             );
 
             let upstream_to_client = Self::forward_upstream_to_client(
@@ -173,6 +179,7 @@ impl TcpForwarder {
                 cancellation_token.clone(),
                 log_subscriber,
                 local_port,
+                Arc::clone(&websocket_tunnel_mode),
             );
 
             let result = tokio::try_join!(client_to_upstream, upstream_to_client);
@@ -255,7 +262,7 @@ impl TcpForwarder {
         mut log_subscriber: tokio::sync::broadcast::Receiver<
             crate::kube::http_log_watcher::HttpLogStateEvent,
         >,
-        local_port: u16,
+        local_port: u16, websocket_tunnel_mode: Arc<AtomicBool>,
     ) -> anyhow::Result<()> {
         let mut buffer = [0; BUFFER_SIZE];
         let mut should_log = {
@@ -276,7 +283,11 @@ impl TcpForwarder {
                         break;
                     }
 
-                    if should_log {
+                    if websocket_tunnel_mode.load(Ordering::SeqCst) {
+                        if let Err(e) = upstream_writer.write_all(&buffer[..n]).await {
+                            return Err(e.into());
+                        }
+                    } else if should_log {
                         if let Some(ref mut req_buf) = request_buffer.as_mut() {
                             req_buf.extend_from_slice(&buffer[..n]);
                             let maybe_logger = {
@@ -363,7 +374,7 @@ impl TcpForwarder {
         mut log_subscriber: tokio::sync::broadcast::Receiver<
             crate::kube::http_log_watcher::HttpLogStateEvent,
         >,
-        local_port: u16,
+        local_port: u16, websocket_tunnel_mode: Arc<AtomicBool>,
     ) -> anyhow::Result<()> {
         let mut buffer = [0; BUFFER_SIZE];
         let mut should_log = {
@@ -396,6 +407,7 @@ impl TcpForwarder {
 
                     if n == 0 {
                         if should_log
+                            && !websocket_tunnel_mode.load(Ordering::SeqCst)
                             && let Some(ref mut state) = response_state.as_mut() {
                                 let maybe_logger = {
                                     let guard = logger.lock().await;
@@ -412,10 +424,25 @@ impl TcpForwarder {
                         break;
                     }
 
-                    if should_log
-                        && let Some(ref mut state) = response_state.as_mut() {
-                            Self::handle_response_logging_static(&buffer[..n], state, &logger, &request_id).await;
+                    if websocket_tunnel_mode.load(Ordering::SeqCst) {
+                        if let Err(e) = client_writer.write_all(&buffer[..n]).await {
+                            return Err(e.into());
                         }
+                        continue;
+                    }
+
+                    let is_websocket_upgrade_response = if should_log
+                        && let Some(ref mut state) = response_state.as_mut() {
+                            Self::handle_response_logging_static(&buffer[..n], state, &logger, &request_id).await
+                        } else {
+                            false
+                        };
+
+                    if is_websocket_upgrade_response {
+                        websocket_tunnel_mode.store(true, Ordering::SeqCst);
+                        response_state = None;
+                        should_log = false;
+                    }
 
                     if let Err(e) = client_writer.write_all(&buffer[..n]).await {
                         return Err(e.into());
@@ -489,7 +516,7 @@ impl TcpForwarder {
     async fn handle_response_logging_static(
         buffer: &[u8], state: &mut ResponseState, logger: &Arc<Mutex<Option<Arc<Logger>>>>,
         request_id: &Arc<Mutex<Option<String>>>,
-    ) {
+    ) -> bool {
         let req_id_guard = request_id.lock().await;
         let current_req_id = req_id_guard.clone();
         drop(req_id_guard);
@@ -519,6 +546,9 @@ impl TcpForwarder {
         );
 
         state.buffer.extend_from_slice(buffer);
+        if kftray_http_logs::http_response_analyzer::HttpResponseAnalyzer::is_websocket_upgrade(&state.buffer) {
+            return true;
+        }
 
         if !state.current_response_logged {
             let maybe_logger = {
@@ -539,6 +569,8 @@ impl TcpForwarder {
                 }
             }
         }
+
+        false
     }
 
     fn should_log_response_static(state: &mut ResponseState) -> bool {
@@ -743,6 +775,7 @@ mod tests {
         let (_, log_subscriber) = tokio::sync::broadcast::channel(1);
 
         let logger = Arc::new(Mutex::new(None));
+        let websocket_tunnel_mode = Arc::new(AtomicBool::new(false));
         let result = TcpForwarder::forward_client_to_upstream(
             logger,
             forwarder.config_id,
@@ -752,6 +785,7 @@ mod tests {
             cancellation_token,
             log_subscriber,
             8080,
+            websocket_tunnel_mode,
         )
         .await;
 
@@ -789,6 +823,7 @@ mod tests {
         let (_, log_subscriber) = tokio::sync::broadcast::channel(1);
 
         let logger = Arc::new(Mutex::new(None));
+        let websocket_tunnel_mode = Arc::new(AtomicBool::new(false));
         let result = TcpForwarder::forward_upstream_to_client(
             logger,
             forwarder.config_id,
@@ -798,6 +833,7 @@ mod tests {
             cancellation_token,
             log_subscriber,
             8080,
+            websocket_tunnel_mode,
         )
         .await;
 
