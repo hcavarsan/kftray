@@ -405,11 +405,20 @@ fn validate_imported_config(config: &Config) -> Result<(), String> {
     Ok(())
 }
 
+fn normalized_groups(config: &Config) -> Option<&str> {
+    config
+        .groups
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+}
+
 fn configs_match_identity(existing: &Config, incoming: &Config) -> bool {
     if existing.context != incoming.context
         || existing.namespace != incoming.namespace
         || existing.workload_type != incoming.workload_type
         || existing.protocol != incoming.protocol
+        || normalized_groups(existing) != normalized_groups(incoming)
     {
         return false;
     }
@@ -1895,6 +1904,65 @@ mod tests {
                 .iter()
                 .all(|c| c.service == Some("my-service".to_string())),
             "All configs should have the same service name"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_import_same_config_different_groups_creates_duplicates() {
+        let pool = setup_test_db().await;
+
+        let base = Config {
+            service: Some("shared-service".to_string()),
+            alias: Some("shared".to_string()),
+            workload_type: Some("service".to_string()),
+            protocol: "tcp".to_string(),
+            context: Some("test-context".to_string()),
+            namespace: "default".to_string(),
+            local_port: Some(18080),
+            remote_port: Some(8080),
+            ..Config::default()
+        };
+
+        let mut group_a = base.clone();
+        group_a.groups = Some("team-a".to_string());
+        let mut group_b = base;
+        group_b.groups = Some("team-b".to_string());
+
+        let first_import = serde_json::to_string(&vec![group_a.clone()]).unwrap();
+        import_configs_with_pool(first_import, &pool).await.unwrap();
+
+        let after_first = read_configs_with_pool(&pool).await.unwrap();
+        assert_eq!(after_first.len(), 1);
+        assert_eq!(after_first[0].groups.as_deref(), Some("team-a"));
+
+        let second_import = serde_json::to_string(&vec![group_b.clone()]).unwrap();
+        import_configs_with_pool(second_import, &pool).await.unwrap();
+
+        let after_second = read_configs_with_pool(&pool).await.unwrap();
+        assert_eq!(
+            after_second.len(),
+            2,
+            "Configs that differ only by groups should both be kept"
+        );
+        assert!(
+            after_second
+                .iter()
+                .any(|c| c.groups.as_deref() == Some("team-a"))
+        );
+        assert!(
+            after_second
+                .iter()
+                .any(|c| c.groups.as_deref() == Some("team-b"))
+        );
+
+        let batch_import = serde_json::to_string(&vec![group_a, group_b]).unwrap();
+        import_configs_with_pool(batch_import, &pool).await.unwrap();
+
+        let after_batch = read_configs_with_pool(&pool).await.unwrap();
+        assert_eq!(
+            after_batch.len(),
+            2,
+            "Re-importing the same group variants should not create more configs"
         );
     }
 }
