@@ -317,13 +317,41 @@ pub async fn update_config(config: Config) -> Result<(), String> {
     update_config_with_pool(config, &pool).await
 }
 
+fn config_group_key(config: &Config) -> &str {
+    config
+        .groups
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or("Ungrouped")
+}
+
+/// Sort configs the same way the UI displays them: by group, then by alias
+/// (case-insensitive, matching `localeCompare` with default / base sensitivity).
+fn sort_configs_like_ui(configs: &mut [Config]) {
+    configs.sort_by(|a, b| {
+        let group_a = config_group_key(a).to_lowercase();
+        let group_b = config_group_key(b).to_lowercase();
+        group_a.cmp(&group_b).then_with(|| {
+            let alias_a = a.alias.as_deref().unwrap_or("");
+            let alias_b = b.alias.as_deref().unwrap_or("");
+            alias_a
+                .to_lowercase()
+                .cmp(&alias_b.to_lowercase())
+                .then_with(|| alias_a.cmp(alias_b))
+        })
+    });
+}
+
 pub(crate) async fn export_configs_with_pool(pool: &SqlitePool) -> Result<String, String> {
-    let configs: Vec<Config> = read_configs_with_pool(pool)
+    let mut configs: Vec<Config> = read_configs_with_pool(pool)
         .await
         .map_err(|e| e.to_string())?
         .into_iter()
         .map(|c| c.prepare_for_export())
         .collect();
+
+    sort_configs_like_ui(&mut configs);
 
     serde_json::to_string_pretty(&configs).map_err(|e| e.to_string())
 }
@@ -1905,6 +1933,75 @@ mod tests {
                 .all(|c| c.service == Some("my-service".to_string())),
             "All configs should have the same service name"
         );
+    }
+
+    #[tokio::test]
+    async fn test_export_configs_sorted_like_ui() {
+        let pool = setup_test_db().await;
+
+        let configs = vec![
+            Config {
+                service: Some("svc-b".to_string()),
+                alias: Some("bravo".to_string()),
+                groups: Some("zeta".to_string()),
+                workload_type: Some("service".to_string()),
+                protocol: "tcp".to_string(),
+                namespace: "default".to_string(),
+                local_port: Some(8082),
+                remote_port: Some(80),
+                ..Config::default()
+            },
+            Config {
+                service: Some("svc-a".to_string()),
+                alias: Some("alpha".to_string()),
+                groups: None,
+                workload_type: Some("service".to_string()),
+                protocol: "tcp".to_string(),
+                namespace: "default".to_string(),
+                local_port: Some(8080),
+                remote_port: Some(80),
+                ..Config::default()
+            },
+            Config {
+                service: Some("svc-c".to_string()),
+                alias: Some("Charlie".to_string()),
+                groups: Some("alpha".to_string()),
+                workload_type: Some("service".to_string()),
+                protocol: "tcp".to_string(),
+                namespace: "default".to_string(),
+                local_port: Some(8081),
+                remote_port: Some(80),
+                ..Config::default()
+            },
+            Config {
+                service: Some("svc-d".to_string()),
+                alias: Some("delta".to_string()),
+                groups: Some("alpha".to_string()),
+                workload_type: Some("service".to_string()),
+                protocol: "tcp".to_string(),
+                namespace: "default".to_string(),
+                local_port: Some(8083),
+                remote_port: Some(80),
+                ..Config::default()
+            },
+        ];
+
+        for config in configs {
+            insert_config_with_pool(config, &pool).await.unwrap();
+        }
+
+        let exported_json = export_configs_with_pool(&pool).await.unwrap();
+        let exported: Vec<Config> = serde_json::from_str(&exported_json).unwrap();
+
+        assert_eq!(exported.len(), 4);
+        assert_eq!(exported[0].groups.as_deref(), Some("alpha"));
+        assert_eq!(exported[0].alias.as_deref(), Some("Charlie"));
+        assert_eq!(exported[1].groups.as_deref(), Some("alpha"));
+        assert_eq!(exported[1].alias.as_deref(), Some("delta"));
+        assert_eq!(exported[2].groups.as_deref(), None); // Ungrouped
+        assert_eq!(exported[2].alias.as_deref(), Some("alpha"));
+        assert_eq!(exported[3].groups.as_deref(), Some("zeta"));
+        assert_eq!(exported[3].alias.as_deref(), Some("bravo"));
     }
 
     #[tokio::test]

@@ -77,11 +77,11 @@ const Header: React.FC<HeaderProps> = ({
     }
   }, [])
 
-  async function handleStopPortForwardsAndExit() {
+  async function handleHideWindow() {
     try {
-      await invoke('handle_exit_app')
+      await appWindow.hide()
     } catch (error) {
-      console.error('Error invoking handle_exit_app:', error)
+      console.error('Error hiding window:', error)
     }
   }
 
@@ -273,14 +273,14 @@ const Header: React.FC<HeaderProps> = ({
         </Tooltip>
 
         <Tooltip
-          content='Close Window'
+          content='Hide Window'
           portalled={true}
           contentProps={{ zIndex: 100 }}
         >
           <Button
             variant='ghost'
             size='sm'
-            onClick={handleStopPortForwardsAndExit}
+            onClick={handleHideWindow}
             height='28px'
             width='28px'
             minWidth='28px'

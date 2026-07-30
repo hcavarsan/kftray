@@ -58,11 +58,21 @@ const PortForwardTable: React.FC<TableProps> = ({
       .sort(
         (a, b) =>
           getConfigGroup(a).localeCompare(getConfigGroup(b)) ||
-          a.alias.localeCompare(b.alias),
+          a.alias.localeCompare(b.alias, undefined, { sensitivity: 'base' }),
       )
   }, [configs, search])
 
   const configsByGroup = useConfigsByGroup(filteredConfigs)
+
+  useEffect(() => {
+    const groupKeys = new Set(Object.keys(configsByGroup))
+
+    setExpandedIndices(prev => {
+      const next = prev.filter(key => groupKeys.has(key))
+
+      return next.length === prev.length ? prev : next
+    })
+  }, [configsByGroup])
 
   useEffect(() => {
     if (prevSelectedConfigsRef.current !== selectedConfigs) {

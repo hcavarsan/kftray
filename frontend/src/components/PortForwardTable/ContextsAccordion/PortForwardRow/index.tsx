@@ -533,7 +533,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
               }
               portalled
             >
-              <Flex align='center' gap={1.5}>
+              <Flex align='center' gap={1.5} minW={0} flex={1}>
                 <Checkbox
                   size='xs'
                   checked={selected}
@@ -554,9 +554,22 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
                   <Box as={Info} width='12px' height='12px' />
                 </IconButton>
 
-                <Text className='text-normal' truncate maxWidth='100%'>
-                  {config.alias}
-                </Text>
+                <Flex direction='column' minW={0} flex={1}>
+                  <Text className='text-normal' truncate maxWidth='100%'>
+                    {config.alias}
+                  </Text>
+                  {config.context && (
+                    <Text
+                      fontSize='10px'
+                      color='whiteAlpha.500'
+                      truncate
+                      maxWidth='100%'
+                      lineHeight='1.2'
+                    >
+                      {config.context}
+                    </Text>
+                  )}
+                </Flex>
               </Flex>
             </Tooltip>
           </Flex>

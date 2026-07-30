@@ -64,11 +64,15 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     selectedProtocol: null as StringOption | null,
   })
 
-  const [uiState, setUiState] = useState({
+  const [uiState, setUiState] = useState(() => ({
     isContextDropdownFocused: false,
     isFormValid: false,
-    kubeConfig: 'default',
-  })
+    kubeConfig:
+      newConfig.kubeconfig?.trim() && newConfig.kubeconfig.trim().length > 0
+        ? newConfig.kubeconfig.trim()
+        : 'default',
+  }))
+  const [isFormHydrated, setIsFormHydrated] = useState(false)
 
   const handleError = (error: unknown, title: string) => {
     console.error(`Error: ${title}`, error)
@@ -162,15 +166,18 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
           ...prev,
           kubeConfig: filePath ?? 'default',
         }))
+        setNewConfig(prev => ({
+          ...prev,
+          kubeconfig: filePath ?? 'default',
+        }))
       }
     } catch (error) {
       handleError(error, 'Error selecting file')
-      setUiState(prev => ({
-        ...prev,
-        kubeConfig: 'default',
-      }))
+      // Keep current kubeconfig on cancel/error — do not force default
     }
   }
+
+  const formReady = isModalOpen && isFormHydrated
 
   const contextQuery = useQuery<{ name: string }[]>({
     queryKey: ['kube-contexts', uiState.kubeConfig],
@@ -179,8 +186,10 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
         kubeconfig: uiState.kubeConfig,
       }),
     enabled:
-      isModalOpen &&
+      formReady &&
       (uiState.isContextDropdownFocused || uiState.kubeConfig !== 'default'),
+    staleTime: 60_000,
+    retry: false,
   })
 
   useEffect(() => {
@@ -190,13 +199,15 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
   }, [contextQuery.error])
 
   const namespaceQuery = useQuery<{ name: string }[]>({
-    queryKey: ['kube-namespaces', newConfig.context],
+    queryKey: ['kube-namespaces', newConfig.context, uiState.kubeConfig],
     queryFn: () =>
       invoke<{ name: string }[]>('list_namespaces', {
         contextName: newConfig.context,
         kubeconfig: uiState.kubeConfig,
       }),
-    enabled: isModalOpen && !!newConfig.context,
+    enabled: formReady && !!newConfig.context,
+    staleTime: 60_000,
+    retry: false,
   })
 
   useEffect(() => {
@@ -206,7 +217,12 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
   }, [namespaceQuery.error])
 
   const serviceQuery = useQuery<ServiceData[]>({
-    queryKey: ['services', newConfig.context, newConfig.namespace],
+    queryKey: [
+      'services',
+      newConfig.context,
+      newConfig.namespace,
+      uiState.kubeConfig,
+    ],
     queryFn: () =>
       invoke<ServiceData[]>('list_services', {
         contextName: newConfig.context,
@@ -214,10 +230,12 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
         kubeconfig: uiState.kubeConfig,
       }),
     enabled:
-      isModalOpen &&
+      formReady &&
       !!newConfig.context &&
       !!newConfig.namespace &&
       newConfig.workload_type === 'service',
+    staleTime: 60_000,
+    retry: false,
   })
 
   useEffect(() => {
@@ -227,7 +245,12 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
   }, [serviceQuery.error])
 
   const podsQuery = useQuery<{ labels_str: string }[]>({
-    queryKey: ['kube-pods', newConfig.context, newConfig.namespace],
+    queryKey: [
+      'kube-pods',
+      newConfig.context,
+      newConfig.namespace,
+      uiState.kubeConfig,
+    ],
     queryFn: () =>
       invoke<{ labels_str: string }[]>('list_pods', {
         contextName: newConfig.context,
@@ -235,10 +258,12 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
         kubeconfig: uiState.kubeConfig,
       }),
     enabled:
-      isModalOpen &&
+      formReady &&
       !!newConfig.context &&
       !!newConfig.namespace &&
       newConfig.workload_type === 'pod',
+    staleTime: 60_000,
+    retry: false,
   })
 
   useEffect(() => {
@@ -253,6 +278,7 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
       newConfig.context,
       newConfig.namespace,
       newConfig.workload_type === 'pod' ? newConfig.target : newConfig.service,
+      uiState.kubeConfig,
     ],
     queryFn: async () => {
       const params = {
@@ -269,8 +295,6 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
         { name: string | null; port: string | number | null }[]
       >('list_ports', params)
 
-      console.log(ports)
-
       return ports
         .filter(p => p.port != null)
         .map(p => ({
@@ -282,16 +306,17 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
         }))
     },
     enabled:
-      isModalOpen &&
+      formReady &&
       !!newConfig.context &&
       !!newConfig.namespace &&
       !!(newConfig.workload_type === 'pod'
         ? newConfig.target
         : newConfig.service) &&
       newConfig.workload_type !== 'proxy',
+    staleTime: 60_000,
+    retry: false,
   })
 
-  // Handle port query errors
   useEffect(() => {
     if (portQuery.error) {
       handleError(portQuery.error, 'Error fetching service ports')
@@ -309,52 +334,59 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     return null
   }
 
-  useEffect(() => {
-    if (isModalOpen && (isEdit || newConfig.context)) {
-      setFormState(prev => ({
-        ...prev,
-        selectedWorkloadType: newConfig.workload_type
-          ? { label: newConfig.workload_type, value: newConfig.workload_type }
-          : null,
-        selectedProtocol: newConfig.protocol
-          ? { label: newConfig.protocol, value: newConfig.protocol }
-          : null,
-        selectedContext: newConfig.context
-          ? { label: newConfig.context, value: newConfig.context }
-          : null,
-        selectedNamespace: newConfig.namespace
-          ? { label: newConfig.namespace, value: newConfig.namespace }
-          : null,
-        selectedServiceOrTarget: getServiceOrTargetValue(newConfig),
-        selectedPort: newConfig.remote_port
-          ? {
-              label: newConfig.remote_port.toString(),
-              value: newConfig.remote_port,
-            }
-          : null,
-      }))
-
-      const newKubeConfig = newConfig.kubeconfig ?? 'default'
-
-
-      setUiState(prev => {
-        if (prev.kubeConfig === newKubeConfig) {
-          return prev
-        }
-        
-return {
-          ...prev,
-          kubeConfig: newKubeConfig,
-        }
-      })
-    }
-  }, [isEdit, isModalOpen, newConfig])
-
+  // Hydrate form once when the modal opens — never on every newConfig keystroke.
+  // A previous write-back effect raced with this and overwrote custom kubeconfig
+  // paths with "default", causing the jump/lag on edit.
   useEffect(() => {
     if (!isModalOpen) {
+      setIsFormHydrated(false)
       resetState()
+      return
     }
-  }, [isModalOpen])
+
+    if (isFormHydrated) {
+      return
+    }
+
+    if (!(isEdit || newConfig.context || newConfig.alias)) {
+      setIsFormHydrated(true)
+      return
+    }
+
+    setFormState(prev => ({
+      ...prev,
+      selectedWorkloadType: newConfig.workload_type
+        ? { label: newConfig.workload_type, value: newConfig.workload_type }
+        : null,
+      selectedProtocol: newConfig.protocol
+        ? { label: newConfig.protocol, value: newConfig.protocol }
+        : null,
+      selectedContext: newConfig.context
+        ? { label: newConfig.context, value: newConfig.context }
+        : null,
+      selectedNamespace: newConfig.namespace
+        ? { label: newConfig.namespace, value: newConfig.namespace }
+        : null,
+      selectedServiceOrTarget: getServiceOrTargetValue(newConfig),
+      selectedPort: newConfig.remote_port
+        ? {
+            label: newConfig.remote_port.toString(),
+            value: newConfig.remote_port,
+          }
+        : null,
+    }))
+
+    const kubeconfig =
+      newConfig.kubeconfig?.trim() && newConfig.kubeconfig.trim().length > 0
+        ? newConfig.kubeconfig.trim()
+        : 'default'
+
+    setUiState(prev => ({
+      ...prev,
+      kubeConfig: kubeconfig,
+    }))
+    setIsFormHydrated(true)
+  }, [isEdit, isModalOpen, newConfig, isFormHydrated])
 
   const resetState = () => {
     setFormState(prev => ({
@@ -452,18 +484,12 @@ return {
     } as React.ChangeEvent<HTMLInputElement>)
   }
 
-  useEffect(() => {
-    if (setNewConfig) {
-      setNewConfig(prev => ({
-        ...prev,
-        kubeconfig: uiState.kubeConfig ?? '',
-      }))
-    }
-  }, [uiState.kubeConfig, setNewConfig])
-
   const handleSave = async (event: React.FormEvent) => {
     event.preventDefault()
-    const configToSave = trimConfigValues(newConfig)
+    const configToSave = trimConfigValues({
+      ...newConfig,
+      kubeconfig: uiState.kubeConfig || 'default',
+    })
 
     await handleSaveConfig(configToSave)
     if (!isEdit) {
@@ -565,6 +591,24 @@ return {
               }}
             >
               <Stack gap={2}>
+                <Stack gap={1.5}>
+                  <Text fontSize='xs' color='gray.400'>
+                    Group
+                  </Text>
+                  <Input
+                    value={newConfig.groups || ''}
+                    name='groups'
+                    onChange={handleInputChange}
+                    placeholder='e.g. production'
+                    bg='#161616'
+                    border='1px solid rgba(255, 255, 255, 0.08)'
+                    _hover={{ borderColor: 'rgba(255, 255, 255, 0.15)' }}
+                    _focus={{ borderColor: 'blue.400', boxShadow: 'none' }}
+                    height='28px'
+                    fontSize='13px'
+                  />
+                </Stack>
+
                 <Grid templateColumns='repeat(2, 1fr)' gap={3}>
                   <Stack gap={1.5}>
                     <Flex align='center' gap={1}>
@@ -611,19 +655,6 @@ return {
                       height='28px'
                       fontSize='13px'
                     />
-                    {newConfig.workload_type !== 'expose' && (
-                      <Checkbox
-                        size='xs'
-                        checked={newConfig.domain_enabled}
-                        onCheckedChange={e =>
-                          handleCheckboxChange('domain_enabled', e)
-                        }
-                      >
-                        <Text fontSize='xs' color='gray.400'>
-                          Enable alias as domain
-                        </Text>
-                      </Checkbox>
-                    )}
                   </Stack>
 
                   <Stack gap={1.5}>
@@ -661,25 +692,19 @@ return {
                   </Stack>
                 </Grid>
 
-                <Grid templateColumns='repeat(2, 1fr)' gap={3}>
-                  <Stack gap={1.5}>
+                {newConfig.workload_type !== 'expose' && (
+                  <Checkbox
+                    size='xs'
+                    checked={!!newConfig.domain_enabled}
+                    onCheckedChange={e =>
+                      handleCheckboxChange('domain_enabled', e)
+                    }
+                  >
                     <Text fontSize='xs' color='gray.400'>
-                      Group
+                      Enable alias as domain
                     </Text>
-                    <Input
-                      value={newConfig.groups || ''}
-                      name='groups'
-                      onChange={handleInputChange}
-                      placeholder='e.g. production, staging'
-                      bg='#161616'
-                      border='1px solid rgba(255, 255, 255, 0.08)'
-                      _hover={{ borderColor: 'rgba(255, 255, 255, 0.15)' }}
-                      _focus={{ borderColor: 'blue.400', boxShadow: 'none' }}
-                      height='28px'
-                      fontSize='13px'
-                    />
-                  </Stack>
-                </Grid>
+                  </Checkbox>
+                )}
 
                 <Grid templateColumns='repeat(2, 1fr)' gap={3}>
                   <Stack gap={1.5}>

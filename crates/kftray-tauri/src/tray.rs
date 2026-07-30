@@ -461,8 +461,9 @@ pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
         && !app_state.pinned.load(Ordering::SeqCst)
     {
         api.prevent_close();
-        let app_handle = webview_window.app_handle();
-        tauri::async_runtime::block_on(handle_exit_app(app_handle.clone()));
+        if let Err(e) = webview_window.hide() {
+            error!("Failed to hide window on close request: {e}");
+        }
     }
 }
 

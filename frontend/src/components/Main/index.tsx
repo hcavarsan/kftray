@@ -352,10 +352,10 @@ const KFTray = () => {
     }
   }
 
-  const handleSaveConfig = async (_configToSave: Config) => {
+  const handleSaveConfig = async (configToSave: Config) => {
     try {
       const updatedConfigToSave: Config = {
-        ...newConfig,
+        ...configToSave,
         id: isEdit ? newConfig.id : 0,
       }
       let wasRunning = false
@@ -375,7 +375,7 @@ const KFTray = () => {
       }
 
       if (wasRunning) {
-        await startPortForwardingForConfig(newConfig)
+        await startPortForwardingForConfig(updatedConfigToSave)
       }
 
       toaster.success({

@@ -189,13 +189,15 @@
 }
 
 .table-row {
-  height: var(--row-height);
+  height: auto;
+  min-height: var(--row-height);
   border: none;
 }
 
 .table-cell {
   padding: 2px var(--padding-x);
-  height: var(--row-height);
+  height: auto;
+  min-height: var(--row-height);
   font-size: var(--font-size-normal);
 }
 
