@@ -289,6 +289,7 @@ impl McpTool for StartPortForwardTool {
                 local_port: args.local_port,
                 remote_port: Some(remote_port),
                 context: args.context,
+                groups: None,
                 workload_type: Some(workload_type),
                 protocol: args.protocol.unwrap_or_else(|| "tcp".to_string()),
                 remote_address: None,

@@ -270,6 +270,7 @@ impl McpTool for CreateConfigTool {
             local_port: args.local_port,
             remote_port: Some(args.remote_port),
             context: Some(args.context),
+            groups: None,
             workload_type: Some(workload_type),
             protocol: args.protocol.unwrap_or_else(|| "tcp".to_string()),
             remote_address: args.remote_address,

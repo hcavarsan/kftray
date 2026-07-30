@@ -5,7 +5,10 @@ import { Box } from '@chakra-ui/react'
 import Header from '@/components/Header'
 import HeaderMenu from '@/components/HeaderMenu'
 import ContextsAccordion from '@/components/PortForwardTable/ContextsAccordion'
-import { useConfigsByContext } from '@/components/PortForwardTable/useConfigsByContext'
+import {
+  getConfigGroup,
+  useConfigsByGroup,
+} from '@/components/PortForwardTable/useConfigsByGroup'
 import { AccordionRoot, ValueChangeDetails } from '@/components/ui/accordion'
 import { Config, TableProps } from '@/types'
 
@@ -35,7 +38,7 @@ const PortForwardTable: React.FC<TableProps> = ({
   const [expandedIndices, setExpandedIndices] = useState<string[]>([])
   const prevSelectedConfigsRef = useRef<Config[]>(selectedConfigs)
   const [isSelectAllChecked, setIsSelectAllChecked] = useState<boolean>(false)
-  const [selectedConfigsByContext, setSelectedConfigsByContext] = useState<
+  const [selectedConfigsByGroup, setSelectedConfigsByGroup] = useState<
     Record<string, boolean>
   >({})
   const [isCheckboxAction, setIsCheckboxAction] = useState<boolean>(false)
@@ -48,29 +51,31 @@ const PortForwardTable: React.FC<TableProps> = ({
         config =>
           config.alias.toLowerCase().includes(searchLower) ||
           config.context.toLowerCase().includes(searchLower) ||
+          getConfigGroup(config).toLowerCase().includes(searchLower) ||
           config.remote_address?.toLowerCase().includes(searchLower) ||
           config.local_port.toString().includes(searchLower),
       )
       .sort(
         (a, b) =>
-          a.alias.localeCompare(b.alias) || a.context.localeCompare(b.context),
+          getConfigGroup(a).localeCompare(getConfigGroup(b)) ||
+          a.alias.localeCompare(b.alias),
       )
   }, [configs, search])
 
-  const configsByContext = useConfigsByContext(filteredConfigs)
+  const configsByGroup = useConfigsByGroup(filteredConfigs)
 
   useEffect(() => {
     if (prevSelectedConfigsRef.current !== selectedConfigs) {
-      const newSelectedConfigsByContext = Object.fromEntries(
-        Object.entries(configsByContext).map(([context, contextConfigs]) => [
-          context,
-          contextConfigs.every(config =>
+      const newSelectedConfigsByGroup = Object.fromEntries(
+        Object.entries(configsByGroup).map(([group, groupConfigs]) => [
+          group,
+          groupConfigs.every(config =>
             selectedConfigs.some(selected => selected.id === config.id),
           ),
         ]),
       )
 
-      setSelectedConfigsByContext(newSelectedConfigsByContext)
+      setSelectedConfigsByGroup(newSelectedConfigsByGroup)
       setIsSelectAllChecked(
         configs.every(config =>
           selectedConfigs.some(selected => selected.id === config.id),
@@ -78,7 +83,7 @@ const PortForwardTable: React.FC<TableProps> = ({
       )
       prevSelectedConfigsRef.current = selectedConfigs
     }
-  }, [selectedConfigs, configs, configsByContext])
+  }, [selectedConfigs, configs, configsByGroup])
 
   useEffect(() => {
     setSelectedConfigs(prev =>
@@ -87,10 +92,10 @@ const PortForwardTable: React.FC<TableProps> = ({
   }, [configs, setSelectedConfigs])
 
   const toggleExpandAll = () => {
-    const allContexts = Object.keys(configsByContext)
+    const allGroups = Object.keys(configsByGroup)
 
     setExpandedIndices(current =>
-      current.length === allContexts.length ? [] : allContexts,
+      current.length === allGroups.length ? [] : allGroups,
     )
   }
 
@@ -101,17 +106,17 @@ const PortForwardTable: React.FC<TableProps> = ({
   }
 
   const handleCheckboxChange = useCallback(
-    (context: string, isChecked: boolean) => {
+    (group: string, isChecked: boolean) => {
       setIsCheckboxAction(true)
-      const contextConfigs = filteredConfigs.filter(
-        config => config.context === context,
+      const groupConfigs = filteredConfigs.filter(
+        config => getConfigGroup(config) === group,
       )
 
       setSelectedConfigs(prev => {
         if (isChecked) {
           const newSelections = [...prev]
 
-          contextConfigs.forEach(config => {
+          groupConfigs.forEach(config => {
             if (!prev.some(p => p.id === config.id)) {
               newSelections.push(config)
             }
@@ -124,7 +129,7 @@ const PortForwardTable: React.FC<TableProps> = ({
           prev
             .filter(
               config =>
-                config.context !== context ||
+                getConfigGroup(config) !== group ||
                 !filteredConfigs.some(fc => fc.id === config.id),
             )
             .map(config => config.id),
@@ -139,20 +144,21 @@ const PortForwardTable: React.FC<TableProps> = ({
 
   const handleSelectionChange = useCallback(
     (config: Config, isSelected: boolean) => {
+      const configGroup = getConfigGroup(config)
       const newSelection = isSelected
         ? [...selectedConfigs, config]
         : selectedConfigs.filter(c => c.id !== config.id)
 
       setSelectedConfigs(newSelection)
 
-      const contextConfigs = configs.filter(c => c.context === config.context)
-      const allContextSelected = contextConfigs.every(contextConfig =>
-        newSelection.some(selected => selected.id === contextConfig.id),
+      const groupConfigs = configs.filter(c => getConfigGroup(c) === configGroup)
+      const allGroupSelected = groupConfigs.every(groupConfig =>
+        newSelection.some(selected => selected.id === groupConfig.id),
       )
 
-      setSelectedConfigsByContext(prev => ({
+      setSelectedConfigsByGroup(prev => ({
         ...prev,
-        [config.context]: allContextSelected,
+        [configGroup]: allGroupSelected,
       }))
     },
     [configs, selectedConfigs, setSelectedConfigs],
@@ -193,7 +199,7 @@ const PortForwardTable: React.FC<TableProps> = ({
             isStopping={isStopping}
             toggleExpandAll={toggleExpandAll}
             expandedIndices={expandedIndices}
-            configsByContext={configsByContext}
+            configsByGroup={configsByGroup}
           />
         </Box>
       </Box>
@@ -216,11 +222,11 @@ const PortForwardTable: React.FC<TableProps> = ({
           value={expandedIndices}
           onValueChange={handleAccordionChange}
         >
-          {Object.entries(configsByContext).map(([context, contextConfigs]) => (
+          {Object.entries(configsByGroup).map(([group, groupConfigs]) => (
             <ContextsAccordion
-              key={context}
-              context={context}
-              contextConfigs={contextConfigs}
+              key={group}
+              group={group}
+              groupConfigs={groupConfigs}
               selectedConfigs={selectedConfigs}
               handleDeleteConfig={handleDeleteConfig}
               confirmDeleteConfig={confirmDeleteConfig}
@@ -229,7 +235,7 @@ const PortForwardTable: React.FC<TableProps> = ({
               isAlertOpen={isAlertOpen}
               setIsAlertOpen={setIsAlertOpen}
               handleSelectionChange={handleSelectionChange}
-              selectedConfigsByContext={selectedConfigsByContext}
+              selectedConfigsByGroup={selectedConfigsByGroup}
               handleCheckboxChange={handleCheckboxChange}
               isInitiating={isInitiating}
               setIsInitiating={setIsInitiating}

@@ -8,6 +8,7 @@ export interface Config {
   domain_enabled: boolean
   remote_port?: number
   context: string
+  groups?: string
   alias: string
   remote_address: string
   workload_type: string
@@ -142,7 +143,7 @@ export interface CustomConfigProps {
   setNewConfig: React.Dispatch<React.SetStateAction<Config>>
 }
 
-export interface ConfigsByContext {
+export interface ConfigsByGroup {
   [key: string]: Config[]
 }
 
@@ -168,7 +169,7 @@ export interface HeaderMenuProps {
   isStopping: boolean
   toggleExpandAll: () => void
   expandedIndices: string[]
-  configsByContext: ConfigsByContext
+  configsByGroup: ConfigsByGroup
   setSelectedConfigs: React.Dispatch<React.SetStateAction<Config[]>>
 }
 
@@ -179,8 +180,8 @@ export interface BulkDeleteButtonProps {
 }
 
 export interface ContextsAccordionProps {
-  context: string
-  contextConfigs: Config[]
+  group: string
+  groupConfigs: Config[]
   selectedConfigs: Config[]
   handleDeleteConfig: (id: number) => void
   confirmDeleteConfig: () => void
@@ -189,8 +190,8 @@ export interface ContextsAccordionProps {
   isAlertOpen: boolean
   setIsAlertOpen: (open: boolean) => void
   handleSelectionChange: (config: Config, isSelected: boolean) => void
-  selectedConfigsByContext: Record<string, boolean>
-  handleCheckboxChange: (context: string, isChecked: boolean) => void
+  selectedConfigsByGroup: Record<string, boolean>
+  handleCheckboxChange: (group: string, isChecked: boolean) => void
   isInitiating: boolean
   setIsInitiating: React.Dispatch<React.SetStateAction<boolean>>
   isStopping: boolean

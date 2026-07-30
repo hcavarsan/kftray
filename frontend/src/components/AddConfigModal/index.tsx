@@ -664,6 +664,26 @@ return {
                 <Grid templateColumns='repeat(2, 1fr)' gap={3}>
                   <Stack gap={1.5}>
                     <Text fontSize='xs' color='gray.400'>
+                      Group
+                    </Text>
+                    <Input
+                      value={newConfig.groups || ''}
+                      name='groups'
+                      onChange={handleInputChange}
+                      placeholder='e.g. production, staging'
+                      bg='#161616'
+                      border='1px solid rgba(255, 255, 255, 0.08)'
+                      _hover={{ borderColor: 'rgba(255, 255, 255, 0.15)' }}
+                      _focus={{ borderColor: 'blue.400', boxShadow: 'none' }}
+                      height='28px'
+                      fontSize='13px'
+                    />
+                  </Stack>
+                </Grid>
+
+                <Grid templateColumns='repeat(2, 1fr)' gap={3}>
+                  <Stack gap={1.5}>
+                    <Text fontSize='xs' color='gray.400'>
                       Workload Type
                     </Text>
                     <Select

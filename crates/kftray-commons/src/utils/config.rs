@@ -697,6 +697,12 @@ fn prepare_config(mut config: Config) -> Config {
     if let Some(ref mut kubeconfig) = config.kubeconfig {
         *kubeconfig = kubeconfig.trim().to_string();
     }
+    if let Some(ref mut groups) = config.groups {
+        *groups = groups.trim().to_string();
+        if groups.is_empty() {
+            config.groups = None;
+        }
+    }
 
     if config.local_port == Some(0) || config.local_port.is_none() {
         match pick_unused_local_port() {

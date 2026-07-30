@@ -21,7 +21,7 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
   isStopping,
   toggleExpandAll,
   expandedIndices,
-  configsByContext,
+  configsByGroup,
   setSelectedConfigs,
 }) => {
   const isSelectAllChecked = useMemo(() => {
@@ -302,9 +302,9 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
       {/* Expand/Collapse Button */}
       <Tooltip
         content={
-          expandedIndices.length === Object.keys(configsByContext).length
-            ? 'Collapse all contexts'
-            : 'Expand all contexts'
+          expandedIndices.length === Object.keys(configsByGroup).length
+            ? 'Collapse all groups'
+            : 'Expand all groups'
         }
         portalled={true}
         contentProps={{ zIndex: 100 }}
@@ -322,13 +322,13 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
           border='1px solid rgba(255, 255, 255, 0.08)'
         >
           <span style={{ fontSize: '11px' }}>
-            {expandedIndices.length === Object.keys(configsByContext).length
+            {expandedIndices.length === Object.keys(configsByGroup).length
               ? 'Collapse All'
               : 'Expand All'}
           </span>
           <Box
             as={
-              expandedIndices.length === Object.keys(configsByContext).length
+              expandedIndices.length === Object.keys(configsByGroup).length
                 ? ChevronUp
                 : ChevronDown
             }
