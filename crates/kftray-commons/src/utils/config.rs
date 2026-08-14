@@ -2,6 +2,7 @@ use futures::stream::StreamExt;
 use log::{
     error,
     info,
+    warn,
 };
 use serde_json::json;
 use sqlx::{
@@ -441,35 +442,118 @@ fn normalized_groups(config: &Config) -> Option<&str> {
         .filter(|s| !s.is_empty())
 }
 
+fn normalized_tab(config: &Config) -> Option<&str> {
+    config
+        .tab
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+}
+
+/// Trim identity-related fields before merge matching, without assigning ports.
+fn normalize_config_for_identity(mut config: Config) -> Config {
+    if let Some(ref mut groups) = config.groups {
+        *groups = groups.trim().to_string();
+        if groups.is_empty() {
+            config.groups = None;
+        }
+    }
+    if let Some(ref mut tab) = config.tab {
+        *tab = tab.trim().to_string();
+        if tab.is_empty() {
+            config.tab = None;
+        }
+    }
+    if let Some(ref mut alias) = config.alias {
+        *alias = alias.trim().to_string();
+        if alias.is_empty() {
+            config.alias = None;
+        }
+    }
+    if let Some(ref mut context) = config.context {
+        *context = context.trim().to_string();
+        if context.is_empty() {
+            config.context = None;
+        }
+    }
+    if let Some(ref mut service) = config.service {
+        *service = service.trim().to_string();
+        if service.is_empty() {
+            config.service = None;
+        }
+    }
+    if let Some(ref mut target) = config.target {
+        *target = target.trim().to_string();
+        if target.is_empty() {
+            config.target = None;
+        }
+    }
+    if let Some(ref mut remote_address) = config.remote_address {
+        *remote_address = remote_address.trim().to_string();
+        if remote_address.is_empty() {
+            config.remote_address = None;
+        }
+    }
+    if let Some(ref mut workload_type) = config.workload_type {
+        *workload_type = workload_type.trim().to_lowercase();
+        if workload_type.is_empty() {
+            config.workload_type = None;
+        }
+    }
+    config.namespace = config.namespace.trim().to_string();
+    config.protocol = config.protocol.trim().to_lowercase();
+    config
+}
+
 fn configs_match_identity(existing: &Config, incoming: &Config) -> bool {
+    // Groups are part of identity: same service/ports in different groups are distinct configs.
+    if normalized_groups(existing) != normalized_groups(incoming) {
+        return false;
+    }
+
+    // Tabs are workspaces: same config in different tabs are distinct.
+    if normalized_tab(existing) != normalized_tab(incoming) {
+        return false;
+    }
+
     if existing.context != incoming.context
         || existing.namespace != incoming.namespace
         || existing.workload_type != incoming.workload_type
         || existing.protocol != incoming.protocol
-        || normalized_groups(existing) != normalized_groups(incoming)
     {
         return false;
     }
 
     match existing.workload_type.as_deref() {
         Some("service") => {
-            let service_matches = existing.service == incoming.service;
-
-            let has_explicit_ports = existing.local_port.is_some()
-                && incoming.local_port.is_some()
-                && existing.local_port != Some(0)
-                && incoming.local_port != Some(0);
-
-            if has_explicit_ports {
-                service_matches
-                    && existing.local_port == incoming.local_port
-                    && existing.remote_port == incoming.remote_port
-            } else {
-                service_matches
+            if existing.service != incoming.service {
+                return false;
             }
+
+            let existing_local = existing.local_port.filter(|&p| p != 0);
+            let incoming_local = incoming.local_port.filter(|&p| p != 0);
+            let existing_remote = existing.remote_port.filter(|&p| p != 0);
+            let incoming_remote = incoming.remote_port.filter(|&p| p != 0);
+
+            // When both sides have explicit local ports, they must match.
+            if let (Some(a), Some(b)) = (existing_local, incoming_local)
+                && a != b
+            {
+                return false;
+            }
+
+            // When both sides have explicit remote ports, they must match.
+            if let (Some(a), Some(b)) = (existing_remote, incoming_remote)
+                && a != b
+            {
+                return false;
+            }
+
+            true
         }
         Some("pod") => existing.target == incoming.target,
         Some("proxy") => existing.remote_address == incoming.remote_address,
+        Some("expose") => existing.alias == incoming.alias,
         _ => {
             existing.service == incoming.service
                 && existing.target == incoming.target
@@ -484,42 +568,69 @@ fn configs_are_identical(existing: &Config, incoming: &Config) -> bool {
 
     existing_clone.id = None;
     incoming_clone.id = None;
+    // Port 0 / None are equivalent for equality during import merge.
+    if existing_clone.local_port == Some(0) {
+        existing_clone.local_port = None;
+    }
+    if incoming_clone.local_port == Some(0) {
+        incoming_clone.local_port = None;
+    }
 
     existing_clone == incoming_clone
 }
 
 async fn merge_config_with_existing(
-    config: Config, existing_configs: &[Config], pool: &SqlitePool,
+    config: Config, existing_configs: &mut Vec<Config>, pool: &SqlitePool,
 ) -> Result<(), String> {
-    if let Some(existing) = existing_configs
+    let config = normalize_config_for_identity(config);
+
+    if let Some(idx) = existing_configs
         .iter()
-        .find(|c| configs_match_identity(c, &config))
+        .position(|c| configs_match_identity(c, &config))
     {
+        let existing_id = existing_configs[idx].id;
         info!(
-            "Found matching config ID={}, checking if update needed",
-            existing.id.unwrap_or(-1)
+            "Found matching config ID={:?}, groups={:?}, checking if update needed",
+            existing_id,
+            normalized_groups(&existing_configs[idx])
         );
-        if configs_are_identical(existing, &config) {
+
+        if configs_are_identical(&existing_configs[idx], &config) {
             info!("Config is identical, skipping");
             return Ok(());
         }
 
         info!("Config has changes, updating");
         let mut updated_config = config;
-        updated_config.id = existing.id;
+        updated_config.id = existing_id;
 
         if updated_config.alias.is_none() || updated_config.alias.as_deref() == Some("") {
-            updated_config.alias = existing.alias.clone();
+            updated_config.alias = existing_configs[idx].alias.clone();
         }
 
         if updated_config.local_port.is_none() || updated_config.local_port == Some(0) {
-            updated_config.local_port = existing.local_port;
+            updated_config.local_port = existing_configs[idx].local_port;
         }
 
         update_config_with_pool(updated_config, pool).await?;
+
+        if let Some(id) = existing_id
+            && let Ok(fresh) = get_config_with_pool(id, pool).await
+        {
+            existing_configs[idx] = fresh;
+        }
     } else {
-        info!("No matching config found, inserting new config");
-        insert_config_with_pool(config, pool).await?;
+        info!(
+            "No matching config found (groups={:?}), inserting new config",
+            normalized_groups(&config)
+        );
+        let id = insert_config_with_pool(config, pool).await?;
+        match get_config_with_pool(id, pool).await {
+            Ok(fresh) => existing_configs.push(fresh),
+            Err(e) => {
+                warn!("Inserted config id={id} but failed to re-read it: {e}");
+            }
+        }
     }
 
     Ok(())
@@ -530,11 +641,11 @@ pub(crate) async fn import_configs_with_pool(
 ) -> Result<(), String> {
     let configs = parse_config_json(&json)?;
 
-    let existing_configs = read_configs_with_pool(pool).await?;
+    let mut existing_configs = read_configs_with_pool(pool).await?;
 
     for config in configs {
         validate_imported_config(&config).map_err(|e| format!("Invalid config: {e}"))?;
-        merge_config_with_existing(config, &existing_configs, pool)
+        merge_config_with_existing(config, &mut existing_configs, pool)
             .await
             .map_err(|e| format!("Failed to merge config: {e}"))?;
     }
@@ -559,37 +670,57 @@ fn parse_config_json(json: &str) -> Result<Vec<Config>, String> {
 }
 
 async fn merge_config_with_existing_and_mode(
-    config: Config, existing_configs: &[Config], pool: &SqlitePool, mode: DatabaseMode,
+    config: Config, existing_configs: &mut Vec<Config>, pool: &SqlitePool, mode: DatabaseMode,
 ) -> Result<(), String> {
-    if let Some(existing) = existing_configs
+    let config = normalize_config_for_identity(config);
+
+    if let Some(idx) = existing_configs
         .iter()
-        .find(|c| configs_match_identity(c, &config))
+        .position(|c| configs_match_identity(c, &config))
     {
+        let existing_id = existing_configs[idx].id;
         info!(
-            "Found matching config ID={}, checking if update needed",
-            existing.id.unwrap_or(-1)
+            "Found matching config ID={:?}, groups={:?}, checking if update needed",
+            existing_id,
+            normalized_groups(&existing_configs[idx])
         );
-        if configs_are_identical(existing, &config) {
+
+        if configs_are_identical(&existing_configs[idx], &config) {
             info!("Config is identical, skipping");
             return Ok(());
         }
 
         info!("Config has changes, updating");
         let mut updated_config = config;
-        updated_config.id = existing.id;
+        updated_config.id = existing_id;
 
         if updated_config.alias.is_none() || updated_config.alias.as_deref() == Some("") {
-            updated_config.alias = existing.alias.clone();
+            updated_config.alias = existing_configs[idx].alias.clone();
         }
 
         if updated_config.local_port.is_none() || updated_config.local_port == Some(0) {
-            updated_config.local_port = existing.local_port;
+            updated_config.local_port = existing_configs[idx].local_port;
         }
 
         update_config_with_pool(updated_config, pool).await?;
+
+        if let Some(id) = existing_id
+            && let Ok(fresh) = get_config_with_pool(id, pool).await
+        {
+            existing_configs[idx] = fresh;
+        }
     } else {
-        info!("No matching config found, inserting new config");
-        insert_config_with_pool_and_mode(config, pool, mode).await?;
+        info!(
+            "No matching config found (groups={:?}), inserting new config",
+            normalized_groups(&config)
+        );
+        let id = insert_config_with_pool_and_mode(config, pool, mode).await?;
+        match get_config_with_pool(id, pool).await {
+            Ok(fresh) => existing_configs.push(fresh),
+            Err(e) => {
+                warn!("Inserted config id={id} but failed to re-read it: {e}");
+            }
+        }
     }
 
     Ok(())
@@ -600,11 +731,11 @@ pub(crate) async fn import_configs_with_pool_and_mode(
 ) -> Result<(), String> {
     let configs = parse_config_json(&json)?;
 
-    let existing_configs = read_configs_with_pool(pool).await?;
+    let mut existing_configs = read_configs_with_pool(pool).await?;
 
     for config in configs {
         validate_imported_config(&config).map_err(|e| format!("Invalid config: {e}"))?;
-        merge_config_with_existing_and_mode(config, &existing_configs, pool, mode)
+        merge_config_with_existing_and_mode(config, &mut existing_configs, pool, mode)
             .await
             .map_err(|e| format!("Failed to merge config: {e}"))?;
     }
@@ -657,10 +788,10 @@ pub async fn upsert_configs_with_mode(
 pub async fn upsert_configs_with_pool_and_mode(
     configs: Vec<Config>, pool: &SqlitePool, mode: DatabaseMode,
 ) -> Result<(), String> {
-    let existing_configs = read_configs_with_pool(pool).await?;
+    let mut existing_configs = read_configs_with_pool(pool).await?;
 
     for config in configs {
-        merge_config_with_existing_and_mode(config, &existing_configs, pool, mode)
+        merge_config_with_existing_and_mode(config, &mut existing_configs, pool, mode)
             .await
             .map_err(|e| format!("Failed to merge config: {e}"))?;
     }
@@ -738,6 +869,12 @@ fn prepare_config(mut config: Config) -> Config {
         *groups = groups.trim().to_string();
         if groups.is_empty() {
             config.groups = None;
+        }
+    }
+    if let Some(ref mut tab) = config.tab {
+        *tab = tab.trim().to_string();
+        if tab.is_empty() {
+            config.tab = None;
         }
     }
 
@@ -2061,5 +2198,151 @@ mod tests {
             2,
             "Re-importing the same group variants should not create more configs"
         );
+    }
+
+    #[tokio::test]
+    async fn test_import_batch_different_groups_into_empty_db() {
+        let pool = setup_test_db().await;
+
+        let configs_json = serde_json::json!([
+            {
+                "service": "api",
+                "alias": "api",
+                "workload_type": "service",
+                "protocol": "tcp",
+                "context": "ctx",
+                "namespace": "default",
+                "local_port": 8080,
+                "remote_port": 80,
+                "groups": "dev"
+            },
+            {
+                "service": "api",
+                "alias": "api",
+                "workload_type": "service",
+                "protocol": "tcp",
+                "context": "ctx",
+                "namespace": "default",
+                "local_port": 8080,
+                "remote_port": 80,
+                "groups": "prod"
+            }
+        ])
+        .to_string();
+
+        import_configs_with_pool(configs_json, &pool).await.unwrap();
+
+        let configs = read_configs_with_pool(&pool).await.unwrap();
+        assert_eq!(
+            configs.len(),
+            2,
+            "Batch import of same service with different groups must create two configs"
+        );
+        assert!(configs.iter().any(|c| c.groups.as_deref() == Some("dev")));
+        assert!(configs.iter().any(|c| c.groups.as_deref() == Some("prod")));
+    }
+
+    #[tokio::test]
+    async fn test_import_different_groups_without_local_port() {
+        let pool = setup_test_db().await;
+
+        let configs_json = serde_json::json!([
+            {
+                "service": "api",
+                "alias": "api-dev",
+                "workload_type": "service",
+                "protocol": "tcp",
+                "context": "ctx",
+                "namespace": "default",
+                "remote_port": 80,
+                "groups": "dev"
+            },
+            {
+                "service": "api",
+                "alias": "api-prod",
+                "workload_type": "service",
+                "protocol": "tcp",
+                "context": "ctx",
+                "namespace": "default",
+                "remote_port": 80,
+                "groups": "prod"
+            }
+        ])
+        .to_string();
+
+        import_configs_with_pool(configs_json, &pool).await.unwrap();
+
+        let configs = read_configs_with_pool(&pool).await.unwrap();
+        assert_eq!(
+            configs.len(),
+            2,
+            "Missing local_port must not cause different groups to merge"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_import_group_alias_and_whitespace() {
+        let pool = setup_test_db().await;
+
+        // Singular "group" key (serde alias) + whitespace around name
+        let first = r#"[{
+            "service": "api",
+            "alias": "api",
+            "workload_type": "service",
+            "protocol": "tcp",
+            "context": "ctx",
+            "namespace": "default",
+            "local_port": 8080,
+            "remote_port": 80,
+            "group": "  staging  "
+        }]"#;
+        import_configs_with_pool(first.to_string(), &pool)
+            .await
+            .unwrap();
+
+        let second = r#"[{
+            "service": "api",
+            "alias": "api",
+            "workload_type": "service",
+            "protocol": "tcp",
+            "context": "ctx",
+            "namespace": "default",
+            "local_port": 8080,
+            "remote_port": 80,
+            "groups": "production"
+        }]"#;
+        import_configs_with_pool(second.to_string(), &pool)
+            .await
+            .unwrap();
+
+        let configs = read_configs_with_pool(&pool).await.unwrap();
+        assert_eq!(configs.len(), 2);
+        assert!(
+            configs
+                .iter()
+                .any(|c| c.groups.as_deref() == Some("staging"))
+        );
+        assert!(
+            configs
+                .iter()
+                .any(|c| c.groups.as_deref() == Some("production"))
+        );
+
+        // Re-import trimmed staging should update, not duplicate
+        let again = r#"[{
+            "service": "api",
+            "alias": "api",
+            "workload_type": "service",
+            "protocol": "tcp",
+            "context": "ctx",
+            "namespace": "default",
+            "local_port": 8080,
+            "remote_port": 80,
+            "groups": "staging"
+        }]"#;
+        import_configs_with_pool(again.to_string(), &pool)
+            .await
+            .unwrap();
+        assert_eq!(read_configs_with_pool(&pool).await.unwrap().len(), 2);
     }
 }

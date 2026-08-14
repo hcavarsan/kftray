@@ -234,7 +234,7 @@ pub async fn load_saved_window_size_preset() -> crate::window_size::WindowSizePr
     }
 }
 
-/// Applies a window size preset on the Tauri main thread.
+/// Applies a window size on the Tauri main thread.
 ///
 /// On Linux, `WebviewWindow::current_monitor`, `outer_size`, and `set_size`
 /// are Xlib/GTK calls that corrupt the xcb request queue when invoked from a
@@ -252,6 +252,44 @@ pub async fn load_saved_window_size_preset() -> crate::window_size::WindowSizePr
 ///
 /// Returns `true` when the size was applied (or was already correct), `false`
 /// when the dispatch or the underlying `set_size` failed.
+async fn apply_window_dimensions_on_main_thread(
+    window: &WebviewWindow<Wry>, width: u32, height: u32,
+) -> bool {
+    let window_clone = window.clone();
+    let (tx, rx) = tokio::sync::oneshot::channel::<bool>();
+
+    let dispatch = window.app_handle().run_on_main_thread(move || {
+        if let (Ok(current), Ok(Some(monitor))) =
+            (window_clone.outer_size(), window_clone.current_monitor())
+        {
+            let logical = current.to_logical::<u32>(monitor.scale_factor());
+            if logical.width == width && logical.height == height {
+                let _ = tx.send(true);
+                return;
+            }
+        }
+
+        match window_clone.set_size(tauri::Size::Logical(tauri::LogicalSize::new(
+            width as f64, height as f64,
+        ))) {
+            Ok(()) => {
+                let _ = tx.send(true);
+            }
+            Err(e) => {
+                warn!("Failed to set window size to {width}x{height}: {e}");
+                let _ = tx.send(false);
+            }
+        }
+    });
+
+    if let Err(e) = dispatch {
+        warn!("Failed to dispatch window size apply to main thread: {e}");
+        return false;
+    }
+
+    rx.await.unwrap_or(false)
+}
+
 async fn apply_window_size_on_main_thread(
     window: &WebviewWindow<Wry>, preset: crate::window_size::WindowSizePreset,
 ) -> bool {
@@ -293,6 +331,10 @@ async fn apply_window_size_on_main_thread(
 }
 
 pub async fn apply_saved_window_size(window: &WebviewWindow<Wry>) {
+    if let Some((w, h)) = crate::window_size::load_custom_window_size().await {
+        apply_window_dimensions_on_main_thread(window, w, h).await;
+        return;
+    }
     let preset = load_saved_window_size_preset().await;
     apply_window_size_on_main_thread(window, preset).await;
 }
@@ -303,6 +345,9 @@ pub async fn apply_window_size_preset(
     if !apply_window_size_on_main_thread(window, preset).await {
         return;
     }
+    // Drop free-resize override so restore uses this preset until the user
+    // resizes again (Resized will rewrite custom size).
+    crate::window_size::clear_custom_window_size().await;
     match kftray_commons::utils::settings::set_setting(
         crate::window_size::SETTING_KEY,
         preset.as_id(),

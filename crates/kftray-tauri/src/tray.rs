@@ -456,6 +456,23 @@ pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
         }
     }
 
+    if let WindowEvent::Resized(_) = event
+        && webview_window.label() == "main"
+    {
+        let app_state = webview_window.state::<AppState>();
+        if !app_state.positioning_active.load(Ordering::SeqCst)
+            && let (Ok(size), Ok(Some(monitor))) =
+                (webview_window.outer_size(), webview_window.current_monitor())
+        {
+            let logical = size.to_logical::<u32>(monitor.scale_factor());
+            let runtime = app_state.runtime.clone();
+            runtime.spawn(async move {
+                sleep(Duration::from_millis(500)).await;
+                crate::window_size::save_custom_window_size(logical.width, logical.height).await;
+            });
+        }
+    }
+
     if let WindowEvent::CloseRequested { api, .. } = event
         && webview_window.label() == "main"
         && !app_state.pinned.load(Ordering::SeqCst)

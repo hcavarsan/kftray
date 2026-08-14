@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import {
   GripVertical,
   Pin,
@@ -31,7 +31,6 @@ const Header: React.FC<HeaderProps> = ({
   const [version, setVersion] = useState('')
   const [tooltipOpen, setTooltipOpen] = useState(false)
   const [isPinned, setIsPinned] = useState(false)
-  const dragHandleRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     app.getVersion().then(setVersion).catch(console.error)
@@ -45,37 +44,26 @@ const Header: React.FC<HeaderProps> = ({
     }
   }, [])
 
-  useEffect(() => {
-    if (!dragHandleRef.current) {
+  const startWindowDrag = (e: React.MouseEvent) => {
+    // Only primary button; ignore clicks that bubbled from controls.
+    if (e.button !== 0 || e.defaultPrevented) {
+      return
+    }
+    const target = e.target as HTMLElement | null
+    if (
+      target?.closest(
+        'button, input, textarea, select, a, [data-no-window-drag]',
+      )
+    ) {
       return
     }
 
-    const handleMouseMove = async (e: MouseEvent) => {
-      if (e.buttons === 1) {
-        e.preventDefault()
-        await appWindow.startDragging()
-      }
-    }
-
-    const handleMouseDown = (_e: MouseEvent) => {
-      setTooltipOpen(false)
-      document.addEventListener('mousemove', handleMouseMove)
-    }
-
-    const handleMouseUp = () => {
-      document.removeEventListener('mousemove', handleMouseMove)
-    }
-
-    const currentDragHandle = dragHandleRef.current
-
-    currentDragHandle.addEventListener('mousedown', handleMouseDown)
-    document.addEventListener('mouseup', handleMouseUp)
-
-    return () => {
-      currentDragHandle.removeEventListener('mousedown', handleMouseDown)
-      document.removeEventListener('mouseup', handleMouseUp)
-    }
-  }, [])
+    e.preventDefault()
+    setTooltipOpen(false)
+    void appWindow.startDragging().catch(err => {
+      console.error('Failed to start window drag:', err)
+    })
+  }
 
   async function handleHideWindow() {
     try {
@@ -109,18 +97,22 @@ const Header: React.FC<HeaderProps> = ({
       border='1px solid rgba(255, 255, 255, 0.08)'
       position='relative'
       zIndex={10}
+      onMouseDown={startWindowDrag}
+      userSelect='none'
     >
       {/* Left Section */}
       <Box display='flex' alignItems='center' gap={3}>
         <Box display='flex' alignItems='center' gap={2}>
           <Box
-            ref={dragHandleRef}
             className='drag-handle'
             onMouseEnter={() => setTooltipOpen(true)}
             onMouseLeave={() => setTooltipOpen(false)}
-            cursor='move'
+            cursor='grab'
+            _active={{ cursor: 'grabbing' }}
             _hover={{ color: 'whiteAlpha.700' }}
             mb={0.5}
+            position='relative'
+            zIndex={1001}
           >
             <Tooltip
               content='Move Window Position'
@@ -133,7 +125,6 @@ const Header: React.FC<HeaderProps> = ({
                 width='22px'
                 height='22px'
                 color='whiteAlpha.500'
-                data-drag
               />
             </Tooltip>
           </Box>
@@ -152,12 +143,19 @@ const Header: React.FC<HeaderProps> = ({
               filter='brightness(0.9)'
               _hover={{ filter: 'brightness(1)' }}
               transition='filter 0.2s'
+              pointerEvents='none'
             />
           </Tooltip>
         </Box>
 
         {/* Search Input */}
-        <Box position='relative' width='200px' ml={12}>
+        <Box
+          position='relative'
+          width='200px'
+          ml={12}
+          data-no-window-drag
+          onMouseDown={e => e.stopPropagation()}
+        >
           <Box
             as={Search}
             position='absolute'
@@ -168,6 +166,7 @@ const Header: React.FC<HeaderProps> = ({
             width='14px'
             height='14px'
             color='whiteAlpha.500'
+            pointerEvents='none'
           />
           <Input
             value={search}
@@ -196,7 +195,15 @@ const Header: React.FC<HeaderProps> = ({
       </Box>
 
       {/* Right Section - Window Controls */}
-      <Box display='flex' alignItems='center' gap={1} ml={4} mr={-1}>
+      <Box
+        display='flex'
+        alignItems='center'
+        gap={1}
+        ml={4}
+        mr={-1}
+        data-no-window-drag
+        onMouseDown={e => e.stopPropagation()}
+      >
         <Tooltip
           content='Manage Server Resources'
           portalled={true}

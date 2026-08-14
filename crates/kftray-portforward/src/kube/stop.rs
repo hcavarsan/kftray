@@ -632,6 +632,8 @@ mod tests {
             local_port: Some(8080),
             remote_port: Some(8080),
             protocol: "tcp".to_string(),
+            groups: None,
+            tab: None,
             workload_type: Some("service".to_string()),
             target: None,
             local_address: Some("127.0.0.1".to_string()),

@@ -23,6 +23,7 @@
     "release:minor": "cargo run --bin bump_version minor && git add . && git commit -m 'chore: release new version'",
     "release:patch": "cargo run --bin bump_version patch && git add . && git commit -m 'chore: release new version'",
     "tauri": "cargo build --bin kftray-helper --release && tauri",
+    "build:win": "powershell -NoProfile -ExecutionPolicy Bypass -File ./hacks/build-windows.ps1",
     "knip": "pnpm --filter @kftray/ui run knip"
   },
   "pnpm": {

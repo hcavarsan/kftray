@@ -16,8 +16,9 @@ import { readTextFile, writeTextFile } from '@tauri-apps/plugin-fs'
 import Footer from '@/components/Footer'
 import PortForwardTable from '@/components/PortForwardTable'
 import { toaster } from '@/components/ui/toaster'
+import WindowResizeHandles from '@/components/WindowResizeHandles'
 import { useSyncManager } from '@/hooks/useSyncManager'
-import { Config } from '@/types'
+import { Config, DEFAULT_CONFIG_TAB, getConfigTab } from '@/types'
 
 const AddConfigModal = lazy(() => import('@/components/AddConfigModal'))
 const AutoImportModal = lazy(() => import('@/components/AutoImportModal'))
@@ -31,6 +32,21 @@ const ShortcutModal = lazy(() => import('@/components/ShortcutModal'))
 const initialRemotePort = 0
 const initialLocalPort = 0
 const initialId = 0
+
+const CONFIG_TABS_SETTING = 'config_tabs'
+const ACTIVE_TAB_SETTING = 'active_config_tab'
+
+const tabSettingValue = (tab: string): string | undefined =>
+  tab === DEFAULT_CONFIG_TAB ? undefined : tab
+
+const stampConfigsWithTab = (raw: unknown, tab: string): Config[] => {
+  const items = Array.isArray(raw) ? raw : [raw]
+
+  return items.map(item => ({
+    ...(item as Config),
+    tab: tabSettingValue(tab),
+  }))
+}
 
 // eslint-disable-next-line max-statements
 const KFTray = () => {
@@ -72,6 +88,8 @@ const KFTray = () => {
   const [isServerResourcesModalOpen, setIsServerResourcesModalOpen] =
     useState(false)
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false)
+  const [activeTab, setActiveTab] = useState(DEFAULT_CONFIG_TAB)
+  const [extraTabs, setExtraTabs] = useState<string[]>([])
   const fetchConfigsWithState = useCallback(async () => {
     try {
       const configsResponse = await invoke<Config[]>('get_configs_cmd')
@@ -152,12 +170,107 @@ const KFTray = () => {
     }
   }, [fetchConfigsWithState, debouncedUpdateConfigs])
 
+  useEffect(() => {
+    const loadTabs = async () => {
+      try {
+        const [tabsRaw, activeRaw] = await Promise.all([
+          invoke<string | null>('get_setting_value', {
+            key: CONFIG_TABS_SETTING,
+          }),
+          invoke<string | null>('get_setting_value', {
+            key: ACTIVE_TAB_SETTING,
+          }),
+        ])
+
+        if (tabsRaw) {
+          try {
+            const parsed = JSON.parse(tabsRaw)
+
+            if (Array.isArray(parsed)) {
+              setExtraTabs(
+                parsed
+                  .filter((t): t is string => typeof t === 'string')
+                  .map(t => t.trim())
+                  .filter(t => t && t !== DEFAULT_CONFIG_TAB),
+              )
+            }
+          } catch {
+            /* ignore bad json */
+          }
+        }
+        if (activeRaw?.trim()) {
+          setActiveTab(activeRaw.trim())
+        }
+      } catch (error) {
+        console.error('Failed to load config tabs:', error)
+      }
+    }
+
+    loadTabs()
+  }, [])
+
+  const tabs = React.useMemo(() => {
+    const fromConfigs = configs.map(getConfigTab)
+    const merged = new Set<string>([
+      DEFAULT_CONFIG_TAB,
+      ...extraTabs,
+      ...fromConfigs,
+      activeTab,
+    ])
+
+    return Array.from(merged).sort((a, b) => {
+      if (a === DEFAULT_CONFIG_TAB) {
+        return -1
+      }
+      if (b === DEFAULT_CONFIG_TAB) {
+        return 1
+      }
+
+      return a.localeCompare(b)
+    })
+  }, [configs, extraTabs, activeTab])
+
+  const tabConfigs = React.useMemo(
+    () => configs.filter(c => getConfigTab(c) === activeTab),
+    [configs, activeTab],
+  )
+
+  const persistExtraTabs = useCallback(async (next: string[]) => {
+    setExtraTabs(next)
+    try {
+      await invoke('set_setting_value', {
+        key: CONFIG_TABS_SETTING,
+        value: JSON.stringify(next),
+      })
+    } catch (error) {
+      console.error('Failed to persist tabs:', error)
+    }
+  }, [])
+
+  const persistActiveTab = useCallback(async (tab: string) => {
+    setActiveTab(tab)
+    try {
+      await invoke('set_setting_value', {
+        key: ACTIVE_TAB_SETTING,
+        value: tab,
+      })
+    } catch (error) {
+      console.error('Failed to persist active tab:', error)
+    }
+  }, [])
+
+  const tabHasConfigs = useCallback(
+    (tab: string) => configs.some(c => getConfigTab(c) === tab),
+    [configs],
+  )
+
   const openModal = () => {
     setNewConfig({
       id: initialId,
       service: '',
       context: '',
-    groups: '',
+      groups: '',
+      tab: tabSettingValue(activeTab),
       local_port: initialLocalPort,
       local_address: '127.0.0.1',
       auto_loopback_address: false,
@@ -234,18 +347,22 @@ const KFTray = () => {
         throw new Error('The exported config is not a string')
       }
 
+      const allConfigs = JSON.parse(json) as Config[]
+      const scoped = allConfigs.filter(c => getConfigTab(c) === activeTab)
+      const scopedJson = JSON.stringify(scoped, null, 2)
+
       const filePath = await save({
-        defaultPath: 'configs.json',
+        defaultPath: `configs-${activeTab}.json`,
         filters: [{ name: 'JSON', extensions: ['json'] }],
       })
 
       await invoke('close_save_dialog')
 
       if (filePath) {
-        await writeTextFile(filePath, json)
+        await writeTextFile(filePath, scopedJson)
         toaster.success({
           title: 'Success',
-          description: 'Configuration exported successfully.',
+          description: `Exported ${scoped.length} config(s) from tab "${activeTab}".`,
           duration: 1000,
         })
       }
@@ -274,11 +391,16 @@ const KFTray = () => {
 
       if (typeof selected === 'string') {
         const jsonContent = await readTextFile(selected)
+        const parsed = JSON.parse(jsonContent)
+        const stamped = stampConfigsWithTab(parsed, activeTab)
 
-        await invoke('import_configs_cmd', { json: jsonContent })
+        await invoke('import_configs_cmd', {
+          json: JSON.stringify(stamped),
+        })
+        await updateConfigsWithState()
         toaster.success({
           title: 'Success',
-          description: 'Configuration imported successfully.',
+          description: `Imported into tab "${activeTab}".`,
           duration: 1000,
         })
       } else {
@@ -357,6 +479,7 @@ const KFTray = () => {
       const updatedConfigToSave: Config = {
         ...configToSave,
         id: isEdit ? newConfig.id : 0,
+        tab: configToSave.tab ?? tabSettingValue(activeTab),
       }
       let wasRunning = false
       const originalConfigsRunningState = new Map(
@@ -660,6 +783,7 @@ return { id: config.id, error: null, aborted: false }
 
     try {
       await invoke('delete_config_cmd', { id: configToDelete })
+      await updateConfigsWithState()
       toaster.success({
         title: 'Success',
         description: 'Configuration deleted successfully.',
@@ -787,15 +911,107 @@ return { id: config.id, error: null, aborted: false }
   }
 
   const stopAllPortForwarding = async () => {
+    const configsToStop = tabConfigs.filter(config => config.is_running)
+
+    if (configsToStop.length > 0) {
+      await executeStopOperation(
+        configsToStop,
+        `Port forwarding stopped for tab "${activeTab}".`,
+      )
+    }
+  }
+
+  const stopAllRunningConnections = async () => {
     const configsToStop = configs.filter(config => config.is_running)
 
     if (configsToStop.length > 0) {
       await executeStopOperation(
         configsToStop,
-        'Port forwarding stopped successfully for all configurations.',
+        'All port forwards stopped on tab switch.',
       )
     }
   }
+
+  const handleSelectTab = useCallback(
+    async (tab: string) => {
+      if (tab === activeTab) {
+        return
+      }
+      await stopAllRunningConnections()
+      setSelectedConfigs([])
+      await persistActiveTab(tab)
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [activeTab, configs, persistActiveTab],
+  )
+
+  const handleCreateTab = useCallback(
+    async (name: string) => {
+      const trimmed = name.trim()
+      if (!trimmed) {
+        return
+      }
+      if (!extraTabs.includes(trimmed) && trimmed !== DEFAULT_CONFIG_TAB) {
+        await persistExtraTabs([...extraTabs, trimmed])
+      }
+      await handleSelectTab(trimmed)
+    },
+    [extraTabs, persistExtraTabs, handleSelectTab],
+  )
+
+  const handleRenameTab = useCallback(
+    async (from: string, to: string) => {
+      const trimmed = to.trim()
+      if (!trimmed || trimmed === from) {
+        return
+      }
+
+      const toUpdate = configs.filter(c => getConfigTab(c) === from)
+      for (const config of toUpdate) {
+        await invoke('update_config_cmd', {
+          config: { ...config, tab: tabSettingValue(trimmed) },
+        })
+      }
+
+      const nextExtra = extraTabs
+        .filter(t => t !== from)
+        .concat(
+          trimmed !== DEFAULT_CONFIG_TAB && !extraTabs.includes(trimmed)
+            ? [trimmed]
+            : [],
+        )
+      await persistExtraTabs(Array.from(new Set(nextExtra)))
+
+      if (activeTab === from) {
+        await persistActiveTab(trimmed)
+      }
+      await updateConfigsWithState()
+    },
+    [
+      configs,
+      extraTabs,
+      activeTab,
+      persistExtraTabs,
+      persistActiveTab,
+      updateConfigsWithState,
+    ],
+  )
+
+  const handleDeleteTab = useCallback(
+    async (tab: string) => {
+      if (tab === DEFAULT_CONFIG_TAB) {
+        return
+      }
+      if (tabHasConfigs(tab)) {
+        return
+      }
+      await persistExtraTabs(extraTabs.filter(t => t !== tab))
+      if (activeTab === tab) {
+        await persistActiveTab(DEFAULT_CONFIG_TAB)
+      }
+    },
+    [extraTabs, activeTab, tabHasConfigs, persistExtraTabs, persistActiveTab],
+  )
 
   const handleSetCredentialsSaved = useCallback((value: boolean) => {
     setCredentialsSaved(value)
@@ -841,6 +1057,7 @@ return { id: config.id, error: null, aborted: false }
       bg='#111111'
       borderRadius='lg'
     >
+      <WindowResizeHandles />
       <VStack
         height='100%'
         width='100%'
@@ -868,7 +1085,7 @@ return { id: config.id, error: null, aborted: false }
             padding='5px'
           >
             <PortForwardTable
-              configs={configs}
+              configs={tabConfigs}
               initiatePortForwarding={initiatePortForwarding}
               startSelectedPortForwarding={startSelectedPortForwarding}
               isInitiating={isInitiating}
@@ -888,6 +1105,13 @@ return { id: config.id, error: null, aborted: false }
               setSelectedConfigs={setSelectedConfigs}
               openSettingsModal={openSettingsModal}
               openServerResourcesModal={openServerResourcesModal}
+              tabs={tabs}
+              activeTab={activeTab}
+              onSelectTab={handleSelectTab}
+              onCreateTab={handleCreateTab}
+              onRenameTab={handleRenameTab}
+              onDeleteTab={handleDeleteTab}
+              tabHasConfigs={tabHasConfigs}
             />
           </Box>
 
@@ -952,6 +1176,7 @@ return { id: config.id, error: null, aborted: false }
             <AutoImportModal
               isOpen={isAutoImportModalOpen}
               onClose={() => setIsAutoImportModalOpen(false)}
+              activeTab={activeTab}
             />
           )}
 

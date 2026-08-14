@@ -88,8 +88,13 @@ pub struct Config {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context: Option<String>,
     #[serde(default)]
+    #[serde(alias = "group")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub groups: Option<String>,
+    /// Workspace tab name. `None` / empty maps to the default tab in the UI.
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tab: Option<String>,
     #[serde(default)]
     pub workload_type: Option<String>,
     #[serde(default)]
@@ -158,6 +163,7 @@ impl Default for Config {
             remote_port: Some(0),
             context: Some("current-context".to_string()),
             groups: None,
+            tab: None,
             workload_type: Some("default-workload".to_string()),
             protocol: "protocol".to_string(),
             remote_address: Some("default-remote-address".to_string()),
@@ -223,6 +229,10 @@ impl Config {
 
         if self.groups.as_deref().is_some_and(|s| s.is_empty()) {
             self.groups = None;
+        }
+
+        if self.tab.as_deref().is_some_and(|s| s.trim().is_empty()) {
+            self.tab = None;
         }
 
         if self.domain_enabled == Some(false) {

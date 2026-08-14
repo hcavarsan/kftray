@@ -41,6 +41,8 @@ mod tests {
                 local_port: Some(8080 + i as u16),
                 remote_port: Some(80),
                 context: Some(format!("context-{i}")),
+                groups: None,
+                tab: None,
                 workload_type: Some("service".to_string()),
                 protocol: "tcp".to_string(),
                 remote_address: Some(format!("remote-{i}")),

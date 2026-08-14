@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { Box } from '@chakra-ui/react'
 
+import ConfigTabs from '@/components/ConfigTabs'
 import Header from '@/components/Header'
 import HeaderMenu from '@/components/HeaderMenu'
 import ContextsAccordion from '@/components/PortForwardTable/ContextsAccordion'
@@ -33,6 +34,13 @@ const PortForwardTable: React.FC<TableProps> = ({
   setSelectedConfigs,
   openSettingsModal,
   openServerResourcesModal,
+  tabs,
+  activeTab,
+  onSelectTab,
+  onCreateTab,
+  onRenameTab,
+  onDeleteTab,
+  tabHasConfigs,
 }) => {
   const [search, setSearch] = useState<string>('')
   const [expandedIndices, setExpandedIndices] = useState<string[]>([])
@@ -210,6 +218,15 @@ const PortForwardTable: React.FC<TableProps> = ({
             toggleExpandAll={toggleExpandAll}
             expandedIndices={expandedIndices}
             configsByGroup={configsByGroup}
+          />
+          <ConfigTabs
+            tabs={tabs}
+            activeTab={activeTab}
+            onSelectTab={onSelectTab}
+            onCreateTab={onCreateTab}
+            onRenameTab={onRenameTab}
+            onDeleteTab={onDeleteTab}
+            tabHasConfigs={tabHasConfigs}
           />
         </Box>
       </Box>

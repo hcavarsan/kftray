@@ -8,6 +8,8 @@ const BASE_HEIGHT: u32 = 500;
 const MONITOR_FILL_RATIO: f32 = 0.9;
 
 pub const SETTING_KEY: &str = "window_size_preset";
+pub const CUSTOM_WIDTH_KEY: &str = "window_custom_width";
+pub const CUSTOM_HEIGHT_KEY: &str = "window_custom_height";
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub enum WindowSizePreset {
@@ -78,6 +80,45 @@ fn compute_dimensions(base_scale: f32, available_logical: Option<(f64, f64)>) ->
         (BASE_WIDTH as f32 * s).round() as u32,
         (BASE_HEIGHT as f32 * s).round() as u32,
     )
+}
+
+/// Logical outer size saved after free-resize (overrides preset on restore).
+pub async fn load_custom_window_size() -> Option<(u32, u32)> {
+    let width = kftray_commons::utils::settings::get_setting(CUSTOM_WIDTH_KEY)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|v| v.parse::<u32>().ok())?;
+    let height = kftray_commons::utils::settings::get_setting(CUSTOM_HEIGHT_KEY)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|v| v.parse::<u32>().ok())?;
+    if width == 0 || height == 0 {
+        return None;
+    }
+    Some((width, height))
+}
+
+pub async fn save_custom_window_size(width: u32, height: u32) {
+    if width == 0 || height == 0 {
+        return;
+    }
+    if let Err(e) =
+        kftray_commons::utils::settings::set_setting(CUSTOM_WIDTH_KEY, &width.to_string()).await
+    {
+        log::warn!("Failed to persist custom window width: {e}");
+    }
+    if let Err(e) =
+        kftray_commons::utils::settings::set_setting(CUSTOM_HEIGHT_KEY, &height.to_string()).await
+    {
+        log::warn!("Failed to persist custom window height: {e}");
+    }
+}
+
+pub async fn clear_custom_window_size() {
+    let _ = kftray_commons::utils::settings::set_setting(CUSTOM_WIDTH_KEY, "").await;
+    let _ = kftray_commons::utils::settings::set_setting(CUSTOM_HEIGHT_KEY, "").await;
 }
 
 #[cfg(test)]
