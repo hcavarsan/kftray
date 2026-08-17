@@ -111,6 +111,18 @@ async fn handle_corrupted_file(path: &Path, error: impl std::fmt::Display) {
 }
 
 pub fn toggle_window_visibility(window: &WebviewWindow<Wry>) {
+    toggle_window_visibility_with_position(window, false);
+}
+
+/// Toggles the window using the latest tray icon position when opening it.
+///
+/// A saved position is useful for keyboard-shortcut launches, but it can be
+/// on a different display from the tray icon that was just clicked.
+pub fn toggle_window_visibility_from_tray(window: &WebviewWindow<Wry>) {
+    toggle_window_visibility_with_position(window, true);
+}
+
+fn toggle_window_visibility_with_position(window: &WebviewWindow<Wry>, from_tray: bool) {
     let app_state = window.state::<AppState>();
     let is_visible = window.is_visible().unwrap_or(false);
 
@@ -121,7 +133,11 @@ pub fn toggle_window_visibility(window: &WebviewWindow<Wry>) {
             warn!("Failed to hide window: {e}");
         }
     } else {
-        set_position_before_show(window.clone());
+        if from_tray {
+            set_position_from_tray_before_show(window.clone());
+        } else {
+            set_position_before_show(window.clone());
+        }
         if let Err(e) = window.show() {
             warn!("Failed to show window: {e}");
         }
@@ -187,6 +203,14 @@ pub fn toggle_window_visibility(window: &WebviewWindow<Wry>) {
 }
 
 pub fn set_position_before_show(window: WebviewWindow<Wry>) {
+    set_position_before_show_with_mode(window, false);
+}
+
+fn set_position_from_tray_before_show(window: WebviewWindow<Wry>) {
+    set_position_before_show_with_mode(window, true);
+}
+
+fn set_position_before_show_with_mode(window: WebviewWindow<Wry>, from_tray: bool) {
     let (positioning_active, runtime) = {
         let app_state = window.state::<AppState>();
         app_state.positioning_active.store(true, Ordering::SeqCst);
@@ -200,26 +224,33 @@ pub fn set_position_before_show(window: WebviewWindow<Wry>) {
 
     runtime.spawn(async move {
         apply_saved_window_size(&window_clone).await;
-        match load_window_position().await {
-            Some(position) if is_valid_position(&window_clone, position.x, position.y) => {
-                info!(
-                    "Using saved window position: ({}, {})",
-                    position.x, position.y
-                );
-                let _ = window_clone.set_position(tauri::Position::Physical(
-                    tauri::PhysicalPosition::new(position.x, position.y),
-                ));
-                tokio::spawn({
-                    let positioning_active = positioning_active.clone();
-                    async move {
-                        sleep(Duration::from_millis(150)).await;
-                        positioning_active.store(false, Ordering::SeqCst);
-                    }
-                });
-            }
-            _ => {
-                info!("No valid saved position, using tray positioning");
-                position_from_tray(&window_clone);
+        if from_tray {
+            // The tray event has the authoritative display for this launch.
+            // position_from_tray falls back to the saved position when no
+            // usable tray rectangle is available (for example on startup).
+            position_from_tray(&window_clone);
+        } else {
+            match load_window_position().await {
+                Some(position) if is_valid_position(&window_clone, position.x, position.y) => {
+                    info!(
+                        "Using saved window position: ({}, {})",
+                        position.x, position.y
+                    );
+                    let _ = window_clone.set_position(tauri::Position::Physical(
+                        tauri::PhysicalPosition::new(position.x, position.y),
+                    ));
+                    tokio::spawn({
+                        let positioning_active = positioning_active.clone();
+                        async move {
+                            sleep(Duration::from_millis(150)).await;
+                            positioning_active.store(false, Ordering::SeqCst);
+                        }
+                    });
+                }
+                _ => {
+                    info!("No valid saved position, using tray positioning");
+                    position_from_tray(&window_clone);
+                }
             }
         }
     });
