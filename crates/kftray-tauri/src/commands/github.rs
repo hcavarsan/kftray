@@ -74,12 +74,12 @@ pub fn delete_key(service: &str, name: &str) -> std::result::Result<(), CustomEr
 
 #[tauri::command]
 pub async fn import_configs_from_github(
-    repo_url: String, config_path: String, use_system_credentials: bool, flush: bool,
+    repo_url: String, config_paths: Vec<String>, use_system_credentials: bool, flush: bool,
     github_token: Option<String>,
 ) -> Result<(), String> {
     let config = GitHubConfig {
         repo_url,
-        config_path,
+        config_paths,
         use_system_credentials,
         github_token,
         flush_existing: flush,
@@ -162,7 +162,7 @@ mod tests {
     async fn test_import_configs_from_github() {
         let result = import_configs_from_github(
             "https://github.com/nonexistent/repo".to_string(),
-            "config.json".to_string(),
+            vec!["config.json".to_string()],
             false,
             false,
             None,

@@ -103,7 +103,7 @@ To import and sync your GitHub configs in kftray:
 
 1. Open the application's main menu
 2. Select the button with GitHub icon in the footer menu
-3. Enter the URL of your Git repository and path containing the JSON file
+3. Enter the URL of your Git repository and one or more paths to the JSON config file(s) — use the `+` button to add additional paths if your configs are split across multiple files
 4. If your GitHub repository is private, you will need to enter the private token. Credentials are securely saved in the SO keyring (Keychain on macOS). Kftray does not store or save credentials in any local file; they are only stored in the local keyring.
 5. Select the polling time for when Kftray will synchronize configurations and retrieve them from GitHub.
 

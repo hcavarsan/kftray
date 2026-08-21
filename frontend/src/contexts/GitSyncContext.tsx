@@ -30,6 +30,17 @@ const CREDENTIALS_CACHE_KEY = 'git-sync-credentials'
 const SERVICE_NAME = 'kftray'
 const ACCOUNT_NAME = 'github_config'
 
+interface LegacyGitConfig extends Omit<GitConfig, 'configPaths'> {
+  configPath?: string
+  configPaths?: string[]
+}
+
+const normalizeCredentials = (raw: LegacyGitConfig): GitConfig => ({
+  ...raw,
+  configPaths:
+    raw.configPaths ?? (raw.configPath ? [raw.configPath] : []),
+})
+
 export const GitSyncProvider: React.FC<{ children: React.ReactNode }> = ({
   children,
 }) => {
@@ -50,7 +61,7 @@ export const GitSyncProvider: React.FC<{ children: React.ReactNode }> = ({
         const cached = sessionStorage.getItem(CREDENTIALS_CACHE_KEY)
 
         if (cached) {
-          setCredentials(JSON.parse(cached))
+          setCredentials(normalizeCredentials(JSON.parse(cached)))
 
           return
         }
@@ -61,10 +72,10 @@ export const GitSyncProvider: React.FC<{ children: React.ReactNode }> = ({
         })
 
         if (credentialsString) {
-          const creds = JSON.parse(credentialsString)
+          const creds = normalizeCredentials(JSON.parse(credentialsString))
 
           setCredentials(creds)
-          sessionStorage.setItem(CREDENTIALS_CACHE_KEY, credentialsString)
+          sessionStorage.setItem(CREDENTIALS_CACHE_KEY, JSON.stringify(creds))
         }
       } catch (error) {
         console.error('Failed to fetch credentials:', error)
@@ -101,7 +112,7 @@ export const GitSyncProvider: React.FC<{ children: React.ReactNode }> = ({
     try {
       await invoke('import_configs_from_github', {
         repoUrl: credentials.repoUrl,
-        configPath: credentials.configPath,
+        configPaths: credentials.configPaths,
         useSystemCredentials: credentials.authMethod === 'system',
         flush: credentials.flush ?? false,
         githubToken:

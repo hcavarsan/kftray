@@ -8,7 +8,7 @@ pub struct Cli {
     #[arg(
         short = 'c',
         long,
-        help = "Path to config file (local JSON file or path within GitHub repo)",
+        help = "Path to config file (local JSON file or path within GitHub repo; comma-separate multiple paths when using --github-url)",
         value_name = "PATH"
     )]
     pub configs_path: Option<String>,
