@@ -15,7 +15,7 @@ use crate::utils::db_mode::{
 
 pub struct GitHubConfig {
     pub repo_url: String,
-    pub config_path: String,
+    pub config_paths: Vec<String>,
     pub use_system_credentials: bool,
     pub github_token: Option<String>,
     pub flush_existing: bool,
@@ -27,9 +27,13 @@ pub struct GitHubRepository;
 
 impl GitHubRepository {
     pub async fn import_configs(config: GitHubConfig, mode: DatabaseMode) -> GitHubResult<()> {
+        if config.config_paths.is_empty() {
+            return Err("At least one config path must be provided".to_string());
+        }
+
         let config_content = Self::clone_and_read_config(
             &config.repo_url,
-            &config.config_path,
+            &config.config_paths,
             config.use_system_credentials,
             config.github_token,
         )?;
@@ -38,7 +42,7 @@ impl GitHubRepository {
     }
 
     fn clone_and_read_config(
-        repo_url: &str, config_path: &str, use_system_credentials: bool,
+        repo_url: &str, config_paths: &[String], use_system_credentials: bool,
         github_token: Option<String>,
     ) -> GitHubResult<String> {
         use git2::{
@@ -105,11 +109,11 @@ impl GitHubRepository {
         match builder.clone(repo_url, temp_dir.path()) {
             Ok(_) => {
                 info!("Successfully cloned repository");
-                Self::read_config_file(temp_dir.path(), config_path)
+                Self::read_config_files(temp_dir.path(), config_paths)
             }
             Err(e) => {
                 warn!("Repository clone failed: {e}, trying fallback with system git command");
-                Self::try_clone_with_system_git(repo_url, temp_dir.path(), config_path)
+                Self::try_clone_with_system_git(repo_url, temp_dir.path(), config_paths)
             }
         }
     }
@@ -135,7 +139,7 @@ impl GitHubRepository {
     }
 
     fn try_clone_with_system_git(
-        repo_url: &str, path: &Path, config_path: &str,
+        repo_url: &str, path: &Path, config_paths: &[String],
     ) -> GitHubResult<String> {
         use std::process::Command;
 
@@ -153,7 +157,7 @@ impl GitHubRepository {
 
         if output.status.success() {
             info!("Successfully cloned repository using system git");
-            Self::read_config_file(path, config_path)
+            Self::read_config_files(path, config_paths)
         } else {
             let error_msg = String::from_utf8_lossy(&output.stderr);
             error!("System git clone failed: {error_msg}");
@@ -163,12 +167,66 @@ impl GitHubRepository {
         }
     }
 
-    fn read_config_file(temp_dir: &Path, config_path: &str) -> GitHubResult<String> {
-        let config_path = Path::new(config_path);
-        let full_path = temp_dir.join(config_path);
+    fn read_config_files(temp_dir: &Path, config_paths: &[String]) -> GitHubResult<String> {
+        let canonical_root = temp_dir
+            .canonicalize()
+            .map_err(|e| format!("Failed to resolve clone directory: {e}"))?;
 
-        std::fs::read_to_string(&full_path)
-            .map_err(|e| format!("Failed to read config file at {}: {e}", full_path.display()))
+        let mut merged_configs: Vec<serde_json::Value> = Vec::new();
+
+        for config_path in config_paths {
+            let full_path = Self::resolve_config_path(&canonical_root, config_path)?;
+
+            let content = std::fs::read_to_string(&full_path).map_err(|e| {
+                format!("Failed to read config file at {}: {e}", full_path.display())
+            })?;
+
+            let value: serde_json::Value = serde_json::from_str(&content).map_err(|e| {
+                format!("Failed to parse config file at {}: {e}", full_path.display())
+            })?;
+
+            match value {
+                serde_json::Value::Array(items) => merged_configs.extend(items),
+                other => merged_configs.push(other),
+            }
+        }
+
+        serde_json::to_string(&merged_configs)
+            .map_err(|e| format!("Failed to merge config files: {e}"))
+    }
+
+    fn resolve_config_path(
+        canonical_root: &Path, config_path: &str,
+    ) -> GitHubResult<std::path::PathBuf> {
+        use std::path::Component;
+
+        if config_path.trim().is_empty() {
+            return Err("Config path must not be empty".to_string());
+        }
+
+        let candidate = Path::new(config_path);
+
+        if candidate.is_absolute()
+            || candidate
+                .components()
+                .any(|c| matches!(c, Component::ParentDir | Component::Prefix(_)))
+        {
+            return Err(format!("Invalid config path: {config_path}"));
+        }
+
+        let joined = canonical_root.join(candidate);
+
+        let canonical_file = joined
+            .canonicalize()
+            .map_err(|e| format!("Failed to read config file at {}: {e}", joined.display()))?;
+
+        if !canonical_file.starts_with(canonical_root) {
+            return Err(format!(
+                "Config path escapes repository directory: {config_path}"
+            ));
+        }
+
+        Ok(canonical_file)
     }
 
     async fn process_config_content(
@@ -327,6 +385,109 @@ mod tests {
 
         let result = clear_existing_configs_with_pool(&pool).await;
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_read_config_files_merges_multiple_arrays() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+
+        std::fs::write(
+            temp_dir.path().join("configs-a.json"),
+            r#"[{"id": 1}, {"id": 2}]"#,
+        )
+        .unwrap();
+        std::fs::write(temp_dir.path().join("configs-b.json"), r#"[{"id": 3}]"#).unwrap();
+
+        let merged = GitHubRepository::read_config_files(
+            temp_dir.path(),
+            &["configs-a.json".to_string(), "configs-b.json".to_string()],
+        )
+        .unwrap();
+
+        let parsed: serde_json::Value = serde_json::from_str(&merged).unwrap();
+        assert_eq!(parsed.as_array().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn test_read_config_files_merges_single_objects() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+
+        std::fs::write(temp_dir.path().join("a.json"), r#"{"id": 1}"#).unwrap();
+        std::fs::write(temp_dir.path().join("b.json"), r#"{"id": 2}"#).unwrap();
+
+        let merged =
+            GitHubRepository::read_config_files(temp_dir.path(), &[
+                "a.json".to_string(),
+                "b.json".to_string(),
+            ])
+            .unwrap();
+
+        let parsed: serde_json::Value = serde_json::from_str(&merged).unwrap();
+        assert_eq!(parsed.as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn test_read_config_files_missing_file_errors() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+
+        let result =
+            GitHubRepository::read_config_files(temp_dir.path(), &[
+                "missing.json".to_string(),
+            ]);
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Failed to read config file"));
+    }
+
+    #[test]
+    fn test_read_config_files_rejects_parent_dir_traversal() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+
+        let result =
+            GitHubRepository::read_config_files(temp_dir.path(), &[
+                "../config.json".to_string(),
+            ]);
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid config path"));
+    }
+
+    #[test]
+    fn test_read_config_files_rejects_absolute_path() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+
+        let absolute_path = if cfg!(windows) {
+            "C:\\config.json".to_string()
+        } else {
+            "/etc/passwd".to_string()
+        };
+
+        let result =
+            GitHubRepository::read_config_files(temp_dir.path(), &[absolute_path]);
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid config path"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_read_config_files_rejects_symlink_outside_repo() {
+        let temp_dir = tempfile::TempDir::new().unwrap();
+        let outside_dir = tempfile::TempDir::new().unwrap();
+
+        let outside_file = outside_dir.path().join("secret.json");
+        std::fs::write(&outside_file, r#"{"id": "secret"}"#).unwrap();
+
+        let link_path = temp_dir.path().join("config.json");
+        std::os::unix::fs::symlink(&outside_file, &link_path).unwrap();
+
+        let result =
+            GitHubRepository::read_config_files(temp_dir.path(), &[
+                "config.json".to_string(),
+            ]);
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("escapes repository directory"));
     }
 
     #[test]

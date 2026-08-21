@@ -28,7 +28,7 @@ type AuthMethod = 'none' | 'system' | 'token'
 
 export interface GitConfig {
   repoUrl: string
-  configPath: string
+  configPaths: string[]
   authMethod: AuthMethod
   token?: string
   isPrivate?: boolean

@@ -59,7 +59,7 @@ const SyncConfigsButton: React.FC<SyncConfigsButtonProps> = ({
         <>
           <Text>Github Sync Enabled</Text>
           <Text>Repo URL: {credentials.repoUrl}</Text>
-          <Text>Config Path: {credentials.configPath}</Text>
+          <Text>Config Path(s): {credentials.configPaths.join(', ')}</Text>
           <Text>Auth Method: {credentials.authMethod}</Text>
           <Text>Polling Interval: {syncStatus.pollingInterval} minutes</Text>
           <Text>Last Sync: {lastSync ?? ''}</Text>

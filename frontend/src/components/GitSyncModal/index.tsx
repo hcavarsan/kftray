@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react'
+import { Plus, X } from 'lucide-react'
 
 import {
   Box,
@@ -6,6 +7,7 @@ import {
   Dialog,
   Flex,
   HStack,
+  IconButton,
   Input,
   Slider,
   Stack,
@@ -36,7 +38,10 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
 
   const [formState, setFormState] = useState(() => ({
     repoUrl: credentials?.repoUrl || '',
-    configPath: credentials?.configPath || '',
+    configPaths:
+      credentials?.configPaths && credentials.configPaths.length > 0
+        ? credentials.configPaths
+        : [''],
     authMethod: (credentials?.authMethod || 'none') as AuthMethod,
     gitToken: credentials?.token || '',
     pollingInterval: syncStatus.pollingInterval || 60,
@@ -48,13 +53,42 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
       setFormState(prev => ({
         ...prev,
         repoUrl: credentials.repoUrl,
-        configPath: credentials.configPath,
+        configPaths:
+          credentials.configPaths && credentials.configPaths.length > 0
+            ? credentials.configPaths
+            : [''],
         authMethod: credentials.authMethod,
         gitToken: credentials.token || '',
         flushBeforeSync: credentials.flush ?? false,
       }))
     }
   }, [isGitSyncModalOpen, credentials])
+
+  const handleConfigPathChange = (index: number, value: string) => {
+    setFormState(prev => ({
+      ...prev,
+      configPaths: prev.configPaths.map((path, i) =>
+        i === index ? value : path,
+      ),
+    }))
+  }
+
+  const handleAddConfigPath = () => {
+    setFormState(prev => ({
+      ...prev,
+      configPaths: [...prev.configPaths, ''],
+    }))
+  }
+
+  const handleRemoveConfigPath = (index: number) => {
+    setFormState(prev => ({
+      ...prev,
+      configPaths:
+        prev.configPaths.length > 1
+          ? prev.configPaths.filter((_, i) => i !== index)
+          : [''],
+    }))
+  }
 
   const handlePollingIntervalChange = (value: number) => {
     setFormState(prev => ({ ...prev, pollingInterval: value }))
@@ -64,9 +98,13 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
     e.preventDefault()
 
     try {
+      const configPaths = formState.configPaths
+        .map(path => path.trim())
+        .filter(path => path.length > 0)
+
       const newCredentials = {
         repoUrl: formState.repoUrl,
-        configPath: formState.configPath,
+        configPaths,
         authMethod: formState.authMethod,
         token: formState.authMethod === 'token' ? formState.gitToken : '',
         pollingInterval: formState.pollingInterval,
@@ -206,27 +244,53 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
 
                   {/* Config Path */}
                   <Stack gap={2}>
-                    <Text fontSize='xs' color='gray.400'>
-                      Config Path
-                    </Text>
-                    <Input
-                      value={formState.configPath}
-                      onChange={e =>
-                        setFormState(prev => ({
-                          ...prev,
-                          configPath: e.target.value,
-                        }))
-                      }
-                      placeholder='path/to/config.json'
-                      bg='#161616'
-                      borderColor='rgba(255, 255, 255, 0.08)'
-                      _hover={{
-                        borderColor: 'rgba(255, 255, 255, 0.20)',
-                        bg: '#161616',
-                      }}
-                      height='30px'
-                      fontSize='12px'
-                    />
+                    <Flex justify='space-between' align='center'>
+                      <Text fontSize='xs' color='gray.400'>
+                        Config Path(s)
+                      </Text>
+                      <IconButton
+                        aria-label='Add config path'
+                        size='xs'
+                        variant='ghost'
+                        onClick={handleAddConfigPath}
+                        color='gray.400'
+                        _hover={{ bg: 'whiteAlpha.100' }}
+                      >
+                        <Box as={Plus} width='12px' height='12px' />
+                      </IconButton>
+                    </Flex>
+                    {formState.configPaths.map((path, index) => (
+                      <HStack key={index} gap={1}>
+                        <Input
+                          value={path}
+                          onChange={e =>
+                            handleConfigPathChange(index, e.target.value)
+                          }
+                          placeholder='path/to/config.json'
+                          bg='#161616'
+                          borderColor='rgba(255, 255, 255, 0.08)'
+                          _hover={{
+                            borderColor: 'rgba(255, 255, 255, 0.20)',
+                            bg: '#161616',
+                          }}
+                          height='30px'
+                          fontSize='12px'
+                        />
+                        <IconButton
+                          aria-label='Remove config path'
+                          size='xs'
+                          variant='ghost'
+                          onClick={() => handleRemoveConfigPath(index)}
+                          color='gray.500'
+                          _hover={{ bg: 'whiteAlpha.100' }}
+                          disabled={
+                            formState.configPaths.length === 1 && !path
+                          }
+                        >
+                          <Box as={X} width='12px' height='12px' />
+                        </IconButton>
+                      </HStack>
+                    ))}
                   </Stack>
 
                   {/* Authentication Method */}
@@ -413,7 +477,7 @@ const GitSyncModal: React.FC<GitSyncModalProps> = ({
                     disabled={
                       isLoading ||
                       !formState.repoUrl ||
-                      !formState.configPath ||
+                      !formState.configPaths.some(path => path.trim()) ||
                       (formState.authMethod === 'token' && !formState.gitToken)
                     }
                     height='28px'
