@@ -33,15 +33,23 @@ pub struct UpdateInfo {
 }
 
 #[allow(dead_code)]
-pub async fn check_for_updates() -> Result<UpdateInfo, Box<dyn Error>> {
+pub async fn check_for_updates() -> Result<UpdateInfo, String> {
+    tokio::task::spawn_blocking(check_for_updates_blocking)
+        .await
+        .map_err(|e| format!("Update check task failed: {e}"))?
+}
+
+fn check_for_updates_blocking() -> Result<UpdateInfo, String> {
     let current_version = cargo_crate_version!();
     let asset_name = get_asset_name_for_platform();
 
     let releases = ReleaseList::configure()
         .repo_owner(REPO_OWNER)
         .repo_name(REPO_NAME)
-        .build()?
-        .fetch()?;
+        .build()
+        .map_err(|e| e.to_string())?
+        .fetch()
+        .map_err(|e| e.to_string())?;
 
     if let Some(latest_release) = releases.first() {
         let asset_exists = latest_release
@@ -50,11 +58,12 @@ pub async fn check_for_updates() -> Result<UpdateInfo, Box<dyn Error>> {
             .any(|asset| asset.name == asset_name);
 
         if !asset_exists {
-            return Err(format!("Asset {} not found for the latest release", asset_name).into());
+            return Err(format!("Asset {asset_name} not found for the latest release"));
         }
 
-        let current_ver = semver::Version::parse(current_version)?;
-        let latest_ver = semver::Version::parse(&latest_release.version)?;
+        let current_ver = semver::Version::parse(current_version).map_err(|e| e.to_string())?;
+        let latest_ver =
+            semver::Version::parse(&latest_release.version).map_err(|e| e.to_string())?;
         let has_update = latest_ver > current_ver;
 
         Ok(UpdateInfo {
@@ -63,7 +72,7 @@ pub async fn check_for_updates() -> Result<UpdateInfo, Box<dyn Error>> {
             has_update,
         })
     } else {
-        Err("No releases found".into())
+        Err("No releases found".to_string())
     }
 }
 
