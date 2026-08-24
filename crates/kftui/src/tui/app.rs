@@ -34,7 +34,7 @@ use crate::updater::UpdateInfo;
 type UpdateCheckTask = JoinHandle<Result<UpdateInfo, String>>;
 
 pub async fn run_tui(
-    mode: DatabaseMode, logger_state: LoggerState, no_update_check: bool,
+    mode: DatabaseMode, logger_state: LoggerState, _no_update_check: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -43,12 +43,15 @@ pub async fn run_tui(
     let mut terminal = Terminal::new(backend)?;
 
     let mut app = App::new(logger_state);
-    let mut update_check: Option<UpdateCheckTask> = None;
 
     #[cfg(not(debug_assertions))]
-    if !no_update_check {
-        update_check = Some(tokio::spawn(crate::updater::check_for_updates()));
-    }
+    let mut update_check: Option<UpdateCheckTask> = if !_no_update_check {
+        Some(tokio::spawn(crate::updater::check_for_updates()))
+    } else {
+        None
+    };
+    #[cfg(debug_assertions)]
+    let mut update_check: Option<UpdateCheckTask> = None;
 
     // Start network monitor if enabled
     if let Ok(enabled) = kftray_commons::utils::settings::get_network_monitor_with_mode(mode).await
@@ -71,7 +74,7 @@ pub async fn run_tui(
     Ok(())
 }
 
-pub async fn run_app<B: ratatui::backend::Backend>(
+async fn run_app<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>, app: &mut App, mode: DatabaseMode,
     update_check: &mut Option<UpdateCheckTask>,
 ) -> io::Result<()>
