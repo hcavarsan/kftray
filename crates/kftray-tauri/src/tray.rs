@@ -456,13 +456,36 @@ pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
         }
     }
 
+    if let WindowEvent::Resized(_) = event
+        && webview_window.label() == "main"
+    {
+        // Preset / restore `set_size` fires Resized — do not persist as custom.
+        if crate::window_size::take_programmatic_resize() {
+            return;
+        }
+
+        let app_state = webview_window.state::<AppState>();
+        if !app_state.positioning_active.load(Ordering::SeqCst)
+            && let (Ok(size), Ok(Some(monitor))) =
+                (webview_window.outer_size(), webview_window.current_monitor())
+        {
+            let logical = size.to_logical::<u32>(monitor.scale_factor());
+            let runtime = app_state.runtime.clone();
+            runtime.spawn(async move {
+                sleep(Duration::from_millis(500)).await;
+                crate::window_size::save_custom_window_size(logical.width, logical.height).await;
+            });
+        }
+    }
+
     if let WindowEvent::CloseRequested { api, .. } = event
         && webview_window.label() == "main"
         && !app_state.pinned.load(Ordering::SeqCst)
     {
         api.prevent_close();
-        let app_handle = webview_window.app_handle();
-        tauri::async_runtime::block_on(handle_exit_app(app_handle.clone()));
+        if let Err(e) = webview_window.hide() {
+            error!("Failed to hide window on close request: {e}");
+        }
     }
 }
 

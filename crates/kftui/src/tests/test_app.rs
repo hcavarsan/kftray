@@ -24,6 +24,8 @@ mod tests {
             local_port: Some(8080 + id as u16),
             remote_port: Some(80),
             context: Some("test-context".to_string()),
+            groups: None,
+            tab: None,
             workload_type: Some("deployment".to_string()),
             protocol: "tcp".to_string(),
             remote_address: Some(format!("remote-{id}")),

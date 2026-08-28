@@ -88,6 +88,14 @@ pub struct Config {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context: Option<String>,
     #[serde(default)]
+    #[serde(alias = "group")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub groups: Option<String>,
+    /// Workspace tab name. `None` / empty maps to the default tab in the UI.
+    #[serde(default)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tab: Option<String>,
+    #[serde(default)]
     pub workload_type: Option<String>,
     #[serde(default)]
     #[serde(skip_serializing_if = "is_empty_string")]
@@ -154,6 +162,8 @@ impl Default for Config {
             local_port: Some(0),
             remote_port: Some(0),
             context: Some("current-context".to_string()),
+            groups: None,
+            tab: None,
             workload_type: Some("default-workload".to_string()),
             protocol: "protocol".to_string(),
             remote_address: Some("default-remote-address".to_string()),
@@ -215,6 +225,17 @@ impl Config {
 
         if self.kubeconfig.as_deref() == Some("default") {
             self.kubeconfig = None;
+        }
+
+        if let Some(groups) = self.groups.take() {
+            let trimmed = groups.trim();
+            if !trimmed.is_empty() {
+                self.groups = Some(trimmed.to_string());
+            }
+        }
+
+        if self.tab.as_deref().is_some_and(|s| s.trim().is_empty()) {
+            self.tab = None;
         }
 
         if self.domain_enabled == Some(false) {
@@ -370,5 +391,29 @@ mod tests {
                 panic!("Failed to deserialize config array: {}", e);
             }
         }
+    }
+
+    #[test]
+    fn prepare_for_export_trims_groups_and_drops_whitespace_only() {
+        let trimmed = Config {
+            groups: Some("  prod  ".to_string()),
+            ..Config::default()
+        }
+        .prepare_for_export();
+        assert_eq!(trimmed.groups.as_deref(), Some("prod"));
+
+        let whitespace_only = Config {
+            groups: Some(" \t ".to_string()),
+            ..Config::default()
+        }
+        .prepare_for_export();
+        assert_eq!(whitespace_only.groups, None);
+
+        let empty = Config {
+            groups: Some(String::new()),
+            ..Config::default()
+        }
+        .prepare_for_export();
+        assert_eq!(empty.groups, None);
     }
 }

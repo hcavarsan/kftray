@@ -1,3 +1,8 @@
+use std::sync::atomic::{
+    AtomicBool,
+    Ordering,
+};
+
 use tauri::{
     WebviewWindow,
     Wry,
@@ -8,6 +13,27 @@ const BASE_HEIGHT: u32 = 500;
 const MONITOR_FILL_RATIO: f32 = 0.9;
 
 pub const SETTING_KEY: &str = "window_size_preset";
+/// Atomic custom size as `"WxH"` (single setting — no partial width/height overrides).
+pub const CUSTOM_SIZE_KEY: &str = "window_custom_size";
+/// Legacy keys; still read for migration, cleared on save/clear.
+pub const CUSTOM_WIDTH_KEY: &str = "window_custom_width";
+pub const CUSTOM_HEIGHT_KEY: &str = "window_custom_height";
+
+/// Set before programmatic `set_size` so tray `Resized` does not persist preset sizes as custom.
+static PROGRAMMATIC_RESIZE: AtomicBool = AtomicBool::new(false);
+
+pub fn mark_programmatic_resize() {
+    PROGRAMMATIC_RESIZE.store(true, Ordering::SeqCst);
+}
+
+/// Consume the marker when the corresponding `Resized` event arrives.
+pub fn take_programmatic_resize() -> bool {
+    PROGRAMMATIC_RESIZE.swap(false, Ordering::SeqCst)
+}
+
+pub fn clear_programmatic_resize() {
+    PROGRAMMATIC_RESIZE.store(false, Ordering::SeqCst);
+}
 
 #[derive(Copy, Clone, Debug, Default, PartialEq, Eq)]
 pub enum WindowSizePreset {
@@ -78,6 +104,71 @@ fn compute_dimensions(base_scale: f32, available_logical: Option<(f64, f64)>) ->
         (BASE_WIDTH as f32 * s).round() as u32,
         (BASE_HEIGHT as f32 * s).round() as u32,
     )
+}
+
+fn parse_custom_size(value: &str) -> Option<(u32, u32)> {
+    let (w_str, h_str) = value.split_once('x')?;
+    let width = w_str.parse::<u32>().ok()?;
+    let height = h_str.parse::<u32>().ok()?;
+    if width == 0 || height == 0 {
+        return None;
+    }
+    Some((width, height))
+}
+
+/// Logical outer size saved after free-resize (overrides preset on restore).
+pub async fn load_custom_window_size() -> Option<(u32, u32)> {
+    if let Some(value) = kftray_commons::utils::settings::get_setting(CUSTOM_SIZE_KEY)
+        .await
+        .ok()
+        .flatten()
+        && let Some(size) = parse_custom_size(&value)
+    {
+        return Some(size);
+    }
+
+    // Legacy split keys (migrate on next save/clear).
+    let width = kftray_commons::utils::settings::get_setting(CUSTOM_WIDTH_KEY)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|v| v.parse::<u32>().ok())?;
+    let height = kftray_commons::utils::settings::get_setting(CUSTOM_HEIGHT_KEY)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|v| v.parse::<u32>().ok())?;
+    if width == 0 || height == 0 {
+        return None;
+    }
+    Some((width, height))
+}
+
+pub async fn save_custom_window_size(width: u32, height: u32) {
+    if width == 0 || height == 0 {
+        return;
+    }
+    if let Err(e) = kftray_commons::utils::settings::set_setting(
+        CUSTOM_SIZE_KEY,
+        &format!("{width}x{height}"),
+    )
+    .await
+    {
+        log::warn!("Failed to persist custom window size: {e}");
+        return;
+    }
+    // Drop legacy keys so they cannot partially override the atomic value.
+    let _ = kftray_commons::utils::settings::set_setting(CUSTOM_WIDTH_KEY, "").await;
+    let _ = kftray_commons::utils::settings::set_setting(CUSTOM_HEIGHT_KEY, "").await;
+}
+
+pub async fn clear_custom_window_size() -> Result<(), String> {
+    kftray_commons::utils::settings::set_setting(CUSTOM_SIZE_KEY, "")
+        .await
+        .map_err(|e| e.to_string())?;
+    let _ = kftray_commons::utils::settings::set_setting(CUSTOM_WIDTH_KEY, "").await;
+    let _ = kftray_commons::utils::settings::set_setting(CUSTOM_HEIGHT_KEY, "").await;
+    Ok(())
 }
 
 #[cfg(test)]
@@ -181,5 +272,21 @@ mod tests {
     fn compute_dimensions_uses_full_scale_when_monitor_is_large_enough() {
         assert_eq!(compute_dimensions(1.5, Some((3840.0, 2160.0))), (675, 750));
         assert_eq!(compute_dimensions(2.0, Some((3840.0, 2160.0))), (900, 1000));
+    }
+
+    #[test]
+    fn parse_custom_size_accepts_wxh() {
+        assert_eq!(parse_custom_size("800x600"), Some((800, 600)));
+        assert_eq!(parse_custom_size("0x100"), None);
+        assert_eq!(parse_custom_size("bad"), None);
+    }
+
+    #[test]
+    fn programmatic_resize_marker_round_trip() {
+        clear_programmatic_resize();
+        assert!(!take_programmatic_resize());
+        mark_programmatic_resize();
+        assert!(take_programmatic_resize());
+        assert!(!take_programmatic_resize());
     }
 }

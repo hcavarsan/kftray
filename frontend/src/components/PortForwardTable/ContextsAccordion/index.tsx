@@ -22,8 +22,8 @@ import { Tooltip } from '@/components/ui/tooltip'
 import { ContextsAccordionProps } from '@/types'
 
 const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
-  context,
-  contextConfigs,
+  group,
+  groupConfigs,
   selectedConfigs,
   handleSelectionChange,
   handleCheckboxChange,
@@ -37,17 +37,17 @@ const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
   isAlertOpen,
   setIsAlertOpen,
 }) => {
-  const isContextSelected = useMemo(() => {
-    return contextConfigs.every(config =>
+  const isGroupSelected = useMemo(() => {
+    return groupConfigs.every(config =>
       selectedConfigs.some(selected => selected.id === config.id),
     )
-  }, [contextConfigs, selectedConfigs])
+  }, [groupConfigs, selectedConfigs])
 
-  const contextRunningCount = contextConfigs.filter(
+  const groupRunningCount = groupConfigs.filter(
     config => config.is_running,
   ).length
-  const contextTotalCount = contextConfigs.length
-  const contextProgressValue = (contextRunningCount / contextTotalCount) * 100
+  const groupTotalCount = groupConfigs.length
+  const groupProgressValue = (groupRunningCount / groupTotalCount) * 100
   const columns = [
     { width: '40%', label: 'Alias' },
     { width: '20%', label: 'Port' },
@@ -56,7 +56,7 @@ const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
   ]
 
   return (
-    <AccordionItem value={context} className='accordion-item'>
+    <AccordionItem value={group} className='accordion-item'>
       <AccordionItemTrigger className='accordion-trigger'>
         <div className='accordion-header'>
           <div className='checkbox-wrapper'>
@@ -64,33 +64,33 @@ const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
               <Checkbox
                 className='checkbox'
                 size='xs'
-                checked={isContextSelected}
+                checked={isGroupSelected}
                 onCheckedChange={e =>
-                  handleCheckboxChange(context, e.checked === true)
+                  handleCheckboxChange(group, e.checked === true)
                 }
                 disabled={false}
               />
             </Box>
-            <span className='context-tag'>{context}</span>
+            <span className='group-tag'>{group}</span>
           </div>
 
           <Flex align='center' gap={2}>
             <Tooltip
-              content={`${contextRunningCount} running out of ${contextTotalCount} total`}
+              content={`${groupRunningCount} running out of ${groupTotalCount} total`}
             >
               <span className='status-tag'>
-                {contextRunningCount > 0 ? (
+                {groupRunningCount > 0 ? (
                   <RepeatIcon className='status-icon animate-spin' />
                 ) : (
                   <InfoIcon className='status-icon' />
                 )}
                 <span>
-                  {contextRunningCount}/{contextTotalCount}
+                  {groupRunningCount}/{groupTotalCount}
                 </span>
               </span>
             </Tooltip>
             <ProgressRoot
-              value={contextProgressValue}
+              value={groupProgressValue}
               css={{
                 width: '40px',
                 height: '3px',
@@ -101,12 +101,12 @@ const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
               <ProgressBar
                 css={{
                   height: '100%',
-                  width: `${contextProgressValue}%`,
+                  width: `${groupProgressValue}%`,
                   transition: 'all 0.2s ease-in-out',
                   backgroundColor:
-                    contextProgressValue === 100
+                    groupProgressValue === 100
                       ? 'rgb(59, 130, 246)'
-                      : contextProgressValue > 0
+                      : groupProgressValue > 0
                         ? 'rgba(59, 130, 246, 0.8)'
                         : 'rgba(255, 255, 255, 0.2)',
                 }}
@@ -146,7 +146,7 @@ const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
               </tr>
             </TableHeader>
             <TableBody border='none'>
-              {contextConfigs.map(config => (
+              {groupConfigs.map(config => (
                 <PortForwardRow
                   key={config.id}
                   config={config}

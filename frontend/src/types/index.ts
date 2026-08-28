@@ -8,6 +8,9 @@ export interface Config {
   domain_enabled: boolean
   remote_port?: number
   context: string
+  groups?: string
+  /** Workspace tab. Empty/undefined = Default */
+  tab?: string
   alias: string
   remote_address: string
   workload_type: string
@@ -22,6 +25,14 @@ export interface Config {
   cert_issuer_kind?: string
   ingress_class?: string
   ingress_annotations?: string
+}
+
+export const DEFAULT_CONFIG_TAB = 'Default'
+
+export function getConfigTab(config: Pick<Config, 'tab'>): string {
+  const tab = config.tab?.trim()
+
+  return tab || DEFAULT_CONFIG_TAB
 }
 
 type AuthMethod = 'none' | 'system' | 'token'
@@ -67,6 +78,13 @@ export interface TableProps {
   setIsInitiating: React.Dispatch<React.SetStateAction<boolean>>
   openSettingsModal: () => void
   openServerResourcesModal: () => void
+  tabs: string[]
+  activeTab: string
+  onSelectTab: (tab: string) => void
+  onCreateTab: (name: string) => void
+  onRenameTab: (from: string, to: string) => void
+  onDeleteTab: (tab: string) => void
+  tabHasConfigs: (tab: string) => boolean
 }
 
 export interface PortForwardRowProps {
@@ -142,7 +160,7 @@ export interface CustomConfigProps {
   setNewConfig: React.Dispatch<React.SetStateAction<Config>>
 }
 
-export interface ConfigsByContext {
+export interface ConfigsByGroup {
   [key: string]: Config[]
 }
 
@@ -168,7 +186,7 @@ export interface HeaderMenuProps {
   isStopping: boolean
   toggleExpandAll: () => void
   expandedIndices: string[]
-  configsByContext: ConfigsByContext
+  configsByGroup: ConfigsByGroup
   setSelectedConfigs: React.Dispatch<React.SetStateAction<Config[]>>
 }
 
@@ -179,8 +197,8 @@ export interface BulkDeleteButtonProps {
 }
 
 export interface ContextsAccordionProps {
-  context: string
-  contextConfigs: Config[]
+  group: string
+  groupConfigs: Config[]
   selectedConfigs: Config[]
   handleDeleteConfig: (id: number) => void
   confirmDeleteConfig: () => void
@@ -189,8 +207,8 @@ export interface ContextsAccordionProps {
   isAlertOpen: boolean
   setIsAlertOpen: (open: boolean) => void
   handleSelectionChange: (config: Config, isSelected: boolean) => void
-  selectedConfigsByContext: Record<string, boolean>
-  handleCheckboxChange: (context: string, isChecked: boolean) => void
+  selectedConfigsByGroup: Record<string, boolean>
+  handleCheckboxChange: (group: string, isChecked: boolean) => void
   isInitiating: boolean
   setIsInitiating: React.Dispatch<React.SetStateAction<boolean>>
   isStopping: boolean
@@ -199,6 +217,7 @@ export interface ContextsAccordionProps {
 export interface AutoImportModalProps {
   isOpen: boolean
   onClose: () => void
+  activeTab?: string
 }
 
 export interface ServiceData {

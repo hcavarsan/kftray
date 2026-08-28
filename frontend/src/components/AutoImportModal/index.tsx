@@ -21,15 +21,20 @@ import { toaster } from '@/components/ui/toaster'
 import {
   AutoImportModalProps,
   Config,
+  DEFAULT_CONFIG_TAB,
   KubeContext,
   StringOption,
 } from '@/types'
 
 import { autoImportSelectStyles } from './styles'
 
+const tabSettingValue = (tab: string): string | undefined =>
+  tab === DEFAULT_CONFIG_TAB ? undefined : tab
+
 const AutoImportModal: React.FC<AutoImportModalProps> = ({
   isOpen,
   onClose,
+  activeTab = DEFAULT_CONFIG_TAB,
 }) => {
   const [state, setState] = useState({
     selectedContext: null as SingleValue<StringOption>,
@@ -111,6 +116,7 @@ const AutoImportModal: React.FC<AutoImportModalProps> = ({
         if (state.enableAutoLoopback) {
           config.auto_loopback_address = true
         }
+        config.tab = tabSettingValue(activeTab)
       }
 
       const configsJson = JSON.stringify(configs)
@@ -119,7 +125,7 @@ const AutoImportModal: React.FC<AutoImportModalProps> = ({
 
       toaster.success({
         title: 'Success',
-        description: 'Configs imported successfully.',
+        description: `Configs imported into tab "${activeTab}".`,
         duration: 1000,
       })
       onClose()
