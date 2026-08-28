@@ -227,8 +227,11 @@ impl Config {
             self.kubeconfig = None;
         }
 
-        if self.groups.as_deref().is_some_and(|s| s.is_empty()) {
-            self.groups = None;
+        if let Some(groups) = self.groups.take() {
+            let trimmed = groups.trim();
+            if !trimmed.is_empty() {
+                self.groups = Some(trimmed.to_string());
+            }
         }
 
         if self.tab.as_deref().is_some_and(|s| s.trim().is_empty()) {
@@ -388,5 +391,29 @@ mod tests {
                 panic!("Failed to deserialize config array: {}", e);
             }
         }
+    }
+
+    #[test]
+    fn prepare_for_export_trims_groups_and_drops_whitespace_only() {
+        let trimmed = Config {
+            groups: Some("  prod  ".to_string()),
+            ..Config::default()
+        }
+        .prepare_for_export();
+        assert_eq!(trimmed.groups.as_deref(), Some("prod"));
+
+        let whitespace_only = Config {
+            groups: Some(" \t ".to_string()),
+            ..Config::default()
+        }
+        .prepare_for_export();
+        assert_eq!(whitespace_only.groups, None);
+
+        let empty = Config {
+            groups: Some(String::new()),
+            ..Config::default()
+        }
+        .prepare_for_export();
+        assert_eq!(empty.groups, None);
     }
 }

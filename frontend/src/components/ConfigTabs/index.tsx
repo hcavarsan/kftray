@@ -36,21 +36,21 @@ const ConfigTabs: React.FC<ConfigTabsProps> = ({
       return
     }
     const next = editValue.trim()
-    if (next && next !== editingTab) {
+    if (next && next !== editingTab && !tabs.includes(next)) {
       onRenameTab(editingTab, next)
     }
     setEditingTab(null)
     setEditValue('')
-  }, [editingTab, editValue, onRenameTab])
+  }, [editingTab, editValue, onRenameTab, tabs])
 
   const commitCreate = useCallback(() => {
     const next = createValue.trim()
-    if (next) {
+    if (next && !tabs.includes(next)) {
       onCreateTab(next)
     }
     setCreating(false)
     setCreateValue('')
-  }, [createValue, onCreateTab])
+  }, [createValue, onCreateTab, tabs])
 
   return (
     <Box
@@ -94,6 +94,9 @@ const ConfigTabs: React.FC<ConfigTabsProps> = ({
           return (
             <Box
               key={tab}
+              role='tab'
+              tabIndex={0}
+              aria-selected={isActive}
               display='flex'
               alignItems='center'
               gap={0.5}
@@ -108,6 +111,16 @@ const ConfigTabs: React.FC<ConfigTabsProps> = ({
               borderColor={isActive ? 'whiteAlpha.300' : 'transparent'}
               _hover={{ bg: 'whiteAlpha.100', color: 'gray.100' }}
               onClick={() => onSelectTab(tab)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  onSelectTab(tab)
+                }
+                if (e.key === 'F2') {
+                  setEditingTab(tab)
+                  setEditValue(tab)
+                }
+              }}
               onDoubleClick={() => {
                 setEditingTab(tab)
                 setEditValue(tab)

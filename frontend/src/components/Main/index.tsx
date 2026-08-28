@@ -350,9 +350,9 @@ const KFTray = () => {
       const allConfigs = JSON.parse(json) as Config[]
       const scoped = allConfigs.filter(c => getConfigTab(c) === activeTab)
       const scopedJson = JSON.stringify(scoped, null, 2)
-
+      const safeTabName = activeTab.replace(/[^\w.-]+/g, '_')
       const filePath = await save({
-        defaultPath: `configs-${activeTab}.json`,
+        defaultPath: `configs-${safeTabName}.json`,
         filters: [{ name: 'JSON', extensions: ['json'] }],
       })
 
@@ -965,13 +965,28 @@ return { id: config.id, error: null, aborted: false }
       if (!trimmed || trimmed === from) {
         return
       }
+      if (from === DEFAULT_CONFIG_TAB) {
+        return
+      }
 
       const toUpdate = configs.filter(c => getConfigTab(c) === from)
-      for (const config of toUpdate) {
-        await invoke('update_config_cmd', {
-          config: { ...config, tab: tabSettingValue(trimmed) },
-        })
-      }
+      try {
+          for (const config of toUpdate) {
+            await invoke('update_config_cmd', {
+              config: { ...config, tab: tabSettingValue(trimmed) },
+            })
+          }
+        } catch (error) {
+          console.error('Failed to rename tab:', error)
+          toaster.error({
+            title: 'Error',
+            description: `Failed to rename tab "${from}". Some configurations may still use the old name.`,
+            duration: 2000,
+          })
+          await updateConfigsWithState()
+      
+          return
+        }
 
       const nextExtra = extraTabs
         .filter(t => t !== from)
@@ -1003,6 +1018,12 @@ return { id: config.id, error: null, aborted: false }
         return
       }
       if (tabHasConfigs(tab)) {
+        toaster.error({
+            title: 'Cannot delete tab',
+            description: `Tab "${tab}" still contains configurations.`,
+            duration: 2000,
+          })
+
         return
       }
       await persistExtraTabs(extraTabs.filter(t => t !== tab))

@@ -252,6 +252,15 @@ pub async fn load_saved_window_size_preset() -> crate::window_size::WindowSizePr
 ///
 /// Returns `true` when the size was applied (or was already correct), `false`
 /// when the dispatch or the underlying `set_size` failed.
+/// Keep the programmatic-resize marker alive until the async `Resized`
+/// notification can observe it; clear if no event (e.g. coalesced).
+fn schedule_programmatic_resize_clear() {
+    tokio::spawn(async {
+        sleep(Duration::from_millis(750)).await;
+        crate::window_size::clear_programmatic_resize();
+    });
+}
+
 async fn apply_window_dimensions_on_main_thread(
     window: &WebviewWindow<Wry>, width: u32, height: u32,
 ) -> bool {
@@ -269,6 +278,7 @@ async fn apply_window_dimensions_on_main_thread(
             }
         }
 
+        crate::window_size::mark_programmatic_resize();
         match window_clone.set_size(tauri::Size::Logical(tauri::LogicalSize::new(
             width as f64, height as f64,
         ))) {
@@ -276,6 +286,7 @@ async fn apply_window_dimensions_on_main_thread(
                 let _ = tx.send(true);
             }
             Err(e) => {
+                crate::window_size::clear_programmatic_resize();
                 warn!("Failed to set window size to {width}x{height}: {e}");
                 let _ = tx.send(false);
             }
@@ -287,7 +298,12 @@ async fn apply_window_dimensions_on_main_thread(
         return false;
     }
 
-    rx.await.unwrap_or(false)
+    let ok = rx.await.unwrap_or(false);
+    if ok {
+        // Only needed when set_size ran (marker set). No-op if size was already correct.
+        schedule_programmatic_resize_clear();
+    }
+    ok
 }
 
 async fn apply_window_size_on_main_thread(
@@ -309,6 +325,7 @@ async fn apply_window_size_on_main_thread(
             }
         }
 
+        crate::window_size::mark_programmatic_resize();
         match window_clone.set_size(tauri::Size::Logical(tauri::LogicalSize::new(
             w as f64, h as f64,
         ))) {
@@ -316,6 +333,7 @@ async fn apply_window_size_on_main_thread(
                 let _ = tx.send(true);
             }
             Err(e) => {
+                crate::window_size::clear_programmatic_resize();
                 warn!("Failed to set window size for preset {preset:?}: {e}");
                 let _ = tx.send(false);
             }
@@ -327,13 +345,18 @@ async fn apply_window_size_on_main_thread(
         return false;
     }
 
-    rx.await.unwrap_or(false)
+    let ok = rx.await.unwrap_or(false);
+    if ok {
+        schedule_programmatic_resize_clear();
+    }
+    ok
 }
 
 pub async fn apply_saved_window_size(window: &WebviewWindow<Wry>) {
     if let Some((w, h)) = crate::window_size::load_custom_window_size().await {
-        apply_window_dimensions_on_main_thread(window, w, h).await;
-        return;
+        if apply_window_dimensions_on_main_thread(window, w, h).await {
+            return;
+        }
     }
     let preset = load_saved_window_size_preset().await;
     apply_window_size_on_main_thread(window, preset).await;
@@ -346,8 +369,15 @@ pub async fn apply_window_size_preset(
         return;
     }
     // Drop free-resize override so restore uses this preset until the user
-    // resizes again (Resized will rewrite custom size).
-    crate::window_size::clear_custom_window_size().await;
+    // resizes again (Resized will rewrite custom size). Do not persist the
+    // preset if clearing custom size fails (would leave a partial override).
+    if let Err(e) = crate::window_size::clear_custom_window_size().await {
+        warn!(
+            "Failed to clear custom window size before preset persist: {e}; skipping preset save"
+        );
+        position_from_tray(window);
+        return;
+    }
     match kftray_commons::utils::settings::set_setting(
         crate::window_size::SETTING_KEY,
         preset.as_id(),

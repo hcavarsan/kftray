@@ -25,7 +25,6 @@ use kube::{
 use kube_runtime::wait::conditions;
 use log::{
     debug,
-    error,
     info,
 };
 
@@ -55,7 +54,7 @@ pub async fn create_expose_resources(
             "Resources already exist for config {}: {:?}. Cleaning up before recreating",
             config_id_str, resources
         );
-        let _ = delete_expose_resources(client.clone(), &config.namespace, &config_id_str).await;
+        delete_expose_resources(client.clone(), &config.namespace, &config_id_str).await?;
 
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
     }
@@ -362,13 +361,10 @@ pub async fn delete_expose_resources(
 async fn delete_ingresses(client: &Client, namespace: &str, lp: &ListParams) -> Result<(), String> {
     let api: Api<Ingress> = Api::namespaced(client.clone(), namespace);
 
-    let items = match api.list(lp).await {
-        Ok(list) => list,
-        Err(e) => {
-            info!("No ingresses to delete or error listing: {}", e);
-            return Ok(());
-        }
-    };
+    let items = api
+        .list(lp)
+        .await
+        .map_err(|e| format!("Failed to list ingresses for cleanup: {e}"))?;
 
     if items.items.is_empty() {
         debug!("No ingresses found to delete");
@@ -378,10 +374,10 @@ async fn delete_ingresses(client: &Client, namespace: &str, lp: &ListParams) -> 
     for ingress in items.items {
         if let Some(name) = &ingress.metadata.name {
             info!("Deleting ingress: {}", name);
-            match api.delete(name, &DeleteParams::default()).await {
-                Ok(_) => info!("Ingress {} deleted successfully", name),
-                Err(e) => error!("Failed to delete ingress {}: {}", name, e),
-            }
+            api.delete(name, &DeleteParams::default())
+                .await
+                .map_err(|e| format!("Failed to delete ingress {name}: {e}"))?;
+            info!("Ingress {} deleted successfully", name);
         }
     }
     Ok(())
@@ -390,13 +386,10 @@ async fn delete_ingresses(client: &Client, namespace: &str, lp: &ListParams) -> 
 async fn delete_services(client: &Client, namespace: &str, lp: &ListParams) -> Result<(), String> {
     let api: Api<Service> = Api::namespaced(client.clone(), namespace);
 
-    let items = match api.list(lp).await {
-        Ok(list) => list,
-        Err(e) => {
-            info!("No services to delete or error listing: {}", e);
-            return Ok(());
-        }
-    };
+    let items = api
+        .list(lp)
+        .await
+        .map_err(|e| format!("Failed to list services for cleanup: {e}"))?;
 
     if items.items.is_empty() {
         debug!("No services found to delete");
@@ -406,10 +399,10 @@ async fn delete_services(client: &Client, namespace: &str, lp: &ListParams) -> R
     for service in items.items {
         if let Some(name) = &service.metadata.name {
             info!("Deleting service: {}", name);
-            match api.delete(name, &DeleteParams::default()).await {
-                Ok(_) => info!("Service {} deleted successfully", name),
-                Err(e) => error!("Failed to delete service {}: {}", name, e),
-            }
+            api.delete(name, &DeleteParams::default())
+                .await
+                .map_err(|e| format!("Failed to delete service {name}: {e}"))?;
+            info!("Service {} deleted successfully", name);
         }
     }
     Ok(())
@@ -420,13 +413,10 @@ async fn delete_deployments(
 ) -> Result<(), String> {
     let api: Api<Deployment> = Api::namespaced(client.clone(), namespace);
 
-    let items = match api.list(lp).await {
-        Ok(list) => list,
-        Err(e) => {
-            info!("No deployments to delete or error listing: {}", e);
-            return Ok(());
-        }
-    };
+    let items = api
+        .list(lp)
+        .await
+        .map_err(|e| format!("Failed to list deployments for cleanup: {e}"))?;
 
     if items.items.is_empty() {
         debug!("No deployments found to delete");
@@ -436,10 +426,10 @@ async fn delete_deployments(
     for deployment in items.items {
         if let Some(name) = &deployment.metadata.name {
             info!("Deleting deployment: {}", name);
-            match api.delete(name, &DeleteParams::default()).await {
-                Ok(_) => info!("Deployment {} deleted successfully", name),
-                Err(e) => error!("Failed to delete deployment {}: {}", name, e),
-            }
+            api.delete(name, &DeleteParams::default())
+                .await
+                .map_err(|e| format!("Failed to delete deployment {name}: {e}"))?;
+            info!("Deployment {} deleted successfully", name);
         }
     }
     Ok(())

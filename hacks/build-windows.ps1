@@ -10,14 +10,14 @@
     - dist/installers/*.msi / *-setup.exe
 
   Tauri updater signing requires TAURI_SIGNING_PRIVATE_KEY. Local builds without
-  that key still produce exe/installers; the script treats that as success when
-  the binaries are present.
+  that key still produce exe/installers; the script treats that as success only
+  when required artifacts exist and are fresher than build start.
 
 .PARAMETER OutDir
   Output directory relative to repo root (default: dist).
 
 .PARAMETER SkipBundles
-  Only build/copy kftray.exe (+ helper), skip waiting for NSIS/MSI if missing.
+  Only build/copy kftray.exe (+ helper), skip requiring NSIS/MSI.
 
 .EXAMPLE
   .\hacks\build-windows.ps1
@@ -54,7 +54,7 @@ function Get-RepoRoot {
     return (Get-Location).Path
 }
 
-function Find-ReleaseDir([string]$RepoRoot) {
+function Get-ReleaseCandidates([string]$RepoRoot) {
     $candidates = New-Object System.Collections.Generic.List[string]
 
     if ($env:CARGO_TARGET_DIR) {
@@ -62,7 +62,6 @@ function Find-ReleaseDir([string]$RepoRoot) {
     }
     $candidates.Add((Join-Path $RepoRoot "target\release"))
 
-    # Cursor / sandbox sometimes redirects cargo target elsewhere
     $sandboxRoot = Join-Path $env:LOCALAPPDATA "Temp\cursor-sandbox-cache"
     if (Test-Path $sandboxRoot) {
         Get-ChildItem -Path $sandboxRoot -Directory -ErrorAction SilentlyContinue |
@@ -71,14 +70,18 @@ function Find-ReleaseDir([string]$RepoRoot) {
             }
     }
 
+    return $candidates | Select-Object -Unique
+}
+
+function Find-ReleaseDir([string]$RepoRoot) {
     $found = @()
-    foreach ($dir in $candidates) {
+    foreach ($dir in (Get-ReleaseCandidates $RepoRoot)) {
         $exe = Join-Path $dir "kftray.exe"
         if (Test-Path $exe) {
             $found += [PSCustomObject]@{
-                Dir     = $dir
-                Exe     = Get-Item $exe
-                Mtime   = (Get-Item $exe).LastWriteTimeUtc
+                Dir   = $dir
+                Exe   = Get-Item $exe
+                Mtime = (Get-Item $exe).LastWriteTimeUtc
             }
         }
     }
@@ -88,6 +91,69 @@ function Find-ReleaseDir([string]$RepoRoot) {
     }
 
     return ($found | Sort-Object Mtime -Descending | Select-Object -First 1).Dir
+}
+
+function Test-FreshFile([string]$Path, [datetime]$SinceUtc) {
+    if (-not (Test-Path $Path)) {
+        return $false
+    }
+    return ((Get-Item $Path).LastWriteTimeUtc -ge $SinceUtc)
+}
+
+function Clear-StaleReleaseOutputs([string]$RepoRoot) {
+    foreach ($dir in (Get-ReleaseCandidates $RepoRoot)) {
+        if (-not (Test-Path $dir)) {
+            continue
+        }
+        $exe = Join-Path $dir "kftray.exe"
+        if (Test-Path $exe) {
+            Write-Warn "Removing stale $exe"
+            Remove-Item $exe -Force -ErrorAction SilentlyContinue
+        }
+        $msiDir = Join-Path $dir "bundle\msi"
+        if (Test-Path $msiDir) {
+            Get-ChildItem (Join-Path $msiDir "*.msi") -ErrorAction SilentlyContinue |
+                ForEach-Object {
+                    Write-Warn ("Removing stale {0}" -f $_.FullName)
+                    Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue
+                }
+        }
+        $nsisDir = Join-Path $dir "bundle\nsis"
+        if (Test-Path $nsisDir) {
+            Get-ChildItem (Join-Path $nsisDir "*-setup.exe") -ErrorAction SilentlyContinue |
+                ForEach-Object {
+                    Write-Warn ("Removing stale {0}" -f $_.FullName)
+                    Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue
+                }
+        }
+    }
+}
+
+function Test-RequiredArtifacts(
+    [string]$ReleaseDir,
+    [datetime]$BuildStartedUtc,
+    [bool]$RequireBundles
+) {
+    $exePath = Join-Path $ReleaseDir "kftray.exe"
+    if (-not (Test-FreshFile $exePath $BuildStartedUtc)) {
+        Write-Err "kftray.exe missing or older than build start: $exePath"
+        return $false
+    }
+
+    if ($RequireBundles) {
+        $msi = Get-ChildItem (Join-Path $ReleaseDir "bundle\msi\*.msi") -ErrorAction SilentlyContinue |
+            Where-Object { $_.LastWriteTimeUtc -ge $BuildStartedUtc } |
+            Select-Object -First 1
+        $nsis = Get-ChildItem (Join-Path $ReleaseDir "bundle\nsis\*-setup.exe") -ErrorAction SilentlyContinue |
+            Where-Object { $_.LastWriteTimeUtc -ge $BuildStartedUtc } |
+            Select-Object -First 1
+        if (-not $msi -and -not $nsis) {
+            Write-Err ('No fresh MSI/NSIS under {0}\bundle (required unless -SkipBundles)' -f $ReleaseDir)
+            return $false
+        }
+    }
+
+    return $true
 }
 
 $RepoRoot = Get-RepoRoot
@@ -104,6 +170,9 @@ if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
     Write-Err "cargo not found in PATH"
     exit 1
 }
+
+Write-Step "Clearing stale release outputs"
+Clear-StaleReleaseOutputs $RepoRoot
 
 $buildStarted = (Get-Date).ToUniversalTime()
 
@@ -126,35 +195,47 @@ $signingOnlyFailure =
     $buildExit -ne 0 -and
     $logText -match "TAURI_SIGNING_PRIVATE_KEY|public key has been found, but no private key"
 
+Write-Step "Locating and verifying release artifacts"
+$releaseDir = Find-ReleaseDir $RepoRoot
+if (-not $releaseDir) {
+    Write-Err "kftray.exe not found under target/release (or CARGO_TARGET_DIR)"
+    if ($logText) {
+        Write-Host ($logText.Substring([Math]::Max(0, $logText.Length - 2000)))
+    }
+    exit 1
+}
+
+$artifactsOk = Test-RequiredArtifacts `
+    -ReleaseDir $releaseDir `
+    -BuildStartedUtc $buildStarted `
+    -RequireBundles (-not $SkipBundles)
+
 if ($buildExit -eq 0) {
+    if (-not $artifactsOk) {
+        Write-Err "Build exit 0 but required fresh artifacts are missing. Log: $buildLog"
+        exit 1
+    }
     Write-Ok "pnpm tauri build finished (exit 0)"
 }
-elseif ($signingOnlyFailure) {
+elseif ($signingOnlyFailure -and $artifactsOk) {
     Write-Warn "Build finished with updater-signing error (no TAURI_SIGNING_PRIVATE_KEY)."
-    Write-Warn "Exe/installers are still usable for local use."
+    Write-Warn "Fresh exe/installers verified - treating as success for local use."
 }
 else {
     Write-Err "Build failed (exit $buildExit). Log: $buildLog"
+    if (-not $artifactsOk) {
+        Write-Err "Required fresh artifacts were not produced."
+    }
     if ($logText) {
         Write-Host ($logText.Substring([Math]::Max(0, $logText.Length - 2000)))
     }
     exit $buildExit
 }
 
-Write-Step "Locating release artifacts"
-$releaseDir = Find-ReleaseDir $RepoRoot
-if (-not $releaseDir) {
-    Write-Err "kftray.exe not found under target/release (or CARGO_TARGET_DIR)"
-    exit 1
-}
+Write-Ok "release dir: $releaseDir"
 
 $exePath = Join-Path $releaseDir "kftray.exe"
 $exeItem = Get-Item $exePath
-if ($exeItem.LastWriteTimeUtc -lt $buildStarted.AddMinutes(-1)) {
-    Write-Warn "kftray.exe looks older than this build start - check you got a fresh binary."
-}
-
-Write-Ok "release dir: $releaseDir"
 
 $outRoot = Join-Path $RepoRoot $OutDir
 $outInstallers = Join-Path $outRoot "installers"
@@ -164,7 +245,7 @@ New-Item -ItemType Directory -Force -Path $outInstallers | Out-Null
 Write-Step "Copying to $outRoot"
 Copy-Item $exePath (Join-Path $outRoot "kftray.exe") -Force
 $exeMb = [math]::Round($exeItem.Length / 1MB, 1)
-Write-Ok ("kftray.exe ({0} MB)" -f $exeMb)
+Write-Ok ('kftray.exe ({0} MB)' -f $exeMb)
 
 $helperSrc = Join-Path $releaseDir "kftray-helper.exe"
 if (-not (Test-Path $helperSrc)) {
@@ -181,9 +262,11 @@ else {
 $copiedBundles = 0
 if (-not $SkipBundles) {
     $msi = Get-ChildItem (Join-Path $releaseDir "bundle\msi\*.msi") -ErrorAction SilentlyContinue |
+        Where-Object { $_.LastWriteTimeUtc -ge $buildStarted } |
         Sort-Object LastWriteTimeUtc -Descending |
         Select-Object -First 1
     $nsis = Get-ChildItem (Join-Path $releaseDir "bundle\nsis\*-setup.exe") -ErrorAction SilentlyContinue |
+        Where-Object { $_.LastWriteTimeUtc -ge $buildStarted } |
         Sort-Object LastWriteTimeUtc -Descending |
         Select-Object -First 1
 
@@ -199,8 +282,8 @@ if (-not $SkipBundles) {
     }
 
     if ($copiedBundles -eq 0) {
-        Write-Warn ("No MSI/NSIS bundles found under {0}\bundle" -f $releaseDir)
-        Write-Warn "Exe was still copied. Fix WiX/NSIS toolchain if you need installers."
+        Write-Err ("No fresh MSI/NSIS bundles under {0}\bundle" -f $releaseDir)
+        exit 1
     }
 }
 
@@ -209,9 +292,9 @@ Write-Host "Artifacts:" -ForegroundColor Cyan
 Get-ChildItem $outRoot -Recurse -Include *.exe, *.msi |
     ForEach-Object {
         $mb = [math]::Round($_.Length / 1MB, 1)
-        Write-Host ("  {0}  ({1} MB)" -f $_.FullName, $mb)
+        Write-Host ('  {0}  ({1} MB)' -f $_.FullName, $mb)
     }
 
 Write-Host ""
-Write-Ok ("Done. Log: {0}" -f $buildLog)
+Write-Ok ('Done. Log: {0}' -f $buildLog)
 exit 0

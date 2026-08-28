@@ -13,7 +13,6 @@ use kftray_commons::models::config_model::Config;
 use kftray_commons::utils::settings::get_ssl_enabled;
 use kftray_portforward::kube::{
     clear_stopped_by_timeout,
-    stop_all_port_forward,
     stop_port_forward,
 };
 use kftray_portforward::ssl::cert_manager::CertificateManager;
@@ -24,10 +23,21 @@ use log::{
 };
 
 /// Stop active port-forward (and free local ports) before config deletion.
-/// Errors are logged but do not block deletion.
-async fn stop_port_forward_before_delete(id: i64) {
-    if let Err(e) = stop_port_forward(id.to_string()).await {
-        warn!("Failed to stop port forward for config {id} before deletion: {e}");
+/// Uses per-config stop so expose keys (`{id}`) are cleaned, not only composite PF keys.
+async fn stop_port_forward_before_delete(id: i64) -> Result<(), String> {
+    match stop_port_forward(id.to_string()).await {
+        Ok(resp) if resp.status != 0 => Err(format!(
+            "Failed to stop port forward for config {id} before deletion: {}",
+            if resp.stderr.is_empty() {
+                resp.stdout
+            } else {
+                resp.stderr
+            }
+        )),
+        Ok(_) => Ok(()),
+        Err(e) => Err(format!(
+            "Failed to stop port forward for config {id} before deletion: {e}"
+        )),
     }
 }
 
@@ -218,7 +228,7 @@ async fn restart_ssl_proxies_with_retry() {
 #[tauri::command]
 pub async fn delete_config_cmd(id: i64) -> Result<(), String> {
     info!("Deleting config with id: {id}");
-    stop_port_forward_before_delete(id).await;
+    stop_port_forward_before_delete(id).await?;
     clear_stopped_by_timeout(id);
     let result = delete_config(id).await;
     if result.is_ok() {
@@ -231,7 +241,7 @@ pub async fn delete_config_cmd(id: i64) -> Result<(), String> {
 pub async fn delete_configs_cmd(ids: Vec<i64>) -> Result<(), String> {
     info!("Deleting configs with ids: {ids:?}");
     for id in &ids {
-        stop_port_forward_before_delete(*id).await;
+        stop_port_forward_before_delete(*id).await?;
         clear_stopped_by_timeout(*id);
     }
     let result = delete_configs(ids).await;
@@ -244,8 +254,22 @@ pub async fn delete_configs_cmd(ids: Vec<i64>) -> Result<(), String> {
 #[tauri::command]
 pub async fn delete_all_configs_cmd() -> Result<(), String> {
     info!("Deleting all configs");
-    if let Err(e) = stop_all_port_forward().await {
-        warn!("Failed to stop all port forwards before deleting all configs: {e}");
+    let configs = get_configs().await?;
+    let mut failures = Vec::new();
+    for config in &configs {
+        let Some(id) = config.id else {
+            continue;
+        };
+        match stop_port_forward_before_delete(id).await {
+            Ok(()) => clear_stopped_by_timeout(id),
+            Err(e) => failures.push(e),
+        }
+    }
+    if !failures.is_empty() {
+        return Err(format!(
+            "Failed to stop all port forwards before deleting configs: {}",
+            failures.join("; ")
+        ));
     }
     let result = delete_all_configs().await;
     if result.is_ok() {

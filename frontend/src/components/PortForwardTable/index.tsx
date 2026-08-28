@@ -7,6 +7,7 @@ import Header from '@/components/Header'
 import HeaderMenu from '@/components/HeaderMenu'
 import ContextsAccordion from '@/components/PortForwardTable/ContextsAccordion'
 import {
+  areAllGroupsExpanded,
   getConfigGroup,
   useConfigsByGroup,
 } from '@/components/PortForwardTable/useConfigsByGroup'
@@ -113,7 +114,7 @@ const PortForwardTable: React.FC<TableProps> = ({
     const allGroups = Object.keys(configsByGroup)
 
     setExpandedIndices(current =>
-      current.length === allGroups.length ? [] : allGroups,
+      areAllGroupsExpanded(current, configsByGroup) ? [] : allGroups,
     )
   }
 

@@ -459,6 +459,11 @@ pub fn handle_window_event(window: &tauri::Window<Wry>, event: &WindowEvent) {
     if let WindowEvent::Resized(_) = event
         && webview_window.label() == "main"
     {
+        // Preset / restore `set_size` fires Resized — do not persist as custom.
+        if crate::window_size::take_programmatic_resize() {
+            return;
+        }
+
         let app_state = webview_window.state::<AppState>();
         if !app_state.positioning_active.load(Ordering::SeqCst)
             && let (Ok(size), Ok(Some(monitor))) =

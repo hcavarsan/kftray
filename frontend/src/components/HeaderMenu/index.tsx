@@ -6,6 +6,7 @@ import { Box, Group } from '@chakra-ui/react'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Tooltip } from '@/components/ui/tooltip'
+import { areAllGroupsExpanded } from '@/components/PortForwardTable/useConfigsByGroup'
 import { HeaderMenuProps } from '@/types'
 
 const HeaderMenu: React.FC<HeaderMenuProps> = ({
@@ -29,6 +30,11 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
       selectedConfigs.some(selected => selected.id === config.id),
     )
   }, [configs, selectedConfigs])
+
+  const allGroupsExpanded = useMemo(
+    () => areAllGroupsExpanded(expandedIndices, configsByGroup),
+    [expandedIndices, configsByGroup],
+  )
 
   const handleCheckboxChange = ({
     checked,
@@ -302,9 +308,7 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
       {/* Expand/Collapse Button */}
       <Tooltip
         content={
-          expandedIndices.length === Object.keys(configsByGroup).length
-            ? 'Collapse all groups'
-            : 'Expand all groups'
+          allGroupsExpanded ? 'Collapse all groups' : 'Expand all groups'
         }
         portalled={true}
         contentProps={{ zIndex: 100 }}
@@ -322,16 +326,10 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
           border='1px solid rgba(255, 255, 255, 0.08)'
         >
           <span style={{ fontSize: '11px' }}>
-            {expandedIndices.length === Object.keys(configsByGroup).length
-              ? 'Collapse All'
-              : 'Expand All'}
+            {allGroupsExpanded ? 'Collapse All' : 'Expand All'}
           </span>
           <Box
-            as={
-              expandedIndices.length === Object.keys(configsByGroup).length
-                ? ChevronUp
-                : ChevronDown
-            }
+            as={allGroupsExpanded ? ChevronUp : ChevronDown}
             width='12px'
             height='12px'
             marginLeft={1.5}
