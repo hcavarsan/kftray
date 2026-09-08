@@ -546,8 +546,17 @@ impl TcpForwarder {
         );
 
         state.buffer.extend_from_slice(buffer);
-        if kftray_http_logs::http_response_analyzer::HttpResponseAnalyzer::is_websocket_upgrade(&state.buffer) {
-            return true;
+        let is_websocket_upgrade =
+            kftray_http_logs::http_response_analyzer::HttpResponseAnalyzer::is_websocket_upgrade(
+                &state.buffer,
+            );
+        if is_websocket_upgrade {
+            // A read may contain both the handshake and the first WebSocket
+            // frame. Log only the complete HTTP headers; forwarding
+            // still uses the original read.
+            if let Some(headers_end) = state.buffer.windows(4).position(|w| w == b"\r\n\r\n") {
+                state.buffer.truncate(headers_end + 4);
+            }
         }
 
         if !state.current_response_logged {
@@ -570,7 +579,9 @@ impl TcpForwarder {
             }
         }
 
-        false
+        // The caller switches to raw forwarding only after the handshake is
+        // logged.
+        is_websocket_upgrade
     }
 
     fn should_log_response_static(state: &mut ResponseState) -> bool {
@@ -653,6 +664,137 @@ impl ResponseState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const WEBSOCKET_HANDSHAKE: &[u8] = b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: test-accept\r\n\r\n";
+
+    async fn check_websocket_response_forwarding(
+        response: &[u8], split_at: usize, logging_enabled: bool, expect_tunnel: bool,
+    ) {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let log_path = temp_dir.path().join("websocket.log");
+        let http_logger = Arc::new(
+            Logger::new(
+                kftray_http_logs::LogConfig::new(temp_dir.path().to_path_buf()),
+                log_path.clone(),
+            )
+            .await
+            .unwrap(),
+        );
+        let req_id = http_logger
+            .log_request(bytes::Bytes::from_static(
+                b"GET /websocket HTTP/1.1\r\nHost: example.test\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n",
+            ))
+            .await;
+        let logger = Arc::new(Mutex::new(logging_enabled.then(|| http_logger.clone())));
+        let request_id = Arc::new(Mutex::new(Some(req_id)));
+        let tunnel = Arc::new(AtomicBool::new(false));
+        let forward_tunnel = tunnel.clone();
+        let (mut upstream_reader, mut upstream_writer) = tokio::io::duplex(4096);
+        let (mut client_writer, mut client_reader) = tokio::io::duplex(4096);
+        let (_events, subscriber) = tokio::sync::broadcast::channel(1);
+        let forward = tokio::spawn(async move {
+            TcpForwarder::forward_upstream_to_client(
+                logger,
+                1,
+                &mut upstream_reader,
+                &mut client_writer,
+                request_id,
+                CancellationToken::new(),
+                subscriber,
+                8080,
+                forward_tunnel,
+            )
+            .await
+            .unwrap();
+        });
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            upstream_writer
+                .write_all(&response[..split_at])
+                .await
+                .unwrap();
+            let mut first = vec![0; split_at];
+            client_reader.read_exact(&mut first).await.unwrap();
+            assert_eq!(first, response[..split_at]);
+            assert!(
+                !tunnel.load(Ordering::SeqCst),
+                "incomplete headers must not switch modes"
+            );
+
+            let frame = b"\x81\x0dframe-payload";
+            let mut last = response[split_at..].to_vec();
+            if expect_tunnel || !logging_enabled {
+                last.extend_from_slice(frame);
+            }
+            upstream_writer.write_all(&last).await.unwrap();
+            let mut received = vec![0; last.len()];
+            client_reader.read_exact(&mut received).await.unwrap();
+            assert_eq!(received, last, "coalesced frame bytes must be preserved");
+            assert_eq!(tunnel.load(Ordering::SeqCst), expect_tunnel);
+
+            if expect_tunnel || !logging_enabled {
+                upstream_writer.write_all(frame).await.unwrap();
+                let mut received = vec![0; frame.len()];
+                client_reader.read_exact(&mut received).await.unwrap();
+                assert_eq!(received, frame, "later frame bytes must be preserved");
+            }
+            upstream_writer.shutdown().await.unwrap();
+            forward.await.unwrap();
+        })
+        .await
+        .expect("forwarding should not stall");
+
+        let status = std::str::from_utf8(response)
+            .unwrap()
+            .lines()
+            .next()
+            .unwrap();
+        if logging_enabled {
+            tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    http_logger.flush().await.unwrap();
+                    let contents = tokio::fs::read_to_string(&log_path).await.unwrap();
+                    if contents.contains(status) {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .expect("the HTTP response must be logged before leaving HTTP mode");
+        }
+        http_logger.shutdown().await;
+        let contents = tokio::fs::read_to_string(&log_path).await.unwrap();
+        assert_eq!(
+            contents.matches(status).count(),
+            usize::from(logging_enabled)
+        );
+        assert!(
+            !contents.contains("frame-payload"),
+            "WebSocket frames are not HTTP log entries"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_websocket_handshake_logged_before_tunnel() {
+        check_websocket_response_forwarding(WEBSOCKET_HANDSHAKE, 30, true, true).await;
+    }
+
+    #[tokio::test]
+    async fn test_websocket_rejection_stays_in_http_mode() {
+        check_websocket_response_forwarding(
+            b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n",
+            15,
+            true,
+            false,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_websocket_without_logging_preserves_bytes() {
+        check_websocket_response_forwarding(WEBSOCKET_HANDSHAKE, 30, false, false).await;
+    }
 
     #[tokio::test]
     async fn test_new() {
