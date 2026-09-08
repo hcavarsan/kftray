@@ -1,6 +1,6 @@
-import { StylesConfig } from 'react-select'
+import type { StylesConfig } from 'react-select'
 
-import { PortOption, StringOption } from '@/types'
+import type { PortOption, StringOption } from '@/types'
 
 export const selectStyles: StylesConfig<StringOption | PortOption> = {
   control: base => ({

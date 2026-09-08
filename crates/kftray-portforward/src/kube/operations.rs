@@ -263,10 +263,12 @@ mod tests {
                 kube::config::NamedContext {
                     name: "context1".to_string(),
                     context: Some(kube::config::Context::default()),
+                    ..Default::default()
                 },
                 kube::config::NamedContext {
                     name: "context2".to_string(),
                     context: Some(kube::config::Context::default()),
+                    ..Default::default()
                 },
             ],
             ..Default::default()

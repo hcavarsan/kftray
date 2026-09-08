@@ -1,4 +1,8 @@
 use std::sync::Arc;
+use std::sync::atomic::{
+    AtomicBool,
+    Ordering,
+};
 use std::time::Duration;
 
 use tokio::io::{
@@ -17,6 +21,73 @@ use crate::Logger;
 use crate::kube::http_log_watcher::HttpLogStateWatcher;
 
 const BUFFER_SIZE: usize = 65536;
+
+#[derive(Default)]
+struct UpgradeDetector {
+    headers: Vec<u8>,
+    body_remaining: usize,
+    opaque: bool,
+}
+
+impl UpgradeDetector {
+    fn observe(&mut self, mut bytes: &[u8]) -> bool {
+        while !bytes.is_empty() && !self.opaque {
+            if self.body_remaining > 0 {
+                let consumed = self.body_remaining.min(bytes.len());
+                self.body_remaining -= consumed;
+                bytes = &bytes[consumed..];
+                continue;
+            }
+            // Bound header storage and never classify a response body as a
+            // handshake.
+            self.headers.push(bytes[0]);
+            bytes = &bytes[1..];
+            let prefix_len = self.headers.len().min(5);
+            if self.headers[..prefix_len] != b"HTTP/"[..prefix_len] {
+                self.opaque = true;
+                self.headers.clear();
+                return false;
+            }
+            if self.headers.ends_with(b"\r\n\r\n") {
+                if kftray_http_logs::http_response_analyzer::HttpResponseAnalyzer::is_websocket_upgrade(&self.headers) {
+                    self.headers.clear();
+                    return true;
+                }
+                let mut headers = [httparse::EMPTY_HEADER; 64];
+                let mut response = httparse::Response::new(&mut headers);
+                if matches!(
+                    response.parse(&self.headers),
+                    Ok(httparse::Status::Complete(_))
+                ) {
+                    let no_body = matches!(response.code, Some(100..=199) | Some(204) | Some(304));
+                    let length = response
+                        .headers
+                        .iter()
+                        .find(|h| h.name.eq_ignore_ascii_case("content-length"))
+                        .and_then(|h| std::str::from_utf8(h.value).ok())
+                        .and_then(|v| v.trim().parse::<usize>().ok());
+                    let transfer_encoded = response
+                        .headers
+                        .iter()
+                        .any(|h| h.name.eq_ignore_ascii_case("transfer-encoding"));
+                    // Unknown/streamed framing stays opaque; it must not create
+                    // a false upgrade.
+                    self.opaque = response.code == Some(101)
+                        || transfer_encoded
+                        || (!no_body && length.is_none());
+                    self.body_remaining = if no_body { 0 } else { length.unwrap_or(0) };
+                } else {
+                    self.opaque = true;
+                }
+                self.headers.clear();
+            } else if self.headers.len() == BUFFER_SIZE {
+                self.opaque = true;
+                self.headers.clear();
+            }
+        }
+        false
+    }
+}
 
 #[derive(Clone)]
 pub struct TcpForwarder {
@@ -149,6 +220,7 @@ impl TcpForwarder {
                 Arc::new(Mutex::new(self.logger.take().map(Arc::new)));
 
             let request_id = Arc::new(Mutex::new(None));
+            let websocket_tunnel_mode = Arc::new(AtomicBool::new(false));
             let mut client_conn_guard = client_conn.lock().await;
             let (mut client_reader, mut client_writer) = tokio::io::split(&mut *client_conn_guard);
             let (mut upstream_reader, mut upstream_writer) = tokio::io::split(upstream_conn);
@@ -162,6 +234,7 @@ impl TcpForwarder {
                 cancellation_token.clone(),
                 log_subscriber.resubscribe(),
                 local_port,
+                Arc::clone(&websocket_tunnel_mode),
             );
 
             let upstream_to_client = Self::forward_upstream_to_client(
@@ -173,6 +246,7 @@ impl TcpForwarder {
                 cancellation_token.clone(),
                 log_subscriber,
                 local_port,
+                Arc::clone(&websocket_tunnel_mode),
             );
 
             let result = tokio::try_join!(client_to_upstream, upstream_to_client);
@@ -255,7 +329,7 @@ impl TcpForwarder {
         mut log_subscriber: tokio::sync::broadcast::Receiver<
             crate::kube::http_log_watcher::HttpLogStateEvent,
         >,
-        local_port: u16,
+        local_port: u16, websocket_tunnel_mode: Arc<AtomicBool>,
     ) -> anyhow::Result<()> {
         let mut buffer = [0; BUFFER_SIZE];
         let mut should_log = {
@@ -276,7 +350,12 @@ impl TcpForwarder {
                         break;
                     }
 
-                    if should_log {
+                    if websocket_tunnel_mode.load(Ordering::SeqCst) {
+                        tokio::select! {
+                            result = upstream_writer.write_all(&buffer[..n]) => result?,
+                            _ = cancellation_token.cancelled() => break,
+                        }
+                    } else if should_log {
                         if let Some(ref mut req_buf) = request_buffer.as_mut() {
                             req_buf.extend_from_slice(&buffer[..n]);
                             let maybe_logger = {
@@ -299,6 +378,9 @@ impl TcpForwarder {
                     }
                 },
                 log_event = log_subscriber.recv() => {
+                    if websocket_tunnel_mode.load(Ordering::SeqCst) {
+                        continue;
+                    }
                     if let Ok(event) = log_event
                         && event.config_id == config_id {
                             let needs_logger = event.enabled && {
@@ -363,7 +445,7 @@ impl TcpForwarder {
         mut log_subscriber: tokio::sync::broadcast::Receiver<
             crate::kube::http_log_watcher::HttpLogStateEvent,
         >,
-        local_port: u16,
+        local_port: u16, websocket_tunnel_mode: Arc<AtomicBool>,
     ) -> anyhow::Result<()> {
         let mut buffer = [0; BUFFER_SIZE];
         let mut should_log = {
@@ -385,6 +467,7 @@ impl TcpForwarder {
         } else {
             None
         };
+        let mut upgrade_detector = UpgradeDetector::default();
 
         loop {
             tokio::select! {
@@ -396,6 +479,7 @@ impl TcpForwarder {
 
                     if n == 0 {
                         if should_log
+                            && !websocket_tunnel_mode.load(Ordering::SeqCst)
                             && let Some(ref mut state) = response_state.as_mut() {
                                 let maybe_logger = {
                                     let guard = logger.lock().await;
@@ -412,16 +496,36 @@ impl TcpForwarder {
                         break;
                     }
 
-                    if should_log
-                        && let Some(ref mut state) = response_state.as_mut() {
-                            Self::handle_response_logging_static(&buffer[..n], state, &logger, &request_id).await;
+                    if websocket_tunnel_mode.load(Ordering::SeqCst) {
+                        tokio::select! {
+                            result = client_writer.write_all(&buffer[..n]) => result?,
+                            _ = cancellation_token.cancelled() => break,
                         }
+                        continue;
+                    }
+
+                    let detected_upgrade = upgrade_detector.observe(&buffer[..n]);
+                    let logged_upgrade = if should_log
+                        && let Some(ref mut state) = response_state.as_mut() {
+                            Self::handle_response_logging_static(&buffer[..n], state, &logger, &request_id).await
+                        } else {
+                            false
+                        };
+
+                    if logged_upgrade || detected_upgrade {
+                        websocket_tunnel_mode.store(true, Ordering::SeqCst);
+                        response_state = None;
+                        should_log = false;
+                    }
 
                     if let Err(e) = client_writer.write_all(&buffer[..n]).await {
                         return Err(e.into());
                     }
                 },
                 log_event = log_subscriber.recv() => {
+                    if websocket_tunnel_mode.load(Ordering::SeqCst) {
+                        continue;
+                    }
                     if let Ok(event) = log_event
                         && event.config_id == config_id {
                             let needs_logger = event.enabled && {
@@ -489,7 +593,7 @@ impl TcpForwarder {
     async fn handle_response_logging_static(
         buffer: &[u8], state: &mut ResponseState, logger: &Arc<Mutex<Option<Arc<Logger>>>>,
         request_id: &Arc<Mutex<Option<String>>>,
-    ) {
+    ) -> bool {
         let req_id_guard = request_id.lock().await;
         let current_req_id = req_id_guard.clone();
         drop(req_id_guard);
@@ -519,6 +623,18 @@ impl TcpForwarder {
         );
 
         state.buffer.extend_from_slice(buffer);
+        let is_websocket_upgrade =
+            kftray_http_logs::http_response_analyzer::HttpResponseAnalyzer::is_websocket_upgrade(
+                &state.buffer,
+            );
+        if is_websocket_upgrade {
+            // A read may contain both the handshake and the first WebSocket
+            // frame. Log only the complete HTTP headers; forwarding
+            // still uses the original read.
+            if let Some(headers_end) = state.buffer.windows(4).position(|w| w == b"\r\n\r\n") {
+                state.buffer.truncate(headers_end + 4);
+            }
+        }
 
         if !state.current_response_logged {
             let maybe_logger = {
@@ -539,6 +655,10 @@ impl TcpForwarder {
                 }
             }
         }
+
+        // The caller switches to raw forwarding only after the handshake is
+        // logged.
+        is_websocket_upgrade
     }
 
     fn should_log_response_static(state: &mut ResponseState) -> bool {
@@ -621,6 +741,224 @@ impl ResponseState {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    const WEBSOCKET_HANDSHAKE: &[u8] = b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: test-accept\r\n\r\n";
+
+    async fn check_websocket_response_forwarding(
+        response: &[u8], split_at: usize, logging_enabled: bool, expect_tunnel: bool,
+    ) {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let log_path = temp_dir.path().join("websocket.log");
+        let http_logger = Arc::new(
+            Logger::new(
+                kftray_http_logs::LogConfig::new(temp_dir.path().to_path_buf()),
+                log_path.clone(),
+            )
+            .await
+            .unwrap(),
+        );
+        let req_id = http_logger
+            .log_request(bytes::Bytes::from_static(
+                b"GET /websocket HTTP/1.1\r\nHost: example.test\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n",
+            ))
+            .await;
+        let logger = Arc::new(Mutex::new(logging_enabled.then(|| http_logger.clone())));
+        let request_id = Arc::new(Mutex::new(Some(req_id)));
+        let tunnel = Arc::new(AtomicBool::new(false));
+        let forward_tunnel = tunnel.clone();
+        let (mut upstream_reader, mut upstream_writer) = tokio::io::duplex(4096);
+        let (mut client_writer, mut client_reader) = tokio::io::duplex(4096);
+        let (events, subscriber) = tokio::sync::broadcast::channel(8);
+        let forward = tokio::spawn(async move {
+            TcpForwarder::forward_upstream_to_client(
+                logger,
+                1,
+                &mut upstream_reader,
+                &mut client_writer,
+                request_id,
+                CancellationToken::new(),
+                subscriber,
+                8080,
+                forward_tunnel,
+            )
+            .await
+            .unwrap();
+        });
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            upstream_writer
+                .write_all(&response[..split_at])
+                .await
+                .unwrap();
+            let mut first = vec![0; split_at];
+            client_reader.read_exact(&mut first).await.unwrap();
+            assert_eq!(first, response[..split_at]);
+            assert!(
+                !tunnel.load(Ordering::SeqCst),
+                "incomplete headers must not switch modes"
+            );
+
+            let frame = b"\x81\x0dframe-payload";
+            let mut last = response[split_at..].to_vec();
+            if expect_tunnel || !logging_enabled {
+                last.extend_from_slice(frame);
+            }
+            upstream_writer.write_all(&last).await.unwrap();
+            let mut received = vec![0; last.len()];
+            client_reader.read_exact(&mut received).await.unwrap();
+            assert_eq!(received, last, "coalesced frame bytes must be preserved");
+            assert_eq!(tunnel.load(Ordering::SeqCst), expect_tunnel);
+
+            if expect_tunnel || !logging_enabled {
+                events
+                    .send(crate::kube::http_log_watcher::HttpLogStateEvent::new(
+                        1, true,
+                    ))
+                    .unwrap();
+                tokio::task::yield_now().await;
+                upstream_writer.write_all(frame).await.unwrap();
+                let mut received = vec![0; frame.len()];
+                client_reader.read_exact(&mut received).await.unwrap();
+                assert_eq!(received, frame, "later frame bytes must be preserved");
+            }
+            upstream_writer.shutdown().await.unwrap();
+            forward.await.unwrap();
+        })
+        .await
+        .expect("forwarding should not stall");
+
+        let status = std::str::from_utf8(response)
+            .unwrap()
+            .lines()
+            .next()
+            .unwrap();
+        if logging_enabled {
+            tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    http_logger.flush().await.unwrap();
+                    let contents = tokio::fs::read_to_string(&log_path).await.unwrap();
+                    if contents.contains(status) {
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .expect("the HTTP response must be logged before leaving HTTP mode");
+        }
+        http_logger.shutdown().await;
+        let contents = tokio::fs::read_to_string(&log_path).await.unwrap();
+        assert_eq!(
+            contents.matches(status).count(),
+            usize::from(logging_enabled)
+        );
+        assert!(
+            !contents.contains("frame-payload"),
+            "WebSocket frames are not HTTP log entries"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_websocket_handshake_logged_before_tunnel() {
+        check_websocket_response_forwarding(WEBSOCKET_HANDSHAKE, 30, true, true).await;
+    }
+
+    #[tokio::test]
+    async fn test_websocket_rejection_stays_in_http_mode() {
+        check_websocket_response_forwarding(
+            b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n",
+            15,
+            true,
+            false,
+        )
+        .await;
+    }
+
+    #[tokio::test]
+    async fn test_websocket_without_logging_preserves_bytes() {
+        check_websocket_response_forwarding(WEBSOCKET_HANDSHAKE, 30, false, true).await;
+    }
+
+    #[test]
+    fn test_upgrade_detector_is_bounded() {
+        let mut detector = UpgradeDetector::default();
+        assert!(!detector.observe(b"H"));
+        assert!(detector.observe(&WEBSOCKET_HANDSHAKE[1..]));
+        assert!(detector.headers.is_empty());
+        let mut oversized = b"HTTP/1.1 101 Switching Protocols\r\nX-Long: ".to_vec();
+        oversized.resize(BUFFER_SIZE * 2, b'x');
+        assert!(!detector.observe(&oversized));
+        assert!(detector.headers.is_empty());
+        assert!(!detector.observe(&vec![0x81; BUFFER_SIZE * 2]));
+        assert!(detector.headers.is_empty());
+    }
+
+    #[test]
+    fn test_upgrade_detector_does_not_classify_body_bytes() {
+        let mut detector = UpgradeDetector::default();
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\n\r\n",
+            WEBSOCKET_HANDSHAKE.len()
+        );
+        assert!(!detector.observe(response.as_bytes()));
+        assert!(!detector.observe(WEBSOCKET_HANDSHAKE));
+        assert!(detector.observe(WEBSOCKET_HANDSHAKE));
+    }
+
+    #[tokio::test]
+    async fn test_raw_tunnel_blocked_writes_are_cancellable() {
+        for upstream_to_client in [false, true] {
+            let (mut reader, mut source) = tokio::io::duplex(1024);
+            let (mut writer, _unread_peer) = tokio::io::duplex(1);
+            source.write_all(&[0x81; 64]).await.unwrap();
+            let token = CancellationToken::new();
+            let cancel = token.clone();
+            let (_events, receiver) = tokio::sync::broadcast::channel(1);
+            let mut forward = tokio::spawn(async move {
+                let logger = Arc::new(Mutex::new(None));
+                let request_id = Arc::new(Mutex::new(None));
+                let tunnel = Arc::new(AtomicBool::new(true));
+                if upstream_to_client {
+                    TcpForwarder::forward_upstream_to_client(
+                        logger,
+                        1,
+                        &mut reader,
+                        &mut writer,
+                        request_id,
+                        token,
+                        receiver,
+                        8080,
+                        tunnel,
+                    )
+                    .await
+                } else {
+                    TcpForwarder::forward_client_to_upstream(
+                        logger,
+                        1,
+                        &mut reader,
+                        &mut writer,
+                        request_id,
+                        token,
+                        receiver,
+                        8080,
+                        tunnel,
+                    )
+                    .await
+                }
+            });
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            assert!(!forward.is_finished());
+            cancel.cancel();
+            let result = tokio::time::timeout(Duration::from_secs(1), &mut forward).await;
+            if result.is_err() {
+                forward.abort();
+            }
+            result
+                .expect("cancellation must settle a blocked raw write")
+                .unwrap()
+                .unwrap();
+        }
+    }
 
     #[tokio::test]
     async fn test_new() {
@@ -743,6 +1081,7 @@ mod tests {
         let (_, log_subscriber) = tokio::sync::broadcast::channel(1);
 
         let logger = Arc::new(Mutex::new(None));
+        let websocket_tunnel_mode = Arc::new(AtomicBool::new(false));
         let result = TcpForwarder::forward_client_to_upstream(
             logger,
             forwarder.config_id,
@@ -752,6 +1091,7 @@ mod tests {
             cancellation_token,
             log_subscriber,
             8080,
+            websocket_tunnel_mode,
         )
         .await;
 
@@ -789,6 +1129,7 @@ mod tests {
         let (_, log_subscriber) = tokio::sync::broadcast::channel(1);
 
         let logger = Arc::new(Mutex::new(None));
+        let websocket_tunnel_mode = Arc::new(AtomicBool::new(false));
         let result = TcpForwarder::forward_upstream_to_client(
             logger,
             forwarder.config_id,
@@ -798,6 +1139,7 @@ mod tests {
             cancellation_token,
             log_subscriber,
             8080,
+            websocket_tunnel_mode,
         )
         .await;
 

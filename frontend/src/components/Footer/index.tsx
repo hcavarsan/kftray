@@ -1,4 +1,5 @@
-import React, { useCallback, useState } from 'react'
+import type React from 'react'
+import { useCallback, useState } from 'react'
 import {
   Download,
   GitBranch,
@@ -32,7 +33,7 @@ import {
   MenuTriggerItem,
 } from '@/components/ui/menu'
 import { Tooltip } from '@/components/ui/tooltip'
-import { FooterProps } from '@/types'
+import type { FooterProps } from '@/types'
 
 const Footer: React.FC<FooterProps> = ({
   openModal,

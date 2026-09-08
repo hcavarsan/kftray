@@ -1,4 +1,5 @@
-import React, { useCallback, useMemo, useRef, useState } from 'react'
+import type React from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import debounce from 'lodash/debounce'
 import { RepeatIcon } from 'lucide-react'
 
@@ -6,7 +7,7 @@ import { Box, Button, Spinner, Text } from '@chakra-ui/react'
 
 import { Tooltip } from '@/components/ui/tooltip'
 import { useGitSync } from '@/contexts/GitSyncContext'
-import { SyncConfigsButtonProps } from '@/types'
+import type { SyncConfigsButtonProps } from '@/types'
 
 const SYNC_DEBOUNCE_MS = 1000
 const MAX_RETRIES = 3

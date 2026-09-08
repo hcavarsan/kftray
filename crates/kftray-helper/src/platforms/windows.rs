@@ -1,5 +1,4 @@
 use std::ffi::OsString;
-use std::path::PathBuf;
 use std::time::Duration;
 
 #[cfg(target_os = "windows")]

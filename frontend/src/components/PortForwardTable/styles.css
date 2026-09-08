@@ -310,7 +310,7 @@
   transition: all 0.2s ease;
 }
 
-.switch[data-state='checked'] {
+.switch[data-state="checked"] {
   background-color: rgba(59, 130, 246, 0.3) !important;
 }
 
@@ -320,7 +320,7 @@
 }
 
 .switch::before {
-  content: '';
+  content: "";
   position: absolute;
   width: 14px;
   height: 14px;
@@ -329,7 +329,7 @@
   transition: all 0.15s cubic-bezier(0.4, 0, 0.2, 1);
 }
 
-.switch[data-state='checked']::before {
+.switch[data-state="checked"]::before {
   transform: translateX(16px);
   background-color: rgb(59, 130, 246);
 }

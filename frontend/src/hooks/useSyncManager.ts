@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 
 import { gitService } from '@/services/gitService'
-import { SyncStatus } from '@/types'
+import type { SyncStatus } from '@/types'
 
 interface UseSyncManagerProps {
   onSyncFailure: (error: Error) => void

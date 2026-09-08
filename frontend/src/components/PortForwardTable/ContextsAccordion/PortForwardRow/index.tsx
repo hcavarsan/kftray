@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from 'react'
+import type React from 'react'
+import { useEffect, useState } from 'react'
 import {
   ClipboardIcon,
   Copy,
@@ -38,7 +39,7 @@ import {
 import { Switch } from '@/components/ui/switch'
 import { toaster } from '@/components/ui/toaster'
 import { Tooltip } from '@/components/ui/tooltip'
-import { PortForwardRowProps } from '@/types'
+import type { PortForwardRowProps } from '@/types'
 
 import '../../styles.css'
 
@@ -62,6 +63,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
   const [localInitiating, setLocalInitiating] = useState(false)
 
   useEffect(() => {
+    const fallback = config.http_logs_enabled ?? false
     const fetchHttpLogState = async () => {
       try {
         const enabled = await invoke<boolean>('get_http_logs_cmd', {
@@ -71,7 +73,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
         setHttpLogsEnabled(prev => ({ ...prev, [config.id]: enabled }))
       } catch (error) {
         console.error('Error fetching HTTP log state:', error)
-        setHttpLogsEnabled(prev => ({ ...prev, [config.id]: false }))
+        setHttpLogsEnabled(prev => ({ ...prev, [config.id]: fallback }))
       }
     }
 
@@ -127,7 +129,10 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
         configId: config.id,
         enable: newState,
       })
-      setHttpLogsEnabled(prevState => ({ ...prevState, [config.id]: newState }))
+      setHttpLogsEnabled(prevState => ({
+        ...prevState,
+        [config.id]: newState,
+      }))
     } catch (error) {
       console.error('Error toggling HTTP logs:', error)
       toaster.error({
@@ -373,7 +378,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
     // Follow same logic as checkbox: config.is_running
     if (config.is_running) {
       // Orange: Running but has specific issues
-      if (activePod && activePod.includes('pending-rollout')) {
+      if (activePod?.includes('pending-rollout')) {
         return {
           color: 'rgba(161, 98, 7, 0.7)',
           status: 'Rollout',

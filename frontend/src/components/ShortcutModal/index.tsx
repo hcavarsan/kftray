@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useState } from 'react'
+import type React from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { AlertTriangle, Edit2, Plus, Trash2, Wrench } from 'lucide-react'
 
 import {
@@ -17,7 +18,7 @@ import { Button } from '@/components/ui/button'
 import { DialogCloseTrigger } from '@/components/ui/dialog'
 import { toaster } from '@/components/ui/toaster'
 import { type Shortcut, useGlobalShortcuts } from '@/hooks/useGlobalShortcuts'
-import { type Config } from '@/types'
+import type { Config } from '@/types'
 
 import ShortcutFormModal from './ShortcutFormModal'
 
@@ -86,14 +87,7 @@ const ShortcutModal: React.FC<ShortcutModalProps> = ({ isOpen, onClose }) => {
     isFixingPermissions,
   } = useGlobalShortcuts()
 
-  useEffect(() => {
-    if (isOpen) {
-      loadConfigs()
-      refreshShortcuts()
-    }
-  }, [isOpen, refreshShortcuts])
-
-  const loadConfigs = async () => {
+  const loadConfigs = useCallback(async () => {
     try {
       const allConfigs = await invoke<Config[]>('get_configs_cmd')
 
@@ -106,7 +100,14 @@ const ShortcutModal: React.FC<ShortcutModalProps> = ({ isOpen, onClose }) => {
         duration: 3000,
       })
     }
-  }
+  }, [])
+
+  useEffect(() => {
+    if (isOpen) {
+      loadConfigs()
+      refreshShortcuts()
+    }
+  }, [isOpen, refreshShortcuts, loadConfigs])
 
   const handleFormSaved = async () => {
     setIsFormModalOpen(false)
