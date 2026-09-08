@@ -31,9 +31,9 @@ source ~/.bashrc  # or ~/.zshrc
 
 That's it! mise will handle installing:
 
-- Node.js 24
-- pnpm (latest)
-- Rust nightly (with required components)
+- Node.js 26
+- pnpm 12
+- Rust stable (nightly only for `cargo fmt`)
 - Cargo tools (cargo-llvm-cov, cargo-nextest, cargo-insta, tauri-cli)
 - System dependencies (via `mise run setup`)
 

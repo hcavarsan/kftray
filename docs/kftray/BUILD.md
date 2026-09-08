@@ -16,9 +16,9 @@ The project uses mise to manage all tools and dependencies. You only need to ins
 
 That's it! mise will handle installing and managing:
 
-- Node.js
-- pnpm
-- Rust (nightly toolchain)
+- Node.js 26
+- pnpm 12
+- Rust stable (nightly only for `cargo fmt`)
 - Cargo tools (cargo-llvm-cov, cargo-nextest, cargo-insta)
 - Tauri CLI
 - All system dependencies
