@@ -182,7 +182,10 @@ impl GitHubRepository {
             })?;
 
             let value: serde_json::Value = serde_json::from_str(&content).map_err(|e| {
-                format!("Failed to parse config file at {}: {e}", full_path.display())
+                format!(
+                    "Failed to parse config file at {}: {e}",
+                    full_path.display()
+                )
             })?;
 
             match value {
@@ -415,12 +418,11 @@ mod tests {
         std::fs::write(temp_dir.path().join("a.json"), r#"{"id": 1}"#).unwrap();
         std::fs::write(temp_dir.path().join("b.json"), r#"{"id": 2}"#).unwrap();
 
-        let merged =
-            GitHubRepository::read_config_files(temp_dir.path(), &[
-                "a.json".to_string(),
-                "b.json".to_string(),
-            ])
-            .unwrap();
+        let merged = GitHubRepository::read_config_files(
+            temp_dir.path(),
+            &["a.json".to_string(), "b.json".to_string()],
+        )
+        .unwrap();
 
         let parsed: serde_json::Value = serde_json::from_str(&merged).unwrap();
         assert_eq!(parsed.as_array().unwrap().len(), 2);
@@ -431,9 +433,7 @@ mod tests {
         let temp_dir = tempfile::TempDir::new().unwrap();
 
         let result =
-            GitHubRepository::read_config_files(temp_dir.path(), &[
-                "missing.json".to_string(),
-            ]);
+            GitHubRepository::read_config_files(temp_dir.path(), &["missing.json".to_string()]);
 
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Failed to read config file"));
@@ -444,9 +444,7 @@ mod tests {
         let temp_dir = tempfile::TempDir::new().unwrap();
 
         let result =
-            GitHubRepository::read_config_files(temp_dir.path(), &[
-                "../config.json".to_string(),
-            ]);
+            GitHubRepository::read_config_files(temp_dir.path(), &["../config.json".to_string()]);
 
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Invalid config path"));
@@ -462,8 +460,7 @@ mod tests {
             "/etc/passwd".to_string()
         };
 
-        let result =
-            GitHubRepository::read_config_files(temp_dir.path(), &[absolute_path]);
+        let result = GitHubRepository::read_config_files(temp_dir.path(), &[absolute_path]);
 
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Invalid config path"));
@@ -482,9 +479,7 @@ mod tests {
         std::os::unix::fs::symlink(&outside_file, &link_path).unwrap();
 
         let result =
-            GitHubRepository::read_config_files(temp_dir.path(), &[
-                "config.json".to_string(),
-            ]);
+            GitHubRepository::read_config_files(temp_dir.path(), &["config.json".to_string()]);
 
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("escapes repository directory"));

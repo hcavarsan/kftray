@@ -38,8 +38,7 @@ interface LegacyGitConfig extends Omit<GitConfig, 'configPaths'> {
 
 const normalizeCredentials = (raw: LegacyGitConfig): GitConfig => ({
   ...raw,
-  configPaths:
-    raw.configPaths ?? (raw.configPath ? [raw.configPath] : []),
+  configPaths: raw.configPaths ?? (raw.configPath ? [raw.configPath] : []),
 })
 
 export const GitSyncProvider: React.FC<{ children: React.ReactNode }> = ({
