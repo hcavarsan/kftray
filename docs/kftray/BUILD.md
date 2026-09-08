@@ -111,7 +111,7 @@ For detailed prerequisites, see [Tauri Prerequisites](https://v2.tauri.app/start
 If you prefer not to use mise:
 
 1. Install prerequisites manually (see Tauri docs)
-2. Install pnpm: `npm install -g pnpm`
+2. Install pnpm: `npm install -g pnpm@12`
 3. Install dependencies: `pnpm install`
 4. Run dev mode: `pnpm tauri dev`
 5. Build production: `pnpm tauri build`
