@@ -69,6 +69,42 @@
       "contributions": [
         "code"
       ]
+    },
+    {
+      "login": "kgara",
+      "name": "kgara",
+      "avatar_url": "https://avatars.githubusercontent.com/u/14247772?v=4",
+      "profile": "https://github.com/kgara",
+      "contributions": [
+        "code"
+      ]
+    },
+    {
+      "login": "ramezbenaribia",
+      "name": "Ramez Ben Aribia",
+      "avatar_url": "https://avatars.githubusercontent.com/u/55209480?v=4",
+      "profile": "https://github.com/ramezbenaribia",
+      "contributions": [
+        "code"
+      ]
+    },
+    {
+      "login": "knktc",
+      "name": "knktc",
+      "avatar_url": "https://avatars.githubusercontent.com/u/863586?v=4",
+      "profile": "https://knktc.com/",
+      "contributions": [
+        "code"
+      ]
+    },
+    {
+      "login": "xrow",
+      "name": "Björn Dieding",
+      "avatar_url": "https://avatars.githubusercontent.com/u/295491?v=4",
+      "profile": "http://www.xrow.de/",
+      "contributions": [
+        "code"
+      ]
     }
   ],
   "contributorsPerLine": 7,

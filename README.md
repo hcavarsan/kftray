@@ -344,6 +344,12 @@ Thanks goes to these wonderful people ([emoji key](https://allcontributors.org/d
       <td align="center" valign="top" width="14.28%"><a href="https://github.com/FabijanZulj"><img src="https://avatars.githubusercontent.com/u/38249221?v=4?s=100" width="100px;" alt="FabijanZulj"/><br /><sub><b>FabijanZulj</b></sub></a><br /><a href="https://github.com/hcavarsan/kftray/commits?author=FabijanZulj" title="Code">💻</a></td>
       <td align="center" valign="top" width="14.28%"><a href="https://github.com/skht"><img src="https://avatars.githubusercontent.com/u/1878554?v=4?s=100" width="100px;" alt="skht"/><br /><sub><b>skht</b></sub></a><br /><a href="https://github.com/hcavarsan/kftray/commits?author=skht" title="Code">💻</a></td>
     </tr>
+    <tr>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/kgara"><img src="https://avatars.githubusercontent.com/u/14247772?v=4?s=100" width="100px;" alt="kgara"/><br /><sub><b>kgara</b></sub></a><br /><a href="https://github.com/hcavarsan/kftray/commits?author=kgara" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://github.com/ramezbenaribia"><img src="https://avatars.githubusercontent.com/u/55209480?v=4?s=100" width="100px;" alt="Ramez Ben Aribia"/><br /><sub><b>Ramez Ben Aribia</b></sub></a><br /><a href="https://github.com/hcavarsan/kftray/commits?author=ramezbenaribia" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="https://knktc.com/"><img src="https://avatars.githubusercontent.com/u/863586?v=4?s=100" width="100px;" alt="knktc"/><br /><sub><b>knktc</b></sub></a><br /><a href="https://github.com/hcavarsan/kftray/commits?author=knktc" title="Code">💻</a></td>
+      <td align="center" valign="top" width="14.28%"><a href="http://www.xrow.de/"><img src="https://avatars.githubusercontent.com/u/295491?v=4?s=100" width="100px;" alt="Björn Dieding"/><br /><sub><b>Björn Dieding</b></sub></a><br /><a href="https://github.com/hcavarsan/kftray/commits?author=xrow" title="Code">💻</a></td>
+    </tr>
   </tbody>
 </table>
 
