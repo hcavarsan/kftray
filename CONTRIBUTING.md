@@ -23,6 +23,7 @@
 - Ensure your code is formatted and linted (pre-commit hook handles this automatically).
 - Write clear, descriptive commit messages.
 - Open a new pull request with a clear title and description.
+- Pull requests are squash merged through the merge queue. Once approved and green, a maintainer clicks "Merge when ready"; there is no need to rebase your branch unless it conflicts with `main`.
 
 ### Setting Up Your Development Environment
 
