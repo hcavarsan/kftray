@@ -173,7 +173,12 @@ impl CliHandler {
             PortForwardRunner::run_non_interactive_mode(&self.cli, self.mode, imported_config_ids)
                 .await
         } else {
-            run_tui(self.mode, self.logger_state.clone()).await
+            run_tui(
+                self.mode,
+                self.logger_state.clone(),
+                self.cli.no_update_check,
+            )
+            .await
         }
     }
 }
