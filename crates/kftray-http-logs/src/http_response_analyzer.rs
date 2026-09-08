@@ -80,18 +80,30 @@ impl HttpResponseAnalyzer {
     }
 
     pub fn is_websocket_upgrade(response_data: &[u8]) -> bool {
-        if let Some(headers_end) = find_headers_end(response_data) {
-            let header_section = &response_data[..headers_end];
-            return std::str::from_utf8(header_section)
-                .map(|h| {
-                    let h_lower = h.to_lowercase();
-                    h_lower.contains("upgrade: websocket")
-                        && h_lower.contains("connection: upgrade")
-                        && h_lower.contains("sec-websocket-accept:")
-                })
-                .unwrap_or(false);
+        let mut headers = [httparse::EMPTY_HEADER; 64];
+        let mut response = httparse::Response::new(&mut headers);
+        if !matches!(
+            response.parse(response_data),
+            Ok(httparse::Status::Complete(_))
+        ) || response.code != Some(101)
+        {
+            return false;
         }
-        false
+        let has_token = |name: &str, token: &str| {
+            response.headers.iter().any(|header| {
+                header.name.eq_ignore_ascii_case(name)
+                    && std::str::from_utf8(header.value).is_ok_and(|value| {
+                        value
+                            .split(',')
+                            .any(|part| part.trim().eq_ignore_ascii_case(token))
+                    })
+            })
+        };
+        has_token("upgrade", "websocket")
+            && has_token("connection", "upgrade")
+            && response.headers.iter().any(|header| {
+                header.name.eq_ignore_ascii_case("sec-websocket-accept") && !header.value.is_empty()
+            })
     }
 
     pub fn appears_complete(
@@ -359,6 +371,24 @@ mod tests {
         ));
         assert!(!HttpResponseAnalyzer::is_websocket_upgrade(
             no_headers_response
+        ));
+        let rejected_with_upgrade_headers = String::from_utf8(websocket_response.to_vec())
+            .unwrap()
+            .replace("101 Switching Protocols", "200 OK");
+        assert!(!HttpResponseAnalyzer::is_websocket_upgrade(
+            rejected_with_upgrade_headers.as_bytes()
+        ));
+        let token_list = String::from_utf8(websocket_response.to_vec())
+            .unwrap()
+            .replace("Connection: Upgrade", "cOnNeCtIoN: keep-alive, Upgrade");
+        assert!(HttpResponseAnalyzer::is_websocket_upgrade(
+            token_list.as_bytes()
+        ));
+        let unrelated_header = String::from_utf8(websocket_response.to_vec())
+            .unwrap()
+            .replace("Upgrade: websocket", "X-Upgrade: websocket");
+        assert!(!HttpResponseAnalyzer::is_websocket_upgrade(
+            unrelated_header.as_bytes()
         ));
     }
 
