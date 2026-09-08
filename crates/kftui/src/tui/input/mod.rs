@@ -40,7 +40,7 @@ use crate::tui::input::navigation::handle_auto_add_configs;
 use crate::tui::input::navigation::handle_context_selection;
 
 #[cfg(not(debug_assertions))]
-type UpdateInfo = crate::updater::UpdateInfo;
+pub type UpdateInfo = crate::updater::UpdateInfo;
 
 #[cfg(debug_assertions)]
 #[derive(Debug, Clone)]
@@ -294,6 +294,7 @@ pub struct App {
     pub filtered_stopped_configs: Vec<Config>,
     pub filtered_running_configs: Vec<Config>,
     pub update_info: Option<UpdateInfo>,
+    pub update_prompt_pending: bool,
     pub selected_update_button: UpdateButton,
     pub update_progress_message: Option<String>,
 }
@@ -379,6 +380,7 @@ impl App {
             filtered_stopped_configs: Vec::new(),
             filtered_running_configs: Vec::new(),
             update_info: None,
+            update_prompt_pending: false,
             selected_update_button: UpdateButton::Update,
             update_progress_message: None,
         };

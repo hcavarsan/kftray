@@ -58,7 +58,9 @@ fn check_for_updates_blocking() -> Result<UpdateInfo, String> {
             .any(|asset| asset.name() == asset_name);
 
         if !asset_exists {
-            return Err(format!("Asset {asset_name} not found for the latest release"));
+            return Err(format!(
+                "Asset {asset_name} not found for the latest release"
+            ));
         }
 
         let current_ver = semver::Version::parse(current_version).map_err(|e| e.to_string())?;

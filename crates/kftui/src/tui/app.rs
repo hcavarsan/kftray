@@ -26,10 +26,11 @@ use tokio::time::{
 use crate::logging::LoggerState;
 use crate::tui::input::{
     App,
+    AppState,
+    UpdateInfo,
     handle_input,
 };
 use crate::tui::ui::draw_ui;
-use crate::updater::UpdateInfo;
 
 type UpdateCheckTask = JoinHandle<Result<UpdateInfo, String>>;
 
@@ -91,17 +92,13 @@ where
         app.load_http_logs_states(&configs, mode).await;
         app.load_active_pods(&config_states).await;
 
-        if update_check
-            .as_ref()
-            .is_some_and(|task| task.is_finished())
+        if update_check.as_ref().is_some_and(|task| task.is_finished())
             && let Some(task) = update_check.take()
         {
             match task.await {
                 Ok(Ok(update_info)) => {
-                    if update_info.has_update {
-                        app.update_info = Some(update_info);
-                        app.state = crate::tui::input::AppState::ShowUpdateConfirmation;
-                    }
+                    app.update_prompt_pending = update_info.has_update;
+                    app.update_info = Some(update_info);
                 }
                 Ok(Err(e)) => {
                     error!("Failed to check for updates: {e}");
@@ -110,6 +107,11 @@ where
                     error!("Update check task failed: {e}");
                 }
             }
+        }
+
+        if app.update_prompt_pending && app.state == AppState::Normal {
+            app.update_prompt_pending = false;
+            app.state = AppState::ShowUpdateConfirmation;
         }
 
         if !app.logger_state.is_file_output_enabled() {
