@@ -1,4 +1,5 @@
-import React, { useMemo } from 'react'
+import type React from 'react'
+import { useMemo } from 'react'
 import { InfoIcon, RepeatIcon } from 'lucide-react'
 
 import {
@@ -19,7 +20,7 @@ import {
 import { Checkbox } from '@/components/ui/checkbox'
 import { ProgressBar, ProgressRoot } from '@/components/ui/progress'
 import { Tooltip } from '@/components/ui/tooltip'
-import { ContextsAccordionProps } from '@/types'
+import type { ContextsAccordionProps } from '@/types'
 
 const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
   context,

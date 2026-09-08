@@ -31,9 +31,9 @@ source ~/.bashrc  # or ~/.zshrc
 
 That's it! mise will handle installing:
 
-- Node.js 24
-- pnpm (latest)
-- Rust nightly (with required components)
+- Node.js 26
+- pnpm 12
+- Rust stable (nightly only for `cargo fmt`)
 - Cargo tools (cargo-llvm-cov, cargo-nextest, cargo-insta, tauri-cli)
 - System dependencies (via `mise run setup`)
 
@@ -111,10 +111,10 @@ Run `mise tasks` to see all available tasks. Here are the most commonly used:
 
 | Task | Description |
 |------|-------------|
-| `mise run format` | Format frontend (Prettier) and backend (rustfmt) |
+| `mise run format` | Format frontend (Biome) and backend (rustfmt) |
 | `mise run format:front` | Format only frontend code |
 | `mise run format:back` | Format only backend code |
-| `mise run lint` | Lint with auto-fix (ESLint + Clippy) |
+| `mise run lint` | Lint with auto-fix (Biome + Clippy) |
 | `mise run lint:front` | Lint frontend with auto-fix |
 | `mise run lint:back` | Lint backend with auto-fix |
 | `mise run lint:back:check` | Lint backend without auto-fix (CI mode) |
@@ -178,8 +178,8 @@ kftray/
 
 The repository has an automatic pre-commit hook that:
 
-1. Formats all code (Prettier + rustfmt)
-2. Lints with auto-fix (ESLint + Clippy)
+1. Formats all code (Biome + rustfmt)
+2. Lints with auto-fix (Biome + Clippy)
 3. Stages the fixed files automatically
 
 When you run `git commit`, the hook runs automatically. Your code will be formatted and linted before the commit is created.

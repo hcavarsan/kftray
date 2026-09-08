@@ -69,7 +69,7 @@ impl HttpLogEntry {
         let url = if self.path.starts_with("http") {
             self.path.clone()
         } else {
-            format!("{}{}", base_url.trim_end_matches('/'), &self.path)
+            format!("{}{}", base_url.trim_end_matches('/'), self.path)
         };
 
         let method = match self.method.to_uppercase().as_str() {

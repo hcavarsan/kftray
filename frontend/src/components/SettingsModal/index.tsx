@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from 'react'
+import type React from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Download, FileText, RefreshCw, Shield, Trash2 } from 'lucide-react'
 
 import { Box, Dialog, Flex, Input, Stack, Text } from '@chakra-ui/react'
@@ -23,7 +24,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
   const [networkMonitorStatus, setNetworkMonitorStatus] =
     useState<boolean>(false)
   const [autoUpdateEnabled, setAutoUpdateEnabled] = useState<boolean>(true)
-  const [lastUpdateCheckDisplay, setLastUpdateCheckDisplay] = useState<string>('Never')
+  const [lastUpdateCheckDisplay, setLastUpdateCheckDisplay] =
+    useState<string>('Never')
   const [currentVersion, setCurrentVersion] = useState<string>('')
   const [latestVersion, setLatestVersion] = useState<string>('')
   const [updateStatus, setUpdateStatus] = useState<
@@ -43,15 +45,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
   const [logTotalSize, setLogTotalSize] = useState<number>(0)
   const [isCleaningLogs, setIsCleaningLogs] = useState(false)
 
-  useEffect(() => {
-    if (isOpen) {
-      loadSettings()
-      loadVersionInfo()
-      loadLogInfo()
-    }
-  }, [isOpen])
-
-  const loadSettings = async () => {
+  const loadSettings = useCallback(async () => {
     try {
       setIsLoading(true)
       const settings = await invoke<Record<string, string>>('get_settings')
@@ -67,7 +61,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
         const date = new Date(lastCheck * 1000)
 
         setLastUpdateCheckDisplay(
-          date.toLocaleDateString() + ' at ' + date.toLocaleTimeString(),
+          `${date.toLocaleDateString()} at ${date.toLocaleTimeString()}`,
         )
       } else {
         setLastUpdateCheckDisplay('Never')
@@ -109,9 +103,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
     } finally {
       setIsLoading(false)
     }
-  }
+  }, [])
 
-  const loadVersionInfo = async () => {
+  const loadVersionInfo = useCallback(async () => {
     try {
       const version = await app.getVersion()
 
@@ -122,9 +116,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
       console.error('Error loading version info:', error)
       setUpdateStatus('error')
     }
-  }
+  }, [])
 
-  const loadLogInfo = async () => {
+  const loadLogInfo = useCallback(async () => {
     try {
       const files = await invoke<LogFileInfo[]>('list_log_files')
 
@@ -133,7 +127,15 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
     } catch (error) {
       console.error('Error loading log info:', error)
     }
-  }
+  }, [])
+
+  useEffect(() => {
+    if (isOpen) {
+      loadSettings()
+      loadVersionInfo()
+      loadLogInfo()
+    }
+  }, [isOpen, loadVersionInfo, loadSettings, loadLogInfo])
 
   const checkForUpdates = async () => {
     try {
@@ -261,7 +263,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
       const logCountValue = parseInt(logRetentionCount, 10)
       const logDaysValue = parseInt(logRetentionDays, 10)
 
-      if (isNaN(timeoutValue) || timeoutValue < 0) {
+      if (Number.isNaN(timeoutValue) || timeoutValue < 0) {
         toaster.error({
           title: 'Invalid Input',
           description: 'Please enter a valid number (0 or greater) for timeout',
@@ -272,7 +274,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
       }
 
       if (
-        isNaN(certValidityValue) ||
+        Number.isNaN(certValidityValue) ||
         certValidityValue < 1 ||
         certValidityValue > 3650
       ) {
@@ -285,7 +287,11 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
         return
       }
 
-      if (isNaN(logCountValue) || logCountValue < 1 || logCountValue > 100) {
+      if (
+        Number.isNaN(logCountValue) ||
+        logCountValue < 1 ||
+        logCountValue > 100
+      ) {
         toaster.error({
           title: 'Invalid Input',
           description: 'Log retention count must be between 1 and 100',
@@ -295,7 +301,11 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
         return
       }
 
-      if (isNaN(logDaysValue) || logDaysValue < 1 || logDaysValue > 365) {
+      if (
+        Number.isNaN(logDaysValue) ||
+        logDaysValue < 1 ||
+        logDaysValue > 365
+      ) {
         toaster.error({
           title: 'Invalid Input',
           description: 'Log retention days must be between 1 and 365',
@@ -307,7 +317,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
 
       await invoke('update_disconnect_timeout', { minutes: timeoutValue })
       await invoke('update_network_monitor', { enabled: networkMonitor })
-      await invoke('update_auto_update_enabled', { enabled: autoUpdateEnabled })
+      await invoke('update_auto_update_enabled', {
+        enabled: autoUpdateEnabled,
+      })
 
       const currentSslSettings = await invoke<{
         ssl_enabled: boolean
@@ -796,7 +808,8 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
                     lineHeight='1.3'
                     flex='1'
                   >
-                    Current: {currentVersion || '...'}{updateStatus === 'available' ? ` → ${latestVersion}` : ''}
+                    Current: {currentVersion || '...'}
+                    {updateStatus === 'available' ? ` → ${latestVersion}` : ''}
                   </Text>
                   <Box
                     borderTop='1px solid rgba(255, 255, 255, 0.06)'

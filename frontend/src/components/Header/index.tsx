@@ -1,4 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react'
+import type React from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   GripVertical,
   Pin,
@@ -18,7 +19,7 @@ import { getCurrentWebviewWindow } from '@tauri-apps/api/webviewWindow'
 import logo from '@/assets/logo.webp'
 import { Button } from '@/components/ui/button'
 import { Tooltip } from '@/components/ui/tooltip'
-import { HeaderProps } from '@/types'
+import type { HeaderProps } from '@/types'
 
 const appWindow = getCurrentWebviewWindow()
 

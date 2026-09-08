@@ -1,8 +1,11 @@
-/* eslint-disable complexity */
-
-import React, { useEffect, useMemo, useState } from 'react'
+import type React from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Info } from 'lucide-react'
-import Select, { ActionMeta, MultiValue, SingleValue } from 'react-select'
+import Select, {
+  type ActionMeta,
+  type MultiValue,
+  type SingleValue,
+} from 'react-select'
 import CreatableSelect from 'react-select/creatable'
 
 import {
@@ -22,7 +25,7 @@ import { open } from '@tauri-apps/plugin-dialog'
 import { Checkbox } from '@/components/ui/checkbox'
 import { toaster } from '@/components/ui/toaster'
 import { Tooltip } from '@/components/ui/tooltip'
-import {
+import type {
   Config,
   CustomConfigProps,
   PortOption,
@@ -33,7 +36,27 @@ import {
 import { selectStyles } from './styles'
 import { trimConfigValues, validateFormFields } from './utils'
 
-// eslint-disable-next-line max-lines-per-function
+const handleError = (error: unknown, title: string) => {
+  console.error(`Error: ${title}`, error)
+  toaster.error({
+    title,
+    description:
+      error instanceof Error ? error.message : 'An unknown error occurred',
+    duration: 1000,
+  })
+}
+
+const getServiceOrTargetValue = (config: Config) => {
+  if (config.service) {
+    return { label: config.service, value: config.service }
+  }
+  if (config.target) {
+    return { label: config.target, value: config.target }
+  }
+
+  return null
+}
+
 const AddConfigModal: React.FC<CustomConfigProps> = ({
   isModalOpen,
   closeModal,
@@ -69,16 +92,6 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     isFormValid: false,
     kubeConfig: 'default',
   })
-
-  const handleError = (error: unknown, title: string) => {
-    console.error(`Error: ${title}`, error)
-    toaster.error({
-      title,
-      description:
-        error instanceof Error ? error.message : 'An unknown error occurred',
-      duration: 1000,
-    })
-  }
 
   useEffect(() => {
     if (formState.selectedWorkloadType?.value === 'expose') {
@@ -298,17 +311,6 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
     }
   }, [portQuery.error])
 
-  const getServiceOrTargetValue = (config: Config) => {
-    if (config.service) {
-      return { label: config.service, value: config.service }
-    }
-    if (config.target) {
-      return { label: config.target, value: config.target }
-    }
-
-    return null
-  }
-
   useEffect(() => {
     if (isModalOpen && (isEdit || newConfig.context)) {
       setFormState(prev => ({
@@ -336,13 +338,12 @@ const AddConfigModal: React.FC<CustomConfigProps> = ({
 
       const newKubeConfig = newConfig.kubeconfig ?? 'default'
 
-
       setUiState(prev => {
         if (prev.kubeConfig === newKubeConfig) {
           return prev
         }
-        
-return {
+
+        return {
           ...prev,
           kubeConfig: newKubeConfig,
         }
@@ -350,13 +351,7 @@ return {
     }
   }, [isEdit, isModalOpen, newConfig])
 
-  useEffect(() => {
-    if (!isModalOpen) {
-      resetState()
-    }
-  }, [isModalOpen])
-
-  const resetState = () => {
+  const resetState = useCallback(() => {
     setFormState(prev => ({
       ...prev,
       selectedContext: null,
@@ -372,7 +367,13 @@ return {
       isFormValid: false,
       kubeConfig: 'default',
     }))
-  }
+  }, [])
+
+  useEffect(() => {
+    if (!isModalOpen) {
+      resetState()
+    }
+  }, [isModalOpen, resetState])
 
   const handleSelectChange = (
     newValue:
@@ -689,7 +690,7 @@ return {
                       }))}
                       isLoading={namespaceQuery.isLoading}
                       styles={selectStyles}
-                      formatCreateLabel={(inputValue) => `Use "${inputValue}"`}
+                      formatCreateLabel={inputValue => `Use "${inputValue}"`}
                       noOptionsMessage={() =>
                         namespaceQuery.isError
                           ? 'Type namespace name manually'
@@ -1178,16 +1179,16 @@ return {
                               : serviceQuery.isLoading
                           }
                           styles={selectStyles}
-                          formatCreateLabel={(inputValue) => `Use "${inputValue}"`}
+                          formatCreateLabel={inputValue =>
+                            `Use "${inputValue}"`
+                          }
                           noOptionsMessage={() => {
                             const hasError =
                               newConfig.workload_type === 'pod'
                                 ? podsQuery.isError
                                 : serviceQuery.isError
 
-
-								
-return hasError
+                            return hasError
                               ? 'Type name manually'
                               : 'No results found'
                           }}
@@ -1235,7 +1236,7 @@ return hasError
                             !newConfig.context || !newConfig.namespace
                           }
                           styles={selectStyles}
-                          formatCreateLabel={(inputValue) =>
+                          formatCreateLabel={inputValue =>
                             `Use port ${inputValue}`
                           }
                           noOptionsMessage={() =>

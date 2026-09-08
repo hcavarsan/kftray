@@ -67,7 +67,7 @@ kftray-helper = { workspace = true }
 tauri-build = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-inotify = "0.11.1"
+inotify = "0.11.5"
 ksni = "0.3"
 libc = { workspace = true }
 png = "0.18"

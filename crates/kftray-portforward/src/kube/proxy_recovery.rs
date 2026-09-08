@@ -202,8 +202,7 @@ impl ProxyRecoveryManager {
     ///
     /// Runs until cancelled via [`cancel()`](Self::cancel). On each signal:
     /// 1. Acquires the per-config recovery lock
-    /// 2. Retries up to [`MAX_RECOVERY_ATTEMPTS`] times with exponential
-    ///    backoff
+    /// 2. Retries up to [`MAX_RECOVERY_ATTEMPTS`] times with exponential backoff
     /// 3. Updates [`ConfigState`] in the database at each step
     pub async fn run_recovery_loop(&self) {
         let rx = self.recovery_signal_tx.subscribe();
@@ -355,8 +354,7 @@ impl ProxyRecoveryManager {
     ///
     /// Dispatches to the appropriate recovery function based on [`ProxyType`]:
     /// - [`ProxyType::BarePod`] → full re-deployment via [`recover_bare_pod()`]
-    /// - [`ProxyType::Deployment`] → stream reconnection via
-    ///   [`recover_deployment()`]
+    /// - [`ProxyType::Deployment`] → stream reconnection via [`recover_deployment()`]
     async fn do_recovery_attempt(&self) -> anyhow::Result<()> {
         let client_key = crate::kube::shared_client::ServiceClientKey::new(
             self.config.context.clone(),
@@ -425,8 +423,8 @@ async fn cleanup_child_processes_for_config(config_id: i64) {
 /// Bare pods have no controller (no Deployment/ReplicaSet), so when the pod
 /// dies there is nothing to auto-restart it. This function:
 /// 1. Cleans up old cluster resources (pods, deployments) to prevent orphans
-/// 2. Removes stale [`CHILD_PROCESSES`](crate::port_forward::CHILD_PROCESSES)
-///    entries for this config
+/// 2. Removes stale [`CHILD_PROCESSES`](crate::port_forward::CHILD_PROCESSES) entries for this
+///    config
 /// 3. Re-deploys a fresh proxy pod via
 ///    [`deploy_and_forward_pod()`](crate::kube::proxy::deploy_and_forward_pod)
 pub async fn recover_bare_pod(config: &Config, client: &kube::Client) -> anyhow::Result<()> {

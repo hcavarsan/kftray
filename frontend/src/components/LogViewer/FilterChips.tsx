@@ -100,7 +100,7 @@ function FilterChipsComponent({
           const segments = formatted.split('::')
 
           if (segments.length > 2) {
-            return '… ' + segments.slice(-2).join(' › ')
+            return `… ${segments.slice(-2).join(' › ')}`
           }
 
           return segments.join(' › ')
@@ -122,7 +122,7 @@ function FilterChipsComponent({
       {/* Search chip */}
       {searchText.trim() && (
         <Chip
-          label={`"${searchText.length > 15 ? searchText.slice(0, 12) + '...' : searchText}"`}
+          label={`"${searchText.length > 15 ? `${searchText.slice(0, 12)}...` : searchText}"`}
           bg='rgba(251, 191, 36, 0.1)'
           color='rgba(251, 191, 36, 1)'
           borderColor='rgba(251, 191, 36, 0.2)'

@@ -71,7 +71,6 @@ function LogViewerListComponent({
     (id: number, height: number) => {
       const index = entries.findIndex(e => e.id === id)
 
-
       if (index !== -1) {
         dynamicRowHeight.setRowHeight(index, height)
       }
@@ -156,7 +155,11 @@ function LogViewerListComponent({
           rowCount={entries.length}
           rowHeight={dynamicRowHeight}
           overscanCount={10}
-          style={{ overflowX: 'hidden', height: dimensions.height, width: dimensions.width || '100%' }}
+          style={{
+            overflowX: 'hidden',
+            height: dimensions.height,
+            width: dimensions.width || '100%',
+          }}
           rowComponent={Row}
           rowProps={{
             entries,

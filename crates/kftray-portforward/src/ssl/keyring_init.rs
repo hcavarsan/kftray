@@ -27,7 +27,7 @@ fn try_install() -> anyhow::Result<()> {
 
     #[cfg(target_os = "linux")]
     {
-        let store = LinuxCompositeStore::new()?;
+        let store = LinuxCompositeStore::new_store()?;
         keyring_core::set_default_store(store);
     }
 

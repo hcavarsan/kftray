@@ -433,9 +433,9 @@ async fn process_single_config_with_address(
     debug!("Local Port: {:?}", config.local_port);
 
     match config.workload_type.as_deref() {
-        Some("pod") => info!("Attempting to forward to pod label: {:?}", &config.target),
-        Some("proxy") => info!("Attempting to forward to proxy pod: {:?}", &config.service),
-        _ => info!("Attempting to forward to service: {:?}", &config.service),
+        Some("pod") => info!("Attempting to forward to pod label: {:?}", config.target),
+        Some("proxy") => info!("Attempting to forward to proxy pod: {:?}", config.service),
+        _ => info!("Attempting to forward to service: {:?}", config.service),
     }
 
     let final_local_address = config
@@ -458,7 +458,7 @@ async fn process_single_config_with_address(
                     let error_message = format!(
                         "Failed to write to the hostfile for {service_name}: {e}. Domain alias feature requires hostfile access."
                     );
-                    error!("{}", &error_message);
+                    error!("{}", error_message);
                     return SingleConfigResult::Error {
                         message: error_message,
                         failed_handle: None,
@@ -468,7 +468,7 @@ async fn process_single_config_with_address(
             Err(_) => {
                 let error_message =
                     format!("Invalid IP address format for domain alias: {final_local_address}");
-                error!("{}", &error_message);
+                error!("{}", error_message);
                 return SingleConfigResult::Error {
                     message: error_message,
                     failed_handle: None,
@@ -535,7 +535,7 @@ async fn process_single_config_with_address(
                         protocol_upper,
                         actual_local_port,
                         workload_type_description(config.workload_type.as_deref()),
-                        &config.service
+                        config.service
                     );
 
                     debug!(
@@ -613,7 +613,7 @@ async fn process_single_config_with_address(
                         config.service.clone().unwrap_or_default(),
                         e
                     );
-                    error!("{}", &error_message);
+                    error!("{}", error_message);
 
                     if let Err(cleanup_err) = port_forward.cleanup_resources().await {
                         error!(
@@ -644,7 +644,7 @@ async fn process_single_config_with_address(
                 config.service.clone().unwrap_or_default(),
                 e
             );
-            error!("{}", &error_message);
+            error!("{}", error_message);
 
             if let Some(local_addr) = &config.local_address
                 && crate::network_utils::is_custom_loopback_address(local_addr)
@@ -685,7 +685,7 @@ async fn process_expose_config(config: Config, mode: DatabaseMode) -> SingleConf
                 config.id.unwrap_or_default(),
                 e
             );
-            error!("{}", &error_message);
+            error!("{}", error_message);
             SingleConfigResult::ExposeResult {
                 responses: vec![],
                 error: Some(error_message),

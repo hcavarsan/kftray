@@ -3,7 +3,7 @@
 	"customManagers": [
 		{
 			"customType": "regex",
-			"fileMatch": ["^\\.mise\\.toml$"],
+			"managerFilePatterns": ["/^\\.mise\\.toml$/"],
 			"matchStrings": [
 				"syft\\s*=\\s*\"(?<currentValue>[^\"]+)\""
 			],
@@ -13,7 +13,7 @@
 		},
 		{
 			"customType": "regex",
-			"fileMatch": ["^\\.mise\\.toml$"],
+			"managerFilePatterns": ["/^\\.mise\\.toml$/"],
 			"matchStrings": [
 				"grype\\s*=\\s*\"(?<currentValue>[^\"]+)\""
 			],
@@ -23,7 +23,7 @@
 		}
 	],
 	"extends": [
-		"config:base",
+		"config:recommended",
 		":preserveSemverRanges",
 		":semanticCommitTypeAll(chore)",
 		"schedule:daily",
@@ -45,9 +45,7 @@
 	"dependencyDashboard": false,
 	"packageRules": [
 		{
-			"matchPackagePatterns": [
-				"*"
-			],
+			"matchPackageNames": ["*"],
 			"matchUpdateTypes": [
 				"minor",
 				"patch"
@@ -63,7 +61,7 @@
 		},
 		{
 			"matchManagers": ["github-actions"],
-			"matchPackagePatterns": ["ubuntu"],
+			"matchPackageNames": ["/ubuntu/"],
 			"enabled": false
 		},
 		{
@@ -71,7 +69,6 @@
 				"kube",
 				"k8s-openapi",
 				"kube-runtime",
-				"eslint",
 				"hyper",
 				"tauri",
 				"tauri-plugin-positioner",

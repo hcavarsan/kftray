@@ -242,7 +242,7 @@ fn to_rgba8(buf: &[u8], color: png::ColorType, bit_depth: png::BitDepth) -> Opti
         png::ColorType::Rgba => Some(buf.to_vec()),
         png::ColorType::Rgb => {
             let mut out = Vec::with_capacity(buf.len() / 3 * 4);
-            for px in buf.chunks_exact(3) {
+            for px in buf.as_chunks::<3>().0 {
                 out.extend_from_slice(&[px[0], px[1], px[2], 0xFF]);
             }
             Some(out)
@@ -256,7 +256,7 @@ fn to_rgba8(buf: &[u8], color: png::ColorType, bit_depth: png::BitDepth) -> Opti
 
 fn rgba_to_argb(rgba: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(rgba.len());
-    for px in rgba.chunks_exact(4) {
+    for px in rgba.as_chunks::<4>().0 {
         let a = px[3] as u16;
         let r = ((px[0] as u16 * a + 127) / 255) as u8;
         let g = ((px[1] as u16 * a + 127) / 255) as u8;

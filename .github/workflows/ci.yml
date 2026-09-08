@@ -23,82 +23,42 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  eslint-format:
-    name: ESLint
+  frontend-lint:
+    name: Biome
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install pnpm
-        uses: pnpm/action-setup@1e1c8eafbd745f64b1ef30a7d7ed7965034c486c
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
-          version: 10
-          run_install: |
-            - recursive: true
-              args: [--frozen-lockfile]
+          version: 12
 
       - name: Install Node.js
-        uses: actions/setup-node@65d868f8d4d85d7d4abb7de0875cde3fcc8798f5
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24"
+          node-version: "26"
           cache: "pnpm"
 
-      - name: Cache pnpm modules
-        uses: actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb
-        with:
-          path: |
-            ~/.pnpm-store
-            node_modules
-            frontend/node_modules
-          key: pnpm-eslint-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            pnpm-eslint-${{ runner.os }}-
-            pnpm-${{ runner.os }}-
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
 
       - name: Perform linting
-        run: pnpm lint:front
+        run: pnpm --filter @kftray/ui run lint:check
 
   rust-format:
     name: rustfmt
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt install -y \
-              build-essential \
-              curl \
-              wget \
-              file \
-              libxdo-dev \
-              libssl-dev \
-              libayatana-appindicator3-dev \
-              librsvg2-dev \
-              libwebkit2gtk-4.1-dev \
-              patchelf \
-              xdg-utils
-
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561
-        with:
-          toolchain: nightly
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install Rust nightly
-        run: rustup toolchain install nightly
-
-      - name: Install rustfmt for nightly
-        run: rustup component add --toolchain nightly rustfmt
-
-      - name: Cache Rust
-        uses: swatinem/rust-cache@5e4a76743357a1c3c57315bc1896d2c7f89d6861
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
-          key: rust-format-${{ runner.os }}
-          shared-key: deps-format
-          cache-on-failure: false
+          toolchain: nightly
+          components: rustfmt
 
       - name: Run rustfmt
         run: cargo +nightly fmt --all -- --check
@@ -120,7 +80,7 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install dependencies
         if: matrix.os_name == 'linux'
@@ -140,16 +100,15 @@ jobs:
               xdg-utils
 
       - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
-          toolchain: nightly
-
-      - name: Install clippy for nightly
-        run: rustup component add --toolchain nightly clippy
+          toolchain: stable
+          targets: ${{ matrix.rust_target }}
+          components: clippy
 
       - name: Set up Perl on Windows
         if: matrix.os == 'windows-latest'
-        uses: shogo82148/actions-setup-perl@b27fdd828a97a63c975cdedfe6ad62830c3b55c9
+        uses: shogo82148/actions-setup-perl@53e33bb27be492a926eee378e8a5f7ff6618b061 # v1.43.1
         with:
           perl-version: "5.32"
           distribution: "strawberry"
@@ -161,12 +120,8 @@ jobs:
           echo "PERL=$((where.exe perl)[0])" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           echo "OPENSSL_SRC_PERL=$((where.exe perl)[0])" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
-      - name: Configure Rust targets
-        run: rustup target add ${{ matrix.rust_target }}
-        shell: bash
-
       - name: Cache Rust
-        uses: swatinem/rust-cache@5e4a76743357a1c3c57315bc1896d2c7f89d6861
+        uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: rust-lint-${{ matrix.os }}-${{ matrix.rust_target }}
           shared-key: deps-lint-${{ matrix.rust_target }}
@@ -179,7 +134,7 @@ jobs:
         run: cargo build --bin kftray-helper --release
 
       - name: Run Clippy
-        run: cargo clippy --workspace --all-targets --allow-dirty --allow-staged --all-features --fix -- -D warnings
+        run: cargo clippy --workspace --all-targets --all-features -- -D warnings
 
   rust-coverage:
     name: Code Coverage
@@ -188,7 +143,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install dependencies
         run: |
@@ -206,26 +161,24 @@ jobs:
               patchelf \
               xdg-utils
 
-      - name: Install Rust nightly
-        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
-          toolchain: nightly
-
-      - name: Install llvm-tools
-        run: rustup component add llvm-tools
+          toolchain: stable
+          components: llvm-tools
 
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@50cee16bd6b97b2579572f83cfa1c0a721b1e336
+        uses: taiki-e/install-action@d438492cf8a250514fa2d34b30bc3c0dc37c65ff # v2.87.8
         with:
           tool: cargo-llvm-cov
 
       - name: Install nextest
-        uses: taiki-e/install-action@50cee16bd6b97b2579572f83cfa1c0a721b1e336
+        uses: taiki-e/install-action@d438492cf8a250514fa2d34b30bc3c0dc37c65ff # v2.87.8
         with:
           tool: cargo-nextest
 
       - name: Cache Rust
-        uses: swatinem/rust-cache@5e4a76743357a1c3c57315bc1896d2c7f89d6861
+        uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: rust-coverage-ci-${{ runner.os }}
           shared-key: deps-coverage-ci
@@ -243,14 +196,14 @@ jobs:
         run: cargo build --bin kftray-helper --release && INSTA_UPDATE=1 cargo llvm-cov nextest --profile ci --config-file .cargo/nextest.toml --locked --workspace --all-features --lib --bins --examples --tests --lcov --output-path lcov.info
 
       - name: Upload coverage
-        uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: lcov.info
           slug: hcavarsan/kftray
 
       - name: Upload test results
-        uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
         if: ${{ !cancelled() }}
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
@@ -265,38 +218,26 @@ jobs:
       contents: read
     steps:
       - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install pnpm
-        uses: pnpm/action-setup@1e1c8eafbd745f64b1ef30a7d7ed7965034c486c
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
-          version: 10
-          run_install: |
-            - recursive: true
-              args: [--frozen-lockfile]
+          version: 12
 
       - name: Install Node.js
-        uses: actions/setup-node@65d868f8d4d85d7d4abb7de0875cde3fcc8798f5
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24"
+          node-version: "26"
           cache: "pnpm"
 
-      - name: Cache pnpm modules
-        uses: actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb
-        with:
-          path: |
-            ~/.pnpm-store
-            node_modules
-            frontend/node_modules
-          key: pnpm-bundle-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            pnpm-bundle-${{ runner.os }}-
-            pnpm-${{ runner.os }}-
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
 
       - name: Build frontend with bundle analysis
         env:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
-        run: cd frontend && pnpm build
+        run: pnpm --filter @kftray/ui run build
 
   build-and-push-docker:
     if: ${{ contains(github.event.pull_request.title, '[docker]') }}
@@ -306,23 +247,23 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
+        uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4.3.0
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build and push Docker image
-        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           platforms: linux/amd64,linux/arm64
           context: .

@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useState } from 'react'
+import type React from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { FileText } from 'lucide-react'
 
 import { Box, Dialog, Flex, Grid, Input, Stack, Text } from '@chakra-ui/react'

@@ -17,13 +17,10 @@ pub trait ProxyHandler: Send + Sync {
     /// signal.
     ///
     /// # Parameters
-    /// * `config` - Configuration containing proxy settings like ports and
-    ///   target details
-    /// * `shutdown` - Notification mechanism to signal when the proxy should
-    ///   stop
+    /// * `config` - Configuration containing proxy settings like ports and target details
+    /// * `shutdown` - Notification mechanism to signal when the proxy should stop
     ///
     /// # Returns
-    /// * `Result<(), ProxyError>` - Success if proxy runs and shuts down
-    ///   cleanly, or error details
+    /// * `Result<(), ProxyError>` - Success if proxy runs and shuts down cleanly, or error details
     async fn start(&self, config: ProxyConfig, shutdown: Arc<Notify>) -> Result<(), ProxyError>;
 }
