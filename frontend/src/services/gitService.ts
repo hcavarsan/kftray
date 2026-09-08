@@ -41,7 +41,7 @@ export const gitService = {
   async importConfigs(credentials: GitConfig) {
     await invoke('import_configs_from_github', {
       repoUrl: credentials.repoUrl,
-      configPath: credentials.configPath,
+      configPaths: credentials.configPaths,
       useSystemCredentials: credentials.authMethod === 'system',
       flush: credentials.flush ?? false,
       githubToken:
