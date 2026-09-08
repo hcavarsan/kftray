@@ -58,7 +58,7 @@ use crate::window::{
 use crate::window::{
     reset_window_position,
     set_window_position,
-    toggle_window_visibility,
+    toggle_window_visibility_from_tray,
 };
 
 #[cfg(not(target_os = "linux"))]
@@ -205,7 +205,7 @@ pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<(), tauri::Error> {
             }
             "toggle" => match app.get_webview_window("main") {
                 Some(window) => {
-                    toggle_window_visibility(&window);
+                    toggle_window_visibility_from_tray(&window);
                 }
                 _ => {
                     error!("Main window not found on menu event");
@@ -333,7 +333,7 @@ pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<(), tauri::Error> {
                     if button == MouseButton::Left && button_state == MouseButtonState::Up {
                         let app = tray.app_handle();
                         if let Some(window) = app.get_webview_window("main") {
-                            toggle_window_visibility(&window);
+                            toggle_window_visibility_from_tray(&window);
                         }
                     }
                 }
@@ -342,7 +342,7 @@ pub fn create_tray_icon(app: &tauri::App<Wry>) -> Result<(), tauri::Error> {
                     if button == MouseButton::Left {
                         let app = tray.app_handle();
                         if let Some(window) = app.get_webview_window("main") {
-                            toggle_window_visibility(&window);
+                            toggle_window_visibility_from_tray(&window);
                         }
                     }
                 }
