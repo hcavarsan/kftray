@@ -63,7 +63,7 @@ pub async fn install_ca_certificate(ca_cert_der: &[u8]) -> Result<()> {
             None,
         );
 
-        CertFreeCertificateContext(Some(cert_context));
+        let _ = CertFreeCertificateContext(Some(cert_context));
         let _ = CertCloseStore(Some(cert_store), 0);
 
         if result.is_ok() {
@@ -137,9 +137,9 @@ pub async fn is_ca_installed(ca_cert_der: &[u8]) -> Result<bool> {
             None,
         );
 
-        CertFreeCertificateContext(Some(cert_context));
+        let _ = CertFreeCertificateContext(Some(cert_context));
         if !found_cert.is_null() {
-            CertFreeCertificateContext(Some(found_cert));
+            let _ = CertFreeCertificateContext(Some(found_cert));
         }
         let _ = CertCloseStore(Some(cert_store), 0);
 
@@ -205,7 +205,7 @@ pub async fn remove_ca_certificate(ca_cert_der: &[u8]) -> Result<()> {
             None,
         );
 
-        CertFreeCertificateContext(Some(cert_context));
+        let _ = CertFreeCertificateContext(Some(cert_context));
 
         if found_cert.is_null() {
             let _ = CertCloseStore(Some(cert_store), 0);
