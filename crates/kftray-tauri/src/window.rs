@@ -111,6 +111,17 @@ async fn handle_corrupted_file(path: &Path, error: impl std::fmt::Display) {
 }
 
 pub fn toggle_window_visibility(window: &WebviewWindow<Wry>) {
+    toggle_window_visibility_with_position(window, false);
+}
+
+/// Toggles the window from a tray interaction. A saved position is only
+/// reused when it sits on the display that hosts the tray icon.
+#[cfg(not(target_os = "linux"))]
+pub fn toggle_window_visibility_from_tray(window: &WebviewWindow<Wry>) {
+    toggle_window_visibility_with_position(window, true);
+}
+
+fn toggle_window_visibility_with_position(window: &WebviewWindow<Wry>, from_tray: bool) {
     let app_state = window.state::<AppState>();
     let is_visible = window.is_visible().unwrap_or(false);
 
@@ -121,7 +132,7 @@ pub fn toggle_window_visibility(window: &WebviewWindow<Wry>) {
             warn!("Failed to hide window: {e}");
         }
     } else {
-        set_position_before_show(window.clone());
+        set_position_before_show_with_mode(window.clone(), from_tray);
         if let Err(e) = window.show() {
             warn!("Failed to show window: {e}");
         }
@@ -187,6 +198,10 @@ pub fn toggle_window_visibility(window: &WebviewWindow<Wry>) {
 }
 
 pub fn set_position_before_show(window: WebviewWindow<Wry>) {
+    set_position_before_show_with_mode(window, false);
+}
+
+fn set_position_before_show_with_mode(window: WebviewWindow<Wry>, from_tray: bool) {
     let (positioning_active, runtime) = {
         let app_state = window.state::<AppState>();
         app_state.positioning_active.store(true, Ordering::SeqCst);
@@ -201,7 +216,11 @@ pub fn set_position_before_show(window: WebviewWindow<Wry>) {
     runtime.spawn(async move {
         apply_saved_window_size(&window_clone).await;
         match load_window_position().await {
-            Some(position) if is_valid_position(&window_clone, position.x, position.y) => {
+            Some(position)
+                if is_valid_position(&window_clone, position.x, position.y)
+                    && (!from_tray
+                        || is_on_tray_monitor(&window_clone, position.x, position.y)) =>
+            {
                 info!(
                     "Using saved window position: ({}, {})",
                     position.x, position.y
@@ -218,11 +237,29 @@ pub fn set_position_before_show(window: WebviewWindow<Wry>) {
                 });
             }
             _ => {
-                info!("No valid saved position, using tray positioning");
+                info!("No usable saved position, using tray positioning");
                 position_from_tray(&window_clone);
             }
         }
     });
+}
+
+/// Whether a saved position lies on the monitor that hosts the tray icon.
+/// Without tray data or a matching monitor the saved position is kept.
+fn is_on_tray_monitor(window: &WebviewWindow<Wry>, x: i32, y: i32) -> bool {
+    let Some(tray_state) = window
+        .app_handle()
+        .try_state::<crate::tray::TrayPositionState>()
+    else {
+        return true;
+    };
+    let Some((tray_pos, _)) = *tray_state.position.lock().unwrap() else {
+        return true;
+    };
+    match find_tray_monitor(window, tray_pos) {
+        Some(monitor) => contains_point(&monitor, PhysicalPosition::new(x as f64, y as f64)),
+        None => true,
+    }
 }
 
 pub async fn load_saved_window_size_preset() -> crate::window_size::WindowSizePreset {
