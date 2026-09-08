@@ -57,6 +57,9 @@ pub struct Cli {
     )]
     pub logs_to_file: bool,
 
+    #[arg(long, help = "Disable the automatic update check on TUI startup")]
+    pub no_update_check: bool,
+
     #[arg(long, help = "Enable SSL/TLS for port forwarding (overrides settings)")]
     pub ssl: bool,
 
@@ -204,5 +207,18 @@ impl Cli {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use clap::Parser;
+
+    use super::Cli;
+
+    #[test]
+    fn parses_no_update_check_flag() {
+        let cli = Cli::try_parse_from(["kftui", "--no-update-check"]).unwrap();
+        assert!(cli.no_update_check);
     }
 }
