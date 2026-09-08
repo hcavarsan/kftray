@@ -20,6 +20,7 @@ hard_tabs = false
 tab_spaces = 4
 # Comments will be wrapped at the max_width length
 wrap_comments = true
+comment_width = 100
 # Function parameters will be formatted in a compressed style
 fn_params_layout = "Compressed"
 # Match arms will be wrapped in blocks

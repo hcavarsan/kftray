@@ -1,3 +1,4 @@
+#[cfg(unix)]
 use std::io;
 #[cfg(unix)]
 use std::os::unix::net::UnixStream;

@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import type React from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import {
   Box as BoxIcon,
   Database,
@@ -8,7 +9,7 @@ import {
   Trash2,
 } from 'lucide-react'
 import { createPortal } from 'react-dom'
-import Select, { SingleValue } from 'react-select'
+import Select, { type SingleValue } from 'react-select'
 
 import {
   Badge,
@@ -26,7 +27,7 @@ import { Button } from '@/components/ui/button'
 import { DialogCloseTrigger } from '@/components/ui/dialog'
 import { toaster } from '@/components/ui/toaster'
 import { Tooltip } from '@/components/ui/tooltip'
-import { NamespaceGroup, ServerResource, StringOption } from '@/types'
+import type { NamespaceGroup, ServerResource, StringOption } from '@/types'
 
 interface ServerResourcesModalProps {
   isOpen: boolean
@@ -49,10 +50,7 @@ type CleanupMode = 'orphaned' | 'all'
 
 const CONTEXT_TIMEOUT_MS = 8000
 
-const withTimeout = <T, >(
-  promise: Promise<T>,
-  ms: number,
-): Promise<T> => {
+const withTimeout = <T,>(promise: Promise<T>, ms: number): Promise<T> => {
   return Promise.race([
     promise,
     new Promise<T>((_, reject) =>
@@ -83,10 +81,12 @@ const CleanupConfirmDialog = ({
   }
 
   const count = resources.length
-  const title = mode === 'orphaned' ? 'Clean Orphaned Resources' : 'Delete All Resources'
-  const description = mode === 'orphaned'
-    ? `Delete ${count} orphaned ${count === 1 ? 'resource' : 'resources'}`
-    : `Delete ${count} ${count === 1 ? 'resource' : 'resources'}`
+  const title =
+    mode === 'orphaned' ? 'Clean Orphaned Resources' : 'Delete All Resources'
+  const description =
+    mode === 'orphaned'
+      ? `Delete ${count} orphaned ${count === 1 ? 'resource' : 'resources'}`
+      : `Delete ${count} ${count === 1 ? 'resource' : 'resources'}`
 
   return createPortal(
     <Box
@@ -143,7 +143,8 @@ const CleanupConfirmDialog = ({
             ?
             {mode === 'all' && (
               <Text as='span' color='orange.400' fontWeight='500'>
-                {' '}This will also stop active port forwards.
+                {' '}
+                This will also stop active port forwards.
               </Text>
             )}
           </Text>
@@ -230,12 +231,10 @@ const CleanupConfirmDialog = ({
   )
 }
 
-
 const ServerResourcesModal: React.FC<ServerResourcesModalProps> = ({
   isOpen,
   onClose,
 }) => {
-
   const [contexts, setContexts] = useState<StringOption[]>([])
   const [selectedContext, setSelectedContext] = useState<StringOption | null>(
     null,
@@ -324,7 +323,7 @@ const ServerResourcesModal: React.FC<ServerResourcesModalProps> = ({
     }),
   }
 
-  const loadContexts = async () => {
+  const loadContexts = useCallback(async () => {
     try {
       const configs = await invoke<any[]>('get_configs_cmd')
 
@@ -357,7 +356,7 @@ const ServerResourcesModal: React.FC<ServerResourcesModalProps> = ({
 
       return []
     }
-  }
+  }, [])
 
   const loadResources = useCallback(async () => {
     if (!selectedContext) {
@@ -411,7 +410,10 @@ const ServerResourcesModal: React.FC<ServerResourcesModalProps> = ({
               console.warn(`Skipped context ${contextName}: ${error}`)
             } finally {
               loadedCount++
-              setLoadingProgress({ loaded: loadedCount, total: uniqueContexts.length })
+              setLoadingProgress({
+                loaded: loadedCount,
+                total: uniqueContexts.length,
+              })
               setNamespaceGroups([...allGroups])
             }
           }),
@@ -457,7 +459,7 @@ const ServerResourcesModal: React.FC<ServerResourcesModalProps> = ({
         abortControllerRef.current.abort()
       }
     }
-  }, [isOpen])
+  }, [isOpen, loadContexts])
 
   useEffect(() => {
     if (selectedContext) {
@@ -511,9 +513,10 @@ const ServerResourcesModal: React.FC<ServerResourcesModalProps> = ({
       return
     }
 
-    const command = cleanupMode === 'orphaned'
-      ? 'cleanup_orphaned_kftray_resources'
-      : 'cleanup_all_kftray_resources'
+    const command =
+      cleanupMode === 'orphaned'
+        ? 'cleanup_orphaned_kftray_resources'
+        : 'cleanup_all_kftray_resources'
 
     try {
       setIsCleaningAll(true)
@@ -539,9 +542,7 @@ const ServerResourcesModal: React.FC<ServerResourcesModalProps> = ({
             )
             const matches = result.match(/(\d+)/)
 
-
-            
-return matches ? parseInt(matches[1], 10) : 0
+            return matches ? parseInt(matches[1], 10) : 0
           }),
         )
 
@@ -790,7 +791,7 @@ return matches ? parseInt(matches[1], 10) : 0
                 </Flex>
               ) : (
                 <Stack gap={2}>
-                  {flatResources.map((resource) => {
+                  {flatResources.map(resource => {
                     const resourceKey = `${resource.context}-${resource.displayNamespace}-${resource.resource_type}-${resource.name}`
                     const isDeletingThis = isDeleting === resourceKey
 
@@ -865,11 +866,7 @@ return matches ? parseInt(matches[1], 10) : 0
                             portalled
                             positioning={{ placement: 'top' }}
                           >
-                            <Text
-                              truncate
-                              maxWidth='120px'
-                              cursor='default'
-                            >
+                            <Text truncate maxWidth='120px' cursor='default'>
                               {resource.context}
                             </Text>
                           </Tooltip>
@@ -881,11 +878,7 @@ return matches ? parseInt(matches[1], 10) : 0
                             portalled
                             positioning={{ placement: 'top' }}
                           >
-                            <Text
-                              truncate
-                              maxWidth='100px'
-                              cursor='default'
-                            >
+                            <Text truncate maxWidth='100px' cursor='default'>
                               {resource.displayNamespace}
                             </Text>
                           </Tooltip>
@@ -951,7 +944,10 @@ return matches ? parseInt(matches[1], 10) : 0
                       px={2}
                       _hover={{ bg: 'whiteAlpha.50' }}
                     >
-                      <RefreshCw size={12} className={isLoading ? 'animate-spin' : ''} />
+                      <RefreshCw
+                        size={12}
+                        className={isLoading ? 'animate-spin' : ''}
+                      />
                     </Button>
                   </Tooltip>
 
@@ -978,7 +974,9 @@ return matches ? parseInt(matches[1], 10) : 0
         isOpen={showConfirmDialog}
         onClose={() => setShowConfirmDialog(false)}
         onConfirm={handleCleanup}
-        resources={cleanupMode === 'orphaned' ? orphanedResources : allResourcesForDialog}
+        resources={
+          cleanupMode === 'orphaned' ? orphanedResources : allResourcesForDialog
+        }
         contextName={selectedContext?.label || 'All Contexts'}
         isLoading={isCleaningAll}
         mode={cleanupMode}

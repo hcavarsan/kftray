@@ -1,6 +1,6 @@
 import { useMemo } from 'react'
 
-import { Config, ConfigsByContext } from '../../types'
+import type { Config, ConfigsByContext } from '../../types'
 
 export const useConfigsByContext = (
   filteredConfigs: Config[],

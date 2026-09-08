@@ -1,16 +1,17 @@
 'use client'
 
-import { useEffect, useMemo, useRef } from 'react'
+import { type ReactNode, useEffect, useMemo, useRef } from 'react'
 import debounce from 'lodash/debounce'
 import { X } from 'lucide-react'
 
 import {
+  Toaster as ChakraToaster,
+  type CreateToasterReturn,
   createToaster,
   Portal,
   Spinner,
   Stack,
   Toast,
-  Toaster as ChakraToaster,
 } from '@chakra-ui/react'
 
 interface StatusChangeDetails {
@@ -47,10 +48,27 @@ interface Options<T = any> {
 
 type ChakraToastFunction = (data: Options<any>) => string
 type CustomToastFunction = (options: ToastOptions) => string
+type WrappedToaster = Omit<
+  CreateToasterReturn<ReactNode>,
+  'success' | 'error' | 'loading' | 'create'
+> &
+  Record<'success' | 'error' | 'loading' | 'create', CustomToastFunction>
+
+const chakraToaster = createToaster({
+  placement: 'top-end',
+  duration: 1000,
+  overlap: true,
+  offsets: {
+    top: '5px',
+    right: '5px',
+    bottom: '5px',
+    left: '5px',
+  },
+})
 
 const createToastWrapper = (
-  originalToaster: ReturnType<typeof createToaster>,
-) => {
+  originalToaster: CreateToasterReturn<ReactNode>,
+): WrappedToaster => {
   const wrapToastFunction =
     (fn: ChakraToastFunction): CustomToastFunction =>
     (options: ToastOptions) => {
@@ -80,21 +98,7 @@ const createToastWrapper = (
   }
 }
 
-type ToasterType = ReturnType<typeof createToaster>
-
-export const toaster: ToasterType = createToastWrapper(
-  createToaster({
-    placement: 'top-end',
-    duration: 1000,
-    overlap: true,
-    offsets: {
-      top: '5px',
-      right: '5px',
-      bottom: '5px',
-      left: '5px',
-    },
-  }),
-)
+export const toaster: WrappedToaster = createToastWrapper(chakraToaster)
 
 export const Toaster = () => {
   const toastRef = useRef<HTMLDivElement>(null)
@@ -131,7 +135,7 @@ export const Toaster = () => {
   return (
     <Portal>
       <ChakraToaster
-        toaster={toaster}
+        toaster={chakraToaster}
         insetInline={{ mdDown: '2' }}
         insetBlock={{ mdDown: '2' }}
         css={{ pointerEvents: 'none' }}

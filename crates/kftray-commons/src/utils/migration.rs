@@ -579,10 +579,8 @@ mod tests {
     }
 
     async fn check_trigger_exists(pool: &SqlitePool, trigger_name: &str) -> bool {
-        let query = format!(
-            "SELECT name FROM sqlite_master WHERE type='trigger' AND name='{trigger_name}'"
-        );
-        sqlx::query(&query)
+        sqlx::query("SELECT name FROM sqlite_master WHERE type='trigger' AND name=?")
+            .bind(trigger_name)
             .fetch_optional(pool)
             .await
             .unwrap()

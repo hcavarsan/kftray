@@ -1,4 +1,4 @@
-import React from 'react'
+import type React from 'react'
 
 import Main from '@/components/Main'
 import { GitSyncProvider } from '@/contexts/GitSyncContext'

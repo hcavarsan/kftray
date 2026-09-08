@@ -17,7 +17,7 @@ import Footer from '@/components/Footer'
 import PortForwardTable from '@/components/PortForwardTable'
 import { toaster } from '@/components/ui/toaster'
 import { useSyncManager } from '@/hooks/useSyncManager'
-import { Config } from '@/types'
+import type { Config } from '@/types'
 
 const AddConfigModal = lazy(() => import('@/components/AddConfigModal'))
 const AutoImportModal = lazy(() => import('@/components/AutoImportModal'))
@@ -32,7 +32,6 @@ const initialRemotePort = 0
 const initialLocalPort = 0
 const initialId = 0
 
-// eslint-disable-next-line max-statements
 const KFTray = () => {
   const [pollingInterval, setPollingInterval] = useState(0)
   const [configs, setConfigs] = useState<Config[]>([])
@@ -470,7 +469,7 @@ const KFTray = () => {
   const START_TIMEOUT_MS = 60000
   const PER_CONFIG_TIMEOUT_MS = 30000
 
-  const withConfigTimeout = <T, >(
+  const withConfigTimeout = <T,>(
     promise: Promise<T>,
     configId: number,
     ms: number,
@@ -498,7 +497,6 @@ const KFTray = () => {
     }
     const abortController = new AbortController()
 
-
     startAbortControllerRef.current = abortController
     const abortSignal = abortController.signal
 
@@ -517,8 +515,8 @@ const KFTray = () => {
             config.id,
             PER_CONFIG_TIMEOUT_MS,
           )
-          
-return { id: config.id, error: null, aborted: false }
+
+          return { id: config.id, error: null, aborted: false }
         } catch (error) {
           return { id: config.id, error, aborted: abortSignal.aborted }
         }
@@ -555,11 +553,9 @@ return { id: config.id, error: null, aborted: false }
       if (!abortSignal.aborted) {
         const errors: Array<{ id: number; error: unknown }> = []
 
-
         for (const result of results) {
           if (result.status === 'fulfilled') {
             const value = result.value
-
 
             if (value && value.error != null && !value.aborted) {
               errors.push({ id: value.id, error: value.error })
@@ -698,7 +694,6 @@ return { id: config.id, error: null, aborted: false }
     }
     const abortController = new AbortController()
 
-
     stopAbortControllerRef.current = abortController
     const abortSignal = abortController.signal
 
@@ -772,9 +767,7 @@ return { id: config.id, error: null, aborted: false }
   const stopSelectedPortForwarding = async () => {
     const configsToStop = selectedConfigs
       .map(selected => configs.find(c => c.id === selected.id))
-      .filter(
-        (config): config is Config => config !== undefined && config.is_running,
-      )
+      .filter((config): config is Config => config?.is_running === true)
 
     if (configsToStop.length > 0) {
       await executeStopOperation(

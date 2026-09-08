@@ -36,7 +36,7 @@ jobs:
       release_id: ${{ steps.set_release_id.outputs.id }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -60,7 +60,7 @@ jobs:
       - name: Create release draft
         id: create_release
         if: steps.check_release.outputs.release_exists != 'true'
-        uses: softprops/action-gh-release@5122b4edc95f85501a71628a57dc180a03ec7588
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           tag_name: ${{ github.ref_name }}
           name: "KFtray - ${{ github.ref_name }}"
@@ -128,15 +128,15 @@ jobs:
     runs-on: ${{ matrix.runner || matrix.os }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
-          toolchain: nightly
+          toolchain: stable
 
       - name: Cache Rust
-        uses: swatinem/rust-cache@5e4a76743357a1c3c57315bc1896d2c7f89d6861
+        uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: kftray-tauri-${{ matrix.rust_target }}-${{ matrix.os }}
           shared-key: kftray-tauri-${{ matrix.rust_target }}
@@ -145,32 +145,22 @@ jobs:
             crates/kftray-tauri
 
       - name: Install pnpm
-        uses: pnpm/action-setup@1e1c8eafbd745f64b1ef30a7d7ed7965034c486c
+        uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
-          version: 10
-          run_install: |
-            - recursive: true
-              args: [--frozen-lockfile]
+          version: 12
 
       - name: Install Node.js
-        uses: actions/setup-node@65d868f8d4d85d7d4abb7de0875cde3fcc8798f5
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "24"
+          node-version: "26"
           cache: "pnpm"
 
-      - name: Cache pnpm modules
-        uses: actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb
-        with:
-          path: |
-            $(pnpm store path --silent)
-            **/node_modules
-          key: ${{ runner.OS }}-pnpm-${{ matrix.arch }}-${{ hashFiles('**/pnpm-lock.yaml', '**/package.json') }}
-          restore-keys: |
-            ${{ runner.OS }}-pnpm-${{ matrix.arch }}-
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
 
       - name: Set up Visual Studio shell
         if: matrix.os == 'windows-latest' && matrix.arch == 'arm64'
-        uses: TheMrMilchmann/setup-msvc-dev@ced9887c29958f18f71b18c99d9eb0837859434c
+        uses: TheMrMilchmann/setup-msvc-dev@368ef7d1ee4d1171b31d4a7f67f4d954f903f5a9 # v4.1.0
         with:
           arch: amd64_arm64
 
@@ -240,7 +230,7 @@ jobs:
 
       - name: Sign and notarize the helper binary
         if: matrix.os == 'macos-latest'
-        uses: toitlang/action-macos-sign-notarize@385e50b59cf23df408e3361c28d3d665f4730dd1
+        uses: toitlang/action-macos-sign-notarize@385e50b59cf23df408e3361c28d3d665f4730dd1 # v1.3.0
         with:
           certificate: ${{ secrets.APPLE_CERTIFICATE }}
           certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -285,7 +275,7 @@ jobs:
           echo "Certificate identity: $CERT_ID"
 
       - name: Build kftray-tauri Desktop App
-        uses: tauri-apps/tauri-action@9ce1dcc1a78395184050946b71457a6c242beab6
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
         id: tauri_build
         continue-on-error: true
         env: &tauri-build-env
@@ -310,7 +300,7 @@ jobs:
 
       - name: Retry Build on Failure
         if: steps.tauri_build.outcome == 'failure'
-        uses: tauri-apps/tauri-action@9ce1dcc1a78395184050946b71457a6c242beab6
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # v1.0.0
         env: *tauri-build-env
         with: *tauri-build-with
 
@@ -417,7 +407,7 @@ jobs:
 
       - name: Generate build provenance attestation
         if: steps.find_artifacts.outputs.artifacts != ''
-        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: ${{ steps.find_artifacts.outputs.artifacts }}
 
@@ -462,45 +452,21 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
-          toolchain: nightly
+          toolchain: stable
 
       - name: Cache Rust
-        uses: swatinem/rust-cache@5e4a76743357a1c3c57315bc1896d2c7f89d6861
+        uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: kftui-${{ matrix.rust_target }}-${{ matrix.os }}
           shared-key: kftui-${{ matrix.rust_target }}
           workspaces: |
             .
             crates/kftui
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@1e1c8eafbd745f64b1ef30a7d7ed7965034c486c
-        with:
-          version: 10
-          run_install: |
-            - recursive: true
-              args: [--frozen-lockfile]
-
-      - name: Install Node.js
-        uses: actions/setup-node@65d868f8d4d85d7d4abb7de0875cde3fcc8798f5
-        with:
-          node-version: "24"
-          cache: "pnpm"
-
-      - name: Cache pnpm modules
-        uses: actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb
-        with:
-          path: |
-            $(pnpm store path --silent)
-            **/node_modules
-          key: ${{ runner.OS }}-pnpm-${{ runner.ARCH }}-${{ hashFiles('**/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.OS }}-pnpm-${{ runner.ARCH }}-
 
       - name: Setup platform-specific dependencies
         if: startsWith(matrix.os, 'ubuntu-')
@@ -530,7 +496,7 @@ jobs:
 
       - name: Set up Visual Studio shell
         if: matrix.os == 'windows-latest' && matrix.arch == 'arm64'
-        uses: TheMrMilchmann/setup-msvc-dev@ced9887c29958f18f71b18c99d9eb0837859434c
+        uses: TheMrMilchmann/setup-msvc-dev@368ef7d1ee4d1171b31d4a7f67f4d954f903f5a9 # v4.1.0
         with:
           arch: amd64_arm64
 
@@ -541,7 +507,7 @@ jobs:
 
       - name: Set up Perl on Windows
         if: matrix.os == 'windows-latest'
-        uses: shogo82148/actions-setup-perl@b27fdd828a97a63c975cdedfe6ad62830c3b55c9
+        uses: shogo82148/actions-setup-perl@53e33bb27be492a926eee378e8a5f7ff6618b061 # v1.43.1
         with:
           perl-version: "5.32"
           distribution: "strawberry"
@@ -585,7 +551,7 @@ jobs:
 
       - name: Sign and notarize the release build
         if: matrix.os == 'macos-latest'
-        uses: toitlang/action-macos-sign-notarize@385e50b59cf23df408e3361c28d3d665f4730dd1
+        uses: toitlang/action-macos-sign-notarize@385e50b59cf23df408e3361c28d3d665f4730dd1 # v1.3.0
         with:
           certificate: ${{ secrets.APPLE_CERTIFICATE }}
           certificate-password: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -670,7 +636,7 @@ jobs:
 
       - name: Generate build provenance attestation
         if: steps.find_artifacts.outputs.artifacts != ''
-        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-path: ${{ steps.find_artifacts.outputs.artifacts }}
 
@@ -690,21 +656,21 @@ jobs:
       DOCKER_PLATFORMS: linux/amd64,linux/arm64
     steps:
       - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a # v4.0.0
+        uses: docker/setup-qemu-action@1f40c72289eff860ee54a304f1438e3cff362e0a # v4.3.0
         with:
           platforms: ${{ env.DOCKER_PLATFORMS }}
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@4d04d5d9486b7bd6fa91e7baf45bbb4f8b9deedd # v4.0.0
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
         with:
           driver-opts: |
             network=host
 
       - name: Login to GitHub Container Registry
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -712,7 +678,7 @@ jobs:
 
       - name: Docker meta
         id: meta
-        uses: docker/metadata-action@030e881283bb7a6894de51c315a6bfe6a94e05cf # v6.0.0
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
           images: ghcr.io/${{ github.repository_owner }}/kftray-server
           tags: |
@@ -722,7 +688,7 @@ jobs:
 
       - name: Build and push Docker image
         id: docker_build
-        uses: docker/build-push-action@bcafcacb16a39f128d818304e6c9c0c18556b85f # v7.1.0
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
         with:
           platforms: ${{ env.DOCKER_PLATFORMS }}
           context: .
@@ -740,7 +706,7 @@ jobs:
           sbom: true
 
       - name: Generate artifact attestation
-        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
         with:
           subject-name: ghcr.io/${{ github.repository_owner }}/kftray-server
           subject-digest: ${{ steps.docker_build.outputs.digest }}
@@ -765,32 +731,27 @@ jobs:
     steps:
       # === SBOM Generation ===
       - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
-          toolchain: nightly
+          toolchain: stable
 
       - name: Cache cargo-cyclonedx
-        uses: actions/cache@9255dc7a253b0ccc959486e2bca901246202afeb
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cargo/bin/cargo-cyclonedx
           key: cargo-cyclonedx-${{ runner.os }}
 
       - name: Setup mise
-        uses: jdx/mise-action@1648a7812b9aeae629881980618f079932869151 # v4.0.1
+        uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4.3.0
 
-      - name: Install pnpm
-        uses: pnpm/action-setup@1e1c8eafbd745f64b1ef30a7d7ed7965034c486c
-        with:
-          version: 10
-          run_install: |
-            - recursive: true
-              args: [--frozen-lockfile]
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
 
       - name: Login to GHCR
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -814,9 +775,9 @@ jobs:
 
       # === SBOM Scanning ===
       - name: Setup Go
-        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: "1.26"
+          go-version: "1.27"
 
       - name: Build grype with VEX SBOM support
         run: |
@@ -886,12 +847,12 @@ jobs:
       !contains(github.ref, '-alpha')
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
       - name: Generate changelog
-        uses: orhun/git-cliff-action@2032a55a2e7a76b12f13fd1dfe8b9e44fcf84e94
+        uses: orhun/git-cliff-action@3d96a18cc4ec17e9dc69ddcc424ccafaf1f78ce2 # v4.9.0
         id: git-cliff
         with:
           config: cliff.toml
@@ -900,7 +861,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Update release notes
-        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -931,8 +892,38 @@ jobs:
               }
             }
 
+      - name: Use direct download URLs in latest.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_ID: ${{ needs.create-release-draft.outputs.release_id }}
+        run: |
+          set -euo pipefail
+
+          # tauri-action v1 writes api.github.com asset URLs, which are rate limited for anonymous clients
+          assets=$(gh api "repos/$GH_REPO/releases/$RELEASE_ID/assets?per_page=100")
+          latest_id=$(jq -r 'map(select(.name == "latest.json")) | .[0].id // empty' <<<"$assets")
+          if [ -z "$latest_id" ]; then
+            echo "::warning::latest.json not found on release $RELEASE_ID"
+            exit 0
+          fi
+
+          gh api -H "Accept: application/octet-stream" "repos/$GH_REPO/releases/assets/$latest_id" > latest.json
+          jq --argjson assets "$assets" --arg base "https://github.com/$GH_REPO/releases/download/$GITHUB_REF_NAME/" '
+            .platforms |= with_entries(
+              .value.url |= (
+                if test("^https://api.github.com/repos/.+/releases/assets/[0-9]+$") then
+                  (sub(".*/assets/"; "") | tonumber) as $id
+                  | ($assets | map(select(.id == $id)) | .[0].name) as $name
+                  | if $name == null then . else $base + $name end
+                else . end
+              )
+            )' latest.json > latest.direct.json
+          mv latest.direct.json latest.json
+          gh release upload "$GITHUB_REF_NAME" latest.json --clobber
+
       - name: Publish release
-        uses: eregon/publish-release@70a6784870e7313347f6aa7fa7783786f2c1692f
+        uses: eregon/publish-release@01df127f5e9a3c26935118e22e738d95b59d10ce # v1.0.6
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
@@ -949,15 +940,15 @@ jobs:
       !contains(github.ref, '-alpha')
     steps:
       - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@f7ccc83f9ed1e5b9c81d8a67d7ad1a747e22a561
+        uses: dtolnay/rust-toolchain@6c977a6ca4077a0ceb28ffbe03f59d46e9ac8772 # v1
         with:
-          toolchain: nightly
+          toolchain: stable
 
       - name: Cache Rust
-        uses: swatinem/rust-cache@5e4a76743357a1c3c57315bc1896d2c7f89d6861
+        uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           key: publish-cargo-crates
           shared-key: publish-cargo-crates
@@ -1059,7 +1050,7 @@ jobs:
       !contains(github.ref, '-beta') &&
       !contains(github.ref, '-alpha')
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup and publish to OBS
         env:
@@ -1089,7 +1080,7 @@ jobs:
           name: sbom-signed
 
       - name: Login to GHCR
-        uses: docker/login-action@4907a6ddec9925e35a0a9e82d7399ccc52663121 # v4.1.0
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -1135,10 +1126,10 @@ jobs:
       !contains(github.ref, '-alpha')
     steps:
       - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup uv
-        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           python-version: "3.12"
 

@@ -1,6 +1,6 @@
-import { StylesConfig } from 'react-select'
+import type { StylesConfig } from 'react-select'
 
-import { StringOption } from '@/types'
+import type { StringOption } from '@/types'
 
 export const autoImportSelectStyles: StylesConfig<StringOption> = {
   control: base => ({

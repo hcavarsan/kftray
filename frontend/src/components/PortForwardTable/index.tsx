@@ -1,4 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import type React from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import { Box } from '@chakra-ui/react'
 
@@ -6,8 +7,11 @@ import Header from '@/components/Header'
 import HeaderMenu from '@/components/HeaderMenu'
 import ContextsAccordion from '@/components/PortForwardTable/ContextsAccordion'
 import { useConfigsByContext } from '@/components/PortForwardTable/useConfigsByContext'
-import { AccordionRoot, ValueChangeDetails } from '@/components/ui/accordion'
-import { Config, TableProps } from '@/types'
+import {
+  AccordionRoot,
+  type ValueChangeDetails,
+} from '@/components/ui/accordion'
+import type { Config, TableProps } from '@/types'
 
 const PortForwardTable: React.FC<TableProps> = ({
   configs,

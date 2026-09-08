@@ -23,7 +23,7 @@ pub struct LinuxCompositeStore {
 }
 
 impl LinuxCompositeStore {
-    pub fn new() -> Result<Arc<CredentialStore>> {
+    pub fn new_store() -> Result<Arc<CredentialStore>> {
         let primary: Arc<CredentialStore> = dbus_secret_service_keyring_store::Store::new()
             .map_err(|e| Error::PlatformFailure(Box::new(e)))?;
         let fallback: Option<Arc<CredentialStore>> = match linux_keyutils_keyring_store::Store::new(

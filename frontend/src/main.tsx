@@ -3,9 +3,9 @@ import ReactDOM from 'react-dom/client'
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 
+import App from './App'
 import { Provider } from './components/ui/provider'
 import { Toaster } from './components/ui/toaster'
-import App from './App'
 
 import './index.css'
 

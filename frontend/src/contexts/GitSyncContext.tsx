@@ -1,4 +1,5 @@
-import React, {
+import type React from 'react'
+import {
   createContext,
   useCallback,
   useContext,
@@ -10,7 +11,7 @@ import React, {
 import { invoke } from '@tauri-apps/api/core'
 
 import { toaster } from '@/components/ui/toaster'
-import { GitConfig, SyncStatus } from '@/types'
+import type { GitConfig, SyncStatus } from '@/types'
 
 interface GitSyncContextType {
   credentials: GitConfig | null

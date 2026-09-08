@@ -1,10 +1,10 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react'
+import type React from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Keyboard } from 'lucide-react'
 
 import { Box, Flex, Text } from '@chakra-ui/react'
 
 import { Button } from '@/components/ui/button'
-
 
 interface ShortcutCaptureProps {
   value: string
@@ -75,7 +75,7 @@ const ShortcutCapture: React.FC<ShortcutCaptureProps> = ({
           setCapturedKeys('')
         }, 500)
       } else if (modifiers.length > 0) {
-        setCapturedKeys(modifiers.join('+') + '+')
+        setCapturedKeys(`${modifiers.join('+')}+`)
       }
     },
     [isCapturing, formatKey, onChange],
@@ -103,7 +103,7 @@ const ShortcutCapture: React.FC<ShortcutCaptureProps> = ({
           remaining.push('Shift')
         }
 
-        setCapturedKeys(remaining.length > 0 ? remaining.join('+') + '+' : '')
+        setCapturedKeys(remaining.length > 0 ? `${remaining.join('+')}+` : '')
       }
     },
     [isCapturing],
