@@ -510,15 +510,28 @@ pub(crate) async fn import_configs_with_pool(
 }
 
 fn parse_config_json(json: &str) -> Result<Vec<Config>, String> {
-    match serde_json::from_str(json) {
-        Ok(configs) => Ok(configs),
+    let parsed: Vec<Config> = match serde_json::from_str(json) {
+        Ok(configs) => configs,
         Err(e) => {
             info!("Failed to parse JSON as Vec<Config>: {e}. Trying as single Config.");
             let config = serde_json::from_str::<Config>(json)
                 .map_err(|e| format!("Failed to parse config: {e}"))?;
-            Ok(vec![config])
+            vec![config]
+        }
+    };
+
+    let mut configs: Vec<Config> = Vec::with_capacity(parsed.len());
+    for config in parsed {
+        match configs
+            .iter_mut()
+            .find(|c| configs_match_identity(c, &config))
+        {
+            Some(previous) => *previous = config,
+            None => configs.push(config),
         }
     }
+
+    Ok(configs)
 }
 
 async fn merge_config_with_existing_and_mode(
@@ -1191,6 +1204,43 @@ mod tests {
         let result = import_configs_with_pool(invalid_json.to_string(), &pool).await;
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("Failed to parse config"));
+    }
+
+    #[tokio::test]
+    async fn test_import_configs_same_identity_twice_keeps_last() {
+        let pool = setup_test_db().await;
+        let configs_json = json!([
+            {
+                "service": "shared-service",
+                "alias": "from-first-file",
+                "workload_type": "service",
+                "protocol": "tcp",
+                "context": "test-context",
+                "namespace": "default",
+                "local_port": 5001,
+                "remote_port": 80
+            },
+            {
+                "service": "shared-service",
+                "alias": "from-second-file",
+                "workload_type": "service",
+                "protocol": "tcp",
+                "context": "test-context",
+                "namespace": "default",
+                "local_port": 5001,
+                "remote_port": 80
+            }
+        ])
+        .to_string();
+
+        import_configs_with_pool(configs_json.clone(), &pool)
+            .await
+            .unwrap();
+        import_configs_with_pool(configs_json, &pool).await.unwrap();
+
+        let configs = read_configs_with_pool(&pool).await.unwrap();
+        assert_eq!(configs.len(), 1);
+        assert_eq!(configs[0].alias.as_deref(), Some("from-second-file"));
     }
 
     #[tokio::test]
