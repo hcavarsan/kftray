@@ -172,12 +172,17 @@ impl ConfigImporter {
 
     async fn import_from_github(cli: &Cli, mode: DatabaseMode) -> Result<(), String> {
         let github_url = cli.get_github_url().unwrap();
-        let config_path = cli.get_configs_path_with_default();
+        let config_paths = cli
+            .get_configs_path_with_default()
+            .split(',')
+            .map(|path| path.trim().to_string())
+            .filter(|path| !path.is_empty())
+            .collect();
         let github_token = std::env::var("GITHUB_TOKEN").ok();
 
         let github_config = GitHubConfig {
             repo_url: github_url.to_string(),
-            config_path,
+            config_paths,
             use_system_credentials: true,
             github_token,
             flush_existing: false,

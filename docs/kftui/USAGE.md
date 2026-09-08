@@ -55,6 +55,12 @@ Import configurations from version-controlled repositories:
 kftui --github-url https://github.com/your-team/k8s-configs --configs-path environments/dev.json
 ```
 
+To merge configs split across several files, pass the paths separated by commas:
+
+```bash
+kftui --github-url https://github.com/your-team/k8s-configs --configs-path environments/dev.json,environments/shared.json
+```
+
 This method works well for teams that maintain environment-specific configurations in version control.
 
 ### Inline JSON
