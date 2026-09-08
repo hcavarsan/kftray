@@ -25,3 +25,12 @@ pull_request_rules:
       - -title~=\(major\)
     actions:
       queue: {}
+
+  - name: remove ready-to-merge once closed
+    conditions:
+      - closed
+      - label=ready-to-merge
+    actions:
+      label:
+        remove:
+          - ready-to-merge
