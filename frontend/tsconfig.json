@@ -16,14 +16,12 @@
     "isolatedModules": true,
     "noEmit": true,
     "jsx": "react-jsx",
-    "baseUrl": ".",
-	"composite": true,
-    "ignoreDeprecations": "6.0",
+    "composite": true,
     "paths": {
-      "@/*": ["src/*"]
+      "@/*": ["./src/*"]
     }
   },
   "include": ["./src/**/*"],
   "exclude": ["node_modules", "crates", "dist", "target"],
-   "references": [{ "path": "./tsconfig.node.json" }]
+  "references": [{ "path": "./tsconfig.node.json" }]
 }

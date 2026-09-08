@@ -43,23 +43,23 @@ pub async fn check_for_updates() -> Result<UpdateInfo, Box<dyn Error>> {
         .build()?
         .fetch()?;
 
-    if let Some(latest_release) = releases.first() {
+    if let Some(latest_release) = releases.latest() {
         let asset_exists = latest_release
-            .assets
+            .assets()
             .iter()
-            .any(|asset| asset.name == asset_name);
+            .any(|asset| asset.name() == asset_name);
 
         if !asset_exists {
             return Err(format!("Asset {} not found for the latest release", asset_name).into());
         }
 
         let current_ver = semver::Version::parse(current_version)?;
-        let latest_ver = semver::Version::parse(&latest_release.version)?;
+        let latest_ver = semver::Version::parse(latest_release.version())?;
         let has_update = latest_ver > current_ver;
 
         Ok(UpdateInfo {
             current_version: current_version.to_string(),
-            latest_version: latest_release.version.clone(),
+            latest_version: latest_release.version().to_string(),
             has_update,
         })
     } else {
@@ -77,24 +77,27 @@ pub async fn perform_update() -> Result<String, Box<dyn Error>> {
         .build()?
         .fetch()?;
 
-    if let Some(latest_release) = releases.first() {
+    if let Some(latest_release) = releases.latest() {
         if let Some(asset) = latest_release
-            .assets
+            .assets()
             .iter()
-            .find(|asset| asset.name == asset_name)
+            .find(|asset| asset.name() == asset_name)
         {
             let tmp_dir = tempfile::tempdir()?;
-            let tmp_archive_path = tmp_dir.path().join(&asset.name);
+            let tmp_archive_path = tmp_dir.path().join(asset.name());
             let mut tmp_file = File::create(&tmp_archive_path)?;
 
-            let version = if latest_release.version.starts_with('v') {
-                latest_release.version.clone()
+            let version = if latest_release.version().starts_with('v') {
+                latest_release.version().to_string()
             } else {
-                format!("v{}", latest_release.version)
+                format!("v{}", latest_release.version())
             };
             let direct_url = format!(
                 "https://github.com/{}/{}/releases/download/{}/{}",
-                REPO_OWNER, REPO_NAME, version, asset.name
+                REPO_OWNER,
+                REPO_NAME,
+                version,
+                asset.name()
             );
 
             self_update::Download::from_url(&direct_url).download_to(&mut tmp_file)?;
@@ -126,7 +129,7 @@ pub async fn perform_update() -> Result<String, Box<dyn Error>> {
             }
 
             let archive_name_without_ext =
-                asset.name.strip_suffix(".tar.gz").unwrap_or(&asset.name);
+                asset.name().strip_suffix(".tar.gz").unwrap_or(asset.name());
 
             let new_exe = if cfg!(windows) {
                 extract_dir.join(format!("{}.exe", archive_name_without_ext))
@@ -135,7 +138,7 @@ pub async fn perform_update() -> Result<String, Box<dyn Error>> {
             };
 
             if new_exe.exists() {
-                self_update::self_replace::self_replace(new_exe)?;
+                self_replace::self_replace(new_exe)?;
             } else {
                 let entries: Vec<_> = std::fs::read_dir(&extract_dir)?
                     .filter_map(|e| e.ok())
@@ -148,7 +151,7 @@ pub async fn perform_update() -> Result<String, Box<dyn Error>> {
                 .into());
             }
 
-            Ok(latest_release.version.clone())
+            Ok(latest_release.version().to_string())
         } else {
             Err(format!("Asset {} not found for the latest release", asset_name).into())
         }

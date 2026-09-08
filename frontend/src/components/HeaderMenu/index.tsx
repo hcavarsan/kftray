@@ -1,4 +1,5 @@
-import React, { useMemo } from 'react'
+import type React from 'react'
+import { useMemo } from 'react'
 import { ChevronDown, ChevronUp, Loader2, RefreshCw, X } from 'lucide-react'
 
 import { Box, Group } from '@chakra-ui/react'
@@ -6,7 +7,7 @@ import { Box, Group } from '@chakra-ui/react'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Tooltip } from '@/components/ui/tooltip'
-import { HeaderMenuProps } from '@/types'
+import type { HeaderMenuProps } from '@/types'
 
 const HeaderMenu: React.FC<HeaderMenuProps> = ({
   configs,
@@ -112,7 +113,7 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
                         c => c.id === selected.id,
                       )
 
-                      return currentConfig && currentConfig.is_running
+                      return currentConfig?.is_running
                     })
                   : configs.every(config => config.is_running))
               }
@@ -149,7 +150,11 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
                     }}
                   />
                   <span style={{ fontSize: '11px' }}>Starting...</span>
-                  <Tooltip content='Cancel' portalled contentProps={{ zIndex: 101 }}>
+                  <Tooltip
+                    content='Cancel'
+                    portalled
+                    contentProps={{ zIndex: 101 }}
+                  >
                     <Box
                       as='span'
                       display='inline-flex'
@@ -204,7 +209,7 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
                         c => c.id === selected.id,
                       )
 
-                      return currentConfig && currentConfig.is_running
+                      return currentConfig?.is_running
                     })
                   ? 'Stop selected port forwards'
                   : 'Stop all port forwards'
@@ -257,7 +262,11 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
                     }}
                   />
                   <span style={{ fontSize: '11px' }}>Stopping...</span>
-                  <Tooltip content='Cancel' portalled contentProps={{ zIndex: 101 }}>
+                  <Tooltip
+                    content='Cancel'
+                    portalled
+                    contentProps={{ zIndex: 101 }}
+                  >
                     <Box
                       as='span'
                       display='inline-flex'
@@ -287,7 +296,7 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
                         c => c.id === selected.id,
                       )
 
-                      return currentConfig && currentConfig.is_running
+                      return currentConfig?.is_running
                     })
                       ? 'Stop Selected'
                       : 'Stop All'}

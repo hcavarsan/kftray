@@ -1,4 +1,5 @@
-import React, { useState } from 'react'
+import type React from 'react'
+import { useState } from 'react'
 import { Trash2 } from 'lucide-react'
 import { createPortal } from 'react-dom'
 
@@ -7,7 +8,7 @@ import { invoke } from '@tauri-apps/api/core'
 
 import { toaster } from '@/components/ui/toaster'
 import { Tooltip } from '@/components/ui/tooltip'
-import { BulkDeleteButtonProps } from '@/types'
+import type { BulkDeleteButtonProps } from '@/types'
 
 const DeleteDialog = ({
   isOpen,

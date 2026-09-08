@@ -5,9 +5,9 @@ import { Box, Flex, IconButton, Text } from '@chakra-ui/react'
 
 import { Tooltip } from '@/components/ui/tooltip'
 
-import { highlightText } from './utils/filterLogs'
 import { COLORS, LEVEL_COLORS } from './constants'
 import type { LogLevel, LogRowProps } from './types'
+import { highlightText } from './utils/filterLogs'
 
 function LevelBadge({ level }: { level: LogLevel }) {
   const colors = LEVEL_COLORS[level]
@@ -209,7 +209,7 @@ function LogRowComponent({
     observer.observe(contentRef.current)
 
     return () => observer.disconnect()
-  }, [isExpanded, entry.id, entry.message, onHeightChange])
+  }, [isExpanded, entry.id, onHeightChange])
 
   return (
     <Box

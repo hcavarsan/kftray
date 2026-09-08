@@ -55,7 +55,7 @@ function ModuleFilterDropdownComponent({
     const segments = formatted.split('::')
 
     if (segments.length > 3) {
-      formatted = '… ' + segments.slice(-3).join(' › ')
+      formatted = `… ${segments.slice(-3).join(' › ')}`
     } else {
       formatted = segments.join(' › ')
     }

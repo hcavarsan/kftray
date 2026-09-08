@@ -1,0 +1,36 @@
+merge_queue:
+  max_parallel_checks: 2
+
+queue_rules:
+  - name: default
+    merge_method: squash
+    queue_conditions:
+      - -draft
+      - -label=do-not-merge
+      - or:
+          - author=hcavarsan
+          - author=renovate[bot]
+          - "#approved-reviews-by>=1"
+
+pull_request_rules:
+  - name: queue when labeled ready-to-merge
+    conditions:
+      - label=ready-to-merge
+    actions:
+      queue: {}
+
+  - name: queue non-major Renovate updates
+    conditions:
+      - author=renovate[bot]
+      - -title~=\(major\)
+    actions:
+      queue: {}
+
+  - name: remove ready-to-merge once closed
+    conditions:
+      - closed
+      - label=ready-to-merge
+    actions:
+      label:
+        remove:
+          - ready-to-merge

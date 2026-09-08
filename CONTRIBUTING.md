@@ -23,6 +23,7 @@
 - Ensure your code is formatted and linted (pre-commit hook handles this automatically).
 - Write clear, descriptive commit messages.
 - Open a new pull request with a clear title and description.
+- Once approved and green, a maintainer adds the `ready-to-merge` label. Mergify then tests the change against the latest `main` and squash merges it; there is no need to rebase your branch unless it conflicts.
 
 ### Setting Up Your Development Environment
 

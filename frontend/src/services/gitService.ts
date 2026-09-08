@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 
-import { GitConfig } from '@/types'
+import type { GitConfig } from '@/types'
 
 export const gitService = {
   async saveCredentials(

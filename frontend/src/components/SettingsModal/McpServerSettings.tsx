@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from 'react'
+import type React from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Server } from 'lucide-react'
 
 import { Box, Flex, Input, Text } from '@chakra-ui/react'
@@ -23,11 +24,7 @@ const McpServerSettings: React.FC<McpServerSettingsProps> = ({ isLoading }) => {
   const [mcpServerRunning, setMcpServerRunning] = useState<boolean>(false)
   const [isMcpToggling, setIsMcpToggling] = useState(false)
 
-  useEffect(() => {
-    loadMcpStatus()
-  }, [])
-
-  const loadMcpStatus = async () => {
+  const loadMcpStatus = useCallback(async () => {
     try {
       const status = await invoke<McpStatus>('get_mcp_server_status')
 
@@ -40,7 +37,11 @@ const McpServerSettings: React.FC<McpServerSettingsProps> = ({ isLoading }) => {
       setMcpServerPort('3000')
       setMcpServerRunning(false)
     }
-  }
+  }, [])
+
+  useEffect(() => {
+    loadMcpStatus()
+  }, [loadMcpStatus])
 
   const toggleMcpServer = async (enabled: boolean) => {
     try {
@@ -79,7 +80,7 @@ const McpServerSettings: React.FC<McpServerSettingsProps> = ({ isLoading }) => {
   const saveMcpPort = async () => {
     const portValue = parseInt(mcpServerPort, 10)
 
-    if (isNaN(portValue) || portValue < 1 || portValue > 65535) {
+    if (Number.isNaN(portValue) || portValue < 1 || portValue > 65535) {
       toaster.error({
         title: 'Invalid Port',
         description: 'Port must be between 1 and 65535',
@@ -123,12 +124,7 @@ const McpServerSettings: React.FC<McpServerSettingsProps> = ({ isLoading }) => {
         height='100%'
       >
         <Flex align='center' gap={1.5} mb={1}>
-          <Box
-            as={Server}
-            width='10px'
-            height='10px'
-            color='purple.400'
-          />
+          <Box as={Server} width='10px' height='10px' color='purple.400' />
           <Text fontSize='sm' fontWeight='500' color='white'>
             MCP Server
           </Text>
@@ -140,19 +136,11 @@ const McpServerSettings: React.FC<McpServerSettingsProps> = ({ isLoading }) => {
             title={mcpServerRunning ? 'Running' : 'Stopped'}
           />
         </Flex>
-        <Text
-          fontSize='xs'
-          color='whiteAlpha.600'
-          lineHeight='1.3'
-          flex='1'
-        >
-          Enable MCP server for AI assistants to manage port forwards via Model Context Protocol.
+        <Text fontSize='xs' color='whiteAlpha.600' lineHeight='1.3' flex='1'>
+          Enable MCP server for AI assistants to manage port forwards via Model
+          Context Protocol.
         </Text>
-        <Box
-          borderTop='1px solid rgba(255, 255, 255, 0.06)'
-          mt={3}
-          pt={3}
-        >
+        <Box borderTop='1px solid rgba(255, 255, 255, 0.06)' mt={3} pt={3}>
           <Flex align='center' justify='flex-end' gap={2}>
             <Text fontSize='xs' color='whiteAlpha.500'>
               Enabled:
@@ -181,21 +169,12 @@ const McpServerSettings: React.FC<McpServerSettingsProps> = ({ isLoading }) => {
         <Text fontSize='sm' fontWeight='500' color='white' mb={1}>
           MCP Server Port
         </Text>
-        <Text
-          fontSize='xs'
-          color='whiteAlpha.600'
-          lineHeight='1.3'
-          flex='1'
-        >
+        <Text fontSize='xs' color='whiteAlpha.600' lineHeight='1.3' flex='1'>
           {mcpServerRunning
             ? `Running at http://127.0.0.1:${mcpServerPort}`
             : 'Server endpoint port'}
         </Text>
-        <Box
-          borderTop='1px solid rgba(255, 255, 255, 0.06)'
-          mt={3}
-          pt={3}
-        >
+        <Box borderTop='1px solid rgba(255, 255, 255, 0.06)' mt={3} pt={3}>
           <Flex align='center' justify='flex-end' gap={2}>
             <Text fontSize='xs' color='whiteAlpha.500'>
               Port:
