@@ -6,7 +6,6 @@ on:
   pull_request:
     branches:
       - main
-  merge_group:
   push:
     branches:
       - main
@@ -198,7 +197,6 @@ jobs:
 
       - name: Upload coverage
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
-        if: github.event_name != 'merge_group'
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: lcov.info
@@ -206,7 +204,7 @@ jobs:
 
       - name: Upload test results
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
-        if: ${{ !cancelled() && github.event_name != 'merge_group' }}
+        if: ${{ !cancelled() }}
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           files: target/nextest/ci/junit.xml
