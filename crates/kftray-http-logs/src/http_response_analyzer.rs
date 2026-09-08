@@ -3,6 +3,9 @@ use std::sync::Arc;
 use tracing::debug;
 use tracing::trace;
 pub const DEFAULT_MIN_VALID_HEADERS_SIZE: usize = 16;
+// Match the transport detector's bounded handshake buffer; frame bytes are
+// excluded.
+const MAX_WEBSOCKET_HEADERS_SIZE: usize = 65_536;
 
 #[derive(Debug, Clone)]
 pub struct ResponseAnalyzerConfig {
@@ -80,14 +83,34 @@ impl HttpResponseAnalyzer {
     }
 
     pub fn is_websocket_upgrade(response_data: &[u8]) -> bool {
-        let mut headers = [httparse::EMPTY_HEADER; 64];
-        let mut response = httparse::Response::new(&mut headers);
-        if !matches!(
-            response.parse(response_data),
-            Ok(httparse::Status::Complete(_))
-        ) || response.code != Some(101)
-        {
+        let bounded_data = &response_data[..response_data.len().min(MAX_WEBSOCKET_HEADERS_SIZE)];
+        let Some(headers_end) = find_headers_end(bounded_data) else {
             return false;
+        };
+        let header_bytes = &bounded_data[..headers_end + 4];
+        let mut headers = [httparse::EMPTY_HEADER; 64];
+        match Self::parse_websocket_upgrade(header_bytes, &mut headers) {
+            Err(httparse::Error::TooManyHeaders) => {
+                // Count only the complete bounded header block, never coalesced
+                // frames.
+                let header_count = header_bytes
+                    .windows(2)
+                    .filter(|pair| *pair == b"\r\n")
+                    .count()
+                    - 2;
+                let mut headers = vec![httparse::EMPTY_HEADER; header_count];
+                Self::parse_websocket_upgrade(header_bytes, &mut headers).unwrap_or(false)
+            }
+            result => result.unwrap_or(false),
+        }
+    }
+
+    fn parse_websocket_upgrade<'a>(
+        response_data: &'a [u8], headers: &mut [httparse::Header<'a>],
+    ) -> Result<bool, httparse::Error> {
+        let mut response = httparse::Response::new(headers);
+        if !response.parse(response_data)?.is_complete() || response.code != Some(101) {
+            return Ok(false);
         }
         let has_token = |name: &str, token: &str| {
             response.headers.iter().any(|header| {
@@ -99,11 +122,11 @@ impl HttpResponseAnalyzer {
                     })
             })
         };
-        has_token("upgrade", "websocket")
+        Ok(has_token("upgrade", "websocket")
             && has_token("connection", "upgrade")
             && response.headers.iter().any(|header| {
                 header.name.eq_ignore_ascii_case("sec-websocket-accept") && !header.value.is_empty()
-            })
+            }))
     }
 
     pub fn appears_complete(
@@ -135,18 +158,11 @@ impl HttpResponseAnalyzer {
         &self, response_data: &[u8], is_chunked: bool, found_end_marker: bool,
     ) -> bool {
         if let Some(headers_end) = find_headers_end(response_data) {
-            let headers = &response_data[..headers_end];
-            if let Ok(headers_str) = std::str::from_utf8(headers) {
-                let h_lower = headers_str.to_lowercase();
-                if h_lower.contains("upgrade: websocket")
-                    && h_lower.contains("connection: upgrade")
-                    && h_lower.contains("sec-websocket-accept:")
-                {
-                    trace!(
-                        "WebSocket upgrade response fully confirmed with all necessary headers - complete"
-                    );
-                    return true;
-                }
+            if Self::is_websocket_upgrade(response_data) {
+                trace!(
+                    "WebSocket upgrade response fully confirmed with all necessary headers - complete"
+                );
+                return true;
             }
 
             if is_chunked {
@@ -389,6 +405,65 @@ mod tests {
             .replace("Upgrade: websocket", "X-Upgrade: websocket");
         assert!(!HttpResponseAnalyzer::is_websocket_upgrade(
             unrelated_header.as_bytes()
+        ));
+    }
+
+    #[test]
+    fn test_websocket_logging_readiness_validates_status_and_tokens() {
+        let response = "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: proof\r\nContent-Length: 128\r\n\r\n";
+        let rejected = response.replace("101 Switching Protocols", "200 OK");
+        assert!(!HttpResponseAnalyzer::is_ready_for_logging(
+            rejected.as_bytes(),
+            false,
+            false
+        ));
+        let unrelated = rejected.replace("Upgrade: websocket", "X-Upgrade: websocket");
+        assert!(!HttpResponseAnalyzer::is_ready_for_logging(
+            unrelated.as_bytes(),
+            false,
+            false
+        ));
+        let token_list = response.replace("Connection: Upgrade", "Connection: keep-alive, Upgrade");
+        assert!(HttpResponseAnalyzer::is_ready_for_logging(
+            token_list.as_bytes(),
+            false,
+            false
+        ));
+    }
+
+    #[test]
+    fn test_websocket_upgrade_with_many_headers_still_validates_handshake() {
+        let extra_headers = "X-Extra: value\r\n".repeat(80);
+        let response = format!(
+            "HTTP/1.1 101 Switching Protocols\r\n{extra_headers}Upgrade: websocket\r\nConnection: keep-alive, Upgrade\r\nSec-WebSocket-Accept: proof\r\n\r\n"
+        );
+        assert!(HttpResponseAnalyzer::is_websocket_upgrade(
+            response.as_bytes()
+        ));
+        assert!(HttpResponseAnalyzer::default().appears_complete(
+            response.as_bytes(),
+            false,
+            false
+        ));
+        let no_accept = response.replace("Sec-WebSocket-Accept: proof\r\n", "");
+        assert!(!HttpResponseAnalyzer::is_websocket_upgrade(
+            no_accept.as_bytes()
+        ));
+        let rejected = response.replace("101 Switching Protocols", "200 OK");
+        assert!(!HttpResponseAnalyzer::is_websocket_upgrade(
+            rejected.as_bytes()
+        ));
+        assert!(!HttpResponseAnalyzer::is_websocket_upgrade(
+            &response.as_bytes()[..response.len() - 2]
+        ));
+        let with_frames = format!("{response}{}", "frame".repeat(20_000));
+        assert!(HttpResponseAnalyzer::is_websocket_upgrade(
+            with_frames.as_bytes()
+        ));
+        let oversized =
+            response.replace("X-Extra: value", &format!("X-Extra: {}", "a".repeat(1000)));
+        assert!(!HttpResponseAnalyzer::is_websocket_upgrade(
+            oversized.as_bytes()
         ));
     }
 
