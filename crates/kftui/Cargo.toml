@@ -1,6 +1,6 @@
 [package]
 name = "kftui"
-version = "0.27.30"
+version = "0.27.31"
 authors = [
   "Henrique Cavarsan <hencavarsan@gmail.com>",
 ]
@@ -30,8 +30,8 @@ libc = { workspace = true }
 log = { workspace = true }
 ratatui = { workspace = true }
 ratatui-explorer = { workspace = true }
-self-replace = "1.5"
 self_update = { version = "1.3.0", features = ["compression-tar-gz"] }
+self-replace = "1.5"
 semver = { workspace = true }
 serde_json = { workspace = true }
 tar = { workspace = true }
