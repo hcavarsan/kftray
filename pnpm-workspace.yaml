@@ -1,9 +1,18 @@
 packages:
   - frontend
 
-onlyBuiltDependencies:
-  - '@swc/core'
-  - core-js
-  - esbuild
-  - oxc-resolver
-  - unrs-resolver
+allowBuilds:
+  oxc-resolver: true
+
+overrides:
+  '@codecov/vite-plugin>vite': ^8.0.3
+  undici: ^8.0.0
+
+peerDependencyRules:
+  allowedVersions:
+    '@codecov/vite-plugin>vite': '8'
+
+minimumReleaseAgeExclude:
+  - lucide-react@1.43.0
+
+

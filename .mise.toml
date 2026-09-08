@@ -1,7 +1,7 @@
 [tools]
-node = "24"
-pnpm = "latest"
-syft = "1.44.0"   # Pinned for reproducibility (https://github.com/anchore/syft/releases)
+node = "26"
+pnpm = "12.3.4"
+syft = "1.51.1"  
 
 [tasks.dev]
 description = "Start Tauri development mode (tauri dev)"
@@ -36,7 +36,7 @@ description = "Run frontend type checking"
 run = "pnpm --filter @kftray/ui run check"
 
 [tasks."lint:front"]
-description = "Lint frontend code with ESLint (with auto-fix)"
+description = "Lint frontend code with Biome (with auto-fix)"
 run = "pnpm --filter @kftray/ui run lint"
 
 [tasks."lint:back"]
@@ -48,7 +48,7 @@ description = "Lint both frontend and backend (with auto-fix)"
 depends = ["lint:front", "lint:back"]
 
 [tasks."format:front"]
-description = "Format frontend code with Prettier"
+description = "Format frontend code with Biome"
 run = "pnpm --filter @kftray/ui run format"
 
 [tasks."format:back"]

@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core'
 
-import { Config, KubeContext } from '@/types'
+import type { Config, KubeContext } from '@/types'
 
 export const fetchKubeContexts = (
   kubeConfig?: string,

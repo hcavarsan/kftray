@@ -23,8 +23,8 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  eslint-format:
-    name: ESLint
+  frontend-lint:
+    name: Biome
     runs-on: ubuntu-22.04
     steps:
       - name: Checkout repository
@@ -51,13 +51,13 @@ jobs:
             ~/.pnpm-store
             node_modules
             frontend/node_modules
-          key: pnpm-eslint-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
+          key: pnpm-biome-${{ runner.os }}-${{ hashFiles('**/pnpm-lock.yaml') }}
           restore-keys: |
-            pnpm-eslint-${{ runner.os }}-
+            pnpm-biome-${{ runner.os }}-
             pnpm-${{ runner.os }}-
 
       - name: Perform linting
-        run: pnpm lint:front
+        run: pnpm --filter @kftray/ui run lint:check
 
   rust-format:
     name: rustfmt

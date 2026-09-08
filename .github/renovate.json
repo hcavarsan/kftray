@@ -71,7 +71,6 @@
 				"kube",
 				"k8s-openapi",
 				"kube-runtime",
-				"eslint",
 				"hyper",
 				"tauri",
 				"tauri-plugin-positioner",

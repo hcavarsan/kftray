@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react'
-import ReactSelect, { ActionMeta, SingleValue } from 'react-select'
+import type React from 'react'
+import { useEffect, useState } from 'react'
+import ReactSelect, { type ActionMeta, type SingleValue } from 'react-select'
 
 import {
   Button,
@@ -18,7 +19,7 @@ import { open } from '@tauri-apps/plugin-dialog'
 import { fetchKubeContexts } from '@/components/AddConfigModal/utils'
 import { Checkbox } from '@/components/ui/checkbox'
 import { toaster } from '@/components/ui/toaster'
-import {
+import type {
   AutoImportModalProps,
   Config,
   KubeContext,

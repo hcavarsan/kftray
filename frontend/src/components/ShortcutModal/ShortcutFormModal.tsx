@@ -1,4 +1,5 @@
-import React, { useEffect, useState } from 'react'
+import type React from 'react'
+import { useEffect, useState } from 'react'
 
 import {
   Box,
@@ -17,7 +18,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { DialogCloseTrigger } from '@/components/ui/dialog'
 import { toaster } from '@/components/ui/toaster'
 import { type Shortcut, useGlobalShortcuts } from '@/hooks/useGlobalShortcuts'
-import { type Config } from '@/types'
+import type { Config } from '@/types'
 
 interface ShortcutFormModalProps {
   isOpen: boolean
