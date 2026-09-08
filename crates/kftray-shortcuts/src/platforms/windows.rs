@@ -59,7 +59,7 @@ impl WindowsPlatform {
         std::thread::spawn(move || {
             let rt = tokio::runtime::Runtime::new().unwrap();
             rt.block_on(async {
-                let mut manager = match GlobalHotKeyManager::new() {
+                let manager = match GlobalHotKeyManager::new() {
                     Ok(m) => m,
                     Err(e) => {
                         error!("Failed to create GlobalHotKeyManager: {}", e);
