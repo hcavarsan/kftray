@@ -17,6 +17,7 @@ use ratatui::{
     Terminal,
     backend::CrosstermBackend,
 };
+use tokio::task::JoinHandle;
 use tokio::time::{
     self,
     Duration,
@@ -25,12 +26,16 @@ use tokio::time::{
 use crate::logging::LoggerState;
 use crate::tui::input::{
     App,
+    AppState,
+    UpdateInfo,
     handle_input,
 };
 use crate::tui::ui::draw_ui;
 
+type UpdateCheckTask = JoinHandle<Result<UpdateInfo, String>>;
+
 pub async fn run_tui(
-    mode: DatabaseMode, logger_state: LoggerState,
+    mode: DatabaseMode, logger_state: LoggerState, _no_update_check: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -41,19 +46,13 @@ pub async fn run_tui(
     let mut app = App::new(logger_state);
 
     #[cfg(not(debug_assertions))]
-    {
-        match crate::updater::check_for_updates().await {
-            Ok(update_info) => {
-                if update_info.has_update {
-                    app.update_info = Some(update_info);
-                    app.state = crate::tui::input::AppState::ShowUpdateConfirmation;
-                }
-            }
-            Err(e) => {
-                error!("Failed to check for updates: {e}");
-            }
-        }
-    }
+    let mut update_check: Option<UpdateCheckTask> = if !_no_update_check {
+        Some(tokio::spawn(crate::updater::check_for_updates()))
+    } else {
+        None
+    };
+    #[cfg(debug_assertions)]
+    let mut update_check: Option<UpdateCheckTask> = None;
 
     // Start network monitor if enabled
     if let Ok(enabled) = kftray_commons::utils::settings::get_network_monitor_with_mode(mode).await
@@ -63,7 +62,7 @@ pub async fn run_tui(
         error!("Failed to start network monitor: {e}");
     }
 
-    let res = run_app(&mut terminal, &mut app, mode).await;
+    let res = run_app(&mut terminal, &mut app, mode, &mut update_check).await;
 
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
@@ -76,8 +75,9 @@ pub async fn run_tui(
     Ok(())
 }
 
-pub async fn run_app<B: ratatui::backend::Backend>(
+async fn run_app<B: ratatui::backend::Backend>(
     terminal: &mut Terminal<B>, app: &mut App, mode: DatabaseMode,
+    update_check: &mut Option<UpdateCheckTask>,
 ) -> io::Result<()>
 where
     std::io::Error: From<B::Error>,
@@ -91,6 +91,28 @@ where
         app.update_configs(&configs, &config_states);
         app.load_http_logs_states(&configs, mode).await;
         app.load_active_pods(&config_states).await;
+
+        if update_check.as_ref().is_some_and(|task| task.is_finished())
+            && let Some(task) = update_check.take()
+        {
+            match task.await {
+                Ok(Ok(update_info)) => {
+                    app.update_prompt_pending = update_info.has_update;
+                    app.update_info = Some(update_info);
+                }
+                Ok(Err(e)) => {
+                    error!("Failed to check for updates: {e}");
+                }
+                Err(e) => {
+                    error!("Update check task failed: {e}");
+                }
+            }
+        }
+
+        if app.update_prompt_pending && app.state == AppState::Normal {
+            app.update_prompt_pending = false;
+            app.state = AppState::ShowUpdateConfirmation;
+        }
 
         if !app.logger_state.is_file_output_enabled() {
             tui_logger::move_events();
@@ -232,7 +254,6 @@ mod tests {
                 draw_ui(f, &mut app, &config_states);
             })
             .unwrap();
-
         insta::assert_debug_snapshot!("ui_with_data", terminal.backend().buffer());
 
         app.active_component = ActiveComponent::RunningTable;
