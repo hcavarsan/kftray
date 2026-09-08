@@ -3,6 +3,7 @@ use std::time::{
     UNIX_EPOCH,
 };
 
+#[cfg(unix)]
 use log::{
     debug,
     info,
@@ -212,23 +213,4 @@ fn get_authorized_user_uid() -> u32 {
     let current_uid = unsafe { libc::getuid() };
     info!("No specific authorized UID found, falling back to current UID: {current_uid}");
     current_uid
-}
-
-#[cfg(windows)]
-pub fn validate_peer_credentials(
-    _pipe_handle: windows::Win32::Foundation::HANDLE,
-) -> Result<(), HelperError> {
-    Ok(())
-}
-
-#[cfg(not(any(unix, windows)))]
-fn get_authorized_user_uid() -> u32 {
-    warn!("Unsupported platform: No UID-based authorization, using default");
-    0
-}
-
-#[cfg(not(any(unix, windows)))]
-pub fn validate_peer_credentials<T>(_stream: &T) -> Result<(), HelperError> {
-    warn!("Unsupported platform: Peer credential validation skipped");
-    Ok(())
 }
