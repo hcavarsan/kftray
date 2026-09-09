@@ -138,8 +138,7 @@ jobs:
       - name: Cache Rust
         uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          key: kftray-tauri-${{ matrix.rust_target }}-${{ matrix.os }}
-          shared-key: kftray-tauri-${{ matrix.rust_target }}
+          shared-key: kftray-tauri-${{ matrix.rust_target }}-${{ matrix.os }}
           workspaces: |
             .
             crates/kftray-tauri
@@ -462,8 +461,7 @@ jobs:
       - name: Cache Rust
         uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          key: kftui-${{ matrix.rust_target }}-${{ matrix.os }}
-          shared-key: kftui-${{ matrix.rust_target }}
+          shared-key: kftui-${{ matrix.rust_target }}-${{ matrix.os }}
           workspaces: |
             .
             crates/kftui
