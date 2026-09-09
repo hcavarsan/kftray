@@ -14,6 +14,8 @@ brew install --cask kftray
 
 ### Linux
 
+Debian, Ubuntu, Fedora, and openSUSE users can install the `kftray` package from the project's [package repositories](https://github.com/hcavarsan/kftray#linux-packages), which keep it updated through the system package manager.
+
 Install using Homebrew:
 
 ```bash

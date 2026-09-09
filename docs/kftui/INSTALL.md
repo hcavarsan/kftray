@@ -24,6 +24,14 @@ brew tap hcavarsan/kftray
 brew install kftui
 ```
 
+Using the Debian, Ubuntu, Fedora, or openSUSE [package repositories](https://github.com/hcavarsan/kftray#linux-packages):
+
+```sh
+sudo apt install kftui     # Debian and Ubuntu
+sudo dnf install kftui     # Fedora
+sudo zypper install kftui  # openSUSE
+```
+
 Using `curl`:
 
 #### Bash Shell

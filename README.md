@@ -120,6 +120,37 @@ The terminal interface for those who prefer staying in the console.
 - [Usage Guide](https://github.com/hcavarsan/kftray/tree/main/docs/kftui/USAGE.md) – Terminal shortcuts and features
 - [Building from Source](https://github.com/hcavarsan/kftray/tree/main/docs/kftui/BUILD.md) – Build instructions
 
+## Linux Packages
+
+Every release publishes `kftray` and `kftui` packages for Debian, Ubuntu, Fedora, and openSUSE through the [openSUSE Build Service](https://build.opensuse.org/project/show/home:hencavarsan:kftray). Add the repository once, then install either package with your package manager; updates arrive with the regular system upgrade. The commands below install `kftui`; replace it with `kftray` for the desktop app.
+
+**Debian and Ubuntu** – replace `Debian_12` with `Debian_13`, `Ubuntu_22.04`, `Ubuntu_24.04`, or `Ubuntu_26.04`:
+
+```bash
+sudo mkdir -p /etc/apt/keyrings
+curl -fsSL https://download.opensuse.org/repositories/home:/hencavarsan:/kftray/Debian_12/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/kftray.gpg
+echo "deb [signed-by=/etc/apt/keyrings/kftray.gpg] https://download.opensuse.org/repositories/home:/hencavarsan:/kftray/Debian_12/ /" | sudo tee /etc/apt/sources.list.d/kftray.list
+sudo apt update
+sudo apt install kftui
+```
+
+**Fedora** – replace `Fedora_44` with `Fedora_43` if needed:
+
+```bash
+sudo dnf config-manager addrepo --from-repofile=https://download.opensuse.org/repositories/home:/hencavarsan:/kftray/Fedora_44/home:hencavarsan:kftray.repo
+sudo dnf install kftui
+```
+
+**openSUSE** – replace `openSUSE_Tumbleweed` with `openSUSE_Leap_16.0` for Leap:
+
+```bash
+sudo zypper addrepo https://download.opensuse.org/repositories/home:/hencavarsan:/kftray/openSUSE_Tumbleweed/home:hencavarsan:kftray.repo
+sudo zypper --gpg-auto-import-keys refresh
+sudo zypper install kftui
+```
+
+Packages are signed with the project key of `home:hencavarsan:kftray`; the `.repo` files reference it and the apt source pins it with `signed-by`.
+
 ## kftray-server - Proxy Relay
 
 The proxy relay that runs in your cluster to handle TCP/UDP forwarding.
