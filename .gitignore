@@ -56,3 +56,6 @@ fuzz/corpus/**/crash-*
 fuzz/corpus/**/leak-*
 fuzz/corpus/**/timeout-*
 .omc/
+.debug-journal.md
+**/__pycache__/
+.omo/

@@ -20,8 +20,10 @@ jobs:
     runs-on: ubuntu-22.04
     steps:
       - name: Validate version format
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
         run: |
-          if ! [[ ${{ github.ref_name }} =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
+          if ! [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
             echo "Invalid version format. Must be vX.Y.Z or vX.Y.Z-suffix"
             exit 1
           fi
@@ -65,7 +67,7 @@ jobs:
           tag_name: ${{ github.ref_name }}
           name: "KFtray - ${{ github.ref_name }}"
           draft: true
-          prerelease: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Set release ID output
@@ -294,7 +296,7 @@ jobs:
           releaseBody: "See the assets to download this version and install."
           releaseDraft: true
           releaseAssetNamePattern: ${{ matrix.asset_name_pattern || '' }}
-          prerelease: false
+          prerelease: ${{ contains(github.ref_name, '-') }}
           args: ${{ matrix.tauri_args }}
 
       - name: Retry Build on Failure
@@ -579,8 +581,8 @@ jobs:
             tar -czf kftui_${{ matrix.os_name }}_${{ matrix.arch }}.tar.gz kftui_${{ matrix.os_name }}_${{ matrix.arch }}.exe
             cd ../..
 
-            gh release upload ${{ github.ref_name }} ./target/release/kftui_${{ matrix.os_name }}_${{ matrix.arch }}.exe
-            gh release upload ${{ github.ref_name }} ./target/release/kftui_${{ matrix.os_name }}_${{ matrix.arch }}.tar.gz
+            gh release upload ${{ github.ref_name }} ./target/release/kftui_${{ matrix.os_name }}_${{ matrix.arch }}.exe --clobber
+            gh release upload ${{ github.ref_name }} ./target/release/kftui_${{ matrix.os_name }}_${{ matrix.arch }}.tar.gz --clobber
           else
             mkdir -p ./target/release
             mv ./target/${{ matrix.rust_target }}/release/kftui ./target/release/kftui_${{ matrix.os_name }}_${{ matrix.arch }}
@@ -590,8 +592,8 @@ jobs:
             tar -czf kftui_${{ matrix.os_name }}_${{ matrix.arch }}.tar.gz kftui_${{ matrix.os_name }}_${{ matrix.arch }}
             cd ../..
 
-            gh release upload ${{ github.ref_name }} ./target/release/kftui_${{ matrix.os_name }}_${{ matrix.arch }}
-            gh release upload ${{ github.ref_name }} ./target/release/kftui_${{ matrix.os_name }}_${{ matrix.arch }}.tar.gz
+            gh release upload ${{ github.ref_name }} ./target/release/kftui_${{ matrix.os_name }}_${{ matrix.arch }} --clobber
+            gh release upload ${{ github.ref_name }} ./target/release/kftui_${{ matrix.os_name }}_${{ matrix.arch }}.tar.gz --clobber
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -841,8 +843,7 @@ jobs:
     runs-on: ubuntu-22.04
     if: |
       startsWith(github.ref, 'refs/tags/v') &&
-      !contains(github.ref, '-beta') &&
-      !contains(github.ref, '-alpha')
+      !contains(github.ref_name, '-')
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -860,6 +861,8 @@ jobs:
 
       - name: Update release notes
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          RELEASE_NOTES: ${{ steps.git-cliff.outputs.content }}
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           script: |
@@ -868,7 +871,7 @@ jobs:
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 release_id: ${{ needs.create-release-draft.outputs.release_id }},
-                body: `${{ steps.git-cliff.outputs.content }}`,
+                body: process.env.RELEASE_NOTES,
                 tag_name: process.env.GITHUB_REF_NAME,
                 name: `KFtray - ${process.env.GITHUB_REF_NAME}`
               });
@@ -881,7 +884,7 @@ jobs:
                   owner: context.repo.owner,
                   repo: context.repo.repo,
                   release_id: ${{ needs.create-release-draft.outputs.release_id }},
-                  body: `${{ steps.git-cliff.outputs.content }}`,
+                  body: process.env.RELEASE_NOTES,
                   tag_name: process.env.GITHUB_REF_NAME,
                   name: `KFtray - ${process.env.GITHUB_REF_NAME}`
                 });
@@ -920,6 +923,17 @@ jobs:
           mv latest.direct.json latest.json
           gh release upload "$GITHUB_REF_NAME" latest.json --clobber
 
+      - name: Setup uv for updater metadata
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          python-version: "3.12"
+
+      - name: Finalize updater metadata before publishing
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: uv run hacks/fix_updater_json.py "$GITHUB_REF_NAME"
+
       - name: Publish release
         uses: eregon/publish-release@01df127f5e9a3c26935118e22e738d95b59d10ce # v1.0.6
         env:
@@ -934,8 +948,7 @@ jobs:
     runs-on: ubuntu-22.04
     if: |
       startsWith(github.ref, 'refs/tags/v') &&
-      !contains(github.ref, '-beta') &&
-      !contains(github.ref, '-alpha')
+      !contains(github.ref_name, '-')
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1120,8 +1133,7 @@ jobs:
     runs-on: macos-latest
     if: |
       startsWith(github.ref, 'refs/tags/v') &&
-      !contains(github.ref, '-beta') &&
-      !contains(github.ref, '-alpha')
+      !contains(github.ref_name, '-')
     steps:
       - name: Checkout repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1134,13 +1146,6 @@ jobs:
       - name: Install Python dependencies
         working-directory: hacks
         run: uv sync
-
-      - name: Fix updater JSON for multi-glibc support
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        working-directory: hacks
-        run: uv run python fix_updater_json.py ${{ github.ref_name }}
 
       - name: Update Homebrew formulas
         env:

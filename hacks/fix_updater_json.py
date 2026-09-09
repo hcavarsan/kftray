@@ -1,130 +1,167 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.12"
+# dependencies = []
+# ///
 
 import json
 import os
+import re
 import subprocess
 import sys
-import glob
 from pathlib import Path
+from tempfile import TemporaryDirectory
+from typing import Final
 
 
-def run_command(cmd):
-    result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
-    if result.returncode != 0:
-        print(f"Command failed: {cmd}")
-        print(f"Error: {result.stderr}")
-        sys.exit(1)
-    return result.stdout.strip()
+type JsonValue = (
+    None | bool | int | float | str | list[JsonValue] | dict[str, JsonValue]
+)
+type JsonObject = dict[str, JsonValue]
+
+DEFAULT_REPOSITORY: Final = "hcavarsan/kftray"
+DEFAULT_DIRECTORY: Final = Path(".")
 
 
-def download_release_files(tag):
-    print(f"Downloading files from release {tag}")
-
-    os.makedirs("temp_release", exist_ok=True)
-    os.chdir("temp_release")
-
-    try:
-        run_command(f"gh release download {tag} -p 'latest.json'")
-    except:
-        print("No existing latest.json found, will create new one")
-        with open("latest.json", "w") as f:
-            json.dump({"platforms": {}}, f)
-
-    run_command(f"gh release download {tag} -p '*.AppImage.sig'")
-
-    print("Downloaded files:")
-    for file in glob.glob("*"):
-        print(f"  {file}")
+class ReleaseError(ValueError):
+    pass
 
 
-def read_signature(sig_file):
-    if not os.path.exists(sig_file):
-        print(f"Warning: {sig_file} not found")
-        return None
-
-    with open(sig_file, 'r') as f:
-        return f.read().strip()
-
-
-def map_appimage_to_platform(filename):
-    if "newer-glibc" in filename:
-        if "amd64" in filename or "x86_64" in filename:
-            return "linux-x86_64-glibc239"
-        elif "aarch64" in filename or "arm64" in filename:
-            return "linux-aarch64-glibc239"
-    else:
-        if "amd64" in filename or "x86_64" in filename:
-            return "linux-x86_64-glibc231"
-        elif "aarch64" in filename or "arm64" in filename:
-            return "linux-aarch64-glibc231"
-
-    return None
+def run_command(args: list[str]) -> str:
+    return subprocess.run(
+        args,
+        check=True,
+        stdout=subprocess.PIPE,
+        text=True,
+        timeout=120,
+    ).stdout.strip()
 
 
-def build_fixed_json(tag):
-    with open("latest.json", "r") as f:
-        data = json.load(f)
+def appimage_platforms(tag: str) -> tuple[tuple[str, str], ...]:
+    version = tag.removeprefix("v")
+    return tuple(
+        (f"linux-{arch}-glibc{glibc}", f"kftray_{version}_{prefix}{suffix}.AppImage")
+        for arch, suffix in (("x86_64", "amd64"), ("aarch64", "aarch64"))
+        for glibc, prefix in (("231", ""), ("239", "newer-glibc_"))
+    )
 
-    if "platforms" not in data:
-        data["platforms"] = {}
 
-    version = tag.lstrip('v')
-    data["version"] = version
-    data["notes"] = "See the assets to download this version and install."
-    data["pub_date"] = data.get("pub_date", "2025-01-01T00:00:00.000Z")
+def download_release_files(tag: str, directory: Path, repository: str) -> None:
+    assets = set(
+        run_command(
+            [
+                "gh",
+                "release",
+                "view",
+                tag,
+                "--repo",
+                repository,
+                "--json",
+                "assets",
+                "--jq",
+                '.assets[] | select(.state == "uploaded") | .name',
+            ]
+        ).splitlines()
+    )
+    required = {"latest.json"}
+    for _, asset in appimage_platforms(tag):
+        required.update((asset, f"{asset}.sig"))
+    missing = required - assets
+    if missing:
+        raise ReleaseError(
+            f"Release {tag} is missing assets: {', '.join(sorted(missing))}"
+        )
 
-    sig_files = glob.glob("*.AppImage.sig")
+    _ = run_command(
+        [
+            "gh",
+            "release",
+            "download",
+            tag,
+            "--repo",
+            repository,
+            "--pattern",
+            "latest.json",
+            "--pattern",
+            "*.AppImage.sig",
+            "--dir",
+            str(directory),
+        ]
+    )
 
-    for sig_file in sig_files:
-        appimage_name = sig_file.replace(".sig", "")
-        platform_key = map_appimage_to_platform(appimage_name)
 
-        if platform_key:
-            signature = read_signature(sig_file)
-            if signature:
-                data["platforms"][platform_key] = {
-                    "signature": signature,
-                    "url": f"https://github.com/hcavarsan/kftray/releases/download/{tag}/{appimage_name}"
-                }
-                print(f"Added platform {platform_key} -> {appimage_name}")
+def build_fixed_json(
+    tag: str,
+    directory: Path = DEFAULT_DIRECTORY,
+    repository: str = DEFAULT_REPOSITORY,
+) -> JsonObject:
+    data: JsonValue = json.loads(
+        (directory / "latest.json").read_text(encoding="utf-8")
+    )
+    if not isinstance(data, dict) or data.get("version") != tag.removeprefix("v"):
+        raise ReleaseError(f"latest.json must contain version {tag.removeprefix('v')}")
+    platforms = data.get("platforms")
+    if not isinstance(platforms, dict) or not platforms:
+        raise ReleaseError("latest.json must contain existing platform entries")
+
+    for platform, asset in appimage_platforms(tag):
+        signature = (directory / f"{asset}.sig").read_text(encoding="utf-8").strip()
+        if not signature:
+            raise ReleaseError(f"Signature is empty: {asset}.sig")
+        entry: JsonObject = {
+            "signature": signature,
+            "url": f"https://github.com/{repository}/releases/download/{tag}/{asset}",
+        }
+        platforms[platform] = entry
+        if platform.endswith("-glibc231"):
+            generic = platform.removesuffix("-glibc231")
+            platforms[generic] = entry
+            platforms[f"{generic}-appimage"] = entry
 
     return data
 
 
-def main():
+def main() -> int:
     if len(sys.argv) != 2:
-        print("Usage: python3 fix_updater_json.py <tag>")
-        print("Example: python3 fix_updater_json.py v0.26.2")
-        sys.exit(1)
+        print("Usage: uv run hacks/fix_updater_json.py <tag>", file=sys.stderr)
+        return 1
 
     tag = sys.argv[1]
-    original_dir = os.getcwd()
-
+    if re.fullmatch(r"v[0-9]+\.[0-9]+\.[0-9]+(?:-[a-zA-Z0-9.]+)?", tag) is None:
+        print(f"Invalid release tag: {tag}", file=sys.stderr)
+        return 1
+    repository = os.environ.get("GH_REPO", DEFAULT_REPOSITORY)
     try:
-        download_release_files(tag)
+        with TemporaryDirectory(prefix="kftray-updater-") as temporary:
+            directory = Path(temporary)
+            download_release_files(tag, directory, repository)
+            fixed_data = build_fixed_json(tag, directory, repository)
+            manifest = directory / "latest.json"
+            _ = manifest.write_text(
+                json.dumps(fixed_data, indent=2) + "\n", encoding="utf-8"
+            )
+            _ = run_command(
+                [
+                    "gh",
+                    "release",
+                    "upload",
+                    tag,
+                    str(manifest),
+                    "--repo",
+                    repository,
+                    "--clobber",
+                ]
+            )
+    except subprocess.CalledProcessError as error:
+        print(f"Release command failed: {error}", file=sys.stderr)
+        return 1
+    except (OSError, ValueError, subprocess.TimeoutExpired) as error:
+        print(f"Could not normalize updater metadata: {error}", file=sys.stderr)
+        return 1
 
-        fixed_data = build_fixed_json(tag)
-
-        with open("latest_fixed.json", "w") as f:
-            json.dump(fixed_data, f, indent=2)
-
-        print("\nFixed JSON structure:")
-        print(json.dumps(fixed_data, indent=2))
-
-        print(f"\nUploading fixed JSON to release {tag}")
-        run_command(f"gh release upload {tag} latest_fixed.json --clobber")
-        run_command(f"rm -f latest.json")
-        run_command(f"mv latest_fixed.json latest.json")
-        run_command(f"gh release upload {tag} latest.json --clobber")
-
-        print("Successfully updated latest.json in release!")
-
-    finally:
-        os.chdir(original_dir)
-        if os.path.exists("temp_release"):
-            import shutil
-            shutil.rmtree("temp_release")
+    print(f"Updated latest.json for {tag} from finalized AppImage signatures")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
