@@ -4,7 +4,7 @@ Version: {{VERSION}}-1
 Binary: kftui
 Maintainer: hcavarsan <hcavarsan@yahoo.com.br>
 Architecture: amd64 arm64
-Build-Depends: debhelper (>= 11)
+Build-Depends: debhelper (>= 11), libdbus-1-dev
 Checksums-Sha1:
  {{SHA1_ORIG}} {{SIZE_ORIG}} kftui_{{VERSION}}.orig.tar.gz
  {{SHA1_DEBIAN}} {{SIZE_DEBIAN}} kftui_{{VERSION}}-1.debian.tar.xz

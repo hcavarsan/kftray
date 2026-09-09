@@ -5,11 +5,17 @@
 
 override_dh_auto_build:
 
+override_dh_strip:
+
 override_dh_auto_install:
 	mkdir -p debian/kftray/usr/bin
 	DEB_HOST_ARCH=$$(dpkg-architecture -qDEB_HOST_ARCH); \
+	variant=; \
+	if dpkg --compare-versions "$$(getconf GNU_LIBC_VERSION | cut -d' ' -f2)" ge 2.39; then \
+		variant=newer-glibc_; \
+	fi; \
 	if [ "$$DEB_HOST_ARCH" = "amd64" ]; then \
-		install -m755 kftray_{{VERSION}}_amd64.AppImage debian/kftray/usr/bin/kftray; \
+		install -m755 "kftray_{{VERSION}}_$${variant}amd64.AppImage" debian/kftray/usr/bin/kftray; \
 	elif [ "$$DEB_HOST_ARCH" = "arm64" ]; then \
-		install -m755 kftray_{{VERSION}}_arm64.AppImage debian/kftray/usr/bin/kftray; \
+		install -m755 "kftray_{{VERSION}}_$${variant}aarch64.AppImage" debian/kftray/usr/bin/kftray; \
 	fi

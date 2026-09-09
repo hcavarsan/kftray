@@ -4,7 +4,7 @@ FROM opensuse/tumbleweed@sha256:b4406fd5a038f199f1a017aa96f1a5758775fdc807f5bf65
 RUN zypper refresh && \
     zypper addrepo https://download.opensuse.org/repositories/openSUSE:Tools/openSUSE_Tumbleweed/openSUSE:Tools.repo && \
     zypper --gpg-auto-import-keys refresh && \
-    zypper install -y osc build git curl wget && \
+    zypper install -y osc build git curl wget jq libxml2-tools tar gzip xz coreutils && \
     zypper clean -a
 
 WORKDIR /workspace
