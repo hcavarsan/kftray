@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+umask 022
 
 # OBS Package Publisher
 # Publishes kftui and kftray packages to OpenSUSE Build Service
@@ -21,7 +22,7 @@ set -euo pipefail
 
 show_usage() {
     echo "OBS Package Publisher"
-    echo "Usage: $0 [package_name...]"
+    echo "Usage: $0 [--dry-run] [package_name...]"
     echo ""
     echo "Environment variables required:"
     echo "  VERSION      - Version to publish (e.g., 1.2.3)"
@@ -29,7 +30,10 @@ show_usage() {
     echo "  OBS_PASSWORD - OpenSUSE Build Service password"
     echo ""
     echo "Optional:"
-    echo "  OBS_PROJECT  - Project name (default: home:\${OBS_USER}:kftray)"
+    echo "  OBS_PROJECT         - Project name (default: home:\${OBS_USER}:kftray)"
+    echo "  OBS_RESULTS_TIMEOUT - Wait budget per package for OBS builds (default: 30m)"
+    echo "  GITHUB_TOKEN        - Authenticates GitHub API calls (avoids anonymous rate limits)"
+    echo "  --dry-run           - Validate and prepare packages without contacting OBS"
     echo ""
     echo "Examples:"
     echo "  export VERSION=1.2.3 OBS_USER=myuser OBS_PASSWORD=mypass"
@@ -40,7 +44,13 @@ show_usage() {
     echo "Available packages: kftui, kftray"
 }
 
-# Validate required environment variables
+ORIGINAL_ARGS="$*"
+DRY_RUN=false
+if [ "${1:-}" = "--dry-run" ]; then
+    DRY_RUN=true
+    shift
+fi
+
 if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
     show_usage
     exit 0
@@ -53,14 +63,14 @@ if [ -z "${VERSION:-}" ]; then
     exit 1
 fi
 
-if [ -z "${OBS_USER:-}" ]; then
+if [ "$DRY_RUN" = false ] && [ -z "${OBS_USER:-}" ]; then
     echo "Error: OBS_USER environment variable is required"
     echo "Example: export OBS_USER=myusername"
     show_usage
     exit 1
 fi
 
-if [ -z "${OBS_PASSWORD:-}" ]; then
+if [ "$DRY_RUN" = false ] && [ -z "${OBS_PASSWORD:-}" ]; then
     echo "Error: OBS_PASSWORD environment variable is required"
     echo "Example: export OBS_PASSWORD=mypassword"
     show_usage
@@ -68,22 +78,21 @@ if [ -z "${OBS_PASSWORD:-}" ]; then
 fi
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VERSION="${VERSION:-${GITHUB_REF#refs/tags/v}}"
-OBS_PROJECT="${OBS_PROJECT:-home:${OBS_USER}:kftray}"
+VERSION="${VERSION#v}"
+OBS_PROJECT="${OBS_PROJECT:-home:${OBS_USER:-dryrun}:kftray}"
+OBS_RESULTS_TIMEOUT="${OBS_RESULTS_TIMEOUT:-30m}"
 PACKAGES=("kftui" "kftray")
+WORK_DIR=""
+RELEASE_METADATA=""
+SOURCE_DATE_EPOCH=""
 
 # Version validation function
 validate_version() {
     local version="$1"
     
-    # Remove leading 'v' if present
-    version="${version#v}"
-    
-    # Check if version matches semantic versioning pattern
-    # Accepts patterns like: 1.2.3, 1.2.3-beta.1, 1.2.3-alpha, etc.
-    if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$ ]]; then
+    if [[ ! "$version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
         echo "Error: Invalid version format: '$version'"
-        echo "Expected format: X.Y.Z or X.Y.Z-suffix (e.g., 1.2.3, 1.2.3-beta.1)"
+        echo "Expected a stable version: X.Y.Z (e.g., 1.2.3)"
         return 1
     fi
     
@@ -96,11 +105,12 @@ retry_command() {
     local max_attempts=3
     local delay=5
     local attempt=1
-    local command="$*"
     
     while [ $attempt -le $max_attempts ]; do
-        echo "Attempt $attempt/$max_attempts: $command"
-        if eval "$command"; then
+        printf 'Attempt %s/%s:' "$attempt" "$max_attempts"
+        printf ' %q' "$@"
+        printf '\n'
+        if "$@"; then
             return 0
         else
             echo "Command failed on attempt $attempt"
@@ -113,35 +123,57 @@ retry_command() {
         fi
     done
     
-    echo "Command failed after $max_attempts attempts: $command"
+    echo "Command failed after $max_attempts attempts: $*"
     return 1
 }
 
-# Generate checksums for binary downloads
-# Generate dynamic changelog with release notes from GitHub
+load_release() {
+    local -a auth=()
+    RELEASE_METADATA="${WORK_DIR}/release.json"
+    if [ -n "${GITHUB_TOKEN:-}" ]; then
+        auth=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
+    fi
+    curl -fsSL --retry 3 --connect-timeout 15 --max-time 60 \
+        -H "Accept: application/vnd.github+json" "${auth[@]}" \
+        "https://api.github.com/repos/hcavarsan/kftray/releases/tags/v${VERSION}" \
+        -o "$RELEASE_METADATA" || return 1
+    if ! jq -e --arg tag "v${VERSION}" \
+        '.tag_name == $tag and .draft == false and .prerelease == false and (.assets | type == "array")' \
+        "$RELEASE_METADATA" >/dev/null; then
+        echo "Error: Expected a published stable release v${VERSION}" >&2
+        return 1
+    fi
+    SOURCE_DATE_EPOCH=$(jq -er '.published_at | fromdateiso8601' "$RELEASE_METADATA") || return 1
+}
+
+download_asset() {
+    local filename="$1" destination="$2" digest
+    digest=$(jq -er --arg name "$filename" \
+        '[.assets[] | select(.name == $name)] | select(length == 1) | .[0].digest | select(type == "string") | select(test("^sha256:[0-9a-f]{64}$"))' \
+        "$RELEASE_METADATA") || {
+        echo "Error: Release asset $filename is missing a SHA256 digest" >&2
+        return 1
+    }
+    curl -fsSL --retry 3 --connect-timeout 15 --max-time 600 \
+        "https://github.com/hcavarsan/kftray/releases/download/v${VERSION}/${filename}" \
+        -o "$destination" || return 1
+    printf '%s  %s\n' "${digest#sha256:}" "$destination" | sha256sum --check --status || {
+        echo "Error: SHA256 mismatch for $filename" >&2
+        return 1
+    }
+}
+
 generate_changelog() {
     local package_name="$1"
-    local release_notes=""
-    
-    # Try to fetch release notes from GitHub API
-    echo "Fetching release notes for v${VERSION}..." >&2
-    local api_url="https://api.github.com/repos/hcavarsan/kftray/releases/tags/v${VERSION}"
-    
-    if command -v curl >/dev/null 2>&1; then
-        local response=$(curl -s "$api_url" 2>/dev/null)
-        if [ $? -eq 0 ] && echo "$response" | grep -q '"tag_name"'; then
-            # Extract body from JSON (simple extraction, works for basic cases)
-            release_notes=$(echo "$response" | grep -o '"body":"[^"]*"' | sed 's/"body":"//' | sed 's/"$//' | sed 's/\\n/\n/g' | sed 's/\\r//g')
-        fi
-    fi
+    local release_notes date_str
+    release_notes=$(jq -r '.body // "" | gsub("\r"; "")' "$RELEASE_METADATA") || return 1
     
     # Fallback to generic message if no release notes found
     if [ -z "$release_notes" ]; then
         release_notes="Update to version ${VERSION}"
     fi
     
-    # Generate RFC 2822 date format for changelog
-    local date_str=$(date -R 2>/dev/null || date '+%a, %d %b %Y %H:%M:%S %z')
+    date_str=$(jq -r '.published_at | fromdateiso8601 | strftime("%a, %d %b %Y %H:%M:%S +0000")' "$RELEASE_METADATA") || return 1
     
     # Generate changelog entry
     echo "${package_name} (${VERSION}-1) stable; urgency=low"
@@ -169,10 +201,9 @@ generate_debian_source() {
     local package_name="$1"
     local temp_dir="checksums-${package_name}"
     
-    mkdir -p "$temp_dir"
-    cd "$temp_dir"
+    mkdir -p "$temp_dir" || return 1
+    cd "$temp_dir" || return 1
     
-    local base_url="https://github.com/hcavarsan/kftray/releases/download/v${VERSION}"
     local amd64_file=""
     local arm64_file=""
     
@@ -183,80 +214,95 @@ generate_debian_source() {
             ;;
         "kftray")
             amd64_file="kftray_${VERSION}_amd64.AppImage"
-            arm64_file="kftray_${VERSION}_arm64.AppImage"
+            arm64_file="kftray_${VERSION}_aarch64.AppImage"
             ;;
     esac
     
     echo "Creating debian source package for ${package_name}..."
     
     # Create orig.tar.gz with the actual binaries
-    mkdir -p "${package_name}-${VERSION}"
+    mkdir -p "${package_name}-${VERSION}" || return 1
     
     # Download binaries and add to source tree
     echo "Downloading binaries..."
-    if curl -sL "${base_url}/${amd64_file}" -o "${package_name}-${VERSION}/${amd64_file}"; then
+    if download_asset "$amd64_file" "${package_name}-${VERSION}/${amd64_file}"; then
         echo "Downloaded: ${amd64_file}"
     else
-        echo "Warning: Could not download ${amd64_file}"
+        echo "Error: Could not download ${amd64_file}" >&2
+        return 1
     fi
     
-    if curl -sL "${base_url}/${arm64_file}" -o "${package_name}-${VERSION}/${arm64_file}"; then
+    if download_asset "$arm64_file" "${package_name}-${VERSION}/${arm64_file}"; then
         echo "Downloaded: ${arm64_file}"
     else
-        echo "Warning: Could not download ${arm64_file}"
+        echo "Error: Could not download ${arm64_file}" >&2
+        return 1
+    fi
+
+    if [ "$package_name" = kftray ]; then
+        local architecture newer_file
+        for architecture in amd64 aarch64; do
+            newer_file="kftray_${VERSION}_newer-glibc_${architecture}.AppImage"
+            download_asset "$newer_file" "${package_name}-${VERSION}/${newer_file}" || return 1
+        done
     fi
     
     # Create orig.tar.gz
-    tar -czf "${package_name}_${VERSION}.orig.tar.gz" "${package_name}-${VERSION}/"
+    tar --sort=name --mtime="@${SOURCE_DATE_EPOCH}" --owner=0 --group=0 --numeric-owner \
+        -czf "${package_name}_${VERSION}.orig.tar.gz" "${package_name}-${VERSION}/" || return 1
     
     # Create debian.tar.xz with proper debian/ subdirectory structure
-    mkdir -p debian-temp/debian
+    mkdir -p debian-temp/debian || return 1
     
     # Copy debian files from templates to debian/ subdirectory
     for template in "${SCRIPT_DIR}/${package_name}/templates/debian-"*; do
         [ -f "$template" ] || continue
-        filename=$(basename "$template")
+        local filename target_file
+        filename=$(basename "$template") || return 1
         # Remove debian- prefix and copy to debian/ subdirectory
         target_file="${filename#debian-}"
-        cp "$template" "debian-temp/debian/$target_file"
+        cp "$template" "debian-temp/debian/$target_file" || return 1
     done
     
     # Create debian/source/format file
-    mkdir -p debian-temp/debian/source
-    echo "3.0 (quilt)" > debian-temp/debian/source/format
+    mkdir -p debian-temp/debian/source || return 1
+    echo "3.0 (quilt)" > debian-temp/debian/source/format || return 1
     
     # Generate dynamic changelog with release notes
-    generate_changelog "$package_name" > debian-temp/debian/changelog
+    generate_changelog "$package_name" > debian-temp/debian/changelog || return 1
     
     # Process debian control files with version substitution (except changelog)
     for file in debian-temp/debian/*; do
         [ -f "$file" ] || continue
         [ "$(basename "$file")" = "changelog" ] && continue  # Skip changelog, already generated
-        sed -i "s/{{VERSION}}/${VERSION}/g" "$file"
+        sed -i "s/{{VERSION}}/${VERSION}/g" "$file" || return 1
     done
+    chmod +x debian-temp/debian/rules || return 1
     
     # Create the debian.tar.xz from the temp directory
-    tar -cJf "${package_name}_${VERSION}-1.debian.tar.xz" -C debian-temp .
+    tar --sort=name --mtime="@${SOURCE_DATE_EPOCH}" --owner=0 --group=0 --numeric-owner \
+        -cJf "${package_name}_${VERSION}-1.debian.tar.xz" -C debian-temp . || return 1
     
     # Calculate checksums and sizes
     local orig_file="${package_name}_${VERSION}.orig.tar.gz"
     local debian_file="${package_name}_${VERSION}-1.debian.tar.xz"
     
     # Copy generated files to package directory for upload
-    cp "$orig_file" "${SCRIPT_DIR}/package-${package_name}/"
-    cp "$debian_file" "${SCRIPT_DIR}/package-${package_name}/"
+    cp "$orig_file" "$debian_file" "${WORK_DIR}/package-${package_name}/" || return 1
     
     # Calculate all checksums and sizes for orig.tar.gz
-    local md5_orig=$(md5sum "$orig_file" | cut -d' ' -f1)
-    local sha1_orig=$(sha1sum "$orig_file" | cut -d' ' -f1)
-    local sha256_orig=$(sha256sum "$orig_file" | cut -d' ' -f1)
-    local size_orig=$(stat -c%s "$orig_file")
+    local md5_orig sha1_orig sha256_orig size_orig
+    md5_orig=$(md5sum "$orig_file" | cut -d' ' -f1) || return 1
+    sha1_orig=$(sha1sum "$orig_file" | cut -d' ' -f1) || return 1
+    sha256_orig=$(sha256sum "$orig_file" | cut -d' ' -f1) || return 1
+    size_orig=$(stat -c%s "$orig_file") || return 1
     
     # Calculate all checksums and sizes for debian.tar.xz
-    local md5_debian=$(md5sum "$debian_file" | cut -d' ' -f1)
-    local sha1_debian=$(sha1sum "$debian_file" | cut -d' ' -f1)
-    local sha256_debian=$(sha256sum "$debian_file" | cut -d' ' -f1)
-    local size_debian=$(stat -c%s "$debian_file")
+    local md5_debian sha1_debian sha256_debian size_debian
+    md5_debian=$(md5sum "$debian_file" | cut -d' ' -f1) || return 1
+    sha1_debian=$(sha1sum "$debian_file" | cut -d' ' -f1) || return 1
+    sha256_debian=$(sha256sum "$debian_file" | cut -d' ' -f1) || return 1
+    size_debian=$(stat -c%s "$debian_file") || return 1
     
     echo "Orig file checksums:"
     echo "  MD5: $md5_orig"
@@ -270,8 +316,7 @@ generate_debian_source() {
     echo "  SHA256: $sha256_debian"
     echo "  Size: $size_debian"
     
-    cd ..
-    rm -rf "$temp_dir"
+    cd "$WORK_DIR" || return 1
     
     # Export all values for template substitution
     export MD5_ORIG="$md5_orig"
@@ -283,23 +328,20 @@ generate_debian_source() {
     export SHA256_DEBIAN="$sha256_debian"
     export SIZE_DEBIAN="$size_debian"
     
-    # Keep original exports for RPM compatibility
-    export SHA256_AMD64="$sha256_orig"
-    export SHA256_ARM64="$sha256_orig"
-}
-
-# Compatibility alias for old function name
-generate_checksums() {
-    generate_debian_source "$@"
 }
 
 generate_repos_xml() {
-    while IFS=: read -r name project version repo archs; do
+    local name project repo archs arch
+    while read -r name project repo archs; do
         [[ "$name" =~ ^#.*$ ]] && continue
         [[ -z "$name" ]] && continue
+        if [ -z "$project" ] || [ -z "$repo" ] || [ -z "$archs" ]; then
+            echo "Error: Invalid distros.conf entry: $name" >&2
+            return 1
+        fi
         
         echo "  <repository name=\"$name\">"
-        echo "    <path project=\"${project}:${version}\" repository=\"$repo\"/>"
+        echo "    <path project=\"$project\" repository=\"$repo\"/>"
         
         IFS=',' read -ra ARCH_ARRAY <<< "$archs"
         for arch in "${ARCH_ARRAY[@]}"; do
@@ -310,23 +352,78 @@ generate_repos_xml() {
     done < "${SCRIPT_DIR}/distros.conf"
 }
 
-create_project() {
-    if ! retry_command "osc meta prj \"${OBS_PROJECT}\" &>/dev/null"; then
-        cat > project.xml << EOF
-<project name="${OBS_PROJECT}">
-  <title>KFtray</title>
-  <description>Kubernetes port-forwarding manager</description>
-  <person userid="${OBS_USER}" role="maintainer"/>
-$(generate_repos_xml)
-</project>
-EOF
-        retry_command "osc meta prj -F project.xml \"${OBS_PROJECT}\""
-        rm project.xml
+render_project_meta() {
+    local current="$1" output="$2" template="${WORK_DIR}/project-template.xml" repositories
+    repositories=$(generate_repos_xml) || return 1
+    {
+        echo "<project name=\"${OBS_PROJECT}\">"
+        echo "  <title>KFtray</title>"
+        echo "  <description>Kubernetes port-forwarding manager</description>"
+        echo "  <person userid=\"${OBS_USER:-dryrun}\" role=\"maintainer\"/>"
+        printf '%s\n' "$repositories"
+        echo "</project>"
+    } > "$template" || return 1
+    python3 - "$current" "$template" "$output" <<'PY'
+import copy
+import sys
+import xml.etree.ElementTree as ET
+
+current_path, template_path, output_path = sys.argv[1:4]
+
+
+def canonical(element):
+    clone = copy.deepcopy(element)
+    ET.indent(clone)
+    return ET.tostring(clone)
+
+
+template = ET.parse(template_path).getroot()
+if current_path:
+    project = ET.parse(current_path).getroot()
+    before = canonical(project)
+    for repository in project.findall("repository"):
+        project.remove(repository)
+    project.extend(template.findall("repository"))
+    changed = canonical(project) != before
+else:
+    project = template
+    changed = True
+ET.indent(project)
+ET.ElementTree(project).write(output_path, encoding="unicode")
+print("changed" if changed else "unchanged")
+PY
+}
+
+ensure_project() {
+    local current="${WORK_DIR}/project-current.xml" rendered="${WORK_DIR}/project.xml"
+    local errors="${WORK_DIR}/project-errors.txt" attempt state
+    for attempt in 1 2 3; do
+        if osc meta prj "${OBS_PROJECT}" > "$current" 2> "$errors"; then
+            break
+        fi
+        if grep -q 'HTTP Error 404' "$errors"; then
+            current=""
+            break
+        fi
+        cat "$errors" >&2
+        [ "$attempt" -lt 3 ] || return 1
+        sleep 5
+    done
+    state=$(render_project_meta "$current" "$rendered") || return 1
+    if [ -z "$current" ]; then
+        echo "Creating OBS project ${OBS_PROJECT} from distros.conf"
+    elif [ "$state" = unchanged ]; then
+        echo "OBS project repositories already match distros.conf"
+        return 0
+    else
+        echo "Updating OBS project repositories from distros.conf"
     fi
+    retry_command osc meta prj -F "$rendered" "${OBS_PROJECT}" || return 1
 }
 
 prepare_package() {
     local package_name="$1"
+    local filename
     echo "Creating package directory: package-${package_name}"
     mkdir -p "package-${package_name}" || {
         echo "Error: Failed to create package directory"
@@ -344,12 +441,10 @@ prepare_package() {
     for template in "${SCRIPT_DIR}/${package_name}/templates"/*; do
         [ -f "$template" ] || continue
         
-        filename=$(basename "$template")
+        filename=$(basename "$template") || return 1
         echo "Processing template: $filename"
         # Substitute all template placeholders
         sed -e "s/{{VERSION}}/${VERSION}/g" \
-            -e "s/{{SHA256_AMD64}}/${SHA256_AMD64}/g" \
-            -e "s/{{SHA256_ARM64}}/${SHA256_ARM64}/g" \
             -e "s/{{MD5_ORIG}}/${MD5_ORIG}/g" \
             -e "s/{{SHA1_ORIG}}/${SHA1_ORIG}/g" \
             -e "s/{{SHA256_ORIG}}/${SHA256_ORIG}/g" \
@@ -364,177 +459,100 @@ prepare_package() {
         }
     done
     
-    [ -f "package-${package_name}/debian-rules" ] && chmod +x "package-${package_name}/debian-rules"
+    chmod +x "package-${package_name}/debian-rules" || return 1
     echo "Successfully prepared package files for ${package_name}"
+}
+
+wait_for_scheduler() {
+    local package_name="$1" results_file="$2" previous_state="$3" attempt state
+    for attempt in $(seq 1 60); do
+        osc results --xml > "$results_file" || return 1
+        state=$(xmllint --xpath 'string(/resultlist/@state)' "$results_file") || state=""
+        if [ "$state" != "$previous_state" ] || [ "$(xmllint --xpath 'boolean(/resultlist/result[@dirty="true"] | /resultlist/result/status[@code="scheduled" or @code="blocked" or @code="dispatching" or @code="building" or @code="signing" or @code="finished"])' "$results_file")" = true ]; then
+            return 0
+        fi
+        sleep 5
+    done
+    echo "Error: OBS scheduler did not pick up the new revision of ${package_name} within 5 minutes" >&2
+    return 1
 }
 
 upload_package() {
     local package_name="$1"
     local working_dir="${OBS_PROJECT}/${package_name}"
-    local base_dir="$(pwd)"
+    local base_dir="$WORK_DIR"
+    local package_meta="${WORK_DIR}/${package_name}.xml"
+    local file status_output
     
     echo "Processing package: ${package_name}"
     
-    # Step 1: Ensure we're in the correct base directory
-    cd "$base_dir"
+    cd "$base_dir" || return 1
     
-    # Step 2: Ensure package exists in OBS (idempotent)
     echo "Ensuring package ${package_name} exists in OBS..."
     if ! osc meta pkg "${OBS_PROJECT}" "${package_name}" &>/dev/null; then
         echo "Package doesn't exist, creating..."
-        retry_command "osc meta pkg \"${OBS_PROJECT}\" \"${package_name}\" -F /dev/stdin" << EOF
+        cat > "$package_meta" << EOF || return 1
 <package name="${package_name}" project="${OBS_PROJECT}">
   <title>${package_name}</title>
   <description>Kubernetes port-forwarding tool</description>
 </package>
 EOF
+        retry_command osc meta pkg "${OBS_PROJECT}" "${package_name}" -F "$package_meta" || return 1
     else
         echo "Package ${package_name} already exists"
     fi
     
-    # Step 3: Handle working copy (resilient to existing state)
-    if [ -d "$working_dir" ]; then
-        if [ -d "$working_dir/.osc" ]; then
-            echo "Valid working copy exists, updating from server..."
-            cd "$working_dir"
-            if retry_command "osc up"; then
-                echo "Working copy updated successfully"
-                cd "$base_dir"
-            else
-                echo "Update failed, recreating working copy..."
-                cd "$base_dir"
-                rm -rf "$working_dir"
-            fi
-        else
-            echo "Invalid working copy directory, removing..."
-            rm -rf "$working_dir"
-        fi
-    fi
+    echo "Creating working copy for ${package_name}..."
+    retry_command osc co "${OBS_PROJECT}" "${package_name}" || return 1
     
-    # Step 4: Create working copy if it doesn't exist
-    if [ ! -d "$working_dir" ]; then
-        echo "Creating working copy for ${package_name}..."
-        retry_command "osc co \"${OBS_PROJECT}\" \"${package_name}\""
-    fi
-    
-    # Step 5: Verify we have a valid working copy
     if [ ! -d "$working_dir/.osc" ]; then
         echo "Error: Failed to create valid working copy for ${package_name}"
         return 1
     fi
     
-    # Step 6: Update files (with change detection)
-    cd "$working_dir"
+    cd "$working_dir" || return 1
     
-    # Verify source files exist
     if [ ! -d "${base_dir}/package-${package_name}" ]; then
         echo "Error: Source directory package-${package_name} not found"
-        cd "$base_dir"
         return 1
     fi
     
-    # Create backup for change detection
-    local temp_backup=$(mktemp -d)
-    cp * "$temp_backup/" 2>/dev/null || true
-    
-    # Copy new files
     echo "Updating package files..."
-    cp "${base_dir}/package-${package_name}"/* . 2>/dev/null || {
-        echo "Warning: No files found in package-${package_name}/"
-        rm -rf "$temp_backup"
-        cd "$base_dir"
-        return 1
-    }
-    
-    # Handle debian packaging - keep files flat for OBS
-    # OBS expects debian files at root level, not in debian/ subdirectory
-    
-    # Step 7: Detect changes and commit only if needed
-    local has_changes=false
-    
-    # Check for new or modified files
+    cp "${base_dir}/package-${package_name}"/* . || return 1
     for file in *; do
-        [ -f "$file" ] || continue
-        if [ ! -f "$temp_backup/$file" ] || ! cmp -s "$file" "$temp_backup/$file" 2>/dev/null; then
-            has_changes=true
-            echo "Detected change in: $file"
-            break
+        if [ -f "$file" ] && [ ! -f "${base_dir}/package-${package_name}/$file" ]; then
+            rm -- "$file" || return 1
         fi
     done
-    
-    # Check for deleted files
-    if [ "$has_changes" = false ]; then
-        for file in "$temp_backup"/*; do
-            [ -f "$file" ] || continue
-            local basename_file=$(basename "$file")
-            if [ ! -f "$basename_file" ]; then
-                has_changes=true
-                echo "Detected deletion: $basename_file"
-                break
-            fi
-        done
-    fi
-    
-    # Clean up backup
-    rm -rf "$temp_backup"
-    
-    # Step 8: Commit changes if detected
-    if [ "$has_changes" = true ]; then
+    osc addremove || return 1
+    status_output=$(osc status) || return 1
+
+    local results_file="${WORK_DIR}/results-${package_name}.xml" previous_state=""
+    if [ -n "$status_output" ]; then
         echo "Changes detected for ${package_name}, committing..."
-        
-        # Add only new files to avoid interactive prompts on existing files
-        for file in *; do
-            [ -f "$file" ] || continue
-            if ! osc status "$file" &>/dev/null; then
-                echo "Adding new file: $file"
-                osc add "$file" 2>/dev/null || true
-            fi
-        done
-        
-        # Specifically handle debian files that might be untracked
-        for debian_file in debian-*; do
-            if [ -f "$debian_file" ]; then
-                local status_output=$(osc status "$debian_file" 2>/dev/null || echo "?")
-                if [[ "$status_output" == *"?"* ]] || ! osc status "$debian_file" &>/dev/null; then
-                    echo "Adding untracked debian file: $debian_file"
-                    osc add "$debian_file" 2>/dev/null || true
-                fi
-            fi
-        done
-        
-        # Specifically handle source tarball files
-        for source_file in *.orig.tar.gz *.debian.tar.xz; do
-            if [ -f "$source_file" ]; then
-                local status_output=$(osc status "$source_file" 2>/dev/null || echo "?")
-                if [[ "$status_output" == *"?"* ]] || ! osc status "$source_file" &>/dev/null; then
-                    echo "Adding source file: $source_file"
-                    osc add "$source_file" 2>/dev/null || true
-                fi
-            fi
-        done
-        
-        # Check OBS status before committing
-        echo "Current OBS status:"
-        osc status || true
-        
-        # Commit with proper error handling
-        if retry_command "osc commit -m \"Update to version ${VERSION}\""; then
+        printf '%s\n' "$status_output"
+        osc results --xml > "$results_file" || return 1
+        previous_state=$(xmllint --xpath 'string(/resultlist/@state)' "$results_file") || previous_state=""
+        if retry_command osc commit -m "Update to version ${VERSION}"; then
             echo "Successfully committed ${package_name}"
-            
-            # Show build status (non-blocking)
-            echo "Build status for ${package_name}:"
-            retry_command "osc results" || echo "Could not retrieve build status (this is normal for new packages)"
         else
             echo "Failed to commit ${package_name}"
-            cd "$base_dir"
             return 1
         fi
+        wait_for_scheduler "$package_name" "$results_file" "$previous_state" || return 1
     else
         echo "No changes detected for ${package_name}, skipping commit"
     fi
     
-    # Step 9: Return to base directory
-    cd "$base_dir"
+    echo "Waiting for OBS builds of ${package_name} (up to ${OBS_RESULTS_TIMEOUT})..."
+    timeout "$OBS_RESULTS_TIMEOUT" osc results --watch || return 1
+    osc results --xml > "$results_file" || return 1
+    if [ "$(xmllint --xpath 'boolean(/resultlist/result/status[@code="succeeded"]) and not(/resultlist/result[@dirty="true" or not(status)]) and not(/resultlist/result/status[not(@code) or (@code!="succeeded" and @code!="excluded" and @code!="disabled")])' "$results_file")" != true ]; then
+        cat "$results_file" >&2
+        echo "Error: OBS builds did not all succeed for ${package_name}" >&2
+        return 1
+    fi
+    cd "$base_dir" || return 1
     echo "Finished processing ${package_name}"
     return 0
 }
@@ -546,39 +564,33 @@ cleanup() {
         echo "Script failed with exit code $exit_code, cleaning up..."
     fi
     
-    # Clean up any temporary directories
-    find . -maxdepth 1 -name "package-*" -type d -exec rm -rf {} + 2>/dev/null || true
-    find . -maxdepth 1 -name "checksums-*" -type d -exec rm -rf {} + 2>/dev/null || true
-    
-    # Remove any stale project.xml files
-    [ -f project.xml ] && rm -f project.xml
+    if [ -n "$WORK_DIR" ]; then
+        rm -rf -- "$WORK_DIR"
+    fi
     
     if [ $exit_code -ne 0 ]; then
         echo "Cleanup completed. Check logs above for errors."
-        echo "To retry: export VERSION=${VERSION:-} OBS_USER=${OBS_USER:-} OBS_PASSWORD=*** && $0 $*"
+        echo "To retry: export VERSION=${VERSION:-} OBS_USER=${OBS_USER:-} OBS_PASSWORD=*** && $0 ${ORIGINAL_ARGS}"
     fi
     
     exit $exit_code
 }
 
 # Set up signal handlers for cleanup
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 main() {
     echo "=== OBS Package Publisher ==="
     echo "Version: ${VERSION}"
     echo "Project: ${OBS_PROJECT}"
-    echo "User: ${OBS_USER}"
+    echo "User: ${OBS_USER:-dryrun}"
     echo "Timestamp: $(date)"
     echo "================================"
     
     # Validate version format before proceeding
     validate_version "${VERSION}"
-    
-    # Create project (idempotent)
-    echo "Step 1: Creating/verifying OBS project..."
-    create_project
-    echo "✓ Project ready"
     
     # Determine which packages to process
     local packages_to_process
@@ -591,6 +603,22 @@ main() {
         packages_to_process=("${PACKAGES[@]}")
         echo "Step 2: Processing all packages: ${packages_to_process[*]}"
     fi
+
+    for package in "${packages_to_process[@]}"; do
+        case "$package" in
+            kftui|kftray) ;;
+            *) echo "Error: Unknown package: $package" >&2; return 1 ;;
+        esac
+    done
+
+    WORK_DIR=$(mktemp -d)
+    cd "$WORK_DIR"
+    load_release
+    if [ "$DRY_RUN" = true ]; then
+        echo "OBS project metadata rendered from distros.conf:"
+        render_project_meta "" "${WORK_DIR}/project.xml" >/dev/null || return 1
+        cat "${WORK_DIR}/project.xml"
+    fi
     
     # Track success/failure
     local failed_packages=()
@@ -598,6 +626,7 @@ main() {
     
     # Process each package
     for package in "${packages_to_process[@]}"; do
+        cd "$WORK_DIR"
         echo ""
         echo "=== Processing package: ${package} ==="
         
@@ -610,7 +639,22 @@ main() {
             failed_packages+=("${package}")
             continue
         fi
-        
+
+    done
+
+    if [ ${#failed_packages[@]} -gt 0 ]; then
+        echo "Preparation failed for: ${failed_packages[*]}. No packages were uploaded." >&2
+        return 1
+    fi
+    if [ "$DRY_RUN" = true ]; then
+        echo "Dry run: validated sources and packaging metadata for ${packages_to_process[*]}"
+        return 0
+    fi
+
+    cd "$WORK_DIR"
+    echo "Reconciling OBS project ${OBS_PROJECT} with distros.conf..."
+    ensure_project || return 1
+    for package in "${packages_to_process[@]}"; do
         # Upload package
         echo "Step 2b: Uploading package ${package} to OBS..."
         if upload_package "${package}"; then
@@ -637,7 +681,7 @@ main() {
     else
         echo "✓ All packages processed successfully!"
         echo "Project URL: https://build.opensuse.org/project/show/${OBS_PROJECT}"
-        echo "Repository URL: https://download.opensuse.org/repositories/${OBS_PROJECT//:\/}//"
+        echo "Repository URL: https://download.opensuse.org/repositories/${OBS_PROJECT//:/:\/}/"
         return 0
     fi
 }

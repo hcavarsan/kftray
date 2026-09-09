@@ -1054,12 +1054,15 @@ jobs:
           echo "All crates published successfully!"
 
   publish-linux-packages:
-    needs: [sbom-pipeline]
+    needs: [update-release]
     runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    concurrency:
+      group: obs-publishing
+      cancel-in-progress: false
     if: |
       startsWith(github.ref, 'refs/tags/v') &&
-      !contains(github.ref, '-beta') &&
-      !contains(github.ref, '-alpha')
+      !contains(github.ref_name, '-')
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -1067,6 +1070,7 @@ jobs:
         env:
           OBS_USER: ${{ secrets.OBS_USER }}
           OBS_PASSWORD: ${{ secrets.OBS_PASSWORD }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION=${GITHUB_REF_NAME#v}
           export VERSION

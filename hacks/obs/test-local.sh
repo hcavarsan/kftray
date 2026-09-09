@@ -15,7 +15,7 @@ docker build -f Dockerfile.test -t obs-test .
 echo "Running OBS test container..."
 echo "Available commands inside container:"
 echo "  - ./setup.sh     # Setup OBS tools (will fail without credentials)"
-echo "  - ./publish.sh   # Test publish (dry-run mode)"
+echo "  - bash ./dry-run.sh  # Validate real release artifacts without publishing"
 echo "  - osc --help     # OBS command help"
 echo ""
 
@@ -23,6 +23,6 @@ docker run -it --rm \
     -v "${SCRIPT_DIR}:/workspace/obs" \
     -e OBS_USER="${OBS_USER:-test}" \
     -e OBS_PASSWORD="${OBS_PASSWORD:-test}" \
-    -e VERSION="${VERSION:-1.0.0-test}" \
+    -e VERSION="${VERSION:?Set VERSION to a published stable release}" \
     obs-test \
     bash -c "cd /workspace/obs && bash"
