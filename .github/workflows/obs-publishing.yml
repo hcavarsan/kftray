@@ -64,3 +64,27 @@ jobs:
 
       - name: Test updater manifest finalization
         run: uv run --project hacks --with pytest python -m pytest hacks/tests/test_fix_updater_json.py
+
+  rpm-builds:
+    name: RPM builds (${{ matrix.image }})
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["fedora:43", "fedora:44", "opensuse/tumbleweed", "opensuse/leap:16.0"]
+    runs-on: ubuntu-24.04
+    container: ${{ matrix.image }}
+    timeout-minutes: 20
+    steps:
+      - name: Install build dependencies
+        run: |
+          if command -v dnf > /dev/null; then
+            dnf install -y git tar rpm-build gcc redhat-rpm-config dbus-devel cpio pkgconf-pkg-config glibc-static
+          else
+            zypper --non-interactive install git tar rpm-build gcc dbus-1-devel cpio pkg-config glibc-devel-static
+          fi
+
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Build RPM packages with the distribution's rpm macros
+        run: bash hacks/obs/test-package-builds.sh rpm

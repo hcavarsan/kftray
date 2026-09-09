@@ -7,6 +7,8 @@ URL:            https://github.com/hcavarsan/kftray
 Source0:        kftui_{{VERSION}}.orig.tar.gz
 ExclusiveArch:  x86_64 aarch64
 
+%global debug_package %{nil}
+
 %description
 KFtui - Kubernetes port-forwarding CLI manager
 
