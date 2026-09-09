@@ -419,8 +419,8 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: ubuntu-24.04
-            runner: ubuntu-24.04-arm
+          - os: ubuntu-22.04
+            runner: ubuntu-22.04-arm
             arch: arm64
             rust_target: aarch64-unknown-linux-gnu
             os_name: linux
