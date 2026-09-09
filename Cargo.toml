@@ -160,6 +160,12 @@ windows = { version = "0.62", features = [
 windows-native-keyring-store = "1.1"
 windows-service = "0.8"
 
+# Left click on the macOS 27 menu bar icon opened the menu instead of the
+# window (tauri-apps/tray-icon#355). Drop once a tray-icon release ships the
+# fix from the pinned branch and cargo update picks it up.
+[patch.crates-io]
+tray-icon = { git = "https://github.com/hcavarsan/tray-icon", rev = "f2fc8a97fb39023d97aa6104ebfb086cb48c602b" }
+
 [profile.dev]
 incremental = true
 
