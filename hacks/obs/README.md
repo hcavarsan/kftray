@@ -67,8 +67,11 @@ All selected packages are prepared before any OBS write. The publisher then:
 
 The command is idempotent: rerunning it for the same version detects no changes,
 waits for the current builds, and reports their result. When the release job
-fails because OBS was slow, rerun the job. GitHub Actions serializes OBS
-publication jobs and limits each to 90 minutes.
+fails because OBS was slow, rerun the job. When it fails because of the
+publishing files themselves, fix them on `main` and run the "OBS publishing"
+workflow manually with the release version as input: it runs the checks from
+the selected branch and then publishes that version from it. GitHub Actions
+serializes OBS publication jobs and limits each to 90 minutes.
 
 ## Release history notes
 

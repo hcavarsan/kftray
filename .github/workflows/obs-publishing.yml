@@ -2,6 +2,11 @@ name: OBS publishing
 
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: "Published release version to (re)publish to OBS, for example 0.27.32. Leave empty to only run the checks."
+        required: false
+        type: string
 
   pull_request:
     branches:
@@ -25,7 +30,7 @@ on:
       - "hacks/uv.lock"
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -88,3 +93,27 @@ jobs:
 
       - name: Build RPM packages with the distribution's rpm macros
         run: bash hacks/obs/test-package-builds.sh rpm
+
+  publish:
+    name: Publish ${{ inputs.version }} to OBS
+    needs: [checks, rpm-builds]
+    if: github.event_name == 'workflow_dispatch' && inputs.version != ''
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90
+    concurrency:
+      group: obs-publishing
+      cancel-in-progress: false
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Setup and publish to OBS
+        env:
+          VERSION: ${{ inputs.version }}
+          OBS_USER: ${{ secrets.OBS_USER }}
+          OBS_PASSWORD: ${{ secrets.OBS_PASSWORD }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          chmod +x ./hacks/obs/*.sh
+          ./hacks/obs/setup.sh
+          ./hacks/obs/publish.sh
