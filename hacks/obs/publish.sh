@@ -81,6 +81,17 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VERSION="${VERSION#v}"
 OBS_PROJECT="${OBS_PROJECT:-home:${OBS_USER:-dryrun}:kftray}"
 OBS_RESULTS_TIMEOUT="${OBS_RESULTS_TIMEOUT:-30m}"
+if [[ "$OBS_RESULTS_TIMEOUT" =~ ^([0-9]+)([smhd]?)$ ]]; then
+    case "${BASH_REMATCH[2]}" in
+        m) OBS_RESULTS_TIMEOUT_SECONDS=$((BASH_REMATCH[1] * 60)) ;;
+        h) OBS_RESULTS_TIMEOUT_SECONDS=$((BASH_REMATCH[1] * 3600)) ;;
+        d) OBS_RESULTS_TIMEOUT_SECONDS=$((BASH_REMATCH[1] * 86400)) ;;
+        *) OBS_RESULTS_TIMEOUT_SECONDS=$((BASH_REMATCH[1])) ;;
+    esac
+else
+    echo "Error: OBS_RESULTS_TIMEOUT must be a number with an optional s, m, h or d suffix, got '${OBS_RESULTS_TIMEOUT}'" >&2
+    exit 1
+fi
 PACKAGES=("kftui" "kftray")
 WORK_DIR=""
 RELEASE_METADATA=""
@@ -463,10 +474,20 @@ prepare_package() {
     echo "Successfully prepared package files for ${package_name}"
 }
 
+fetch_results() {
+    local results_file="$1" attempt
+    for attempt in 1 2 3; do
+        [ "$attempt" -eq 1 ] || sleep 5
+        osc results --xml > "$results_file" && return 0
+        echo "Warning: could not fetch OBS build results (attempt ${attempt}/3)" >&2
+    done
+    return 1
+}
+
 wait_for_scheduler() {
     local package_name="$1" results_file="$2" previous_state="$3" attempt state
     for attempt in $(seq 1 60); do
-        osc results --xml > "$results_file" || return 1
+        fetch_results "$results_file" || return 1
         state=$(xmllint --xpath 'string(/resultlist/@state)' "$results_file") || state=""
         if [ "$state" != "$previous_state" ] || [ "$(xmllint --xpath 'boolean(/resultlist/result[@dirty="true"] | /resultlist/result/status[@code="scheduled" or @code="blocked" or @code="dispatching" or @code="building" or @code="signing" or @code="finished"])' "$results_file")" = true ]; then
             return 0
@@ -475,6 +496,24 @@ wait_for_scheduler() {
     done
     echo "Error: OBS scheduler did not pick up the new revision of ${package_name} within 5 minutes" >&2
     return 1
+}
+
+wait_for_results() {
+    local package_name="$1" deadline remaining status
+    deadline=$(( $(date +%s) + OBS_RESULTS_TIMEOUT_SECONDS ))
+    while :; do
+        remaining=$(( deadline - $(date +%s) ))
+        if [ "$remaining" -le 0 ]; then
+            echo "Error: OBS builds of ${package_name} did not finish within ${OBS_RESULTS_TIMEOUT}" >&2
+            return 1
+        fi
+        status=0
+        timeout "$remaining" osc results --watch || status=$?
+        [ "$status" -ne 0 ] || return 0
+        [ "$status" -ne 124 ] || continue
+        echo "Warning: lost the OBS connection while watching ${package_name} builds (osc exited ${status}), retrying in 10s..." >&2
+        sleep 10
+    done
 }
 
 upload_package() {
@@ -531,7 +570,7 @@ EOF
     if [ -n "$status_output" ]; then
         echo "Changes detected for ${package_name}, committing..."
         printf '%s\n' "$status_output"
-        osc results --xml > "$results_file" || return 1
+        fetch_results "$results_file" || return 1
         previous_state=$(xmllint --xpath 'string(/resultlist/@state)' "$results_file") || previous_state=""
         if retry_command osc commit -m "Update to version ${VERSION}"; then
             echo "Successfully committed ${package_name}"
@@ -545,8 +584,8 @@ EOF
     fi
     
     echo "Waiting for OBS builds of ${package_name} (up to ${OBS_RESULTS_TIMEOUT})..."
-    timeout "$OBS_RESULTS_TIMEOUT" osc results --watch || return 1
-    osc results --xml > "$results_file" || return 1
+    wait_for_results "$package_name" || return 1
+    fetch_results "$results_file" || return 1
     if [ "$(xmllint --xpath 'boolean(/resultlist/result/status[@code="succeeded"]) and not(/resultlist/result[@dirty="true" or not(status)]) and not(/resultlist/result/status[not(@code) or (@code!="succeeded" and @code!="excluded" and @code!="disabled")])' "$results_file")" != true ]; then
         cat "$results_file" >&2
         echo "Error: OBS builds did not all succeed for ${package_name}" >&2

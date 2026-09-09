@@ -77,6 +77,12 @@ osc() {
                     if [[ " $* " == *' --xml '* ]]; then
                         printf '<resultlist state="after"><result><status code="building"/></result></resultlist>\n'
                     else
+                        polls=$(( $(cat "$OBS_TEST_CASE/watches-$package" 2>/dev/null || echo 0) + 1 ))
+                        printf '%s' "$polls" > "$OBS_TEST_CASE/watches-$package"
+                        if [ "$polls" -le "${OBS_TEST_WATCH_FAILURES:-0}" ]; then
+                            printf "SSL Error: (104, 'Connection reset by peer')\\n" >&2
+                            return 1
+                        fi
                         printf 'fixture: succeeded\n'
                         return 0
                     fi
@@ -308,6 +314,8 @@ run_case() (
         unresolved-build) export OBS_TEST_BUILD_STATE=unresolvable ;;
         stale-results) export OBS_TEST_STALE_POLLS=2 ;;
         scheduler-timeout) export OBS_TEST_STALE_POLLS=999 ;;
+        watch-interrupted) export OBS_TEST_WATCH_FAILURES=1 ;;
+        watch-timeout) export OBS_TEST_WATCH_FAILURES=999 OBS_RESULTS_TIMEOUT=1s ;;
         project-missing|project-current) export OBS_TEST_PROJECT_MISSING=true ;;
         github-token) export GITHUB_TOKEN=fixture-token ;;
     esac
@@ -339,6 +347,10 @@ run_case() (
         scheduler-timeout)
             [ "$result" -ne 0 ] || fail "$scenario reported success" || return 1
             grep -q 'scheduler did not pick up' "$OBS_TEST_CASE/log" || fail "$scenario failed for another reason" || return 1
+            ;;
+        watch-timeout)
+            [ "$result" -ne 0 ] || fail "$scenario reported success" || return 1
+            grep -q 'did not finish within 1s' "$OBS_TEST_CASE/log" || fail "$scenario failed for another reason" || return 1
             ;;
         dry-run)
             [ "$result" -eq 0 ] || { cat "$OBS_TEST_CASE/log"; fail "dry-run failed"; return 1; }
@@ -389,12 +401,15 @@ run_case() (
         stale-results)
             [ "$(cat "$OBS_TEST_CASE/polls-kftui")" -gt 2 ] || fail "publisher trusted stale build results" || return 1
             ;;
+        watch-interrupted)
+            [ "$(cat "$OBS_TEST_CASE/watches-kftui")" -eq 2 ] || fail "publisher did not resume watching after the connection dropped" || return 1
+            ;;
     esac
     printf 'PASS: %s\n' "$scenario"
 )
 
 failures=0
-for scenario in archives metadata missing-download failed-archive failed-add obsolete-source v-prefixed-version unknown-package preserve-unrelated corrupt-download missing-digest draft-release prerelease-release repeated-prefix prerelease-version dry-run dry-run-help changelog failed-build empty-build partial-empty-build missing-code-build dirty-build unresolved-build stale-results scheduler-timeout project-missing project-current github-token reproducible; do
+for scenario in archives metadata missing-download failed-archive failed-add obsolete-source v-prefixed-version unknown-package preserve-unrelated corrupt-download missing-digest draft-release prerelease-release repeated-prefix prerelease-version dry-run dry-run-help changelog failed-build empty-build partial-empty-build missing-code-build dirty-build unresolved-build stale-results scheduler-timeout watch-interrupted watch-timeout project-missing project-current github-token reproducible; do
     if run_case "$scenario"; then
         :
     else
