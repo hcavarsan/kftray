@@ -203,7 +203,7 @@ syft scan dir:frontend \
   --source-name kftray-frontend \
   --source-version $VERSION \
   --enrich all \
-  -o cyclonedx-json=sbom-kftray-frontend.cdx.json
+  -o cyclonedx-json@1.6=sbom-kftray-frontend.cdx.json
 
 echo "Generating SBOM for kftray-tauri backend..."
 cargo cyclonedx --manifest-path crates/kftray-tauri/Cargo.toml --format json --spec-version 1.5 --target all --override-filename sbom-kftray-backend
@@ -213,6 +213,7 @@ find crates -name "sbom-kftray-backend.json" -delete 2>/dev/null || true
 echo "Assembling kftray SBOM..."
 sbomasm assemble \
   --flatMerge \
+  --outputSpecVersion 1.6 \
   -n kftray \
   -v $VERSION \
   -t application \
@@ -271,11 +272,12 @@ syft scan $DOCKER_IMAGE \
   --source-name kftray-server-container \
   --source-version $VERSION \
   --enrich all \
-  -o cyclonedx-json=sbom-kftray-server-docker.cdx.json
+  -o cyclonedx-json@1.6=sbom-kftray-server-docker.cdx.json
 
 echo "Assembling kftray-server SBOM..."
 sbomasm assemble \
   --flatMerge \
+  --outputSpecVersion 1.6 \
   -n kftray-server \
   -v $VERSION \
   -t container \
