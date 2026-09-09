@@ -35,6 +35,7 @@ jobs:
   checks:
     name: OBS publishing checks
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-22.04, ubuntu-24.04]
     runs-on: ${{ matrix.os }}
@@ -44,7 +45,10 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Install publishing test dependencies
-        run: sudo apt-get update && sudo apt-get install -y jq libxml2-utils build-essential pkg-config debhelper libdbus-1-dev rpm cpio
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome*
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get install -y jq libxml2-utils build-essential pkg-config debhelper libdbus-1-dev rpm cpio
 
       - name: Check publisher scripts
         run: shellcheck hacks/obs/*.sh

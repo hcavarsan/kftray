@@ -85,7 +85,8 @@ jobs:
       - name: Install dependencies
         if: matrix.os_name == 'linux'
         run: |
-          sudo apt-get update
+          sudo rm -f /etc/apt/sources.list.d/google-chrome*
+          sudo apt-get -o Acquire::Retries=3 update
           sudo apt install -y \
               build-essential \
               curl \
@@ -147,7 +148,8 @@ jobs:
 
       - name: Install dependencies
         run: |
-          sudo apt-get update
+          sudo rm -f /etc/apt/sources.list.d/google-chrome*
+          sudo apt-get -o Acquire::Retries=3 update
           sudo apt install -y \
               build-essential \
               curl \
