@@ -24,6 +24,8 @@ export interface Config {
   ingress_annotations?: string
 }
 
+export type PortForwardAction = 'starting' | 'stopping'
+
 type AuthMethod = 'none' | 'system' | 'token'
 
 export interface GitConfig {
@@ -50,6 +52,11 @@ export interface TableProps {
   configs: Config[]
   isInitiating: boolean
   isStopping: boolean
+  pendingConfigActions: Map<number, PortForwardAction>
+  toggleConfigForward: (
+    config: Config,
+    action: PortForwardAction,
+  ) => Promise<void>
   initiatePortForwarding: (configs: Config[]) => Promise<void>
   startSelectedPortForwarding: () => Promise<void>
   stopSelectedPortForwarding: () => Promise<void>
@@ -80,9 +87,11 @@ export interface PortForwardRowProps {
   showContext?: boolean
   onSelectionChange: (isSelected: boolean) => void
   selected: boolean
-  _isInitiating: boolean
-  setIsInitiating: React.Dispatch<React.SetStateAction<boolean>>
-  isStopping: boolean
+  pendingConfigActions: Map<number, PortForwardAction>
+  toggleConfigForward: (
+    config: Config,
+    action: PortForwardAction,
+  ) => Promise<void>
 }
 
 export interface SyncStatus {
@@ -191,9 +200,11 @@ export interface ContextsAccordionProps {
   handleSelectionChange: (config: Config, isSelected: boolean) => void
   selectedConfigsByContext: Record<string, boolean>
   handleCheckboxChange: (context: string, isChecked: boolean) => void
-  isInitiating: boolean
-  setIsInitiating: React.Dispatch<React.SetStateAction<boolean>>
-  isStopping: boolean
+  pendingConfigActions: Map<number, PortForwardAction>
+  toggleConfigForward: (
+    config: Config,
+    action: PortForwardAction,
+  ) => Promise<void>
 }
 
 export interface AutoImportModalProps {

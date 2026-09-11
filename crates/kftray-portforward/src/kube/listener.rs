@@ -448,20 +448,22 @@ impl PortForwarder {
     }
 
     async fn cleanup_background_tasks(&self) {
-        let mut tasks = self.background_tasks.lock().await;
-        for handle in tasks.drain(..) {
+        let tasks = std::mem::take(&mut *self.background_tasks.lock().await);
+        for handle in &tasks {
             handle.abort();
+        }
+        for handle in tasks {
+            let _ = handle.await;
         }
     }
 
     async fn cleanup_connection_tasks(&self) {
-        let mut tasks = self.connection_tasks.lock().await;
-        let count = tasks.len();
-        for handle in tasks.drain(..) {
+        let tasks = std::mem::take(&mut *self.connection_tasks.lock().await);
+        for handle in &tasks {
             handle.abort();
         }
-        if count > 0 {
-            debug!("Aborted {} active connection tasks", count);
+        for handle in tasks {
+            let _ = handle.await;
         }
     }
 
@@ -757,6 +759,7 @@ mod tests {
         let manager = Arc::new(crate::kube::proxy_recovery::ProxyRecoveryManager::new(
             config,
             crate::kube::proxy_recovery::ProxyType::Deployment,
+            kftray_commons::utils::db_mode::DatabaseMode::Memory,
         ));
         let receiver = manager.subscribe_recovery_signals();
         crate::kube::proxy_recovery::RECOVERY_MANAGERS.insert(config_id, manager);
@@ -765,6 +768,7 @@ mod tests {
 
     #[tokio::test]
     async fn udp_owner_signals_recovery_when_upstream_closes() {
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
         let config_id = 900_101;
         let (mut upstream, server_stream) = tokio::io::duplex(64);
         let token = CancellationToken::new();
@@ -790,6 +794,7 @@ mod tests {
 
     #[tokio::test]
     async fn udp_owner_does_not_signal_recovery_on_intentional_cancellation() {
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
         let config_id = 900_102;
         let (_upstream, server_stream) = tokio::io::duplex(64);
         let token = CancellationToken::new();

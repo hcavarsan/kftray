@@ -28,9 +28,8 @@ const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
   selectedConfigs,
   handleSelectionChange,
   handleCheckboxChange,
-  isInitiating,
-  setIsInitiating,
-  isStopping,
+  pendingConfigActions,
+  toggleConfigForward,
   handleDeleteConfig,
   confirmDeleteConfig,
   handleEditConfig,
@@ -163,9 +162,8 @@ const ContextsAccordion: React.FC<ContextsAccordionProps> = ({
                     handleSelectionChange(config, isSelected)
                   }
                   setIsAlertOpen={setIsAlertOpen}
-                  _isInitiating={isInitiating}
-                  setIsInitiating={setIsInitiating}
-                  isStopping={isStopping}
+                  pendingConfigActions={pendingConfigActions}
+                  toggleConfigForward={toggleConfigForward}
                 />
               ))}
             </TableBody>

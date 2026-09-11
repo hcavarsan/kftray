@@ -2,7 +2,6 @@ use std::{
     collections::HashMap,
     fs::File,
     io::Read,
-    pin::Pin,
     time::{
         SystemTime,
         UNIX_EPOCH,
@@ -10,9 +9,9 @@ use std::{
 };
 
 use futures::{
-    Future,
     StreamExt,
-    stream::FuturesUnordered,
+    TryStreamExt,
+    stream,
 };
 use k8s_openapi::api::{
     apps::v1::Deployment,
@@ -45,6 +44,7 @@ use kube::api::{
     DeleteParams,
     PostParams,
 };
+use kube_runtime::WatchStreamExt;
 use log::{
     debug,
     error,
@@ -67,55 +67,53 @@ pub async fn deploy_and_forward_pod(configs: Vec<Config>) -> Result<Vec<CustomRe
 pub async fn deploy_and_forward_pod_with_mode(
     configs: Vec<Config>, mode: DatabaseMode, ssl_override: bool,
 ) -> Result<Vec<CustomResponse>, String> {
-    if configs.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    type ProxyFuture = Pin<Box<dyn Future<Output = Result<CustomResponse, String>> + Send>>;
-    let mut futures: FuturesUnordered<ProxyFuture> = FuturesUnordered::new();
-
-    for config in configs {
-        futures.push(Box::pin(process_single_proxy_config(
-            config,
-            mode,
-            ssl_override,
-        )));
-    }
-
-    // Collect results as they complete - allow partial success
-    let mut responses: Vec<CustomResponse> = Vec::new();
-    let mut errors: Vec<String> = Vec::new();
-
+    let mut futures = stream::iter(configs)
+        .map(|config| process_single_proxy_config(config, mode, ssl_override))
+        .buffer_unordered(16);
+    let mut responses = Vec::new();
+    let mut errors = Vec::new();
     while let Some(result) = futures.next().await {
         match result {
-            Ok(response) => {
-                responses.push(response);
-            }
-            Err(e) => {
-                error!("Proxy config failed: {e}");
-                errors.push(e);
-            }
+            Ok(response) => responses.push(response),
+            Err(error) => errors.push(error),
         }
     }
-
-    if !errors.is_empty() && responses.is_empty() {
-        return Err(errors.join("; "));
+    if responses.is_empty() && !errors.is_empty() {
+        Err(errors.join("; "))
+    } else {
+        for error in errors {
+            error!("Proxy config failed: {error}");
+        }
+        Ok(responses)
     }
-
-    if !errors.is_empty() {
-        error!(
-            "Partial proxy deployment: {} succeeded, {} failed",
-            responses.len(),
-            errors.len()
-        );
-    }
-
-    Ok(responses)
 }
 
 async fn process_single_proxy_config(
+    config: Config, mode: DatabaseMode, ssl_override: bool,
+) -> Result<CustomResponse, String> {
+    let id = config.id.ok_or("Config has no ID")?;
+    let lock = crate::kube::proxy_recovery::acquire_recovery_lock(id).await;
+    let guard = lock.lock().await;
+    let result = if crate::port_forward::CHILD_PROCESSES.contains_key(&id) {
+        Err(format!(
+            "Port forwarding is already running for config {id}"
+        ))
+    } else {
+        start_proxy_config(config, mode, ssl_override).await
+    };
+    drop(guard);
+    drop(lock);
+    crate::kube::proxy_recovery::remove_recovery_lock(id);
+    result
+}
+
+pub(super) async fn start_proxy_config(
     mut config: Config, mode: DatabaseMode, ssl_override: bool,
 ) -> Result<CustomResponse, String> {
+    let protocol = config.protocol.to_ascii_lowercase();
+    if !matches!(protocol.as_str(), "tcp" | "udp") {
+        return Err(format!("Unsupported proxy protocol: {protocol}"));
+    }
     let client_key = ServiceClientKey::new(config.context.clone(), config.kubeconfig.clone());
 
     let shared_client = SHARED_CLIENT_MANAGER
@@ -145,8 +143,6 @@ async fn process_single_proxy_config(
         .chars()
         .filter(|c: &char| c.is_alphanumeric())
         .collect();
-
-    let protocol = config.protocol.to_string().to_lowercase();
 
     let hashed_name =
         format!("kftray-forward-{clean_username}-{protocol}-{timestamp}-{random_string}")
@@ -320,55 +316,20 @@ async fn process_deployment_proxy(
 
             config.service = Some(hashed_name.to_string());
 
-            let start_response = match protocol {
-                "udp" => {
-                    super::start::start_port_forward_with_mode(
-                        vec![config.clone()],
-                        "udp",
+            match super::start::start_config(config.clone(), protocol, mode, ssl_override).await {
+                Ok(response) => {
+                    crate::kube::proxy_recovery::spawn_recovery_manager(
+                        config.clone(),
+                        crate::kube::proxy_recovery::ProxyType::Deployment,
                         mode,
-                        ssl_override,
-                    )
-                    .await
+                    );
+                    Ok(response)
                 }
-                "tcp" => {
-                    super::start::start_port_forward_with_mode(
-                        vec![config.clone()],
-                        "tcp",
-                        mode,
-                        ssl_override,
-                    )
-                    .await
-                }
-                _ => {
+                Err(error) => {
                     let _ = deployments
                         .delete(hashed_name, &DeleteParams::default())
                         .await;
-                    return Err("Unsupported proxy type".to_string());
-                }
-            };
-
-            match start_response {
-                Ok(mut port_forward_responses) => match port_forward_responses.pop() {
-                    Some(response) => {
-                        // Spawn recovery manager for deployment proxy
-                        crate::kube::proxy_recovery::spawn_recovery_manager(
-                            config.clone(),
-                            crate::kube::proxy_recovery::ProxyType::Deployment,
-                        );
-                        Ok(response)
-                    }
-                    None => {
-                        let _ = deployments
-                            .delete(hashed_name, &DeleteParams::default())
-                            .await;
-                        Err("No response received from port forwarding".to_string())
-                    }
-                },
-                Err(e) => {
-                    let _ = deployments
-                        .delete(hashed_name, &DeleteParams::default())
-                        .await;
-                    Err(format!("Failed to start port forwarding {e}"))
+                    Err(format!("Failed to start port forwarding: {error}"))
                 }
             }
         }
@@ -379,23 +340,32 @@ async fn process_deployment_proxy(
 async fn wait_for_deployment_pod(
     pods: &Api<Pod>, lp: &ListParams, hashed_name: &str, deployments: &Api<Deployment>,
 ) -> Result<String, String> {
-    for attempt in 0..10 {
-        let pod_list = pods.list(lp).await.map_err(|e| e.to_string())?;
-        if let Some(pod) = pod_list.items.first()
-            && let Some(name) = pod.metadata.name.clone()
-        {
-            return Ok(name);
+    let watcher = kube_runtime::watcher(
+        pods.clone(),
+        kube_runtime::watcher::Config::default()
+            .labels(lp.label_selector.as_deref().unwrap_or_default()),
+    )
+    .applied_objects();
+    futures::pin_mut!(watcher);
+    let result =
+        tokio::time::timeout(std::time::Duration::from_secs(120), watcher.try_next()).await;
+    let error = match result {
+        Ok(Ok(Some(pod))) => {
+            if let Some(name) = pod.metadata.name {
+                return Ok(name);
+            }
+            "Proxy pod has no name".to_string()
         }
-        if attempt < 9 {
-            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-        }
-    }
+        Ok(Ok(None)) => "Proxy pod watch ended before a pod was created".to_string(),
+        Ok(Err(error)) => error.to_string(),
+        Err(_) => "Timed out waiting for the proxy deployment pod".to_string(),
+    };
     let dp = DeleteParams {
         grace_period_seconds: Some(0),
         ..DeleteParams::default()
     };
     let _ = deployments.delete(hashed_name, &dp).await;
-    Err("No pod found for deployment after retries".to_string())
+    Err(error)
 }
 
 async fn process_pod_proxy(
@@ -436,49 +406,18 @@ async fn process_pod_proxy(
 
             config.service = Some(hashed_name.to_string());
 
-            let start_response = match protocol {
-                "udp" => {
-                    super::start::start_port_forward_with_mode(
-                        vec![config.clone()],
-                        "udp",
+            match super::start::start_config(config.clone(), protocol, mode, ssl_override).await {
+                Ok(response) => {
+                    crate::kube::proxy_recovery::spawn_recovery_manager(
+                        config.clone(),
+                        crate::kube::proxy_recovery::ProxyType::BarePod,
                         mode,
-                        ssl_override,
-                    )
-                    .await
+                    );
+                    Ok(response)
                 }
-                "tcp" => {
-                    super::start::start_port_forward_with_mode(
-                        vec![config.clone()],
-                        "tcp",
-                        mode,
-                        ssl_override,
-                    )
-                    .await
-                }
-                _ => {
+                Err(error) => {
                     let _ = pods.delete(hashed_name, &DeleteParams::default()).await;
-                    return Err("Unsupported proxy type".to_string());
-                }
-            };
-
-            match start_response {
-                Ok(mut port_forward_responses) => match port_forward_responses.pop() {
-                    Some(response) => {
-                        // Spawn recovery manager for bare pod proxy
-                        crate::kube::proxy_recovery::spawn_recovery_manager(
-                            config.clone(),
-                            crate::kube::proxy_recovery::ProxyType::BarePod,
-                        );
-                        Ok(response)
-                    }
-                    None => {
-                        let _ = pods.delete(hashed_name, &DeleteParams::default()).await;
-                        Err("No response received from port forwarding".to_string())
-                    }
-                },
-                Err(e) => {
-                    let _ = pods.delete(hashed_name, &DeleteParams::default()).await;
-                    Err(format!("Failed to start port forwarding {e}"))
+                    Err(format!("Failed to start port forwarding: {error}"))
                 }
             }
         }

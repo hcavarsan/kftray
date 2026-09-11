@@ -59,46 +59,26 @@ impl PortForwardProcess {
     pub async fn cleanup_and_abort(self) {
         const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 
-        tracing::info!("Cancelling port forward for config: {}", self.config_id);
-
-        if let Some(ws_handle) = self.ws_client_handle {
-            ws_handle.abort();
-            match timeout(SHUTDOWN_TIMEOUT, ws_handle).await {
-                Err(_) => tracing::warn!(
-                    "WebSocket client shutdown timed out for config: {}",
-                    self.config_id
-                ),
-                Ok(Err(error)) if !error.is_cancelled() => tracing::warn!(
-                    "WebSocket client task failed for config {}: {}",
-                    self.config_id,
-                    error
-                ),
-                _ => {}
-            }
-        }
-
         self.cancellation_token.cancel();
-
-        if let Some(forwarder) = &self.direct_forwarder {
-            tracing::info!(
-                "Cleaning up forwarder resources for config: {}",
-                self.config_id
-            );
-            if timeout(SHUTDOWN_TIMEOUT, forwarder.shutdown())
-                .await
-                .is_err()
-            {
-                tracing::warn!(
-                    "Forwarder shutdown timed out for config: {}, forcing abort",
-                    self.config_id
-                );
-            }
+        self.handle.abort();
+        if let Some(handle) = &self.ws_client_handle {
+            handle.abort();
         }
 
-        self.handle.abort();
-        if timeout(SHUTDOWN_TIMEOUT, self.handle).await.is_err() {
+        let cleanup = async {
+            let websocket = async {
+                if let Some(handle) = self.ws_client_handle {
+                    let _ = handle.await;
+                }
+            };
+            let _ = tokio::join!(self.handle, websocket);
+            if let Some(forwarder) = self.direct_forwarder {
+                forwarder.shutdown().await;
+            }
+        };
+        if timeout(SHUTDOWN_TIMEOUT, cleanup).await.is_err() {
             tracing::warn!(
-                "Port-forward task shutdown timed out for config: {}",
+                "Port-forward shutdown timed out for config: {}",
                 self.config_id
             );
         }
@@ -107,6 +87,10 @@ impl PortForwardProcess {
     pub fn cancel(&self) {
         tracing::info!("Cancelling port forward for config: {}", self.config_id);
         self.cancellation_token.cancel();
+        self.handle.abort();
+        if let Some(handle) = &self.ws_client_handle {
+            handle.abort();
+        }
     }
 
     pub fn abort(&self) {
@@ -123,7 +107,12 @@ impl PortForwardProcess {
 }
 
 lazy_static! {
-    pub static ref CHILD_PROCESSES: DashMap<String, PortForwardProcess> = DashMap::new();
+    pub static ref CHILD_PROCESSES: DashMap<i64, PortForwardProcess> = DashMap::new();
+}
+
+#[cfg(test)]
+lazy_static! {
+    pub(crate) static ref PROCESS_TEST_MUTEX: tokio::sync::Mutex<()> = tokio::sync::Mutex::new(());
 }
 
 fn pod_readiness_for(workload_type: &str) -> kube_portforward::PodReadiness {

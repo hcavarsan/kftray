@@ -17,7 +17,6 @@ use kftray_portforward::kube::{
     start_port_forward_with_mode as kube_start_port_forward,
     stop_all_port_forward_with_mode,
     stop_port_forward_with_mode,
-    stop_proxy_forward_with_mode,
 };
 use log::error;
 
@@ -26,15 +25,13 @@ use crate::tui::input::{
     AppState,
 };
 
-pub async fn start_port_forwarding(app: &mut App, config: Config, mode: DatabaseMode) {
-    start_port_forwarding_with_ssl(app, config, mode, false).await
+pub async fn start_port_forwarding(config: Config, mode: DatabaseMode) -> Result<(), String> {
+    start_port_forwarding_with_ssl(config, mode, false).await
 }
 
 pub async fn start_port_forwarding_with_ssl(
-    app: &mut App, config: Config, mode: DatabaseMode, ssl_override: bool,
-) {
-    let _config_id = config.id.unwrap_or_default();
-
+    config: Config, mode: DatabaseMode, ssl_override: bool,
+) -> Result<(), String> {
     let result = match config.workload_type.as_deref() {
         Some("proxy") => {
             deploy_and_forward_pod_with_mode(vec![config.clone()], mode, ssl_override).await
@@ -47,49 +44,30 @@ pub async fn start_port_forwarding_with_ssl(
             "udp" => {
                 deploy_and_forward_pod_with_mode(vec![config.clone()], mode, ssl_override).await
             }
-            _ => return,
+            protocol => return Err(format!("Unsupported protocol: {protocol}")),
         },
-        _ => return,
+        workload => return Err(format!("Unsupported workload type: {workload:?}")),
     };
 
     if let Err(e) = result {
         error!("Failed to start port forward: {e:?}");
-        app.error_message = Some(format!("Failed to start port forward: {e:?}"));
-        app.state = AppState::ShowErrorPopup;
-        return;
+        return Err(format!("Failed to start port forward: {e:?}"));
     }
+
+    Ok(())
 }
 
-pub async fn stop_port_forwarding(app: &mut App, config: Config, mode: DatabaseMode) {
-    let config_id = config.id.unwrap_or_default();
-
-    let result = match config.workload_type.as_deref() {
-        Some("proxy") => {
-            stop_proxy_forward_with_mode(
-                config_id,
-                &config.namespace,
-                config.service.clone().unwrap_or_default(),
-                mode,
-            )
-            .await
-        }
-        Some("expose") => stop_port_forward_with_mode(config_id.to_string(), mode).await,
-        Some("service") | Some("pod") => {
-            stop_port_forward_with_mode(config_id.to_string(), mode).await
-        }
-        _ => return,
-    };
-
-    if let Err(e) = result {
-        error!("Failed to stop port forward: {e:?}");
-        app.error_message = Some(format!("Failed to stop port forward: {e:?}"));
-        app.state = AppState::ShowErrorPopup;
-        return;
-    }
+pub async fn stop_port_forwarding(config: Config, mode: DatabaseMode) -> Result<(), String> {
+    let config_id = config.id.ok_or("Config has no ID")?;
+    stop_port_forward_with_mode(config_id.to_string(), mode)
+        .await
+        .map(|_| ())
+        .map_err(|error| format!("Failed to stop port forward: {error}"))
 }
 
 pub async fn stop_all_port_forward_and_exit(app: &mut App, mode: DatabaseMode) {
     log::debug!("Stopping all port forwards in mode: {mode:?}...");
+    app.finish_forwarding().await;
     match stop_all_port_forward_with_mode(mode).await {
         Ok(responses) => {
             for response in responses {
@@ -124,24 +102,7 @@ pub async fn start_port_forward(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config = get_config_with_mode(config_id, mode).await?;
 
-    match config.workload_type.as_deref() {
-        Some("proxy") => {
-            deploy_and_forward_pod_with_mode(vec![config], mode, ssl_override).await?;
-        }
-        Some("expose") => {
-            kube_start_port_forward(vec![config], "tcp", mode, ssl_override).await?;
-        }
-        Some("service") | Some("pod") => match config.protocol.as_str() {
-            "tcp" => {
-                kube_start_port_forward(vec![config], "tcp", mode, ssl_override).await?;
-            }
-            "udp" => {
-                deploy_and_forward_pod_with_mode(vec![config], mode, ssl_override).await?;
-            }
-            _ => return Ok(()),
-        },
-        _ => return Ok(()),
-    }
-
-    Ok(())
+    start_port_forwarding_with_ssl(config, mode, ssl_override)
+        .await
+        .map_err(|error| Box::new(std::io::Error::other(error)) as Box<dyn std::error::Error>)
 }

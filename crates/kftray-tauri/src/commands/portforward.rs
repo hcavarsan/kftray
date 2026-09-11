@@ -132,14 +132,14 @@ fn config_compare_changes<T: PartialEq>(prev: &[T], current: &[T]) -> bool {
 pub async fn start_port_forward_udp_cmd(
     configs: Vec<Config>, _app_handle: tauri::AppHandle<Wry>,
 ) -> Result<Vec<CustomResponse>, String> {
-    start_port_forward(configs.clone(), "udp").await
+    start_port_forward(configs, "udp").await
 }
 
 #[tauri::command]
 pub async fn start_port_forward_tcp_cmd(
     configs: Vec<Config>, _app_handle: tauri::AppHandle<Wry>,
 ) -> Result<Vec<CustomResponse>, String> {
-    start_port_forward(configs.clone(), "tcp").await
+    start_port_forward(configs, "tcp").await
 }
 
 #[tauri::command]
@@ -153,14 +153,14 @@ pub async fn stop_all_port_forward_cmd(
 pub async fn stop_port_forward_cmd(
     config_id: String, _app_handle: tauri::AppHandle<Wry>,
 ) -> Result<CustomResponse, String> {
-    stop_port_forward(config_id.clone()).await
+    stop_port_forward(config_id).await
 }
 
 #[tauri::command]
 pub async fn deploy_and_forward_pod_cmd(
     configs: Vec<Config>, _app_handle: tauri::AppHandle<Wry>,
 ) -> Result<Vec<CustomResponse>, String> {
-    deploy_and_forward_pod(configs.clone()).await
+    deploy_and_forward_pod(configs).await
 }
 
 #[tauri::command]
@@ -178,21 +178,16 @@ pub async fn stop_proxy_forward_cmd(
 pub async fn get_active_pod_cmd(config_id: String) -> Result<Option<String>, String> {
     use kftray_portforward::port_forward::CHILD_PROCESSES;
 
-    let handle_key = format!("config:{}:service:", config_id);
-
-    let matching_forwarders: Vec<_> = CHILD_PROCESSES
-        .iter()
-        .filter(|entry| entry.key().starts_with(&handle_key) || entry.key() == &config_id)
-        .filter_map(|entry| entry.value().direct_forwarder.clone())
-        .collect();
-
-    for forwarder in matching_forwarders {
-        if let Some(pod_name) = forwarder.get_current_active_pod().await {
-            return Ok(Some(pod_name));
-        }
+    let config_id = config_id
+        .parse::<i64>()
+        .map_err(|e| format!("Invalid config ID: {e}"))?;
+    let forwarder = CHILD_PROCESSES
+        .get(&config_id)
+        .and_then(|process| process.direct_forwarder.clone());
+    match forwarder {
+        Some(forwarder) => Ok(forwarder.get_current_active_pod().await),
+        None => Ok(None),
     }
-
-    Ok(None)
 }
 
 #[tauri::command]

@@ -1,23 +1,29 @@
-use std::collections::HashMap;
+use std::collections::{
+    HashMap,
+    HashSet,
+};
+use std::sync::Arc;
 use std::time::Duration;
 
 use futures::stream::{
-    FuturesUnordered,
+    self,
     StreamExt,
 };
 use k8s_openapi::api::apps::v1::Deployment;
 use k8s_openapi::api::core::v1::Pod;
 use kftray_commons::config_model::Config;
-use kftray_commons::config_state::get_configs_state;
 use kftray_commons::{
-    config::get_configs,
+    config::get_config_with_mode,
     models::{
         config_state_model::ConfigState,
         response::CustomResponse,
     },
     utils::{
         config::read_configs_with_mode,
-        config_state::update_config_state_with_mode,
+        config_state::{
+            get_configs_state_with_mode,
+            update_config_state_with_mode,
+        },
         db_mode::DatabaseMode,
         timeout_manager::cancel_timeout_for_forward,
     },
@@ -31,14 +37,11 @@ use kube::api::{
 use tokio::task::spawn_blocking;
 use tokio::time::timeout;
 use tracing::{
-    debug,
-    error,
     info,
     warn,
 };
 
 use crate::hostsfile::{
-    remove_all_host_entries,
     remove_host_entry,
     remove_ssl_host_entry,
 };
@@ -124,52 +127,69 @@ async fn release_address_with_fallback(address: &str) {
 
 pub(crate) async fn delete_proxy_cluster_resources(
     client: Client, namespace: &str, config_id: i64,
-) {
-    let username = whoami::username().unwrap_or_else(|_| "unknown".to_string());
-    let pod_prefix = format!("kftray-forward-{username}");
+) -> Result<(), String> {
+    let username: String = whoami::username()
+        .unwrap_or_else(|_| "unknown".to_string())
+        .to_lowercase()
+        .chars()
+        .filter(|character| character.is_alphanumeric())
+        .collect();
+    let prefix = format!("kftray-forward-{username}-");
     let lp = ListParams::default().labels(&format!("config_id={config_id}"));
-
-    // Delete pods
+    let dp = DeleteParams {
+        grace_period_seconds: Some(0),
+        ..DeleteParams::default()
+    };
     let pods: Api<Pod> = Api::namespaced(client.clone(), namespace);
-    match pods.list(&lp).await {
-        Ok(pod_list) => {
-            for pod in pod_list.items {
-                if let Some(pod_name) = pod.metadata.name
-                    && pod_name.starts_with(&pod_prefix)
-                {
-                    let dp = DeleteParams {
-                        grace_period_seconds: Some(0),
-                        ..DeleteParams::default()
-                    };
-                    match pods.delete(&pod_name, &dp).await {
-                        Ok(_) => info!("Deleted proxy pod: {pod_name}"),
-                        Err(e) => warn!("Failed to delete proxy pod {pod_name}: {e}"),
-                    }
-                }
-            }
-        }
-        Err(e) => warn!("Failed to list pods for cleanup (config_id={config_id}): {e}"),
-    }
-
     let deployments: Api<Deployment> = Api::namespaced(client, namespace);
-    match deployments.list(&lp).await {
-        Ok(dep_list) => {
-            for dep in dep_list.items {
-                if let Some(dep_name) = dep.metadata.name
-                    && dep_name.starts_with(&pod_prefix)
-                {
-                    let dp = DeleteParams {
-                        grace_period_seconds: Some(0),
-                        ..DeleteParams::default()
-                    };
-                    match deployments.delete(&dep_name, &dp).await {
-                        Ok(_) => info!("Deleted proxy deployment: {dep_name}"),
-                        Err(e) => warn!("Failed to delete proxy deployment {dep_name}: {e}"),
-                    }
-                }
+    let delete_pods = async {
+        let mut errors = Vec::new();
+        let list = pods.list(&lp).await.map_err(|error| error.to_string())?;
+        for pod in list.items {
+            if let Some(name) = pod.metadata.name
+                && name.starts_with(&prefix)
+                && let Err(error) = pods.delete(&name, &dp).await
+                && !matches!(&error, kube::Error::Api(response) if response.code == 404)
+            {
+                errors.push(error.to_string());
             }
         }
-        Err(e) => warn!("Failed to list deployments for cleanup (config_id={config_id}): {e}"),
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors.join("; "))
+        }
+    };
+    let delete_deployments = async {
+        let mut errors = Vec::new();
+        let list = deployments
+            .list(&lp)
+            .await
+            .map_err(|error| error.to_string())?;
+        for deployment in list.items {
+            if let Some(name) = deployment.metadata.name
+                && name.starts_with(&prefix)
+                && let Err(error) = deployments.delete(&name, &dp).await
+                && !matches!(&error, kube::Error::Api(response) if response.code == 404)
+            {
+                errors.push(error.to_string());
+            }
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(errors.join("; "))
+        }
+    };
+    let (pods, deployments) = tokio::join!(delete_pods, delete_deployments);
+    let errors: Vec<_> = [pods, deployments]
+        .into_iter()
+        .filter_map(Result::err)
+        .collect();
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
     }
 }
 
@@ -180,244 +200,52 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
 pub async fn stop_all_port_forward_with_mode(
     mode: DatabaseMode,
 ) -> Result<Vec<CustomResponse>, String> {
-    crate::ssl::ensure_crypto_provider_installed();
-    info!("Attempting to stop all port forwards in mode: {mode:?}");
-
-    let mut responses = Vec::with_capacity(1024);
-
-    let handle_keys: Vec<String> = CHILD_PROCESSES
-        .iter()
-        .map(|entry| entry.key().clone())
-        .collect();
-
-    if handle_keys.is_empty() {
-        debug!("No port forwarding processes to stop");
-    }
-
-    for composite_key in &handle_keys {
-        if let Some(config_id_str) = composite_key
-            .strip_prefix("config:")
-            .and_then(|s| s.split(":service:").next())
-            && let Ok(config_id) = config_id_str.parse::<i64>()
-        {
-            cancel_timeout_for_forward(config_id).await;
-        }
-    }
-
-    let running_configs_state = match get_configs_state().await {
-        Ok(states) => states
-            .into_iter()
-            .filter(|s| s.is_running)
-            .map(|s| s.config_id)
-            .collect::<Vec<i64>>(),
-        Err(e) => {
-            let error_message = format!("Failed to retrieve config states: {e}");
-            error!("{error_message}");
-            return Err(error_message);
-        }
-    };
-
-    let configs = match mode {
-        DatabaseMode::File => get_configs().await.unwrap_or_default(),
-        DatabaseMode::Memory => read_configs_with_mode(mode).await.unwrap_or_default(),
-    };
-
-    let config_map: HashMap<i64, &Config> = configs
-        .iter()
-        .filter_map(|c| c.id.map(|id| (id, c)))
-        .collect();
-
-    let empty_str = String::new();
-
-    let mut abort_handles: FuturesUnordered<_> = handle_keys
-        .into_iter()
-        .map(|composite_key| {
-            let empty_str_clone = empty_str.clone();
-            let config_map_cloned = config_map.clone();
-
-            async move {
-                let (config_id_str, service_id) = if let Some(content) = composite_key.strip_prefix("config:") {
-                    if let Some((config_part, service_part)) = content.split_once(":service:") {
-                        (config_part, service_part.to_string())
-                    } else {
-                        error!("Invalid composite key format encountered: {composite_key}");
-                        return CustomResponse {
-                            id: None,
-                            service: empty_str_clone.clone(),
-                            namespace: empty_str_clone.clone(),
-                            local_port: 0,
-                            remote_port: 0,
-                            context: empty_str_clone.clone(),
-                            protocol: empty_str_clone.clone(),
-                            stdout: empty_str_clone.clone(),
-                            stderr: String::from("Invalid composite key format"),
-                            status: 1,
-                        };
-                    }
-                } else {
-                    error!("Invalid composite key format encountered: {composite_key}");
-                    return CustomResponse {
-                        id: None,
-                        service: empty_str_clone.clone(),
-                        namespace: empty_str_clone.clone(),
-                        local_port: 0,
-                        remote_port: 0,
-                        context: empty_str_clone.clone(),
-                        protocol: empty_str_clone.clone(),
-                        stdout: empty_str_clone.clone(),
-                        stderr: String::from("Invalid composite key format"),
-                        status: 1,
-                    };
-                };
-                let config_id_parsed = config_id_str.parse::<i64>().unwrap_or_default();
-                let config_option = config_map_cloned.get(&config_id_parsed).cloned();
-
-                if let Some(config) = config_option
-                    && config.domain_enabled.unwrap_or_default()
-                {
-                    if let Err(e) = remove_host_entry(config_id_str) {
-                        error!(
-                            "Failed to remove host entry for ID {config_id_str}: {e}"
-                        );
-                    }
-
-
-                    if let Err(e) = remove_ssl_host_entry(config_id_str) {
-                        error!(
-                            "Failed to remove SSL host entry for ID {config_id_str}: {e}"
-                        );
-                    }
-                } else {
-                    warn!("Config with id '{config_id_str}' not found.");
-                }
-
-                info!(
-                    "Aborting port forwarding task for config_id: {config_id_str}"
-                );
-
-                if let Some(config) = config_map_cloned.get(&config_id_parsed).cloned() {
-                    info!("stop_all: Found config {} with local_address: {:?} and auto_loopback_address: {}",
-                          config_id_str, config.local_address, config.auto_loopback_address);
-                    if let Some(local_addr) = &config.local_address && crate::network_utils::is_custom_loopback_address(local_addr) {
-                        info!(
-                            "Cleaning up loopback address for config {config_id_str}: {local_addr}"
-                        );
-
-                        release_address_with_fallback(local_addr).await;
-                    }
-                }
-
-                if let Some((_, process)) = CHILD_PROCESSES.remove(&composite_key) {
-                    process.cleanup_and_abort().await;
-                }
-
-                CustomResponse {
-                    id: Some(config_id_parsed),
-                    service: service_id,
-                    namespace: empty_str_clone.clone(),
-                    local_port: 0,
-                    remote_port: 0,
-                    context: empty_str_clone.clone(),
-                    protocol: empty_str_clone.clone(),
-                    stdout: String::from("Service port forwarding has been stopped"),
-                    stderr: empty_str_clone,
-                    status: 0,
-                }
-            }
-        })
-        .collect();
-
-    while let Some(response) = abort_handles.next().await {
-        responses.push(response);
-    }
-
-    let cluster_cleanup_tasks: FuturesUnordered<_> = configs
-        .iter()
-        .filter(|config| running_configs_state.contains(&config.id.unwrap_or_default()))
-        .filter(|config| {
-            config.protocol == "udp" || matches!(config.workload_type.as_deref(), Some("proxy"))
-        })
-        .map(|config| {
-            let config_id = config.id.unwrap_or_default();
-            let namespace = config.namespace.clone();
-            let client_key =
-                ServiceClientKey::new(config.context.clone(), config.kubeconfig.clone());
-            async move {
-                match SHARED_CLIENT_MANAGER.get_connection(client_key).await {
-                    Ok(shared_client) => {
-                        let client = shared_client.client.clone();
-                        delete_proxy_cluster_resources(client, &namespace, config_id).await;
-                    }
-                    Err(e) => error!(
-                        "Failed to get K8s client for cluster cleanup of config {config_id}: {e}"
-                    ),
-                }
-            }
-        })
-        .collect();
-
-    cluster_cleanup_tasks.collect::<Vec<_>>().await;
-
-    // Cancel all recovery managers
+    let mut ids: HashSet<i64> = CHILD_PROCESSES.iter().map(|entry| *entry.key()).collect();
     for entry in crate::kube::proxy_recovery::RECOVERY_MANAGERS.iter() {
         entry.value().cancel();
+        ids.insert(*entry.key());
     }
-    crate::kube::proxy_recovery::RECOVERY_MANAGERS.clear();
-    crate::kube::proxy_recovery::RECOVERY_LOCKS.clear();
-    info!("Cancelled and cleared all recovery managers");
+    for entry in CHILD_PROCESSES.iter() {
+        entry.value().cancel();
+    }
+    for entry in crate::kube::proxy_recovery::RECOVERY_LOCKS.iter() {
+        if Arc::strong_count(entry.value()) > 1 {
+            ids.insert(*entry.key());
+        }
+    }
 
-    let address_cleanup_tasks: FuturesUnordered<_> = configs
-        .iter()
-        .filter(|config| running_configs_state.contains(&config.id.unwrap_or_default()))
-        .filter_map(|config| {
-            if let Some(local_addr) = &config.local_address {
-                if crate::network_utils::is_custom_loopback_address(local_addr) {
-                    Some(async move {
-                        info!(
-                            "Releasing loopback address for config {}: {} (auto_allocated: {})",
-                            config.id.unwrap_or_default(),
-                            local_addr,
-                            config.auto_loopback_address
-                        );
-                        release_address_with_fallback(local_addr).await;
-                    })
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        })
+    let configs_result = read_configs_with_mode(mode).await;
+    let states_result = get_configs_state_with_mode(mode).await;
+    if let Ok(states) = &states_result {
+        ids.extend(
+            states
+                .iter()
+                .filter(|state| state.is_running)
+                .map(|state| state.config_id),
+        );
+    }
+    let configs: HashMap<_, _> = configs_result
+        .as_ref()
+        .ok()
+        .into_iter()
+        .flatten()
+        .filter_map(|config| config.id.map(|id| (id, config)))
         .collect();
-
-    address_cleanup_tasks.collect::<Vec<_>>().await;
-
-    let update_config_tasks: FuturesUnordered<_> = configs
-        .iter()
-        .map(|config| {
-            let config_id_parsed = config.id.unwrap_or_default();
+    let responses = stream::iter(ids)
+        .map(|id| {
+            let config = configs.get(&id).copied();
             async move {
-                let config_state = ConfigState::new(config_id_parsed, false);
-                if let Err(e) = update_config_state_with_mode(&config_state, mode).await {
-                    error!("Failed to update config state: {e}");
-                } else {
-                    info!("Successfully updated config state for config_id: {config_id_parsed}");
+                match stop_config(id, config, mode).await {
+                    Ok(response) => response,
+                    Err(error) => stop_response(id, config, Some(error)),
                 }
             }
         })
-        .collect();
-
-    update_config_tasks.collect::<Vec<_>>().await;
-
-    if let Err(e) = remove_all_host_entries() {
-        error!("Failed to clean up all host entries: {e}");
-    }
-
-    info!(
-        "Port forward stopping process completed with {} responses",
-        responses.len()
-    );
-
+        .buffer_unordered(16)
+        .collect()
+        .await;
+    configs_result?;
+    states_result?;
     Ok(responses)
 }
 
@@ -428,429 +256,235 @@ pub async fn stop_port_forward(config_id: String) -> Result<CustomResponse, Stri
 pub async fn stop_port_forward_with_mode(
     config_id: String, mode: DatabaseMode,
 ) -> Result<CustomResponse, String> {
-    let config_id_parsed = config_id
+    let id = config_id
         .parse::<i64>()
         .map_err(|_| "Invalid config ID".to_string())?;
-
-    let configs = match mode {
-        DatabaseMode::File => get_configs().await.unwrap_or_default(),
-        DatabaseMode::Memory => read_configs_with_mode(mode).await.unwrap_or_default(),
-    };
-
-    if let Some(config) = configs.iter().find(|c| c.id == Some(config_id_parsed))
-        && config.workload_type.as_deref() == Some("expose")
-    {
-        return crate::expose::stop_expose(config_id_parsed, &config.namespace, mode).await;
+    if let Some(manager) = crate::kube::proxy_recovery::RECOVERY_MANAGERS.get(&id) {
+        manager.cancel();
     }
+    if let Some(process) = CHILD_PROCESSES.get(&id) {
+        process.cancel();
+    }
+    let config = get_config_with_mode(id, mode).await;
+    let response = stop_config(id, config.as_ref().ok(), mode).await;
+    if let Ok(config) = &config
+        && config.context.is_some()
+    {
+        SHARED_CLIENT_MANAGER.invalidate_client(&ServiceClientKey::new(
+            config.context.clone(),
+            config.kubeconfig.clone(),
+        ));
+    }
+    match (config, response) {
+        (Err(error), Err(_)) => Err(error),
+        (_, response) => response,
+    }
+}
 
-    let composite_key = CHILD_PROCESSES
-        .iter()
-        .find(|entry| {
-            entry
-                .key()
-                .starts_with(&format!("config:{config_id}:service:"))
-        })
-        .map(|entry| entry.key().clone());
-
-    if let Some(composite_key) = composite_key {
-        let config_id_parsed = config_id.parse::<i64>().unwrap_or_default();
-
-        let configs = match mode {
-            DatabaseMode::File => get_configs().await.unwrap_or_default(),
-            DatabaseMode::Memory => read_configs_with_mode(mode).await.unwrap_or_default(),
-        };
-
-        if let Some(config) = configs.iter().find(|c| c.id == Some(config_id_parsed)) {
-            info!(
-                "Found config {} during stop with local_address: {:?} and auto_loopback_address: {}",
-                config_id, config.local_address, config.auto_loopback_address
-            );
-            if let Some(local_addr) = &config.local_address
-                && crate::network_utils::is_custom_loopback_address(local_addr)
-            {
-                info!(
-                    "Cleaning up loopback address for config {config_id}: {local_addr} (auto_allocated: {})",
-                    config.auto_loopback_address
-                );
-                release_address_with_fallback(local_addr).await;
-            }
-        }
-
-        if let Some((_, process)) = CHILD_PROCESSES.remove(&composite_key) {
-            process.cleanup_and_abort().await;
-        }
-
-        // Cancel any in-progress recovery for this config
-        if let Some((_, manager)) =
-            crate::kube::proxy_recovery::RECOVERY_MANAGERS.remove(&config_id_parsed)
-        {
-            manager.cancel();
-            info!("Cancelled recovery manager for config {}", config_id_parsed);
-        }
-        // Clean up recovery coordination lock
-        crate::kube::proxy_recovery::remove_recovery_lock(config_id_parsed);
-
-        if let Some(config) = configs.iter().find(|c| c.id == Some(config_id_parsed)) {
-            let needs_cluster_cleanup =
-                config.protocol == "udp" || config.workload_type.as_deref() == Some("proxy");
-
-            if needs_cluster_cleanup {
-                info!(
-                    "Cleaning up cluster resources for config {config_id} \
-                    (protocol={}, workload_type={:?})",
-                    config.protocol, config.workload_type
-                );
-                let client_key =
-                    ServiceClientKey::new(config.context.clone(), config.kubeconfig.clone());
-                match SHARED_CLIENT_MANAGER.get_connection(client_key).await {
-                    Ok(shared_client) => {
-                        let client = shared_client.client.clone();
-                        delete_proxy_cluster_resources(client, &config.namespace, config_id_parsed)
-                            .await;
-                    }
-                    Err(e) => error!(
-                        "Failed to get K8s client for cluster cleanup of config {config_id}: {e}"
-                    ),
-                }
-            }
-        }
-
-        let config_id_parsed = config_id.parse::<i64>().unwrap_or_default();
-        cancel_timeout_for_forward(config_id_parsed).await;
-
-        let service_name = composite_key
-            .strip_prefix("config:")
-            .and_then(|s| s.split_once(":service:"))
-            .map(|(_, service)| service)
-            .unwrap_or("");
-
-        if let Some(config) = configs.iter().find(|c| c.id == Some(config_id_parsed)) {
-            if config.domain_enabled.unwrap_or_default() {
-                if let Err(e) = remove_host_entry(&config_id) {
-                    error!("Failed to remove host entry for ID {config_id}: {e}");
-
-                    let config_state = ConfigState::new(config_id_parsed, false);
-                    if let Err(e) = update_config_state_with_mode(&config_state, mode).await {
-                        error!("Failed to update config state: {e}");
-                    }
-                    return Err(e.to_string());
-                }
-
-                if let Err(e) = remove_ssl_host_entry(&config_id) {
-                    error!("Failed to remove SSL host entry for ID {config_id}: {e}");
-                }
-            }
-        } else {
-            warn!("Config with id '{config_id}' not found.");
-        }
-
-        let config_state = ConfigState::new(config_id_parsed, false);
-        if let Err(e) = update_config_state_with_mode(&config_state, mode).await {
-            error!("Failed to update config state: {e}");
-        }
-
-        if let Some(config) = configs.iter().find(|c| c.id == Some(config_id_parsed)) {
-            let client_key =
-                ServiceClientKey::new(config.context.clone(), config.kubeconfig.clone());
-            SHARED_CLIENT_MANAGER.invalidate_client(&client_key);
-            debug!("Invalidated client for config {}", config_id);
-        }
-
-        Ok(CustomResponse {
-            id: None,
-            service: service_name.to_string(),
-            namespace: String::new(),
-            local_port: 0,
-            remote_port: 0,
-            context: String::new(),
-            protocol: String::new(),
-            stdout: String::from("Service port forwarding has been stopped"),
-            stderr: String::new(),
-            status: 0,
-        })
+async fn stop_config(
+    id: i64, config: Option<&Config>, mode: DatabaseMode,
+) -> Result<CustomResponse, String> {
+    if let Some(manager) = crate::kube::proxy_recovery::RECOVERY_MANAGERS.get(&id) {
+        manager.cancel();
+    }
+    let lock = crate::kube::proxy_recovery::acquire_recovery_lock(id).await;
+    let (guard, was_starting) = match lock.try_lock() {
+        Ok(guard) => (guard, false),
+        Err(_) => (lock.lock().await, true),
+    };
+    let refreshed = if was_starting {
+        get_config_with_mode(id, mode).await.ok()
     } else {
-        let config_id_parsed = config_id.parse::<i64>().unwrap_or_default();
+        None
+    };
+    let config = refreshed.as_ref().or(config);
+    if let Some((_, manager)) = crate::kube::proxy_recovery::RECOVERY_MANAGERS.remove(&id) {
+        manager.cancel();
+    }
+    let process = CHILD_PROCESSES.remove(&id);
+    let existed = process.is_some();
+    if let Some((_, process)) = process {
+        process.cleanup_and_abort().await;
+    }
+    cancel_timeout_for_forward(id).await;
 
-        let configs = match mode {
-            DatabaseMode::File => get_configs().await.unwrap_or_default(),
-            DatabaseMode::Memory => read_configs_with_mode(mode).await.unwrap_or_default(),
+    let result = if let Some(config) = config {
+        let cluster_cleanup = async {
+            if config.workload_type.as_deref() == Some("expose")
+                || config.workload_type.as_deref() == Some("proxy")
+                || config.protocol == "udp"
+            {
+                let key = ServiceClientKey::new(config.context.clone(), config.kubeconfig.clone());
+                let connection = SHARED_CLIENT_MANAGER
+                    .get_connection(key)
+                    .await
+                    .map_err(|error| error.to_string())?;
+                if config.workload_type.as_deref() == Some("expose") {
+                    crate::expose::kubernetes::delete_expose_resources(
+                        connection.client.clone(),
+                        &config.namespace,
+                        &id.to_string(),
+                    )
+                    .await
+                } else {
+                    delete_proxy_cluster_resources(connection.client.clone(), &config.namespace, id)
+                        .await
+                }
+            } else {
+                Ok(())
+            }
         };
-
-        let config = configs.iter().find(|c| c.id == Some(config_id_parsed));
-
-        if config.is_none() {
-            return Err(format!(
-                "No port forwarding process found for config_id '{config_id}'"
-            ));
+        let local_cleanup = async {
+            if let Some(address) = &config.local_address
+                && crate::network_utils::is_custom_loopback_address(address)
+            {
+                release_address_with_fallback(address).await;
+            }
+            let mut errors = Vec::new();
+            if config.domain_enabled.unwrap_or_default() {
+                if let Err(error) = remove_host_entry(&id.to_string()) {
+                    errors.push(error.to_string());
+                }
+                if let Err(error) = remove_ssl_host_entry(&id.to_string()) {
+                    errors.push(error.to_string());
+                }
+            }
+            if errors.is_empty() {
+                Ok(())
+            } else {
+                Err(errors.join("; "))
+            }
+        };
+        let state = ConfigState::new(id, false);
+        let (cluster, local, state) = tokio::join!(
+            cluster_cleanup,
+            local_cleanup,
+            update_config_state_with_mode(&state, mode)
+        );
+        let errors: Vec<_> = [cluster, local, state]
+            .into_iter()
+            .filter_map(Result::err)
+            .collect();
+        if errors.is_empty() {
+            Ok(stop_response(id, Some(config), None))
+        } else {
+            Err(errors.join("; "))
         }
+    } else if existed {
+        Ok(stop_response(id, None, None))
+    } else {
+        Err(format!(
+            "No port forwarding process found for config_id '{id}'"
+        ))
+    };
+    drop(guard);
+    drop(lock);
+    crate::kube::proxy_recovery::remove_recovery_lock(id);
+    result
+}
 
-        let config_state = ConfigState::new(config_id_parsed, false);
-        if let Err(e) = update_config_state_with_mode(&config_state, mode).await {
-            error!("Failed to update config state: {e}");
-        }
-
-        debug!("No active process found for config_id '{config_id}', marked as stopped");
-        Ok(CustomResponse {
-            id: Some(config_id_parsed),
-            service: String::new(),
-            namespace: String::new(),
-            local_port: 0,
-            remote_port: 0,
-            context: String::new(),
-            protocol: String::new(),
-            stdout: String::from("Port forwarding was already stopped"),
-            stderr: String::new(),
-            status: 0,
-        })
+fn stop_response(id: i64, config: Option<&Config>, error: Option<String>) -> CustomResponse {
+    CustomResponse {
+        id: Some(id),
+        service: config
+            .and_then(|config| config.service.clone())
+            .unwrap_or_default(),
+        namespace: config
+            .map(|config| config.namespace.clone())
+            .unwrap_or_default(),
+        local_port: config
+            .and_then(|config| config.local_port)
+            .unwrap_or_default(),
+        remote_port: config
+            .and_then(|config| config.remote_port)
+            .unwrap_or_default(),
+        context: config
+            .and_then(|config| config.context.clone())
+            .unwrap_or_default(),
+        protocol: config
+            .map(|config| config.protocol.clone())
+            .unwrap_or_default(),
+        stdout: if error.is_none() {
+            "Port forwarding has been stopped".to_string()
+        } else {
+            String::new()
+        },
+        status: i32::from(error.is_some()),
+        stderr: error.unwrap_or_default(),
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
-
-    use kftray_commons::models::config_model::Config;
+    use tokio::net::{
+        TcpListener,
+        UdpSocket,
+    };
 
     use super::*;
 
-    async fn create_dummy_handle() -> PortForwardProcess {
-        let handle = tokio::spawn(async {
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-            Ok(())
+    #[tokio::test]
+    async fn stop_releases_listener_and_websocket_owner_before_returning() {
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let id = 410_011;
+        let tcp = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let tcp_address = tcp.local_addr().unwrap();
+        let udp = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let udp_address = udp.local_addr().unwrap();
+        let task = tokio::spawn(async move {
+            let _tcp = tcp;
+            std::future::pending::<anyhow::Result<()>>().await
         });
-        PortForwardProcess::new(handle, "test-config".to_string())
+        let websocket = tokio::spawn(async move {
+            let _udp = udp;
+            std::future::pending::<()>().await;
+        });
+        let mut process = PortForwardProcess::new(task, id.to_string());
+        process.set_ws_client_handle(websocket);
+        CHILD_PROCESSES.insert(id, process);
+
+        stop_port_forward_with_mode(id.to_string(), DatabaseMode::Memory)
+            .await
+            .unwrap();
+
+        let _tcp = TcpListener::bind(tcp_address).await.unwrap();
+        let _udp = UdpSocket::bind(udp_address).await.unwrap();
     }
 
-    fn create_test_config() -> Config {
-        Config {
-            id: Some(1),
-            context: Some("test-context".to_string()),
-            kubeconfig: Some("test-kubeconfig".to_string()),
-            namespace: "test-namespace".to_string(),
-            service: Some("test-service".to_string()),
-            alias: Some("test-alias".to_string()),
-            local_port: Some(8080),
-            remote_port: Some(8080),
-            protocol: "tcp".to_string(),
-            workload_type: Some("service".to_string()),
-            target: None,
-            local_address: Some("127.0.0.1".to_string()),
-            auto_loopback_address: false,
-            remote_address: None,
-            domain_enabled: Some(true),
-            http_logs_enabled: Some(false),
-            http_logs_max_file_size: Some(10 * 1024 * 1024),
-            http_logs_retention_days: Some(7),
-            http_logs_auto_cleanup: Some(true),
-            exposure_type: None,
-            cert_manager_enabled: None,
-            cert_issuer: None,
-            cert_issuer_kind: None,
-            ingress_class: None,
-            ingress_annotations: None,
+    #[tokio::test]
+    async fn stop_all_releases_every_transport_in_memory_mode() {
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let mut addresses = Vec::new();
+        for id in [410_021, 410_022] {
+            let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+            addresses.push(listener.local_addr().unwrap());
+            let task = tokio::spawn(async move {
+                let _listener = listener;
+                std::future::pending::<anyhow::Result<()>>().await
+            });
+            CHILD_PROCESSES.insert(id, PortForwardProcess::new(task, id.to_string()));
         }
-    }
+        let udp = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let udp_address = udp.local_addr().unwrap();
+        let task = tokio::spawn(async move {
+            let _udp = udp;
+            std::future::pending::<anyhow::Result<()>>().await
+        });
+        CHILD_PROCESSES.insert(410_023, PortForwardProcess::new(task, "410023".to_string()));
 
-    fn create_udp_config() -> Config {
-        let mut config = create_test_config();
-        config.id = Some(2);
-        config.protocol = "udp".to_string();
-        config
-    }
-
-    fn create_proxy_config() -> Config {
-        let mut config = create_test_config();
-        config.id = Some(3);
-        config.workload_type = Some("proxy".to_string());
-        config
-    }
-
-    #[tokio::test]
-    async fn test_stop_port_forward_nonexistent() {
-        let result = stop_port_forward("999".to_string()).await;
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .contains("No port forwarding process found")
-        );
-    }
-
-    #[tokio::test]
-    async fn test_stop_port_forward_with_handle() {
-        use std::time::{
-            SystemTime,
-            UNIX_EPOCH,
-        };
-
-        let unique_suffix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-
-        let dummy_handle = create_dummy_handle().await;
-        let key = format!(
-            "config:test_single_201_{}:service:test-service",
-            unique_suffix
-        );
-
-        CHILD_PROCESSES.insert(key.clone(), dummy_handle);
-        assert!(
-            CHILD_PROCESSES.contains_key(&key),
-            "Process should be present"
-        );
-
-        if let Some((_, process)) = CHILD_PROCESSES.remove(&key) {
-            process.abort();
+        let responses = stop_all_port_forward_with_mode(DatabaseMode::Memory)
+            .await
+            .unwrap();
+        for id in [410_021, 410_022, 410_023] {
+            assert!(
+                responses
+                    .iter()
+                    .any(|response| response.id == Some(id) && response.status == 0)
+            );
         }
-
-        assert!(
-            !CHILD_PROCESSES.contains_key(&key),
-            "Process handle should be removed"
-        );
-    }
-
-    #[tokio::test]
-    async fn test_stop_port_forward_with_multiple_handles() {
-        use std::time::{
-            SystemTime,
-            UNIX_EPOCH,
-        };
-
-        let unique_suffix = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-
-        let dummy_handle1 = create_dummy_handle().await;
-        let dummy_handle2 = create_dummy_handle().await;
-        let dummy_handle3 = create_dummy_handle().await;
-
-        let key1 = format!("config:test_multi_101_{}:service:service1", unique_suffix);
-        let key2 = format!("config:test_multi_102_{}:service:service2", unique_suffix);
-        let key3 = format!("config:test_multi_103_{}:service:service3", unique_suffix);
-
-        // Insert test processes (no global clear - other tests may be running)
-        CHILD_PROCESSES.insert(key1.clone(), dummy_handle1);
-        CHILD_PROCESSES.insert(key2.clone(), dummy_handle2);
-        CHILD_PROCESSES.insert(key3.clone(), dummy_handle3);
-
-        // Verify all 3 keys we inserted exist
-        assert!(
-            CHILD_PROCESSES.contains_key(&key1),
-            "Should contain key1 after insert"
-        );
-        assert!(
-            CHILD_PROCESSES.contains_key(&key2),
-            "Should contain key2 after insert"
-        );
-        assert!(
-            CHILD_PROCESSES.contains_key(&key3),
-            "Should contain key3 after insert"
-        );
-
-        // Remove key2
-        if let Some((_, process)) = CHILD_PROCESSES.remove(&key2) {
-            process.abort();
-        } else {
-            panic!("key2 should have been found for removal");
+        for address in addresses {
+            let _listener = TcpListener::bind(address).await.unwrap();
         }
-
-        assert!(
-            CHILD_PROCESSES.contains_key(&key1),
-            "Should still contain key1: {}",
-            key1
-        );
-        assert!(
-            !CHILD_PROCESSES.contains_key(&key2),
-            "Should not contain key2 after removal: {}",
-            key2
-        );
-        assert!(
-            CHILD_PROCESSES.contains_key(&key3),
-            "Should still contain key3: {}",
-            key3
-        );
-
-        if let Some((_, p)) = CHILD_PROCESSES.remove(&key1) {
-            p.abort();
-        }
-        if let Some((_, p)) = CHILD_PROCESSES.remove(&key3) {
-            p.abort();
-        }
-    }
-
-    #[tokio::test]
-    async fn test_format_composite_key() {
-        let config_id = 123;
-        let service_id = "my-service";
-
-        let composite_key = format!("{config_id}_{service_id}");
-        assert_eq!(composite_key, "123_my-service");
-
-        let (config_id_str, service_name) = composite_key.split_once('_').unwrap();
-        assert_eq!(config_id_str, "123");
-        assert_eq!(service_name, "my-service");
-
-        let config_id_parsed = config_id_str.parse::<i64>().unwrap();
-        assert_eq!(config_id_parsed, 123);
-    }
-
-    #[tokio::test]
-    async fn test_invalid_composite_key() {
-        let invalid_key = "invalid-key-without-underscore";
-        let parts = invalid_key.split_once('_');
-        assert!(parts.is_none());
-    }
-
-    #[tokio::test]
-    async fn test_running_configs_filter() {
-        let configs = [
-            create_test_config(),
-            create_udp_config(),
-            create_proxy_config(),
-        ];
-
-        let running_configs_state = [1, 2, 3];
-
-        let filtered_configs: Vec<&Config> = configs
-            .iter()
-            .filter(|config| running_configs_state.contains(&config.id.unwrap_or_default()))
-            .filter(|config| {
-                config.protocol == "udp" || matches!(config.workload_type.as_deref(), Some("proxy"))
-            })
-            .collect();
-
-        assert_eq!(filtered_configs.len(), 2);
-        assert_eq!(filtered_configs[0].id, Some(2));
-        assert_eq!(filtered_configs[1].id, Some(3));
-    }
-
-    #[tokio::test]
-    async fn test_extract_config_with_id() {
-        let configs = [
-            create_test_config(),
-            create_udp_config(),
-            create_proxy_config(),
-        ];
-
-        let config_map: HashMap<i64, &Config> = configs
-            .iter()
-            .filter_map(|c| c.id.map(|id| (id, c)))
-            .collect();
-
-        assert_eq!(config_map.len(), 3);
-        assert!(config_map.contains_key(&1));
-        assert!(config_map.contains_key(&2));
-        assert!(config_map.contains_key(&3));
-
-        let config1 = config_map.get(&1).unwrap();
-        assert_eq!(config1.protocol, "tcp");
-
-        let config2 = config_map.get(&2).unwrap();
-        assert_eq!(config2.protocol, "udp");
-
-        let config3 = config_map.get(&3).unwrap();
-        assert_eq!(config3.workload_type, Some("proxy".to_string()));
+        let _udp = UdpSocket::bind(udp_address).await.unwrap();
     }
 }

@@ -5,6 +5,7 @@ use std::time::{
     UNIX_EPOCH,
 };
 
+use futures::TryStreamExt;
 use k8s_openapi::api::{
     apps::v1::Deployment,
     core::v1::{
@@ -26,9 +27,9 @@ use kube::{
     Api,
     Client,
 };
+use kube_runtime::WatchStreamExt;
 use log::{
     debug,
-    error,
     info,
 };
 
@@ -256,35 +257,39 @@ async fn wait_for_pod_ready(
     client: &Client, namespace: &str, config_id: &str,
 ) -> Result<String, String> {
     let pods: Api<Pod> = Api::namespaced(client.clone(), namespace);
-    let lp = ListParams::default().labels(&format!("app=kftray-expose,config_id={}", config_id));
-
+    let watcher = kube_runtime::watcher(
+        pods,
+        kube_runtime::watcher::Config::default()
+            .labels(&format!("app=kftray-expose,config_id={config_id}")),
+    )
+    .applied_objects();
+    futures::pin_mut!(watcher);
     tokio::time::timeout(Duration::from_secs(120), async {
-        loop {
-            let pod_list = pods
-                .list(&lp)
-                .await
-                .map_err(|error| format!("Failed to list pods: {error}"))?;
-            if let Some(pod) = pod_list.items.into_iter().find(|pod| {
-                pod.metadata.deletion_timestamp.is_none()
-                    && pod.status.as_ref().is_some_and(|status| {
-                        status.phase.as_deref() == Some("Running")
-                            && status.conditions.as_ref().is_some_and(|conditions| {
-                                conditions.iter().any(|condition| {
-                                    condition.type_ == "Ready" && condition.status == "True"
-                                })
+        while let Some(pod) = watcher
+            .try_next()
+            .await
+            .map_err(|error| error.to_string())?
+        {
+            if pod.metadata.deletion_timestamp.is_none()
+                && pod.status.as_ref().is_some_and(|status| {
+                    status.phase.as_deref() == Some("Running")
+                        && status.conditions.as_ref().is_some_and(|conditions| {
+                            conditions.iter().any(|condition| {
+                                condition.type_ == "Ready" && condition.status == "True"
                             })
-                    })
-            }) {
+                        })
+                })
+            {
                 return pod
                     .metadata
                     .name
-                    .ok_or_else(|| "Pod has no name".to_owned());
+                    .ok_or_else(|| "Pod has no name".to_string());
             }
-            tokio::time::sleep(Duration::from_millis(250)).await;
         }
+        Err("Expose pod watch ended before readiness".to_string())
     })
     .await
-    .map_err(|_| "Timed out waiting for expose pod readiness".to_owned())?
+    .map_err(|_| "Timed out waiting for expose pod readiness".to_string())?
 }
 
 async fn get_pod_ip(client: &Client, namespace: &str, pod_name: &str) -> Result<String, String> {
@@ -413,9 +418,18 @@ pub async fn delete_expose_resources(
         config_id_label
     );
 
-    delete_ingresses(&client, namespace, &lp).await?;
-    delete_services(&client, namespace, &lp).await?;
-    delete_deployments(&client, namespace, &lp).await?;
+    let (ingresses, services, deployments) = tokio::join!(
+        delete_ingresses(&client, namespace, &lp),
+        delete_services(&client, namespace, &lp),
+        delete_deployments(&client, namespace, &lp)
+    );
+    let errors: Vec<_> = [ingresses, services, deployments]
+        .into_iter()
+        .filter_map(Result::err)
+        .collect();
+    if !errors.is_empty() {
+        return Err(errors.join("; "));
+    }
 
     info!(
         "Successfully deleted expose resources for config_id label '{}'",
@@ -430,8 +444,7 @@ async fn delete_ingresses(client: &Client, namespace: &str, lp: &ListParams) -> 
     let items = match api.list(lp).await {
         Ok(list) => list,
         Err(e) => {
-            info!("No ingresses to delete or error listing: {}", e);
-            return Ok(());
+            return Err(format!("Failed to list expose ingresses: {e}"));
         }
     };
 
@@ -445,7 +458,7 @@ async fn delete_ingresses(client: &Client, namespace: &str, lp: &ListParams) -> 
             info!("Deleting ingress: {}", name);
             match api.delete(name, &DeleteParams::default()).await {
                 Ok(_) => info!("Ingress {} deleted successfully", name),
-                Err(e) => error!("Failed to delete ingress {}: {}", name, e),
+                Err(e) => return Err(format!("Failed to delete ingress {name}: {e}")),
             }
         }
     }
@@ -458,8 +471,7 @@ async fn delete_services(client: &Client, namespace: &str, lp: &ListParams) -> R
     let items = match api.list(lp).await {
         Ok(list) => list,
         Err(e) => {
-            info!("No services to delete or error listing: {}", e);
-            return Ok(());
+            return Err(format!("Failed to list expose services: {e}"));
         }
     };
 
@@ -473,7 +485,7 @@ async fn delete_services(client: &Client, namespace: &str, lp: &ListParams) -> R
             info!("Deleting service: {}", name);
             match api.delete(name, &DeleteParams::default()).await {
                 Ok(_) => info!("Service {} deleted successfully", name),
-                Err(e) => error!("Failed to delete service {}: {}", name, e),
+                Err(e) => return Err(format!("Failed to delete service {name}: {e}")),
             }
         }
     }
@@ -488,8 +500,7 @@ async fn delete_deployments(
     let items = match api.list(lp).await {
         Ok(list) => list,
         Err(e) => {
-            info!("No deployments to delete or error listing: {}", e);
-            return Ok(());
+            return Err(format!("Failed to list expose deployments: {e}"));
         }
     };
 
@@ -503,7 +514,7 @@ async fn delete_deployments(
             info!("Deleting deployment: {}", name);
             match api.delete(name, &DeleteParams::default()).await {
                 Ok(_) => info!("Deployment {} deleted successfully", name),
-                Err(e) => error!("Failed to delete deployment {}: {}", name, e),
+                Err(e) => return Err(format!("Failed to delete deployment {name}: {e}")),
             }
         }
     }

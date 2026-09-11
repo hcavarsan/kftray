@@ -16,7 +16,6 @@ use crossterm::event::{
     KeyCode,
     KeyModifiers,
 };
-use crossterm::terminal::size;
 pub use file_explorer::*;
 use kftray_commons::models::{
     config_model::Config,
@@ -285,8 +284,9 @@ pub struct App {
     pub http_logs_replay_result: Option<String>,
     pub http_logs_replay_in_progress: bool,
     pub throbber_state: throbber_widgets_tui::ThrobberState,
-    pub configs_being_processed:
-        std::collections::HashMap<i64, (Arc<AtomicBool>, std::time::Instant)>,
+    pub configs_being_processed: std::collections::HashMap<i64, Arc<AtomicBool>>,
+    pub forwarding_tasks: tokio::task::JoinSet<()>,
+    pub forwarding_slots: Arc<tokio::sync::Semaphore>,
     pub error_receiver: Option<tokio::sync::mpsc::UnboundedReceiver<String>>,
     pub error_sender: Option<tokio::sync::mpsc::UnboundedSender<String>>,
     pub search_query: String,
@@ -313,7 +313,7 @@ impl App {
         let tui_logger_state = TuiWidgetState::new();
         let (error_sender, error_receiver) = tokio::sync::mpsc::unbounded_channel();
 
-        let mut app = Self {
+        Self {
             details_scroll_offset: 0,
             details_scroll_max_offset: 0,
             import_file_explorer,
@@ -373,6 +373,8 @@ impl App {
             http_logs_replay_in_progress: false,
             throbber_state: throbber_widgets_tui::ThrobberState::default(),
             configs_being_processed: std::collections::HashMap::new(),
+            forwarding_tasks: tokio::task::JoinSet::new(),
+            forwarding_slots: Arc::new(tokio::sync::Semaphore::new(FORWARD_DISPATCH_CONCURRENCY)),
             error_receiver: Some(error_receiver),
             error_sender: Some(error_sender),
             search_query: String::new(),
@@ -383,13 +385,12 @@ impl App {
             update_prompt_pending: false,
             selected_update_button: UpdateButton::Update,
             update_progress_message: None,
-        };
-
-        if let Ok((_, height)) = size() {
-            app.update_visible_rows(height);
         }
+    }
 
-        app
+    pub async fn finish_forwarding(&mut self) {
+        self.forwarding_slots.close();
+        while self.forwarding_tasks.join_next().await.is_some() {}
     }
 
     fn matches_search_query(config: &Config, query_lower: &str) -> bool {
@@ -629,21 +630,14 @@ impl App {
 
         for config_state in config_states {
             if config_state.is_running {
-                let handle_key = format!("config:{}:service:", config_state.config_id);
+                let forwarder = CHILD_PROCESSES
+                    .get(&config_state.config_id)
+                    .and_then(|entry| entry.direct_forwarder.clone());
 
-                let matching_forwarders: Vec<_> = CHILD_PROCESSES
-                    .iter()
-                    .filter(|entry| entry.key().starts_with(&handle_key))
-                    .filter_map(|entry| entry.value().direct_forwarder.clone())
-                    .collect();
-
-                let mut active_pod = None;
-                for forwarder in matching_forwarders {
-                    if let Some(pod_name) = forwarder.get_current_active_pod().await {
-                        active_pod = Some(pod_name);
-                        break;
-                    }
-                }
+                let active_pod = match forwarder {
+                    Some(forwarder) => forwarder.get_current_active_pod().await,
+                    None => None,
+                };
 
                 self.active_pods.insert(config_state.config_id, active_pod);
             } else {
@@ -657,50 +651,43 @@ impl App {
     }
 
     pub fn update_configs(&mut self, configs: &[Config], config_states: &[ConfigState]) {
-        self.stopped_configs = configs
+        let running_ids: HashSet<_> = config_states
             .iter()
-            .filter(|config| {
-                config_states
-                    .iter()
-                    .find(|state| state.config_id == config.id.unwrap_or_default())
-                    .map(|state| !state.is_running)
-                    .unwrap_or(true)
-            })
-            .cloned()
+            .filter(|state| state.is_running)
+            .map(|state| state.config_id)
             .collect();
-
-        self.running_configs = configs
-            .iter()
-            .filter(|config| {
-                config_states
-                    .iter()
-                    .find(|state| state.config_id == config.id.unwrap_or_default())
-                    .map(|state| state.is_running)
-                    .unwrap_or(false)
-            })
-            .cloned()
-            .collect();
+        self.stopped_configs.clear();
+        self.running_configs.clear();
+        for config in configs {
+            if config.id.is_some_and(|id| running_ids.contains(&id)) {
+                self.running_configs.push(config.clone());
+            } else {
+                self.stopped_configs.push(config.clone());
+            }
+        }
 
         self.update_filtered_configs();
 
-        let now = std::time::Instant::now();
         self.configs_being_processed
-            .retain(|&_config_id, (completion_flag, start_time)| {
-                if completion_flag.load(Ordering::Relaxed) {
-                    return false;
-                }
+            .retain(|_, completion_flag| !completion_flag.load(Ordering::Relaxed));
+        while self.forwarding_tasks.try_join_next().is_some() {}
 
-                if now.duration_since(*start_time) > std::time::Duration::from_secs(30) {
-                    return false;
-                }
+        let mut new_errors = Vec::new();
+        if let Some(receiver) = &mut self.error_receiver {
+            while let Ok(error_msg) = receiver.try_recv() {
+                new_errors.push(error_msg);
+            }
+        }
 
-                true
-            });
-
-        if let Some(ref mut receiver) = self.error_receiver
-            && let Ok(error_msg) = receiver.try_recv()
-        {
-            self.error_message = Some(error_msg);
+        if !new_errors.is_empty() {
+            let combined = new_errors.join("\n");
+            self.error_message = match (
+                self.error_message.take(),
+                self.state == AppState::ShowErrorPopup,
+            ) {
+                (Some(existing), true) => Some(format!("{existing}\n{combined}")),
+                _ => Some(combined),
+            };
             self.state = AppState::ShowErrorPopup;
         }
     }
@@ -1412,6 +1399,8 @@ pub fn toggle_row_selection(app: &mut App) {
     }
 }
 
+const FORWARD_DISPATCH_CONCURRENCY: usize = 10;
+
 pub async fn handle_port_forwarding(app: &mut App, mode: DatabaseMode) -> io::Result<()> {
     let (selected_rows, configs, selected_row) = match app.active_table {
         ActiveTable::Stopped => (
@@ -1445,14 +1434,19 @@ pub async fn handle_port_forwarding(app: &mut App, mode: DatabaseMode) -> io::Re
     let selected_configs: Vec<Config> = selected_rows
         .iter()
         .filter_map(|&row| configs.get(row).cloned())
+        .filter(|config| {
+            !config.id.is_some_and(|id| {
+                app.configs_being_processed
+                    .get(&id)
+                    .is_some_and(|flag| !flag.load(Ordering::Relaxed))
+            })
+        })
         .collect();
 
-    let start_time = std::time::Instant::now();
     for config in &selected_configs {
         if let Some(id) = config.id {
             let completion_flag = Arc::new(AtomicBool::new(false));
-            app.configs_being_processed
-                .insert(id, (completion_flag.clone(), start_time));
+            app.configs_being_processed.insert(id, completion_flag);
         }
     }
 
@@ -1467,48 +1461,55 @@ pub async fn handle_port_forwarding(app: &mut App, mode: DatabaseMode) -> io::Re
     }
 
     let error_sender = app.error_sender.clone();
-    let active_table = app.active_table;
-    let logger_state_clone = app.logger_state.clone();
-    for config in selected_configs.clone() {
-        if let Some(id) = config.id {
-            let completion_flag = app
-                .configs_being_processed
-                .get(&id)
-                .map(|(flag, _)| flag.clone());
-            let sender = error_sender.clone();
-            let logger_state_for_task = logger_state_clone.clone();
-            if let Some(flag) = completion_flag {
-                tokio::spawn(async move {
-                    use crate::core::port_forward::{
-                        start_port_forwarding,
-                        stop_port_forwarding,
+    let is_starting = app.active_table == ActiveTable::Stopped;
+    let slots = app.forwarding_slots.clone();
+
+    let dispatch: Vec<(Config, Arc<AtomicBool>)> = selected_configs
+        .iter()
+        .filter_map(|config| {
+            let id = config.id?;
+            let flag = app.configs_being_processed.get(&id)?.clone();
+            Some((config.clone(), flag))
+        })
+        .collect();
+
+    app.forwarding_tasks.spawn(async move {
+        use futures::stream::{
+            self,
+            StreamExt,
+        };
+
+        use crate::core::port_forward::{
+            start_port_forwarding,
+            stop_port_forwarding,
+        };
+
+        stream::iter(dispatch)
+            .for_each_concurrent(FORWARD_DISPATCH_CONCURRENCY, |(config, flag)| {
+                let sender = error_sender.clone();
+                let slots = slots.clone();
+                async move {
+                    let Ok(_permit) = slots.acquire_owned().await else {
+                        flag.store(true, Ordering::Relaxed);
+                        return;
                     };
-                    use crate::tui::input::{
-                        ActiveTable,
-                        App,
-                    };
-
-                    let mut temp_app = App::new(logger_state_for_task);
-
-                    let is_starting = active_table == ActiveTable::Stopped;
-
-                    if is_starting {
-                        start_port_forwarding(&mut temp_app, config, mode).await;
+                    let result = if is_starting {
+                        start_port_forwarding(config, mode).await
                     } else {
-                        stop_port_forwarding(&mut temp_app, config, mode).await;
-                    }
+                        stop_port_forwarding(config, mode).await
+                    };
 
-                    if let Some(error_msg) = temp_app.error_message
+                    if let Err(error_msg) = result
                         && let Some(sender) = sender
                     {
                         let _ = sender.send(error_msg);
                     }
 
                     flag.store(true, Ordering::Relaxed);
-                });
-            }
-        }
-    }
+                }
+            })
+            .await;
+    });
 
     match app.active_table {
         ActiveTable::Stopped => app.selected_rows_stopped.clear(),

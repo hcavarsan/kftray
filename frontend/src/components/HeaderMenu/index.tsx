@@ -106,7 +106,7 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
               size='xs'
               variant='ghost'
               disabled={
-                isInitiating ||
+                !isInitiating &&
                 (selectedConfigs.length > 0
                   ? selectedConfigs.every(selected => {
                       const currentConfig = configs.find(
@@ -118,13 +118,16 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
                   : configs.every(config => config.is_running))
               }
               onClick={
-                selectedConfigs.length > 0
-                  ? startSelectedPortForwarding
-                  : () =>
-                      initiatePortForwarding(
-                        configs.filter(config => !config.is_running),
-                      )
+                isInitiating
+                  ? abortStartOperation
+                  : selectedConfigs.length > 0
+                    ? startSelectedPortForwarding
+                    : () =>
+                        initiatePortForwarding(
+                          configs.filter(config => !config.is_running),
+                        )
               }
+              aria-label={isInitiating ? 'Cancel queued starts' : undefined}
               _hover={{ bg: isInitiating ? undefined : 'whiteAlpha.100' }}
               height='26px'
               minWidth='90px'
@@ -132,7 +135,6 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
               px={2}
               borderRadius='md'
               border='1px solid rgba(255, 255, 255, 0.08)'
-              cursor={isInitiating ? 'default' : undefined}
             >
               {isInitiating ? (
                 <>
@@ -221,7 +223,7 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
               size='xs'
               variant='ghost'
               disabled={
-                isStopping ||
+                !isStopping &&
                 (selectedConfigs.length > 0
                   ? selectedConfigs.every(selected => {
                       const currentConfig = configs.find(
@@ -233,10 +235,13 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
                   : configs.every(config => !config.is_running))
               }
               onClick={
-                selectedConfigs.length > 0
-                  ? stopSelectedPortForwarding
-                  : stopAllPortForwarding
+                isStopping
+                  ? abortStopOperation
+                  : selectedConfigs.length > 0
+                    ? stopSelectedPortForwarding
+                    : stopAllPortForwarding
               }
+              aria-label={isStopping ? 'Cancel queued stops' : undefined}
               _hover={{ bg: isStopping ? undefined : 'whiteAlpha.100' }}
               height='26px'
               minWidth='90px'
@@ -244,7 +249,6 @@ const HeaderMenu: React.FC<HeaderMenuProps> = ({
               px={2}
               borderRadius='md'
               border='1px solid rgba(255, 255, 255, 0.08)'
-              cursor={isStopping ? 'default' : undefined}
             >
               {isStopping ? (
                 <>

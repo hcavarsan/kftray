@@ -16,8 +16,9 @@ import type { Config, TableProps } from '@/types'
 const PortForwardTable: React.FC<TableProps> = ({
   configs,
   isInitiating,
-  setIsInitiating,
   isStopping,
+  pendingConfigActions,
+  toggleConfigForward,
   initiatePortForwarding,
   startSelectedPortForwarding,
   stopSelectedPortForwarding,
@@ -235,9 +236,8 @@ const PortForwardTable: React.FC<TableProps> = ({
               handleSelectionChange={handleSelectionChange}
               selectedConfigsByContext={selectedConfigsByContext}
               handleCheckboxChange={handleCheckboxChange}
-              isInitiating={isInitiating}
-              setIsInitiating={setIsInitiating}
-              isStopping={isStopping}
+              pendingConfigActions={pendingConfigActions}
+              toggleConfigForward={toggleConfigForward}
             />
           ))}
         </AccordionRoot>

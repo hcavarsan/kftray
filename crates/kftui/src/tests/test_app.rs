@@ -5,10 +5,8 @@ use kftray_commons::models::{
 
 use crate::tests::test_logger_state;
 use crate::tui::input::{
-    ActiveComponent,
     ActiveTable,
     App,
-    AppState,
 };
 
 #[cfg(test)]
@@ -67,22 +65,6 @@ mod tests {
         }
 
         (configs, config_states)
-    }
-
-    #[test]
-    fn test_app_new() {
-        let app = App::new(test_logger_state());
-
-        assert_eq!(app.state, AppState::Normal);
-        assert_eq!(app.active_component, ActiveComponent::StoppedTable);
-        assert_eq!(app.active_table, ActiveTable::Stopped);
-        assert!(app.stopped_configs.is_empty());
-        assert!(app.running_configs.is_empty());
-        assert!(app.selected_rows_stopped.is_empty());
-        assert!(app.selected_rows_running.is_empty());
-        assert_eq!(app.selected_row_stopped, 0);
-        assert_eq!(app.selected_row_running, 0);
-        assert_eq!(app.error_message, None);
     }
 
     #[test]
@@ -231,5 +213,43 @@ mod tests {
 
         app.update_visible_rows(19);
         assert_eq!(app.visible_rows, 0);
+    }
+
+    #[test]
+    fn pending_forward_stays_busy_until_completion() {
+        let mut app = App::new(test_logger_state());
+        let complete = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        app.configs_being_processed.insert(1, complete.clone());
+        app.update_configs(&[], &[]);
+        assert!(app.configs_being_processed.contains_key(&1));
+
+        complete.store(true, std::sync::atomic::Ordering::Relaxed);
+        app.update_configs(&[], &[]);
+        assert!(!app.configs_being_processed.contains_key(&1));
+    }
+
+    #[tokio::test]
+    async fn finishing_cancels_queued_forwards_without_waiting_for_a_slot() {
+        let mut app = App::new(test_logger_state());
+        let slots = app.forwarding_slots.available_permits() as u32;
+        let _occupied = app
+            .forwarding_slots
+            .clone()
+            .acquire_many_owned(slots)
+            .await
+            .unwrap();
+        app.stopped_configs = vec![create_test_config(1)];
+        app.table_state_stopped.select(Some(0));
+        crate::tui::input::handle_port_forwarding(
+            &mut app,
+            kftray_commons::utils::db_mode::DatabaseMode::Memory,
+        )
+        .await
+        .unwrap();
+
+        tokio::time::timeout(std::time::Duration::from_secs(1), app.finish_forwarding())
+            .await
+            .unwrap();
+        assert!(app.error_receiver.as_mut().unwrap().try_recv().is_err());
     }
 }

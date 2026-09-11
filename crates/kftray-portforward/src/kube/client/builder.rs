@@ -60,23 +60,26 @@ fn shell_path() -> Option<String> {
 
     let home = env::var("HOME").ok()?;
 
-    let shells_to_try: Vec<String> = [
-        env::var("SHELL").ok(),
-        Some("/opt/homebrew/bin/fish".into()),
-        Some("/usr/local/bin/fish".into()),
-        Some("/bin/zsh".into()),
-        Some("/bin/bash".into()),
-    ]
-    .into_iter()
-    .flatten()
-    .filter(|s| Path::new(s).exists())
-    .collect();
+    let current_shell = env::var("SHELL").ok();
+    let shells_to_try = [
+        current_shell.as_deref(),
+        Some("/opt/homebrew/bin/fish"),
+        Some("/usr/local/bin/fish"),
+        Some("/bin/zsh"),
+        Some("/bin/bash"),
+    ];
 
     let mut seen = HashSet::new();
     let mut merged = Vec::new();
 
-    for shell in shells_to_try {
-        if let Some(path) = try_shell_path(&shell, &home) {
+    for (index, candidate) in shells_to_try.iter().enumerate() {
+        let Some(shell) = *candidate else {
+            continue;
+        };
+        if shells_to_try[..index].contains(candidate) || !Path::new(shell).exists() {
+            continue;
+        }
+        if let Some(path) = try_shell_path(shell, &home) {
             info!("shell_path: {} returned {} chars", shell, path.len());
             for p in path.split(':') {
                 if !p.is_empty() && seen.insert(p.to_string()) {

@@ -25,19 +25,19 @@ use crate::kube::shared_client::{
 pub async fn start_expose(
     configs: Vec<Config>, mode: DatabaseMode,
 ) -> Result<Vec<CustomResponse>, String> {
-    let mut responses = Vec::new();
-
-    for config in configs {
-        match start_single_expose(config, mode).await {
-            Ok(response) => responses.push(response),
-            Err(e) => return Err(e),
-        }
-    }
-
-    Ok(responses)
+    let configs = configs
+        .into_iter()
+        .map(|mut config| {
+            config.workload_type = Some("expose".to_string());
+            config
+        })
+        .collect();
+    crate::kube::start_port_forward_with_mode(configs, "tcp", mode, false).await
 }
 
-async fn start_single_expose(config: Config, mode: DatabaseMode) -> Result<CustomResponse, String> {
+pub(crate) async fn start_single_expose(
+    config: Config, mode: DatabaseMode,
+) -> Result<CustomResponse, String> {
     use self::kubernetes::create_expose_resources;
     use self::websocket_client::WebSocketTunnelClient;
     use crate::kube::models::{
@@ -150,7 +150,6 @@ async fn start_single_expose(config: Config, mode: DatabaseMode) -> Result<Custo
         };
     }
     pf_process.set_ws_client_handle(ws_handle);
-    CHILD_PROCESSES.insert(config_id.to_string(), pf_process);
 
     let config_state = ConfigState {
         id: None,
@@ -161,7 +160,12 @@ async fn start_single_expose(config: Config, mode: DatabaseMode) -> Result<Custo
         retry_count: None,
         last_error: None,
     };
-    update_config_state_with_mode(&config_state, mode).await?;
+    if let Err(error) = update_config_state_with_mode(&config_state, mode).await {
+        pf_process.cleanup_and_abort().await;
+        let _ = delete_expose_resources(client, &config.namespace, &config_id.to_string()).await;
+        return Err(error);
+    }
+    CHILD_PROCESSES.insert(config_id, pf_process);
 
     info!("Expose tunnel fully established for config {}", config_id);
 
@@ -180,54 +184,7 @@ async fn start_single_expose(config: Config, mode: DatabaseMode) -> Result<Custo
 }
 
 pub async fn stop_expose(
-    config_id: i64, namespace: &str, mode: DatabaseMode,
+    config_id: i64, _namespace: &str, mode: DatabaseMode,
 ) -> Result<CustomResponse, String> {
-    use kftray_commons::utils::config::get_config_with_mode;
-
-    use self::kubernetes::delete_expose_resources;
-    use crate::port_forward::CHILD_PROCESSES;
-
-    info!("Stopping expose for config {}", config_id);
-
-    let config = get_config_with_mode(config_id, mode).await?;
-
-    if let Some((_, pf_process)) = CHILD_PROCESSES.remove(&config_id.to_string()) {
-        info!("Cleaning up port-forward for config {}", config_id);
-        pf_process.cleanup_and_abort().await;
-    }
-
-    let client_key = ServiceClientKey::new(config.context.clone(), config.kubeconfig.clone());
-    let client = SHARED_CLIENT_MANAGER
-        .get_connection(client_key)
-        .await
-        .map_err(|e| format!("Failed to get K8s client: {}", e))?;
-    let client = client.client.clone();
-
-    delete_expose_resources(client, namespace, &config_id.to_string()).await?;
-
-    let config_state = ConfigState {
-        id: None,
-        config_id,
-        is_running: false,
-        process_id: None,
-        is_retrying: false,
-        retry_count: None,
-        last_error: None,
-    };
-    update_config_state_with_mode(&config_state, mode).await?;
-
-    info!("Expose stopped for config {}", config_id);
-
-    Ok(CustomResponse {
-        id: Some(config_id),
-        service: config.service.unwrap_or_else(|| "expose".to_string()),
-        namespace: config.namespace.clone(),
-        local_port: config.local_port.unwrap_or(0),
-        remote_port: config.remote_port.unwrap_or(0),
-        context: config.context.unwrap_or_default(),
-        stdout: String::new(),
-        stderr: String::new(),
-        status: 0,
-        protocol: config.protocol.clone(),
-    })
+    crate::kube::stop_port_forward_with_mode(config_id.to_string(), mode).await
 }
