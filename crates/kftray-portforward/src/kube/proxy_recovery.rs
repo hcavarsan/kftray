@@ -517,25 +517,28 @@ pub async fn recover_deployment(
         .ok_or_else(|| anyhow::anyhow!("Config has no ID"))?;
     let namespace = &config.namespace;
 
-    // Check if the Deployment still exists
-    // The service name in config is the hashed_name of the deployment
-    let hashed_name = config.service.as_deref().unwrap_or("");
     let deployments: kube::Api<k8s_openapi::api::apps::v1::Deployment> =
         kube::Api::namespaced(client.clone(), namespace);
 
     let deployment = deployments
-        .get_opt(hashed_name)
+        .list(&kube::api::ListParams::default().labels(&format!("config_id={config_id}")))
         .await
-        .map_err(|e| anyhow::anyhow!("Failed to query deployment {}: {}", hashed_name, e))?;
+        .map_err(|e| anyhow::anyhow!("Failed to query deployment for config {}: {}", config_id, e))?
+        .items
+        .into_iter()
+        .find(|deployment| deployment.metadata.deletion_timestamp.is_none());
 
-    if deployment.is_none() {
+    let Some(deployment) = deployment else {
         log::warn!(
-            "Deployment {} not found, falling back to bare pod recovery for config {}",
-            hashed_name,
+            "Proxy deployment not found, falling back to bare pod recovery for config {}",
             config_id
         );
         return recover_bare_pod(config, client, mode, ssl_override, cancellation).await;
-    }
+    };
+    let hashed_name = deployment
+        .metadata
+        .name
+        .ok_or_else(|| anyhow::anyhow!("Proxy deployment has no name"))?;
 
     let pods: kube::Api<k8s_openapi::api::core::v1::Pod> =
         kube::Api::namespaced(client.clone(), namespace);
@@ -559,7 +562,9 @@ pub async fn recover_deployment(
             {
                 if config.protocol.eq_ignore_ascii_case("udp") {
                     cleanup_child_processes_for_config(config_id).await;
-                    crate::kube::start::start_config(config.clone(), "udp", mode, ssl_override)
+                    let mut current_config = config.clone();
+                    current_config.service = Some(hashed_name.clone());
+                    crate::kube::start::start_config(current_config, "udp", mode, ssl_override)
                         .await
                         .map_err(anyhow::Error::msg)?;
                 }
@@ -838,5 +843,86 @@ mod tests {
         drop(first);
         drop(second);
         remove_recovery_lock(id);
+    }
+
+    #[tokio::test]
+    async fn repeated_recovery_uses_the_current_deployment_identity() {
+        use http::{
+            Method,
+            Request,
+            Response,
+        };
+        use kube::client::Body;
+
+        let (service, mut requests) = tower_test::mock::pair::<Request<Body>, Response<Body>>();
+        let client = kube::Client::new(service, "default");
+        let config = Config {
+            id: Some(420_051),
+            namespace: "default".to_string(),
+            service: Some("stale-deployment-name".to_string()),
+            protocol: "tcp".to_string(),
+            ..Config::default()
+        };
+        let server = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
+            for name in ["replacement-a", "replacement-b"] {
+                let (request, send) = requests.next_request().await.unwrap();
+                assert_eq!(request.method(), Method::GET);
+                assert_eq!(
+                    request.uri().path(),
+                    "/apis/apps/v1/namespaces/default/deployments"
+                );
+                let query = request.uri().query().unwrap_or_default();
+                assert!(
+                    query.contains("labelSelector=")
+                        && query.contains("config_id")
+                        && query.contains("420051"),
+                    "{query}"
+                );
+                send.send_response(Response::builder().body(Body::from(
+                    serde_json::to_vec(&serde_json::json!({
+                        "metadata":{"resourceVersion":"1"},
+                        "items":[
+                            {"metadata":{"name":"retiring-deployment","deletionTimestamp":"2026-09-11T00:00:00Z"}},
+                            {"metadata":{"name":name}}
+                        ]
+                    })).unwrap()
+                )).unwrap());
+
+                let (request, send) = requests.next_request().await.unwrap();
+                assert_eq!(request.method(), Method::GET);
+                assert_eq!(request.uri().path(), "/api/v1/namespaces/default/pods");
+                let query = request.uri().query().unwrap_or_default();
+                assert!(
+                    query.contains("labelSelector=")
+                        && query.contains(name)
+                        && query.contains("config_id")
+                        && query.contains("420051"),
+                    "{query}"
+                );
+                send.send_response(
+                    Response::builder()
+                        .body(Body::from(
+                            serde_json::to_vec(&serde_json::json!({
+                                "metadata":{"resourceVersion":"1"},
+                                "items":[{"metadata":{"name":format!("{name}-pod")},
+                                    "status":{"conditions":[{"type":"Ready","status":"True"}]}}]
+                            }))
+                            .unwrap(),
+                        ))
+                        .unwrap(),
+                );
+            }
+        }));
+        let cancellation = CancellationToken::new();
+        tokio::time::timeout(Duration::from_secs(2), async {
+            for _ in 0..2 {
+                recover_deployment(&config, &client, DatabaseMode::Memory, false, &cancellation)
+                    .await
+                    .unwrap();
+            }
+            server.await.unwrap();
+        })
+        .await
+        .unwrap();
     }
 }

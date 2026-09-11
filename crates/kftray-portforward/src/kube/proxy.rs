@@ -407,16 +407,21 @@ async fn wait_for_deployment_pod(
         biased;
         _ = cancellation.cancelled() => return Err("Proxy startup cancelled".to_string()),
         result = tokio::time::timeout(
-            std::time::Duration::from_secs(120), watcher.try_next(),
+            std::time::Duration::from_secs(120),
+            async {
+                while let Some(pod) = watcher.try_next().await.map_err(|error| error.to_string())? {
+                    if pod.metadata.deletion_timestamp.is_none()
+                        && let Some(name) = pod.metadata.name
+                    {
+                        return Ok(name);
+                    }
+                }
+                Err("Proxy pod watch ended before a pod was created".to_string())
+            },
         ) => result,
     };
     match result {
-        Ok(Ok(Some(pod))) => pod
-            .metadata
-            .name
-            .ok_or_else(|| "Proxy pod has no name".to_string()),
-        Ok(Ok(None)) => Err("Proxy pod watch ended before a pod was created".to_string()),
-        Ok(Err(error)) => Err(error.to_string()),
+        Ok(result) => result,
         Err(_) => Err("Timed out waiting for the proxy deployment pod".to_string()),
     }
 }
@@ -804,5 +809,37 @@ mod tests {
     #[tokio::test]
     async fn stop_cancels_proxy_listener_readiness() {
         assert_startup_wait_is_cancelled(420_002, true).await;
+    }
+
+    #[tokio::test]
+    async fn deployment_discovery_skips_terminating_and_unnamed_pods() {
+        let (service, mut requests) = tower_test::mock::pair::<
+            http::Request<kube::client::Body>,
+            http::Response<kube::client::Body>,
+        >();
+        let pods = Api::namespaced(Client::new(service, "default"), "default");
+        let server = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
+            let (_, send) = requests.next_request().await.unwrap();
+            send.send_response(http::Response::builder().body(kube::client::Body::from(
+                serde_json::to_vec(&serde_json::json!({
+                    "metadata":{"resourceVersion":"1"},
+                    "items":[
+                        {"metadata":{"name":"terminating-pod","deletionTimestamp":"2026-09-11T00:00:00Z"}},
+                        {"metadata":{}},
+                        {"metadata":{"name":"replacement-pod"}}
+                    ]
+                })).unwrap()
+            )).unwrap());
+        }));
+        let cancellation = CancellationToken::new();
+        let selected = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            wait_for_deployment_pod(&pods, &ListParams::default(), &cancellation),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(selected, "replacement-pod");
+        server.await.unwrap();
     }
 }
