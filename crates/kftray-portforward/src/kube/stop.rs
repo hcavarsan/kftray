@@ -343,9 +343,9 @@ pub async fn stop_all_port_forward_with_mode(
             let client_key =
                 ServiceClientKey::new(config.context.clone(), config.kubeconfig.clone());
             async move {
-                match SHARED_CLIENT_MANAGER.get_client(client_key).await {
+                match SHARED_CLIENT_MANAGER.get_connection(client_key).await {
                     Ok(shared_client) => {
-                        let client = Client::clone(&shared_client);
+                        let client = shared_client.client.clone();
                         delete_proxy_cluster_resources(client, &namespace, config_id).await;
                     }
                     Err(e) => error!(
@@ -502,9 +502,9 @@ pub async fn stop_port_forward_with_mode(
                 );
                 let client_key =
                     ServiceClientKey::new(config.context.clone(), config.kubeconfig.clone());
-                match SHARED_CLIENT_MANAGER.get_client(client_key).await {
+                match SHARED_CLIENT_MANAGER.get_connection(client_key).await {
                     Ok(shared_client) => {
-                        let client = Client::clone(&shared_client);
+                        let client = shared_client.client.clone();
                         delete_proxy_cluster_resources(client, &config.namespace, config_id_parsed)
                             .await;
                     }
@@ -524,21 +524,21 @@ pub async fn stop_port_forward_with_mode(
             .map(|(_, service)| service)
             .unwrap_or("");
 
-        if let Some(config) = configs.iter().find(|c| c.id == Some(config_id_parsed))
-            && config.domain_enabled.unwrap_or_default()
-        {
-            if let Err(e) = remove_host_entry(&config_id) {
-                error!("Failed to remove host entry for ID {config_id}: {e}");
+        if let Some(config) = configs.iter().find(|c| c.id == Some(config_id_parsed)) {
+            if config.domain_enabled.unwrap_or_default() {
+                if let Err(e) = remove_host_entry(&config_id) {
+                    error!("Failed to remove host entry for ID {config_id}: {e}");
 
-                let config_state = ConfigState::new(config_id_parsed, false);
-                if let Err(e) = update_config_state_with_mode(&config_state, mode).await {
-                    error!("Failed to update config state: {e}");
+                    let config_state = ConfigState::new(config_id_parsed, false);
+                    if let Err(e) = update_config_state_with_mode(&config_state, mode).await {
+                        error!("Failed to update config state: {e}");
+                    }
+                    return Err(e.to_string());
                 }
-                return Err(e.to_string());
-            }
 
-            if let Err(e) = remove_ssl_host_entry(&config_id) {
-                error!("Failed to remove SSL host entry for ID {config_id}: {e}");
+                if let Err(e) = remove_ssl_host_entry(&config_id) {
+                    error!("Failed to remove SSL host entry for ID {config_id}: {e}");
+                }
             }
         } else {
             warn!("Config with id '{config_id}' not found.");

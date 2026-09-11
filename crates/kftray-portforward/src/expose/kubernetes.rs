@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::time::{
+    Duration,
     SystemTime,
     UNIX_EPOCH,
 };
@@ -8,10 +9,13 @@ use k8s_openapi::api::{
     apps::v1::Deployment,
     core::v1::{
         Pod,
+        Probe,
         Service,
+        TCPSocketAction,
     },
     networking::v1::Ingress,
 };
+use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
 use kftray_commons::models::config_model::Config;
 use kube::api::{
     DeleteParams,
@@ -22,7 +26,6 @@ use kube::{
     Api,
     Client,
 };
-use kube_runtime::wait::conditions;
 use log::{
     debug,
     error,
@@ -119,54 +122,66 @@ pub async fn create_expose_resources(
             .unwrap_or_else(|| deployment_name.clone())
     };
 
-    create_deployment(
-        &client,
-        &config.namespace,
-        &deployment_name,
-        &config_id_str,
-        config,
-    )
-    .await?;
-
-    let pod_name = wait_for_pod_ready(&client, &config.namespace, &config_id_str).await?;
-
-    let pod_ip = get_pod_ip(&client, &config.namespace, &pod_name).await?;
-
-    let local_port = config.local_port.unwrap_or(8080);
-    create_service(
-        &client,
-        &config.namespace,
-        &service_name,
-        &config_id_str,
-        local_port,
-    )
-    .await?;
-
-    let ingress_created = if config.exposure_type.as_deref() == Some("public") {
-        create_ingress(
+    let result = async {
+        create_deployment(
             &client,
             &config.namespace,
-            &ingress_name,
-            &service_name,
+            &deployment_name,
+            &config_id_str,
             config,
         )
         .await?;
-        true
-    } else {
-        false
-    };
 
-    Ok(ExposeResources {
-        deployment_name: deployment_name.clone(),
-        service_name: service_name.clone(),
-        ingress_name: if ingress_created {
-            Some(ingress_name)
+        let pod_name = wait_for_pod_ready(&client, &config.namespace, &config_id_str).await?;
+
+        let pod_ip = get_pod_ip(&client, &config.namespace, &pod_name).await?;
+
+        let local_port = config.local_port.unwrap_or(8080);
+        create_service(
+            &client,
+            &config.namespace,
+            &service_name,
+            &config_id_str,
+            local_port,
+        )
+        .await?;
+
+        let ingress_created = if config.exposure_type.as_deref() == Some("public") {
+            create_ingress(
+                &client,
+                &config.namespace,
+                &ingress_name,
+                &service_name,
+                config,
+            )
+            .await?;
+            true
         } else {
-            None
-        },
-        pod_ip,
-        pod_name,
-    })
+            false
+        };
+
+        Ok(ExposeResources {
+            deployment_name: deployment_name.clone(),
+            service_name: service_name.clone(),
+            ingress_name: if ingress_created {
+                Some(ingress_name)
+            } else {
+                None
+            },
+            pod_ip,
+            pod_name,
+        })
+    }
+    .await;
+    if let Err(error) = result {
+        return match delete_expose_resources(client.clone(), &config.namespace, &config_id_str)
+            .await
+        {
+            Ok(()) => Err(error),
+            Err(cleanup_error) => Err(format!("{error}; cleanup failed: {cleanup_error}")),
+        };
+    }
+    result
 }
 
 async fn create_deployment(
@@ -185,8 +200,48 @@ async fn create_deployment(
     let template = templates::load_deployment_template()?;
     let rendered = templates::render_template(&template, &values);
 
-    let deployment: Deployment = serde_json::from_str(&rendered)
+    let mut deployment: Deployment = serde_json::from_str(&rendered)
         .map_err(|e| format!("Failed to parse deployment: {}", e))?;
+    let spec = deployment
+        .spec
+        .as_mut()
+        .and_then(|deployment| deployment.template.spec.as_mut())
+        .ok_or("Expose deployment must contain a pod specification")?;
+    let index = spec
+        .containers
+        .iter()
+        .position(|container| {
+            container.env.as_ref().is_some_and(|env| {
+                env.iter().any(|value| {
+                    value.name == "PROXY_TYPE" && value.value.as_deref() == Some("reverse_http")
+                })
+            })
+        })
+        .unwrap_or(0);
+    let container = spec
+        .containers
+        .get_mut(index)
+        .ok_or("Expose deployment must contain a container")?;
+    container.startup_probe.get_or_insert_with(|| Probe {
+        tcp_socket: Some(TCPSocketAction {
+            port: IntOrString::Int(9999),
+            ..Default::default()
+        }),
+        period_seconds: Some(1),
+        timeout_seconds: Some(1),
+        failure_threshold: Some(30),
+        ..Default::default()
+    });
+    container.readiness_probe.get_or_insert_with(|| Probe {
+        tcp_socket: Some(TCPSocketAction {
+            port: IntOrString::Int(8080),
+            ..Default::default()
+        }),
+        period_seconds: Some(1),
+        timeout_seconds: Some(1),
+        failure_threshold: Some(1),
+        ..Default::default()
+    });
 
     deployments
         .create(&PostParams::default(), &deployment)
@@ -203,23 +258,33 @@ async fn wait_for_pod_ready(
     let pods: Api<Pod> = Api::namespaced(client.clone(), namespace);
     let lp = ListParams::default().labels(&format!("app=kftray-expose,config_id={}", config_id));
 
-    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-
-    let pod_list = pods
-        .list(&lp)
-        .await
-        .map_err(|e| format!("Failed to list pods: {}", e))?;
-
-    let pod = pod_list.items.first().ok_or("No pod found")?;
-
-    let pod_name = pod.metadata.name.clone().ok_or("Pod has no name")?;
-
-    kube_runtime::wait::await_condition(pods.clone(), &pod_name, conditions::is_pod_running())
-        .await
-        .map_err(|e| format!("Pod not ready: {}", e))?;
-
-    info!("Pod ready: {}", pod_name);
-    Ok(pod_name)
+    tokio::time::timeout(Duration::from_secs(120), async {
+        loop {
+            let pod_list = pods
+                .list(&lp)
+                .await
+                .map_err(|error| format!("Failed to list pods: {error}"))?;
+            if let Some(pod) = pod_list.items.into_iter().find(|pod| {
+                pod.metadata.deletion_timestamp.is_none()
+                    && pod.status.as_ref().is_some_and(|status| {
+                        status.phase.as_deref() == Some("Running")
+                            && status.conditions.as_ref().is_some_and(|conditions| {
+                                conditions.iter().any(|condition| {
+                                    condition.type_ == "Ready" && condition.status == "True"
+                                })
+                            })
+                    })
+            }) {
+                return pod
+                    .metadata
+                    .name
+                    .ok_or_else(|| "Pod has no name".to_owned());
+            }
+            tokio::time::sleep(Duration::from_millis(250)).await;
+        }
+    })
+    .await
+    .map_err(|_| "Timed out waiting for expose pod readiness".to_owned())?
 }
 
 async fn get_pod_ip(client: &Client, namespace: &str, pod_name: &str) -> Result<String, String> {

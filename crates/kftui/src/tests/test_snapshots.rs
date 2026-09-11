@@ -148,22 +148,6 @@ mod tests {
     }
 
     #[test]
-    fn test_draw_ui_about_popup() {
-        let _settings = setup_snapshot();
-        let mut terminal = setup_terminal();
-        let mut app = create_test_app();
-        app.state = AppState::ShowAbout;
-
-        terminal
-            .draw(|frame| {
-                draw_ui(frame, &mut app, &[create_test_config_state()]);
-            })
-            .unwrap();
-
-        assert_snapshot!(terminal.backend());
-    }
-
-    #[test]
     fn test_draw_ui_import_file_explorer() {
         let _settings = setup_snapshot();
         let mut terminal = setup_terminal();

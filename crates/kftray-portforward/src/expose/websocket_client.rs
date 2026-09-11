@@ -24,6 +24,7 @@ use log::{
     info,
     warn,
 };
+use tokio::sync::oneshot;
 use tokio_tungstenite::{
     connect_async,
     tungstenite::Message,
@@ -46,7 +47,8 @@ impl WebSocketTunnelClient {
         }
     }
 
-    pub async fn start(&self) -> Result<(), String> {
+    pub async fn start(&self, ready: oneshot::Sender<Result<(), String>>) -> Result<(), String> {
+        let mut ready = Some(ready);
         let ws_url = format!("ws://127.0.0.1:{}", self.websocket_port);
         let max_retries = 100;
         let mut retry_count = 0;
@@ -59,7 +61,7 @@ impl WebSocketTunnelClient {
                 max_retries
             );
 
-            match self.connect_and_run(&ws_url).await {
+            match self.connect_and_run(&ws_url, &mut ready).await {
                 Ok(_) => {
                     info!("WebSocket tunnel disconnected gracefully");
                 }
@@ -85,11 +87,26 @@ impl WebSocketTunnelClient {
         }
     }
 
-    async fn connect_and_run(&self, ws_url: &str) -> Result<(), String> {
-        // Connect to the port-forwarded WebSocket endpoint
-        let (ws_stream, _) = connect_async(ws_url)
-            .await
-            .map_err(|e| format!("Failed to connect to WebSocket: {}", e))?;
+    async fn connect_and_run(
+        &self, ws_url: &str, ready: &mut Option<oneshot::Sender<Result<(), String>>>,
+    ) -> Result<(), String> {
+        let (ws_stream, _) = match connect_async(ws_url).await {
+            Ok(connection) => connection,
+            Err(error) => {
+                let message = format!("Failed to connect to WebSocket: {error}");
+                if let Some(ready) = ready.take()
+                    && ready.send(Err(message.clone())).is_err()
+                {
+                    return Err("Expose startup was cancelled".to_owned());
+                }
+                return Err(message);
+            }
+        };
+        if let Some(ready) = ready.take() {
+            ready
+                .send(Ok(()))
+                .map_err(|_| "Expose startup was cancelled".to_owned())?;
+        }
 
         info!("WebSocket tunnel connected");
 
@@ -230,20 +247,6 @@ impl WebSocketTunnelClient {
             }
         };
 
-        let service_addr = format!("{}:{}", self.local_service_address, self.local_service_port);
-        match tokio::net::TcpStream::connect(&service_addr).await {
-            Ok(_stream) => {
-                debug!("TCP connection to {} successful", service_addr);
-            }
-            Err(e) => {
-                error!("Cannot establish TCP connection to {}: {}", service_addr, e);
-                return TunnelMessage::Error {
-                    id: Some(request_id),
-                    message: format!("Cannot connect to local service at {}: {}", service_addr, e),
-                };
-            }
-        }
-
         match http_client.request(request).await {
             Ok(response) => {
                 let status = response.status().as_u16();
@@ -288,5 +291,119 @@ impl WebSocketTunnelClient {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use tokio::io::AsyncWriteExt;
+    use tokio::net::TcpListener;
+    use tokio::sync::oneshot;
+
+    use super::WebSocketTunnelClient;
+
+    #[tokio::test]
+    async fn startup_waits_for_the_websocket_handshake() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client = WebSocketTunnelClient::new(
+            listener.local_addr().unwrap().port(),
+            "127.0.0.1".to_owned(),
+            8080,
+        );
+        let (ready_tx, mut ready_rx) = oneshot::channel();
+        let task = tokio::spawn(async move { client.start(ready_tx).await });
+        let (socket, _) = listener.accept().await.unwrap();
+        assert!(matches!(
+            ready_rx.try_recv(),
+            Err(oneshot::error::TryRecvError::Empty)
+        ));
+        let _peer = tokio_tungstenite::accept_async(socket).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(1), ready_rx)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn rejected_handshake_fails_startup() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client = WebSocketTunnelClient::new(
+            listener.local_addr().unwrap().port(),
+            "127.0.0.1".to_owned(),
+            8080,
+        );
+        let (ready_tx, ready_rx) = oneshot::channel();
+        let task = tokio::spawn(async move { client.start(ready_tx).await });
+        let (mut socket, _) = listener.accept().await.unwrap();
+        socket
+            .write_all(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n")
+            .await
+            .unwrap();
+        let result = tokio::time::timeout(Duration::from_secs(1), ready_rx)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(result.is_err());
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn forwards_the_request_without_a_disposable_tcp_probe() {
+        use std::collections::HashMap;
+
+        use http_body_util::Full;
+        use hyper::body::Bytes;
+        use hyper_util::client::legacy::Client;
+        use hyper_util::rt::TokioExecutor;
+        use tokio::io::AsyncReadExt;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client = WebSocketTunnelClient::new(
+            9999,
+            "127.0.0.1".to_owned(),
+            listener.local_addr().unwrap().port(),
+        );
+        let http_client = Client::builder(TokioExecutor::new()).build_http::<Full<Bytes>>();
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            while !request.ends_with(b"\r\n\r\n") {
+                request.push(socket.read_u8().await.unwrap());
+            }
+            assert!(request.starts_with(b"GET /request HTTP/1.1\r\n"));
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\nContent-Length: 8\r\nConnection: close\r\n\r\nresponse",
+                )
+                .await
+                .unwrap();
+        });
+        let response = tokio::time::timeout(
+            Duration::from_secs(2),
+            client.forward_to_local_service(
+                &http_client,
+                "request".to_owned(),
+                "GET".to_owned(),
+                "/request".to_owned(),
+                HashMap::new(),
+                Vec::new(),
+            ),
+        )
+        .await
+        .unwrap();
+        match response {
+            super::TunnelMessage::HttpResponse { status, body, .. } => {
+                assert_eq!(status, 200);
+                assert_eq!(body, b"response");
+            }
+            other => panic!("expected HTTP response, got {other:?}"),
+        }
+        server.await.unwrap();
     }
 }

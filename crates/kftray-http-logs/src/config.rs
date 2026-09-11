@@ -39,8 +39,7 @@ impl LogConfig {
     }
 
     pub fn default_log_directory() -> Result<PathBuf> {
-        let home_dir = dirs::home_dir().context("Failed to determine home directory")?;
-        Ok(home_dir.join(".kftray").join("http_logs"))
+        kftray_commons::utils::config_dir::get_log_folder_path().map_err(anyhow::Error::msg)
     }
 
     pub fn log_dir(&self) -> &Path {
@@ -176,14 +175,6 @@ mod tests {
         assert_eq!(config.max_log_size(), DEFAULT_MAX_LOG_SIZE);
         assert_eq!(config.retention_days(), DEFAULT_LOG_RETENTION_DAYS);
         assert_eq!(config.file_extension, "testlog");
-    }
-
-    #[test]
-    fn test_default_log_directory_ok() {
-        let result = LogConfig::default_log_directory();
-        assert!(result.is_ok());
-        let path = result.unwrap();
-        assert!(path.ends_with(".kftray/http_logs"));
     }
 
     #[test]

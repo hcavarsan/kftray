@@ -14,10 +14,13 @@ use kube::{
 };
 use log::info;
 
-use super::client::create_client_with_specific_context;
 use super::client::error::{
     KubeClientError,
     KubeResult,
+};
+use super::client::{
+    get_kubeconfig_paths_from_option,
+    merge_kubeconfigs,
 };
 use crate::kube::models::KubeContextInfo;
 
@@ -106,28 +109,27 @@ pub fn list_contexts(kubeconfig: &Kubeconfig) -> Vec<String> {
 pub async fn list_kube_contexts(kubeconfig: Option<String>) -> KubeResult<Vec<KubeContextInfo>> {
     info!("list_kube_contexts {}", kubeconfig.as_deref().unwrap_or(""));
 
-    let (_, kubeconfig, contexts) = create_client_with_specific_context(kubeconfig, None)
-        .await
-        .map_err(|err| {
-            KubeClientError::config_error(format!("Failed to read kubeconfig contexts: {err}"))
-        })?;
+    let contexts = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<String>> {
+        let paths = get_kubeconfig_paths_from_option(kubeconfig)?;
+        let (_, contexts, _) = merge_kubeconfigs(&paths)?;
+        Ok(contexts)
+    })
+    .await
+    .map_err(|err| KubeClientError::config_error(format!("Kubeconfig loading task failed: {err}")))?
+    .map_err(|err| {
+        KubeClientError::config_error(format!("Failed to read kubeconfig contexts: {err}"))
+    })?;
 
-    if let Some(kubeconfig) = kubeconfig {
-        Ok(kubeconfig
-            .contexts
-            .into_iter()
-            .map(|c| KubeContextInfo { name: c.name })
-            .collect())
-    } else if !contexts.is_empty() {
-        Ok(contexts
-            .into_iter()
-            .map(|name| KubeContextInfo { name })
-            .collect())
-    } else {
-        Err(KubeClientError::config_error(
+    if contexts.is_empty() {
+        return Err(KubeClientError::config_error(
             "No kubeconfig found or no contexts available. Please check your kubeconfig file exists and contains valid contexts",
-        ))
+        ));
     }
+
+    Ok(contexts
+        .into_iter()
+        .map(|name| KubeContextInfo { name })
+        .collect())
 }
 
 #[cfg(test)]

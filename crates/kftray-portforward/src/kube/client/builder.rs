@@ -2,10 +2,9 @@ use std::env;
 use std::sync::Once;
 
 use anyhow::Result;
-use kube::Client;
-use kube::config::Kubeconfig;
 use log::info;
 
+use super::KubeConnection;
 use super::config::{
     create_config_with_context,
     get_kubeconfig_paths_from_option,
@@ -254,31 +253,29 @@ fn env_debug_info() -> String {
 }
 
 pub async fn create_client_with_specific_context(
-    kubeconfig: Option<String>, context_name: Option<&str>,
-) -> Result<(Option<Client>, Option<Kubeconfig>, Vec<String>)> {
+    kubeconfig: Option<String>, context_name: &str,
+) -> Result<KubeConnection> {
     init_path();
 
     let kubeconfig_paths = get_kubeconfig_paths_from_option(kubeconfig)?;
-    let (merged_kubeconfig, all_contexts, mut errors) = merge_kubeconfigs(&kubeconfig_paths)?;
+    let (merged_kubeconfig, _, mut errors) = merge_kubeconfigs(&kubeconfig_paths)?;
 
-    if let Some(context_name) = context_name {
-        match create_config_with_context(&merged_kubeconfig, context_name).await {
-            Ok(config) => match create_client_with_config(&config).await {
-                Some(client) => {
-                    info!("Created new client for context: {context_name}");
-                    return Ok((Some(client), Some(merged_kubeconfig), all_contexts));
-                }
-                _ => {
-                    errors.push(format!("Connection failed for context '{context_name}'"));
-                }
-            },
-            Err(e) => {
-                errors.push(format!("Config error for context '{context_name}': {e}"));
+    match create_config_with_context(&merged_kubeconfig, context_name).await {
+        Ok(config) => match create_client_with_config(&config).await {
+            Some(client) => {
+                info!("Created new client for context: {context_name}");
+                return Ok(KubeConnection {
+                    client,
+                    cluster_url: config.cluster_url,
+                });
             }
+            None => {
+                errors.push(format!("Connection failed for context '{context_name}'"));
+            }
+        },
+        Err(e) => {
+            errors.push(format!("Config error for context '{context_name}': {e}"));
         }
-    } else {
-        info!("No specific context provided, returning all available contexts.");
-        return Ok((None, None, all_contexts));
     }
 
     Err(anyhow::anyhow!(

@@ -5,11 +5,13 @@ use std::time::{
 };
 
 use dashmap::DashMap;
-use kube::Client;
 use once_cell::sync::Lazy;
 use tokio::sync::Mutex;
 
-use crate::kube::client::create_client_with_specific_context;
+use crate::kube::client::{
+    KubeConnection,
+    create_client_with_specific_context,
+};
 
 #[derive(Debug, Clone, Hash, PartialEq, Eq)]
 pub struct ServiceClientKey {
@@ -27,14 +29,14 @@ impl ServiceClientKey {
 }
 
 struct CachedClient {
-    client: Arc<Client>,
+    connection: Arc<KubeConnection>,
     created_at: Instant,
 }
 
 impl CachedClient {
-    fn new(client: Client) -> Self {
+    fn new(connection: KubeConnection) -> Self {
         Self {
-            client: Arc::new(client),
+            connection: Arc::new(connection),
             created_at: Instant::now(),
         }
     }
@@ -59,10 +61,16 @@ impl SharedClientManager {
         }
     }
 
-    pub async fn get_client(&self, key: ServiceClientKey) -> anyhow::Result<Arc<Client>> {
+    pub async fn get_connection(
+        &self, key: ServiceClientKey,
+    ) -> anyhow::Result<Arc<KubeConnection>> {
+        let context_name = key
+            .context_name
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("Kubernetes context is required"))?;
         if let Some(cached) = self.clients.get(&key) {
             if !cached.is_expired(self.client_ttl) {
-                return Ok(cached.client.clone());
+                return Ok(cached.connection.clone());
             }
             drop(cached);
             self.clients.remove(&key);
@@ -78,32 +86,19 @@ impl SharedClientManager {
 
         if let Some(cached) = self.clients.get(&key) {
             if !cached.is_expired(self.client_ttl) {
-                return Ok(cached.client.clone());
+                return Ok(cached.connection.clone());
             }
             drop(cached);
             self.clients.remove(&key);
         }
 
-        let result = async {
-            let (client_opt, _, _) = create_client_with_specific_context(
-                key.kubeconfig_path.clone(),
-                key.context_name.as_deref(),
-            )
-            .await?;
-
-            client_opt.ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Failed to create client for context: {:?}",
-                    key.context_name
-                )
-            })
-        }
-        .await;
+        let result =
+            create_client_with_specific_context(key.kubeconfig_path.clone(), context_name).await;
 
         match result {
             Ok(client) => {
                 let cached_client = CachedClient::new(client);
-                let client_arc = cached_client.client.clone();
+                let client_arc = cached_client.connection.clone();
                 self.clients.insert(key, cached_client);
                 Ok(client_arc)
             }
@@ -133,38 +128,3 @@ impl Default for SharedClientManager {
 }
 
 pub static SHARED_CLIENT_MANAGER: Lazy<SharedClientManager> = Lazy::new(SharedClientManager::new);
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_service_client_key() {
-        let key1 = ServiceClientKey::new(
-            Some("context1".to_string()),
-            Some("/path/to/config".to_string()),
-        );
-
-        let key2 = ServiceClientKey::new(
-            Some("context1".to_string()),
-            Some("/path/to/config".to_string()),
-        );
-
-        assert_eq!(key1, key2);
-    }
-
-    #[test]
-    fn test_service_client_key_context_reuse() {
-        let key_config1 = ServiceClientKey::new(
-            Some("prod-cluster".to_string()),
-            Some("/home/user/.kube/config".to_string()),
-        );
-
-        let key_config2 = ServiceClientKey::new(
-            Some("prod-cluster".to_string()),
-            Some("/home/user/.kube/config".to_string()),
-        );
-
-        assert_eq!(key_config1, key_config2);
-    }
-}

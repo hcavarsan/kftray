@@ -22,7 +22,10 @@ impl UdpForwarder {
         local_address: String, local_port: u16,
         upstream_conn: impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + 'static,
         cancellation_token: CancellationToken,
-    ) -> anyhow::Result<(u16, tokio::task::JoinHandle<()>)> {
+    ) -> anyhow::Result<(
+        u16,
+        impl Future<Output = anyhow::Result<()>> + Send + 'static,
+    )> {
         let local_udp_addr = format!("{local_address}:{local_port}");
 
         let local_udp_socket = Arc::new(
@@ -42,80 +45,77 @@ impl UdpForwarder {
         let local_udp_socket_read = local_udp_socket.clone();
         let local_udp_socket_write = local_udp_socket;
 
-        let handle = tokio::spawn({
-            let tcp_read = tcp_read.clone();
-            let tcp_write = tcp_write.clone();
-            let cancel_token = cancellation_token.clone();
-            async move {
-                let mut udp_buffer = [0u8; BUFFER_SIZE];
-                let peer: Arc<Mutex<Option<std::net::SocketAddr>>> = Arc::new(Mutex::new(None));
+        let forward_future = async move {
+            let mut udp_buffer = vec![0u8; BUFFER_SIZE];
+            let peer: Arc<Mutex<Option<std::net::SocketAddr>>> = Arc::new(Mutex::new(None));
 
-                loop {
-                    tokio::select! {
-                        result = local_udp_socket_read.recv_from(&mut udp_buffer) => {
-                            match result {
-                                Ok((len, src)) => {
-                                    *peer.lock().await = Some(src);
-                                    let mut writer = tcp_write.lock().await;
+            let result: anyhow::Result<()> = loop {
+                tokio::select! {
+                    result = local_udp_socket_read.recv_from(&mut udp_buffer) => {
+                        match result {
+                            Ok((len, src)) => {
+                                *peer.lock().await = Some(src);
+                                let mut writer = tcp_write.lock().await;
 
-                                    let packet_len = (len as u32).to_be_bytes();
-                                    if let Err(e) = writer.write_all(&packet_len).await {
-                                        error!("Failed to write packet length to TCP stream: {:?}", e);
-                                        break;
-                                    }
-                                    if let Err(e) = writer.write_all(&udp_buffer[..len]).await {
-                                        error!("Failed to write UDP packet to TCP stream: {:?}", e);
-                                        break;
-                                    }
-                                    if let Err(e) = writer.flush().await {
-                                        error!("Failed to flush TCP stream: {:?}", e);
-                                        break;
-                                    }
-                                },
-                                Err(e) => {
-                                    error!("Failed to receive from UDP socket: {:?}", e);
-                                    break;
+                                let packet_len = (len as u32).to_be_bytes();
+                                if let Err(e) = writer.write_all(&packet_len).await {
+                                    error!("Failed to write packet length to TCP stream: {:?}", e);
+                                    break Err(anyhow::anyhow!("Failed to write packet length to TCP stream: {e}"));
                                 }
-                            }
-                        },
-                        result = async {
-                            let mut reader = tcp_read.lock().await;
-                            Self::read_tcp_length_and_packet(&mut *reader).await
-                        } => {
-                            match result {
-                                Ok(Some(packet)) => {
-                                    let peer_addr = *peer.lock().await;
-                                    if let Some(peer_addr) = peer_addr {
-                                        if let Err(e) = local_udp_socket_write.send_to(&packet, &peer_addr).await {
-                                            error!("Failed to send UDP packet to peer: {:?}", e);
-                                            break;
-                                        }
-                                    } else {
-                                        error!("No UDP peer to send to");
-                                        break;
-                                    }
-                                },
-                                Ok(None) => break,
-                                Err(e) => {
-                                    error!("Failed to read from TCP stream: {:?}", e);
-                                    break;
+                                if let Err(e) = writer.write_all(&udp_buffer[..len]).await {
+                                    error!("Failed to write UDP packet to TCP stream: {:?}", e);
+                                    break Err(anyhow::anyhow!("Failed to write UDP packet to TCP stream: {e}"));
                                 }
+                                if let Err(e) = writer.flush().await {
+                                    error!("Failed to flush TCP stream: {:?}", e);
+                                    break Err(anyhow::anyhow!("Failed to flush TCP stream: {e}"));
+                                }
+                            },
+                            Err(e) => {
+                                error!("Failed to receive from UDP socket: {:?}", e);
+                                break Err(anyhow::anyhow!("Failed to receive from UDP socket: {e}"));
                             }
                         }
-                        _ = cancel_token.cancelled() => {
-                            info!("UDP forwarder cancelled, shutting down");
-                            break;
+                    },
+                    result = async {
+                        let mut reader = tcp_read.lock().await;
+                        Self::read_tcp_length_and_packet(&mut *reader).await
+                    } => {
+                        match result {
+                            Ok(Some(packet)) => {
+                                let peer_addr = *peer.lock().await;
+                                if let Some(peer_addr) = peer_addr {
+                                    if let Err(e) = local_udp_socket_write.send_to(&packet, &peer_addr).await {
+                                        error!("Failed to send UDP packet to peer: {:?}", e);
+                                        break Err(anyhow::anyhow!("Failed to send UDP packet to peer: {e}"));
+                                    }
+                                } else {
+                                    error!("No UDP peer to send to");
+                                    break Err(anyhow::anyhow!("No UDP peer to send to"));
+                                }
+                            },
+                            Ok(None) => break Ok(()),
+                            Err(e) => {
+                                error!("Failed to read from TCP stream: {:?}", e);
+                                break Err(anyhow::anyhow!("Failed to read from TCP stream: {e}"));
+                            }
                         }
                     }
+                    _ = cancellation_token.cancelled() => {
+                        info!("UDP forwarder cancelled, shutting down");
+                        break Ok(());
+                    }
                 }
+            };
 
-                if let Err(e) = tcp_write.lock().await.shutdown().await {
-                    error!("Error shutting down TCP writer: {:?}", e);
-                }
+            if let Err(e) = tcp_write.lock().await.shutdown().await {
+                error!("Error shutting down TCP writer: {:?}", e);
             }
-        });
 
-        Ok((local_port, handle))
+            result
+        };
+
+        Ok((local_port, forward_future))
     }
 
     async fn read_tcp_length_and_packet(
@@ -185,33 +185,65 @@ mod tests {
 
     #[tokio::test]
     async fn test_bind_and_forward_basic() {
-        let (_, server_stream) = duplex(1024);
+        let (mut upstream, server_stream) = duplex(1024);
         let cancellation_token = CancellationToken::new();
-
-        let result = UdpForwarder::bind_and_forward(
-            "127.0.0.1".to_string(),
+        let (port, forward) = UdpForwarder::bind_and_forward(
+            "127.0.0.1".to_owned(),
             0,
             server_stream,
-            cancellation_token,
+            cancellation_token.clone(),
         )
-        .await;
-
-        assert!(result.is_ok());
-
-        let (port, handle) = result.unwrap();
-        assert!(port > 0);
-
-        let client_socket = UdpSocket::bind("127.0.0.1:0").await.unwrap();
-        client_socket
-            .connect(format!("127.0.0.1:{port}"))
-            .await
+        .await
+        .unwrap();
+        let owner = tokio::spawn(forward);
+        let client = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        socket2::SockRef::from(&client)
+            .set_send_buffer_size(BUFFER_SIZE)
             .unwrap();
+        client.connect(("127.0.0.1", port)).await.unwrap();
+        let request: Vec<_> = (0..60 * 1024).map(|index| (index % 251) as u8).collect();
+        client.send(&request).await.unwrap();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            assert_eq!(upstream.read_u32().await.unwrap(), request.len() as u32);
+            let mut received_request = vec![0; request.len()];
+            upstream.read_exact(&mut received_request).await.unwrap();
+            assert_eq!(received_request, request);
+            upstream.write_u32(8).await.unwrap();
+            upstream.write_all(b"response").await.unwrap();
+            let mut response = [0; 8];
+            let received = client.recv(&mut response).await.unwrap();
+            assert_eq!(&response[..received], b"response");
+        })
+        .await
+        .unwrap();
+        cancellation_token.cancel();
+        tokio::time::timeout(Duration::from_secs(5), owner)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        UdpSocket::bind(("127.0.0.1", port)).await.unwrap();
+    }
 
-        client_socket.send(b"hello").await.unwrap();
-
-        tokio::time::sleep(Duration::from_millis(100)).await;
-
-        handle.abort();
+    #[tokio::test]
+    async fn large_packet_survives_fragmented_tcp_reads() {
+        let (mut reader, mut writer) = duplex(257);
+        let payload: Vec<_> = (0..60 * 1024).map(|index| (index % 251) as u8).collect();
+        let header = (payload.len() as u32).to_be_bytes();
+        let send = async {
+            writer.write_all(&header[..2]).await.unwrap();
+            tokio::task::yield_now().await;
+            writer.write_all(&header[2..]).await.unwrap();
+            for chunk in payload.chunks(509) {
+                writer.write_all(chunk).await.unwrap();
+            }
+        };
+        let (_, received) = tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::join!(send, UdpForwarder::read_tcp_length_and_packet(&mut reader))
+        })
+        .await
+        .unwrap();
+        assert_eq!(received.unwrap().unwrap(), payload);
     }
 
     #[tokio::test]
@@ -230,8 +262,6 @@ mod tests {
             tokio::spawn(
                 async move { UdpForwarder::read_tcp_length_and_packet(&mut reader).await },
             );
-
-        tokio::time::sleep(Duration::from_millis(100)).await;
 
         drop(writer);
 

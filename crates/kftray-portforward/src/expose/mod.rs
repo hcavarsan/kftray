@@ -15,6 +15,7 @@ use log::{
     info,
 };
 
+use crate::expose::kubernetes::delete_expose_resources;
 use crate::kube::shared_client::{
     SHARED_CLIENT_MANAGER,
     ServiceClientKey,
@@ -52,10 +53,10 @@ async fn start_single_expose(config: Config, mode: DatabaseMode) -> Result<Custo
 
     let client_key = ServiceClientKey::new(config.context.clone(), config.kubeconfig.clone());
     let client = SHARED_CLIENT_MANAGER
-        .get_client(client_key)
+        .get_connection(client_key)
         .await
         .map_err(|e| format!("Failed to get K8s client: {}", e))?;
-    let client = (*client).clone();
+    let client = client.client.clone();
 
     info!("Creating expose resources for config {}", config_id);
     let resources = create_expose_resources(client.clone(), &config).await?;
@@ -80,21 +81,29 @@ async fn start_single_expose(config: Config, mode: DatabaseMode) -> Result<Custo
         config.kubeconfig.clone(),
         config_id,
         "expose".to_string(),
-    )
-    .await
-    .map_err(|e| format!("Failed to create port-forward: {}", e))?;
+    );
 
-    let (websocket_port, pf_process) = port_forward
-        .port_forward_tcp(None)
-        .await
-        .map_err(|e| format!("Failed to start port-forward: {}", e))?;
+    let (websocket_port, mut pf_process) = match port_forward.port_forward_tcp(None).await {
+        Ok(started) => started,
+        Err(error) => {
+            let reason = format!("Failed to start port-forward: {error}");
+            return match delete_expose_resources(
+                client.clone(),
+                &config.namespace,
+                &config_id.to_string(),
+            )
+            .await
+            {
+                Ok(()) => Err(reason),
+                Err(cleanup_error) => Err(format!("{reason}; cleanup failed: {cleanup_error}")),
+            };
+        }
+    };
 
     info!(
         "Port-forward established: localhost:{} → pod:9999",
         websocket_port
     );
-
-    CHILD_PROCESSES.insert(config_id.to_string(), pf_process);
 
     let local_service_port = config.local_port.unwrap_or(8080);
     let local_service_address = config
@@ -112,16 +121,36 @@ async fn start_single_expose(config: Config, mode: DatabaseMode) -> Result<Custo
         websocket_port, local_service_address, local_service_port
     );
 
+    let (ready_tx, ready_rx) = tokio::sync::oneshot::channel();
     let ws_handle = tokio::spawn(async move {
-        if let Err(e) = ws_client.start().await {
+        if let Err(e) = ws_client.start(ready_tx).await {
             error!("WebSocket client error: {}", e);
         }
     });
 
-    // Store the WebSocket client handle so it can be aborted when stopping
-    if let Some(mut process) = CHILD_PROCESSES.get_mut(&config_id.to_string()) {
-        process.set_ws_client_handle(ws_handle);
+    let startup = match tokio::time::timeout(std::time::Duration::from_secs(30), ready_rx).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(error)) => Err(format!(
+            "Expose startup task ended before connecting: {error}"
+        )),
+        Err(_) => Err("Timed out connecting the reverse WebSocket tunnel".to_owned()),
+    };
+    if let Err(error) = startup {
+        ws_handle.abort();
+        pf_process.cleanup_and_abort().await;
+        return match delete_expose_resources(
+            client.clone(),
+            &config.namespace,
+            &config_id.to_string(),
+        )
+        .await
+        {
+            Ok(()) => Err(error),
+            Err(cleanup_error) => Err(format!("{error}; cleanup failed: {cleanup_error}")),
+        };
     }
+    pf_process.set_ws_client_handle(ws_handle);
+    CHILD_PROCESSES.insert(config_id.to_string(), pf_process);
 
     let config_state = ConfigState {
         id: None,
@@ -169,10 +198,10 @@ pub async fn stop_expose(
 
     let client_key = ServiceClientKey::new(config.context.clone(), config.kubeconfig.clone());
     let client = SHARED_CLIENT_MANAGER
-        .get_client(client_key)
+        .get_connection(client_key)
         .await
         .map_err(|e| format!("Failed to get K8s client: {}", e))?;
-    let client = (*client).clone();
+    let client = client.client.clone();
 
     delete_expose_resources(client, namespace, &config_id.to_string()).await?;
 

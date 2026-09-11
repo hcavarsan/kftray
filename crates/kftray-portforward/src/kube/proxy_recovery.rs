@@ -191,6 +191,13 @@ impl ProxyRecoveryManager {
         let _ = self.recovery_signal_tx.send(signal);
     }
 
+    #[cfg(test)]
+    pub(crate) fn subscribe_recovery_signals(
+        &self,
+    ) -> tokio::sync::broadcast::Receiver<RecoverySignal> {
+        self.recovery_signal_tx.subscribe()
+    }
+
     /// Cancel the recovery loop.
     ///
     /// The loop will exit at the next cancellation check point.
@@ -361,10 +368,10 @@ impl ProxyRecoveryManager {
             self.config.kubeconfig.clone(),
         );
         let client = crate::kube::shared_client::SHARED_CLIENT_MANAGER
-            .get_client(client_key)
+            .get_connection(client_key)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to get K8s client: {}", e))?;
-        let client = kube::Client::clone(&client);
+        let client = client.client.clone();
 
         match self.proxy_type {
             ProxyType::BarePod => recover_bare_pod(&self.config, &client).await,

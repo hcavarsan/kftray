@@ -1,9 +1,6 @@
 use std::sync::Arc;
-use std::sync::atomic::{
-    AtomicBool,
-    Ordering,
-};
 
+use anyhow::Context;
 use httparse::Request;
 use k8s_openapi::api::core::v1::Pod;
 use kube::Api;
@@ -24,12 +21,11 @@ use tracing::{
 };
 
 use crate::kube::http_log_watcher::HttpLogStateWatcher;
-use crate::kube::models::{
-    Port,
-    Target,
+use crate::kube::models::Target;
+use crate::kube::shared_client::{
+    SHARED_CLIENT_MANAGER,
+    ServiceClientKey,
 };
-use crate::kube::pod_watcher::PodWatcher;
-use crate::kube::shared_client::SHARED_CLIENT_MANAGER;
 use crate::kube::tcp_forwarder::TcpForwarder;
 use crate::kube::udp_forwarder::UdpForwarder;
 
@@ -69,19 +65,11 @@ impl Default for ListenerConfig {
     }
 }
 
-pub trait PortForwardStream: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send {}
-impl<T> PortForwardStream for T where T: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send {}
-
 pub struct PortForwarder {
     namespace: Arc<str>,
-    pod_watcher: Arc<PodWatcher>,
-    pod_api: Api<Pod>,
-    target_port: Option<u16>,
-    next_portforwarder: Arc<tokio::sync::Mutex<Option<kube::api::Portforwarder>>>,
-    portforward_semaphore: Arc<tokio::sync::Semaphore>,
+    forwarder: Arc<kube_portforward::Forwarder>,
+    target_port: u16,
     http_log_watcher: HttpLogStateWatcher,
-    initialized: Arc<AtomicBool>,
-    initialization_mutex: Arc<tokio::sync::Mutex<()>>,
     background_tasks: Arc<tokio::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
     connection_tasks: Arc<tokio::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
 }
@@ -89,256 +77,71 @@ pub struct PortForwarder {
 impl PortForwarder {
     pub async fn new(
         namespace: &str, target: Target, context_name: Option<String>, kubeconfig: Option<String>,
-        _config_id: i64,
+        pod_readiness: kube_portforward::PodReadiness,
     ) -> anyhow::Result<Self> {
-        let client_key =
-            crate::kube::shared_client::ServiceClientKey::new(context_name, kubeconfig);
-        let client = SHARED_CLIENT_MANAGER.get_client(client_key).await?;
-        let pod_watcher = PodWatcher::new((*client).clone(), target.clone()).await?;
+        let client_key = ServiceClientKey::new(context_name, kubeconfig);
+        let connection = SHARED_CLIENT_MANAGER.get_connection(client_key).await?;
+
+        let pod_selector =
+            crate::kube::target::resolve_pod_selector(&connection.client, namespace, &target)
+                .await?;
+        let pod_api: Api<Pod> = Api::namespaced(connection.client.clone(), namespace);
+
+        let forwarder = kube_portforward::Forwarder::builder(
+            connection.client.clone(),
+            connection.cluster_url.clone(),
+            namespace,
+        )
+        .pod_selector(pod_selector)
+        .pod_readiness(pod_readiness)
+        .build()
+        .await
+        .map_err(|e| anyhow::anyhow!("Failed to build port forwarder: {}", e))?;
+        let forwarder = Arc::new(forwarder);
+
+        let startup = async {
+            let port = crate::kube::target::resolve_target_port(
+                &forwarder,
+                &pod_api,
+                &target,
+                tokio::time::Duration::from_secs(5),
+            )
+            .await?;
+            drop(forwarder.connect(port).await?);
+            Ok::<_, anyhow::Error>(port)
+        };
+        let target_port = match tokio::time::timeout(tokio::time::Duration::from_secs(10), startup)
+            .await
+            .map_err(|err| anyhow::Error::new(err).context("Port-forward startup timed out"))
+            .and_then(|result| result)
+        {
+            Ok(port) => port,
+            Err(err) => {
+                let _ = forwarder.shutdown().await;
+                return Err(err);
+            }
+        };
 
         Ok(Self {
             namespace: namespace.into(),
-            pod_watcher: Arc::new(pod_watcher),
-            pod_api: Api::namespaced((*client).clone(), namespace),
-            target_port: None,
-            next_portforwarder: Arc::new(tokio::sync::Mutex::new(None)),
-            portforward_semaphore: Arc::new(tokio::sync::Semaphore::new(50)),
+            forwarder,
+            target_port,
             http_log_watcher: HttpLogStateWatcher::new(),
-            initialized: Arc::new(AtomicBool::new(false)),
-            initialization_mutex: Arc::new(tokio::sync::Mutex::new(())),
             background_tasks: Arc::new(tokio::sync::Mutex::new(Vec::new())),
             connection_tasks: Arc::new(tokio::sync::Mutex::new(Vec::new())),
         })
     }
 
-    async fn resolve_target_port(&self, target: &Target) -> anyhow::Result<u16> {
-        match &target.port {
-            Port::Number(port) => {
-                let port_u16 = u16::try_from(*port)
-                    .map_err(|_| anyhow::anyhow!("Port number {} is out of range", port))?;
-                Ok(port_u16)
-            }
-            Port::Name(port_name) => {
-                let selected_pod = self
-                    .pod_watcher
-                    .wait_for_ready_pod(tokio::time::Duration::from_secs(5))
-                    .await
-                    .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "No ready pods available to resolve port name '{}'",
-                            port_name
-                        )
-                    })?;
-                Ok(selected_pod.port_number)
-            }
-        }
-    }
+    pub async fn get_stream(&self) -> anyhow::Result<kube_portforward::Stream> {
+        const STREAM_ACQUIRE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
-    pub async fn initialize(&mut self, target: &Target) -> anyhow::Result<()> {
-        if self.initialized.load(Ordering::Acquire) {
-            return Ok(());
-        }
-
-        let _guard = self.initialization_mutex.lock().await;
-
-        if self.initialized.load(Ordering::Acquire) {
-            return Ok(());
-        }
-
-        let target_port = self.resolve_target_port(target).await?;
-        self.target_port = Some(target_port);
-
-        let first_portforwarder = self.create_portforwarder(target_port).await?;
-        {
-            let mut next = self.next_portforwarder.lock().await;
-            *next = Some(first_portforwarder);
-        }
-
-        for _ in 2..=3 {
-            self.spawn_next_portforwarder(target_port);
-        }
-        self.initialized.store(true, Ordering::Release);
-        info!(
-            "Initialized port forwarder for port {} with 1 ready + 2 creating",
-            target_port
-        );
-        Ok(())
-    }
-
-    pub async fn get_stream(&self) -> anyhow::Result<Box<dyn PortForwardStream>> {
-        if !self.initialized.load(Ordering::Acquire) {
-            return Err(anyhow::anyhow!(
-                "Port forwarder not initialized - call initialize() first"
-            ));
-        }
-
-        let target_port = self.target_port.ok_or_else(|| {
-            anyhow::anyhow!("Port forwarder not initialized - call initialize() first")
-        })?;
-
-        let mut next_pf = self.next_portforwarder.lock().await;
-        let mut portforwarder = next_pf.take();
-        drop(next_pf);
-
-        if portforwarder.is_none() {
-            portforwarder = Some(self.create_portforwarder(target_port).await?);
-        }
-
-        let stream = self
-            .get_stream_with_retry(portforwarder.unwrap(), target_port)
-            .await?;
-        self.spawn_next_portforwarder(target_port);
-
-        Ok(Box::new(stream))
-    }
-
-    async fn get_stream_with_retry(
-        &self, mut portforwarder: kube::api::Portforwarder, target_port: u16,
-    ) -> anyhow::Result<impl tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + use<>>
-    {
-        if let Some(stream) = portforwarder.take_stream(target_port) {
-            if let Some(error_future) = portforwarder.take_error(target_port) {
-                let next_pf = self.next_portforwarder.clone();
-                tokio::spawn(async move {
-                    if let Some(error_msg) = error_future.await {
-                        tracing::warn!("Portforwarder error: {}, invalidating cache", error_msg);
-                        let mut guard = next_pf.lock().await;
-                        *guard = None;
-                    }
-                });
-            }
-            return Ok(stream);
-        }
-
-        let mut retry_portforwarder = self.create_portforwarder(target_port).await?;
-
-        match retry_portforwarder.take_stream(target_port) {
-            Some(stream) => {
-                if let Some(error_future) = retry_portforwarder.take_error(target_port) {
-                    let next_pf = self.next_portforwarder.clone();
-                    tokio::spawn(async move {
-                        if let Some(error_msg) = error_future.await {
-                            tracing::warn!(
-                                "Retry portforwarder error: {}, invalidating cache",
-                                error_msg
-                            );
-                            let mut guard = next_pf.lock().await;
-                            *guard = None;
-                        }
-                    });
-                }
-                Ok(stream)
-            }
-            None => Err(anyhow::anyhow!("Failed to get stream after retry")),
-        }
-    }
-
-    async fn create_portforwarder(
-        &self, target_port: u16,
-    ) -> anyhow::Result<kube::api::Portforwarder> {
-        let _permit = tokio::time::timeout(
-            tokio::time::Duration::from_secs(10),
-            self.portforward_semaphore.acquire(),
+        tokio::time::timeout(
+            STREAM_ACQUIRE_TIMEOUT,
+            self.forwarder.connect(self.target_port),
         )
         .await
-        .map_err(|_| anyhow::anyhow!("Timed out waiting for available connection slot (10s)"))?
-        .map_err(|_| anyhow::anyhow!("Semaphore closed"))?;
-
-        let selected_pod = self
-            .pod_watcher
-            .wait_for_ready_pod(tokio::time::Duration::from_secs(3))
-            .await
-            .ok_or_else(|| anyhow::anyhow!("No ready pods available"))?;
-
-        for attempt in 1..=2 {
-            let result = tokio::time::timeout(
-                tokio::time::Duration::from_secs(3),
-                self.pod_api
-                    .portforward(&selected_pod.pod_name, &[target_port]),
-            )
-            .await;
-
-            match result {
-                Ok(Ok(portforwarder)) => return Ok(portforwarder),
-                Ok(Err(e)) => {
-                    if e.to_string().contains("404") && attempt == 1 {
-                        debug!(
-                            "Portforward attempt {} failed with 404, retrying in 2s",
-                            attempt
-                        );
-                        tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                        continue;
-                    }
-                    return Err(anyhow::anyhow!("Failed to create portforwarder: {}", e));
-                }
-                Err(e) => return Err(anyhow::anyhow!("Portforward timeout: {}", e)),
-            }
-        }
-
-        Err(anyhow::anyhow!(
-            "Failed to create portforwarder after 2 attempts"
-        ))
-    }
-
-    fn spawn_next_portforwarder(&self, target_port: u16) {
-        let pod_watcher = Arc::clone(&self.pod_watcher);
-        let pod_api = self.pod_api.clone();
-        let next_pf = self.next_portforwarder.clone();
-
-        tokio::spawn(async move {
-            {
-                let guard = next_pf.lock().await;
-                if guard.is_some() {
-                    return;
-                }
-            }
-
-            let new_portforwarder = if let Some(selected_pod) = pod_watcher
-                .wait_for_ready_pod(tokio::time::Duration::from_secs(5))
-                .await
-            {
-                let mut result = None;
-                for attempt in 1..=2 {
-                    match tokio::time::timeout(
-                        tokio::time::Duration::from_secs(3),
-                        pod_api.portforward(&selected_pod.pod_name, &[target_port]),
-                    )
-                    .await
-                    {
-                        Ok(Ok(pf)) => {
-                            result = Some(pf);
-                            break;
-                        }
-                        Ok(Err(e)) => {
-                            if e.to_string().contains("404") && attempt == 1 {
-                                debug!(
-                                    "Spawn portforward attempt {} failed with 404, retrying in 2s",
-                                    attempt
-                                );
-                                tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
-                                continue;
-                            }
-                            debug!("Spawn portforward failed: {}", e);
-                            break;
-                        }
-                        Err(e) => {
-                            debug!("Spawn portforward timeout: {}", e);
-                            break;
-                        }
-                    }
-                }
-                result
-            } else {
-                None
-            };
-
-            if let Some(pf) = new_portforwarder {
-                let mut guard = next_pf.lock().await;
-                if guard.is_none() {
-                    *guard = Some(pf);
-                }
-            }
-        });
+        .context("Timed out acquiring a port-forward stream")?
+        .map_err(Into::into)
     }
 
     pub async fn handle_tcp_listener(
@@ -383,10 +186,7 @@ impl PortForwarder {
         let forwarder_clone = Arc::clone(&self);
         let cancel_token = cancellation_token.clone();
 
-        let mut pod_change_rx = self.pod_watcher.subscribe_pod_changes();
-        let mut pod_died_rx = self.pod_watcher.subscribe_pod_deaths();
-        let mut last_pod_change = tokio::time::Instant::now();
-        let mut pending_pod: Option<String> = None;
+        let mut pod_change_rx = self.forwarder.subscribe_pod_changes();
         let mut consecutive_accept_errors: u32 = 0;
         const MAX_ACCEPT_ERRORS: u32 = 10;
         const BASE_BACKOFF_MS: u64 = 10;
@@ -435,20 +235,8 @@ impl PortForwarder {
                     }
                 }
                 pod_change = pod_change_rx.recv() => {
-                    if let Ok(new_pod) = pod_change {
-                        let mut next_pf = self.next_portforwarder.lock().await;
-                        *next_pf = None;
-                        drop(next_pf);
-
-                        pending_pod = Some(new_pod.clone());
-                        last_pod_change = tokio::time::Instant::now();
-                        debug!("Pod change detected: {}, killed connections, debouncing for 3s", new_pod);
-                    }
-                    continue;
-                }
-                pod_died = pod_died_rx.recv() => {
-                    match pod_died {
-                        Ok(dead_pod_name) => {
+                    match pod_change {
+                        Ok(kube_portforward::PodChange::Died(dead_pod_name)) => {
                             debug!(
                                 "Pod {} died reactively, signaling recovery for config {}",
                                 dead_pod_name, config_id
@@ -457,28 +245,13 @@ impl PortForwarder {
                                 rm.signal_recovery(crate::kube::proxy_recovery::RecoverySignal::PodDied);
                             }
                         }
+                        Ok(_) => {}
                         Err(tokio::sync::broadcast::error::RecvError::Lagged(n)) => {
-                            debug!("pod_died_rx lagged by {} for config {}", n, config_id);
+                            debug!("pod_change_rx lagged by {} for config {}", n, config_id);
                         }
                         Err(tokio::sync::broadcast::error::RecvError::Closed) => {
-                            debug!("pod_died_rx closed for config {}", config_id);
+                            debug!("pod_change_rx closed for config {}", config_id);
                         }
-                    }
-                    continue;
-                }
-                _ = tokio::time::sleep(tokio::time::Duration::from_secs(3)), if pending_pod.is_some() => {
-                    if pending_pod.take().is_some() && last_pod_change.elapsed() >= tokio::time::Duration::from_secs(3)
-                        && let Some(current_pod) = self.pod_watcher.get_ready_pod().await {
-                            debug!("Pod {} stable for 3s, creating fresh connections", current_pod.pod_name);
-                            let mut next_pf = self.next_portforwarder.lock().await;
-                            *next_pf = None;
-                            drop(next_pf);
-
-                            if let Ok(fresh_pf) = self.create_portforwarder(port).await {
-                                let mut next_pf = self.next_portforwarder.lock().await;
-                                *next_pf = Some(fresh_pf);
-                                debug!("Created stable connection to pod {}", current_pod.pod_name);
-                            }
                     }
                     continue;
                 }
@@ -592,13 +365,8 @@ impl PortForwarder {
                 .await
             }
             Protocol::Udp => {
-                self.start_udp_listener(
-                    listener_config,
-                    config_id,
-                    workload_type,
-                    cancellation_token,
-                )
-                .await
+                self.start_udp_listener(listener_config, config_id, cancellation_token)
+                    .await
             }
         }
     }
@@ -641,41 +409,23 @@ impl PortForwarder {
     }
 
     async fn start_udp_listener(
-        self: Arc<Self>, listener_config: ListenerConfig, config_id: i64, workload_type: String,
+        self: Arc<Self>, listener_config: ListenerConfig, config_id: i64,
         cancellation_token: CancellationToken,
     ) -> anyhow::Result<(u16, JoinHandle<anyhow::Result<()>>)> {
-        if workload_type == "service" || workload_type == "proxy" {
-            tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
-        }
         let upstream_stream = self
             .get_stream()
             .await
             .map_err(|e| anyhow::anyhow!("Failed to get upstream connection for UDP: {}", e))?;
         let signal_token = cancellation_token.clone();
-        let (port, handle) = UdpForwarder::bind_and_forward(
+        let (port, forward_future) = UdpForwarder::bind_and_forward(
             listener_config.local_address,
             listener_config.local_port,
             upstream_stream,
             cancellation_token,
         )
         .await?;
-        let result_handle = tokio::spawn(async move {
-            let result = handle
-                .await
-                .map_err(|e| anyhow::anyhow!("UDP forwarding task failed: {}", e));
-            if !signal_token.is_cancelled()
-                && let Some(rm) = crate::kube::proxy_recovery::RECOVERY_MANAGERS.get(&config_id)
-            {
-                log::info!(
-                    "UDP forwarder task completed, signaling recovery for config_id={}",
-                    config_id
-                );
-                rm.signal_recovery(crate::kube::proxy_recovery::RecoverySignal::StreamFailed);
-            }
-            result?;
-            Ok(())
-        });
-        Ok((port, result_handle))
+        let handle = spawn_udp_forward_owner(forward_future, signal_token, config_id);
+        Ok((port, handle))
     }
 
     pub fn get_http_log_watcher(&self) -> &HttpLogStateWatcher {
@@ -716,10 +466,10 @@ impl PortForwarder {
     }
 
     pub async fn get_current_active_pod(&self) -> Option<String> {
-        match self.pod_watcher.get_ready_pod().await {
-            Some(target_pod) => Some(target_pod.pod_name),
+        match self.forwarder.ready_pod() {
+            Some(pod_name) => Some(pod_name),
             None => {
-                if self.pod_watcher.has_running_pods().await {
+                if self.forwarder.has_running_pods() {
                     Some("pending-rollout".to_string())
                 } else {
                     None
@@ -734,17 +484,34 @@ impl PortForwarder {
             self.namespace.as_ref()
         );
 
-        self.pod_watcher.shutdown();
         self.http_log_watcher.shutdown();
 
         self.cleanup_background_tasks().await;
         self.cleanup_connection_tasks().await;
 
-        let mut next_pf = self.next_portforwarder.lock().await;
-        if let Some(portforwarder) = next_pf.take() {
-            drop(portforwarder);
+        if let Err(e) = self.forwarder.shutdown().await {
+            debug!("Forwarder shutdown returned an error: {}", e);
         }
     }
+}
+
+fn spawn_udp_forward_owner(
+    forward_future: impl Future<Output = anyhow::Result<()>> + Send + 'static,
+    signal_token: CancellationToken, config_id: i64,
+) -> JoinHandle<anyhow::Result<()>> {
+    tokio::spawn(async move {
+        let result = forward_future.await;
+        if !signal_token.is_cancelled()
+            && let Some(rm) = crate::kube::proxy_recovery::RECOVERY_MANAGERS.get(&config_id)
+        {
+            log::info!(
+                "UDP forwarder task completed, signaling recovery for config_id={}",
+                config_id
+            );
+            rm.signal_recovery(crate::kube::proxy_recovery::RecoverySignal::StreamFailed);
+        }
+        result
+    })
 }
 
 async fn is_http_request(client_conn: &TcpStream) -> bool {
@@ -793,4 +560,286 @@ async fn handle_http_redirect(mut stream: TcpStream, port: u16) -> anyhow::Resul
 
     stream.write_all(response.as_bytes()).await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use http::{
+        Request,
+        Response,
+    };
+    use k8s_openapi::apimachinery::pkg::apis::meta::v1::ObjectMeta;
+    use kube::client::Body;
+    use tower_test::mock;
+
+    use super::*;
+
+    fn ready_test_pod(name: &str) -> Pod {
+        use k8s_openapi::api::core::v1::{
+            PodCondition,
+            PodStatus,
+        };
+
+        Pod {
+            metadata: ObjectMeta {
+                name: Some(name.to_string()),
+                uid: Some(format!("{name}-uid")),
+                resource_version: Some("1".to_string()),
+                ..Default::default()
+            },
+            status: Some(PodStatus {
+                phase: Some("Running".to_string()),
+                conditions: Some(vec![PodCondition {
+                    type_: "Ready".into(),
+                    status: "True".into(),
+                    ..Default::default()
+                }]),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    async fn serve_ready_pod_then_stall(
+        mut handle: mock::Handle<Request<Body>, Response<Body>>, pod_name: &str,
+        upgrade_started: Arc<tokio::sync::Notify>, ready_delay: Duration,
+    ) {
+        let (request, send) = handle
+            .next_request()
+            .await
+            .expect("expected the initial pod list request");
+        assert!(
+            request.uri().path().ends_with("/pods"),
+            "expected a pod list request, got {}",
+            request.uri()
+        );
+
+        let body = serde_json::json!({
+            "apiVersion": "v1",
+            "kind": "PodList",
+            "metadata": { "resourceVersion": "1" },
+            "items": [ready_test_pod(pod_name)],
+        });
+        let response = Response::builder()
+            .status(200)
+            .body(Body::from(serde_json::to_vec(&body).unwrap()))
+            .unwrap();
+        tokio::time::sleep(ready_delay).await;
+        send.send_response(response);
+
+        let mut held_pending = Vec::new();
+        while let Some((request, send)) = handle.next_request().await {
+            if request.uri().path().ends_with("/portforward") {
+                upgrade_started.notify_one();
+            }
+            held_pending.push(send);
+        }
+    }
+
+    #[tokio::test]
+    async fn get_stream_preserves_the_pod_readiness_wait() {
+        tokio::time::pause();
+        let pod_name = "delayed-ready";
+        let (mock_service, handle) = mock::pair::<Request<Body>, Response<Body>>();
+        let kube_client = kube::Client::new(mock_service, "default");
+        let upgrade_started = Arc::new(tokio::sync::Notify::new());
+        let driver = tokio::spawn(serve_ready_pod_then_stall(
+            handle,
+            pod_name,
+            Arc::clone(&upgrade_started),
+            Duration::from_secs(4),
+        ));
+        let forwarder = kube_portforward::Forwarder::builder(
+            kube_client,
+            "http://127.0.0.1:1".parse().unwrap(),
+            "default",
+        )
+        .pod_selector(kube_portforward::PodSelector::Name(pod_name.to_owned()))
+        .build()
+        .await
+        .unwrap();
+        let port_forwarder = PortForwarder {
+            namespace: "default".into(),
+            forwarder: Arc::new(forwarder),
+            target_port: 8080,
+            http_log_watcher: HttpLogStateWatcher::new(),
+            background_tasks: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            connection_tasks: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+        };
+        let mut acquisition = Box::pin(port_forwarder.get_stream());
+        tokio::select! {
+            _ = upgrade_started.notified() => {}
+            result = &mut acquisition => {
+                panic!("acquisition ended before the ready pod could start its upgrade: {:?}", result.err());
+            }
+        }
+        drop(acquisition);
+        port_forwarder.shutdown().await;
+        driver.abort();
+        let _ = driver.await;
+    }
+
+    #[tokio::test]
+    async fn get_stream_times_out_when_upgrade_response_never_arrives() {
+        tokio::time::pause();
+
+        let pod_name = "web-0";
+        let (mock_service, handle) = mock::pair::<Request<Body>, Response<Body>>();
+        let kube_client = kube::Client::new(mock_service, "default");
+        let cluster_url: http::Uri = "http://127.0.0.1:1".parse().unwrap();
+
+        let upgrade_started = Arc::new(tokio::sync::Notify::new());
+        let driver = tokio::spawn(serve_ready_pod_then_stall(
+            handle,
+            pod_name,
+            Arc::clone(&upgrade_started),
+            Duration::ZERO,
+        ));
+
+        let forwarder = kube_portforward::Forwarder::builder(kube_client, cluster_url, "default")
+            .pod_selector(kube_portforward::PodSelector::Name(pod_name.to_string()))
+            .pod_readiness(kube_portforward::PodReadiness::default())
+            .build()
+            .await
+            .expect("forwarder should build without contacting the apiserver");
+
+        let ready = forwarder
+            .wait_for_ready_pod(Duration::from_secs(5))
+            .await
+            .expect("pod list response should mark the pod ready");
+        assert_eq!(ready, pod_name);
+
+        let port_forwarder = PortForwarder {
+            namespace: "default".into(),
+            forwarder: Arc::new(forwarder),
+            target_port: 8080,
+            http_log_watcher: HttpLogStateWatcher::new(),
+            background_tasks: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            connection_tasks: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+        };
+
+        let get_stream_fut = port_forwarder.get_stream();
+        tokio::pin!(get_stream_fut);
+        tokio::select! {
+            _ = upgrade_started.notified() => {}
+            _ = &mut get_stream_fut => panic!("acquisition ended before the upgrade request"),
+        }
+
+        tokio::time::advance(Duration::from_secs(10)).await;
+        let result = tokio::time::timeout(Duration::from_secs(1), get_stream_fut)
+            .await
+            .expect("the acquisition deadline must complete the pending upgrade");
+        let error = match result {
+            Ok(_) => panic!("the pending upgrade unexpectedly completed"),
+            Err(error) => error,
+        };
+        assert!(
+            error
+                .downcast_ref::<tokio::time::error::Elapsed>()
+                .is_some()
+        );
+        port_forwarder.shutdown().await;
+        driver.abort();
+        let _ = driver.await;
+    }
+
+    fn recovery_receiver(
+        config_id: i64,
+    ) -> tokio::sync::broadcast::Receiver<crate::kube::proxy_recovery::RecoverySignal> {
+        let config = kftray_commons::models::config_model::Config {
+            id: Some(config_id),
+            kubeconfig: Some("/nonexistent/isolated-test-kubeconfig".to_owned()),
+            protocol: "udp".to_owned(),
+            ..Default::default()
+        };
+        let manager = Arc::new(crate::kube::proxy_recovery::ProxyRecoveryManager::new(
+            config,
+            crate::kube::proxy_recovery::ProxyType::Deployment,
+        ));
+        let receiver = manager.subscribe_recovery_signals();
+        crate::kube::proxy_recovery::RECOVERY_MANAGERS.insert(config_id, manager);
+        receiver
+    }
+
+    #[tokio::test]
+    async fn udp_owner_signals_recovery_when_upstream_closes() {
+        let config_id = 900_101;
+        let (mut upstream, server_stream) = tokio::io::duplex(64);
+        let token = CancellationToken::new();
+        let (_, forward) =
+            UdpForwarder::bind_and_forward("127.0.0.1".to_owned(), 0, server_stream, token.clone())
+                .await
+                .unwrap();
+        let mut receiver = recovery_receiver(config_id);
+        let owner = spawn_udp_forward_owner(forward, token, config_id);
+        upstream.shutdown().await.unwrap();
+        tokio::time::timeout(Duration::from_secs(5), owner)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let signal = receiver.try_recv();
+        crate::kube::proxy_recovery::RECOVERY_MANAGERS.remove(&config_id);
+        assert_eq!(
+            signal.unwrap(),
+            crate::kube::proxy_recovery::RecoverySignal::StreamFailed
+        );
+    }
+
+    #[tokio::test]
+    async fn udp_owner_does_not_signal_recovery_on_intentional_cancellation() {
+        let config_id = 900_102;
+        let (_upstream, server_stream) = tokio::io::duplex(64);
+        let token = CancellationToken::new();
+        let (_, forward) =
+            UdpForwarder::bind_and_forward("127.0.0.1".to_owned(), 0, server_stream, token.clone())
+                .await
+                .unwrap();
+        let mut receiver = recovery_receiver(config_id);
+        token.cancel();
+        let owner = spawn_udp_forward_owner(forward, token, config_id);
+        tokio::time::timeout(Duration::from_secs(5), owner)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        let signal = receiver.try_recv();
+        crate::kube::proxy_recovery::RECOVERY_MANAGERS.remove(&config_id);
+        assert!(matches!(
+            signal,
+            Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+        ));
+    }
+
+    #[tokio::test]
+    async fn aborting_the_udp_owner_releases_the_socket_for_immediate_rebind() {
+        let (_upstream, server_stream) = tokio::io::duplex(1024);
+        let cancellation_token = CancellationToken::new();
+
+        let (port, forward_future) = UdpForwarder::bind_and_forward(
+            "127.0.0.1".to_string(),
+            0,
+            server_stream,
+            cancellation_token.clone(),
+        )
+        .await
+        .unwrap();
+
+        let owner = spawn_udp_forward_owner(forward_future, cancellation_token, 900_201);
+        owner.abort();
+        let join_result = owner.await;
+        assert!(
+            join_result.is_err() && join_result.unwrap_err().is_cancelled(),
+            "the owner task should report a cancelled join, not a normal result"
+        );
+
+        let rebound = tokio::net::UdpSocket::bind(format!("127.0.0.1:{port}")).await;
+        assert!(
+            rebound.is_ok(),
+            "rebinding the same address right after awaited cleanup should succeed: {:?}",
+            rebound.err()
+        );
+    }
 }

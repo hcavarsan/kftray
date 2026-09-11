@@ -16,8 +16,14 @@ use futures::{
 };
 use k8s_openapi::api::{
     apps::v1::Deployment,
-    core::v1::Pod,
+    core::v1::{
+        Pod,
+        PodSpec,
+        Probe,
+        TCPSocketAction,
+    },
 };
+use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
 use kftray_commons::{
     models::{
         config_model::Config,
@@ -39,7 +45,6 @@ use kube::api::{
     DeleteParams,
     PostParams,
 };
-use kube_runtime::wait::conditions;
 use log::{
     debug,
     error,
@@ -114,13 +119,13 @@ async fn process_single_proxy_config(
     let client_key = ServiceClientKey::new(config.context.clone(), config.kubeconfig.clone());
 
     let shared_client = SHARED_CLIENT_MANAGER
-        .get_client(client_key)
+        .get_connection(client_key)
         .await
         .map_err(|e| {
             error!("Failed to get shared Kubernetes client: {e}");
             e.to_string()
         })?;
-    let client = Client::clone(&shared_client);
+    let client = shared_client.client.clone();
 
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -151,30 +156,30 @@ async fn process_single_proxy_config(
         .id
         .map_or_else(|| "default".into(), |id| id.to_string());
 
-    if config.remote_address.as_ref().is_none_or(|s| s.is_empty()) {
-        config.remote_address.clone_from(&config.service);
-    }
+    let remote_address = config
+        .remote_address
+        .take()
+        .filter(|address| !address.is_empty())
+        .or_else(|| config.service.clone().filter(|service| !service.is_empty()))
+        .ok_or("A proxy destination address or service is required")?;
+    let remote_port = config
+        .remote_port
+        .filter(|port| *port > 0)
+        .ok_or("A proxy destination port is required")?;
+    let service_name = config
+        .service
+        .clone()
+        .filter(|service| !service.is_empty())
+        .unwrap_or_else(|| remote_address.clone());
+    config.remote_address = Some(remote_address.clone());
 
     let mut values: HashMap<String, String> = HashMap::new();
     values.insert("hashed_name".to_string(), hashed_name.clone());
     values.insert("config_id".to_string(), config_id_str.clone());
-    values.insert(
-        "service_name".to_string(),
-        config.service.as_ref().unwrap().clone(),
-    );
-    values.insert(
-        "remote_address".to_string(),
-        config.remote_address.as_ref().unwrap().clone(),
-    );
-    values.insert(
-        "remote_port".to_string(),
-        config.remote_port.expect("None").to_string(),
-    );
-    let local_port_value = config
-        .remote_port
-        .unwrap_or(config.local_port.expect("None"))
-        .to_string();
-    values.insert("local_port".to_string(), local_port_value);
+    values.insert("service_name".to_string(), service_name);
+    values.insert("remote_address".to_string(), remote_address);
+    values.insert("remote_port".to_string(), remote_port.to_string());
+    values.insert("local_port".to_string(), remote_port.to_string());
     values.insert("protocol".to_string(), protocol.clone());
 
     let use_deployment = should_use_deployment_manifest();
@@ -205,6 +210,66 @@ async fn process_single_proxy_config(
     }
 }
 
+fn prepare_relay_startup(spec: &mut PodSpec, port: u16) -> Result<String, String> {
+    let index = spec
+        .containers
+        .iter()
+        .position(|container| {
+            container
+                .env
+                .as_ref()
+                .is_some_and(|env| env.iter().any(|variable| variable.name == "LOCAL_PORT"))
+        })
+        .unwrap_or(0);
+    let container = spec
+        .containers
+        .get_mut(index)
+        .ok_or("Proxy manifest must contain a container")?;
+    container.startup_probe.get_or_insert_with(|| Probe {
+        tcp_socket: Some(TCPSocketAction {
+            port: IntOrString::Int(i32::from(port)),
+            ..Default::default()
+        }),
+        period_seconds: Some(1),
+        timeout_seconds: Some(1),
+        failure_threshold: Some(30),
+        ..Default::default()
+    });
+    Ok(container.name.clone())
+}
+
+fn relay_started(pod: Option<&Pod>, container_name: &str) -> bool {
+    pod.is_some_and(|pod| {
+        pod.metadata.deletion_timestamp.is_none()
+            && pod.status.as_ref().is_some_and(|status| {
+                status.phase.as_deref() == Some("Running")
+                    && status
+                        .container_statuses
+                        .as_ref()
+                        .is_some_and(|containers| {
+                            containers.iter().any(|container| {
+                                container.name == container_name && container.started == Some(true)
+                            })
+                        })
+            })
+    })
+}
+
+async fn wait_for_relay_startup(
+    pods: &Api<Pod>, pod_name: &str, container_name: &str,
+) -> Result<(), String> {
+    tokio::time::timeout(
+        std::time::Duration::from_secs(120),
+        kube_runtime::wait::await_condition(pods.clone(), pod_name, |pod: Option<&Pod>| {
+            relay_started(pod, container_name)
+        }),
+    )
+    .await
+    .map_err(|_| format!("Timed out waiting for proxy listener in pod {pod_name}"))?
+    .map(|_| ())
+    .map_err(|error| error.to_string())
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn process_deployment_proxy(
     client: Client, config: &mut Config, hashed_name: &str, config_id_str: &str,
@@ -217,7 +282,19 @@ async fn process_deployment_proxy(
         .map_err(|e| e.to_string())?;
 
     let rendered_json = render_json_template_owned(&contents, values);
-    let deployment: Deployment = serde_json::from_str(&rendered_json).map_err(|e| e.to_string())?;
+    let mut deployment: Deployment =
+        serde_json::from_str(&rendered_json).map_err(|e| e.to_string())?;
+    let spec = deployment
+        .spec
+        .as_mut()
+        .and_then(|spec| spec.template.spec.as_mut())
+        .ok_or("Proxy deployment must contain a pod specification")?;
+    let container_name = prepare_relay_startup(
+        spec,
+        config
+            .remote_port
+            .ok_or("A proxy destination port is required")?,
+    )?;
 
     let deployments: Api<Deployment> = Api::namespaced(client.clone(), &config.namespace);
 
@@ -232,13 +309,7 @@ async fn process_deployment_proxy(
 
             let pod_name = wait_for_deployment_pod(&pods, &lp, hashed_name, &deployments).await?;
 
-            if let Err(e) = kube_runtime::wait::await_condition(
-                pods.clone(),
-                &pod_name,
-                conditions::is_pod_running(),
-            )
-            .await
-            {
+            if let Err(e) = wait_for_relay_startup(&pods, &pod_name, &container_name).await {
                 let dp = DeleteParams {
                     grace_period_seconds: Some(0),
                     ..DeleteParams::default()
@@ -338,19 +409,23 @@ async fn process_pod_proxy(
         .map_err(|e| e.to_string())?;
 
     let rendered_json = render_json_template_owned(&contents, values);
-    let pod: Pod = serde_json::from_str(&rendered_json).map_err(|e| e.to_string())?;
+    let mut pod: Pod = serde_json::from_str(&rendered_json).map_err(|e| e.to_string())?;
+    let spec = pod
+        .spec
+        .as_mut()
+        .ok_or("Proxy pod must contain a pod specification")?;
+    let container_name = prepare_relay_startup(
+        spec,
+        config
+            .remote_port
+            .ok_or("A proxy destination port is required")?,
+    )?;
 
     let pods: Api<Pod> = Api::namespaced(client.clone(), &config.namespace);
 
     match pods.create(&PostParams::default(), &pod).await {
         Ok(_) => {
-            if let Err(e) = kube_runtime::wait::await_condition(
-                pods.clone(),
-                hashed_name,
-                conditions::is_pod_running(),
-            )
-            .await
-            {
+            if let Err(e) = wait_for_relay_startup(&pods, hashed_name, &container_name).await {
                 let dp = DeleteParams {
                     grace_period_seconds: Some(0),
                     ..DeleteParams::default()
@@ -634,6 +709,41 @@ mod tests {
 
         let result = deploy_and_forward_pod(vec![config]).await;
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn running_relay_waits_for_listener_startup() {
+        let pod: Pod = serde_json::from_value(serde_json::json!({
+            "metadata": {"name": "relay"},
+            "status": {
+                "phase": "Running",
+                "containerStatuses": [{
+                    "name": "relay", "started": false, "ready": false,
+                    "restartCount": 0, "image": "relay", "imageID": "relay"
+                }]
+            }
+        }))
+        .unwrap();
+        assert!(!relay_started(Some(&pod), "relay"));
+    }
+
+    #[test]
+    fn started_relay_does_not_require_sidecar_readiness() {
+        let pod: Pod = serde_json::from_value(serde_json::json!({
+            "metadata": {"name": "relay"},
+            "status": {
+                "phase": "Running",
+                "conditions": [{"type": "Ready", "status": "False"}],
+                "containerStatuses": [
+                    {"name": "relay", "started": true, "ready": true,
+                     "restartCount": 0, "image": "relay", "imageID": "relay"},
+                    {"name": "sidecar", "started": true, "ready": false,
+                     "restartCount": 0, "image": "sidecar", "imageID": "sidecar"}
+                ]
+            }
+        }))
+        .unwrap();
+        assert!(relay_started(Some(&pod), "relay"));
     }
 
     #[tokio::test]

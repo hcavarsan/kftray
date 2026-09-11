@@ -20,7 +20,6 @@ path = "src/lib.rs"
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 dirs = { workspace = true }
-env_logger = { workspace = true }
 fix-path-env = { workspace = true }
 flexi_logger = { workspace = true }
 jiff = "0.2"

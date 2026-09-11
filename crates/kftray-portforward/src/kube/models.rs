@@ -1,18 +1,10 @@
-use std::sync::Arc;
-
 use anyhow::Context;
-use k8s_openapi::api::core::v1::{
-    Pod,
-    Service,
-};
+use k8s_openapi::api::core::v1::Pod;
 use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
-use kube::api::Api;
 use serde::{
     Deserialize,
     Serialize,
 };
-use tokio::sync::Mutex;
-use tracing::debug;
 
 impl NameSpace {
     pub fn name_any(&self) -> String {
@@ -49,11 +41,6 @@ impl TargetPod {
             pod_name,
             port_number,
         })
-    }
-
-    #[inline]
-    pub fn into_parts(self) -> (String, u16) {
-        (self.pod_name, self.port_number)
     }
 }
 impl Target {
@@ -94,29 +81,6 @@ impl Target {
     }
 }
 
-#[inline]
-fn is_pod_ready(pod: &&Pod) -> bool {
-    let is_ready = pod
-        .status
-        .as_ref()
-        .and_then(|s| s.conditions.as_ref())
-        .is_some_and(|conditions| {
-            conditions
-                .iter()
-                .any(|c| c.type_ == "Ready" && c.status == "True")
-        });
-
-    if tracing::enabled!(tracing::Level::DEBUG) {
-        debug!(
-            "Pod: {}, is_ready: {}",
-            pod.metadata.name.as_deref().unwrap_or("unknown"),
-            is_ready
-        );
-    }
-
-    is_ready
-}
-
 #[derive(Serialize, Deserialize)]
 pub struct KubeContextInfo {
     pub name: String,
@@ -143,29 +107,15 @@ pub struct PodInfo {
     pub labels_str: String,
 }
 
-pub struct PortForwardConfig {
-    pub local_port: Option<u16>,
-    pub local_address: Option<String>,
-    pub context_name: Option<String>,
-    pub kubeconfig: Option<String>,
-    pub config_id: i64,
-    pub workload_type: String,
-}
-
 #[derive(Clone)]
-#[allow(dead_code)]
 pub struct PortForward {
     pub target: Target,
     pub local_port: Option<u16>,
     pub local_address: Option<String>,
-    pub pod_api: Api<Pod>,
-    pub svc_api: Api<Service>,
-    pub client: kube::Client,
     pub context_name: Option<String>,
     pub kubeconfig: Option<String>,
     pub config_id: i64,
     pub workload_type: String,
-    pub connection: Arc<Mutex<Option<tokio::net::TcpStream>>>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -194,23 +144,6 @@ pub struct NameSpace(pub Option<String>);
 pub struct TargetPod {
     pub pod_name: String,
     pub port_number: u16,
-}
-
-pub trait PodSelection {
-    fn select<'p>(&self, pods: &'p [Pod], selector: &str) -> anyhow::Result<&'p Pod>;
-}
-
-pub struct AnyReady {}
-
-impl PodSelection for AnyReady {
-    fn select<'p>(&self, pods: &'p [Pod], selector: &str) -> anyhow::Result<&'p Pod> {
-        let pod = pods.iter().find(is_pod_ready).context(anyhow::anyhow!(
-            "No ready pods found matching the selector '{}'",
-            selector
-        ))?;
-
-        Ok(pod)
-    }
 }
 
 #[cfg(test)]
@@ -309,18 +242,6 @@ mod tests {
     }
 
     #[test]
-    fn test_target_pod_into_parts() {
-        let pod = TargetPod {
-            pod_name: "test-pod".to_string(),
-            port_number: 8080,
-        };
-
-        let (name, port) = pod.into_parts();
-        assert_eq!(name, "test-pod");
-        assert_eq!(port, 8080);
-    }
-
-    #[test]
     fn test_target_new() {
         let target = Target::new(
             TargetSelector::ServiceName("svc1".to_string()),
@@ -408,41 +329,6 @@ mod tests {
         );
 
         let result = target5.find(&pod, None);
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_is_pod_ready() {
-        let ready_pod = create_test_pod("ready-pod", true, true);
-        let not_ready_pod = create_test_pod("not-ready-pod", true, false);
-
-        assert!(is_pod_ready(&&ready_pod));
-        assert!(!is_pod_ready(&&not_ready_pod));
-    }
-
-    #[test]
-    fn test_any_ready_selection() {
-        let ready_pod = create_test_pod("ready-pod", true, true);
-        let not_ready_pod = create_test_pod("not-ready-pod", true, false);
-
-        let selector = AnyReady {};
-
-        let pods = vec![ready_pod.clone()];
-        let result = selector.select(&pods, "app=web");
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap().metadata.name, Some("ready-pod".to_string()));
-
-        let pods = vec![not_ready_pod.clone()];
-        let result = selector.select(&pods, "app=web");
-        assert!(result.is_err());
-
-        let pods = vec![not_ready_pod, ready_pod.clone()];
-        let result = selector.select(&pods, "app=web");
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap().metadata.name, Some("ready-pod".to_string()));
-
-        let pods: Vec<Pod> = vec![];
-        let result = selector.select(&pods, "app=web");
         assert!(result.is_err());
     }
 }

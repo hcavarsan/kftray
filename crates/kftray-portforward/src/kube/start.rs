@@ -487,7 +487,7 @@ async fn process_single_config_with_address(
 
     let actual_config = config.clone();
 
-    let port_forward_result: Result<PortForward, anyhow::Error> = PortForward::new(
+    let port_forward = PortForward::new(
         target,
         actual_config.local_port,
         local_address_clone,
@@ -495,165 +495,135 @@ async fn process_single_config_with_address(
         kubeconfig.flatten(),
         actual_config.id.unwrap_or_default(),
         actual_config.workload_type.clone().unwrap_or_default(),
-    )
-    .await;
+    );
 
-    match port_forward_result {
-        Ok(port_forward) => {
-            let tls_acceptor = if protocol == "tcp" && should_use_ssl {
-                match get_app_settings().await {
-                    Ok(settings) => match build_tls_acceptor(&actual_config, &settings).await {
-                        Ok(acceptor) => Some(acceptor),
-                        Err(e) => {
-                            warn!("Failed to create TLS acceptor: {}", e);
-                            None
-                        }
-                    },
-                    Err(e) => {
-                        warn!("Failed to get app settings for SSL: {}", e);
-                        None
-                    }
-                }
-            } else {
-                None
-            };
-
-            let forward_result = match protocol.as_str() {
-                "udp" => port_forward.clone().port_forward_udp().await,
-                "tcp" => port_forward.clone().port_forward_tcp(tls_acceptor).await,
-                _ => {
-                    error!("Unsupported protocol: {protocol}");
-                    Err(anyhow::anyhow!("Unsupported protocol: {}", protocol))
-                }
-            };
-
-            match forward_result {
-                Ok((actual_local_port, handle)) => {
-                    let protocol_upper = protocol.to_uppercase();
-                    info!(
-                        "{} port forwarding is set up on local port: {:?} for {}: {:?}",
-                        protocol_upper,
-                        actual_local_port,
-                        workload_type_description(config.workload_type.as_deref()),
-                        config.service
-                    );
-
-                    debug!(
-                        "Port forwarding established for config_id: {}",
-                        port_forward.config_id
-                    );
-                    debug!("Actual local port: {actual_local_port}");
-
-                    let handle_key = format!(
-                        "config:{}:service:{}",
-                        config.id.unwrap(),
-                        config.service.clone().unwrap_or_default()
-                    );
-
-                    // Insert into DashMap - lock-free operation
-                    CHILD_PROCESSES.insert(handle_key.clone(), handle);
-
-                    let config_state = ConfigState::new(config.id.unwrap(), true);
-                    if let Err(e) = update_config_state_with_mode(&config_state, mode).await {
-                        error!("Failed to update config state: {e}");
-                    }
-
-                    let config_id = config.id.unwrap();
-
-                    let timeout_callback = create_static_timeout_callback();
-
-                    if let Err(e) = start_timeout_for_forward(config_id, timeout_callback).await {
-                        error!("Failed to start timeout for config {config_id}: {e}");
-                    }
-
-                    if should_use_ssl
-                        && protocol == "tcp"
-                        && let Err(e) = update_hosts_with_ssl(&config).await
-                    {
-                        warn!("Failed to update hosts file for SSL: {}", e);
-                    }
-
-                    SingleConfigResult::Success(CustomResponse {
-                        id: config.id,
-                        service: config.service.clone().unwrap(),
-                        namespace: namespace.clone(),
-                        local_port: actual_local_port,
-                        remote_port: config.remote_port.unwrap_or_default(),
-                        context: config.context.clone().unwrap_or_default(),
-                        protocol: config.protocol.clone(),
-                        stdout: {
-                            let protocol_display = if should_use_ssl && protocol == "tcp" {
-                                "HTTPS".to_string()
-                            } else {
-                                protocol.to_uppercase()
-                            };
-                            format!(
-                                "{} forwarding from 127.0.0.1:{} -> {:?}:{}{}",
-                                protocol_display,
-                                actual_local_port,
-                                config.remote_port.unwrap_or_default(),
-                                config.service.clone().unwrap(),
-                                if should_use_ssl && protocol == "tcp" {
-                                    " (HTTP redirects to HTTPS)"
-                                } else {
-                                    ""
-                                }
-                            )
-                        },
-                        stderr: String::new(),
-                        status: 0,
-                    })
-                }
+    let tls_acceptor = if protocol == "tcp" && should_use_ssl {
+        match get_app_settings().await {
+            Ok(settings) => match build_tls_acceptor(&actual_config, &settings).await {
+                Ok(acceptor) => Some(acceptor),
                 Err(e) => {
-                    let protocol_upper = protocol.to_uppercase();
-                    let error_message = format!(
-                        "Failed to start {} port forwarding for {} {}: {}",
-                        protocol_upper,
-                        workload_type_description(config.workload_type.as_deref()),
-                        config.service.clone().unwrap_or_default(),
-                        e
-                    );
-                    error!("{}", error_message);
-
-                    if let Err(cleanup_err) = port_forward.cleanup_resources().await {
-                        error!(
-                            "Failed to cleanup resources for failed port forward: {}",
-                            cleanup_err
-                        );
-                    }
-
-                    let failed_handle = config.id.map(|config_id| {
-                        format!(
-                            "config:{}:service:{}",
-                            config_id,
-                            config.service.clone().unwrap_or_default()
-                        )
-                    });
-
-                    SingleConfigResult::Error {
-                        message: error_message,
-                        failed_handle,
-                    }
+                    warn!("Failed to create TLS acceptor: {}", e);
+                    None
                 }
+            },
+            Err(e) => {
+                warn!("Failed to get app settings for SSL: {}", e);
+                None
             }
         }
+    } else {
+        None
+    };
+
+    let forward_result = match protocol.as_str() {
+        "udp" => port_forward.clone().port_forward_udp().await,
+        "tcp" => port_forward.clone().port_forward_tcp(tls_acceptor).await,
+        _ => {
+            error!("Unsupported protocol: {protocol}");
+            Err(anyhow::anyhow!("Unsupported protocol: {}", protocol))
+        }
+    };
+
+    match forward_result {
+        Ok((actual_local_port, handle)) => {
+            let protocol_upper = protocol.to_uppercase();
+            info!(
+                "{} port forwarding is set up on local port: {:?} for {}: {:?}",
+                protocol_upper,
+                actual_local_port,
+                workload_type_description(config.workload_type.as_deref()),
+                config.service
+            );
+
+            debug!(
+                "Port forwarding established for config_id: {}",
+                port_forward.config_id
+            );
+            debug!("Actual local port: {actual_local_port}");
+
+            let handle_key = format!(
+                "config:{}:service:{}",
+                config.id.unwrap(),
+                config.service.clone().unwrap_or_default()
+            );
+
+            // Insert into DashMap - lock-free operation
+            CHILD_PROCESSES.insert(handle_key.clone(), handle);
+
+            let config_state = ConfigState::new(config.id.unwrap(), true);
+            if let Err(e) = update_config_state_with_mode(&config_state, mode).await {
+                error!("Failed to update config state: {e}");
+            }
+
+            let config_id = config.id.unwrap();
+
+            let timeout_callback = create_static_timeout_callback();
+
+            if let Err(e) = start_timeout_for_forward(config_id, timeout_callback).await {
+                error!("Failed to start timeout for config {config_id}: {e}");
+            }
+
+            if should_use_ssl
+                && protocol == "tcp"
+                && let Err(e) = update_hosts_with_ssl(&config).await
+            {
+                warn!("Failed to update hosts file for SSL: {}", e);
+            }
+
+            let target_name =
+                config
+                    .service
+                    .as_deref()
+                    .unwrap_or_else(|| match &port_forward.target.selector {
+                        TargetSelector::ServiceName(name) | TargetSelector::PodLabel(name) => name,
+                    });
+
+            SingleConfigResult::Success(CustomResponse {
+                id: config.id,
+                service: target_name.to_owned(),
+                namespace: namespace.clone(),
+                local_port: actual_local_port,
+                remote_port: config.remote_port.unwrap_or_default(),
+                context: config.context.clone().unwrap_or_default(),
+                protocol: config.protocol.clone(),
+                stdout: {
+                    let protocol_display = if should_use_ssl && protocol == "tcp" {
+                        "HTTPS".to_string()
+                    } else {
+                        protocol.to_uppercase()
+                    };
+                    format!(
+                        "{} forwarding from 127.0.0.1:{} -> {:?}:{}{}",
+                        protocol_display,
+                        actual_local_port,
+                        config.remote_port.unwrap_or_default(),
+                        target_name,
+                        if should_use_ssl && protocol == "tcp" {
+                            " (HTTP redirects to HTTPS)"
+                        } else {
+                            ""
+                        }
+                    )
+                },
+                stderr: String::new(),
+                status: 0,
+            })
+        }
         Err(e) => {
+            let protocol_upper = protocol.to_uppercase();
             let error_message = format!(
-                "Failed to create PortForward for {} {}: {}",
+                "Failed to start {} port forwarding for {} {}: {}",
+                protocol_upper,
                 workload_type_description(config.workload_type.as_deref()),
                 config.service.clone().unwrap_or_default(),
                 e
             );
             error!("{}", error_message);
 
-            if let Some(local_addr) = &config.local_address
-                && crate::network_utils::is_custom_loopback_address(local_addr)
-                && let Err(cleanup_err) =
-                    crate::network_utils::remove_loopback_address(local_addr).await
-            {
+            if let Err(cleanup_err) = port_forward.cleanup_resources().await {
                 error!(
-                    "Failed to cleanup loopback address {} after PortForward creation failure: {}",
-                    local_addr, cleanup_err
+                    "Failed to cleanup resources for failed port forward: {}",
+                    cleanup_err
                 );
             }
 
