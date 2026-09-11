@@ -201,6 +201,10 @@ pub async fn stop_all_port_forward_with_mode(
     mode: DatabaseMode,
 ) -> Result<Vec<CustomResponse>, String> {
     let mut ids: HashSet<i64> = CHILD_PROCESSES.iter().map(|entry| *entry.key()).collect();
+    for entry in crate::kube::proxy::STARTING_PROXIES.iter() {
+        entry.value().cancel();
+        ids.insert(*entry.key());
+    }
     for entry in crate::kube::proxy_recovery::RECOVERY_MANAGERS.iter() {
         entry.value().cancel();
         ids.insert(*entry.key());
@@ -259,6 +263,9 @@ pub async fn stop_port_forward_with_mode(
     let id = config_id
         .parse::<i64>()
         .map_err(|_| "Invalid config ID".to_string())?;
+    if let Some(startup) = crate::kube::proxy::STARTING_PROXIES.get(&id) {
+        startup.cancel();
+    }
     if let Some(manager) = crate::kube::proxy_recovery::RECOVERY_MANAGERS.get(&id) {
         manager.cancel();
     }
@@ -284,6 +291,9 @@ pub async fn stop_port_forward_with_mode(
 async fn stop_config(
     id: i64, config: Option<&Config>, mode: DatabaseMode,
 ) -> Result<CustomResponse, String> {
+    if let Some(startup) = crate::kube::proxy::STARTING_PROXIES.get(&id) {
+        startup.cancel();
+    }
     if let Some(manager) = crate::kube::proxy_recovery::RECOVERY_MANAGERS.get(&id) {
         manager.cancel();
     }
@@ -292,6 +302,9 @@ async fn stop_config(
         Ok(guard) => (guard, false),
         Err(_) => (lock.lock().await, true),
     };
+    if let Some(startup) = crate::kube::proxy::STARTING_PROXIES.get(&id) {
+        startup.cancel();
+    }
     let refreshed = if was_starting {
         get_config_with_mode(id, mode).await.ok()
     } else {
@@ -341,13 +354,13 @@ async fn stop_config(
                 release_address_with_fallback(address).await;
             }
             let mut errors = Vec::new();
-            if config.domain_enabled.unwrap_or_default() {
-                if let Err(error) = remove_host_entry(&id.to_string()) {
-                    errors.push(error.to_string());
-                }
-                if let Err(error) = remove_ssl_host_entry(&id.to_string()) {
-                    errors.push(error.to_string());
-                }
+            if config.domain_enabled.unwrap_or_default()
+                && let Err(error) = remove_host_entry(&id.to_string())
+            {
+                errors.push(error.to_string());
+            }
+            if let Err(error) = remove_ssl_host_entry(&id.to_string()) {
+                errors.push(error.to_string());
             }
             if errors.is_empty() {
                 Ok(())

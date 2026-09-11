@@ -68,8 +68,15 @@ pub async fn run_tui(
 
     let res = run_app(&mut terminal, &mut app, mode, &mut update_check).await;
     app.finish_forwarding().await;
-    if let Err(error) = kftray_portforward::kube::stop_all_port_forward_with_mode(mode).await {
-        error!("Failed to stop port forwards: {error}");
+    match kftray_portforward::kube::stop_all_port_forward_with_mode(mode).await {
+        Ok(responses) => {
+            for response in responses {
+                if response.status != 0 {
+                    error!("Error stopping port forward: {:?}", response.stderr);
+                }
+            }
+        }
+        Err(error) => error!("Failed to stop port forwards: {error}"),
     }
 
     disable_raw_mode()?;

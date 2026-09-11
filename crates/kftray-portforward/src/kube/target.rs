@@ -34,6 +34,7 @@ pub async fn resolve_pod_selector(
                 .spec
                 .as_ref()
                 .and_then(|spec| spec.selector.as_ref())
+                .filter(|selector| !selector.is_empty())
                 .ok_or_else(|| anyhow::anyhow!("Service '{}' has no selector", service_name))?;
 
             let mut label_selector = String::with_capacity(selector.len() * 20);
@@ -201,5 +202,47 @@ mod tests {
         server.await.unwrap();
 
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn resolve_pod_selector_errors_when_service_selector_is_empty() {
+        let (mock_service, mut handle) = mock::pair::<Request<Body>, Response<Body>>();
+        let client = kube::Client::new(mock_service, "default");
+        let target = Target::new(
+            TargetSelector::ServiceName("empty-selector-svc".to_string()),
+            8080,
+            "default",
+        );
+
+        let server = tokio::spawn(async move {
+            let (_request, send) = handle.next_request().await.unwrap();
+
+            let service = Service {
+                metadata: ObjectMeta {
+                    name: Some("empty-selector-svc".to_string()),
+                    namespace: Some("default".to_string()),
+                    ..Default::default()
+                },
+                spec: Some(k8s_openapi::api::core::v1::ServiceSpec {
+                    selector: Some(std::collections::BTreeMap::new()),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            };
+
+            let response = Response::builder()
+                .status(200)
+                .body(Body::from(serde_json::to_vec(&service).unwrap()))
+                .unwrap();
+            send.send_response(response);
+        });
+
+        let result = resolve_pod_selector(&client, "default", &target).await;
+        server.await.unwrap();
+
+        assert!(
+            result.is_err(),
+            "an empty selector must not fall through to a namespace-wide PodSelector::Labels"
+        );
     }
 }

@@ -91,14 +91,21 @@ pub static RECOVERY_MANAGERS: Lazy<DashMap<i64, Arc<ProxyRecoveryManager>>> =
 /// This is a **sync** helper to avoid opaque-type cycles when called from
 /// async proxy functions that are themselves awaited by
 /// `deploy_and_forward_pod`.
-pub fn spawn_recovery_manager(config: Config, proxy_type: ProxyType, mode: DatabaseMode) {
+pub fn spawn_recovery_manager(
+    config: Config, proxy_type: ProxyType, mode: DatabaseMode, ssl_override: bool,
+) {
     let Some(config_id) = config.id else {
         return;
     };
 
     let mut spawned = false;
     RECOVERY_MANAGERS.entry(config_id).or_insert_with(|| {
-        let manager = Arc::new(ProxyRecoveryManager::new(config, proxy_type, mode));
+        let manager = Arc::new(ProxyRecoveryManager::new(
+            config,
+            proxy_type,
+            mode,
+            ssl_override,
+        ));
         let rx = manager.recovery_signal_tx.subscribe();
         let manager_for_task = Arc::clone(&manager);
         tokio::spawn(async move {
@@ -166,6 +173,7 @@ pub struct ProxyRecoveryManager {
     /// Broadcast sender to trigger recovery from any source
     recovery_signal_tx: tokio::sync::broadcast::Sender<RecoverySignal>,
     mode: DatabaseMode,
+    ssl_override: bool,
 }
 
 impl ProxyRecoveryManager {
@@ -174,7 +182,9 @@ impl ProxyRecoveryManager {
     /// # Arguments
     /// * `config` - The port-forward configuration to recover
     /// * `proxy_type` - Whether this is a bare pod or deployment proxy
-    pub fn new(config: Config, proxy_type: ProxyType, mode: DatabaseMode) -> Self {
+    pub fn new(
+        config: Config, proxy_type: ProxyType, mode: DatabaseMode, ssl_override: bool,
+    ) -> Self {
         let config_id = config.id.unwrap_or(0);
         let (recovery_signal_tx, _) = tokio::sync::broadcast::channel::<RecoverySignal>(16);
         Self {
@@ -185,6 +195,7 @@ impl ProxyRecoveryManager {
             state: Arc::new(tokio::sync::RwLock::new(RecoveryState::Idle)),
             recovery_signal_tx,
             mode,
+            ssl_override,
         }
     }
 
@@ -388,8 +399,26 @@ impl ProxyRecoveryManager {
         let client = client.client.clone();
 
         match self.proxy_type {
-            ProxyType::BarePod => recover_bare_pod(&self.config, &client, self.mode).await,
-            ProxyType::Deployment => recover_deployment(&self.config, &client, self.mode).await,
+            ProxyType::BarePod => {
+                recover_bare_pod(
+                    &self.config,
+                    &client,
+                    self.mode,
+                    self.ssl_override,
+                    &self.cancel_token,
+                )
+                .await
+            }
+            ProxyType::Deployment => {
+                recover_deployment(
+                    &self.config,
+                    &client,
+                    self.mode,
+                    self.ssl_override,
+                    &self.cancel_token,
+                )
+                .await
+            }
         }
     }
 
@@ -444,7 +473,8 @@ async fn cleanup_child_processes_for_config(config_id: i64) {
 /// 3. Re-deploys a fresh proxy pod via
 ///    [`deploy_and_forward_pod()`](crate::kube::proxy::deploy_and_forward_pod)
 pub async fn recover_bare_pod(
-    config: &Config, client: &kube::Client, mode: DatabaseMode,
+    config: &Config, client: &kube::Client, mode: DatabaseMode, ssl_override: bool,
+    cancellation: &CancellationToken,
 ) -> anyhow::Result<()> {
     let config_id = config
         .id
@@ -458,7 +488,7 @@ pub async fn recover_bare_pod(
 
     // Step 3: Re-deploy via the existing deploy_and_forward_pod() function
     // This generates a new hashed_name and creates a fresh pod + port forward
-    crate::kube::proxy::start_proxy_config(config.clone(), mode, false)
+    crate::kube::proxy::start_proxy_config(config.clone(), mode, ssl_override, cancellation)
         .await
         .map_err(|e| anyhow::anyhow!("Re-deployment failed: {}", e))?;
 
@@ -479,7 +509,8 @@ pub async fn recover_bare_pod(
 /// 4. For UDP: restarts the port forward (UDP streams are single-shot)
 /// 5. For TCP: the existing pod_watcher detects the new pod automatically
 pub async fn recover_deployment(
-    config: &Config, client: &kube::Client, mode: DatabaseMode,
+    config: &Config, client: &kube::Client, mode: DatabaseMode, ssl_override: bool,
+    cancellation: &CancellationToken,
 ) -> anyhow::Result<()> {
     let config_id = config
         .id
@@ -503,7 +534,7 @@ pub async fn recover_deployment(
             hashed_name,
             config_id
         );
-        return recover_bare_pod(config, client, mode).await;
+        return recover_bare_pod(config, client, mode, ssl_override, cancellation).await;
     }
 
     let pods: kube::Api<k8s_openapi::api::core::v1::Pod> =
@@ -528,7 +559,7 @@ pub async fn recover_deployment(
             {
                 if config.protocol.eq_ignore_ascii_case("udp") {
                     cleanup_child_processes_for_config(config_id).await;
-                    crate::kube::start::start_config(config.clone(), "udp", mode, false)
+                    crate::kube::start::start_config(config.clone(), "udp", mode, ssl_override)
                         .await
                         .map_err(anyhow::Error::msg)?;
                 }
@@ -563,6 +594,7 @@ mod tests {
             config,
             ProxyType::BarePod,
             DatabaseMode::Memory,
+            false,
         ));
         let manager_clone = Arc::clone(&manager);
 
@@ -605,6 +637,7 @@ mod tests {
             config,
             ProxyType::BarePod,
             DatabaseMode::Memory,
+            false,
         ));
         let manager_clone = Arc::clone(&manager);
         let handle = tokio::spawn(async move {
@@ -668,6 +701,7 @@ mod tests {
             config,
             ProxyType::Deployment,
             DatabaseMode::Memory,
+            false,
         ));
         let manager_clone = Arc::clone(&manager);
 

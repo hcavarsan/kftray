@@ -453,16 +453,22 @@ async fn delete_ingresses(client: &Client, namespace: &str, lp: &ListParams) -> 
         return Ok(());
     }
 
+    let mut errors = Vec::new();
     for ingress in items.items {
         if let Some(name) = &ingress.metadata.name {
             info!("Deleting ingress: {}", name);
             match api.delete(name, &DeleteParams::default()).await {
                 Ok(_) => info!("Ingress {} deleted successfully", name),
-                Err(e) => return Err(format!("Failed to delete ingress {name}: {e}")),
+                Err(e) if matches!(&e, kube::Error::Api(response) if response.code == 404) => {}
+                Err(e) => errors.push(format!("Failed to delete ingress {name}: {e}")),
             }
         }
     }
-    Ok(())
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
 }
 
 async fn delete_services(client: &Client, namespace: &str, lp: &ListParams) -> Result<(), String> {
@@ -480,16 +486,22 @@ async fn delete_services(client: &Client, namespace: &str, lp: &ListParams) -> R
         return Ok(());
     }
 
+    let mut errors = Vec::new();
     for service in items.items {
         if let Some(name) = &service.metadata.name {
             info!("Deleting service: {}", name);
             match api.delete(name, &DeleteParams::default()).await {
                 Ok(_) => info!("Service {} deleted successfully", name),
-                Err(e) => return Err(format!("Failed to delete service {name}: {e}")),
+                Err(e) if matches!(&e, kube::Error::Api(response) if response.code == 404) => {}
+                Err(e) => errors.push(format!("Failed to delete service {name}: {e}")),
             }
         }
     }
-    Ok(())
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
 }
 
 async fn delete_deployments(
@@ -509,14 +521,92 @@ async fn delete_deployments(
         return Ok(());
     }
 
+    let mut errors = Vec::new();
     for deployment in items.items {
         if let Some(name) = &deployment.metadata.name {
             info!("Deleting deployment: {}", name);
             match api.delete(name, &DeleteParams::default()).await {
                 Ok(_) => info!("Deployment {} deleted successfully", name),
-                Err(e) => return Err(format!("Failed to delete deployment {name}: {e}")),
+                Err(e) if matches!(&e, kube::Error::Api(response) if response.code == 404) => {}
+                Err(e) => errors.push(format!("Failed to delete deployment {name}: {e}")),
             }
         }
     }
-    Ok(())
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use http::{
+        Method,
+        Request,
+        Response,
+    };
+    use kube::client::Body;
+    use tower_test::mock;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn cleanup_attempts_all_resources_and_ignores_not_found() {
+        let (mock_service, mut handle) = mock::pair::<Request<Body>, Response<Body>>();
+        let client = kube::Client::new(mock_service, "default");
+        let server = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
+            let mut deleted = std::collections::HashSet::new();
+            while deleted.len() < 9 {
+                let (request, send) = handle.next_request().await.unwrap();
+                let name = request.uri().path().rsplit('/').next().unwrap();
+                let (status, body) = if request.method() == Method::GET {
+                    let items: Vec<_> = ["missing", "broken", "ok"].into_iter()
+                        .map(|suffix| serde_json::json!({"metadata":{"name":format!("{name}-{suffix}")}}))
+                        .collect();
+                    (200, serde_json::json!({"items":items}))
+                } else {
+                    assert_eq!(request.method(), Method::DELETE);
+                    assert!(deleted.insert(name.to_string()));
+                    let status = if name.ends_with("-missing") {
+                        404
+                    } else if name.ends_with("-broken") {
+                        500
+                    } else {
+                        200
+                    };
+                    (
+                        status,
+                        serde_json::json!({
+                            "apiVersion":"v1", "kind":"Status", "status":if status==200 {"Success"} else {"Failure"},
+                            "reason":if status==404 {"NotFound"} else {"InternalError"},
+                            "message":name, "code":status
+                        }),
+                    )
+                };
+                send.send_response(
+                    Response::builder()
+                        .status(status)
+                        .body(Body::from(serde_json::to_vec(&body).unwrap()))
+                        .unwrap(),
+                );
+            }
+            deleted
+        }));
+        let (result, deleted) = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            let result = delete_expose_resources(client, "default", "42").await;
+            (result, server.await.unwrap())
+        })
+        .await
+        .unwrap();
+        let error = result.expect_err("failed deletions must be reported");
+        for kind in ["ingresses", "services", "deployments"] {
+            for suffix in ["missing", "broken", "ok"] {
+                assert!(deleted.contains(&format!("{kind}-{suffix}")));
+            }
+            assert!(error.contains(&format!("{kind}-broken")), "{error}");
+            assert!(!error.contains(&format!("{kind}-missing")), "{error}");
+            assert!(!error.contains(&format!("{kind}-ok")), "{error}");
+        }
+    }
 }

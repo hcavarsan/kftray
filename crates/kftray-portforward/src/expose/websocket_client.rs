@@ -27,7 +27,10 @@ use log::{
 use tokio::sync::oneshot;
 use tokio_tungstenite::{
     connect_async,
-    tungstenite::Message,
+    tungstenite::{
+        Error as WsError,
+        Message,
+    },
 };
 
 pub struct WebSocketTunnelClient {
@@ -94,7 +97,9 @@ impl WebSocketTunnelClient {
             Ok(connection) => connection,
             Err(error) => {
                 let message = format!("Failed to connect to WebSocket: {error}");
-                if let Some(ready) = ready.take()
+                let is_permanent = matches!(error, WsError::Http(_));
+                if is_permanent
+                    && let Some(ready) = ready.take()
                     && ready.send(Err(message.clone())).is_err()
                 {
                     return Err("Expose startup was cancelled".to_owned());
@@ -349,6 +354,34 @@ mod tests {
             .unwrap()
             .unwrap();
         assert!(result.is_err());
+        task.abort();
+        assert!(task.await.unwrap_err().is_cancelled());
+    }
+
+    #[tokio::test]
+    async fn transient_connection_failure_retries_before_reporting_readiness() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let client = WebSocketTunnelClient::new(
+            listener.local_addr().unwrap().port(),
+            "127.0.0.1".to_owned(),
+            8080,
+        );
+        let (ready_tx, ready_rx) = oneshot::channel();
+        let task = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
+            client.start(ready_tx).await
+        }));
+        let (first, _) = listener.accept().await.unwrap();
+        drop(first);
+        let peer = async {
+            let (socket, _) = listener.accept().await.unwrap();
+            tokio_tungstenite::accept_async(socket).await.unwrap()
+        };
+        let (ready, _peer) = tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::join!(ready_rx, peer)
+        })
+        .await
+        .unwrap();
+        ready.unwrap().unwrap();
         task.abort();
         assert!(task.await.unwrap_err().is_cancelled());
     }

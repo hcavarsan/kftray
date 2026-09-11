@@ -111,7 +111,10 @@ pub async fn list_kube_contexts(kubeconfig: Option<String>) -> KubeResult<Vec<Ku
 
     let contexts = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<String>> {
         let paths = get_kubeconfig_paths_from_option(kubeconfig)?;
-        let (_, contexts, _) = merge_kubeconfigs(&paths)?;
+        let (_, contexts, errors) = merge_kubeconfigs(&paths)?;
+        if contexts.is_empty() && !errors.is_empty() {
+            anyhow::bail!(errors.join("\n"));
+        }
         Ok(contexts)
     })
     .await
@@ -286,5 +289,25 @@ mod tests {
     async fn test_list_kube_contexts_empty() {
         let result = list_kube_contexts(Some("invalid".to_string())).await;
         assert!(result.is_err());
+    }
+
+    #[tokio::test]
+    async fn test_list_kube_contexts_preserves_load_error() {
+        use tempfile::TempDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let kubeconfig_path = temp_dir.path().join("kubeconfig");
+        std::fs::write(&kubeconfig_path, "not: valid: yaml: [").unwrap();
+
+        let result = list_kube_contexts(Some(kubeconfig_path.to_string_lossy().to_string())).await;
+
+        let err = result
+            .err()
+            .expect("malformed kubeconfig must fail")
+            .to_string();
+        assert!(
+            err.contains(kubeconfig_path.to_string_lossy().as_ref()),
+            "{err}"
+        );
     }
 }

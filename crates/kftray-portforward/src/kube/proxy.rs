@@ -8,6 +8,10 @@ use std::{
     },
 };
 
+use dashmap::{
+    DashMap,
+    mapref::entry::Entry,
+};
 use futures::{
     StreamExt,
     TryStreamExt,
@@ -54,11 +58,49 @@ use rand::distr::{
     Alphanumeric,
     SampleString,
 };
+use tokio_util::sync::CancellationToken;
 
 use crate::kube::shared_client::{
     SHARED_CLIENT_MANAGER,
     ServiceClientKey,
 };
+
+pub(super) static STARTING_PROXIES: std::sync::LazyLock<DashMap<i64, CancellationToken>> =
+    std::sync::LazyLock::new(DashMap::new);
+
+struct ProxyStart {
+    id: i64,
+    cancellation: CancellationToken,
+}
+
+impl ProxyStart {
+    fn new(id: i64) -> Result<Self, String> {
+        match STARTING_PROXIES.entry(id) {
+            Entry::Occupied(_) => Err(format!(
+                "Proxy startup is already in progress for config {id}"
+            )),
+            Entry::Vacant(entry) => {
+                let cancellation = CancellationToken::new();
+                entry.insert(cancellation.clone());
+                Ok(Self { id, cancellation })
+            }
+        }
+    }
+}
+
+impl Drop for ProxyStart {
+    fn drop(&mut self) {
+        STARTING_PROXIES.remove(&self.id);
+        crate::kube::proxy_recovery::remove_recovery_lock(self.id);
+    }
+}
+
+#[derive(Clone, Copy)]
+struct ProxyStartOptions<'a> {
+    mode: DatabaseMode,
+    ssl_override: bool,
+    cancellation: &'a CancellationToken,
+}
 
 pub async fn deploy_and_forward_pod(configs: Vec<Config>) -> Result<Vec<CustomResponse>, String> {
     deploy_and_forward_pod_with_mode(configs, DatabaseMode::File, false).await
@@ -78,13 +120,10 @@ pub async fn deploy_and_forward_pod_with_mode(
             Err(error) => errors.push(error),
         }
     }
-    if responses.is_empty() && !errors.is_empty() {
-        Err(errors.join("; "))
-    } else {
-        for error in errors {
-            error!("Proxy config failed: {error}");
-        }
+    if errors.is_empty() {
         Ok(responses)
+    } else {
+        Err(errors.join("; "))
     }
 }
 
@@ -92,23 +131,29 @@ async fn process_single_proxy_config(
     config: Config, mode: DatabaseMode, ssl_override: bool,
 ) -> Result<CustomResponse, String> {
     let id = config.id.ok_or("Config has no ID")?;
+    let startup = ProxyStart::new(id)?;
     let lock = crate::kube::proxy_recovery::acquire_recovery_lock(id).await;
-    let guard = lock.lock().await;
+    let guard = tokio::select! {
+        biased;
+        _ = startup.cancellation.cancelled() => {
+            return Err(format!("Proxy startup cancelled for config {id}"));
+        }
+        guard = lock.lock() => guard,
+    };
     let result = if crate::port_forward::CHILD_PROCESSES.contains_key(&id) {
         Err(format!(
             "Port forwarding is already running for config {id}"
         ))
     } else {
-        start_proxy_config(config, mode, ssl_override).await
+        start_proxy_config(config, mode, ssl_override, &startup.cancellation).await
     };
     drop(guard);
     drop(lock);
-    crate::kube::proxy_recovery::remove_recovery_lock(id);
     result
 }
 
 pub(super) async fn start_proxy_config(
-    mut config: Config, mode: DatabaseMode, ssl_override: bool,
+    mut config: Config, mode: DatabaseMode, ssl_override: bool, cancellation: &CancellationToken,
 ) -> Result<CustomResponse, String> {
     let protocol = config.protocol.to_ascii_lowercase();
     if !matches!(protocol.as_str(), "tcp" | "udp") {
@@ -116,13 +161,14 @@ pub(super) async fn start_proxy_config(
     }
     let client_key = ServiceClientKey::new(config.context.clone(), config.kubeconfig.clone());
 
-    let shared_client = SHARED_CLIENT_MANAGER
-        .get_connection(client_key)
-        .await
-        .map_err(|e| {
+    let shared_client = tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => return Err("Proxy startup cancelled".to_string()),
+        result = SHARED_CLIENT_MANAGER.get_connection(client_key) => result.map_err(|e| {
             error!("Failed to get shared Kubernetes client: {e}");
             e.to_string()
-        })?;
+        })?,
+    };
     let client = shared_client.client.clone();
 
     let timestamp = SystemTime::now()
@@ -179,6 +225,11 @@ pub(super) async fn start_proxy_config(
     values.insert("protocol".to_string(), protocol.clone());
 
     let use_deployment = should_use_deployment_manifest();
+    let options = ProxyStartOptions {
+        mode,
+        ssl_override,
+        cancellation,
+    };
 
     if use_deployment {
         process_deployment_proxy(
@@ -188,8 +239,7 @@ pub(super) async fn start_proxy_config(
             &config_id_str,
             &values,
             &protocol,
-            mode,
-            ssl_override,
+            options,
         )
         .await
     } else {
@@ -199,8 +249,7 @@ pub(super) async fn start_proxy_config(
             &hashed_name,
             &values,
             &protocol,
-            mode,
-            ssl_override,
+            options,
         )
         .await
     }
@@ -252,24 +301,26 @@ fn relay_started(pod: Option<&Pod>, container_name: &str) -> bool {
 }
 
 async fn wait_for_relay_startup(
-    pods: &Api<Pod>, pod_name: &str, container_name: &str,
+    pods: &Api<Pod>, pod_name: &str, container_name: &str, cancellation: &CancellationToken,
 ) -> Result<(), String> {
-    tokio::time::timeout(
-        std::time::Duration::from_secs(120),
-        kube_runtime::wait::await_condition(pods.clone(), pod_name, |pod: Option<&Pod>| {
-            relay_started(pod, container_name)
-        }),
-    )
-    .await
-    .map_err(|_| format!("Timed out waiting for proxy listener in pod {pod_name}"))?
-    .map(|_| ())
-    .map_err(|error| error.to_string())
+    tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => Err("Proxy startup cancelled".to_string()),
+        result = tokio::time::timeout(
+            std::time::Duration::from_secs(120),
+            kube_runtime::wait::await_condition(pods.clone(), pod_name, |pod: Option<&Pod>| {
+                relay_started(pod, container_name)
+            }),
+        ) => result
+            .map_err(|_| format!("Timed out waiting for proxy listener in pod {pod_name}"))?
+            .map(|_| ())
+            .map_err(|error| error.to_string()),
+    }
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn process_deployment_proxy(
     client: Client, config: &mut Config, hashed_name: &str, config_id_str: &str,
-    values: &HashMap<String, String>, protocol: &str, mode: DatabaseMode, ssl_override: bool,
+    values: &HashMap<String, String>, protocol: &str, options: ProxyStartOptions<'_>,
 ) -> Result<CustomResponse, String> {
     let manifest_path = get_proxy_deployment_manifest_path().map_err(|e| e.to_string())?;
     let mut file = File::open(manifest_path).map_err(|e| e.to_string())?;
@@ -291,54 +342,59 @@ async fn process_deployment_proxy(
             .remote_port
             .ok_or("A proxy destination port is required")?,
     )?;
+    if options.cancellation.is_cancelled() {
+        return Err("Proxy startup cancelled".to_string());
+    }
 
     let deployments: Api<Deployment> = Api::namespaced(client.clone(), &config.namespace);
 
-    match deployments
+    deployments
         .create(&PostParams::default(), &deployment)
         .await
-    {
-        Ok(_) => {
-            let pods: Api<Pod> = Api::namespaced(client.clone(), &config.namespace);
-            let label_selector = format!("app={},config_id={}", hashed_name, config_id_str);
-            let lp = ListParams::default().labels(&label_selector);
-
-            let pod_name = wait_for_deployment_pod(&pods, &lp, hashed_name, &deployments).await?;
-
-            if let Err(e) = wait_for_relay_startup(&pods, &pod_name, &container_name).await {
-                let dp = DeleteParams {
-                    grace_period_seconds: Some(0),
-                    ..DeleteParams::default()
-                };
-                let _ = deployments.delete(hashed_name, &dp).await;
-                return Err(e.to_string());
-            }
-
-            config.service = Some(hashed_name.to_string());
-
-            match super::start::start_config(config.clone(), protocol, mode, ssl_override).await {
-                Ok(response) => {
-                    crate::kube::proxy_recovery::spawn_recovery_manager(
-                        config.clone(),
-                        crate::kube::proxy_recovery::ProxyType::Deployment,
-                        mode,
-                    );
-                    Ok(response)
-                }
-                Err(error) => {
-                    let _ = deployments
-                        .delete(hashed_name, &DeleteParams::default())
-                        .await;
-                    Err(format!("Failed to start port forwarding: {error}"))
-                }
-            }
-        }
-        Err(e) => Err(e.to_string()),
+        .map_err(|e| e.to_string())?;
+    let result: Result<CustomResponse, String> = async {
+        let pods: Api<Pod> = Api::namespaced(client, &config.namespace);
+        let label_selector = format!("app={hashed_name},config_id={config_id_str}");
+        let lp = ListParams::default().labels(&label_selector);
+        let pod_name = wait_for_deployment_pod(&pods, &lp, options.cancellation).await?;
+        wait_for_relay_startup(&pods, &pod_name, &container_name, options.cancellation).await?;
+        config.service = Some(hashed_name.to_string());
+        let response = super::start::start_config(
+            config.clone(),
+            protocol,
+            options.mode,
+            options.ssl_override,
+        )
+        .await
+        .map_err(|error| format!("Failed to start port forwarding: {error}"))?;
+        crate::kube::proxy_recovery::spawn_recovery_manager(
+            config.clone(),
+            crate::kube::proxy_recovery::ProxyType::Deployment,
+            options.mode,
+            options.ssl_override,
+        );
+        Ok(response)
     }
+    .await;
+    if let Err(error) = result {
+        let dp = DeleteParams {
+            grace_period_seconds: Some(0),
+            ..DeleteParams::default()
+        };
+        if let Err(cleanup) = deployments.delete(hashed_name, &dp).await
+            && !matches!(&cleanup, kube::Error::Api(response) if response.code == 404)
+        {
+            return Err(format!(
+                "{error}; failed to delete proxy deployment: {cleanup}"
+            ));
+        }
+        return Err(error);
+    }
+    result
 }
 
 async fn wait_for_deployment_pod(
-    pods: &Api<Pod>, lp: &ListParams, hashed_name: &str, deployments: &Api<Deployment>,
+    pods: &Api<Pod>, lp: &ListParams, cancellation: &CancellationToken,
 ) -> Result<String, String> {
     let watcher = kube_runtime::watcher(
         pods.clone(),
@@ -347,30 +403,27 @@ async fn wait_for_deployment_pod(
     )
     .applied_objects();
     futures::pin_mut!(watcher);
-    let result =
-        tokio::time::timeout(std::time::Duration::from_secs(120), watcher.try_next()).await;
-    let error = match result {
-        Ok(Ok(Some(pod))) => {
-            if let Some(name) = pod.metadata.name {
-                return Ok(name);
-            }
-            "Proxy pod has no name".to_string()
-        }
-        Ok(Ok(None)) => "Proxy pod watch ended before a pod was created".to_string(),
-        Ok(Err(error)) => error.to_string(),
-        Err(_) => "Timed out waiting for the proxy deployment pod".to_string(),
+    let result = tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => return Err("Proxy startup cancelled".to_string()),
+        result = tokio::time::timeout(
+            std::time::Duration::from_secs(120), watcher.try_next(),
+        ) => result,
     };
-    let dp = DeleteParams {
-        grace_period_seconds: Some(0),
-        ..DeleteParams::default()
-    };
-    let _ = deployments.delete(hashed_name, &dp).await;
-    Err(error)
+    match result {
+        Ok(Ok(Some(pod))) => pod
+            .metadata
+            .name
+            .ok_or_else(|| "Proxy pod has no name".to_string()),
+        Ok(Ok(None)) => Err("Proxy pod watch ended before a pod was created".to_string()),
+        Ok(Err(error)) => Err(error.to_string()),
+        Err(_) => Err("Timed out waiting for the proxy deployment pod".to_string()),
+    }
 }
 
 async fn process_pod_proxy(
     client: Client, config: &mut Config, hashed_name: &str, values: &HashMap<String, String>,
-    protocol: &str, mode: DatabaseMode, ssl_override: bool,
+    protocol: &str, options: ProxyStartOptions<'_>,
 ) -> Result<CustomResponse, String> {
     let manifest_path = get_pod_manifest_path().map_err(|e| e.to_string())?;
     let mut file = File::open(manifest_path).map_err(|e| e.to_string())?;
@@ -390,39 +443,48 @@ async fn process_pod_proxy(
             .remote_port
             .ok_or("A proxy destination port is required")?,
     )?;
+    if options.cancellation.is_cancelled() {
+        return Err("Proxy startup cancelled".to_string());
+    }
 
     let pods: Api<Pod> = Api::namespaced(client.clone(), &config.namespace);
 
-    match pods.create(&PostParams::default(), &pod).await {
-        Ok(_) => {
-            if let Err(e) = wait_for_relay_startup(&pods, hashed_name, &container_name).await {
-                let dp = DeleteParams {
-                    grace_period_seconds: Some(0),
-                    ..DeleteParams::default()
-                };
-                let _ = pods.delete(hashed_name, &dp).await;
-                return Err(e.to_string());
-            }
-
-            config.service = Some(hashed_name.to_string());
-
-            match super::start::start_config(config.clone(), protocol, mode, ssl_override).await {
-                Ok(response) => {
-                    crate::kube::proxy_recovery::spawn_recovery_manager(
-                        config.clone(),
-                        crate::kube::proxy_recovery::ProxyType::BarePod,
-                        mode,
-                    );
-                    Ok(response)
-                }
-                Err(error) => {
-                    let _ = pods.delete(hashed_name, &DeleteParams::default()).await;
-                    Err(format!("Failed to start port forwarding: {error}"))
-                }
-            }
-        }
-        Err(e) => Err(e.to_string()),
+    pods.create(&PostParams::default(), &pod)
+        .await
+        .map_err(|e| e.to_string())?;
+    let result: Result<CustomResponse, String> = async {
+        wait_for_relay_startup(&pods, hashed_name, &container_name, options.cancellation).await?;
+        config.service = Some(hashed_name.to_string());
+        let response = super::start::start_config(
+            config.clone(),
+            protocol,
+            options.mode,
+            options.ssl_override,
+        )
+        .await
+        .map_err(|error| format!("Failed to start port forwarding: {error}"))?;
+        crate::kube::proxy_recovery::spawn_recovery_manager(
+            config.clone(),
+            crate::kube::proxy_recovery::ProxyType::BarePod,
+            options.mode,
+            options.ssl_override,
+        );
+        Ok(response)
     }
+    .await;
+    if let Err(error) = result {
+        let dp = DeleteParams {
+            grace_period_seconds: Some(0),
+            ..DeleteParams::default()
+        };
+        if let Err(cleanup) = pods.delete(hashed_name, &dp).await
+            && !matches!(&cleanup, kube::Error::Api(response) if response.code == 404)
+        {
+            return Err(format!("{error}; failed to delete proxy pod: {cleanup}"));
+        }
+        return Err(error);
+    }
+    result
 }
 
 pub async fn stop_proxy_forward_with_mode(
@@ -689,5 +751,58 @@ mod tests {
     async fn test_stop_proxy_forward_invalid_config() {
         let result = stop_proxy_forward(999, "default", "nonexistent-service".to_string()).await;
         assert!(result.is_err());
+    }
+
+    async fn assert_startup_wait_is_cancelled(id: i64, listener_wait: bool) {
+        let _isolation = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let startup = ProxyStart::new(id).unwrap();
+        let lock = crate::kube::proxy_recovery::acquire_recovery_lock(id).await;
+        let guard = lock.lock_owned().await;
+        let (service, mut requests) = tower_test::mock::pair::<
+            http::Request<kube::client::Body>,
+            http::Response<kube::client::Body>,
+        >();
+        let pods = Api::namespaced(Client::new(service, "default"), "default");
+        let waiter = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
+            let _guard = guard;
+            if listener_wait {
+                wait_for_relay_startup(&pods, "relay", "relay", &startup.cancellation).await
+            } else {
+                wait_for_deployment_pod(&pods, &ListParams::default(), &startup.cancellation)
+                    .await
+                    .map(|_| ())
+            }
+        }));
+        let (_request, _pending_response) = requests.next_request().await.unwrap();
+        if listener_wait {
+            let result = tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                crate::kube::stop_port_forward_with_mode(id.to_string(), DatabaseMode::Memory),
+            )
+            .await
+            .unwrap();
+            assert!(result.is_err());
+        } else {
+            let responses = tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                crate::kube::stop_all_port_forward_with_mode(DatabaseMode::Memory),
+            )
+            .await
+            .unwrap()
+            .unwrap();
+            assert!(responses.iter().any(|response| response.id == Some(id)));
+        }
+        assert!(waiter.await.unwrap().is_err());
+        assert!(!STARTING_PROXIES.contains_key(&id));
+    }
+
+    #[tokio::test]
+    async fn stop_all_cancels_proxy_pod_discovery() {
+        assert_startup_wait_is_cancelled(420_001, false).await;
+    }
+
+    #[tokio::test]
+    async fn stop_cancels_proxy_listener_readiness() {
+        assert_startup_wait_is_cancelled(420_002, true).await;
     }
 }

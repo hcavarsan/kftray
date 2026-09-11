@@ -760,6 +760,7 @@ mod tests {
             config,
             crate::kube::proxy_recovery::ProxyType::Deployment,
             kftray_commons::utils::db_mode::DatabaseMode::Memory,
+            false,
         ));
         let receiver = manager.subscribe_recovery_signals();
         crate::kube::proxy_recovery::RECOVERY_MANAGERS.insert(config_id, manager);

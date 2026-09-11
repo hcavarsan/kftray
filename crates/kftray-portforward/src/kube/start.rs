@@ -651,13 +651,10 @@ pub async fn start_port_forward_with_mode(
             Err(error) => errors.push(error),
         }
     }
-    if responses.is_empty() && !errors.is_empty() {
-        Err(errors.join("\n"))
-    } else {
-        for error in errors {
-            warn!("Partial failure: {error}");
-        }
+    if errors.is_empty() {
         Ok(responses)
+    } else {
+        Err(errors.join("\n"))
     }
 }
 

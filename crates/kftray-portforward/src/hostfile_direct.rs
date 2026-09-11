@@ -69,7 +69,9 @@ impl DirectHostfileManager {
         {
             match self.entries.write() {
                 Ok(mut entries) => {
-                    entries.remove(id);
+                    if entries.remove(id).is_none() {
+                        return Ok(());
+                    }
                 }
                 Err(e) => {
                     error!("Failed to acquire host entries write lock: {e}");

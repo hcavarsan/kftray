@@ -228,7 +228,7 @@ impl PortForward {
             self.target.clone(),
             self.context_name.clone(),
             self.kubeconfig.clone(),
-            kube_portforward::PodReadiness::Running,
+            pod_readiness_for(&self.workload_type),
         )
         .await?;
         let direct_forwarder = Arc::new(direct_forwarder);
