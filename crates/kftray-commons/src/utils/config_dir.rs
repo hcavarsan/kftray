@@ -81,94 +81,90 @@ fn load_or_create_installation_id() -> Result<String, String> {
             config_dir.display()
         )
     })?;
-    // Written in full to a temporary file and published with a hard link: the
-    // link only appears once the content is complete, and it never replaces an
-    // identifier another process already published.
-    let generated = uuid::Uuid::new_v4().simple().to_string()[..12].to_owned();
-    match publish_installation_id(&config_dir, &path, &generated) {
-        Ok(()) => return Ok(generated),
-        Err(PublishError::Failed(error)) => return Err(error),
-        Err(PublishError::AlreadyPublished) => {}
-    }
 
-    let stored = read_installation_id(&path)?;
-    if is_valid_installation_id(&stored) {
-        return Ok(stored);
-    }
-
-    // An interrupted write left an unusable file. It is replaced by rename
-    // rather than removed: there is never a window where the file is absent, so
-    // two processes repairing at once converge on whichever rename landed last
-    // instead of one deleting an identifier the other already adopted.
-    replace_installation_id(&config_dir, &path, &generated)?;
-    let stored = read_installation_id(&path)?;
-    if is_valid_installation_id(&stored) {
-        Ok(stored)
-    } else {
-        Err(format!(
-            "The installation identifier at {} is not usable",
-            path.display()
-        ))
-    }
-}
-
-fn read_installation_id(path: &std::path::Path) -> Result<String, String> {
-    fs::read_to_string(path)
-        .map(|stored| stored.trim().to_owned())
-        .map_err(|error| {
-            format!(
-                "Failed to read the installation identifier at {}: {error}",
-                path.display()
-            )
-        })
-}
-
-enum PublishError {
-    AlreadyPublished,
-    Failed(String),
-}
-
-fn publish_installation_id(
-    config_dir: &std::path::Path, path: &std::path::Path, id: &str,
-) -> Result<(), PublishError> {
-    use std::io::Write;
-
-    let temporary = config_dir.join(format!("installation_id.{}.tmp", std::process::id()));
-    let write = (|| -> std::io::Result<()> {
-        let mut file = fs::File::create(&temporary)?;
-        file.write_all(id.as_bytes())?;
-        file.sync_all()
-    })();
-    if let Err(error) = write {
-        let _ = fs::remove_file(&temporary);
-        return Err(PublishError::Failed(format!(
-            "Failed to persist the installation identifier at {}: {error}",
-            path.display()
-        )));
-    }
-
-    let published = fs::hard_link(&temporary, path);
-    let _ = fs::remove_file(&temporary);
-    match published {
-        Ok(()) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-            Err(PublishError::AlreadyPublished)
+    // Creation and repair run under a lock file so concurrent initializers
+    // adopt one identifier instead of each caching its own. It relies only on
+    // exclusive create and rename, which work on filesystems without hard link
+    // support such as exFAT.
+    with_identity_lock(&config_dir, || {
+        let stored = match fs::read_to_string(&path) {
+            Ok(stored) => stored.trim().to_owned(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(error) => {
+                return Err(format!(
+                    "Failed to read the installation identifier at {}: {error}",
+                    path.display()
+                ));
+            }
+        };
+        if is_valid_installation_id(&stored) {
+            return Ok(stored);
         }
-        Err(error) => Err(PublishError::Failed(format!(
-            "Failed to persist the installation identifier at {}: {error}",
-            path.display()
-        ))),
-    }
+        let generated = uuid::Uuid::new_v4().simple().to_string()[..12].to_owned();
+        publish_installation_id(&config_dir, &path, &generated)?;
+        Ok(generated)
+    })
 }
 
-/// Replaces an unusable identifier atomically. `rename` never leaves the path
-/// missing, so a concurrent repair overwrites rather than deletes.
-fn replace_installation_id(
+/// Runs `write` while holding an exclusive lock file next to the identifier.
+///
+/// A lock left behind by a crash is taken over once it is older than
+/// `LOCK_STALE_AFTER`, so initialization cannot be blocked permanently.
+fn with_identity_lock<T>(
+    config_dir: &std::path::Path, write: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    const LOCK_STALE_AFTER: std::time::Duration = std::time::Duration::from_secs(10);
+    const LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(15);
+    const POLL: std::time::Duration = std::time::Duration::from_millis(25);
+
+    let lock_path = config_dir.join("installation_id.lock");
+    let deadline = std::time::Instant::now() + LOCK_WAIT;
+    loop {
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&lock_path)
+        {
+            Ok(_) => break,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                let stale = fs::metadata(&lock_path)
+                    .and_then(|metadata| metadata.modified())
+                    .map(|modified| modified.elapsed().is_ok_and(|age| age > LOCK_STALE_AFTER))
+                    .unwrap_or(true);
+                if stale {
+                    let _ = fs::remove_file(&lock_path);
+                    continue;
+                }
+                if std::time::Instant::now() >= deadline {
+                    return Err(format!(
+                        "Timed out waiting for the installation identifier lock at {}",
+                        lock_path.display()
+                    ));
+                }
+                std::thread::sleep(POLL);
+            }
+            Err(error) => {
+                return Err(format!(
+                    "Failed to lock the installation identifier at {}: {error}",
+                    lock_path.display()
+                ));
+            }
+        }
+    }
+
+    let result = write();
+    let _ = fs::remove_file(&lock_path);
+    result
+}
+
+/// Writes the identifier in full to a temporary file and moves it into place,
+/// so the published path is never visible empty.
+fn publish_installation_id(
     config_dir: &std::path::Path, path: &std::path::Path, id: &str,
 ) -> Result<(), String> {
     use std::io::Write;
 
-    let temporary = config_dir.join(format!("installation_id.{}.repair", std::process::id()));
+    let temporary = config_dir.join(format!("installation_id.{}.tmp", std::process::id()));
     let written = (|| -> std::io::Result<()> {
         let mut file = fs::File::create(&temporary)?;
         file.write_all(id.as_bytes())?;
@@ -180,7 +176,7 @@ fn replace_installation_id(
     }
     written.map_err(|error| {
         format!(
-            "Failed to replace the unusable installation identifier at {}: {error}",
+            "Failed to persist the installation identifier at {}: {error}",
             path.display()
         )
     })
@@ -287,18 +283,35 @@ mod tests {
     }
 
     #[test]
-    fn concurrent_creation_agrees_on_one_identifier() {
+    fn overlapping_initializers_adopt_the_same_identifier() {
+        let _lock = ENV_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let dir = TempDir::new().unwrap();
-        let path = dir.path().join("installation_id");
-        let first = "aaaaaaaaaaaa";
-        let second = "bbbbbbbbbbbb";
-        assert!(publish_installation_id(dir.path(), &path, first).is_ok());
-        assert!(matches!(
-            publish_installation_id(dir.path(), &path, second),
-            Err(PublishError::AlreadyPublished)
-        ));
+        let _guard = EnvVarGuard::set("KFTRAY_CONFIG", dir.path().to_str().unwrap());
 
-        assert_eq!(fs::read_to_string(&path).unwrap(), first);
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(4));
+        let ids: Vec<String> = (0..4)
+            .map(|_| {
+                let barrier = std::sync::Arc::clone(&barrier);
+
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    load_or_create_installation_id().expect("identifier")
+                })
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|handle| handle.join().unwrap())
+            .collect();
+
+        assert!(is_valid_installation_id(&ids[0]), "{}", ids[0]);
+        assert!(
+            ids.iter().all(|id| *id == ids[0]),
+            "concurrent initializers must converge on one identifier: {ids:?}"
+        );
+        assert_eq!(
+            fs::read_to_string(dir.path().join("installation_id")).unwrap(),
+            ids[0]
+        );
     }
 
     #[test]
@@ -319,22 +332,23 @@ mod tests {
     }
 
     #[test]
-    fn concurrent_repair_never_removes_an_adopted_identifier() {
+    fn a_stale_lock_does_not_block_initialization() {
+        let _lock = ENV_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let dir = TempDir::new().unwrap();
-        let path = dir.path().join("installation_id");
-        fs::write(&path, "").unwrap();
+        let _guard = EnvVarGuard::set("KFTRAY_CONFIG", dir.path().to_str().unwrap());
+        // A lock file a crashed process never removed.
+        let lock_path = dir.path().join("installation_id.lock");
+        fs::write(&lock_path, "").unwrap();
+        let stale = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+        fs::File::open(&lock_path)
+            .unwrap()
+            .set_modified(stale)
+            .unwrap();
 
-        // Two processes repairing the same unusable file at once. Neither may
-        // observe a missing path, which is what a remove-then-publish would
-        // expose the other to.
-        replace_installation_id(dir.path(), &path, "aaaaaaaaaaaa").unwrap();
-        assert!(path.exists());
-        replace_installation_id(dir.path(), &path, "bbbbbbbbbbbb").unwrap();
-        assert!(path.exists());
+        let id = load_or_create_installation_id().expect("a stale lock must be taken over");
 
-        let stored = read_installation_id(&path).unwrap();
-        assert!(is_valid_installation_id(&stored), "{stored}");
-        assert_eq!(stored, "bbbbbbbbbbbb");
+        assert!(is_valid_installation_id(&id), "{id}");
+        assert!(!lock_path.exists(), "the lock must be released");
     }
 
     struct EnvVarGuard {

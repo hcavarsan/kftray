@@ -269,11 +269,12 @@ impl DirectHostfileManager {
             }
         }
 
-        // Cleared while holding the lock and re-checking for work: a mutation
-        // arriving here would otherwise see `writer_running` still true, start
-        // nothing, and stay pending forever. After giving up, only a mutation
-        // newer than the one that failed earns a fresh writer, so a persistent
-        // permission error cannot spin.
+        // The flag is only cleared when no replacement is started, so exactly
+        // one writer exists at a time. Re-checking for work under the lock also
+        // closes the window where a mutation would see the flag still set,
+        // start nothing, and stay pending forever. After giving up, only a
+        // mutation newer than the one that failed earns a replacement, so a
+        // persistent permission error cannot spin.
         let mut running = writer_running.lock().unwrap_or_else(|e| {
             error!("Failed to acquire writer_running lock when exiting: {e}");
             e.into_inner()
@@ -281,9 +282,8 @@ impl DirectHostfileManager {
         let pending = *needs_update.lock().unwrap_or_else(|e| e.into_inner());
         let superseded =
             exhausted_at.is_none_or(|failed| generation.load(Ordering::Relaxed) != failed);
-        *running = false;
-        drop(running);
         if pending && superseded {
+            drop(running);
             Self::spawn_writer(
                 entries,
                 needs_update,
@@ -292,6 +292,8 @@ impl DirectHostfileManager {
                 generation,
                 write_lock,
             );
+        } else {
+            *running = false;
         }
     }
 

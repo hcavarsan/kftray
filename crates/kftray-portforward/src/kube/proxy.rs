@@ -442,7 +442,10 @@ async fn process_deployment_proxy(
     // flight leaves an unknown outcome, and a cleanup pass that lists before
     // the object is persisted would forget it. Bounded instead, so a stalled
     // request still releases the lifecycle lock.
-    create_proxy_resource(&deployments, &deployment).await?;
+    let created = create_proxy_resource(&deployments, &deployment).await;
+    // The outcome is known either way, so the record is no longer uncertain.
+    guard.confirm();
+    created?;
     let result: Result<CustomResponse, String> = async {
         let pods: Api<Pod> = Api::namespaced(client, &config.namespace);
         let label_selector = format!("app={hashed_name},{}", proxy_owner_selector(config_id_str)?);
@@ -596,7 +599,9 @@ async fn process_pod_proxy(
             ..config.clone()
         },
     );
-    create_proxy_resource(&pods, &pod).await?;
+    let created = create_proxy_resource(&pods, &pod).await;
+    guard.confirm();
+    created?;
     let result: Result<CustomResponse, String> = async {
         wait_for_relay_startup(&pods, hashed_name, &container_name, options.cancellation).await?;
         config.service = Some(hashed_name.to_string());

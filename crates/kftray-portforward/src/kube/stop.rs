@@ -3,7 +3,10 @@ use std::collections::{
     HashSet,
 };
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{
+    Duration,
+    Instant,
+};
 
 use futures::stream::{
     self,
@@ -53,21 +56,42 @@ use crate::port_forward::CHILD_PROCESSES;
 #[cfg(test)]
 use crate::port_forward::PortForwardProcess;
 
-lazy_static::lazy_static! {
-    /// Configurations whose cluster cleanup has not been confirmed, kept so a
-    /// later stop can retry against the resources that actually exist. The
-    /// database row is not a substitute: it can be edited or deleted while a
-    /// forward runs. One id can hold several entries, because an edited config
-    /// that was restarted describes different resources than the ones an
-    /// earlier failed cleanup left behind.
-    static ref PENDING_CLEANUP: dashmap::DashMap<i64, Vec<Config>> = dashmap::DashMap::new();
+/// One tracked cleanup target.
+#[derive(Clone)]
+struct PendingTarget {
+    config: Config,
+    /// Set while a create request's outcome is unknown. Until it expires, an
+    /// empty resource list is not proof of cleanup: the API server may still be
+    /// persisting an object whose request was abandoned.
+    uncertain_until: Option<Instant>,
 }
 
-/// Two cleanup targets are the same when they name the same cluster resources.
+impl PendingTarget {
+    fn is_uncertain(&self, now: Instant) -> bool {
+        self.uncertain_until.is_some_and(|until| now < until)
+    }
+}
+
+lazy_static::lazy_static! {
+    /// Configurations whose cleanup has not been confirmed, kept so a later
+    /// stop can retry against the resources that actually exist. The database
+    /// row is not a substitute: it can be edited or deleted while a forward
+    /// runs. One id can hold several entries, because an edited config that was
+    /// restarted describes different resources than the ones an earlier failed
+    /// cleanup left behind.
+    static ref PENDING_CLEANUP: dashmap::DashMap<i64, Vec<PendingTarget>> = dashmap::DashMap::new();
+}
+
+/// How long an abandoned create is assumed to still be in flight.
+const UNCERTAIN_CREATE_WINDOW: Duration = Duration::from_secs(120);
+
+/// Two cleanup targets are the same when they name the same resources.
 ///
 /// The protocol is part of that identity: `delete_cluster_resources` treats a
 /// UDP service config as owning relay resources and the otherwise identical TCP
 /// config as a no-op, so collapsing them would let the no-op forget the relay.
+/// The local address and domain alias are part of it too, since local cleanup
+/// releases exactly those.
 fn same_resources(left: &Config, right: &Config) -> bool {
     left.namespace == right.namespace
         && left.context == right.context
@@ -75,23 +99,40 @@ fn same_resources(left: &Config, right: &Config) -> bool {
         && left.workload_type == right.workload_type
         && left.protocol == right.protocol
         && left.service == right.service
+        && left.local_address == right.local_address
+        && left.domain_enabled == right.domain_enabled
 }
 
-/// Records a configuration whose cluster resources exist but whose startup did
-/// not finish, so stop-all still reaches them. Dropping a startup future (the
+/// Records a configuration whose resources exist but whose startup did not
+/// finish, so stop-all still reaches them. Dropping a startup future (the
 /// terminal's shutdown drain, an aborted task) skips its own rollback.
 pub(crate) fn record_pending_cleanup(id: i64, config: Config) {
+    record_target(id, config, None);
+}
+
+fn record_target(id: i64, config: Config, uncertain_until: Option<Instant>) {
     let mut entries = PENDING_CLEANUP.entry(id).or_default();
-    if !entries.iter().any(|entry| same_resources(entry, &config)) {
-        entries.push(config);
+    if let Some(existing) = entries
+        .iter_mut()
+        .find(|entry| same_resources(&entry.config, &config))
+    {
+        existing.uncertain_until = match (existing.uncertain_until, uncertain_until) {
+            (Some(left), Some(right)) => Some(left.max(right)),
+            (left, right) => left.or(right),
+        };
+        return;
     }
+    entries.push(PendingTarget {
+        config,
+        uncertain_until,
+    });
 }
 
 /// Drops one recorded target, leaving any other resources for this id tracked.
 pub(crate) fn forget_pending_cleanup(id: i64, config: &Config) {
     let mut empty = false;
     if let Some(mut entries) = PENDING_CLEANUP.get_mut(&id) {
-        entries.retain(|entry| !same_resources(entry, config));
+        entries.retain(|entry| !same_resources(&entry.config, config));
         empty = entries.is_empty();
     }
     if empty {
@@ -99,7 +140,7 @@ pub(crate) fn forget_pending_cleanup(id: i64, config: &Config) {
     }
 }
 
-fn pending_cleanup_targets(id: i64) -> Vec<Config> {
+fn pending_cleanup_targets(id: i64) -> Vec<PendingTarget> {
     PENDING_CLEANUP
         .get(&id)
         .map(|entry| entry.value().clone())
@@ -107,8 +148,11 @@ fn pending_cleanup_targets(id: i64) -> Vec<Config> {
 }
 
 /// Records created cluster resources so a dropped startup future still leaves a
-/// trail for stop-all. `disarm` is called once the startup either registered a
-/// child process or deleted the resources itself.
+/// trail for stop-all.
+///
+/// The record is uncertain until [`confirm`](Self::confirm) observes the
+/// create's outcome: a request abandoned in flight can still be persisted, and
+/// forgetting it on one empty list would leave it running untracked.
 pub(crate) struct ClusterResourceGuard {
     id: i64,
     config: Option<Config>,
@@ -116,10 +160,27 @@ pub(crate) struct ClusterResourceGuard {
 
 impl ClusterResourceGuard {
     pub(crate) fn arm(id: i64, config: Config) -> Self {
-        record_pending_cleanup(id, config.clone());
+        record_target(
+            id,
+            config.clone(),
+            Some(Instant::now() + UNCERTAIN_CREATE_WINDOW),
+        );
         Self {
             id,
             config: Some(config),
+        }
+    }
+
+    /// The create returned, so the record describes a resource that either
+    /// exists or never will.
+    pub(crate) fn confirm(&self) {
+        if let Some(config) = &self.config
+            && let Some(mut entries) = PENDING_CLEANUP.get_mut(&self.id)
+            && let Some(entry) = entries
+                .iter_mut()
+                .find(|entry| same_resources(&entry.config, config))
+        {
+            entry.uncertain_until = None;
         }
     }
 
@@ -135,6 +196,29 @@ impl Drop for ClusterResourceGuard {
         if let Some(config) = self.config.take() {
             record_pending_cleanup(self.id, config);
         }
+    }
+}
+
+/// Releases the loopback address and host entries one target describes.
+async fn release_local_resources(id: i64, config: &Config) -> Result<(), String> {
+    if let Some(address) = &config.local_address
+        && crate::network_utils::is_custom_loopback_address(address)
+    {
+        release_address_with_fallback(address).await;
+    }
+    let mut errors = Vec::new();
+    if config.domain_enabled.unwrap_or_default()
+        && let Err(error) = remove_host_entry(&id.to_string())
+    {
+        errors.push(error.to_string());
+    }
+    if let Err(error) = remove_ssl_host_entry(&id.to_string()) {
+        errors.push(error.to_string());
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
     }
 }
 
@@ -466,94 +550,72 @@ async fn stop_config(
         .as_ref()
         .or(refreshed.as_ref())
         .or(config)
-        .or(pending.first());
+        .or(pending.first().map(|target| &target.config));
     cancel_timeout_for_forward(id).await;
 
     let result = if let Some(config) = config {
         // Every distinct set of resources this id ever created, not just the
         // current one: an edited config that was restarted does not describe
         // the resources an earlier failed cleanup left behind.
-        let mut targets = vec![config.clone()];
+        let mut targets = vec![PendingTarget {
+            config: config.clone(),
+            uncertain_until: pending
+                .iter()
+                .find(|target| same_resources(&target.config, config))
+                .and_then(|target| target.uncertain_until),
+        }];
         targets.extend(
             pending
                 .iter()
-                .filter(|target| !same_resources(target, config))
+                .filter(|target| !same_resources(&target.config, config))
                 .cloned(),
         );
 
-        let local_cleanup = async {
-            if let Some(address) = &config.local_address
-                && crate::network_utils::is_custom_loopback_address(address)
-            {
-                release_address_with_fallback(address).await;
-            }
-            let mut errors = Vec::new();
-            if config.domain_enabled.unwrap_or_default()
-                && let Err(error) = remove_host_entry(&id.to_string())
-            {
-                errors.push(error.to_string());
-            }
-            if let Err(error) = remove_ssl_host_entry(&id.to_string()) {
-                errors.push(error.to_string());
-            }
-            if errors.is_empty() {
-                Ok(())
-            } else {
-                Err(errors.join("; "))
-            }
-        };
-        let cluster_cleanup = async {
-            let mut errors = Vec::new();
-            let mut cleaned = Vec::new();
-            for target in &targets {
-                match delete_cluster_resources(id, target).await {
-                    Ok(()) => cleaned.push(target),
-                    Err(error) => {
-                        // The only remaining record of where these resources
-                        // live: the database row can be edited or deleted while
-                        // a forward runs.
-                        record_pending_cleanup(id, target.clone());
+        let mut errors: Vec<String> = Vec::new();
+        let mut settled: Vec<Config> = Vec::new();
+        let now = Instant::now();
+        for target in &targets {
+            let cluster = delete_cluster_resources(id, &target.config).await;
+            // Local resources are released per target too: an edited row can
+            // name a different loopback address than the one still bound.
+            let local = release_local_resources(id, &target.config).await;
+            match (cluster, local) {
+                (Ok(()), Ok(())) => {
+                    // An abandoned create may still be persisting, so one empty
+                    // list is not proof. The record survives until the window
+                    // expires and a later stop finds nothing again.
+                    if target.is_uncertain(now) {
+                        record_target(id, target.config.clone(), target.uncertain_until);
+                    } else {
+                        settled.push(target.config.clone());
+                    }
+                }
+                (cluster, local) => {
+                    // The only remaining record of where these resources live:
+                    // the database row can be edited or deleted while a forward
+                    // runs.
+                    record_target(id, target.config.clone(), target.uncertain_until);
+                    if let Err(error) = cluster {
                         SHARED_CLIENT_MANAGER.invalidate_client(&ServiceClientKey::new(
-                            target.context.clone(),
-                            target.kubeconfig.clone(),
+                            target.config.context.clone(),
+                            target.config.kubeconfig.clone(),
                         ));
+                        errors.push(error);
+                    }
+                    if let Err(error) = local {
                         errors.push(error);
                     }
                 }
             }
-            if errors.is_empty() {
-                Ok(cleaned)
-            } else {
-                Err(errors.join("; "))
-            }
-        };
-        let (cluster, local) = tokio::join!(cluster_cleanup, local_cleanup);
-        let mut errors: Vec<String> = Vec::new();
-        // Cleanup metadata is only dropped once the local half finished too:
-        // dropping this future while the loopback release is still pending
-        // would otherwise leave the address and host entries untracked.
-        match (&cluster, &local) {
-            (Ok(cleaned), Ok(())) => {
-                for target in cleaned {
-                    forget_pending_cleanup(id, target);
-                }
-            }
-            _ => {
-                if let Some(config) = targets.first() {
-                    record_pending_cleanup(id, config.clone());
-                }
-            }
         }
-        if let Err(error) = cluster {
-            errors.push(error);
-        } else {
+        for target in settled {
+            forget_pending_cleanup(id, &target);
+        }
+        if errors.is_empty() {
             let state = ConfigState::new(id, false);
             if let Err(error) = update_config_state_with_mode(&state, mode).await {
                 errors.push(error);
             }
-        }
-        if let Err(error) = local {
-            errors.push(error);
         }
         if errors.is_empty() {
             Ok(stop_response(id, Some(config), None))
@@ -806,7 +868,7 @@ mod tests {
             1,
             "a failed cleanup must keep its snapshot for the next stop"
         );
-        assert_eq!(pending[0].namespace, "original-namespace");
+        assert_eq!(pending[0].config.namespace, "original-namespace");
 
         let responses = stop_all_port_forward_with_mode(DatabaseMode::Memory)
             .await
@@ -843,6 +905,46 @@ mod tests {
         assert!(
             responses.iter().any(|response| response.id == Some(id)),
             "stop-all must reach resources left behind by a dropped startup"
+        );
+        PENDING_CLEANUP.remove(&id);
+    }
+
+    #[tokio::test]
+    async fn an_uncertain_create_survives_an_empty_cleanup_pass() {
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let id = 410_160;
+        let config = Config {
+            id: Some(id),
+            namespace: "default".to_string(),
+            service: Some("kftray-forward-pending".to_string()),
+            protocol: "tcp".to_string(),
+            // A plain service forward: cluster cleanup is a successful no-op,
+            // which is exactly the "empty list" the create could outlive.
+            workload_type: Some("service".to_string()),
+            ..Config::default()
+        };
+        let guard = ClusterResourceGuard::arm(id, config.clone());
+        // Dropped without `confirm`: the create request was abandoned, so the
+        // resource may still be persisting.
+        drop(guard);
+
+        let _ = stop_port_forward_with_mode(id.to_string(), DatabaseMode::Memory).await;
+
+        assert!(
+            pending_cleanup_targets(id)
+                .iter()
+                .any(|target| target.config.service.as_deref() == Some("kftray-forward-pending")),
+            "an unconfirmed create must not be forgotten on one empty pass"
+        );
+
+        // Once the create's outcome is observed, the same pass settles it.
+        let guard = ClusterResourceGuard::arm(id, config.clone());
+        guard.confirm();
+        std::mem::forget(guard);
+        let _ = stop_port_forward_with_mode(id.to_string(), DatabaseMode::Memory).await;
+        assert!(
+            pending_cleanup_targets(id).is_empty(),
+            "a confirmed target is forgotten once cleanup succeeds"
         );
         PENDING_CLEANUP.remove(&id);
     }
@@ -888,7 +990,7 @@ mod tests {
         assert!(
             still_pending
                 .iter()
-                .any(|target| target.namespace == "old-namespace"),
+                .any(|target| target.config.namespace == "old-namespace"),
             "cleaning the restarted config must not forget the earlier resources"
         );
         PENDING_CLEANUP.remove(&id);

@@ -687,6 +687,10 @@ const KFTray = () => {
       ])
       if (results === null) {
         timedOut = true
+        // Aborted while `cancelQueued` is still registered: configurations that
+        // never started release their reservation, and nothing new dispatches.
+        // Genuinely in-flight invocations keep theirs until they finish.
+        controller.abort()
         toaster.error({
           title: action === 'starting' ? 'Start Failed' : 'Stop Failed',
           description: `${unresolved.size} configuration(s) are still working. They stay locked until they finish.`,

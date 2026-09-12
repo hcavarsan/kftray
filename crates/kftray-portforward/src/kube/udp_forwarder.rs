@@ -273,7 +273,6 @@ impl UdpForwarder {
                 },
             };
 
-            let traffic_seen = std::sync::atomic::AtomicBool::new(false);
             let mark_activity = || {
                 session_activity.store(
                     u64::try_from(now.elapsed().as_millis()).unwrap_or(u64::MAX),
@@ -285,9 +284,10 @@ impl UdpForwarder {
             // clear the failures that drive recovery.
             let mark_relay_response = || {
                 mark_activity();
-                if !traffic_seen.swap(true, Ordering::Relaxed) {
-                    upstream.on_session_traffic();
-                }
+                // Every response, not just the first: the failure counter is
+                // shared by every client of this config, so a long-lived
+                // healthy session must keep clearing failures from the others.
+                upstream.on_session_traffic();
             };
             let (mut reader, mut writer) = tokio::io::split(stream);
             {

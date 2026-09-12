@@ -70,16 +70,19 @@ pub(crate) async fn start_single_expose(
     // Armed before creation so a dropped startup future, or a create whose
     // response is lost, still leaves a trail for stop-all.
     let guard = crate::kube::stop::ClusterResourceGuard::arm(config_id, config.clone());
-    let resources = match cancellation {
+    let created = match cancellation {
         Some(token) => tokio::select! {
             biased;
             _ = token.cancelled() => {
                 return Err(format!("Expose startup cancelled for config {config_id}"));
             }
-            created = create_expose_resources(client.clone(), &config) => created?,
+            created = create_expose_resources(client.clone(), &config) => created,
         },
-        None => create_expose_resources(client.clone(), &config).await?,
+        None => create_expose_resources(client.clone(), &config).await,
     };
+    // The outcome is known either way, so the record is no longer uncertain.
+    guard.confirm();
+    let resources = created?;
 
     info!(
         "Resources created: deployment={}, service={}, pod={}",
