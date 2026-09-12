@@ -157,19 +157,14 @@ impl UdpForwarder {
                                 ));
                             }
                         };
-                        let Some(packets) = Self::session_for(
+                        Self::dispatch_datagram(
                             &mut sessions,
                             peer,
                             &replies,
                             &upstream,
                             &cancellation_token,
-                        ) else {
-                            debug!("Dropping a datagram from {}: tunnel is cooling down", peer);
-                            continue;
-                        };
-                        if packets.try_send(datagram[..len].to_vec()).is_err() {
-                            debug!("Dropping a datagram from {}: tunnel is saturated", peer);
-                        }
+                            &datagram[..len],
+                        );
                     }
                 }
             };
@@ -196,10 +191,32 @@ impl UdpForwarder {
         Ok((local_port, forward_future))
     }
 
-    /// Returns the queue of the session that owns `peer`, opening one when the
+    /// Hands a datagram to the session that owns `peer`, opening one when the
     /// peer is new or its previous tunnel has ended. The tunnel itself is
     /// opened inside the session task, so one slow handshake cannot stall the
     /// datagrams of every other client.
+    fn dispatch_datagram<U: UdpUpstream>(
+        sessions: &mut HashMap<SocketAddr, UdpSession>, peer: SocketAddr,
+        replies: &mpsc::Sender<(SocketAddr, Vec<u8>)>, upstream: &Arc<U>,
+        cancellation_token: &CancellationToken, payload: &[u8],
+    ) {
+        let Some(packets) =
+            Self::session_for(sessions, peer, replies, upstream, cancellation_token)
+        else {
+            debug!("Dropping a datagram from {}: tunnel is cooling down", peer);
+            return;
+        };
+        if packets.try_send(payload.to_vec()).is_err() {
+            // Not counted as activity: a datagram the session could not accept
+            // must not keep a stalled tunnel alive.
+            debug!("Dropping a datagram from {}: tunnel is saturated", peer);
+            return;
+        }
+        if let Some(session) = sessions.get_mut(&peer) {
+            session.last_seen = Instant::now();
+        }
+    }
+
     fn session_for<U: UdpUpstream>(
         sessions: &mut HashMap<SocketAddr, UdpSession>, peer: SocketAddr,
         replies: &mpsc::Sender<(SocketAddr, Vec<u8>)>, upstream: &Arc<U>,
@@ -208,7 +225,6 @@ impl UdpForwarder {
         let now = Instant::now();
         if let Some(session) = sessions.get_mut(&peer) {
             if !session.packets.is_closed() {
-                session.last_seen = now;
                 return Some(session.packets.clone());
             }
             if session.is_cooling_down(now) {

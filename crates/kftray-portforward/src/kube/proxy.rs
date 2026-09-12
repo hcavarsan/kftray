@@ -438,15 +438,11 @@ async fn process_deployment_proxy(
             ..config.clone()
         },
     );
-    let pp = PostParams::default();
-    let created = tokio::select! {
-        biased;
-        _ = options.cancellation.cancelled() => {
-            return Err("Proxy startup cancelled".to_string());
-        }
-        created = deployments.create(&pp, &deployment) => created,
-    };
-    created.map_err(|e| e.to_string())?;
+    // Deliberately not raced against cancellation: abandoning a create in
+    // flight leaves an unknown outcome, and a cleanup pass that lists before
+    // the object is persisted would forget it. Bounded instead, so a stalled
+    // request still releases the lifecycle lock.
+    create_proxy_resource(&deployments, &deployment).await?;
     let result: Result<CustomResponse, String> = async {
         let pods: Api<Pod> = Api::namespaced(client, &config.namespace);
         let label_selector = format!("app={hashed_name},{}", proxy_owner_selector(config_id_str)?);
@@ -490,6 +486,24 @@ async fn process_deployment_proxy(
     }
     guard.disarm();
     result
+}
+
+/// Creates one proxy resource under a deadline.
+///
+/// The outcome is always observed: a create abandoned in flight could still be
+/// persisted afterwards, and a cleanup pass that listed before that would leave
+/// it running with nothing tracking it.
+async fn create_proxy_resource<K>(api: &Api<K>, resource: &K) -> Result<(), String>
+where
+    K: Clone + serde::Serialize + serde::de::DeserializeOwned + std::fmt::Debug,
+{
+    const CREATE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+    match tokio::time::timeout(CREATE_TIMEOUT, api.create(&PostParams::default(), resource)).await {
+        Ok(Ok(_)) => Ok(()),
+        Ok(Err(error)) => Err(error.to_string()),
+        Err(_) => Err("Timed out creating the proxy resource".to_string()),
+    }
 }
 
 /// Deletes one proxy resource under a deadline. Rollback must not inherit the
@@ -582,15 +596,7 @@ async fn process_pod_proxy(
             ..config.clone()
         },
     );
-    let pp = PostParams::default();
-    let created = tokio::select! {
-        biased;
-        _ = options.cancellation.cancelled() => {
-            return Err("Proxy startup cancelled".to_string());
-        }
-        created = pods.create(&pp, &pod) => created,
-    };
-    created.map_err(|e| e.to_string())?;
+    create_proxy_resource(&pods, &pod).await?;
     let result: Result<CustomResponse, String> = async {
         wait_for_relay_startup(&pods, hashed_name, &container_name, options.cancellation).await?;
         config.service = Some(hashed_name.to_string());

@@ -84,41 +84,43 @@ fn load_or_create_installation_id() -> Result<String, String> {
     // Written in full to a temporary file and published with a hard link: the
     // link only appears once the content is complete, and it never replaces an
     // identifier another process already published.
-    for attempt in 0..2 {
-        let generated = uuid::Uuid::new_v4().simple().to_string()[..12].to_owned();
-        match publish_installation_id(&config_dir, &path, &generated) {
-            Ok(()) => return Ok(generated),
-            Err(PublishError::Failed(error)) => return Err(error),
-            Err(PublishError::AlreadyPublished) => {}
-        }
-
-        let stored = fs::read_to_string(&path)
-            .map_err(|error| {
-                format!(
-                    "Failed to read the installation identifier at {}: {error}",
-                    path.display()
-                )
-            })?
-            .trim()
-            .to_owned();
-        if is_valid_installation_id(&stored) {
-            return Ok(stored);
-        }
-        // An interrupted write left an unusable file. Remove it once and retry
-        // so later launches are not stuck with it forever.
-        if attempt == 0 {
-            fs::remove_file(&path).map_err(|error| {
-                format!(
-                    "Failed to replace the unusable installation identifier at {}: {error}",
-                    path.display()
-                )
-            })?;
-        }
+    let generated = uuid::Uuid::new_v4().simple().to_string()[..12].to_owned();
+    match publish_installation_id(&config_dir, &path, &generated) {
+        Ok(()) => return Ok(generated),
+        Err(PublishError::Failed(error)) => return Err(error),
+        Err(PublishError::AlreadyPublished) => {}
     }
-    Err(format!(
-        "The installation identifier at {} is not usable",
-        path.display()
-    ))
+
+    let stored = read_installation_id(&path)?;
+    if is_valid_installation_id(&stored) {
+        return Ok(stored);
+    }
+
+    // An interrupted write left an unusable file. It is replaced by rename
+    // rather than removed: there is never a window where the file is absent, so
+    // two processes repairing at once converge on whichever rename landed last
+    // instead of one deleting an identifier the other already adopted.
+    replace_installation_id(&config_dir, &path, &generated)?;
+    let stored = read_installation_id(&path)?;
+    if is_valid_installation_id(&stored) {
+        Ok(stored)
+    } else {
+        Err(format!(
+            "The installation identifier at {} is not usable",
+            path.display()
+        ))
+    }
+}
+
+fn read_installation_id(path: &std::path::Path) -> Result<String, String> {
+    fs::read_to_string(path)
+        .map(|stored| stored.trim().to_owned())
+        .map_err(|error| {
+            format!(
+                "Failed to read the installation identifier at {}: {error}",
+                path.display()
+            )
+        })
 }
 
 enum PublishError {
@@ -157,6 +159,31 @@ fn publish_installation_id(
             path.display()
         ))),
     }
+}
+
+/// Replaces an unusable identifier atomically. `rename` never leaves the path
+/// missing, so a concurrent repair overwrites rather than deletes.
+fn replace_installation_id(
+    config_dir: &std::path::Path, path: &std::path::Path, id: &str,
+) -> Result<(), String> {
+    use std::io::Write;
+
+    let temporary = config_dir.join(format!("installation_id.{}.repair", std::process::id()));
+    let written = (|| -> std::io::Result<()> {
+        let mut file = fs::File::create(&temporary)?;
+        file.write_all(id.as_bytes())?;
+        file.sync_all()?;
+        fs::rename(&temporary, path)
+    })();
+    if written.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    written.map_err(|error| {
+        format!(
+            "Failed to replace the unusable installation identifier at {}: {error}",
+            path.display()
+        )
+    })
 }
 
 fn is_valid_installation_id(value: &str) -> bool {
@@ -263,7 +290,6 @@ mod tests {
     fn concurrent_creation_agrees_on_one_identifier() {
         let dir = TempDir::new().unwrap();
         let path = dir.path().join("installation_id");
-
         let first = "aaaaaaaaaaaa";
         let second = "bbbbbbbbbbbb";
         assert!(publish_installation_id(dir.path(), &path, first).is_ok());
@@ -290,6 +316,25 @@ mod tests {
             fs::read_to_string(dir.path().join("installation_id")).unwrap(),
             id
         );
+    }
+
+    #[test]
+    fn concurrent_repair_never_removes_an_adopted_identifier() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("installation_id");
+        fs::write(&path, "").unwrap();
+
+        // Two processes repairing the same unusable file at once. Neither may
+        // observe a missing path, which is what a remove-then-publish would
+        // expose the other to.
+        replace_installation_id(dir.path(), &path, "aaaaaaaaaaaa").unwrap();
+        assert!(path.exists());
+        replace_installation_id(dir.path(), &path, "bbbbbbbbbbbb").unwrap();
+        assert!(path.exists());
+
+        let stored = read_installation_id(&path).unwrap();
+        assert!(is_valid_installation_id(&stored), "{stored}");
+        assert_eq!(stored, "bbbbbbbbbbbb");
     }
 
     struct EnvVarGuard {

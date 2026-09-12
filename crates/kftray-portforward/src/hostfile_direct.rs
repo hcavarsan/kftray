@@ -37,6 +37,10 @@ pub struct DirectHostfileManager {
     reconciled_generation: Arc<AtomicU64>,
     /// Bumped by every mutation.
     generation: Arc<AtomicU64>,
+    /// Serializes the synchronous and background writes. Without it, a
+    /// background write could snapshot older entries and finish after a
+    /// synchronous one, recording a generation its content does not match.
+    write_lock: Arc<Mutex<()>>,
 }
 
 impl DirectHostfileManager {
@@ -47,6 +51,7 @@ impl DirectHostfileManager {
             writer_running: Arc::new(Mutex::new(false)),
             reconciled_generation: Arc::new(AtomicU64::new(u64::MAX)),
             generation: Arc::new(AtomicU64::new(0)),
+            write_lock: Arc::new(Mutex::new(())),
         }
     }
 
@@ -107,12 +112,16 @@ impl DirectHostfileManager {
             }
         }
 
-        let started = self.generation.load(Ordering::Relaxed);
-        match self.update_hosts_file() {
-            Ok(()) => {
-                self.reconciled_generation.store(started, Ordering::Relaxed);
-                Ok(())
-            }
+        // Counted as a mutation like any other, so a background write that
+        // snapshotted the old entries cannot claim to have reconciled this one.
+        self.mark_dirty();
+        match Self::write_snapshot(
+            &self.entries,
+            &self.generation,
+            &self.reconciled_generation,
+            &self.write_lock,
+        ) {
+            Ok(()) => Ok(()),
             Err(error) => {
                 self.mark_dirty();
                 self.ensure_writer_running();
@@ -159,32 +168,43 @@ impl DirectHostfileManager {
 
         if !*writer_running {
             *writer_running = true;
-
-            let entries = self.entries.clone();
-            let needs_update = self.needs_update.clone();
-            let writer_running = self.writer_running.clone();
-            let reconciled_generation = self.reconciled_generation.clone();
-            let generation = self.generation.clone();
-
-            thread::spawn(move || {
-                Self::batch_writer_loop(
-                    entries,
-                    needs_update,
-                    writer_running,
-                    reconciled_generation,
-                    generation,
-                );
-            });
+            Self::spawn_writer(
+                self.entries.clone(),
+                self.needs_update.clone(),
+                self.writer_running.clone(),
+                self.reconciled_generation.clone(),
+                self.generation.clone(),
+                self.write_lock.clone(),
+            );
         }
+    }
+
+    /// Starts a writer thread. The caller owns setting `writer_running`.
+    fn spawn_writer(
+        entries: Arc<RwLock<HostEntriesMap>>, needs_update: Arc<Mutex<bool>>,
+        writer_running: Arc<Mutex<bool>>, reconciled_generation: Arc<AtomicU64>,
+        generation: Arc<AtomicU64>, write_lock: Arc<Mutex<()>>,
+    ) {
+        thread::spawn(move || {
+            Self::batch_writer_loop(
+                entries,
+                needs_update,
+                writer_running,
+                reconciled_generation,
+                generation,
+                write_lock,
+            );
+        });
     }
 
     fn batch_writer_loop(
         entries: Arc<RwLock<HostEntriesMap>>, needs_update: Arc<Mutex<bool>>,
         writer_running: Arc<Mutex<bool>>, reconciled_generation: Arc<AtomicU64>,
-        generation: Arc<AtomicU64>,
+        generation: Arc<AtomicU64>, write_lock: Arc<Mutex<()>>,
     ) {
         let mut backoff = Duration::from_millis(BATCH_DELAY_MS);
         let mut failures = 0u32;
+        let mut exhausted_at = None;
 
         loop {
             thread::sleep(backoff);
@@ -217,13 +237,8 @@ impl DirectHostfileManager {
                 continue;
             }
 
-            let started = generation.load(Ordering::Relaxed);
-            match Self::update_hosts_file_static(&entries) {
+            match Self::write_snapshot(&entries, &generation, &reconciled_generation, &write_lock) {
                 Ok(()) => {
-                    // Records which mutation this write covered. A mutation
-                    // that landed after the snapshot bumps `generation` again,
-                    // so the file is simply not reconciled yet.
-                    reconciled_generation.store(started, Ordering::Relaxed);
                     backoff = Duration::from_millis(BATCH_DELAY_MS);
                     failures = 0;
                 }
@@ -245,6 +260,7 @@ impl DirectHostfileManager {
                         error!(
                             "Giving up on the hosts file after {failures} attempts, last error: {e}"
                         );
+                        exhausted_at = Some(generation.load(Ordering::Relaxed));
                         break;
                     }
                     error!("Failed to write hosts file in background writer: {e}");
@@ -253,15 +269,44 @@ impl DirectHostfileManager {
             }
         }
 
-        let mut writer_running = writer_running.lock().unwrap_or_else(|e| {
+        // Cleared while holding the lock and re-checking for work: a mutation
+        // arriving here would otherwise see `writer_running` still true, start
+        // nothing, and stay pending forever. After giving up, only a mutation
+        // newer than the one that failed earns a fresh writer, so a persistent
+        // permission error cannot spin.
+        let mut running = writer_running.lock().unwrap_or_else(|e| {
             error!("Failed to acquire writer_running lock when exiting: {e}");
             e.into_inner()
         });
-        *writer_running = false;
+        let pending = *needs_update.lock().unwrap_or_else(|e| e.into_inner());
+        let superseded =
+            exhausted_at.is_none_or(|failed| generation.load(Ordering::Relaxed) != failed);
+        *running = false;
+        drop(running);
+        if pending && superseded {
+            Self::spawn_writer(
+                entries,
+                needs_update,
+                Arc::clone(&writer_running),
+                reconciled_generation,
+                generation,
+                write_lock,
+            );
+        }
     }
 
-    fn update_hosts_file(&self) -> std::io::Result<()> {
-        Self::update_hosts_file_static(&self.entries)
+    /// Writes the current entries and records which mutation the write covered.
+    /// The generation is read inside the write lock so the record always
+    /// matches the content that reached disk.
+    fn write_snapshot(
+        entries: &Arc<RwLock<HostEntriesMap>>, generation: &Arc<AtomicU64>,
+        reconciled_generation: &Arc<AtomicU64>, write_lock: &Arc<Mutex<()>>,
+    ) -> std::io::Result<()> {
+        let _writing = write_lock.lock().unwrap_or_else(|e| e.into_inner());
+        let started = generation.load(Ordering::Relaxed);
+        Self::update_hosts_file_static(entries)?;
+        reconciled_generation.store(started, Ordering::Relaxed);
+        Ok(())
     }
 
     fn update_hosts_file_static(entries: &Arc<RwLock<HostEntriesMap>>) -> std::io::Result<()> {

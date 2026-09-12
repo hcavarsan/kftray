@@ -267,8 +267,16 @@ mod tests {
         let mut app = App::new(test_logger_state());
         let handle = app.forwarding_tasks.spawn(async { panic!("boom") });
         app.task_configs.insert(handle.id(), 410_081);
-        let _ = handle;
-        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        // Yield until the task has actually finished: a fixed sleep would make
+        // this pass or fail on scheduling rather than on the behaviour.
+        for _ in 0..200 {
+            if handle.is_finished() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert!(handle.is_finished(), "the task must have panicked by now");
 
         app.update_configs(&[], &[]);
         let reported = app.error_message.clone().unwrap();

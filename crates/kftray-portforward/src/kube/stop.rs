@@ -238,59 +238,63 @@ pub(crate) async fn delete_proxy_cluster_resources(
     client: Client, namespace: &str, config_id: i64,
 ) -> Result<(), String> {
     let prefix = crate::kube::proxy::proxy_resource_prefix();
-    let lp = ListParams::default().labels(&crate::kube::proxy::proxy_owner_selector(
+    let owned = ListParams::default().labels(&crate::kube::proxy::proxy_owner_selector(
         &config_id.to_string(),
     )?);
+    // Relays created before the installation label existed carry only
+    // app/config_id. They can only have come from this user on this machine, so
+    // the name prefix still identifies them, and an installation that upgraded
+    // would otherwise treat an empty labelled list as proof of cleanup. A
+    // resource created by another installation after the upgrade always carries
+    // the label and is excluded here.
+    let legacy = ListParams::default().labels(&format!(
+        "config_id={config_id},!{}",
+        crate::kube::proxy::INSTALLATION_LABEL
+    ));
     let dp = DeleteParams {
         grace_period_seconds: Some(0),
         ..DeleteParams::default()
     };
     let pods: Api<Pod> = Api::namespaced(client.clone(), namespace);
     let deployments: Api<Deployment> = Api::namespaced(client, namespace);
-    let delete_pods = async {
-        let mut errors = Vec::new();
-        let list = pods.list(&lp).await.map_err(|error| error.to_string())?;
-        for pod in list.items {
-            if let Some(name) = pod.metadata.name
-                && name.starts_with(&prefix)
-                && let Err(error) = pods.delete(&name, &dp).await
-                && !matches!(&error, kube::Error::Api(response) if response.code == 404)
-            {
-                errors.push(error.to_string());
-            }
-        }
-        if errors.is_empty() {
-            Ok(())
-        } else {
-            Err(errors.join("; "))
-        }
-    };
-    let delete_deployments = async {
-        let mut errors = Vec::new();
-        let list = deployments
-            .list(&lp)
-            .await
-            .map_err(|error| error.to_string())?;
-        for deployment in list.items {
-            if let Some(name) = deployment.metadata.name
-                && name.starts_with(&prefix)
-                && let Err(error) = deployments.delete(&name, &dp).await
-                && !matches!(&error, kube::Error::Api(response) if response.code == 404)
-            {
-                errors.push(error.to_string());
-            }
-        }
-        if errors.is_empty() {
-            Ok(())
-        } else {
-            Err(errors.join("; "))
-        }
-    };
+    let selectors = [&owned, &legacy];
+    let delete_pods = delete_prefixed(&pods, &selectors, &prefix, &dp);
+    let delete_deployments = delete_prefixed(&deployments, &selectors, &prefix, &dp);
     let (pods, deployments) = tokio::join!(delete_pods, delete_deployments);
     let errors: Vec<_> = [pods, deployments]
         .into_iter()
         .filter_map(Result::err)
         .collect();
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
+}
+
+async fn delete_prefixed<K>(
+    api: &Api<K>, selectors: &[&ListParams], prefix: &str, dp: &DeleteParams,
+) -> Result<(), String>
+where
+    K: Clone + serde::de::DeserializeOwned + std::fmt::Debug + kube::Resource,
+{
+    let mut errors = Vec::new();
+    for lp in selectors {
+        let list = api.list(lp).await.map_err(|error| error.to_string())?;
+        for item in list.items {
+            let Some(name) = item.meta().name.clone() else {
+                continue;
+            };
+            if !name.starts_with(prefix) {
+                continue;
+            }
+            if let Err(error) = api.delete(&name, dp).await
+                && !matches!(&error, kube::Error::Api(response) if response.code == 404)
+            {
+                errors.push(error.to_string());
+            }
+        }
+    }
     if errors.is_empty() {
         Ok(())
     } else {
@@ -500,9 +504,10 @@ async fn stop_config(
         };
         let cluster_cleanup = async {
             let mut errors = Vec::new();
+            let mut cleaned = Vec::new();
             for target in &targets {
                 match delete_cluster_resources(id, target).await {
-                    Ok(()) => forget_pending_cleanup(id, target),
+                    Ok(()) => cleaned.push(target),
                     Err(error) => {
                         // The only remaining record of where these resources
                         // live: the database row can be edited or deleted while
@@ -517,13 +522,28 @@ async fn stop_config(
                 }
             }
             if errors.is_empty() {
-                Ok(())
+                Ok(cleaned)
             } else {
                 Err(errors.join("; "))
             }
         };
         let (cluster, local) = tokio::join!(cluster_cleanup, local_cleanup);
         let mut errors: Vec<String> = Vec::new();
+        // Cleanup metadata is only dropped once the local half finished too:
+        // dropping this future while the loopback release is still pending
+        // would otherwise leave the address and host entries untracked.
+        match (&cluster, &local) {
+            (Ok(cleaned), Ok(())) => {
+                for target in cleaned {
+                    forget_pending_cleanup(id, target);
+                }
+            }
+            _ => {
+                if let Some(config) = targets.first() {
+                    record_pending_cleanup(id, config.clone());
+                }
+            }
+        }
         if let Err(error) = cluster {
             errors.push(error);
         } else {

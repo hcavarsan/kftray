@@ -33,6 +33,7 @@ const initialLocalPort = 0
 const initialId = 0
 
 const CONCURRENCY_LIMIT = 8
+const BATCH_DEADLINE_MS = 180_000
 
 async function runWithLimit<T, R>(
   items: T[],
@@ -651,30 +652,49 @@ const KFTray = () => {
       setPendingConfigActions(new Map(pendingConfigActionsRef.current))
     }
     controller.signal.addEventListener('abort', cancelQueued, { once: true })
+    // The batch is bounded so one hung invoke cannot hold the controller guard
+    // forever and reject every later batch of the same action. Configurations
+    // that never resolved keep their reservation: they are still in flight.
+    const unresolved = new Set(targets.map(config => config.id))
+    let timedOut = false
+
     try {
-      const results = await runWithLimit(
-        targets,
-        CONCURRENCY_LIMIT,
-        async config => {
-          if (controller.signal.aborted) {
-            return { id: config.id, error: null }
+      const batch = runWithLimit(targets, CONCURRENCY_LIMIT, async config => {
+        if (controller.signal.aborted) {
+          return { id: config.id, error: null }
+        }
+        queued.delete(config.id)
+        try {
+          if (action === 'starting') {
+            await startPortForwardingForConfig(config)
+          } else {
+            await stopPortForwardingForConfig(config)
           }
-          queued.delete(config.id)
-          try {
-            if (action === 'starting') {
-              await startPortForwardingForConfig(config)
-            } else {
-              await stopPortForwardingForConfig(config)
-            }
-            return { id: config.id, error: null }
-          } catch (error) {
-            return { id: config.id, error }
-          } finally {
-            clearPending(config.id)
-            debouncedUpdateConfigs()
-          }
-        },
-      )
+          return { id: config.id, error: null }
+        } catch (error) {
+          return { id: config.id, error }
+        } finally {
+          unresolved.delete(config.id)
+          clearPending(config.id)
+          debouncedUpdateConfigs()
+        }
+      })
+      const results = await Promise.race([
+        batch,
+        new Promise<null>(resolve =>
+          setTimeout(() => resolve(null), BATCH_DEADLINE_MS),
+        ),
+      ])
+      if (results === null) {
+        timedOut = true
+        toaster.error({
+          title: action === 'starting' ? 'Start Failed' : 'Stop Failed',
+          description: `${unresolved.size} configuration(s) are still working. They stay locked until they finish.`,
+          duration: 3000,
+        })
+
+        return
+      }
       const failures = results.filter(result => result.error != null)
       if (failures.length > 0) {
         const first = failures[0]
@@ -703,7 +723,9 @@ const KFTray = () => {
         controllerRef.current = null
         setBusy(false)
       }
-      await updateConfigsWithState()
+      if (!timedOut) {
+        await updateConfigsWithState()
+      }
     }
   }
 

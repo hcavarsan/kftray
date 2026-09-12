@@ -523,13 +523,29 @@ pub(super) async fn start_config_cancellable(
         None
     };
 
-    let forward_result = match protocol {
-        "udp" => port_forward.clone().port_forward_udp().await,
-        "tcp" => port_forward.clone().port_forward_tcp(tls_acceptor).await,
-        _ => {
-            error!("Unsupported protocol: {protocol}");
-            Err(anyhow::anyhow!("Unsupported protocol: {}", protocol))
+    // Raced against the startup token: `PortForward` builds its own token, so
+    // these phases, and the connection loading and selector resolution inside
+    // them, would otherwise hold the lifecycle lock while a stop waits on it.
+    let forward = async {
+        match protocol {
+            "udp" => port_forward.clone().port_forward_udp().await,
+            "tcp" => port_forward.clone().port_forward_tcp(tls_acceptor).await,
+            _ => {
+                error!("Unsupported protocol: {protocol}");
+                Err(anyhow::anyhow!("Unsupported protocol: {}", protocol))
+            }
         }
+    };
+    let forward_result = match cancellation {
+        Some(token) => tokio::select! {
+            biased;
+            _ = token.cancelled() => {
+                let _ = port_forward.cleanup_resources().await;
+                return Err(format!("Startup cancelled for config {config_id}"));
+            }
+            forwarded = forward => forwarded,
+        },
+        None => forward.await,
     };
 
     match forward_result {
