@@ -638,6 +638,7 @@ const KFTray = () => {
     controllerRef.current = controller
     const setBusy = action === 'starting' ? setIsInitiating : setIsStopping
     const queued = new Set(targets.map(config => config.id))
+    const unresolved = new Set(targets.map(config => config.id))
     for (const config of targets) {
       pendingConfigActionsRef.current.set(config.id, action)
     }
@@ -647,6 +648,9 @@ const KFTray = () => {
     const cancelQueued = () => {
       for (const id of queued) {
         pendingConfigActionsRef.current.delete(id)
+        // Released here, so the deadline message counts only the invocations
+        // that are genuinely still running.
+        unresolved.delete(id)
       }
       queued.clear()
       setPendingConfigActions(new Map(pendingConfigActionsRef.current))
@@ -655,7 +659,6 @@ const KFTray = () => {
     // The batch is bounded so one hung invoke cannot hold the controller guard
     // forever and reject every later batch of the same action. Configurations
     // that never resolved keep their reservation: they are still in flight.
-    const unresolved = new Set(targets.map(config => config.id))
     let timedOut = false
 
     try {

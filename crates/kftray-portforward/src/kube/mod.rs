@@ -37,6 +37,7 @@ pub use start::{
     start_port_forward_with_mode,
 };
 pub use stop::{
+    cancel_all_startups,
     stop_all_port_forward,
     stop_all_port_forward_with_mode,
     stop_port_forward,

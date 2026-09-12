@@ -390,6 +390,23 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
     stop_all_port_forward_with_mode(DatabaseMode::File).await
 }
 
+/// Cancels every startup and recovery attempt without waiting for them.
+///
+/// Shutdown calls this before draining so in-flight startups observe
+/// cancellation cooperatively and run their own rollback, instead of being
+/// dropped mid-create by an abort deadline.
+pub fn cancel_all_startups() {
+    for entry in crate::kube::proxy::STARTING_PROXIES.iter() {
+        entry.value().cancel();
+    }
+    for entry in crate::kube::proxy_recovery::RECOVERY_MANAGERS.iter() {
+        entry.value().cancel();
+    }
+    for entry in CHILD_PROCESSES.iter() {
+        entry.value().cancel();
+    }
+}
+
 pub async fn stop_all_port_forward_with_mode(
     mode: DatabaseMode,
 ) -> Result<Vec<CustomResponse>, String> {
@@ -582,10 +599,15 @@ async fn stop_config(
             match (cluster, local) {
                 (Ok(()), Ok(())) => {
                     // An abandoned create may still be persisting, so one empty
-                    // list is not proof. The record survives until the window
-                    // expires and a later stop finds nothing again.
+                    // list is not proof. The record survives, and the stop
+                    // reports incomplete cleanup rather than marking the config
+                    // stopped while a relay may still appear.
                     if target.is_uncertain(now) {
                         record_target(id, target.config.clone(), target.uncertain_until);
+                        errors.push(format!(
+                            "A create request for config {id} was never answered, so its cluster \
+                             resources are still being reconciled"
+                        ));
                     } else {
                         settled.push(target.config.clone());
                     }

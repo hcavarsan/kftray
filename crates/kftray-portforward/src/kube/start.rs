@@ -408,22 +408,35 @@ pub(super) async fn start_config_cancellable(
         return Err(format!("Startup cancelled for config {config_id}"));
     }
     if config.auto_loopback_address || config.local_address.is_none() {
-        // Allocation can wait on the privileged helper, a fallback mutex or an
-        // OS authorization prompt, all while the lifecycle lock is held. The
-        // allocation itself is left running so its own bookkeeping completes;
-        // an address it assigns is released by the rollback below.
-        let allocation = allocate_local_address_for_config(&mut config, mode);
-        let allocated = match cancellation {
-            Some(token) => tokio::select! {
-                biased;
-                _ = token.cancelled() => {
-                    return Err(format!("Startup cancelled for config {config_id}"));
-                }
-                allocated = allocation => allocated,
-            },
-            None => allocation.await,
+        const ALLOCATION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
+        // Bounded rather than raced against cancellation: the helper request
+        // runs on a blocking task that keeps going once this future is dropped,
+        // and an address it assigns afterwards would never be recorded or
+        // released. Waiting for the outcome keeps that impossible while still
+        // releasing the lifecycle lock in bounded time.
+        match tokio::time::timeout(
+            ALLOCATION_TIMEOUT,
+            allocate_local_address_for_config(&mut config, mode),
+        )
+        .await
+        {
+            Ok(allocated) => allocated?,
+            Err(_) => {
+                return Err(format!(
+                    "Timed out allocating a local address for config {config_id}"
+                ));
+            }
         };
-        allocated?;
+        if cancelled() {
+            if let Some(address) = &config.local_address
+                && crate::network_utils::is_custom_loopback_address(address)
+            {
+                let _ = crate::network_utils::remove_loopback_address(address).await;
+            }
+
+            return Err(format!("Startup cancelled for config {config_id}"));
+        }
     }
     if let Some(config_id) = config.id {
         clear_stopped_by_timeout(config_id);

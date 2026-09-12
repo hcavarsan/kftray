@@ -397,10 +397,13 @@ impl App {
     /// Cancels in-flight forwarding work and drains it under a deadline, so a
     /// stalled operation cannot hold the terminal in raw mode on exit.
     pub async fn finish_forwarding(&mut self) {
+        // Signalled before draining: an in-flight startup observes cancellation
+        // at its own safe points and runs its own rollback, instead of being
+        // dropped mid-create when the abort deadline below expires.
+        kftray_portforward::kube::cancel_all_startups();
         self.forwarding_cancel.cancel();
         self.forwarding_slots.close();
         self.stop_slots.close();
-
         let drain = async { while self.forwarding_tasks.join_next().await.is_some() {} };
         if tokio::time::timeout(FORWARD_SHUTDOWN_TIMEOUT, drain)
             .await

@@ -121,8 +121,8 @@ impl DirectHostfileManager {
             &self.reconciled_generation,
             &self.write_lock,
         ) {
-            Ok(()) => Ok(()),
-            Err(error) => {
+            Ok(_) => Ok(()),
+            Err((_, error)) => {
                 self.mark_dirty();
                 self.ensure_writer_running();
                 Err(error)
@@ -238,11 +238,11 @@ impl DirectHostfileManager {
             }
 
             match Self::write_snapshot(&entries, &generation, &reconciled_generation, &write_lock) {
-                Ok(()) => {
+                Ok(_) => {
                     backoff = Duration::from_millis(BATCH_DELAY_MS);
                     failures = 0;
                 }
-                Err(e) => {
+                Err((attempted, e)) => {
                     failures += 1;
                     // The change is still pending either way, so a later
                     // add or removal can start a fresh writer once whatever
@@ -260,7 +260,10 @@ impl DirectHostfileManager {
                         error!(
                             "Giving up on the hosts file after {failures} attempts, last error: {e}"
                         );
-                        exhausted_at = Some(generation.load(Ordering::Relaxed));
+                        // The generation this write covered, not whatever
+                        // landed since: a mutation that arrived during the
+                        // final attempt must still earn a replacement writer.
+                        exhausted_at = Some(attempted);
                         break;
                     }
                     error!("Failed to write hosts file in background writer: {e}");
@@ -303,12 +306,16 @@ impl DirectHostfileManager {
     fn write_snapshot(
         entries: &Arc<RwLock<HostEntriesMap>>, generation: &Arc<AtomicU64>,
         reconciled_generation: &Arc<AtomicU64>, write_lock: &Arc<Mutex<()>>,
-    ) -> std::io::Result<()> {
+    ) -> Result<u64, (u64, std::io::Error)> {
         let _writing = write_lock.lock().unwrap_or_else(|e| e.into_inner());
         let started = generation.load(Ordering::Relaxed);
-        Self::update_hosts_file_static(entries)?;
-        reconciled_generation.store(started, Ordering::Relaxed);
-        Ok(())
+        match Self::update_hosts_file_static(entries) {
+            Ok(()) => {
+                reconciled_generation.store(started, Ordering::Relaxed);
+                Ok(started)
+            }
+            Err(error) => Err((started, error)),
+        }
     }
 
     fn update_hosts_file_static(entries: &Arc<RwLock<HostEntriesMap>>) -> std::io::Result<()> {

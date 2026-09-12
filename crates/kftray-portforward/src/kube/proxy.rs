@@ -442,10 +442,16 @@ async fn process_deployment_proxy(
     // flight leaves an unknown outcome, and a cleanup pass that lists before
     // the object is persisted would forget it. Bounded instead, so a stalled
     // request still releases the lifecycle lock.
-    let created = create_proxy_resource(&deployments, &deployment).await;
-    // The outcome is known either way, so the record is no longer uncertain.
-    guard.confirm();
-    created?;
+    match create_proxy_resource(&deployments, &deployment).await {
+        // The API server answered, so the record is no longer uncertain.
+        CreateOutcome::Settled(settled) => {
+            guard.confirm();
+            settled?;
+        }
+        // No answer: the object may still appear, so the record stays uncertain
+        // and a later cleanup pass retries it.
+        CreateOutcome::Unknown(error) => return Err(error),
+    }
     let result: Result<CustomResponse, String> = async {
         let pods: Api<Pod> = Api::namespaced(client, &config.namespace);
         let label_selector = format!("app={hashed_name},{}", proxy_owner_selector(config_id_str)?);
@@ -491,21 +497,31 @@ async fn process_deployment_proxy(
     result
 }
 
+/// The outcome of a create request.
+enum CreateOutcome {
+    /// The API server answered: the resource exists, or it definitively
+    /// rejected the request.
+    Settled(Result<(), String>),
+    /// The client stopped waiting, or the transport failed. The API server may
+    /// still persist the object, so the cleanup record must stay uncertain.
+    Unknown(String),
+}
+
 /// Creates one proxy resource under a deadline.
-///
-/// The outcome is always observed: a create abandoned in flight could still be
-/// persisted afterwards, and a cleanup pass that listed before that would leave
-/// it running with nothing tracking it.
-async fn create_proxy_resource<K>(api: &Api<K>, resource: &K) -> Result<(), String>
+async fn create_proxy_resource<K>(api: &Api<K>, resource: &K) -> CreateOutcome
 where
     K: Clone + serde::Serialize + serde::de::DeserializeOwned + std::fmt::Debug,
 {
     const CREATE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
     match tokio::time::timeout(CREATE_TIMEOUT, api.create(&PostParams::default(), resource)).await {
-        Ok(Ok(_)) => Ok(()),
-        Ok(Err(error)) => Err(error.to_string()),
-        Err(_) => Err("Timed out creating the proxy resource".to_string()),
+        Ok(Ok(_)) => CreateOutcome::Settled(Ok(())),
+        // Only an answer from the API server proves the object was not created.
+        Ok(Err(kube::Error::Api(response))) => {
+            CreateOutcome::Settled(Err(response.message.clone()))
+        }
+        Ok(Err(error)) => CreateOutcome::Unknown(error.to_string()),
+        Err(_) => CreateOutcome::Unknown("Timed out creating the proxy resource".to_string()),
     }
 }
 
@@ -599,9 +615,13 @@ async fn process_pod_proxy(
             ..config.clone()
         },
     );
-    let created = create_proxy_resource(&pods, &pod).await;
-    guard.confirm();
-    created?;
+    match create_proxy_resource(&pods, &pod).await {
+        CreateOutcome::Settled(settled) => {
+            guard.confirm();
+            settled?;
+        }
+        CreateOutcome::Unknown(error) => return Err(error),
+    }
     let result: Result<CustomResponse, String> = async {
         wait_for_relay_startup(&pods, hashed_name, &container_name, options.cancellation).await?;
         config.service = Some(hashed_name.to_string());

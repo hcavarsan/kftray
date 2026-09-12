@@ -3503,6 +3503,7 @@ dependencies = [
  "futures",
  "git2",
  "lazy_static",
+ "libc",
  "log",
  "serde",
  "serde_json",
@@ -3510,6 +3511,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "uuid",
+ "windows 0.62.2",
 ]
 
 [[package]]

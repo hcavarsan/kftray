@@ -46,14 +46,18 @@ pub fn get_log_folder_path() -> Result<PathBuf, String> {
 ///
 /// It fails rather than falling back to a shared placeholder: an identifier two
 /// installations could both produce would let one delete the other's proxies.
+/// Only a success is cached: a transient filesystem error or lock timeout would
+/// otherwise disable proxy ownership for the rest of the process even after the
+/// cause cleared.
 pub fn get_installation_id() -> Result<&'static str, String> {
-    static INSTALLATION_ID: std::sync::LazyLock<Result<String, String>> =
-        std::sync::LazyLock::new(load_or_create_installation_id);
+    static INSTALLATION_ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
-    match &*INSTALLATION_ID {
-        Ok(id) => Ok(id),
-        Err(error) => Err(error.clone()),
+    if let Some(id) = INSTALLATION_ID.get() {
+        return Ok(id);
     }
+    let id = load_or_create_installation_id()?;
+
+    Ok(INSTALLATION_ID.get_or_init(|| id))
 }
 
 fn load_or_create_installation_id() -> Result<String, String> {
@@ -106,55 +110,116 @@ fn load_or_create_installation_id() -> Result<String, String> {
     })
 }
 
-/// Runs `write` while holding an exclusive lock file next to the identifier.
+/// Runs `write` while holding an exclusive advisory lock on a file next to the
+/// identifier.
 ///
-/// A lock left behind by a crash is taken over once it is older than
-/// `LOCK_STALE_AFTER`, so initialization cannot be blocked permanently.
+/// The lock is held by the process through an open descriptor, so it is
+/// released by the kernel when that process exits. A holder that is merely slow
+/// keeps its lock, which an age heuristic could not distinguish from a crash.
 fn with_identity_lock<T>(
     config_dir: &std::path::Path, write: impl FnOnce() -> Result<T, String>,
 ) -> Result<T, String> {
-    const LOCK_STALE_AFTER: std::time::Duration = std::time::Duration::from_secs(10);
     const LOCK_WAIT: std::time::Duration = std::time::Duration::from_secs(15);
     const POLL: std::time::Duration = std::time::Duration::from_millis(25);
 
     let lock_path = config_dir.join("installation_id.lock");
+    let lock = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&lock_path)
+        .map_err(|error| {
+            format!(
+                "Failed to open the installation identifier lock at {}: {error}",
+                lock_path.display()
+            )
+        })?;
+
     let deadline = std::time::Instant::now() + LOCK_WAIT;
     loop {
-        match fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&lock_path)
-        {
-            Ok(_) => break,
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                let stale = fs::metadata(&lock_path)
-                    .and_then(|metadata| metadata.modified())
-                    .map(|modified| modified.elapsed().is_ok_and(|age| age > LOCK_STALE_AFTER))
-                    .unwrap_or(true);
-                if stale {
-                    let _ = fs::remove_file(&lock_path);
-                    continue;
-                }
-                if std::time::Instant::now() >= deadline {
-                    return Err(format!(
-                        "Timed out waiting for the installation identifier lock at {}",
-                        lock_path.display()
-                    ));
-                }
-                std::thread::sleep(POLL);
-            }
-            Err(error) => {
-                return Err(format!(
-                    "Failed to lock the installation identifier at {}: {error}",
-                    lock_path.display()
-                ));
-            }
+        if try_lock_exclusive(&lock) {
+            break;
         }
+        if std::time::Instant::now() >= deadline {
+            return Err(format!(
+                "Timed out waiting for the installation identifier lock at {}",
+                lock_path.display()
+            ));
+        }
+        std::thread::sleep(POLL);
     }
 
     let result = write();
-    let _ = fs::remove_file(&lock_path);
+    unlock(&lock);
     result
+}
+
+#[cfg(unix)]
+fn try_lock_exclusive(file: &fs::File) -> bool {
+    use std::os::fd::AsRawFd;
+
+    // SAFETY: the descriptor is owned by `file` and outlives this call.
+    unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) == 0 }
+}
+
+#[cfg(unix)]
+fn unlock(file: &fs::File) {
+    use std::os::fd::AsRawFd;
+
+    // SAFETY: the descriptor is owned by `file` and outlives this call.
+    unsafe {
+        libc::flock(file.as_raw_fd(), libc::LOCK_UN);
+    }
+}
+
+#[cfg(windows)]
+fn try_lock_exclusive(file: &fs::File) -> bool {
+    use std::os::windows::io::AsRawHandle;
+
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::Storage::FileSystem::{
+        LOCKFILE_EXCLUSIVE_LOCK,
+        LOCKFILE_FAIL_IMMEDIATELY,
+        LockFileEx,
+    };
+    use windows::Win32::System::IO::OVERLAPPED;
+
+    let mut overlapped = OVERLAPPED::default();
+
+    // SAFETY: the handle is owned by `file` and outlives this call.
+    unsafe {
+        LockFileEx(
+            HANDLE(file.as_raw_handle()),
+            LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY,
+            0,
+            u32::MAX,
+            u32::MAX,
+            &mut overlapped,
+        )
+        .is_ok()
+    }
+}
+
+#[cfg(windows)]
+fn unlock(file: &fs::File) {
+    use std::os::windows::io::AsRawHandle;
+
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::Storage::FileSystem::UnlockFileEx;
+    use windows::Win32::System::IO::OVERLAPPED;
+
+    let mut overlapped = OVERLAPPED::default();
+
+    // SAFETY: the handle is owned by `file` and outlives this call.
+    unsafe {
+        let _ = UnlockFileEx(
+            HANDLE(file.as_raw_handle()),
+            0,
+            u32::MAX,
+            u32::MAX,
+            &mut overlapped,
+        );
+    }
 }
 
 /// Writes the identifier in full to a temporary file and moves it into place,
@@ -332,23 +397,18 @@ mod tests {
     }
 
     #[test]
-    fn a_stale_lock_does_not_block_initialization() {
+    fn a_lock_file_left_by_a_dead_process_does_not_block_initialization() {
         let _lock = ENV_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let dir = TempDir::new().unwrap();
         let _guard = EnvVarGuard::set("KFTRAY_CONFIG", dir.path().to_str().unwrap());
-        // A lock file a crashed process never removed.
+        // The file a crashed process left behind. Its advisory lock died with
+        // it, so the file alone must not block anyone.
         let lock_path = dir.path().join("installation_id.lock");
         fs::write(&lock_path, "").unwrap();
-        let stale = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
-        fs::File::open(&lock_path)
-            .unwrap()
-            .set_modified(stale)
-            .unwrap();
 
-        let id = load_or_create_installation_id().expect("a stale lock must be taken over");
+        let id = load_or_create_installation_id().expect("a released lock must not block");
 
         assert!(is_valid_installation_id(&id), "{id}");
-        assert!(!lock_path.exists(), "the lock must be released");
     }
 
     struct EnvVarGuard {

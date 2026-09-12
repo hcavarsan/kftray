@@ -124,6 +124,10 @@ pub async fn create_expose_resources(
             .unwrap_or_else(|| deployment_name.clone())
     };
 
+    // Names this attempt created, so rollback deletes exactly those. Deleting
+    // by label would also remove resources another instance created for the
+    // same config id after our existence check.
+    let mut created: Vec<CreatedResource> = Vec::new();
     let result = async {
         create_deployment(
             &client,
@@ -133,6 +137,7 @@ pub async fn create_expose_resources(
             config,
         )
         .await?;
+        created.push(CreatedResource::Deployment(deployment_name.clone()));
 
         let pod_name = wait_for_pod_ready(&client, &config.namespace, &config_id_str).await?;
 
@@ -147,6 +152,7 @@ pub async fn create_expose_resources(
             local_port,
         )
         .await?;
+        created.push(CreatedResource::Service(service_name.clone()));
 
         let ingress_created = if config.exposure_type.as_deref() == Some("public") {
             create_ingress(
@@ -157,6 +163,7 @@ pub async fn create_expose_resources(
                 config,
             )
             .await?;
+            created.push(CreatedResource::Ingress(ingress_name.clone()));
             true
         } else {
             false
@@ -176,14 +183,52 @@ pub async fn create_expose_resources(
     }
     .await;
     if let Err(error) = result {
-        return match delete_expose_resources(client.clone(), &config.namespace, &config_id_str)
-            .await
-        {
+        return match delete_created_resources(&client, &config.namespace, &created).await {
             Ok(()) => Err(error),
             Err(cleanup_error) => Err(format!("{error}; cleanup failed: {cleanup_error}")),
         };
     }
     result
+}
+
+enum CreatedResource {
+    Deployment(String),
+    Service(String),
+    Ingress(String),
+}
+
+/// Deletes exactly the resources one creation attempt made, newest first.
+async fn delete_created_resources(
+    client: &Client, namespace: &str, created: &[CreatedResource],
+) -> Result<(), String> {
+    let dp = DeleteParams::default();
+    let mut errors = Vec::new();
+    for resource in created.iter().rev() {
+        let deleted = match resource {
+            CreatedResource::Deployment(name) => {
+                let api: Api<Deployment> = Api::namespaced(client.clone(), namespace);
+                api.delete(name, &dp).await.map(|_| ())
+            }
+            CreatedResource::Service(name) => {
+                let api: Api<Service> = Api::namespaced(client.clone(), namespace);
+                api.delete(name, &dp).await.map(|_| ())
+            }
+            CreatedResource::Ingress(name) => {
+                let api: Api<Ingress> = Api::namespaced(client.clone(), namespace);
+                api.delete(name, &dp).await.map(|_| ())
+            }
+        };
+        if let Err(error) = deleted
+            && !matches!(&error, kube::Error::Api(response) if response.code == 404)
+        {
+            errors.push(error.to_string());
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
 }
 
 async fn create_deployment(
