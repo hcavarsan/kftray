@@ -1,4 +1,8 @@
 use std::collections::HashMap;
+use std::sync::atomic::{
+    AtomicBool,
+    Ordering,
+};
 use std::sync::{
     Arc,
     Mutex,
@@ -24,6 +28,7 @@ pub struct DirectHostfileManager {
     entries: Arc<RwLock<HostEntriesMap>>,
     needs_update: Arc<Mutex<bool>>,
     writer_running: Arc<Mutex<bool>>,
+    reconciled: Arc<AtomicBool>,
 }
 
 impl DirectHostfileManager {
@@ -32,6 +37,7 @@ impl DirectHostfileManager {
             entries: Arc::new(RwLock::new(HashMap::new())),
             needs_update: Arc::new(Mutex::new(false)),
             writer_running: Arc::new(Mutex::new(false)),
+            reconciled: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -50,6 +56,8 @@ impl DirectHostfileManager {
             }
         }
 
+        self.reconciled.store(true, Ordering::Relaxed);
+
         {
             let mut needs_update = self.needs_update.lock().unwrap_or_else(|e| {
                 error!("Failed to acquire needs_update lock: {e}");
@@ -66,18 +74,17 @@ impl DirectHostfileManager {
     pub fn remove_host_entry(&self, id: &str) -> std::io::Result<()> {
         debug!("Removing host entry for ID {id}");
 
-        {
-            match self.entries.write() {
-                Ok(mut entries) => {
-                    if entries.remove(id).is_none() {
-                        return Ok(());
-                    }
-                }
-                Err(e) => {
-                    error!("Failed to acquire host entries write lock: {e}");
-                    return Err(std::io::Error::other(e.to_string()));
-                }
+        let existed = match self.entries.write() {
+            Ok(mut entries) => entries.remove(id).is_some(),
+            Err(e) => {
+                error!("Failed to acquire host entries write lock: {e}");
+                return Err(std::io::Error::other(e.to_string()));
             }
+        };
+
+        let first_pass = !self.reconciled.swap(true, Ordering::Relaxed);
+        if !existed && !first_pass {
+            return Ok(());
         }
 
         {
@@ -107,6 +114,8 @@ impl DirectHostfileManager {
                 }
             }
         }
+
+        self.reconciled.store(true, Ordering::Relaxed);
 
         self.update_hosts_file()
     }

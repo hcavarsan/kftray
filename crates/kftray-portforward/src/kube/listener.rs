@@ -270,6 +270,16 @@ impl PortForwarder {
 
             let handle = tokio::spawn(async move {
                 let mut client_conn = client_conn;
+                let tls_acceptor_clone = match tls_acceptor_clone {
+                    Some(_) if is_http_request(&client_conn).await => {
+                        if let Err(e) = handle_http_redirect(client_conn, port).await {
+                            debug!("Failed to redirect HTTP to HTTPS: {}", e);
+                        }
+                        return;
+                    }
+                    acceptor => acceptor,
+                };
+
                 let upstream_stream = match forwarder.get_stream().await {
                     Ok(stream) => {
                         stream_failures_clone.store(0, std::sync::atomic::Ordering::SeqCst);
@@ -288,20 +298,12 @@ impl PortForwarder {
                             );
                         }
                         error!("Failed to create stream for {}: {}", client_addr, e);
-                        // Close client connection properly to avoid leaving socket open
                         let _ = client_conn.shutdown().await;
                         return;
                     }
                 };
 
                 if let Some(acceptor) = tls_acceptor_clone {
-                    if is_http_request(&client_conn).await {
-                        if let Err(e) = handle_http_redirect(client_conn, port).await {
-                            debug!("Failed to redirect HTTP to HTTPS: {}", e);
-                        }
-                        return;
-                    }
-
                     match acceptor.accept(client_conn).await {
                         Ok(tls_stream) => {
                             if let Err(e) = tcp_forwarder
@@ -847,5 +849,61 @@ mod tests {
             "rebinding the same address right after awaited cleanup should succeed: {:?}",
             rebound.err()
         );
+    }
+
+    #[tokio::test]
+    async fn cleanup_shuts_the_forwarder_down_when_the_listener_task_ignores_abort() {
+        let pod_name = "web-0";
+        let (mock_service, handle) = mock::pair::<Request<Body>, Response<Body>>();
+        let kube_client = kube::Client::new(mock_service, "default");
+        let upgrade_started = Arc::new(tokio::sync::Notify::new());
+        let driver = tokio::spawn(serve_ready_pod_then_stall(
+            handle,
+            pod_name,
+            Arc::clone(&upgrade_started),
+            Duration::ZERO,
+        ));
+        let forwarder = kube_portforward::Forwarder::builder(
+            kube_client,
+            "http://127.0.0.1:1".parse().unwrap(),
+            "default",
+        )
+        .pod_selector(kube_portforward::PodSelector::Name(pod_name.to_owned()))
+        .build()
+        .await
+        .unwrap();
+        let port_forwarder = Arc::new(PortForwarder {
+            namespace: "default".into(),
+            forwarder: Arc::new(forwarder),
+            target_port: 8080,
+            http_log_watcher: HttpLogStateWatcher::new(),
+            background_tasks: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            connection_tasks: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+        });
+        port_forwarder
+            .track_task(tokio::spawn(std::future::pending()))
+            .await;
+
+        let stubborn = tokio::task::spawn_blocking(|| -> anyhow::Result<()> {
+            std::thread::sleep(Duration::from_secs(3));
+            Ok(())
+        });
+        let process = crate::port_forward::PortForwardProcess::with_forwarder_and_token(
+            stubborn,
+            Arc::clone(&port_forwarder),
+            "410031".to_owned(),
+            CancellationToken::new(),
+        );
+
+        tokio::time::timeout(Duration::from_secs(5), process.cleanup_and_abort())
+            .await
+            .expect("cleanup must not wait on a task that ignores abort");
+
+        assert!(
+            port_forwarder.background_tasks.lock().await.is_empty(),
+            "the forwarder must be shut down even when the listener join times out"
+        );
+        driver.abort();
+        let _ = driver.await;
     }
 }

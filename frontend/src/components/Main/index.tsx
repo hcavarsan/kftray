@@ -802,12 +802,11 @@ const KFTray = () => {
           >
             <PortForwardTable
               configs={configs}
-              initiatePortForwarding={configs =>
-                runPortForwardBatch(configs, 'starting')
+              initiatePortForwarding={configsToStart =>
+                runPortForwardBatch(configsToStart, 'starting')
               }
               startSelectedPortForwarding={startSelectedPortForwarding}
               isInitiating={isInitiating}
-              setIsInitiating={setIsInitiating}
               isStopping={isStopping}
               pendingConfigActions={pendingConfigActions}
               toggleConfigForward={toggleConfigForward}

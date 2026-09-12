@@ -12,7 +12,6 @@ use log::{
     error,
     info,
 };
-use serde_json::json;
 use sqlx::SqlitePool;
 use tokio::sync::OnceCell;
 
@@ -216,42 +215,8 @@ fn create_server_config_manifest() -> Result<(), std::io::Error> {
         fs::create_dir_all(manifest_dir)?;
     }
 
-    let placeholders = json!({
-        "apiVersion": "v1",
-        "kind": "Pod",
-        "metadata": {
-            "name": "{hashed_name}",
-            "labels": {
-                "app": "{hashed_name}",
-                "config_id": "{config_id}"
-            }
-        },
-        "spec": {
-            "containers": [{
-                "name": "{hashed_name}",
-                "image": "ghcr.io/hcavarsan/kftray-server:latest",
-                "env": [
-                    {"name": "LOCAL_PORT", "value": "{local_port}"},
-                    {"name": "REMOTE_PORT", "value": "{remote_port}"},
-                    {"name": "REMOTE_ADDRESS", "value": "{remote_address}"},
-                    {"name": "PROXY_TYPE", "value": "{protocol}"},
-                    {"name": "RUST_LOG", "value": "DEBUG"},
-                ],
-                "resources": {
-                    "limits": {
-                        "cpu": "100m",
-                        "memory": "200Mi"
-                    },
-                    "requests": {
-                        "cpu": "100m",
-                        "memory": "100Mi"
-                    }
-                }
-            }],
-        }
-    });
-
-    let manifest_json = serde_json::to_string_pretty(&placeholders)?;
+    let manifest_json =
+        serde_json::to_string_pretty(&crate::utils::manifests::default_pod_manifest())?;
 
     File::create(&manifest_path)?.write_all(manifest_json.as_bytes())
 }

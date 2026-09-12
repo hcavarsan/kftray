@@ -2,11 +2,14 @@ use std::fs::File;
 use std::io::Write;
 use std::path::Path;
 
+use serde_json::json;
+
 use crate::utils::config_dir::{
     create_config_dir,
     get_expose_deployment_manifest_path,
     get_expose_ingress_manifest_path,
     get_expose_service_manifest_path,
+    get_pod_manifest_path,
     get_proxy_deployment_manifest_path,
 };
 
@@ -183,6 +186,66 @@ const DEFAULT_EXPOSE_INGRESS: &str = r#"{
 
 fn manifest_file_exists(path: &Path) -> bool {
     path.exists()
+}
+
+/// Default proxy pod manifest (legacy, Pod-based)
+/// Placeholders: {hashed_name}, {config_id}, {local_port}, {remote_port},
+/// {remote_address}, {protocol}
+pub fn default_pod_manifest() -> serde_json::Value {
+    json!({
+        "apiVersion": "v1",
+        "kind": "Pod",
+        "metadata": {
+            "name": "{hashed_name}",
+            "labels": {
+                "app": "{hashed_name}",
+                "config_id": "{config_id}"
+            }
+        },
+        "spec": {
+            "containers": [{
+                "name": "{hashed_name}",
+                "image": "ghcr.io/hcavarsan/kftray-server:latest",
+                "env": [
+                    {"name": "LOCAL_PORT", "value": "{local_port}"},
+                    {"name": "REMOTE_PORT", "value": "{remote_port}"},
+                    {"name": "REMOTE_ADDRESS", "value": "{remote_address}"},
+                    {"name": "PROXY_TYPE", "value": "{protocol}"},
+                    {"name": "RUST_LOG", "value": "DEBUG"},
+                ],
+                "resources": {
+                    "limits": {
+                        "cpu": "100m",
+                        "memory": "200Mi"
+                    },
+                    "requests": {
+                        "cpu": "100m",
+                        "memory": "100Mi"
+                    }
+                }
+            }],
+        }
+    })
+}
+
+/// Reports whether the on-disk Pod manifest differs from
+/// [`default_pod_manifest`]. A missing manifest is not customized; an
+/// unreadable or malformed one is treated as customized so a user's file is
+/// never bypassed.
+pub fn pod_manifest_is_customized() -> bool {
+    let Ok(path) = get_pod_manifest_path() else {
+        return false;
+    };
+    if !path.exists() {
+        return false;
+    }
+    match std::fs::read_to_string(&path) {
+        Ok(contents) => match serde_json::from_str::<serde_json::Value>(&contents) {
+            Ok(manifest) => manifest != default_pod_manifest(),
+            Err(_) => true,
+        },
+        Err(_) => true,
+    }
 }
 
 pub fn create_proxy_deployment_manifest() -> Result<(), Box<dyn std::error::Error>> {

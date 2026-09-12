@@ -54,7 +54,7 @@ use crate::tui::ui::{
 pub fn draw_configs_table(
     frame: &mut Frame, area: Rect, configs: &[Config], config_states: &[ConfigState],
     state: &mut TableState, title: &str, has_focus: bool, selected_rows: &HashSet<usize>,
-    configs_being_processed: &std::collections::HashMap<i64, Arc<AtomicBool>>,
+    configs_being_processed: &std::collections::HashMap<i64, (Arc<AtomicBool>, std::time::Instant)>,
     throbber_state: &throbber_widgets_tui::ThrobberState,
 ) {
     let rows: Vec<Row> = configs
@@ -70,7 +70,7 @@ pub fn draw_configs_table(
             let is_processing = config.id.is_some_and(|id| {
                 configs_being_processed
                     .get(&id)
-                    .is_some_and(|flag| !flag.load(std::sync::atomic::Ordering::Relaxed))
+                    .is_some_and(|(flag, _)| !flag.load(std::sync::atomic::Ordering::Relaxed))
             });
 
             let base_style = if is_processing {

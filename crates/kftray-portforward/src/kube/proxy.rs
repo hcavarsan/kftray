@@ -38,11 +38,13 @@ use kftray_commons::{
             get_proxy_deployment_manifest_path,
         },
         db_mode::DatabaseMode,
-        manifests::proxy_deployment_manifest_exists,
+        manifests::{
+            pod_manifest_is_customized,
+            proxy_deployment_manifest_exists,
+        },
     },
 };
 use kube::Client;
-use kube::api::ListParams;
 use kube::api::{
     Api,
     DeleteParams,
@@ -50,7 +52,6 @@ use kube::api::{
 };
 use kube_runtime::WatchStreamExt;
 use log::{
-    debug,
     error,
     info,
 };
@@ -355,9 +356,13 @@ async fn process_deployment_proxy(
     let result: Result<CustomResponse, String> = async {
         let pods: Api<Pod> = Api::namespaced(client, &config.namespace);
         let label_selector = format!("app={hashed_name},config_id={config_id_str}");
-        let lp = ListParams::default().labels(&label_selector);
-        let pod_name = wait_for_deployment_pod(&pods, &lp, options.cancellation).await?;
-        wait_for_relay_startup(&pods, &pod_name, &container_name, options.cancellation).await?;
+        wait_for_relay_pod(
+            &pods,
+            &label_selector,
+            &container_name,
+            options.cancellation,
+        )
+        .await?;
         config.service = Some(hashed_name.to_string());
         let response = super::start::start_config(
             config.clone(),
@@ -393,13 +398,12 @@ async fn process_deployment_proxy(
     result
 }
 
-async fn wait_for_deployment_pod(
-    pods: &Api<Pod>, lp: &ListParams, cancellation: &CancellationToken,
+async fn wait_for_relay_pod(
+    pods: &Api<Pod>, label_selector: &str, container_name: &str, cancellation: &CancellationToken,
 ) -> Result<String, String> {
     let watcher = kube_runtime::watcher(
         pods.clone(),
-        kube_runtime::watcher::Config::default()
-            .labels(lp.label_selector.as_deref().unwrap_or_default()),
+        kube_runtime::watcher::Config::default().labels(label_selector),
     )
     .applied_objects();
     futures::pin_mut!(watcher);
@@ -410,19 +414,20 @@ async fn wait_for_deployment_pod(
             std::time::Duration::from_secs(120),
             async {
                 while let Some(pod) = watcher.try_next().await.map_err(|error| error.to_string())? {
-                    if pod.metadata.deletion_timestamp.is_none()
-                        && let Some(name) = pod.metadata.name
-                    {
-                        return Ok(name);
+                    if relay_started(Some(&pod), container_name) {
+                        return pod
+                            .metadata
+                            .name
+                            .ok_or_else(|| "Proxy pod has no name".to_string());
                     }
                 }
-                Err("Proxy pod watch ended before a pod was created".to_string())
+                Err("Proxy pod watch ended before the relay started".to_string())
             },
         ) => result,
     };
     match result {
         Ok(result) => result,
-        Err(_) => Err("Timed out waiting for the proxy deployment pod".to_string()),
+        Err(_) => Err("Timed out waiting for the proxy deployment relay to start".to_string()),
     }
 }
 
@@ -520,34 +525,8 @@ pub async fn stop_proxy_forward(
     })
 }
 
-fn is_custom_pod_manifest() -> bool {
-    match get_pod_manifest_path() {
-        Ok(path) if path.exists() => {
-            // Read the current manifest
-            if let Ok(mut file) = File::open(&path) {
-                let mut contents = String::new();
-                if file.read_to_string(&mut contents).is_ok() {
-                    let size = contents.len();
-                    if !(520..=780).contains(&size) {
-                        debug!("Pod manifest appears customized (size: {} bytes)", size);
-                        return true;
-                    }
-                    if contents.contains("# Custom") || contents.contains("# Modified") {
-                        debug!("Pod manifest contains custom markers");
-                        return true;
-                    }
-                    debug!("Pod manifest appears to be default template");
-                    return false;
-                }
-            }
-            true
-        }
-        _ => false,
-    }
-}
-
 fn should_use_deployment_manifest() -> bool {
-    if is_custom_pod_manifest() {
+    if pod_manifest_is_customized() {
         info!("Using legacy Pod manifest (custom detected)");
         return false;
     }
@@ -773,7 +752,7 @@ mod tests {
             if listener_wait {
                 wait_for_relay_startup(&pods, "relay", "relay", &startup.cancellation).await
             } else {
-                wait_for_deployment_pod(&pods, &ListParams::default(), &startup.cancellation)
+                wait_for_relay_pod(&pods, "app=relay", "relay", &startup.cancellation)
                     .await
                     .map(|_| ())
             }
@@ -812,21 +791,29 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn deployment_discovery_skips_terminating_and_unnamed_pods() {
+    async fn relay_discovery_skips_pods_whose_relay_has_not_started() {
         let (service, mut requests) = tower_test::mock::pair::<
             http::Request<kube::client::Body>,
             http::Response<kube::client::Body>,
         >();
         let pods = Api::namespaced(Client::new(service, "default"), "default");
+        let started = serde_json::json!({
+            "phase": "Running",
+            "containerStatuses": [{
+                "name": "relay", "started": true, "ready": true,
+                "restartCount": 0, "image": "relay", "imageID": "relay"
+            }]
+        });
         let server = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
             let (_, send) = requests.next_request().await.unwrap();
             send.send_response(http::Response::builder().body(kube::client::Body::from(
                 serde_json::to_vec(&serde_json::json!({
                     "metadata":{"resourceVersion":"1"},
                     "items":[
-                        {"metadata":{"name":"terminating-pod","deletionTimestamp":"2026-09-11T00:00:00Z"}},
-                        {"metadata":{}},
-                        {"metadata":{"name":"replacement-pod"}}
+                        {"metadata":{"name":"terminating-pod","deletionTimestamp":"2026-09-11T00:00:00Z"},
+                         "status": started},
+                        {"metadata":{"name":"scheduling-pod"},"status":{"phase":"Pending"}},
+                        {"metadata":{"name":"replacement-pod"},"status": started}
                     ]
                 })).unwrap()
             )).unwrap());
@@ -834,7 +821,7 @@ mod tests {
         let cancellation = CancellationToken::new();
         let selected = tokio::time::timeout(
             std::time::Duration::from_secs(2),
-            wait_for_deployment_pod(&pods, &ListParams::default(), &cancellation),
+            wait_for_relay_pod(&pods, "app=relay", "relay", &cancellation),
         )
         .await
         .unwrap()

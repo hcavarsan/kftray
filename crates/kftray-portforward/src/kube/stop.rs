@@ -248,8 +248,12 @@ pub async fn stop_all_port_forward_with_mode(
         .buffer_unordered(16)
         .collect()
         .await;
-    configs_result?;
-    states_result?;
+    if let Err(error) = configs_result {
+        warn!("Stopped every known forward but could not read configs: {error}");
+    }
+    if let Err(error) = states_result {
+        warn!("Stopped every known forward but could not read config states: {error}");
+    }
     Ok(responses)
 }
 
@@ -274,14 +278,6 @@ pub async fn stop_port_forward_with_mode(
     }
     let config = get_config_with_mode(id, mode).await;
     let response = stop_config(id, config.as_ref().ok(), mode).await;
-    if let Ok(config) = &config
-        && config.context.is_some()
-    {
-        SHARED_CLIENT_MANAGER.invalidate_client(&ServiceClientKey::new(
-            config.context.clone(),
-            config.kubeconfig.clone(),
-        ));
-    }
     match (config, response) {
         (Err(error), Err(_)) => Err(error),
         (_, response) => response,
@@ -368,16 +364,26 @@ async fn stop_config(
                 Err(errors.join("; "))
             }
         };
-        let state = ConfigState::new(id, false);
-        let (cluster, local, state) = tokio::join!(
-            cluster_cleanup,
-            local_cleanup,
-            update_config_state_with_mode(&state, mode)
-        );
-        let errors: Vec<_> = [cluster, local, state]
-            .into_iter()
-            .filter_map(Result::err)
-            .collect();
+        let (cluster, local) = tokio::join!(cluster_cleanup, local_cleanup);
+        let mut errors: Vec<String> = Vec::new();
+        match cluster {
+            Ok(()) => {
+                let state = ConfigState::new(id, false);
+                if let Err(error) = update_config_state_with_mode(&state, mode).await {
+                    errors.push(error);
+                }
+            }
+            Err(error) => {
+                SHARED_CLIENT_MANAGER.invalidate_client(&ServiceClientKey::new(
+                    config.context.clone(),
+                    config.kubeconfig.clone(),
+                ));
+                errors.push(error);
+            }
+        }
+        if let Err(error) = local {
+            errors.push(error);
+        }
         if errors.is_empty() {
             Ok(stop_response(id, Some(config), None))
         } else {
@@ -499,5 +505,43 @@ mod tests {
             let _listener = TcpListener::bind(address).await.unwrap();
         }
         let _udp = UdpSocket::bind(udp_address).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn failed_cluster_cleanup_keeps_the_config_marked_running() {
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let config = Config {
+            namespace: "default".to_string(),
+            service: Some("expose-target".to_string()),
+            context: Some("missing-context".to_string()),
+            kubeconfig: Some("/nonexistent/kubeconfig".to_string()),
+            protocol: "tcp".to_string(),
+            workload_type: Some("expose".to_string()),
+            ..Config::default()
+        };
+        let id =
+            kftray_commons::utils::config::insert_config_with_mode(config, DatabaseMode::Memory)
+                .await
+                .unwrap();
+        update_config_state_with_mode(&ConfigState::new(id, true), DatabaseMode::Memory)
+            .await
+            .unwrap();
+        let task = tokio::spawn(std::future::pending::<anyhow::Result<()>>());
+        CHILD_PROCESSES.insert(id, PortForwardProcess::new(task, id.to_string()));
+
+        let error = stop_port_forward_with_mode(id.to_string(), DatabaseMode::Memory)
+            .await
+            .expect_err("an unreachable cluster must fail the stop");
+        assert!(!error.is_empty());
+
+        let states = get_configs_state_with_mode(DatabaseMode::Memory)
+            .await
+            .unwrap();
+        assert!(
+            states
+                .iter()
+                .any(|state| state.config_id == id && state.is_running),
+            "orphaned cluster resources must keep the config retryable"
+        );
     }
 }

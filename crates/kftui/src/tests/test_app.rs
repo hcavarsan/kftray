@@ -219,12 +219,25 @@ mod tests {
     fn pending_forward_stays_busy_until_completion() {
         let mut app = App::new(test_logger_state());
         let complete = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        app.configs_being_processed.insert(1, complete.clone());
+        app.configs_being_processed
+            .insert(1, (complete.clone(), std::time::Instant::now()));
         app.update_configs(&[], &[]);
         assert!(app.configs_being_processed.contains_key(&1));
 
         complete.store(true, std::sync::atomic::Ordering::Relaxed);
         app.update_configs(&[], &[]);
+        assert!(!app.configs_being_processed.contains_key(&1));
+    }
+
+    #[test]
+    fn pending_forward_expires_after_the_watchdog_window() {
+        let mut app = App::new(test_logger_state());
+        let complete = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stale = std::time::Instant::now() - std::time::Duration::from_secs(31);
+        app.configs_being_processed.insert(1, (complete, stale));
+
+        app.update_configs(&[], &[]);
+
         assert!(!app.configs_being_processed.contains_key(&1));
     }
 

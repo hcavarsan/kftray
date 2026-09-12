@@ -92,21 +92,12 @@ impl SharedClientManager {
             self.clients.remove(&key);
         }
 
-        let result =
-            create_client_with_specific_context(key.kubeconfig_path.clone(), context_name).await;
-
-        match result {
-            Ok(client) => {
-                let cached_client = CachedClient::new(client);
-                let client_arc = cached_client.connection.clone();
-                self.clients.insert(key, cached_client);
-                Ok(client_arc)
-            }
-            Err(e) => {
-                self.creation_locks.remove(&key);
-                Err(e)
-            }
-        }
+        let connection =
+            create_client_with_specific_context(key.kubeconfig_path.clone(), context_name).await?;
+        let cached_client = CachedClient::new(connection);
+        let client_arc = cached_client.connection.clone();
+        self.clients.insert(key, cached_client);
+        Ok(client_arc)
     }
 
     pub fn invalidate_client(&self, key: &ServiceClientKey) {

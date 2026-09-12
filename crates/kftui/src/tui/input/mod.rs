@@ -284,7 +284,8 @@ pub struct App {
     pub http_logs_replay_result: Option<String>,
     pub http_logs_replay_in_progress: bool,
     pub throbber_state: throbber_widgets_tui::ThrobberState,
-    pub configs_being_processed: std::collections::HashMap<i64, Arc<AtomicBool>>,
+    pub configs_being_processed:
+        std::collections::HashMap<i64, (Arc<AtomicBool>, std::time::Instant)>,
     pub forwarding_tasks: tokio::task::JoinSet<()>,
     pub forwarding_slots: Arc<tokio::sync::Semaphore>,
     pub error_receiver: Option<tokio::sync::mpsc::UnboundedReceiver<String>>,
@@ -668,8 +669,12 @@ impl App {
 
         self.update_filtered_configs();
 
+        let now = std::time::Instant::now();
         self.configs_being_processed
-            .retain(|_, completion_flag| !completion_flag.load(Ordering::Relaxed));
+            .retain(|_, (flag, started_at)| {
+                !flag.load(Ordering::Relaxed)
+                    && now.duration_since(*started_at) <= PROCESSING_WATCHDOG
+            });
         while self.forwarding_tasks.try_join_next().is_some() {}
 
         let mut new_errors = Vec::new();
@@ -1400,6 +1405,15 @@ pub fn toggle_row_selection(app: &mut App) {
 }
 
 const FORWARD_DISPATCH_CONCURRENCY: usize = 10;
+const PROCESSING_WATCHDOG: std::time::Duration = std::time::Duration::from_secs(30);
+
+struct ProcessingFlag(Arc<AtomicBool>);
+
+impl Drop for ProcessingFlag {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+}
 
 pub async fn handle_port_forwarding(app: &mut App, mode: DatabaseMode) -> io::Result<()> {
     let (selected_rows, configs, selected_row) = match app.active_table {
@@ -1438,15 +1452,17 @@ pub async fn handle_port_forwarding(app: &mut App, mode: DatabaseMode) -> io::Re
             !config.id.is_some_and(|id| {
                 app.configs_being_processed
                     .get(&id)
-                    .is_some_and(|flag| !flag.load(Ordering::Relaxed))
+                    .is_some_and(|(flag, _)| !flag.load(Ordering::Relaxed))
             })
         })
         .collect();
 
+    let started_at = std::time::Instant::now();
     for config in &selected_configs {
         if let Some(id) = config.id {
             let completion_flag = Arc::new(AtomicBool::new(false));
-            app.configs_being_processed.insert(id, completion_flag);
+            app.configs_being_processed
+                .insert(id, (completion_flag, started_at));
         }
     }
 
@@ -1468,7 +1484,7 @@ pub async fn handle_port_forwarding(app: &mut App, mode: DatabaseMode) -> io::Re
         .iter()
         .filter_map(|config| {
             let id = config.id?;
-            let flag = app.configs_being_processed.get(&id)?.clone();
+            let flag = app.configs_being_processed.get(&id)?.0.clone();
             Some((config.clone(), flag))
         })
         .collect();
@@ -1489,8 +1505,8 @@ pub async fn handle_port_forwarding(app: &mut App, mode: DatabaseMode) -> io::Re
                 let sender = error_sender.clone();
                 let slots = slots.clone();
                 async move {
+                    let finished = ProcessingFlag(flag);
                     let Ok(_permit) = slots.acquire_owned().await else {
-                        flag.store(true, Ordering::Relaxed);
                         return;
                     };
                     let result = if is_starting {
@@ -1505,7 +1521,7 @@ pub async fn handle_port_forwarding(app: &mut App, mode: DatabaseMode) -> io::Re
                         let _ = sender.send(error_msg);
                     }
 
-                    flag.store(true, Ordering::Relaxed);
+                    drop(finished);
                 }
             })
             .await;

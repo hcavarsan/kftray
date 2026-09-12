@@ -59,28 +59,39 @@ impl PortForwardProcess {
     pub async fn cleanup_and_abort(self) {
         const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 
-        self.cancellation_token.cancel();
-        self.handle.abort();
-        if let Some(handle) = &self.ws_client_handle {
+        let Self {
+            handle,
+            direct_forwarder,
+            cancellation_token,
+            config_id,
+            ws_client_handle,
+        } = self;
+
+        cancellation_token.cancel();
+        handle.abort();
+        if let Some(handle) = &ws_client_handle {
             handle.abort();
         }
 
-        let cleanup = async {
+        let tasks = async {
             let websocket = async {
-                if let Some(handle) = self.ws_client_handle {
+                if let Some(handle) = ws_client_handle {
                     let _ = handle.await;
                 }
             };
-            let _ = tokio::join!(self.handle, websocket);
-            if let Some(forwarder) = self.direct_forwarder {
+            let _ = tokio::join!(handle, websocket);
+        };
+        let shutdown = async {
+            if let Some(forwarder) = direct_forwarder {
                 forwarder.shutdown().await;
             }
         };
-        if timeout(SHUTDOWN_TIMEOUT, cleanup).await.is_err() {
-            tracing::warn!(
-                "Port-forward shutdown timed out for config: {}",
-                self.config_id
-            );
+        let (tasks, shutdown) = tokio::join!(
+            timeout(SHUTDOWN_TIMEOUT, tasks),
+            timeout(SHUTDOWN_TIMEOUT, shutdown)
+        );
+        if tasks.is_err() || shutdown.is_err() {
+            tracing::warn!("Port-forward shutdown timed out for config: {config_id}");
         }
     }
 

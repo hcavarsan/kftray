@@ -71,7 +71,6 @@ export interface TableProps {
   setIsAlertOpen: (open: boolean) => void
   selectedConfigs: Config[]
   setSelectedConfigs: React.Dispatch<React.SetStateAction<Config[]>>
-  setIsInitiating: React.Dispatch<React.SetStateAction<boolean>>
   openSettingsModal: () => void
   openServerResourcesModal: () => void
 }

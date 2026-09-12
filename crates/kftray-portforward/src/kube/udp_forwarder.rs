@@ -38,73 +38,75 @@ impl UdpForwarder {
 
         info!("Local UDP socket bound to {}", local_udp_addr);
 
-        let (tcp_read, tcp_write) = tokio::io::split(upstream_conn);
-        let tcp_read = Arc::new(Mutex::new(tcp_read));
+        let (mut tcp_read, tcp_write) = tokio::io::split(upstream_conn);
         let tcp_write = Arc::new(Mutex::new(tcp_write));
+        let peer: Arc<Mutex<Option<std::net::SocketAddr>>> = Arc::new(Mutex::new(None));
 
-        let local_udp_socket_read = local_udp_socket.clone();
-        let local_udp_socket_write = local_udp_socket;
+        let uplink_socket = local_udp_socket.clone();
+        let uplink_writer = tcp_write.clone();
+        let uplink_peer = peer.clone();
 
         let forward_future = async move {
-            let mut udp_buffer = vec![0u8; BUFFER_SIZE];
-            let peer: Arc<Mutex<Option<std::net::SocketAddr>>> = Arc::new(Mutex::new(None));
-
-            let result: anyhow::Result<()> = loop {
-                tokio::select! {
-                    result = local_udp_socket_read.recv_from(&mut udp_buffer) => {
-                        match result {
-                            Ok((len, src)) => {
-                                *peer.lock().await = Some(src);
-                                let mut writer = tcp_write.lock().await;
-
-                                let packet_len = (len as u32).to_be_bytes();
-                                if let Err(e) = writer.write_all(&packet_len).await {
-                                    error!("Failed to write packet length to TCP stream: {:?}", e);
-                                    break Err(anyhow::anyhow!("Failed to write packet length to TCP stream: {e}"));
-                                }
-                                if let Err(e) = writer.write_all(&udp_buffer[..len]).await {
-                                    error!("Failed to write UDP packet to TCP stream: {:?}", e);
-                                    break Err(anyhow::anyhow!("Failed to write UDP packet to TCP stream: {e}"));
-                                }
-                                if let Err(e) = writer.flush().await {
-                                    error!("Failed to flush TCP stream: {:?}", e);
-                                    break Err(anyhow::anyhow!("Failed to flush TCP stream: {e}"));
-                                }
-                            },
-                            Err(e) => {
-                                error!("Failed to receive from UDP socket: {:?}", e);
-                                break Err(anyhow::anyhow!("Failed to receive from UDP socket: {e}"));
-                            }
+            let uplink = async {
+                let mut udp_buffer = vec![0u8; BUFFER_SIZE];
+                let result: anyhow::Result<()> = loop {
+                    let (len, src) = match uplink_socket.recv_from(&mut udp_buffer).await {
+                        Ok(received) => received,
+                        Err(e) => {
+                            error!("Failed to receive from UDP socket: {:?}", e);
+                            break Err(anyhow::anyhow!("Failed to receive from UDP socket: {e}"));
                         }
-                    },
-                    result = async {
-                        let mut reader = tcp_read.lock().await;
-                        Self::read_tcp_length_and_packet(&mut *reader).await
-                    } => {
-                        match result {
-                            Ok(Some(packet)) => {
-                                let peer_addr = *peer.lock().await;
-                                if let Some(peer_addr) = peer_addr {
-                                    if let Err(e) = local_udp_socket_write.send_to(&packet, &peer_addr).await {
-                                        error!("Failed to send UDP packet to peer: {:?}", e);
-                                        break Err(anyhow::anyhow!("Failed to send UDP packet to peer: {e}"));
-                                    }
-                                } else {
-                                    error!("No UDP peer to send to");
-                                    break Err(anyhow::anyhow!("No UDP peer to send to"));
-                                }
-                            },
-                            Ok(None) => break Ok(()),
-                            Err(e) => {
-                                error!("Failed to read from TCP stream: {:?}", e);
-                                break Err(anyhow::anyhow!("Failed to read from TCP stream: {e}"));
-                            }
+                    };
+                    *uplink_peer.lock().await = Some(src);
+                    let mut writer = uplink_writer.lock().await;
+                    if let Err(e) = writer.write_all(&(len as u32).to_be_bytes()).await {
+                        error!("Failed to write packet length to TCP stream: {:?}", e);
+                        break Err(anyhow::anyhow!(
+                            "Failed to write packet length to TCP stream: {e}"
+                        ));
+                    }
+                    if let Err(e) = writer.write_all(&udp_buffer[..len]).await {
+                        error!("Failed to write UDP packet to TCP stream: {:?}", e);
+                        break Err(anyhow::anyhow!(
+                            "Failed to write UDP packet to TCP stream: {e}"
+                        ));
+                    }
+                    if let Err(e) = writer.flush().await {
+                        error!("Failed to flush TCP stream: {:?}", e);
+                        break Err(anyhow::anyhow!("Failed to flush TCP stream: {e}"));
+                    }
+                };
+                result
+            };
+
+            let downlink = async {
+                let result: anyhow::Result<()> = loop {
+                    let packet = match Self::read_tcp_length_and_packet(&mut tcp_read).await {
+                        Ok(Some(packet)) => packet,
+                        Ok(None) => break Ok(()),
+                        Err(e) => {
+                            error!("Failed to read from TCP stream: {:?}", e);
+                            break Err(anyhow::anyhow!("Failed to read from TCP stream: {e}"));
                         }
+                    };
+                    let Some(peer_addr) = *peer.lock().await else {
+                        error!("No UDP peer to send to");
+                        break Err(anyhow::anyhow!("No UDP peer to send to"));
+                    };
+                    if let Err(e) = local_udp_socket.send_to(&packet, &peer_addr).await {
+                        error!("Failed to send UDP packet to peer: {:?}", e);
+                        break Err(anyhow::anyhow!("Failed to send UDP packet to peer: {e}"));
                     }
-                    _ = cancellation_token.cancelled() => {
-                        info!("UDP forwarder cancelled, shutting down");
-                        break Ok(());
-                    }
+                };
+                result
+            };
+
+            let result = tokio::select! {
+                result = uplink => result,
+                result = downlink => result,
+                _ = cancellation_token.cancelled() => {
+                    info!("UDP forwarder cancelled, shutting down");
+                    Ok(())
                 }
             };
 
@@ -130,6 +132,11 @@ impl UdpForwarder {
         }
 
         let len = u32::from_be_bytes(len_bytes) as usize;
+        if len > BUFFER_SIZE {
+            return Err(anyhow::anyhow!(
+                "Upstream announced a {len} byte datagram, above the {BUFFER_SIZE} byte limit"
+            ));
+        }
         let mut packet = vec![0u8; len];
 
         match tcp_read.read_exact(&mut packet).await {
@@ -277,5 +284,71 @@ mod tests {
             inner.unwrap().is_none(),
             "Partial read should return Ok(None)"
         );
+    }
+
+    #[tokio::test]
+    async fn oversized_length_prefix_is_rejected() {
+        let (mut reader, mut writer) = duplex(64);
+
+        writer.write_all(&u32::MAX.to_be_bytes()).await.unwrap();
+        writer.flush().await.unwrap();
+
+        let error = UdpForwarder::read_tcp_length_and_packet(&mut reader)
+            .await
+            .expect_err("an oversized length prefix must not allocate");
+        assert!(error.to_string().contains("above the"), "{error}");
+    }
+
+    #[tokio::test]
+    async fn upstream_frame_survives_concurrent_uplink_traffic() {
+        let (mut upstream, server_stream) = duplex(4096);
+        let cancellation_token = CancellationToken::new();
+        let (port, forward) = UdpForwarder::bind_and_forward(
+            "127.0.0.1".to_owned(),
+            0,
+            server_stream,
+            cancellation_token.clone(),
+        )
+        .await
+        .unwrap();
+        let owner = tokio::spawn(forward);
+        let client = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        client.connect(("127.0.0.1", port)).await.unwrap();
+
+        client.send(b"hello").await.unwrap();
+        let mut header = [0u8; 4];
+        upstream.read_exact(&mut header).await.unwrap();
+        let mut relayed = [0u8; 5];
+        upstream.read_exact(&mut relayed).await.unwrap();
+        assert_eq!(&relayed, b"hello");
+
+        let response_header = 8u32.to_be_bytes();
+        upstream.write_all(&response_header[..2]).await.unwrap();
+        upstream.flush().await.unwrap();
+        tokio::task::yield_now().await;
+
+        client.send(b"second").await.unwrap();
+        upstream.read_exact(&mut header).await.unwrap();
+        let mut relayed = [0u8; 6];
+        upstream.read_exact(&mut relayed).await.unwrap();
+        assert_eq!(&relayed, b"second");
+
+        upstream.write_all(&response_header[2..]).await.unwrap();
+        upstream.write_all(b"response").await.unwrap();
+        upstream.flush().await.unwrap();
+
+        let mut response = [0u8; 8];
+        let received = tokio::time::timeout(Duration::from_secs(5), client.recv(&mut response))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(&response[..received], b"response");
+
+        cancellation_token.cancel();
+        tokio::time::timeout(Duration::from_secs(5), owner)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
     }
 }

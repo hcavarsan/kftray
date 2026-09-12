@@ -240,7 +240,7 @@ async fn create_deployment(
         }),
         period_seconds: Some(1),
         timeout_seconds: Some(1),
-        failure_threshold: Some(1),
+        failure_threshold: Some(3),
         ..Default::default()
     });
 
