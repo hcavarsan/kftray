@@ -212,6 +212,23 @@ pub async fn create_expose_resources(
     result
 }
 
+/// Labels every exposure resource must carry for cleanup to find it, applied
+/// programmatically so a customized template cannot omit them.
+async fn tag_expose_ownership(
+    labels: &mut Option<std::collections::BTreeMap<String, String>>, config_id: &str,
+) -> Result<(), String> {
+    let labels = labels.get_or_insert_with(std::collections::BTreeMap::new);
+    labels.insert("app".to_owned(), "kftray-expose".to_owned());
+    labels.insert("config_id".to_owned(), config_id.to_owned());
+    labels.insert(
+        crate::kube::proxy::INSTALLATION_LABEL.to_owned(),
+        kftray_commons::utils::config_dir::installation_id()
+            .await?
+            .to_owned(),
+    );
+    Ok(())
+}
+
 /// Selector matching only the exposure resources this installation created.
 ///
 /// Configuration ids come from a local database, so `config_id` alone also
@@ -425,10 +442,11 @@ async fn create_deployment(
         .map_err(|e| format!("Failed to parse deployment: {}", e))?;
     // Tagged so cleanup can tell this installation's exposure apart from
     // another one using the same, locally assigned, configuration id.
-    crate::kube::proxy::tag_installation(&mut deployment.metadata.labels).await?;
+    tag_expose_ownership(&mut deployment.metadata.labels, config_id).await?;
     if let Some(spec) = deployment.spec.as_mut() {
-        crate::kube::proxy::tag_installation(
+        tag_expose_ownership(
             &mut spec.template.metadata.get_or_insert_default().labels,
+            config_id,
         )
         .await?;
         // The selector has to match the tagged pods, and it also keeps another
@@ -589,7 +607,7 @@ async fn create_service(
 
     let mut service: Service =
         serde_json::from_str(&rendered).map_err(|e| format!("Failed to parse service: {}", e))?;
-    crate::kube::proxy::tag_installation(&mut service.metadata.labels).await?;
+    tag_expose_ownership(&mut service.metadata.labels, config_id).await?;
     // Without this the Service would also select another installation's relay
     // pods and send its HTTP traffic to the wrong local service.
     // Only an existing selector is narrowed. Giving a selectorless Service one
@@ -661,7 +679,7 @@ async fn create_ingress(
 
     let mut ingress: Ingress =
         serde_json::from_str(&rendered).map_err(|e| format!("Failed to parse ingress: {}", e))?;
-    crate::kube::proxy::tag_installation(&mut ingress.metadata.labels).await?;
+    tag_expose_ownership(&mut ingress.metadata.labels, &config_id_str).await?;
 
     let created = ingresses
         .create(&PostParams::default(), &ingress)

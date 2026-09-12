@@ -90,15 +90,23 @@ pub async fn run_tui(
     .find_map(Result::err);
 
     app.finish_forwarding().await;
-    match kftray_portforward::kube::stop_all_port_forward_with_mode(mode).await {
-        Ok(responses) => {
+    // Bounded like the reconciliation below: a stop waits on lifecycle locks
+    // and hosts-file work, and a stalled one must not keep the process alive.
+    match tokio::time::timeout(
+        CLEANUP_RECONCILE_TIMEOUT,
+        kftray_portforward::kube::stop_all_port_forward_with_mode(mode),
+    )
+    .await
+    {
+        Ok(Ok(responses)) => {
             for response in responses {
                 if response.status != 0 {
                     error!("Error stopping port forward: {:?}", response.stderr);
                 }
             }
         }
-        Err(error) => error!("Failed to stop port forwards: {error}"),
+        Ok(Err(error)) => error!("Failed to stop port forwards: {error}"),
+        Err(_) => error!("Stopping port forwards did not finish within the shutdown budget"),
     }
     // A create abandoned on the way out can surface after that first pass.
     kftray_portforward::kube::reconcile_pending_cleanup(mode, CLEANUP_RECONCILE_TIMEOUT).await;

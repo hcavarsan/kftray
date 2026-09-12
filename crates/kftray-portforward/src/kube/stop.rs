@@ -222,8 +222,16 @@ lazy_static::lazy_static! {
     static ref RELEASING_ADDRESSES: dashmap::DashSet<String> = dashmap::DashSet::new();
 }
 
-/// Clears the in-flight mark however the release ends.
+/// Clears the in-flight mark once every holder is done.
 struct ReleaseInFlight(String);
+
+impl ReleaseInFlight {
+    fn mark(address: &str) -> Arc<Self> {
+        RELEASING_ADDRESSES.insert(address.to_owned());
+
+        Arc::new(Self(address.to_owned()))
+    }
+}
 
 impl Drop for ReleaseInFlight {
     fn drop(&mut self) {
@@ -345,18 +353,22 @@ fn try_release_address_sync(address: &str) -> Result<(), String> {
 async fn release_address_with_fallback(address: &str) -> Result<(), String> {
     const ADDRESS_RELEASE_TIMEOUT: Duration = Duration::from_secs(3);
 
-    // Marked for as long as a release may still be executing. Timing out the
-    // wait does not stop the helper request or the platform command, and a
-    // restart that reused the address could have it removed underneath it.
-    RELEASING_ADDRESSES.insert(address.to_owned());
-    let _releasing = ReleaseInFlight(address.to_owned());
+    // Marked for as long as a release may still be executing, and owned by the
+    // work itself rather than by this future: timing out the wait does not stop
+    // the helper request or the platform command, and a restart that reused the
+    // address could have it removed underneath it.
+    let releasing = ReleaseInFlight::mark(address);
 
     let address_owned = address.to_string();
 
     // Wrap blocking helper service call in spawn_blocking with timeout
-    let result = timeout(ADDRESS_RELEASE_TIMEOUT, async {
+    let result = timeout(ADDRESS_RELEASE_TIMEOUT, {
         let addr = address_owned.clone();
-        spawn_blocking(move || try_release_address_sync(&addr)).await
+        let releasing = Arc::clone(&releasing);
+        spawn_blocking(move || {
+            let _releasing = releasing;
+            try_release_address_sync(&addr)
+        })
     })
     .await;
 
@@ -383,14 +395,15 @@ async fn release_address_with_fallback(address: &str) -> Result<(), String> {
     // shells out, and doing that inline would hold a runtime worker, and the
     // lifecycle lock with it, for as long as the command takes.
     let address_owned = address.to_string();
-    let platform = timeout(
-        ADDRESS_RELEASE_TIMEOUT,
+    let platform = timeout(ADDRESS_RELEASE_TIMEOUT, {
+        let releasing = Arc::clone(&releasing);
         spawn_blocking(move || {
+            let _releasing = releasing;
             tokio::runtime::Handle::current().block_on(
                 crate::network_utils::remove_loopback_address(&address_owned),
             )
-        }),
-    )
+        })
+    })
     .await;
     match platform {
         Ok(Ok(Ok(()))) => {

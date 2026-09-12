@@ -61,6 +61,33 @@ impl HostfileManager {
         self.direct_manager.remove_host_entry(id)
     }
 
+    /// Removes several ids, reconciling them with one write where possible.
+    ///
+    /// The direct manager rewrites the file from its whole remaining map, so a
+    /// single successful write covers every id. The helper removes one at a
+    /// time, so its failures stay per-id.
+    pub fn remove_host_entries(&self, ids: &[&str]) -> std::io::Result<()> {
+        if let Some(helper) = &self.helper_client
+            && helper.is_available()
+        {
+            let mut errors = Vec::new();
+            for id in ids {
+                if let Err(e) = helper.remove_host_entry(id) {
+                    errors.push(format!("{id}: {e}"));
+                }
+            }
+            if errors.is_empty() {
+                return Ok(());
+            }
+            warn!(
+                "Helper hostfile remove failed ({}), falling back to direct",
+                errors.join("; ")
+            );
+        }
+
+        self.direct_manager.remove_host_entries(ids)
+    }
+
     pub fn remove_all_host_entries(&self) -> std::io::Result<()> {
         if let Some(helper) = &self.helper_client
             && helper.is_available()
@@ -115,20 +142,14 @@ pub fn add_ssl_host_entry(config_id: &str, alias: &str, _https_port: u16) -> std
 }
 
 pub fn remove_ssl_host_entry(config_id: &str) -> std::io::Result<()> {
-    // Reported rather than swallowed: a caller that keeps a configuration
-    // tracked for retry can only do so if it learns the aliases are still
-    // present.
-    let mut errors = Vec::new();
-    for suffix in ["https", "https-local"] {
-        if let Err(error) = remove_host_entry(&format!("{config_id}-{suffix}")) {
-            errors.push(error.to_string());
-        }
-    }
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(std::io::Error::other(errors.join("; ")))
-    }
+    // Removed together so one reconciliation covers both: removing them one at
+    // a time would report the first failure even when the second write, which
+    // rewrites the whole file, already took both aliases out. Reported rather
+    // than swallowed, so a caller can keep the configuration tracked for retry.
+    let https = format!("{config_id}-https");
+    let local = format!("{config_id}-https-local");
+
+    HOSTFILE_MANAGER.remove_host_entries(&[https.as_str(), local.as_str()])
 }
 
 pub fn update_hosts_with_ssl_from_config(
@@ -168,10 +189,6 @@ pub fn remove_ssl_host_entry_from_config(
 
 #[cfg(test)]
 mod tests {
-    use std::net::{
-        IpAddr,
-        Ipv4Addr,
-    };
     use std::sync::Once;
 
     use super::*;
@@ -184,27 +201,11 @@ mod tests {
         });
     }
 
-    fn get_test_entry() -> HostEntry {
-        HostEntry {
-            ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2)),
-            hostname: "test.local".to_string(),
-        }
-    }
-
-    #[test]
-    fn test_add_and_remove_host_entry() {
-        init();
-        let _ = remove_all_host_entries();
-
-        let id = "test-id-1".to_string();
-        let entry = get_test_entry();
-
-        let result = add_host_entry(id.clone(), entry.clone());
-        assert!(result.is_ok());
-
-        let result = remove_host_entry(&id);
-        assert!(result.is_ok());
-    }
+    // `test_add_and_remove_host_entry` used to live here. It asserted that two
+    // calls returned Ok, which only held where the process could write the
+    // system hosts file, and it rewrote that file as a side effect. The
+    // decisions it was meant to cover are asserted without touching it in
+    // `hostfile_direct::tests`.
 
     #[test]
     fn test_manager_creation() {

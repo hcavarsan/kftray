@@ -77,11 +77,23 @@ impl DirectHostfileManager {
     }
 
     pub fn remove_host_entry(&self, id: &str) -> std::io::Result<()> {
-        debug!("Removing host entry for ID {id}");
+        self.remove_host_entries(std::slice::from_ref(&id))
+    }
+
+    /// Removes several ids and reconciles them with one write.
+    ///
+    /// The file is rewritten from the whole remaining map, so a single
+    /// successful write covers every id in the batch.
+    pub fn remove_host_entries(&self, ids: &[&str]) -> std::io::Result<()> {
+        debug!("Removing host entries for IDs {ids:?}");
 
         let existed = match self.entries.write() {
             Ok(mut entries) => {
-                let existed = entries.remove(id).is_some();
+                // Collected first so every id is removed, not just the ones
+                // before the first hit.
+                let removed: Vec<bool> =
+                    ids.iter().map(|id| entries.remove(*id).is_some()).collect();
+                let existed = removed.into_iter().any(|removed| removed);
                 // Counted while the entries lock is held: a concurrent removal
                 // of the same id would otherwise see the entry already gone and
                 // the generation still reconciled, and report success without

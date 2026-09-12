@@ -341,12 +341,21 @@ pub(crate) fn relay_container_name(spec: &PodSpec) -> Option<String> {
         .map(|container| container.name.clone())
 }
 
+/// Adds a startup probe to the relay container and returns its name.
+///
+/// A customized manifest is left alone: the probe is a kubelet TCP check
+/// against the pod IP, and a custom relay may only listen on loopback inside
+/// the pod, which the port forward can still reach but the probe cannot.
 fn prepare_relay_startup(spec: &mut PodSpec, port: u16) -> Result<String, String> {
     let index = relay_container_index(spec);
+    let customized = pod_manifest_is_customized();
     let container = spec
         .containers
         .get_mut(index)
         .ok_or("Proxy manifest must contain a container")?;
+    if customized {
+        return Ok(container.name.clone());
+    }
     container.startup_probe.get_or_insert_with(|| Probe {
         tcp_socket: Some(TCPSocketAction {
             port: IntOrString::Int(i32::from(port)),

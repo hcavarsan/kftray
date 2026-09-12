@@ -143,6 +143,45 @@ static FALLBACK_ALLOCATION_MUTEX: Lazy<TokioMutex<()>> = Lazy::new(|| TokioMutex
 /// tracking it.
 /// Releases what a failed startup registered outside the process. Cleanup that
 /// does not finish keeps the configuration tracked, so a later stop retries it.
+/// Releases what a startup registered outside the process before it had a
+/// forwarder, and keeps the configuration recorded only if that did not finish.
+async fn rollback_local_resources(config: &Config, address: &str, reason: String) -> String {
+    let mut errors = Vec::new();
+    if crate::network_utils::is_custom_loopback_address(address)
+        && let Err(error) = crate::network_utils::remove_loopback_address(address).await
+    {
+        errors.push(error.to_string());
+    }
+    let id = config.id.unwrap_or_default();
+    let hosts = tokio::task::spawn_blocking(move || {
+        let mut errors = Vec::new();
+        if let Err(error) = crate::hostsfile::remove_host_entry(&id.to_string()) {
+            errors.push(error.to_string());
+        }
+        if let Err(error) = crate::hostsfile::remove_ssl_host_entry(&id.to_string()) {
+            errors.push(error.to_string());
+        }
+        errors
+    })
+    .await;
+    match hosts {
+        Ok(hosts_errors) => errors.extend(hosts_errors),
+        Err(error) => errors.push(format!("Hosts cleanup task failed: {error}")),
+    }
+
+    if errors.is_empty() {
+        if let Some(id) = config.id {
+            crate::kube::stop::forget_pending_cleanup(id, config);
+        }
+        reason
+    } else {
+        if let Some(id) = config.id {
+            crate::kube::stop::record_pending_cleanup(id, config.clone());
+        }
+        format!("{reason}; cleanup incomplete: {}", errors.join("; "))
+    }
+}
+
 async fn rollback_startup(port_forward: &PortForward, config: Config, reason: String) -> String {
     match port_forward.cleanup_resources().await {
         Ok(()) => {
@@ -547,34 +586,39 @@ pub(super) async fn start_config_cancellable(
     if config.domain_enabled.unwrap_or_default()
         && let Some(service_name) = &config.service
     {
+        // Validated first: nothing has been created yet, so a rejected address
+        // must not leave a cleanup record that would then block deleting the
+        // configuration.
+        let Ok(ip_addr) = final_local_address.parse::<std::net::IpAddr>() else {
+            let error_message =
+                format!("Invalid IP address format for domain alias: {final_local_address}");
+            error!("{}", error_message);
+            return Err(error_message);
+        };
+
         // Recorded before the alias exists: from here the startup owns a hosts
         // entry, and being dropped before the process is registered would
         // otherwise leave it behind with nothing tracking it.
         if let Some(id) = config.id {
             crate::kube::stop::record_pending_cleanup(id, config.clone());
         }
-        match final_local_address.parse::<std::net::IpAddr>() {
-            Ok(ip_addr) => {
-                let entry_id = format!("{}", config.id.unwrap_or_default());
-                let host_entry = HostEntry {
-                    ip: ip_addr,
-                    hostname: config.alias.clone().unwrap_or_default(),
-                };
+        let entry_id = format!("{}", config.id.unwrap_or_default());
+        let host_entry = HostEntry {
+            ip: ip_addr,
+            hostname: config.alias.clone().unwrap_or_default(),
+        };
+        if let Err(e) = add_host_entry(entry_id, host_entry) {
+            let error_message = format!(
+                "Failed to write to the hostfile for {service_name}: {e}. Domain alias feature \
+                 requires hostfile access."
+            );
+            error!("{}", error_message);
 
-                if let Err(e) = add_host_entry(entry_id, host_entry) {
-                    let error_message = format!(
-                        "Failed to write to the hostfile for {service_name}: {e}. Domain alias feature requires hostfile access."
-                    );
-                    error!("{}", error_message);
-                    return Err(error_message);
-                }
-            }
-            Err(_) => {
-                let error_message =
-                    format!("Invalid IP address format for domain alias: {final_local_address}");
-                error!("{}", error_message);
-                return Err(error_message);
-            }
+            // Releases the address this startup may already have allocated, and
+            // keeps the configuration recorded only if that did not finish.
+            return Err(
+                rollback_local_resources(&config, &final_local_address, error_message).await,
+            );
         }
     }
 

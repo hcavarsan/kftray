@@ -65,13 +65,28 @@ impl Default for ListenerConfig {
     }
 }
 
+/// A target whose port is given by name, and the last number resolved for the
+/// pod it was resolved against.
+struct NamedPort {
+    target: Target,
+    pod_api: Api<Pod>,
+    resolved: Arc<std::sync::Mutex<Option<(String, u16)>>>,
+}
+
 pub struct PortForwarder {
     namespace: Arc<str>,
     forwarder: Arc<kube_portforward::Forwarder>,
     target_port: u16,
+    /// Set for a target whose port is given by name. The number can change when
+    /// a rollout replaces the pod, so it is re-resolved for the pod actually
+    /// selected rather than pinned at startup.
+    named_port: Option<NamedPort>,
     http_log_watcher: HttpLogStateWatcher,
     background_tasks: Arc<std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
     connection_tasks: Arc<std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
+    /// Set once shutdown has drained the registries, so a connection accepted
+    /// afterwards is aborted rather than tracked by nobody.
+    workers_closed: Arc<std::sync::atomic::AtomicBool>,
 }
 
 impl PortForwarder {
@@ -122,26 +137,69 @@ impl PortForwarder {
             }
         };
 
+        let named_port =
+            matches!(target.port, crate::kube::models::Port::Name(_)).then(|| NamedPort {
+                target: target.clone(),
+                pod_api: pod_api.clone(),
+                resolved: Arc::new(std::sync::Mutex::new(None)),
+            });
+
         Ok(Self {
             namespace: namespace.into(),
             forwarder,
             target_port,
+            named_port,
             http_log_watcher: HttpLogStateWatcher::new(),
             background_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
             connection_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
+            workers_closed: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         })
     }
 
     pub async fn get_stream(&self) -> anyhow::Result<kube_portforward::Stream> {
         const STREAM_ACQUIRE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
-        tokio::time::timeout(
-            STREAM_ACQUIRE_TIMEOUT,
-            self.forwarder.connect(self.target_port),
+        let port = self.current_target_port().await?;
+
+        tokio::time::timeout(STREAM_ACQUIRE_TIMEOUT, self.forwarder.connect(port))
+            .await
+            .context("Timed out acquiring a port-forward stream")?
+            .map_err(Into::into)
+    }
+
+    /// The port to connect to for the pod currently selected.
+    ///
+    /// A named port is re-resolved when the ready pod changes: a rollout can
+    /// map the same name to a different number, and the old one would then
+    /// reach nothing or the wrong container port.
+    async fn current_target_port(&self) -> anyhow::Result<u16> {
+        let Some(named) = &self.named_port else {
+            return Ok(self.target_port);
+        };
+        let ready_pod = self.forwarder.ready_pod();
+        if let Some(pod) = &ready_pod
+            && let Some((cached_pod, port)) = named
+                .resolved
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone()
+            && &cached_pod == pod
+        {
+            return Ok(port);
+        }
+
+        let port = crate::kube::target::resolve_target_port(
+            &self.forwarder,
+            &named.pod_api,
+            &named.target,
+            tokio::time::Duration::from_secs(5),
         )
-        .await
-        .context("Timed out acquiring a port-forward stream")?
-        .map_err(Into::into)
+        .await?;
+        if let Some(pod) = ready_pod {
+            *named.resolved.lock().unwrap_or_else(|e| e.into_inner()) = Some((pod, port));
+        }
+
+        Ok(port)
     }
 
     pub async fn handle_tcp_listener(
@@ -266,6 +324,7 @@ impl PortForwarder {
             let cancel_token_clone = cancel_token.clone();
             let tls_acceptor_clone = tls_acceptor.clone();
             let connection_tasks = Arc::clone(&self.connection_tasks);
+            let workers_closed = Arc::clone(&self.workers_closed);
             let stream_failures_clone = Arc::clone(&consecutive_stream_failures);
 
             let handle = tokio::spawn(async move {
@@ -338,8 +397,15 @@ impl PortForwarder {
 
             {
                 let mut tasks = Self::registry(&connection_tasks);
-                tasks.retain(|handle| !handle.is_finished());
-                tasks.push(handle);
+                // Registration is closed under the same lock the final drain
+                // takes, so a connection accepted while shutdown runs is
+                // aborted instead of being left untracked.
+                if workers_closed.load(std::sync::atomic::Ordering::SeqCst) {
+                    handle.abort();
+                } else {
+                    tasks.retain(|handle| !handle.is_finished());
+                    tasks.push(handle);
+                }
             }
         }
 
@@ -456,8 +522,15 @@ impl PortForwarder {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    async fn cleanup_tasks(tasks: &Arc<std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>) {
-        let tasks = std::mem::take(&mut *Self::registry(tasks));
+    async fn cleanup_tasks(&self, tasks: &Arc<std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>) {
+        let tasks = {
+            let mut registry = Self::registry(tasks);
+            // Closed first: an accept iteration already running would otherwise
+            // register a worker after this drain and never be joined.
+            self.workers_closed
+                .store(true, std::sync::atomic::Ordering::SeqCst);
+            std::mem::take(&mut *registry)
+        };
         for handle in &tasks {
             handle.abort();
         }
@@ -502,8 +575,8 @@ impl PortForwarder {
 
         self.http_log_watcher.shutdown();
 
-        Self::cleanup_tasks(&self.background_tasks).await;
-        Self::cleanup_tasks(&self.connection_tasks).await;
+        self.cleanup_tasks(&self.background_tasks).await;
+        self.cleanup_tasks(&self.connection_tasks).await;
 
         if let Err(e) = self.forwarder.shutdown().await {
             debug!("Forwarder shutdown returned an error: {}", e);
@@ -746,9 +819,11 @@ mod tests {
             namespace: "default".into(),
             forwarder: Arc::new(forwarder),
             target_port: 8080,
+            named_port: None,
             http_log_watcher: HttpLogStateWatcher::new(),
             background_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
             connection_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
+            workers_closed: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         };
         let mut acquisition = Box::pin(port_forwarder.get_stream());
         tokio::select! {
@@ -797,9 +872,11 @@ mod tests {
             namespace: "default".into(),
             forwarder: Arc::new(forwarder),
             target_port: 8080,
+            named_port: None,
             http_log_watcher: HttpLogStateWatcher::new(),
             background_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
             connection_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
+            workers_closed: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         };
 
         let get_stream_fut = port_forwarder.get_stream();
@@ -977,9 +1054,11 @@ mod tests {
             namespace: "default".into(),
             forwarder: Arc::new(forwarder),
             target_port: 8080,
+            named_port: None,
             http_log_watcher: HttpLogStateWatcher::new(),
             background_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
             connection_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
+            workers_closed: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         });
         port_forwarder.track_task(tokio::spawn(std::future::pending()));
 
@@ -1030,9 +1109,11 @@ mod tests {
             namespace: "default".into(),
             forwarder: Arc::new(forwarder),
             target_port: 8080,
+            named_port: None,
             http_log_watcher: HttpLogStateWatcher::new(),
             background_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
             connection_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
+            workers_closed: Arc::new(std::sync::atomic::AtomicBool::new(false)),
         });
 
         // A client that connected and then stalled where no cancellation token

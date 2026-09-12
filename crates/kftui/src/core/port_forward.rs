@@ -56,13 +56,7 @@ pub async fn start_port_forwarding_with_ssl(
             return Err(format!("Failed to start port forward: {e:?}"));
         }
     };
-    let failures: Vec<String> = responses
-        .into_iter()
-        .filter(|response| response.status != 0)
-        .map(|response| response.stderr)
-        .collect();
-    if !failures.is_empty() {
-        let message = failures.join("; ");
+    if let Err(message) = kftray_commons::models::response::batch_failure(&responses) {
         error!("Failed to start port forward: {message}");
         return Err(format!("Failed to start port forward: {message}"));
     }
@@ -89,7 +83,13 @@ pub async fn stop_all_port_forward_and_exit(app: &mut App, mode: DatabaseMode) {
     let _ = std::io::stdout().flush();
 
     app.finish_forwarding().await;
-    match stop_all_port_forward_with_mode(mode).await {
+    match tokio::time::timeout(
+        crate::tui::app::CLEANUP_RECONCILE_TIMEOUT,
+        stop_all_port_forward_with_mode(mode),
+    )
+    .await
+    .unwrap_or_else(|_| Err("shutdown budget elapsed".to_owned()))
+    {
         Ok(responses) => {
             for response in responses {
                 if response.status != 0 {
