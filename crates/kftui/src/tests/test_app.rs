@@ -218,26 +218,37 @@ mod tests {
     #[test]
     fn pending_forward_stays_busy_until_completion() {
         let mut app = App::new(test_logger_state());
-        let complete = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        app.configs_being_processed
-            .insert(1, (complete.clone(), std::time::Instant::now()));
+        let pending = std::sync::Arc::new(crate::tui::input::PendingForward::new());
+        app.configs_being_processed.insert(1, pending.clone());
         app.update_configs(&[], &[]);
         assert!(app.configs_being_processed.contains_key(&1));
 
-        complete.store(true, std::sync::atomic::Ordering::Relaxed);
+        pending.finish();
         app.update_configs(&[], &[]);
         assert!(!app.configs_being_processed.contains_key(&1));
     }
 
     #[test]
-    fn pending_forward_expires_after_the_watchdog_window() {
+    fn a_stalled_pending_forward_stays_registered_until_its_task_reports_back() {
         let mut app = App::new(test_logger_state());
-        let complete = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let stale = std::time::Instant::now() - std::time::Duration::from_secs(31);
-        app.configs_being_processed.insert(1, (complete, stale));
+        let queued = std::sync::Arc::new(crate::tui::input::PendingForward::new());
+        app.configs_being_processed.insert(1, queued.clone());
 
         app.update_configs(&[], &[]);
+        assert!(
+            app.configs_being_processed.contains_key(&1),
+            "a config still waiting for a slot must keep its busy indicator"
+        );
 
+        queued.mark_running_at(std::time::Instant::now() - std::time::Duration::from_secs(31));
+        app.update_configs(&[], &[]);
+        assert!(
+            app.configs_being_processed.contains_key(&1),
+            "a stalled operation is aborted but must stay registered until it unwinds"
+        );
+
+        queued.finish();
+        app.update_configs(&[], &[]);
         assert!(!app.configs_being_processed.contains_key(&1));
     }
 
@@ -264,5 +275,33 @@ mod tests {
             .await
             .unwrap();
         assert!(app.error_receiver.as_mut().unwrap().try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn a_saturated_start_batch_does_not_block_stopping() {
+        let mut app = App::new(test_logger_state());
+        let slots = app.forwarding_slots.available_permits() as u32;
+        let _occupied = app
+            .forwarding_slots
+            .clone()
+            .acquire_many_owned(slots)
+            .await
+            .unwrap();
+
+        app.active_table = crate::tui::input::ActiveTable::Running;
+        app.running_configs = vec![create_test_config(410_061)];
+        app.table_state_running.select(Some(0));
+        crate::tui::input::handle_port_forwarding(
+            &mut app,
+            kftray_commons::utils::db_mode::DatabaseMode::Memory,
+        )
+        .await
+        .unwrap();
+
+        let receiver = app.error_receiver.as_mut().unwrap();
+        let reported = tokio::time::timeout(std::time::Duration::from_secs(2), receiver.recv())
+            .await
+            .expect("the stop must run while every start permit is held");
+        assert!(reported.is_some());
     }
 }

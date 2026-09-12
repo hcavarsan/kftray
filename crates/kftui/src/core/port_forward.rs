@@ -49,9 +49,22 @@ pub async fn start_port_forwarding_with_ssl(
         workload => return Err(format!("Unsupported workload type: {workload:?}")),
     };
 
-    if let Err(e) = result {
-        error!("Failed to start port forward: {e:?}");
-        return Err(format!("Failed to start port forward: {e:?}"));
+    let responses = match result {
+        Ok(responses) => responses,
+        Err(e) => {
+            error!("Failed to start port forward: {e:?}");
+            return Err(format!("Failed to start port forward: {e:?}"));
+        }
+    };
+    let failures: Vec<String> = responses
+        .into_iter()
+        .filter(|response| response.status != 0)
+        .map(|response| response.stderr)
+        .collect();
+    if !failures.is_empty() {
+        let message = failures.join("; ");
+        error!("Failed to start port forward: {message}");
+        return Err(format!("Failed to start port forward: {message}"));
     }
 
     Ok(())

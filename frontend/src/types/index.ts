@@ -26,6 +26,19 @@ export interface Config {
 
 export type PortForwardAction = 'starting' | 'stopping'
 
+export interface PortForwardResponse {
+  id: number | null
+  service: string
+  namespace: string
+  local_port: number
+  remote_port: number
+  context: string
+  stdout: string
+  stderr: string
+  status: number
+  protocol: string
+}
+
 type AuthMethod = 'none' | 'system' | 'token'
 
 export interface GitConfig {

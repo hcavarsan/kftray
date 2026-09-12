@@ -517,7 +517,7 @@ pub(super) async fn start_config(
     };
 
     match forward_result {
-        Ok((actual_local_port, handle)) => {
+        Ok((actual_local_port, mut handle)) => {
             let protocol_upper = protocol.to_uppercase();
             info!(
                 "{} port forwarding is set up on local port: {:?} for {}: {:?}",
@@ -540,6 +540,7 @@ pub(super) async fn start_config(
                 return Err(error);
             }
 
+            handle.set_config(config.clone());
             CHILD_PROCESSES.insert(config_id, handle);
             let timeout_callback = create_static_timeout_callback(mode);
 
@@ -637,25 +638,39 @@ pub(super) async fn start_config_locked(
     result
 }
 
+/// Failure placeholder mirroring [`stop_response`](super::stop) so a batch can
+/// report per-config outcomes. Returning a batch-level `Err` would discard the
+/// responses of the configs that did start, including their dynamically
+/// assigned local ports.
+pub(super) fn start_failure_response(config: &Config, error: String) -> CustomResponse {
+    CustomResponse {
+        id: config.id,
+        service: config.service.clone().unwrap_or_default(),
+        namespace: config.namespace.clone(),
+        local_port: config.local_port.unwrap_or_default(),
+        remote_port: config.remote_port.unwrap_or_default(),
+        context: config.context.clone().unwrap_or_default(),
+        protocol: config.protocol.clone(),
+        stdout: String::new(),
+        status: 1,
+        stderr: error,
+    }
+}
+
 pub async fn start_port_forward_with_mode(
     configs: Vec<Config>, protocol: &str, mode: DatabaseMode, ssl_override: bool,
 ) -> Result<Vec<CustomResponse>, String> {
-    let mut futures = stream::iter(configs)
-        .map(|config| start_config_locked(config, protocol, mode, ssl_override))
-        .buffer_unordered(16);
-    let mut responses = Vec::new();
-    let mut errors = Vec::new();
-    while let Some(result) = futures.next().await {
-        match result {
-            Ok(response) => responses.push(response),
-            Err(error) => errors.push(error),
-        }
-    }
-    if errors.is_empty() {
-        Ok(responses)
-    } else {
-        Err(errors.join("\n"))
-    }
+    let responses = stream::iter(configs)
+        .map(|config| async move {
+            match start_config_locked(config.clone(), protocol, mode, ssl_override).await {
+                Ok(response) => response,
+                Err(error) => start_failure_response(&config, error),
+            }
+        })
+        .buffer_unordered(16)
+        .collect()
+        .await;
+    Ok(responses)
 }
 
 #[cfg(test)]
@@ -693,13 +708,6 @@ mod tests {
         }
     }
 
-    fn setup_pod_config() -> Config {
-        let mut config = setup_test_config();
-        config.workload_type = Some("pod".to_string());
-        config.target = Some("app=test".to_string());
-        config
-    }
-
     fn setup_config_with_domain() -> Config {
         let mut config = setup_test_config();
         config.domain_enabled = Some(true);
@@ -725,39 +733,42 @@ mod tests {
 
     #[tokio::test]
     async fn test_start_port_forward_invalid_protocol() {
-        let result = start_port_forward_with_mode(
+        let responses = start_port_forward_with_mode(
             vec![setup_test_config()],
             "invalid",
             DatabaseMode::Memory,
             false,
         )
-        .await;
-        assert!(result.is_err());
+        .await
+        .unwrap();
+        assert_eq!(responses.len(), 1);
+        assert_ne!(responses[0].status, 0);
         assert!(!CHILD_PROCESSES.contains_key(&1));
     }
 
     #[tokio::test]
-    async fn test_start_port_forward_with_pod_label() {
-        let configs = vec![setup_pod_config()];
+    async fn a_failed_config_does_not_hide_its_siblings_results() {
+        let mut healthy = setup_config_with_domain();
+        healthy.id = Some(410_041);
+        let mut broken = setup_config_with_invalid_ip();
+        broken.id = Some(410_042);
 
-        let result = start_port_forward(configs, "tcp").await;
-        assert!(result.is_err());
-    }
+        let responses =
+            start_port_forward_with_mode(vec![healthy, broken], "tcp", DatabaseMode::Memory, false)
+                .await
+                .unwrap();
 
-    #[tokio::test]
-    async fn test_start_port_forward_with_domain_enabled() {
-        let configs = vec![setup_config_with_domain()];
-
-        let result = start_port_forward(configs, "tcp").await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_start_port_forward_with_invalid_ip() {
-        let configs = vec![setup_config_with_invalid_ip()];
-
-        let result = start_port_forward(configs, "tcp").await;
-        assert!(result.is_err());
+        assert_eq!(responses.len(), 2);
+        for response in &responses {
+            assert_ne!(response.status, 0);
+            assert!(!response.stderr.is_empty());
+        }
+        let mut ids: Vec<_> = responses
+            .iter()
+            .filter_map(|response| response.id)
+            .collect();
+        ids.sort_unstable();
+        assert_eq!(ids, vec![410_041, 410_042]);
     }
 
     #[tokio::test]
@@ -783,18 +794,24 @@ mod tests {
             let _listener = listener;
             std::future::pending::<anyhow::Result<()>>().await
         });
-        CHILD_PROCESSES.insert(
-            id,
-            crate::port_forward::PortForwardProcess::new(task, id.to_string()),
-        );
+        let mut existing = crate::port_forward::PortForwardProcess::new(task, id.to_string());
+        existing.set_config(Config {
+            id: Some(id),
+            ..setup_test_config()
+        });
+        CHILD_PROCESSES.insert(id, existing);
         let config = Config {
             id: Some(id),
             kubeconfig: Some("/nonexistent/isolated-test-kubeconfig".to_string()),
             ..setup_test_config()
         };
-        let result =
-            start_port_forward_with_mode(vec![config], "tcp", DatabaseMode::Memory, false).await;
-        assert!(result.is_err());
+        let responses =
+            start_port_forward_with_mode(vec![config], "tcp", DatabaseMode::Memory, false)
+                .await
+                .unwrap();
+        assert_eq!(responses.len(), 1);
+        assert_ne!(responses[0].status, 0);
+        assert!(responses[0].stderr.contains("already running"));
         assert!(tokio::net::TcpListener::bind(address).await.is_err());
         super::super::stop::stop_port_forward_with_mode(id.to_string(), DatabaseMode::Memory)
             .await

@@ -888,7 +888,7 @@ mod tests {
             std::thread::sleep(Duration::from_secs(3));
             Ok(())
         });
-        let process = crate::port_forward::PortForwardProcess::with_forwarder_and_token(
+        let mut process = crate::port_forward::PortForwardProcess::with_forwarder_and_token(
             stubborn,
             Arc::clone(&port_forwarder),
             "410031".to_owned(),

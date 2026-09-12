@@ -85,16 +85,8 @@ impl ConfigManager {
 
         if !other_configs.is_empty() {
             match kftray_portforward::kube::start_port_forward(other_configs, protocol).await {
-                Ok(_) => info!("Successfully restarted {protocol} port forwards"),
-                Err(e) => {
-                    if protocol == "udp" && e.contains("No ready pods available") {
-                        log::warn!(
-                            "UDP port forward restart skipped - no ready pods available: {e}"
-                        );
-                    } else {
-                        error!("Failed to restart {protocol} port forwards: {e}");
-                    }
-                }
+                Ok(responses) => report_restart_outcome(&responses, protocol, "port forwards"),
+                Err(e) => error!("Failed to restart {protocol} port forwards: {e}"),
             }
         }
 
@@ -120,13 +112,39 @@ impl ConfigManager {
 
             if !configs_to_restart.is_empty() {
                 match kftray_portforward::kube::deploy_and_forward_pod(configs_to_restart).await {
-                    Ok(_) => info!("Successfully restarted {protocol} proxy port forwards"),
-                    Err(e) => {
-                        error!("Failed to restart {protocol} proxy port forwards: {e}");
+                    Ok(responses) => {
+                        report_restart_outcome(&responses, protocol, "proxy port forwards")
                     }
+                    Err(e) => error!("Failed to restart {protocol} proxy port forwards: {e}"),
                 }
             }
         }
+    }
+}
+
+fn report_restart_outcome(
+    responses: &[kftray_commons::models::response::CustomResponse], protocol: &str, kind: &str,
+) {
+    let failures: Vec<&str> = responses
+        .iter()
+        .filter(|response| response.status != 0)
+        .map(|response| response.stderr.as_str())
+        .collect();
+    let restarted = responses.len() - failures.len();
+    if restarted > 0 {
+        info!("Restarted {restarted} {protocol} {kind}");
+    }
+    if failures.is_empty() {
+        return;
+    }
+    let message = failures.join("; ");
+    if protocol == "udp" && message.contains("No ready pods available") {
+        log::warn!("UDP port forward restart skipped - no ready pods available: {message}");
+    } else {
+        error!(
+            "Failed to restart {} {protocol} {kind}: {message}",
+            failures.len()
+        );
     }
 }
 

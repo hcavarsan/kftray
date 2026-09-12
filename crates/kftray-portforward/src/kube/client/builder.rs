@@ -261,7 +261,7 @@ pub async fn create_client_with_specific_context(
     init_path();
 
     let kubeconfig_paths = get_kubeconfig_paths_from_option(kubeconfig)?;
-    let (merged_kubeconfig, _, mut errors) = merge_kubeconfigs(&kubeconfig_paths)?;
+    let (merged_kubeconfig, mut errors) = merge_kubeconfigs(&kubeconfig_paths)?;
 
     match create_config_with_context(&merged_kubeconfig, context_name).await {
         Ok(config) => match create_client_with_config(&config).await {

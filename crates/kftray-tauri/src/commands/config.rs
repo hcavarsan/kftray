@@ -160,13 +160,27 @@ async fn restart_ssl_proxies_if_running() -> Result<(), String> {
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
 
         // Restart with the same protocol (assuming TCP for SSL)
-        if let Err(e) = start_port_forward(vec![config.clone()], "tcp").await {
-            warn!(
+        match start_port_forward(vec![config.clone()], "tcp").await {
+            Ok(responses) => {
+                let failures: Vec<&str> = responses
+                    .iter()
+                    .filter(|response| response.status != 0)
+                    .map(|response| response.stderr.as_str())
+                    .collect();
+                if failures.is_empty() {
+                    info!("Successfully restarted SSL proxy for config {}", config_id);
+                } else {
+                    warn!(
+                        "Failed to restart port forward for config {}: {}",
+                        config_id,
+                        failures.join("; ")
+                    );
+                }
+            }
+            Err(e) => warn!(
                 "Failed to restart port forward for config {}: {}",
                 config_id, e
-            );
-        } else {
-            info!("Successfully restarted SSL proxy for config {}", config_id);
+            ),
         }
     }
 

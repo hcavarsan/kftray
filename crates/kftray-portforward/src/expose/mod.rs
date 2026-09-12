@@ -165,6 +165,7 @@ pub(crate) async fn start_single_expose(
         let _ = delete_expose_resources(client, &config.namespace, &config_id.to_string()).await;
         return Err(error);
     }
+    pf_process.set_config(config.clone());
     CHILD_PROCESSES.insert(config_id, pf_process);
 
     info!("Expose tunnel fully established for config {}", config_id);

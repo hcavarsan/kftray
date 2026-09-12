@@ -128,13 +128,7 @@ async fn release_address_with_fallback(address: &str) {
 pub(crate) async fn delete_proxy_cluster_resources(
     client: Client, namespace: &str, config_id: i64,
 ) -> Result<(), String> {
-    let username: String = whoami::username()
-        .unwrap_or_else(|_| "unknown".to_string())
-        .to_lowercase()
-        .chars()
-        .filter(|character| character.is_alphanumeric())
-        .collect();
-    let prefix = format!("kftray-forward-{username}-");
+    let prefix = crate::kube::proxy::proxy_resource_prefix();
     let lp = ListParams::default().labels(&format!("config_id={config_id}"));
     let dp = DeleteParams {
         grace_period_seconds: Some(0),
@@ -235,7 +229,7 @@ pub async fn stop_all_port_forward_with_mode(
         .flatten()
         .filter_map(|config| config.id.map(|id| (id, config)))
         .collect();
-    let responses = stream::iter(ids)
+    let mut responses: Vec<CustomResponse> = stream::iter(ids)
         .map(|id| {
             let config = configs.get(&id).copied();
             async move {
@@ -248,13 +242,37 @@ pub async fn stop_all_port_forward_with_mode(
         .buffer_unordered(16)
         .collect()
         .await;
+
     if let Err(error) = configs_result {
-        warn!("Stopped every known forward but could not read configs: {error}");
+        warn!("Could not read configs while stopping every forward: {error}");
+        responses.push(enumeration_failure(format!(
+            "Could not read configs, so some forwards may not have been cleaned up: {error}"
+        )));
     }
     if let Err(error) = states_result {
-        warn!("Stopped every known forward but could not read config states: {error}");
+        warn!("Could not read config states while stopping every forward: {error}");
+        responses.push(enumeration_failure(format!(
+            "Could not read config states, so persisted forwards may have been missed: {error}"
+        )));
     }
     Ok(responses)
+}
+
+/// Failure response that is not tied to a single config, used when stop-all
+/// cannot enumerate everything it was supposed to stop.
+fn enumeration_failure(error: String) -> CustomResponse {
+    CustomResponse {
+        id: None,
+        service: String::new(),
+        namespace: String::new(),
+        local_port: 0,
+        remote_port: 0,
+        context: String::new(),
+        protocol: String::new(),
+        stdout: String::new(),
+        status: 1,
+        stderr: error,
+    }
 }
 
 pub async fn stop_port_forward(config_id: String) -> Result<CustomResponse, String> {
@@ -312,9 +330,12 @@ async fn stop_config(
     }
     let process = CHILD_PROCESSES.remove(&id);
     let existed = process.is_some();
-    if let Some((_, process)) = process {
+    let mut retained = None;
+    if let Some((_, mut process)) = process {
+        retained = process.config().cloned();
         process.cleanup_and_abort().await;
     }
+    let config = config.or(retained.as_ref());
     cancel_timeout_for_forward(id).await;
 
     let result = if let Some(config) = config {
@@ -390,7 +411,10 @@ async fn stop_config(
             Err(errors.join("; "))
         }
     } else if existed {
-        Ok(stop_response(id, None, None))
+        Err(format!(
+            "Stopped the local process for config {id} but could not load its configuration, so \
+             cluster resources, loopback addresses and host entries were left in place"
+        ))
     } else {
         Err(format!(
             "No port forwarding process found for config_id '{id}'"
@@ -442,6 +466,19 @@ mod tests {
 
     use super::*;
 
+    /// Mirrors the snapshot `start_config` stores: a plain local forward with
+    /// no cluster resources, loopback address or host entry to release.
+    fn local_config(id: i64) -> Config {
+        Config {
+            id: Some(id),
+            namespace: "default".to_string(),
+            service: Some("test-service".to_string()),
+            protocol: "tcp".to_string(),
+            workload_type: Some("service".to_string()),
+            ..Config::default()
+        }
+    }
+
     #[tokio::test]
     async fn stop_releases_listener_and_websocket_owner_before_returning() {
         let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
@@ -460,6 +497,7 @@ mod tests {
         });
         let mut process = PortForwardProcess::new(task, id.to_string());
         process.set_ws_client_handle(websocket);
+        process.set_config(local_config(id));
         CHILD_PROCESSES.insert(id, process);
 
         stop_port_forward_with_mode(id.to_string(), DatabaseMode::Memory)
@@ -468,6 +506,34 @@ mod tests {
 
         let _tcp = TcpListener::bind(tcp_address).await.unwrap();
         let _udp = UdpSocket::bind(udp_address).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn stop_uses_the_retained_config_when_the_database_lookup_fails() {
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let id = 410_051;
+        let task = tokio::spawn(std::future::pending::<anyhow::Result<()>>());
+        let mut process = PortForwardProcess::new(task, id.to_string());
+        process.set_config(Config {
+            id: Some(id),
+            workload_type: Some("proxy".to_string()),
+            protocol: "tcp".to_string(),
+            namespace: "default".to_string(),
+            context: Some("missing-context".to_string()),
+            kubeconfig: Some("/nonexistent/isolated-test-kubeconfig".to_string()),
+            ..Config::default()
+        });
+        CHILD_PROCESSES.insert(id, process);
+
+        let error = stop_port_forward_with_mode(id.to_string(), DatabaseMode::Memory)
+            .await
+            .expect_err("cluster cleanup must be attempted from the retained config");
+
+        assert!(!CHILD_PROCESSES.contains_key(&id));
+        assert!(
+            !error.contains("could not load its configuration"),
+            "the retained snapshot should have supplied the cleanup metadata: {error}"
+        );
     }
 
     #[tokio::test]
@@ -481,7 +547,9 @@ mod tests {
                 let _listener = listener;
                 std::future::pending::<anyhow::Result<()>>().await
             });
-            CHILD_PROCESSES.insert(id, PortForwardProcess::new(task, id.to_string()));
+            let mut process = PortForwardProcess::new(task, id.to_string());
+            process.set_config(local_config(id));
+            CHILD_PROCESSES.insert(id, process);
         }
         let udp = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let udp_address = udp.local_addr().unwrap();
@@ -489,7 +557,9 @@ mod tests {
             let _udp = udp;
             std::future::pending::<anyhow::Result<()>>().await
         });
-        CHILD_PROCESSES.insert(410_023, PortForwardProcess::new(task, "410023".to_string()));
+        let mut process = PortForwardProcess::new(task, "410023".to_string());
+        process.set_config(local_config(410_023));
+        CHILD_PROCESSES.insert(410_023, process);
 
         let responses = stop_all_port_forward_with_mode(DatabaseMode::Memory)
             .await

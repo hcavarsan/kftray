@@ -111,7 +111,8 @@ pub async fn list_kube_contexts(kubeconfig: Option<String>) -> KubeResult<Vec<Ku
 
     let contexts = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<String>> {
         let paths = get_kubeconfig_paths_from_option(kubeconfig)?;
-        let (_, contexts, errors) = merge_kubeconfigs(&paths)?;
+        let (merged, errors) = merge_kubeconfigs(&paths)?;
+        let contexts = list_contexts(&merged);
         if contexts.is_empty() && !errors.is_empty() {
             anyhow::bail!(errors.join("\n"));
         }

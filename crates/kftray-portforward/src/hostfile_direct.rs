@@ -56,16 +56,7 @@ impl DirectHostfileManager {
             }
         }
 
-        self.reconciled.store(true, Ordering::Relaxed);
-
-        {
-            let mut needs_update = self.needs_update.lock().unwrap_or_else(|e| {
-                error!("Failed to acquire needs_update lock: {e}");
-                e.into_inner()
-            });
-            *needs_update = true;
-        }
-
+        self.mark_dirty();
         self.ensure_writer_running();
 
         Ok(())
@@ -82,19 +73,11 @@ impl DirectHostfileManager {
             }
         };
 
-        let first_pass = !self.reconciled.swap(true, Ordering::Relaxed);
-        if !existed && !first_pass {
+        if !existed && self.reconciled.load(Ordering::Relaxed) {
             return Ok(());
         }
 
-        {
-            let mut needs_update = self.needs_update.lock().unwrap_or_else(|e| {
-                error!("Failed to acquire needs_update lock: {e}");
-                e.into_inner()
-            });
-            *needs_update = true;
-        }
-
+        self.mark_dirty();
         self.ensure_writer_running();
 
         Ok(())
@@ -115,9 +98,25 @@ impl DirectHostfileManager {
             }
         }
 
-        self.reconciled.store(true, Ordering::Relaxed);
+        match self.update_hosts_file() {
+            Ok(()) => {
+                self.reconciled.store(true, Ordering::Relaxed);
+                Ok(())
+            }
+            Err(error) => {
+                self.mark_dirty();
+                self.ensure_writer_running();
+                Err(error)
+            }
+        }
+    }
 
-        self.update_hosts_file()
+    fn mark_dirty(&self) {
+        let mut needs_update = self.needs_update.lock().unwrap_or_else(|e| {
+            error!("Failed to acquire needs_update lock: {e}");
+            e.into_inner()
+        });
+        *needs_update = true;
     }
 
     pub fn list_host_entries(&self) -> std::io::Result<Vec<(String, HostEntry)>> {
@@ -145,16 +144,17 @@ impl DirectHostfileManager {
             let entries = self.entries.clone();
             let needs_update = self.needs_update.clone();
             let writer_running = self.writer_running.clone();
+            let reconciled = self.reconciled.clone();
 
             thread::spawn(move || {
-                Self::batch_writer_loop(entries, needs_update, writer_running);
+                Self::batch_writer_loop(entries, needs_update, writer_running, reconciled);
             });
         }
     }
 
     fn batch_writer_loop(
         entries: Arc<RwLock<HostEntriesMap>>, needs_update: Arc<Mutex<bool>>,
-        writer_running: Arc<Mutex<bool>>,
+        writer_running: Arc<Mutex<bool>>, reconciled: Arc<AtomicBool>,
     ) {
         loop {
             thread::sleep(Duration::from_millis(BATCH_DELAY_MS));
@@ -174,8 +174,16 @@ impl DirectHostfileManager {
             };
 
             if should_update {
-                if let Err(e) = Self::update_hosts_file_static(&entries) {
-                    error!("Failed to write hosts file in background writer: {e}");
+                match Self::update_hosts_file_static(&entries) {
+                    Ok(()) => reconciled.store(true, Ordering::Relaxed),
+                    Err(e) => {
+                        error!("Failed to write hosts file in background writer: {e}");
+                        let mut update_flag = needs_update.lock().unwrap_or_else(|e| {
+                            error!("Failed to re-arm the pending hosts write: {e}");
+                            e.into_inner()
+                        });
+                        *update_flag = true;
+                    }
                 }
             } else {
                 let pending = {

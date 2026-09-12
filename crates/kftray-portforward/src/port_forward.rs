@@ -2,6 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use dashmap::DashMap;
+use kftray_commons::models::config_model::Config;
 use lazy_static::lazy_static;
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
@@ -18,22 +19,30 @@ use crate::kube::models::{
     Target,
 };
 
+/// Owns the tasks backing a single forward. Dropping it aborts them, so a
+/// startup future that is cancelled before the process reaches
+/// [`CHILD_PROCESSES`] cannot leave an untracked listener running.
 pub struct PortForwardProcess {
-    pub handle: JoinHandle<anyhow::Result<()>>,
+    handle: Option<JoinHandle<anyhow::Result<()>>>,
     pub direct_forwarder: Option<Arc<PortForwarder>>,
     pub cancellation_token: CancellationToken,
     pub config_id: String,
-    pub ws_client_handle: Option<JoinHandle<()>>,
+    ws_client_handle: Option<JoinHandle<()>>,
+    /// Snapshot taken at registration so a stop can still release cluster
+    /// resources, loopback addresses and host entries when the configuration
+    /// has since been deleted from the database.
+    config: Option<Config>,
 }
 
 impl PortForwardProcess {
     pub fn new(handle: JoinHandle<anyhow::Result<()>>, config_id: String) -> Self {
         Self {
-            handle,
+            handle: Some(handle),
             direct_forwarder: None,
             cancellation_token: CancellationToken::new(),
             config_id,
             ws_client_handle: None,
+            config: None,
         }
     }
 
@@ -42,11 +51,12 @@ impl PortForwardProcess {
         cancellation_token: CancellationToken,
     ) -> Self {
         Self {
-            handle,
+            handle: Some(handle),
             direct_forwarder: Some(forwarder),
             cancellation_token,
             config_id,
             ws_client_handle: None,
+            config: None,
         }
     }
 
@@ -54,32 +64,43 @@ impl PortForwardProcess {
         self.ws_client_handle = Some(ws_handle);
     }
 
+    pub fn set_config(&mut self, config: Config) {
+        self.config = Some(config);
+    }
+
+    pub fn config(&self) -> Option<&Config> {
+        self.config.as_ref()
+    }
+
     /// Cleanup and abort the port forward process.
     /// Uses timeouts to prevent blocking on shutdown operations.
-    pub async fn cleanup_and_abort(self) {
+    pub async fn cleanup_and_abort(&mut self) {
         const SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 
-        let Self {
-            handle,
-            direct_forwarder,
-            cancellation_token,
-            config_id,
-            ws_client_handle,
-        } = self;
+        self.cancellation_token.cancel();
+        let handle = self.handle.take();
+        let ws_client_handle = self.ws_client_handle.take();
+        let direct_forwarder = self.direct_forwarder.take();
 
-        cancellation_token.cancel();
-        handle.abort();
+        if let Some(handle) = &handle {
+            handle.abort();
+        }
         if let Some(handle) = &ws_client_handle {
             handle.abort();
         }
 
         let tasks = async {
+            let forwarding = async {
+                if let Some(handle) = handle {
+                    let _ = handle.await;
+                }
+            };
             let websocket = async {
                 if let Some(handle) = ws_client_handle {
                     let _ = handle.await;
                 }
             };
-            let _ = tokio::join!(handle, websocket);
+            tokio::join!(forwarding, websocket);
         };
         let shutdown = async {
             if let Some(forwarder) = direct_forwarder {
@@ -91,21 +112,26 @@ impl PortForwardProcess {
             timeout(SHUTDOWN_TIMEOUT, shutdown)
         );
         if tasks.is_err() || shutdown.is_err() {
-            tracing::warn!("Port-forward shutdown timed out for config: {config_id}");
+            tracing::warn!(
+                "Port-forward shutdown timed out for config: {}",
+                self.config_id
+            );
         }
     }
 
     pub fn cancel(&self) {
         tracing::info!("Cancelling port forward for config: {}", self.config_id);
         self.cancellation_token.cancel();
-        self.handle.abort();
-        if let Some(handle) = &self.ws_client_handle {
-            handle.abort();
-        }
+        self.abort();
     }
 
     pub fn abort(&self) {
-        self.handle.abort();
+        if let Some(handle) = &self.handle {
+            handle.abort();
+        }
+        if let Some(handle) = &self.ws_client_handle {
+            handle.abort();
+        }
     }
 
     pub async fn get_current_active_pod(&self) -> Option<String> {
@@ -114,6 +140,13 @@ impl PortForwardProcess {
         } else {
             None
         }
+    }
+}
+
+impl Drop for PortForwardProcess {
+    fn drop(&mut self) {
+        self.cancellation_token.cancel();
+        self.abort();
     }
 }
 
@@ -335,6 +368,24 @@ mod tests {
 
         process.cleanup_and_abort().await;
 
+        assert!(forwarding_task.is_finished());
+        assert!(websocket_task.is_finished());
+    }
+
+    #[tokio::test]
+    async fn dropping_an_unregistered_process_aborts_its_tasks() {
+        let handle = tokio::spawn(std::future::pending::<anyhow::Result<()>>());
+        let forwarding_task = handle.abort_handle();
+        let websocket = tokio::spawn(std::future::pending::<()>());
+        let websocket_task = websocket.abort_handle();
+        let mut process = PortForwardProcess::new(handle, "dropped".to_owned());
+        process.set_ws_client_handle(websocket);
+        let cancellation = process.cancellation_token.clone();
+
+        drop(process);
+        tokio::task::yield_now().await;
+
+        assert!(cancellation.is_cancelled());
         assert!(forwarding_task.is_finished());
         assert!(websocket_task.is_finished());
     }

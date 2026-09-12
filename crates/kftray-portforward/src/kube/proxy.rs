@@ -96,6 +96,19 @@ impl Drop for ProxyStart {
     }
 }
 
+/// Name prefix shared by every proxy resource this user creates. Config ids come
+/// from a local database and are not unique inside a namespace, so anything that
+/// selects resources by `config_id` must also match this prefix.
+pub(crate) fn proxy_resource_prefix() -> String {
+    let username: String = whoami::username()
+        .unwrap_or_else(|_| "unknown".to_string())
+        .to_lowercase()
+        .chars()
+        .filter(|character| character.is_alphanumeric())
+        .collect();
+    format!("kftray-forward-{username}-")
+}
+
 #[derive(Clone, Copy)]
 struct ProxyStartOptions<'a> {
     mode: DatabaseMode,
@@ -107,32 +120,55 @@ pub async fn deploy_and_forward_pod(configs: Vec<Config>) -> Result<Vec<CustomRe
     deploy_and_forward_pod_with_mode(configs, DatabaseMode::File, false).await
 }
 
+type RegisteredProxyBatch = (Vec<(Config, ProxyStart)>, Vec<(Config, String)>);
+
+/// Registers every config in [`STARTING_PROXIES`] before any work is buffered.
+/// Registration has to be eager: `buffer_unordered` only polls a window of the
+/// batch, and a stop-all that snapshots the map while the tail is still
+/// unpolled would let those configs start after the snapshot.
+fn register_proxy_batch(configs: Vec<Config>) -> RegisteredProxyBatch {
+    let mut queued = Vec::new();
+    let mut rejected = Vec::new();
+    for config in configs {
+        match config.id.ok_or_else(|| "Config has no ID".to_string()) {
+            Ok(id) => match ProxyStart::new(id) {
+                Ok(startup) => queued.push((config, startup)),
+                Err(error) => rejected.push((config, error)),
+            },
+            Err(error) => rejected.push((config, error)),
+        }
+    }
+    (queued, rejected)
+}
+
 pub async fn deploy_and_forward_pod_with_mode(
     configs: Vec<Config>, mode: DatabaseMode, ssl_override: bool,
 ) -> Result<Vec<CustomResponse>, String> {
-    let mut futures = stream::iter(configs)
-        .map(|config| process_single_proxy_config(config, mode, ssl_override))
-        .buffer_unordered(16);
-    let mut responses = Vec::new();
-    let mut errors = Vec::new();
-    while let Some(result) = futures.next().await {
-        match result {
-            Ok(response) => responses.push(response),
-            Err(error) => errors.push(error),
-        }
-    }
-    if errors.is_empty() {
-        Ok(responses)
-    } else {
-        Err(errors.join("; "))
-    }
+    let (queued, rejected) = register_proxy_batch(configs);
+
+    let mut responses: Vec<CustomResponse> = stream::iter(queued)
+        .map(|(config, startup)| async move {
+            match process_single_proxy_config(config.clone(), startup, mode, ssl_override).await {
+                Ok(response) => response,
+                Err(error) => super::start::start_failure_response(&config, error),
+            }
+        })
+        .buffer_unordered(16)
+        .collect()
+        .await;
+    responses.extend(
+        rejected
+            .into_iter()
+            .map(|(config, error)| super::start::start_failure_response(&config, error)),
+    );
+    Ok(responses)
 }
 
 async fn process_single_proxy_config(
-    config: Config, mode: DatabaseMode, ssl_override: bool,
+    config: Config, startup: ProxyStart, mode: DatabaseMode, ssl_override: bool,
 ) -> Result<CustomResponse, String> {
-    let id = config.id.ok_or("Config has no ID")?;
-    let startup = ProxyStart::new(id)?;
+    let id = startup.id;
+
     let lock = crate::kube::proxy_recovery::acquire_recovery_lock(id).await;
     let guard = tokio::select! {
         biased;
@@ -183,17 +219,11 @@ pub(super) async fn start_proxy_config(
         .map(|c| c.to_ascii_lowercase())
         .collect();
 
-    let username = whoami::username()
-        .unwrap_or_else(|_| "unknown".to_string())
-        .to_lowercase();
-    let clean_username: String = username
-        .chars()
-        .filter(|c: &char| c.is_alphanumeric())
-        .collect();
-
-    let hashed_name =
-        format!("kftray-forward-{clean_username}-{protocol}-{timestamp}-{random_string}")
-            .to_lowercase();
+    let hashed_name = format!(
+        "{}{protocol}-{timestamp}-{random_string}",
+        proxy_resource_prefix()
+    )
+    .to_lowercase();
 
     let config_id_str = config
         .id
@@ -256,9 +286,8 @@ pub(super) async fn start_proxy_config(
     }
 }
 
-fn prepare_relay_startup(spec: &mut PodSpec, port: u16) -> Result<String, String> {
-    let index = spec
-        .containers
+fn relay_container_index(spec: &PodSpec) -> usize {
+    spec.containers
         .iter()
         .position(|container| {
             container
@@ -266,7 +295,17 @@ fn prepare_relay_startup(spec: &mut PodSpec, port: u16) -> Result<String, String
                 .as_ref()
                 .is_some_and(|env| env.iter().any(|variable| variable.name == "LOCAL_PORT"))
         })
-        .unwrap_or(0);
+        .unwrap_or(0)
+}
+
+pub(crate) fn relay_container_name(spec: &PodSpec) -> Option<String> {
+    spec.containers
+        .get(relay_container_index(spec))
+        .map(|container| container.name.clone())
+}
+
+fn prepare_relay_startup(spec: &mut PodSpec, port: u16) -> Result<String, String> {
+    let index = relay_container_index(spec);
     let container = spec
         .containers
         .get_mut(index)
@@ -284,7 +323,7 @@ fn prepare_relay_startup(spec: &mut PodSpec, port: u16) -> Result<String, String
     Ok(container.name.clone())
 }
 
-fn relay_started(pod: Option<&Pod>, container_name: &str) -> bool {
+pub(crate) fn relay_started(pod: Option<&Pod>, container_name: &str) -> bool {
     pod.is_some_and(|pod| {
         pod.metadata.deletion_timestamp.is_none()
             && pod.status.as_ref().is_some_and(|status| {
@@ -559,6 +598,33 @@ mod tests {
     use super::*;
 
     #[test]
+    fn every_batch_config_registers_before_any_is_buffered() {
+        let ids: Vec<i64> = (930_100..930_130).collect();
+        let configs: Vec<Config> = ids
+            .iter()
+            .map(|id| Config {
+                id: Some(*id),
+                ..Default::default()
+            })
+            .collect();
+
+        let (queued, errors) = register_proxy_batch(configs);
+
+        assert!(errors.is_empty());
+        assert_eq!(queued.len(), ids.len());
+        for id in &ids {
+            assert!(
+                STARTING_PROXIES.contains_key(id),
+                "config {id} must be cancellable by stop-all before its turn in the buffer"
+            );
+        }
+        drop(queued);
+        for id in &ids {
+            assert!(!STARTING_PROXIES.contains_key(id));
+        }
+    }
+
+    #[test]
     fn test_render_json_template_owned() {
         let template = r#"{
             "name": "{hashed_name}",
@@ -692,8 +758,11 @@ mod tests {
             ingress_annotations: None,
         };
 
-        let result = deploy_and_forward_pod(vec![config]).await;
-        assert!(result.is_err());
+        let responses = deploy_and_forward_pod(vec![config]).await.unwrap();
+        assert_eq!(responses.len(), 1);
+        assert_eq!(responses[0].id, Some(1));
+        assert_ne!(responses[0].status, 0);
+        assert!(!responses[0].stderr.is_empty());
     }
 
     #[test]

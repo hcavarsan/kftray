@@ -3768,6 +3768,7 @@ dependencies = [
  "tempfile",
  "throbber-widgets-tui",
  "tokio",
+ "tokio-util",
  "tui-logger",
  "uuid",
 ]

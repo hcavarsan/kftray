@@ -458,7 +458,7 @@ impl ProxyRecoveryManager {
 // ============================================================================
 
 async fn cleanup_child_processes_for_config(config_id: i64) {
-    if let Some((_, process)) = crate::port_forward::CHILD_PROCESSES.remove(&config_id) {
+    if let Some((_, mut process)) = crate::port_forward::CHILD_PROCESSES.remove(&config_id) {
         process.cleanup_and_abort().await;
     }
 }
@@ -520,13 +520,21 @@ pub async fn recover_deployment(
     let deployments: kube::Api<k8s_openapi::api::apps::v1::Deployment> =
         kube::Api::namespaced(client.clone(), namespace);
 
+    let prefix = crate::kube::proxy::proxy_resource_prefix();
     let deployment = deployments
         .list(&kube::api::ListParams::default().labels(&format!("config_id={config_id}")))
         .await
         .map_err(|e| anyhow::anyhow!("Failed to query deployment for config {}: {}", config_id, e))?
         .items
         .into_iter()
-        .find(|deployment| deployment.metadata.deletion_timestamp.is_none());
+        .find(|deployment| {
+            deployment.metadata.deletion_timestamp.is_none()
+                && deployment
+                    .metadata
+                    .name
+                    .as_ref()
+                    .is_some_and(|name| name.starts_with(&prefix))
+        });
 
     let Some(deployment) = deployment else {
         log::warn!(
@@ -535,6 +543,12 @@ pub async fn recover_deployment(
         );
         return recover_bare_pod(config, client, mode, ssl_override, cancellation).await;
     };
+    let container_name = deployment
+        .spec
+        .as_ref()
+        .and_then(|spec| spec.template.spec.as_ref())
+        .and_then(crate::kube::proxy::relay_container_name)
+        .ok_or_else(|| anyhow::anyhow!("Proxy deployment has no relay container"))?;
     let hashed_name = deployment
         .metadata
         .name
@@ -551,15 +565,7 @@ pub async fn recover_deployment(
     futures::pin_mut!(watcher);
     tokio::time::timeout(Duration::from_secs(POD_READY_TIMEOUT_SECS), async {
         while let Some(pod) = watcher.try_next().await? {
-            if pod.metadata.deletion_timestamp.is_none()
-                && pod.status.as_ref().is_some_and(|status| {
-                    status.conditions.as_ref().is_some_and(|conditions| {
-                        conditions.iter().any(|condition| {
-                            condition.type_ == "Ready" && condition.status == "True"
-                        })
-                    })
-                })
-            {
+            if crate::kube::proxy::relay_started(Some(&pod), &container_name) {
                 if config.protocol.eq_ignore_ascii_case("udp") {
                     cleanup_child_processes_for_config(config_id).await;
                     let mut current_config = config.clone();
@@ -846,7 +852,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn repeated_recovery_uses_the_current_deployment_identity() {
+    async fn repeated_recovery_uses_the_current_owned_deployment() {
         use http::{
             Method,
             Request,
@@ -863,8 +869,14 @@ mod tests {
             protocol: "tcp".to_string(),
             ..Config::default()
         };
+        let prefix = crate::kube::proxy::proxy_resource_prefix();
+        let owned: Vec<String> = ["a", "b"]
+            .iter()
+            .map(|suffix| format!("{prefix}tcp-1-{suffix}"))
+            .collect();
+        let expected = owned.clone();
         let server = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
-            for name in ["replacement-a", "replacement-b"] {
+            for name in expected {
                 let (request, send) = requests.next_request().await.unwrap();
                 assert_eq!(request.method(), Method::GET);
                 assert_eq!(
@@ -878,12 +890,19 @@ mod tests {
                         && query.contains("420051"),
                     "{query}"
                 );
+                let relay = serde_json::json!({
+                    "spec": {"template": {"spec": {"containers": [{
+                        "name": "kftray-relay",
+                        "env": [{"name": "LOCAL_PORT", "value": "8080"}]
+                    }]}}}
+                });
                 send.send_response(Response::builder().body(Body::from(
                     serde_json::to_vec(&serde_json::json!({
                         "metadata":{"resourceVersion":"1"},
                         "items":[
-                            {"metadata":{"name":"retiring-deployment","deletionTimestamp":"2026-09-11T00:00:00Z"}},
-                            {"metadata":{"name":name}}
+                            {"metadata":{"name":format!("{name}-retiring"),"deletionTimestamp":"2026-09-11T00:00:00Z"},"spec":relay["spec"]},
+                            {"metadata":{"name":"someone-elses-deployment"},"spec":relay["spec"]},
+                            {"metadata":{"name":name},"spec":relay["spec"]}
                         ]
                     })).unwrap()
                 )).unwrap());
@@ -894,7 +913,7 @@ mod tests {
                 let query = request.uri().query().unwrap_or_default();
                 assert!(
                     query.contains("labelSelector=")
-                        && query.contains(name)
+                        && query.contains(&name)
                         && query.contains("config_id")
                         && query.contains("420051"),
                     "{query}"
@@ -904,8 +923,21 @@ mod tests {
                         .body(Body::from(
                             serde_json::to_vec(&serde_json::json!({
                                 "metadata":{"resourceVersion":"1"},
-                                "items":[{"metadata":{"name":format!("{name}-pod")},
-                                    "status":{"conditions":[{"type":"Ready","status":"True"}]}}]
+                                "items":[{
+                                    "metadata":{"name":format!("{name}-pod")},
+                                    "status":{
+                                        "phase":"Running",
+                                        "conditions":[{"type":"Ready","status":"False"}],
+                                        "containerStatuses":[{
+                                            "name":"kftray-relay",
+                                            "started":true,
+                                            "ready":false,
+                                            "restartCount":0,
+                                            "image":"kftray-server",
+                                            "imageID":""
+                                        }]
+                                    }
+                                }]
                             }))
                             .unwrap(),
                         ))
@@ -915,7 +947,7 @@ mod tests {
         }));
         let cancellation = CancellationToken::new();
         tokio::time::timeout(Duration::from_secs(2), async {
-            for _ in 0..2 {
+            for _ in 0..owned.len() {
                 recover_deployment(&config, &client, DatabaseMode::Memory, false, &cancellation)
                     .await
                     .unwrap();

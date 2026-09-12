@@ -17,7 +17,7 @@ import Footer from '@/components/Footer'
 import PortForwardTable from '@/components/PortForwardTable'
 import { toaster } from '@/components/ui/toaster'
 import { useSyncManager } from '@/hooks/useSyncManager'
-import type { Config, PortForwardAction } from '@/types'
+import type { Config, PortForwardAction, PortForwardResponse } from '@/types'
 
 const AddConfigModal = lazy(() => import('@/components/AddConfigModal'))
 const AutoImportModal = lazy(() => import('@/components/AutoImportModal'))
@@ -402,24 +402,32 @@ const KFTray = () => {
   }
 
   const handleSaveConfig = async (_configToSave: Config) => {
+    const wasRunning = Boolean(
+      isEdit && configs.find(conf => conf.id === newConfig.id)?.is_running,
+    )
+
+    if (isEdit && pendingConfigActionsRef.current.has(newConfig.id)) {
+      toaster.error({
+        title: 'Error',
+        description: 'This configuration is busy. Try again once it settles.',
+        duration: 1000,
+      })
+
+      return
+    }
+
+    if (wasRunning) {
+      markPending(newConfig.id, 'stopping')
+    }
+
     try {
       const updatedConfigToSave: Config = {
         ...newConfig,
         id: isEdit ? newConfig.id : 0,
       }
-      let wasRunning = false
-      const originalConfigsRunningState = new Map(
-        configs.map(conf => [conf.id, conf.is_running]),
-      )
 
-      if (isEdit && originalConfigsRunningState.get(newConfig.id)) {
-        wasRunning = true
-        markPending(newConfig.id, 'stopping')
-        try {
-          await stopPortForwardingForConfig(newConfig)
-        } finally {
-          clearPending(newConfig.id)
-        }
+      if (wasRunning) {
+        await stopPortForwardingForConfig(newConfig)
       }
 
       if (isEdit) {
@@ -430,11 +438,7 @@ const KFTray = () => {
 
       if (wasRunning) {
         markPending(newConfig.id, 'starting')
-        try {
-          await startPortForwardingForConfig(newConfig)
-        } finally {
-          clearPending(newConfig.id)
-        }
+        await startPortForwardingForConfig(newConfig)
       }
 
       toaster.success({
@@ -450,6 +454,10 @@ const KFTray = () => {
         description: `Failed to ${isEdit ? 'update' : 'add'} configuration.`,
         duration: 1000,
       })
+    } finally {
+      if (wasRunning) {
+        clearPending(newConfig.id)
+      }
     }
   }
 
@@ -488,22 +496,34 @@ const KFTray = () => {
   }
 
   const startPortForwardingForConfig = async (config: Config) => {
-    if (config.workload_type === 'expose') {
-      await invoke('start_port_forward_tcp_cmd', { configs: [config] })
-    } else if (
-      (config.workload_type === 'service' || config.workload_type === 'pod') &&
-      config.protocol === 'tcp'
+    let responses: PortForwardResponse[]
+
+    if (
+      config.workload_type === 'expose' ||
+      ((config.workload_type === 'service' || config.workload_type === 'pod') &&
+        config.protocol === 'tcp')
     ) {
-      await invoke('start_port_forward_tcp_cmd', { configs: [config] })
+      responses = await invoke('start_port_forward_tcp_cmd', {
+        configs: [config],
+      })
     } else if (
       config.workload_type.startsWith('proxy') ||
       ((config.workload_type === 'service' || config.workload_type === 'pod') &&
         config.protocol === 'udp')
     ) {
-      await invoke('deploy_and_forward_pod_cmd', { configs: [config] })
+      responses = await invoke('deploy_and_forward_pod_cmd', {
+        configs: [config],
+      })
     } else {
       throw new Error(`Unsupported workload type: ${config.workload_type}`)
     }
+
+    const failure = responses.find(response => response.status !== 0)
+
+    if (failure) {
+      throw new Error(failure.stderr || 'Failed to start port forwarding.')
+    }
+
     configRefreshVersion.current += 1
     setConfigs(current =>
       current.map(item =>

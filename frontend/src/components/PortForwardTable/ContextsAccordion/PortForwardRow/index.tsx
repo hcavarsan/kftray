@@ -583,6 +583,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
               <MenuItem
                 className='menu-item'
                 value='edit'
+                disabled={isPending}
                 onClick={() => handleEditConfig(config.id)}
               >
                 <Box as={Pencil} width='12px' height='12px' />
@@ -603,6 +604,7 @@ const PortForwardRow: React.FC<PortForwardRowProps> = ({
               <MenuItem
                 className='menu-item'
                 value='delete'
+                disabled={isPending}
                 onClick={handleOpenDeleteDialog}
               >
                 <Box as={Trash2} width='12px' height='12px' />

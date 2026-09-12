@@ -9,6 +9,7 @@ use futures::TryStreamExt;
 use k8s_openapi::api::{
     apps::v1::Deployment,
     core::v1::{
+        Container,
         Pod,
         Probe,
         Service,
@@ -223,9 +224,11 @@ async fn create_deployment(
         .containers
         .get_mut(index)
         .ok_or("Expose deployment must contain a container")?;
+    let websocket_port = container_env_port(container, "WEBSOCKET_PORT", 9999);
+    let http_port = container_env_port(container, "HTTP_PORT", 8080);
     container.startup_probe.get_or_insert_with(|| Probe {
         tcp_socket: Some(TCPSocketAction {
-            port: IntOrString::Int(9999),
+            port: IntOrString::Int(websocket_port),
             ..Default::default()
         }),
         period_seconds: Some(1),
@@ -235,7 +238,7 @@ async fn create_deployment(
     });
     container.readiness_probe.get_or_insert_with(|| Probe {
         tcp_socket: Some(TCPSocketAction {
-            port: IntOrString::Int(8080),
+            port: IntOrString::Int(http_port),
             ..Default::default()
         }),
         period_seconds: Some(1),
@@ -251,6 +254,18 @@ async fn create_deployment(
 
     info!("Deployment created successfully");
     Ok(())
+}
+
+/// Reads a port from a container's environment so injected probes follow a
+/// customized manifest instead of the default template's ports.
+fn container_env_port(container: &Container, name: &str, fallback: i32) -> i32 {
+    container
+        .env
+        .as_ref()
+        .and_then(|env| env.iter().find(|variable| variable.name == name))
+        .and_then(|variable| variable.value.as_deref())
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(fallback)
 }
 
 async fn wait_for_pod_ready(

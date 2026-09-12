@@ -284,10 +284,11 @@ pub struct App {
     pub http_logs_replay_result: Option<String>,
     pub http_logs_replay_in_progress: bool,
     pub throbber_state: throbber_widgets_tui::ThrobberState,
-    pub configs_being_processed:
-        std::collections::HashMap<i64, (Arc<AtomicBool>, std::time::Instant)>,
+    pub configs_being_processed: std::collections::HashMap<i64, Arc<PendingForward>>,
     pub forwarding_tasks: tokio::task::JoinSet<()>,
     pub forwarding_slots: Arc<tokio::sync::Semaphore>,
+    pub stop_slots: Arc<tokio::sync::Semaphore>,
+    pub forwarding_cancel: tokio_util::sync::CancellationToken,
     pub error_receiver: Option<tokio::sync::mpsc::UnboundedReceiver<String>>,
     pub error_sender: Option<tokio::sync::mpsc::UnboundedSender<String>>,
     pub search_query: String,
@@ -376,6 +377,8 @@ impl App {
             configs_being_processed: std::collections::HashMap::new(),
             forwarding_tasks: tokio::task::JoinSet::new(),
             forwarding_slots: Arc::new(tokio::sync::Semaphore::new(FORWARD_DISPATCH_CONCURRENCY)),
+            stop_slots: Arc::new(tokio::sync::Semaphore::new(FORWARD_DISPATCH_CONCURRENCY)),
+            forwarding_cancel: tokio_util::sync::CancellationToken::new(),
             error_receiver: Some(error_receiver),
             error_sender: Some(error_sender),
             search_query: String::new(),
@@ -389,9 +392,30 @@ impl App {
         }
     }
 
+    /// Cancels in-flight forwarding work and drains it under a deadline, so a
+    /// stalled operation cannot hold the terminal in raw mode on exit.
     pub async fn finish_forwarding(&mut self) {
+        self.forwarding_cancel.cancel();
         self.forwarding_slots.close();
-        while self.forwarding_tasks.join_next().await.is_some() {}
+        self.stop_slots.close();
+
+        let drain = async { while self.forwarding_tasks.join_next().await.is_some() {} };
+        if tokio::time::timeout(FORWARD_SHUTDOWN_TIMEOUT, drain)
+            .await
+            .is_ok()
+        {
+            return;
+        }
+
+        log::warn!("Forwarding tasks did not finish in time; aborting them");
+        self.forwarding_tasks.abort_all();
+        let drain = async { while self.forwarding_tasks.join_next().await.is_some() {} };
+        if tokio::time::timeout(FORWARD_SHUTDOWN_TIMEOUT, drain)
+            .await
+            .is_err()
+        {
+            log::error!("Abandoning forwarding tasks that ignored abort");
+        }
     }
 
     fn matches_search_query(config: &Config, query_lower: &str) -> bool {
@@ -670,11 +694,13 @@ impl App {
         self.update_filtered_configs();
 
         let now = std::time::Instant::now();
-        self.configs_being_processed
-            .retain(|_, (flag, started_at)| {
-                !flag.load(Ordering::Relaxed)
-                    && now.duration_since(*started_at) <= PROCESSING_WATCHDOG
-            });
+        self.configs_being_processed.retain(|_, pending| {
+            if !pending.is_active() {
+                return false;
+            }
+            pending.abort_if_stalled(now);
+            true
+        });
         while self.forwarding_tasks.try_join_next().is_some() {}
 
         let mut new_errors = Vec::new();
@@ -1405,13 +1431,80 @@ pub fn toggle_row_selection(app: &mut App) {
 }
 
 const FORWARD_DISPATCH_CONCURRENCY: usize = 10;
+const FORWARD_SHUTDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 const PROCESSING_WATCHDOG: std::time::Duration = std::time::Duration::from_secs(30);
 
-struct ProcessingFlag(Arc<AtomicBool>);
+/// Tracks one dispatched start/stop. The watchdog measures only the time the
+/// operation actually runs, so a config waiting behind the concurrency limit
+/// keeps its busy indicator and its exclusion from a second dispatch.
+pub struct PendingForward {
+    done: AtomicBool,
+    running_since: std::sync::Mutex<Option<std::time::Instant>>,
+    abort: std::sync::Mutex<Option<tokio::task::AbortHandle>>,
+    aborted: AtomicBool,
+}
+
+impl PendingForward {
+    pub(crate) fn new() -> Self {
+        Self {
+            done: AtomicBool::new(false),
+            running_since: std::sync::Mutex::new(None),
+            abort: std::sync::Mutex::new(None),
+            aborted: AtomicBool::new(false),
+        }
+    }
+
+    pub fn is_active(&self) -> bool {
+        !self.done.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn finish(&self) {
+        self.done.store(true, Ordering::Relaxed);
+    }
+
+    pub(crate) fn mark_running_at(&self, at: std::time::Instant) {
+        if let Ok(mut running_since) = self.running_since.lock() {
+            *running_since = Some(at);
+        }
+    }
+
+    fn mark_running(&self) {
+        self.mark_running_at(std::time::Instant::now());
+    }
+
+    fn set_abort(&self, handle: tokio::task::AbortHandle) {
+        if let Ok(mut abort) = self.abort.lock() {
+            *abort = Some(handle);
+        }
+    }
+
+    /// Aborts an operation that has been running past the watchdog window. The
+    /// entry stays registered until its task reports completion, so the config
+    /// cannot be dispatched again while the old operation is still unwinding.
+    fn abort_if_stalled(&self, now: std::time::Instant) {
+        let stalled = self
+            .running_since
+            .lock()
+            .ok()
+            .and_then(|running_since| *running_since)
+            .is_some_and(|started| now.duration_since(started) > PROCESSING_WATCHDOG);
+        if !stalled || self.aborted.swap(true, Ordering::Relaxed) {
+            return;
+        }
+        log::warn!("Aborting a forwarding operation that exceeded the watchdog window");
+        if let Ok(abort) = self.abort.lock()
+            && let Some(handle) = abort.as_ref()
+        {
+            handle.abort();
+        }
+    }
+}
+
+struct ProcessingFlag(Arc<PendingForward>);
 
 impl Drop for ProcessingFlag {
     fn drop(&mut self) {
-        self.0.store(true, Ordering::Relaxed);
+        self.0.finish();
     }
 }
 
@@ -1452,17 +1545,15 @@ pub async fn handle_port_forwarding(app: &mut App, mode: DatabaseMode) -> io::Re
             !config.id.is_some_and(|id| {
                 app.configs_being_processed
                     .get(&id)
-                    .is_some_and(|(flag, _)| !flag.load(Ordering::Relaxed))
+                    .is_some_and(|pending| pending.is_active())
             })
         })
         .collect();
 
-    let started_at = std::time::Instant::now();
     for config in &selected_configs {
         if let Some(id) = config.id {
-            let completion_flag = Arc::new(AtomicBool::new(false));
             app.configs_being_processed
-                .insert(id, (completion_flag, started_at));
+                .insert(id, Arc::new(PendingForward::new()));
         }
     }
 
@@ -1478,54 +1569,61 @@ pub async fn handle_port_forwarding(app: &mut App, mode: DatabaseMode) -> io::Re
 
     let error_sender = app.error_sender.clone();
     let is_starting = app.active_table == ActiveTable::Stopped;
-    let slots = app.forwarding_slots.clone();
+    let slots = if is_starting {
+        app.forwarding_slots.clone()
+    } else {
+        app.stop_slots.clone()
+    };
+    let cancel = app.forwarding_cancel.clone();
 
-    let dispatch: Vec<(Config, Arc<AtomicBool>)> = selected_configs
+    let dispatch: Vec<(Config, Arc<PendingForward>)> = selected_configs
         .iter()
         .filter_map(|config| {
             let id = config.id?;
-            let flag = app.configs_being_processed.get(&id)?.0.clone();
-            Some((config.clone(), flag))
+            let pending = app.configs_being_processed.get(&id)?.clone();
+            Some((config.clone(), pending))
         })
         .collect();
 
-    app.forwarding_tasks.spawn(async move {
-        use futures::stream::{
-            self,
-            StreamExt,
-        };
+    for (config, pending) in dispatch {
+        let sender = error_sender.clone();
+        let slots = slots.clone();
+        let cancel = cancel.clone();
+        let task = pending.clone();
+        let handle = app.forwarding_tasks.spawn(async move {
+            use crate::core::port_forward::{
+                start_port_forwarding,
+                stop_port_forwarding,
+            };
 
-        use crate::core::port_forward::{
-            start_port_forwarding,
-            stop_port_forwarding,
-        };
+            let finished = ProcessingFlag(task);
+            let Ok(_permit) = slots.acquire_owned().await else {
+                return;
+            };
+            finished.0.mark_running();
 
-        stream::iter(dispatch)
-            .for_each_concurrent(FORWARD_DISPATCH_CONCURRENCY, |(config, flag)| {
-                let sender = error_sender.clone();
-                let slots = slots.clone();
-                async move {
-                    let finished = ProcessingFlag(flag);
-                    let Ok(_permit) = slots.acquire_owned().await else {
-                        return;
-                    };
-                    let result = if is_starting {
+            let result = tokio::select! {
+                biased;
+                _ = cancel.cancelled() => return,
+                result = async {
+                    if is_starting {
                         start_port_forwarding(config, mode).await
                     } else {
                         stop_port_forwarding(config, mode).await
-                    };
-
-                    if let Err(error_msg) = result
-                        && let Some(sender) = sender
-                    {
-                        let _ = sender.send(error_msg);
                     }
+                } => result,
+            };
 
-                    drop(finished);
-                }
-            })
-            .await;
-    });
+            if let Err(error_msg) = result
+                && let Some(sender) = sender
+            {
+                let _ = sender.send(error_msg);
+            }
+
+            drop(finished);
+        });
+        pending.set_abort(handle);
+    }
 
     match app.active_table {
         ActiveTable::Stopped => app.selected_rows_stopped.clear(),

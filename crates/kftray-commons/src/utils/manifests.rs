@@ -236,8 +236,10 @@ pub fn pod_manifest_is_customized() -> bool {
     let Ok(path) = get_pod_manifest_path() else {
         return false;
     };
-    if !path.exists() {
-        return false;
+    match std::fs::symlink_metadata(&path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return false,
+        Err(_) => return true,
+        Ok(_) => {}
     }
     match std::fs::read_to_string(&path) {
         Ok(contents) => match serde_json::from_str::<serde_json::Value>(&contents) {
