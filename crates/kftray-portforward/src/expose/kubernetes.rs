@@ -592,15 +592,21 @@ async fn create_service(
     crate::kube::proxy::tag_installation(&mut service.metadata.labels).await?;
     // Without this the Service would also select another installation's relay
     // pods and send its HTTP traffic to the wrong local service.
-    if let Some(spec) = service.spec.as_mut() {
-        spec.selector
-            .get_or_insert_with(std::collections::BTreeMap::new)
-            .insert(
-                crate::kube::proxy::INSTALLATION_LABEL.to_owned(),
-                kftray_commons::utils::config_dir::installation_id()
-                    .await?
-                    .to_owned(),
-            );
+    // Only an existing selector is narrowed. Giving a selectorless Service one
+    // would change it from manually managed endpoints to routing at every pod
+    // this installation runs.
+    if let Some(selector) = service
+        .spec
+        .as_mut()
+        .and_then(|spec| spec.selector.as_mut())
+        .filter(|selector| !selector.is_empty())
+    {
+        selector.insert(
+            crate::kube::proxy::INSTALLATION_LABEL.to_owned(),
+            kftray_commons::utils::config_dir::installation_id()
+                .await?
+                .to_owned(),
+        );
     }
 
     let created = services
@@ -716,7 +722,7 @@ pub async fn delete_expose_resources(
     // and its containers, running. Anything still present keeps the
     // configuration tracked for a later retry.
     if errors.is_empty()
-        && let Err(error) = wait_until_gone(&client, namespace, &lp).await
+        && let Err(error) = wait_until_gone(&client, namespace, &lp, ingress_possible).await
     {
         errors.push(error);
     }
@@ -842,19 +848,24 @@ async fn delete_services(client: &Client, namespace: &str, lp: &ListParams) -> R
 }
 
 /// Waits for every resource matching `lp` to disappear.
-async fn wait_until_gone(client: &Client, namespace: &str, lp: &ListParams) -> Result<(), String> {
+async fn wait_until_gone(
+    client: &Client, namespace: &str, lp: &ListParams, ingress_possible: bool,
+) -> Result<(), String> {
     let deadline = tokio::time::Instant::now() + ROLLBACK_DELETION_TIMEOUT;
     loop {
         let deployments: Api<Deployment> = Api::namespaced(client.clone(), namespace);
         let services: Api<Service> = Api::namespaced(client.clone(), namespace);
         let ingresses: Api<Ingress> = Api::namespaced(client.clone(), namespace);
-        let mut remaining = Vec::new();
-        for names in [
-            names_matching(&deployments, lp).await?,
-            names_matching(&services, lp).await?,
-            names_matching(&ingresses, lp).await?,
-        ] {
-            remaining.extend(names);
+        let mut remaining = names_matching(&deployments, lp).await?;
+        remaining.extend(names_matching(&services, lp).await?);
+        // A private exposure never creates an Ingress, so a role without
+        // permission to list them is legitimate and must not fail cleanup.
+        match names_matching(&ingresses, lp).await {
+            Ok(names) => remaining.extend(names),
+            Err(error) if !ingress_possible => {
+                debug!("Skipping ingress verification: {error}");
+            }
+            Err(error) => return Err(error),
         }
         if remaining.is_empty() {
             return Ok(());

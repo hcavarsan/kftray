@@ -216,6 +216,26 @@ impl Drop for ClusterResourceGuard {
     }
 }
 
+lazy_static::lazy_static! {
+    /// Addresses whose release may still be running. They must not be handed to
+    /// a new forward until it finishes.
+    static ref RELEASING_ADDRESSES: dashmap::DashSet<String> = dashmap::DashSet::new();
+}
+
+/// Clears the in-flight mark however the release ends.
+struct ReleaseInFlight(String);
+
+impl Drop for ReleaseInFlight {
+    fn drop(&mut self) {
+        RELEASING_ADDRESSES.remove(&self.0);
+    }
+}
+
+/// Whether an address is still being released and cannot be reused yet.
+pub(crate) fn address_release_in_flight(address: &str) -> bool {
+    RELEASING_ADDRESSES.contains(address)
+}
+
 /// Outcome of releasing the local resources one target describes.
 #[derive(Default)]
 struct LocalCleanup {
@@ -242,13 +262,26 @@ async fn release_local_resources(id: i64, config: &Config) -> LocalCleanup {
     {
         cleanup.deferred.push(error);
     }
-    if config.domain_enabled.unwrap_or_default()
-        && let Err(error) = remove_host_entry(&id.to_string())
-    {
-        cleanup.failures.push(error.to_string());
-    }
-    if let Err(error) = remove_ssl_host_entry(&id.to_string()) {
-        cleanup.failures.push(error.to_string());
+    // Hosts-file work is synchronous and serialized behind one lock, so it runs
+    // on a blocking thread: several stops at once would otherwise queue up on
+    // runtime workers and stall unrelated forwards.
+    let domain_enabled = config.domain_enabled.unwrap_or_default();
+    let hosts = spawn_blocking(move || {
+        let mut errors = Vec::new();
+        if domain_enabled && let Err(error) = remove_host_entry(&id.to_string()) {
+            errors.push(error.to_string());
+        }
+        if let Err(error) = remove_ssl_host_entry(&id.to_string()) {
+            errors.push(error.to_string());
+        }
+        errors
+    })
+    .await;
+    match hosts {
+        Ok(errors) => cleanup.failures.extend(errors),
+        Err(error) => cleanup
+            .failures
+            .push(format!("Hosts cleanup task failed: {error}")),
     }
     cleanup
 }
@@ -311,6 +344,12 @@ fn try_release_address_sync(address: &str) -> Result<(), String> {
 /// on system restart.
 async fn release_address_with_fallback(address: &str) -> Result<(), String> {
     const ADDRESS_RELEASE_TIMEOUT: Duration = Duration::from_secs(3);
+
+    // Marked for as long as a release may still be executing. Timing out the
+    // wait does not stop the helper request or the platform command, and a
+    // restart that reused the address could have it removed underneath it.
+    RELEASING_ADDRESSES.insert(address.to_owned());
+    let _releasing = ReleaseInFlight(address.to_owned());
 
     let address_owned = address.to_string();
 
@@ -525,13 +564,20 @@ where
     // Held across the delete: `start_config_locked` takes the same lock, so a
     // start cannot register between the check and the row disappearing, and a
     // start already waiting on the lock re-reads the row afterwards.
-    let mut guards = Vec::with_capacity(ids.len());
-    for id in ids {
+    //
+    // Sorted and deduplicated first: these mutexes are not reentrant, so a
+    // repeated id would wait on a lock this call already holds, and two batches
+    // naming the same ids in different orders would deadlock each other.
+    let mut ordered: Vec<i64> = ids.to_vec();
+    ordered.sort_unstable();
+    ordered.dedup();
+    let mut guards = Vec::with_capacity(ordered.len());
+    for id in &ordered {
         let lock = crate::kube::proxy_recovery::acquire_recovery_lock(*id).await;
         guards.push(lock.lock_owned().await);
     }
 
-    let active: Vec<i64> = ids
+    let active: Vec<i64> = ordered
         .iter()
         .copied()
         .filter(|id| {

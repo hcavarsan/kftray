@@ -364,6 +364,13 @@ async fn try_fallback_allocate_and_save(
             continue;
         }
 
+        // A release that timed out can still be executing, and it would remove
+        // the alias from underneath this forward.
+        if crate::kube::stop::address_release_in_flight(&address) {
+            debug!("Address {address} is still being released, skipping");
+            continue;
+        }
+
         if crate::network_utils::is_address_accessible(&address).await {
             debug!("Address {address} is already in use on system, skipping");
             continue;
@@ -908,27 +915,53 @@ mod tests {
         assert!(result.unwrap().is_empty());
     }
 
-    #[tokio::test]
-    async fn test_start_port_forward_invalid_protocol() {
-        let responses = start_port_forward_with_mode(
-            vec![setup_test_config()],
-            "invalid",
+    /// Inserts a configuration so a start reaches the phase under test instead
+    /// of stopping at the missing-row check.
+    async fn insert_fixture(config: Config) -> Config {
+        let id = kftray_commons::utils::config::insert_config_with_mode(
+            config.clone(),
             DatabaseMode::Memory,
-            false,
         )
         .await
         .unwrap();
+
+        Config {
+            id: Some(id),
+            ..config
+        }
+    }
+
+    #[tokio::test]
+    async fn test_start_port_forward_invalid_protocol() {
+        let config = insert_fixture(setup_test_config()).await;
+        let id = config.id.unwrap();
+
+        let responses =
+            start_port_forward_with_mode(vec![config], "invalid", DatabaseMode::Memory, false)
+                .await
+                .unwrap();
+
         assert_eq!(responses.len(), 1);
         assert_ne!(responses[0].status, 0);
-        assert!(!CHILD_PROCESSES.contains_key(&1));
+        assert!(
+            responses[0]
+                .stderr
+                .contains("Unsupported protocol: invalid"),
+            "{}",
+            responses[0].stderr
+        );
+        assert!(!CHILD_PROCESSES.contains_key(&id));
     }
 
     #[tokio::test]
     async fn a_failed_config_does_not_hide_its_siblings_results() {
-        let mut healthy = setup_config_with_domain();
-        healthy.id = Some(410_041);
-        let mut broken = setup_config_with_invalid_ip();
-        broken.id = Some(410_042);
+        let healthy = insert_fixture(setup_config_with_domain()).await;
+        let broken = insert_fixture(setup_config_with_invalid_ip()).await;
+        let expected = {
+            let mut ids = vec![healthy.id.unwrap(), broken.id.unwrap()];
+            ids.sort_unstable();
+            ids
+        };
 
         let responses =
             start_port_forward_with_mode(vec![healthy, broken], "tcp", DatabaseMode::Memory, false)
@@ -945,7 +978,7 @@ mod tests {
             .filter_map(|response| response.id)
             .collect();
         ids.sort_unstable();
-        assert_eq!(ids, vec![410_041, 410_042]);
+        assert_eq!(ids, expected);
     }
 
     #[tokio::test]

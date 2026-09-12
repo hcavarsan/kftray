@@ -126,7 +126,14 @@ impl DirectHostfileManager {
         {
             match self.entries.write() {
                 Ok(mut entries) => {
+                    let had_entries = !entries.is_empty();
                     entries.clear();
+                    // Counted here so a concurrent removal cannot observe the
+                    // cleared map with a still-reconciled generation and report
+                    // success without writing.
+                    if had_entries {
+                        self.generation.fetch_add(1, Ordering::Relaxed);
+                    }
                 }
                 Err(e) => {
                     error!("Failed to acquire host entries write lock: {e}");
@@ -164,10 +171,15 @@ impl DirectHostfileManager {
     /// because most stops involve no alias at all and the file usually needs
     /// elevated privileges to write.
     fn removal_needs_write(&self, existed: bool) -> bool {
+        // Taken under the write lock so the answer cannot be overtaken by a
+        // snapshot write that is still landing, and an unreadable file counts
+        // as "might still hold entries" rather than as nothing to do.
+        let _writing = self.write_lock.lock().unwrap_or_else(|e| e.into_inner());
+
         removal_needs_write(existed, self.is_reconciled(), || {
             HostsFile::new(KFTRAY_HOSTS_TAG)
                 .section_exists()
-                .unwrap_or(false)
+                .unwrap_or(true)
         })
     }
 

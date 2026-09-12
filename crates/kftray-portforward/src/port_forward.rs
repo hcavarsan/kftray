@@ -221,12 +221,23 @@ impl PortForward {
         }
         // Reported rather than swallowed: this runs when a startup failed or
         // was cancelled after adding an alias, and the caller keeps the config
-        // tracked for retry when cleanup did not finish.
-        if let Err(error) = crate::hostsfile::remove_host_entry(&self.config_id.to_string()) {
-            errors.push(error.to_string());
-        }
-        if let Err(error) = crate::hostsfile::remove_ssl_host_entry(&self.config_id.to_string()) {
-            errors.push(error.to_string());
+        // tracked for retry when cleanup did not finish. Run on a blocking
+        // thread because the hosts file is written synchronously behind a lock.
+        let config_id = self.config_id;
+        match tokio::task::spawn_blocking(move || {
+            let mut errors = Vec::new();
+            if let Err(error) = crate::hostsfile::remove_host_entry(&config_id.to_string()) {
+                errors.push(error.to_string());
+            }
+            if let Err(error) = crate::hostsfile::remove_ssl_host_entry(&config_id.to_string()) {
+                errors.push(error.to_string());
+            }
+            errors
+        })
+        .await
+        {
+            Ok(hosts_errors) => errors.extend(hosts_errors),
+            Err(error) => errors.push(format!("Hosts cleanup task failed: {error}")),
         }
         if errors.is_empty() {
             Ok(())
