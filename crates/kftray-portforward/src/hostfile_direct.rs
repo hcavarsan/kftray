@@ -113,7 +113,11 @@ impl DirectHostfileManager {
         }
     }
 
+    /// Marks the hosts file as no longer matching the in-memory entries. Until
+    /// a write succeeds, a removal cannot be short-circuited: the file may
+    /// still carry an entry this process already forgot.
     fn mark_dirty(&self) {
+        self.reconciled.store(false, Ordering::Relaxed);
         let mut needs_update = self.needs_update.lock().unwrap_or_else(|e| {
             error!("Failed to acquire needs_update lock: {e}");
             e.into_inner()
@@ -200,6 +204,15 @@ impl DirectHostfileManager {
                 }
                 Err(e) => {
                     failures += 1;
+                    // The change is still pending either way, so a later
+                    // add or removal can start a fresh writer once whatever
+                    // blocked the write clears.
+                    let mut update_flag = needs_update.lock().unwrap_or_else(|e| {
+                        error!("Failed to re-arm the pending hosts write: {e}");
+                        e.into_inner()
+                    });
+                    *update_flag = true;
+                    drop(update_flag);
                     // A persistent error is usually missing permissions on the
                     // hosts file. Retry with backoff, then stop rather than
                     // spin a thread logging forever.
@@ -211,11 +224,6 @@ impl DirectHostfileManager {
                     }
                     error!("Failed to write hosts file in background writer: {e}");
                     backoff = (backoff * 2).min(MAX_WRITE_BACKOFF);
-                    let mut update_flag = needs_update.lock().unwrap_or_else(|e| {
-                        error!("Failed to re-arm the pending hosts write: {e}");
-                        e.into_inner()
-                    });
-                    *update_flag = true;
                 }
             }
         }
@@ -292,6 +300,49 @@ mod tests {
             ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2)),
             hostname: "test.local".to_string(),
         }
+    }
+
+    fn pending_write(manager: &DirectHostfileManager) -> bool {
+        *manager
+            .needs_update
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+    }
+
+    #[test]
+    fn an_unwritten_change_keeps_later_removals_retrying() {
+        init();
+        let manager = DirectHostfileManager::new();
+        manager.reconciled.store(true, Ordering::Relaxed);
+
+        manager
+            .entries
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert("41007".to_owned(), get_test_entry());
+        manager.mark_dirty();
+        assert!(
+            !manager.reconciled.load(Ordering::Relaxed),
+            "a pending change means the file no longer matches memory"
+        );
+
+        // The removal drops the entry from memory; if its write never lands,
+        // the alias is still in the file and the next removal must retry.
+        manager
+            .entries
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove("41007");
+        *manager
+            .needs_update
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = false;
+
+        manager.remove_host_entry("41007").expect("removal");
+        assert!(
+            pending_write(&manager),
+            "a removal must schedule another write while the file is unreconciled"
+        );
     }
 
     #[test]

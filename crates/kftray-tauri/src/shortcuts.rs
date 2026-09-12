@@ -35,12 +35,12 @@ use crate::commands::{
     },
 };
 
-/// Collapses a start batch into a single error. The batch call reports one
-/// result per configuration, so an all-failed batch still returns `Ok`.
-fn start_error(
-    result: Result<Vec<kftray_commons::models::response::CustomResponse>, String>,
+/// Collapses a batch of per-configuration responses into a single error. Both
+/// the start and stop-all commands report one result per configuration, so an
+/// all-failed batch still returns `Ok`.
+fn batch_error(
+    responses: &[kftray_commons::models::response::CustomResponse],
 ) -> Result<(), String> {
-    let responses = result?;
     let failures: Vec<&str> = responses
         .iter()
         .filter(|response| response.status != 0)
@@ -51,6 +51,12 @@ fn start_error(
     } else {
         Err(failures.join("; "))
     }
+}
+
+fn start_error(
+    result: Result<Vec<kftray_commons::models::response::CustomResponse>, String>,
+) -> Result<(), String> {
+    batch_error(&result?)
 }
 
 static GLOBAL_MANAGER: OnceCell<Arc<Mutex<ShortcutManager>>> = OnceCell::const_new();
@@ -301,8 +307,12 @@ impl ActionHandler for StopAllPortForwardAction {
     async fn execute(&self, _context: &ActionContext) -> kftray_shortcuts::ShortcutResult<()> {
         info!("Executing stop all port forward action");
 
-        match stop_all_port_forward_cmd(self.app_handle.clone()).await {
-            Ok(_) => {
+        let stopped = stop_all_port_forward_cmd(self.app_handle.clone())
+            .await
+            .map_err(|error| error.to_string())
+            .and_then(|responses| batch_error(&responses));
+        match stopped {
+            Ok(()) => {
                 info!("Successfully stopped all port forwards");
 
                 let _ = self
@@ -318,6 +328,14 @@ impl ActionHandler for StopAllPortForwardAction {
             }
             Err(e) => {
                 error!("Failed to stop all port forwards: {}", e);
+                let _ = self
+                    .app_handle
+                    .notification()
+                    .builder()
+                    .title("Port Forward")
+                    .body(format!("Failed to stop every port forward: {e}"))
+                    .show();
+                let _ = self.app_handle.emit("port-forward-status-changed", ());
                 Err(kftray_shortcuts::ShortcutError::ActionExecutionFailed(
                     format!("Failed to stop all port forwards: {}", e),
                 ))

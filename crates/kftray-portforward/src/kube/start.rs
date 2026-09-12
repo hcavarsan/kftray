@@ -28,6 +28,7 @@ use log::{
 };
 use once_cell::sync::Lazy;
 use tokio::sync::Mutex as TokioMutex;
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     hostsfile::{
@@ -385,11 +386,26 @@ pub async fn start_port_forward(
 }
 
 pub(super) async fn start_config(
-    mut config: Config, protocol: &str, mode: DatabaseMode, ssl_override: bool,
+    config: Config, protocol: &str, mode: DatabaseMode, ssl_override: bool,
 ) -> Result<CustomResponse, String> {
+    start_config_cancellable(config, protocol, mode, ssl_override, None).await
+}
+
+/// `cancellation` covers the phase after the relay is ready: loopback
+/// allocation, TLS setup and stream acquisition all run while the proxy
+/// lifecycle lock is held, so a stop issued during them would otherwise wait
+/// for the whole startup to finish.
+pub(super) async fn start_config_cancellable(
+    mut config: Config, protocol: &str, mode: DatabaseMode, ssl_override: bool,
+    cancellation: Option<&CancellationToken>,
+) -> Result<CustomResponse, String> {
+    let cancelled = || cancellation.is_some_and(CancellationToken::is_cancelled);
     let config_id = config.id.ok_or("Config has no ID")?;
     if !matches!(protocol, "tcp" | "udp") {
         return Err(format!("Unsupported protocol: {protocol}"));
+    }
+    if cancelled() {
+        return Err(format!("Startup cancelled for config {config_id}"));
     }
     if config.auto_loopback_address || config.local_address.is_none() {
         allocate_local_address_for_config(&mut config, mode).await?;
@@ -533,6 +549,12 @@ pub(super) async fn start_config(
             );
             debug!("Actual local port: {actual_local_port}");
 
+            if cancelled() {
+                handle.cleanup_and_abort().await;
+                let _ = port_forward.cleanup_resources().await;
+                return Err(format!("Startup cancelled for config {config_id}"));
+            }
+
             let config_state = ConfigState::new(config_id, true);
             if let Err(error) = update_config_state_with_mode(&config_state, mode).await {
                 handle.cleanup_and_abort().await;
@@ -660,8 +682,19 @@ pub(super) fn start_failure_response(config: &Config, error: String) -> CustomRe
 pub async fn start_port_forward_with_mode(
     configs: Vec<Config>, protocol: &str, mode: DatabaseMode, ssl_override: bool,
 ) -> Result<Vec<CustomResponse>, String> {
-    let responses = stream::iter(configs)
-        .map(|config| async move {
+    // Registration is eager so a stop-all that snapshots the pending starts
+    // sees the whole batch: `buffer_unordered` only polls a window, and the
+    // unpolled tail would otherwise start after that snapshot.
+    let (queued, rejected) = crate::kube::proxy::register_start_batch(configs);
+
+    let mut responses: Vec<CustomResponse> = stream::iter(queued)
+        .map(|(config, startup)| async move {
+            if startup.cancellation().is_cancelled() {
+                return start_failure_response(
+                    &config,
+                    "Startup cancelled before it began".to_string(),
+                );
+            }
             match start_config_locked(config.clone(), protocol, mode, ssl_override).await {
                 Ok(response) => response,
                 Err(error) => start_failure_response(&config, error),
@@ -670,6 +703,11 @@ pub async fn start_port_forward_with_mode(
         .buffer_unordered(16)
         .collect()
         .await;
+    responses.extend(
+        rejected
+            .into_iter()
+            .map(|(config, error)| start_failure_response(&config, error)),
+    );
     Ok(responses)
 }
 
@@ -769,6 +807,41 @@ mod tests {
             .collect();
         ids.sort_unstable();
         assert_eq!(ids, vec![410_041, 410_042]);
+    }
+
+    #[tokio::test]
+    async fn a_batch_start_registers_through_the_shared_pending_registry() {
+        let id = 410_090;
+        let (queued, _) = crate::kube::proxy::register_start_batch(vec![Config {
+            id: Some(id),
+            ..setup_config_with_invalid_ip()
+        }]);
+        assert_eq!(queued.len(), 1);
+
+        // Holding the registration models the queued tail of a larger batch:
+        // stop-all can see and cancel it, and a second start cannot slip past.
+        let responses = start_port_forward_with_mode(
+            vec![Config {
+                id: Some(id),
+                ..setup_config_with_invalid_ip()
+            }],
+            "tcp",
+            DatabaseMode::Memory,
+            false,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(responses.len(), 1);
+        assert!(
+            responses[0].stderr.contains("already in progress"),
+            "{}",
+            responses[0].stderr
+        );
+        assert!(!CHILD_PROCESSES.contains_key(&id));
+
+        drop(queued);
+        assert!(!crate::kube::proxy::STARTING_PROXIES.contains_key(&id));
     }
 
     #[tokio::test]

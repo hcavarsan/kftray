@@ -69,17 +69,21 @@ use crate::kube::shared_client::{
 pub(super) static STARTING_PROXIES: std::sync::LazyLock<DashMap<i64, CancellationToken>> =
     std::sync::LazyLock::new(DashMap::new);
 
-struct ProxyStart {
+pub(super) struct PendingStart {
     id: i64,
     cancellation: CancellationToken,
 }
 
-impl ProxyStart {
+impl PendingStart {
+    pub(super) fn cancellation(&self) -> &CancellationToken {
+        &self.cancellation
+    }
+}
+
+impl PendingStart {
     fn new(id: i64) -> Result<Self, String> {
         match STARTING_PROXIES.entry(id) {
-            Entry::Occupied(_) => Err(format!(
-                "Proxy startup is already in progress for config {id}"
-            )),
+            Entry::Occupied(_) => Err(format!("Startup is already in progress for config {id}")),
             Entry::Vacant(entry) => {
                 let cancellation = CancellationToken::new();
                 entry.insert(cancellation.clone());
@@ -89,7 +93,7 @@ impl ProxyStart {
     }
 }
 
-impl Drop for ProxyStart {
+impl Drop for PendingStart {
     fn drop(&mut self) {
         STARTING_PROXIES.remove(&self.id);
         crate::kube::proxy_recovery::remove_recovery_lock(self.id);
@@ -109,6 +113,28 @@ pub(crate) fn proxy_resource_prefix() -> String {
     format!("kftray-forward-{username}-")
 }
 
+/// Label carried by every proxy resource this installation creates.
+pub(crate) const INSTALLATION_LABEL: &str = "installation_id";
+
+/// Selector that matches only this installation's resources for `config_id`.
+/// Two machines can hold the same local config id under the same username, so
+/// `config_id` alone is not an ownership test.
+pub(crate) fn proxy_owner_selector(config_id: &str) -> String {
+    format!(
+        "config_id={config_id},{INSTALLATION_LABEL}={}",
+        kftray_commons::utils::config_dir::get_installation_id()
+    )
+}
+
+fn tag_installation(labels: &mut Option<std::collections::BTreeMap<String, String>>) {
+    labels
+        .get_or_insert_with(std::collections::BTreeMap::new)
+        .insert(
+            INSTALLATION_LABEL.to_owned(),
+            kftray_commons::utils::config_dir::get_installation_id().to_owned(),
+        );
+}
+
 #[derive(Clone, Copy)]
 struct ProxyStartOptions<'a> {
     mode: DatabaseMode,
@@ -120,18 +146,48 @@ pub async fn deploy_and_forward_pod(configs: Vec<Config>) -> Result<Vec<CustomRe
     deploy_and_forward_pod_with_mode(configs, DatabaseMode::File, false).await
 }
 
-type RegisteredProxyBatch = (Vec<(Config, ProxyStart)>, Vec<(Config, String)>);
+/// Records created cluster resources so a dropped startup future still leaves a
+/// trail for stop-all. `disarm` is called once the startup either registered a
+/// child process or deleted the resources itself.
+struct ClusterResourceGuard {
+    id: i64,
+    config: Option<Config>,
+}
+
+impl ClusterResourceGuard {
+    fn arm(id: i64, config: Config) -> Self {
+        Self {
+            id,
+            config: Some(config),
+        }
+    }
+
+    fn disarm(mut self) {
+        self.config = None;
+        crate::kube::stop::clear_pending_cleanup(self.id);
+    }
+}
+
+impl Drop for ClusterResourceGuard {
+    fn drop(&mut self) {
+        if let Some(config) = self.config.take() {
+            crate::kube::stop::record_pending_cleanup(self.id, config);
+        }
+    }
+}
+
+pub(super) type RegisteredBatch = (Vec<(Config, PendingStart)>, Vec<(Config, String)>);
 
 /// Registers every config in [`STARTING_PROXIES`] before any work is buffered.
 /// Registration has to be eager: `buffer_unordered` only polls a window of the
 /// batch, and a stop-all that snapshots the map while the tail is still
 /// unpolled would let those configs start after the snapshot.
-fn register_proxy_batch(configs: Vec<Config>) -> RegisteredProxyBatch {
+pub(super) fn register_start_batch(configs: Vec<Config>) -> RegisteredBatch {
     let mut queued = Vec::new();
     let mut rejected = Vec::new();
     for config in configs {
         match config.id.ok_or_else(|| "Config has no ID".to_string()) {
-            Ok(id) => match ProxyStart::new(id) {
+            Ok(id) => match PendingStart::new(id) {
                 Ok(startup) => queued.push((config, startup)),
                 Err(error) => rejected.push((config, error)),
             },
@@ -144,7 +200,7 @@ fn register_proxy_batch(configs: Vec<Config>) -> RegisteredProxyBatch {
 pub async fn deploy_and_forward_pod_with_mode(
     configs: Vec<Config>, mode: DatabaseMode, ssl_override: bool,
 ) -> Result<Vec<CustomResponse>, String> {
-    let (queued, rejected) = register_proxy_batch(configs);
+    let (queued, rejected) = register_start_batch(configs);
 
     let mut responses: Vec<CustomResponse> = stream::iter(queued)
         .map(|(config, startup)| async move {
@@ -165,7 +221,7 @@ pub async fn deploy_and_forward_pod_with_mode(
 }
 
 async fn process_single_proxy_config(
-    config: Config, startup: ProxyStart, mode: DatabaseMode, ssl_override: bool,
+    config: Config, startup: PendingStart, mode: DatabaseMode, ssl_override: bool,
 ) -> Result<CustomResponse, String> {
     let id = startup.id;
 
@@ -371,6 +427,17 @@ async fn process_deployment_proxy(
     let rendered_json = render_json_template_owned(&contents, values);
     let mut deployment: Deployment =
         serde_json::from_str(&rendered_json).map_err(|e| e.to_string())?;
+    tag_installation(&mut deployment.metadata.labels);
+    if let Some(spec) = deployment.spec.as_mut() {
+        spec.selector
+            .match_labels
+            .get_or_insert_with(std::collections::BTreeMap::new)
+            .insert(
+                INSTALLATION_LABEL.to_owned(),
+                kftray_commons::utils::config_dir::get_installation_id().to_owned(),
+            );
+        tag_installation(&mut spec.template.metadata.get_or_insert_default().labels);
+    }
     let spec = deployment
         .spec
         .as_mut()
@@ -392,9 +459,16 @@ async fn process_deployment_proxy(
         .create(&PostParams::default(), &deployment)
         .await
         .map_err(|e| e.to_string())?;
+    let guard = ClusterResourceGuard::arm(
+        config.id.unwrap_or_default(),
+        Config {
+            service: Some(hashed_name.to_string()),
+            ..config.clone()
+        },
+    );
     let result: Result<CustomResponse, String> = async {
         let pods: Api<Pod> = Api::namespaced(client, &config.namespace);
-        let label_selector = format!("app={hashed_name},config_id={config_id_str}");
+        let label_selector = format!("app={hashed_name},{}", proxy_owner_selector(config_id_str));
         wait_for_relay_pod(
             &pods,
             &label_selector,
@@ -403,11 +477,12 @@ async fn process_deployment_proxy(
         )
         .await?;
         config.service = Some(hashed_name.to_string());
-        let response = super::start::start_config(
+        let response = super::start::start_config_cancellable(
             config.clone(),
             protocol,
             options.mode,
             options.ssl_override,
+            Some(options.cancellation),
         )
         .await
         .map_err(|error| format!("Failed to start port forwarding: {error}"))?;
@@ -432,8 +507,10 @@ async fn process_deployment_proxy(
                 "{error}; failed to delete proxy deployment: {cleanup}"
             ));
         }
+        guard.disarm();
         return Err(error);
     }
+    guard.disarm();
     result
 }
 
@@ -482,6 +559,7 @@ async fn process_pod_proxy(
 
     let rendered_json = render_json_template_owned(&contents, values);
     let mut pod: Pod = serde_json::from_str(&rendered_json).map_err(|e| e.to_string())?;
+    tag_installation(&mut pod.metadata.labels);
     let spec = pod
         .spec
         .as_mut()
@@ -501,14 +579,22 @@ async fn process_pod_proxy(
     pods.create(&PostParams::default(), &pod)
         .await
         .map_err(|e| e.to_string())?;
+    let guard = ClusterResourceGuard::arm(
+        config.id.unwrap_or_default(),
+        Config {
+            service: Some(hashed_name.to_string()),
+            ..config.clone()
+        },
+    );
     let result: Result<CustomResponse, String> = async {
         wait_for_relay_startup(&pods, hashed_name, &container_name, options.cancellation).await?;
         config.service = Some(hashed_name.to_string());
-        let response = super::start::start_config(
+        let response = super::start::start_config_cancellable(
             config.clone(),
             protocol,
             options.mode,
             options.ssl_override,
+            Some(options.cancellation),
         )
         .await
         .map_err(|error| format!("Failed to start port forwarding: {error}"))?;
@@ -531,8 +617,10 @@ async fn process_pod_proxy(
         {
             return Err(format!("{error}; failed to delete proxy pod: {cleanup}"));
         }
+        guard.disarm();
         return Err(error);
     }
+    guard.disarm();
     result
 }
 
@@ -608,7 +696,7 @@ mod tests {
             })
             .collect();
 
-        let (queued, errors) = register_proxy_batch(configs);
+        let (queued, errors) = register_start_batch(configs);
 
         assert!(errors.is_empty());
         assert_eq!(queued.len(), ids.len());
@@ -808,7 +896,7 @@ mod tests {
 
     async fn assert_startup_wait_is_cancelled(id: i64, listener_wait: bool) {
         let _isolation = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
-        let startup = ProxyStart::new(id).unwrap();
+        let startup = PendingStart::new(id).unwrap();
         let lock = crate::kube::proxy_recovery::acquire_recovery_lock(id).await;
         let guard = lock.lock_owned().await;
         let (service, mut requests) = tower_test::mock::pair::<

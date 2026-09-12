@@ -1625,21 +1625,25 @@ pub async fn handle_port_forwarding(app: &mut App, mode: DatabaseMode) -> io::Re
             };
 
             let finished = ProcessingFlag(task);
+            if cancel.is_cancelled() {
+                return;
+            }
             let Ok(_permit) = slots.acquire_owned().await else {
                 return;
             };
+            if cancel.is_cancelled() {
+                return;
+            }
             finished.0.mark_running();
 
-            let result = tokio::select! {
-                biased;
-                _ = cancel.cancelled() => return,
-                result = async {
-                    if is_starting {
-                        start_port_forwarding(config, mode).await
-                    } else {
-                        stop_port_forwarding(config, mode).await
-                    }
-                } => result,
+            // Deliberately not raced against the cancellation token: dropping
+            // the backend future here would skip its rollback and orphan a pod
+            // or Deployment it already created. The backend observes the same
+            // shutdown through its own startup cancellation and timeouts.
+            let result = if is_starting {
+                start_port_forwarding(config, mode).await
+            } else {
+                stop_port_forwarding(config, mode).await
             };
 
             if let Err(error_msg) = result

@@ -1,6 +1,10 @@
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::sync::atomic::{
+    AtomicU64,
+    Ordering,
+};
 use std::time::{
     Duration,
     Instant,
@@ -52,6 +56,27 @@ struct UdpSession {
     task: tokio_util::task::AbortOnDropHandle<()>,
     last_seen: Instant,
     opened_at: Instant,
+    /// Milliseconds since `opened_at` of the last byte the tunnel moved in
+    /// either direction. A session waiting on slow replies is still working,
+    /// even though no new local datagram has arrived.
+    tunnel_activity: Arc<AtomicU64>,
+}
+
+impl UdpSession {
+    fn is_working(&self, now: Instant) -> bool {
+        if self.packets.capacity() < SESSION_QUEUE_DEPTH {
+            return true;
+        }
+        let activity =
+            self.opened_at + Duration::from_millis(self.tunnel_activity.load(Ordering::Relaxed));
+        now.duration_since(self.last_seen.max(activity)) <= SESSION_IDLE_TIMEOUT
+    }
+
+    /// A tunnel that ended is retried only after a cooldown, so a relay that
+    /// refuses connections cannot be hammered once per datagram.
+    fn is_cooling_down(&self, now: Instant) -> bool {
+        now.duration_since(self.opened_at) < TUNNEL_RETRY_COOLDOWN
+    }
 }
 
 pub struct UdpForwarder;
@@ -158,12 +183,13 @@ impl UdpForwarder {
         sessions: &mut HashMap<SocketAddr, UdpSession>, peer: SocketAddr,
         socket: &Arc<TokioUdpSocket>, upstream: &Arc<U>, cancellation_token: &CancellationToken,
     ) -> Option<mpsc::Sender<Vec<u8>>> {
+        let now = Instant::now();
         if let Some(session) = sessions.get_mut(&peer) {
             if !session.packets.is_closed() {
-                session.last_seen = Instant::now();
+                session.last_seen = now;
                 return Some(session.packets.clone());
             }
-            if session.opened_at.elapsed() < TUNNEL_RETRY_COOLDOWN {
+            if session.is_cooling_down(now) {
                 return None;
             }
             sessions.remove(&peer);
@@ -193,6 +219,9 @@ impl UdpForwarder {
         let socket = Arc::clone(socket);
         let upstream = Arc::clone(upstream);
 
+        let tunnel_activity = Arc::new(AtomicU64::new(0));
+        let session_activity = Arc::clone(&tunnel_activity);
+
         let task = tokio::spawn(async move {
             let stream = tokio::select! {
                 biased;
@@ -206,6 +235,12 @@ impl UdpForwarder {
                 },
             };
 
+            let touch = || {
+                session_activity.store(
+                    u64::try_from(now.elapsed().as_millis()).unwrap_or(u64::MAX),
+                    Ordering::Relaxed,
+                );
+            };
             let (mut reader, mut writer) = tokio::io::split(stream);
             {
                 let uplink = async {
@@ -215,6 +250,7 @@ impl UdpForwarder {
                         writer.write_all(&len.to_be_bytes()).await?;
                         writer.write_all(&packet).await?;
                         writer.flush().await?;
+                        touch();
                     }
                     Ok::<(), anyhow::Error>(())
                 };
@@ -226,6 +262,7 @@ impl UdpForwarder {
                             continue;
                         }
                         socket.send_to(&packet, &peer).await?;
+                        touch();
                     }
                     Ok::<(), anyhow::Error>(())
                 };
@@ -244,7 +281,6 @@ impl UdpForwarder {
         });
 
         let queue = packets.clone();
-        let now = Instant::now();
         sessions.insert(
             peer,
             UdpSession {
@@ -253,6 +289,7 @@ impl UdpForwarder {
                 task: tokio_util::task::AbortOnDropHandle::new(task),
                 last_seen: now,
                 opened_at: now,
+                tunnel_activity,
             },
         );
         Some(queue)
@@ -262,15 +299,16 @@ impl UdpForwarder {
         let now = Instant::now();
         sessions.retain(|peer, session| {
             if session.packets.is_closed() {
-                debug!("UDP tunnel for {} has ended", peer);
-                return false;
+                // Kept until the cooldown expires: dropping the record now
+                // would let the next datagram reconnect immediately.
+                return session.is_cooling_down(now);
             }
-            if now.duration_since(session.last_seen) > SESSION_IDLE_TIMEOUT {
-                debug!("Retiring the idle UDP session for {}", peer);
-                session.cancellation.cancel();
-                return false;
+            if session.is_working(now) {
+                return true;
             }
-            true
+            debug!("Retiring the idle UDP session for {}", peer);
+            session.cancellation.cancel();
+            false
         });
     }
 
@@ -403,6 +441,81 @@ pub(crate) mod tests {
             .unwrap();
         stream.write_all(payload).await.unwrap();
         stream.flush().await.unwrap();
+    }
+
+    fn closed_session(opened_at: Instant) -> UdpSession {
+        let (packets, queue) = mpsc::channel::<Vec<u8>>(SESSION_QUEUE_DEPTH);
+        drop(queue);
+        UdpSession {
+            packets,
+            cancellation: CancellationToken::new(),
+            task: tokio_util::task::AbortOnDropHandle::new(tokio::spawn(std::future::pending())),
+            last_seen: opened_at,
+            opened_at,
+            tunnel_activity: Arc::new(AtomicU64::new(0)),
+        }
+    }
+
+    #[tokio::test]
+    async fn retirement_keeps_failed_sessions_until_their_cooldown_expires() {
+        let peer: SocketAddr = "127.0.0.1:41007".parse().unwrap();
+        let other: SocketAddr = "127.0.0.1:41008".parse().unwrap();
+        let mut sessions = HashMap::new();
+        sessions.insert(peer, closed_session(Instant::now()));
+        sessions.insert(
+            other,
+            closed_session(Instant::now() - TUNNEL_RETRY_COOLDOWN * 2),
+        );
+
+        // A retirement pass runs whenever any peer opens a session and on every
+        // sweep tick; it must not hand another peer a free reconnect.
+        UdpForwarder::retire_sessions(&mut sessions);
+
+        assert!(
+            sessions.contains_key(&peer),
+            "a tunnel that just failed must keep cooling down"
+        );
+        assert!(
+            !sessions.contains_key(&other),
+            "a tunnel past its cooldown is retried on the next datagram"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_session_awaiting_slow_replies_is_not_retired_as_idle() {
+        let (packets, queue) = mpsc::channel::<Vec<u8>>(SESSION_QUEUE_DEPTH);
+        let idle_for_ages = Instant::now() - SESSION_IDLE_TIMEOUT * 2;
+        let mut session = UdpSession {
+            packets,
+            cancellation: CancellationToken::new(),
+            task: tokio_util::task::AbortOnDropHandle::new(tokio::spawn(std::future::pending())),
+            last_seen: idle_for_ages,
+            opened_at: idle_for_ages,
+            tunnel_activity: Arc::new(AtomicU64::new(0)),
+        };
+        let now = Instant::now();
+
+        assert!(
+            !session.is_working(now),
+            "no local traffic, no tunnel activity and an empty queue means idle"
+        );
+
+        session.packets.try_send(b"queued".to_vec()).unwrap();
+        assert!(
+            session.is_working(now),
+            "a request still queued for the tunnel is outstanding work"
+        );
+        drop(queue);
+
+        session.tunnel_activity.store(
+            u64::try_from(now.duration_since(idle_for_ages).as_millis()).unwrap(),
+            Ordering::Relaxed,
+        );
+        session.packets = mpsc::channel::<Vec<u8>>(SESSION_QUEUE_DEPTH).0;
+        assert!(
+            session.is_working(now),
+            "a reply that just came back through the tunnel is activity"
+        );
     }
 
     #[tokio::test]

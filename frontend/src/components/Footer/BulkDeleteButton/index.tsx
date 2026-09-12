@@ -102,6 +102,7 @@ const DeleteDialog = ({
 const BulkDeleteButton: React.FC<BulkDeleteButtonProps> = ({
   selectedConfigs,
   setSelectedConfigs,
+  pendingConfigActions,
 }) => {
   const [state, setState] = useState({
     configsToDelete: [] as number[],
@@ -127,6 +128,23 @@ const BulkDeleteButton: React.FC<BulkDeleteButtonProps> = ({
         description: 'No configurations selected for deletion.',
         duration: 1000,
       })
+
+      return
+    }
+
+    // Deleting only removes the database row, so a queued start would still
+    // reach the cluster with a configuration that no longer exists.
+    const busy = state.configsToDelete.filter(id =>
+      pendingConfigActions.has(id),
+    )
+
+    if (busy.length) {
+      toaster.error({
+        title: 'Error',
+        description: `${busy.length} selected configuration(s) are busy. Try again once they settle.`,
+        duration: 2000,
+      })
+      setState(prev => ({ ...prev, isDialogOpen: false }))
 
       return
     }

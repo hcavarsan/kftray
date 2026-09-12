@@ -522,7 +522,11 @@ pub async fn recover_deployment(
 
     let prefix = crate::kube::proxy::proxy_resource_prefix();
     let deployment = deployments
-        .list(&kube::api::ListParams::default().labels(&format!("config_id={config_id}")))
+        .list(
+            &kube::api::ListParams::default().labels(&crate::kube::proxy::proxy_owner_selector(
+                &config_id.to_string(),
+            )),
+        )
         .await
         .map_err(|e| anyhow::anyhow!("Failed to query deployment for config {}: {}", config_id, e))?
         .items
@@ -558,8 +562,10 @@ pub async fn recover_deployment(
         kube::Api::namespaced(client.clone(), namespace);
     let watcher = kube_runtime::watcher(
         pods,
-        kube_runtime::watcher::Config::default()
-            .labels(&format!("app={hashed_name},config_id={config_id}")),
+        kube_runtime::watcher::Config::default().labels(&format!(
+            "app={hashed_name},{}",
+            crate::kube::proxy::proxy_owner_selector(&config_id.to_string())
+        )),
     )
     .applied_objects();
     futures::pin_mut!(watcher);
@@ -875,6 +881,7 @@ mod tests {
             .map(|suffix| format!("{prefix}tcp-1-{suffix}"))
             .collect();
         let expected = owned.clone();
+        let installation_id = kftray_commons::utils::config_dir::get_installation_id();
         let server = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
             for name in expected {
                 let (request, send) = requests.next_request().await.unwrap();
@@ -887,8 +894,9 @@ mod tests {
                 assert!(
                     query.contains("labelSelector=")
                         && query.contains("config_id")
-                        && query.contains("420051"),
-                    "{query}"
+                        && query.contains("420051")
+                        && query.contains(installation_id),
+                    "recovery must not select another installation's deployment: {query}"
                 );
                 let relay = serde_json::json!({
                     "spec": {"template": {"spec": {"containers": [{
@@ -915,7 +923,8 @@ mod tests {
                     query.contains("labelSelector=")
                         && query.contains(&name)
                         && query.contains("config_id")
-                        && query.contains("420051"),
+                        && query.contains("420051")
+                        && query.contains(installation_id),
                     "{query}"
                 );
                 send.send_response(

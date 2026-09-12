@@ -38,6 +38,43 @@ pub fn get_log_folder_path() -> Result<PathBuf, String> {
     Ok(config_path)
 }
 
+/// Identifier for this kftray installation, persisted next to the database.
+///
+/// Config ids come from a local database, so two installations can hold the
+/// same id and their cluster resources are otherwise indistinguishable. This
+/// value labels the resources one installation owns.
+pub fn get_installation_id() -> &'static str {
+    static INSTALLATION_ID: std::sync::LazyLock<String> =
+        std::sync::LazyLock::new(load_or_create_installation_id);
+
+    &INSTALLATION_ID
+}
+
+fn load_or_create_installation_id() -> String {
+    let Ok(config_dir) = get_config_dir() else {
+        return "unknown".to_owned();
+    };
+    let path = config_dir.join("installation_id");
+    if let Ok(stored) = fs::read_to_string(&path) {
+        let stored = stored.trim();
+        if is_valid_installation_id(stored) {
+            return stored.to_owned();
+        }
+    }
+    let generated = uuid::Uuid::new_v4().simple().to_string()[..12].to_owned();
+    let _ = fs::create_dir_all(&config_dir);
+    let _ = fs::write(&path, &generated);
+    generated
+}
+
+fn is_valid_installation_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 63
+        && value
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric())
+}
+
 pub fn get_db_file_path() -> Result<PathBuf, String> {
     let mut config_path = get_config_dir()?;
     config_path.push("configs.db");

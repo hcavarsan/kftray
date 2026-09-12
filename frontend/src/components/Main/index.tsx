@@ -696,6 +696,17 @@ const KFTray = () => {
       return
     }
 
+    if (pendingConfigActionsRef.current.has(configToDelete)) {
+      toaster.error({
+        title: 'Error',
+        description: 'This configuration is busy. Try again once it settles.',
+        duration: 1000,
+      })
+      setIsAlertOpen(false)
+
+      return
+    }
+
     try {
       await invoke('delete_config_cmd', { id: configToDelete })
       toaster.success({
@@ -877,6 +888,7 @@ const KFTray = () => {
               onSyncComplete={handleSyncComplete}
               openShortcutModal={openShortcutModal}
               setIsAutoImportModalOpen={setIsAutoImportModalOpen}
+              pendingConfigActions={pendingConfigActions}
             />
           </Box>
         </Box>

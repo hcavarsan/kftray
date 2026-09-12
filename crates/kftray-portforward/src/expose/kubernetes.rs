@@ -260,11 +260,21 @@ async fn create_deployment(
 
 /// Resolves the port an injected probe should target.
 ///
-/// Returns `None` when the manifest supplies the port dynamically through
-/// `valueFrom` or `envFrom`: guessing the default there would probe the wrong
-/// port and fail a healthy deployment. Such a manifest has to carry its own
-/// probe.
+/// Returns `None` only when the port is genuinely unresolved: guessing the
+/// default would probe the wrong port and fail a healthy deployment. An
+/// explicit `env` entry wins, matching Kubernetes' own precedence over
+/// `envFrom`.
 fn container_env_port(container: &Container, name: &str, default: i32) -> Option<i32> {
+    if let Some(variable) = container
+        .env
+        .as_ref()
+        .and_then(|env| env.iter().find(|variable| variable.name == name))
+    {
+        return variable
+            .value
+            .as_deref()
+            .and_then(|value| value.parse().ok());
+    }
     if container
         .env_from
         .as_ref()
@@ -272,17 +282,7 @@ fn container_env_port(container: &Container, name: &str, default: i32) -> Option
     {
         return None;
     }
-    let Some(variable) = container
-        .env
-        .as_ref()
-        .and_then(|env| env.iter().find(|variable| variable.name == name))
-    else {
-        return Some(default);
-    };
-    variable
-        .value
-        .as_deref()
-        .and_then(|value| value.parse().ok())
+    Some(default)
 }
 
 async fn wait_for_pod_ready(
@@ -637,6 +637,19 @@ mod tests {
             ..Default::default()
         }]);
         assert_eq!(container_env_port(&from_env_from, "HTTP_PORT", 8080), None);
+
+        let mut explicit_alongside_env_from =
+            relay_container(vec![k8s_openapi::api::core::v1::EnvVar {
+                name: "HTTP_PORT".to_owned(),
+                value: Some("9100".to_owned()),
+                ..Default::default()
+            }]);
+        explicit_alongside_env_from.env_from = from_env_from.env_from.clone();
+        assert_eq!(
+            container_env_port(&explicit_alongside_env_from, "HTTP_PORT", 8080),
+            Some(9100),
+            "an explicit env entry takes precedence over envFrom, as in Kubernetes"
+        );
     }
 
     #[tokio::test]
