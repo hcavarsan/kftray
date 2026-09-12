@@ -103,12 +103,18 @@ impl Drop for PendingStart {
 /// Name prefix shared by every proxy resource this user creates. Config ids come
 /// from a local database and are not unique inside a namespace, so anything that
 /// selects resources by `config_id` must also match this prefix.
+///
+/// The username is reduced to at most 16 ASCII alphanumeric characters: the
+/// full name is also used as an `app` label value, which Kubernetes caps at 63
+/// characters and restricts to ASCII, so a long or non-ASCII username would
+/// make every create request fail.
 pub(crate) fn proxy_resource_prefix() -> String {
     let username: String = whoami::username()
         .unwrap_or_else(|_| "unknown".to_string())
         .to_lowercase()
         .chars()
-        .filter(|character| character.is_alphanumeric())
+        .filter(char::is_ascii_alphanumeric)
+        .take(16)
         .collect();
     format!("kftray-forward-{username}-")
 }
@@ -447,10 +453,12 @@ async fn process_deployment_proxy(
     // the object is persisted would forget it. Bounded instead, so a stalled
     // request still releases the lifecycle lock.
     match create_proxy_resource(&deployments, &deployment).await {
-        // The API server answered, so the record is no longer uncertain.
-        CreateOutcome::Settled(settled) => {
-            guard.confirm();
-            settled?;
+        CreateOutcome::Settled(Ok(())) => guard.confirm(),
+        // A definitive rejection means nothing was created, so there is nothing
+        // for a later cleanup pass to find.
+        CreateOutcome::Settled(Err(error)) => {
+            guard.disarm();
+            return Err(error);
         }
         // No answer: the object may still appear, so the record stays uncertain
         // and a later cleanup pass retries it.
@@ -629,9 +637,10 @@ async fn process_pod_proxy(
         },
     );
     match create_proxy_resource(&pods, &pod).await {
-        CreateOutcome::Settled(settled) => {
-            guard.confirm();
-            settled?;
+        CreateOutcome::Settled(Ok(())) => guard.confirm(),
+        CreateOutcome::Settled(Err(error)) => {
+            guard.disarm();
+            return Err(error);
         }
         CreateOutcome::Unknown(error) => return Err(error),
     }

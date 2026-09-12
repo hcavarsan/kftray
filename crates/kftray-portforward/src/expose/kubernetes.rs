@@ -192,6 +192,7 @@ pub async fn create_expose_resources(
             },
             pod_ip,
             pod_name,
+            owned: std::mem::take(&mut created),
         })
     }
     .await;
@@ -258,13 +259,15 @@ fn classify_create_error(what: &str, error: &kube::Error) -> ExposeCreateError {
 
 /// A resource this attempt created, identified by the name and UID the API
 /// server returned rather than the name the template asked for.
-struct CreatedResource {
+#[derive(Debug)]
+pub struct CreatedResource {
     kind: ResourceKind,
     name: String,
     uid: Option<String>,
 }
 
-enum ResourceKind {
+#[derive(Debug)]
+pub enum ResourceKind {
     Deployment,
     Service,
     Ingress,
@@ -279,7 +282,7 @@ fn created_from<K: kube::Resource>(kind: ResourceKind, created: &K) -> CreatedRe
 }
 
 /// Deletes exactly the resources one creation attempt made, newest first.
-async fn delete_created_resources(
+pub async fn delete_created_resources(
     client: &Client, namespace: &str, created: &[CreatedResource],
 ) -> Result<(), String> {
     let mut errors = Vec::new();
@@ -314,11 +317,69 @@ async fn delete_created_resources(
             errors.push(error.to_string());
         }
     }
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(errors.join("; "))
+    if !errors.is_empty() {
+        return Err(errors.join("; "));
     }
+
+    // An accepted DELETE only starts deletion: a finalizer can keep the object,
+    // and its containers, running. Rollback is only complete once the recorded
+    // objects are gone, or replaced by something this attempt does not own.
+    let deadline = tokio::time::Instant::now() + ROLLBACK_DELETION_TIMEOUT;
+    loop {
+        let mut remaining = Vec::new();
+        for resource in created {
+            if still_present(client, namespace, resource).await? {
+                remaining.push(resource.name.clone());
+            }
+        }
+        if remaining.is_empty() {
+            return Ok(());
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err(format!(
+                "Resources are still terminating after {ROLLBACK_DELETION_TIMEOUT:?}: {}",
+                remaining.join(", ")
+            ));
+        }
+        tokio::time::sleep(ROLLBACK_DELETION_POLL).await;
+    }
+}
+
+const ROLLBACK_DELETION_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
+const ROLLBACK_DELETION_POLL: std::time::Duration = std::time::Duration::from_millis(250);
+
+/// Whether the exact object this attempt created still exists. A different UID
+/// under the same name belongs to someone else.
+async fn still_present(
+    client: &Client, namespace: &str, resource: &CreatedResource,
+) -> Result<bool, String> {
+    let uid = match resource.kind {
+        ResourceKind::Deployment => {
+            let api: Api<Deployment> = Api::namespaced(client.clone(), namespace);
+            api.get_opt(&resource.name)
+                .await
+                .map(|found| found.and_then(|item| item.metadata.uid))
+        }
+        ResourceKind::Service => {
+            let api: Api<Service> = Api::namespaced(client.clone(), namespace);
+            api.get_opt(&resource.name)
+                .await
+                .map(|found| found.and_then(|item| item.metadata.uid))
+        }
+        ResourceKind::Ingress => {
+            let api: Api<Ingress> = Api::namespaced(client.clone(), namespace);
+            api.get_opt(&resource.name)
+                .await
+                .map(|found| found.and_then(|item| item.metadata.uid))
+        }
+    }
+    .map_err(|error| error.to_string())?;
+
+    Ok(match (uid, resource.uid.as_deref()) {
+        (None, _) => false,
+        (Some(found), Some(created)) => found == created,
+        (Some(_), None) => true,
+    })
 }
 
 async fn create_deployment(

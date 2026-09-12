@@ -79,21 +79,6 @@ static INSTALLATION_ID: std::sync::OnceLock<String> = std::sync::OnceLock::new()
 fn load_or_create_installation_id() -> Result<String, String> {
     let config_dir = get_config_dir()?;
     let path = config_dir.join("installation_id");
-    match fs::read_to_string(&path) {
-        Ok(stored) => {
-            let stored = stored.trim();
-            if is_valid_installation_id(stored) {
-                return Ok(stored.to_owned());
-            }
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => {
-            return Err(format!(
-                "Failed to read the installation identifier at {}: {error}",
-                path.display()
-            ));
-        }
-    }
 
     fs::create_dir_all(&config_dir).map_err(|error| {
         format!(
@@ -102,10 +87,10 @@ fn load_or_create_installation_id() -> Result<String, String> {
         )
     })?;
 
-    // Creation and repair run under a lock file so concurrent initializers
-    // adopt one identifier instead of each caching its own. It relies only on
-    // exclusive create and rename, which work on filesystems without hard link
-    // support such as exFAT.
+    // Reading happens under the same lock as creation: a publisher can be
+    // between its rename and its directory sync, and adopting an identifier
+    // that is not yet durable would make the next launch generate a different
+    // one and stop matching the resources this one labelled.
     with_identity_lock(&config_dir, || {
         let stored = match fs::read_to_string(&path) {
             Ok(stored) => stored.trim().to_owned(),
@@ -118,6 +103,13 @@ fn load_or_create_installation_id() -> Result<String, String> {
             }
         };
         if is_valid_installation_id(&stored) {
+            sync_directory(&config_dir).map_err(|error| {
+                format!(
+                    "Failed to synchronize {} before using its installation identifier: {error}",
+                    config_dir.display()
+                )
+            })?;
+
             return Ok(stored);
         }
         let generated = uuid::Uuid::new_v4().simple().to_string()[..12].to_owned();

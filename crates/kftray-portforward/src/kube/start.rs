@@ -167,13 +167,33 @@ async fn allocate_local_address_owned(
     let mut owned = config.clone();
     tokio::spawn(async move {
         let result = allocate_local_address_for_config(&mut owned, mode).await;
-        if let Err((result, owned)) = sender.send((result, owned))
-            && result.is_ok()
+        let allocated = result.is_ok()
+            && owned
+                .local_address
+                .as_deref()
+                .is_some_and(crate::network_utils::is_custom_loopback_address);
+        // Recorded before the handoff: a successful send does not prove the
+        // startup consumed it, and an address nobody recorded is an address
+        // stop-all and reconciliation cannot find.
+        if allocated && let Some(id) = owned.id {
+            crate::kube::stop::record_pending_cleanup(id, owned.clone());
+        }
+        if let Err((_, owned)) = sender.send((result, owned))
+            && allocated
             && let Some(address) = owned.local_address.as_deref()
-            && crate::network_utils::is_custom_loopback_address(address)
         {
             warn!("Releasing address {address} allocated after startup was abandoned");
-            let _ = crate::network_utils::remove_loopback_address(address).await;
+            match crate::network_utils::remove_loopback_address(address).await {
+                Ok(()) => {
+                    if let Some(id) = owned.id {
+                        crate::kube::stop::forget_pending_cleanup(id, &owned);
+                    }
+                }
+                Err(error) => {
+                    // The record stays, so a later stop retries the release.
+                    warn!("Failed to release {address} after an abandoned startup: {error}");
+                }
+            }
         }
     });
 
@@ -181,15 +201,6 @@ async fn allocate_local_address_owned(
         .await
         .map_err(|_| "Address allocation ended unexpectedly".to_string())?;
     let address = result?;
-    // Recorded before anything else can be dropped: from here on the address
-    // exists, and a cancellation during persistence or forwarding must leave a
-    // trail for cleanup rather than an allocation nobody knows about. The
-    // startup clears it once the forward is registered or rolled back.
-    if let Some(id) = owned.id
-        && crate::network_utils::is_custom_loopback_address(&address)
-    {
-        crate::kube::stop::record_pending_cleanup(id, owned.clone());
-    }
     // Persisted only now that the result reached a startup that is still
     // current. The task keeps running when this future is abandoned, and
     // writing from there would overwrite settings edited in the meantime.
@@ -203,21 +214,15 @@ async fn allocate_local_address_owned(
     Ok(address)
 }
 
-/// Writes only the allocated address, leaving every other field as stored.
+/// Writes only the allocated address, and only while the stored configuration
+/// still asks for one.
 async fn persist_allocated_address(
     id: i64, address: &str, mode: DatabaseMode,
 ) -> Result<(), String> {
-    use kftray_commons::utils::config::{
-        get_config_with_mode,
-        update_config_with_mode,
-    };
-
-    let mut stored = get_config_with_mode(id, mode).await?;
-    if stored.local_address.as_deref() == Some(address) {
-        return Ok(());
+    if !kftray_commons::utils::config::set_allocated_local_address(id, address, mode).await? {
+        debug!("Config {id} no longer requests an allocated address; keeping its own");
     }
-    stored.local_address = Some(address.to_owned());
-    update_config_with_mode(stored, mode).await
+    Ok(())
 }
 
 async fn allocate_local_address_for_config(

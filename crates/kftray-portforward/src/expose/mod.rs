@@ -16,7 +16,6 @@ use log::{
 };
 use tokio_util::sync::CancellationToken;
 
-use crate::expose::kubernetes::delete_expose_resources;
 use crate::kube::shared_client::{
     SHARED_CLIENT_MANAGER,
     ServiceClientKey,
@@ -34,6 +33,24 @@ pub async fn start_expose(
         })
         .collect();
     crate::kube::start_port_forward_with_mode(configs, "tcp", mode, false).await
+}
+
+/// Deletes exactly what this attempt created and releases its cleanup record
+/// only once that succeeded.
+///
+/// Deleting by label would also reach resources another installation created
+/// for the same configuration id, which is local to each database.
+async fn roll_back_exposure<T>(
+    client: &kube::Client, config: &Config, resources: &models::ExposeResources,
+    guard: crate::kube::stop::ClusterResourceGuard, reason: String,
+) -> Result<T, String> {
+    match kubernetes::delete_created_resources(client, &config.namespace, &resources.owned).await {
+        Ok(()) => {
+            guard.disarm();
+            Err(reason)
+        }
+        Err(cleanup_error) => Err(format!("{reason}; cleanup failed: {cleanup_error}")),
+    }
 }
 
 pub(crate) async fn start_single_expose(
@@ -136,20 +153,7 @@ pub(crate) async fn start_single_expose(
         Ok(started) => started,
         Err(error) => {
             let reason = format!("Failed to start port-forward: {error}");
-            return match delete_expose_resources(
-                client.clone(),
-                &config.namespace,
-                &config_id.to_string(),
-                config.exposure_type.as_deref() == Some("public"),
-            )
-            .await
-            {
-                Ok(()) => {
-                    guard.disarm();
-                    Err(reason)
-                }
-                Err(cleanup_error) => Err(format!("{reason}; cleanup failed: {cleanup_error}")),
-            };
+            return roll_back_exposure(&client, &config, &resources, guard, reason).await;
         }
     };
 
@@ -203,20 +207,7 @@ pub(crate) async fn start_single_expose(
     };
     if let Err(error) = startup {
         pf_process.cleanup_and_abort().await;
-        return match delete_expose_resources(
-            client.clone(),
-            &config.namespace,
-            &config_id.to_string(),
-            config.exposure_type.as_deref() == Some("public"),
-        )
-        .await
-        {
-            Ok(()) => {
-                guard.disarm();
-                Err(error)
-            }
-            Err(cleanup_error) => Err(format!("{error}; cleanup failed: {cleanup_error}")),
-        };
+        return roll_back_exposure(&client, &config, &resources, guard, error).await;
     }
 
     let config_state = ConfigState {
@@ -230,18 +221,7 @@ pub(crate) async fn start_single_expose(
     };
     if let Err(error) = update_config_state_with_mode(&config_state, mode).await {
         pf_process.cleanup_and_abort().await;
-        if delete_expose_resources(
-            client,
-            &config.namespace,
-            &config_id.to_string(),
-            config.exposure_type.as_deref() == Some("public"),
-        )
-        .await
-        .is_ok()
-        {
-            guard.disarm();
-        }
-        return Err(error);
+        return roll_back_exposure(&client, &config, &resources, guard, error).await;
     }
     pf_process.set_config(config.clone());
     CHILD_PROCESSES.insert(config_id, pf_process);

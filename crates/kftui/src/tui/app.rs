@@ -39,7 +39,7 @@ type UpdateCheckTask = JoinHandle<Result<UpdateInfo, String>>;
 /// Covers the backend's uncertainty window with room for the retries inside it:
 /// a create abandoned on the way out can still be applied, and the registry
 /// tracking it does not survive the process.
-const CLEANUP_RECONCILE_TIMEOUT: std::time::Duration =
+pub(crate) const CLEANUP_RECONCILE_TIMEOUT: std::time::Duration =
     kftray_portforward::kube::UNCERTAIN_CREATE_WINDOW.saturating_mul(2);
 
 pub async fn run_tui(

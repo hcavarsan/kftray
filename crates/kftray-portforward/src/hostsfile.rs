@@ -115,11 +115,20 @@ pub fn add_ssl_host_entry(config_id: &str, alias: &str, _https_port: u16) -> std
 }
 
 pub fn remove_ssl_host_entry(config_id: &str) -> std::io::Result<()> {
-    let _ = remove_host_entry(&format!("{}-https", config_id));
-
-    let _ = remove_host_entry(&format!("{}-https-local", config_id));
-
-    Ok(())
+    // Reported rather than swallowed: a caller that keeps a configuration
+    // tracked for retry can only do so if it learns the aliases are still
+    // present.
+    let mut errors = Vec::new();
+    for suffix in ["https", "https-local"] {
+        if let Err(error) = remove_host_entry(&format!("{config_id}-{suffix}")) {
+            errors.push(error.to_string());
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(std::io::Error::other(errors.join("; ")))
+    }
 }
 
 pub fn update_hosts_with_ssl_from_config(

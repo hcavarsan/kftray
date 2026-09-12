@@ -133,8 +133,15 @@ impl UdpForwarder {
             let (replies, mut incoming_replies) =
                 mpsc::channel::<(SocketAddr, Vec<u8>)>(REPLY_QUEUE_DEPTH);
             let result: anyhow::Result<()> = loop {
+                // Cancellation is checked here rather than as a biased branch:
+                // a sustained reply flow would otherwise keep its branch ready
+                // and the loop would stop polling the socket, filling its
+                // buffer and dropping inbound datagrams.
+                if cancellation_token.is_cancelled() {
+                    info!("UDP forwarder cancelled, shutting down");
+                    break Ok(());
+                }
                 tokio::select! {
-                    biased;
                     _ = cancellation_token.cancelled() => {
                         info!("UDP forwarder cancelled, shutting down");
                         break Ok(());

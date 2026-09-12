@@ -439,6 +439,9 @@ async fn delete_prefixed<K>(
 where
     K: Clone + serde::de::DeserializeOwned + std::fmt::Debug + kube::Resource,
 {
+    const DELETION_TIMEOUT: Duration = Duration::from_secs(20);
+    const POLL: Duration = Duration::from_millis(250);
+
     let mut errors = Vec::new();
     for lp in selectors {
         let list = api.list(lp).await.map_err(|error| error.to_string())?;
@@ -456,10 +459,35 @@ where
             }
         }
     }
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(errors.join("; "))
+    if !errors.is_empty() {
+        return Err(errors.join("; "));
+    }
+
+    // An accepted DELETE only starts deletion: a finalizer can keep the object,
+    // and its containers, running. Cleanup is only complete once it is gone, so
+    // anything still present keeps the configuration tracked for a later retry.
+    let deadline = Instant::now() + DELETION_TIMEOUT;
+    loop {
+        let mut remaining = Vec::new();
+        for lp in selectors {
+            let list = api.list(lp).await.map_err(|error| error.to_string())?;
+            remaining.extend(
+                list.items
+                    .iter()
+                    .filter_map(|item| item.meta().name.clone())
+                    .filter(|name| name.starts_with(prefix)),
+            );
+        }
+        if remaining.is_empty() {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "Resources are still terminating after {DELETION_TIMEOUT:?}: {}",
+                remaining.join(", ")
+            ));
+        }
+        tokio::time::sleep(POLL).await;
     }
 }
 
