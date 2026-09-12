@@ -37,6 +37,7 @@ pub use start::{
     start_port_forward_with_mode,
 };
 pub use stop::{
+    UNCERTAIN_CREATE_WINDOW,
     cancel_all_startups,
     reconcile_pending_cleanup,
     stop_all_port_forward,

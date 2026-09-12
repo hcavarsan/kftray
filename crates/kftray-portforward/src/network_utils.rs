@@ -231,7 +231,10 @@ pub async fn remove_loopback_address(addr: &str) -> Result<()> {
         if unsafe { libc::geteuid() } == 0 {
             execute_command("ip", &["addr", "del", addr, "dev", "lo"])?;
         } else {
-            execute_command("sudo", &["ip", "addr", "del", addr, "dev", "lo"])?;
+            // `-n` keeps this non-interactive: a password prompt during a stop
+            // would block until someone typed into a terminal that may not even
+            // be attached.
+            execute_command("sudo", &["-n", "ip", "addr", "del", addr, "dev", "lo"])?;
         }
         Ok(())
     }

@@ -695,14 +695,20 @@ const KFTray = () => {
             await stopPortForwardingForConfig(config)
           }
         } catch (error) {
-          failures.push({ id: config.id, error })
+          const failure = { id: config.id, error }
+
+          failures.push(failure)
+          // After the deadline nobody is aggregating any more, so each failure
+          // reports itself instead of waiting for unrelated invocations.
+          if (timedOut) {
+            reportFailures([failure])
+          }
         } finally {
           unresolved.delete(config.id)
           clearPending(config.id)
           debouncedUpdateConfigs()
         }
       })
-      let reported = 0
       const settled = await Promise.race([
         batch.then(() => true),
         new Promise<false>(resolve =>
@@ -716,17 +722,7 @@ const KFTray = () => {
         // never started release their reservation, and nothing new dispatches.
         // Genuinely in-flight invocations keep theirs until they finish.
         controller.abort()
-        reported = failures.length
         reportFailures()
-        // Workers still running keep appending, and nobody is waiting on the
-        // batch any more, so their errors are reported when they arrive.
-        void batch.then(() => {
-          const late = failures.slice(reported)
-
-          if (late.length) {
-            reportFailures(late)
-          }
-        })
         toaster.error({
           title: action === 'starting' ? 'Start Failed' : 'Stop Failed',
           description: `${unresolved.size} configuration(s) are still working. They stay locked until they finish.`,

@@ -420,6 +420,13 @@ mod tests {
             .needs_update
             .lock()
             .unwrap_or_else(|e| e.into_inner()) = false;
+        // Marked as already running so no writer thread starts: this test is
+        // about the bookkeeping decision, and a real writer would rewrite the
+        // system hosts file with the empty map.
+        *manager
+            .writer_running
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = true;
 
         manager.remove_host_entry("41007").expect("removal");
         assert!(

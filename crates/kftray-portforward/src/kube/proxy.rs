@@ -435,7 +435,7 @@ async fn process_deployment_proxy(
     // Armed before the request: the API server can create the resource and
     // still leave us without a response, and a dropped startup future never
     // reaches the rollback below.
-    let guard = crate::kube::stop::ClusterResourceGuard::arm(
+    let mut guard = crate::kube::stop::ClusterResourceGuard::arm(
         config.id.unwrap_or_default(),
         Config {
             service: Some(hashed_name.to_string()),
@@ -621,7 +621,7 @@ async fn process_pod_proxy(
 
     let pods: Api<Pod> = Api::namespaced(client.clone(), &config.namespace);
 
-    let guard = crate::kube::stop::ClusterResourceGuard::arm(
+    let mut guard = crate::kube::stop::ClusterResourceGuard::arm(
         config.id.unwrap_or_default(),
         Config {
             service: Some(hashed_name.to_string()),

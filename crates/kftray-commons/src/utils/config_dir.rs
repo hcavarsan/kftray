@@ -207,7 +207,7 @@ fn try_lock_exclusive(file: &fs::File) -> bool {
         LockFileEx(
             HANDLE(file.as_raw_handle()),
             LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY,
-            0,
+            None,
             u32::MAX,
             u32::MAX,
             &mut overlapped,
@@ -230,7 +230,7 @@ fn unlock(file: &fs::File) {
     unsafe {
         let _ = UnlockFileEx(
             HANDLE(file.as_raw_handle()),
-            0,
+            None,
             u32::MAX,
             u32::MAX,
             &mut overlapped,
@@ -254,8 +254,7 @@ fn publish_installation_id(
         // The rename itself has to reach disk before the identifier is used to
         // label cluster resources: losing the directory entry would make the
         // next launch generate a different one and stop matching them.
-        sync_directory(config_dir);
-        Ok(())
+        sync_directory(config_dir)
     })();
     if written.is_err() {
         let _ = fs::remove_file(&temporary);
@@ -269,17 +268,16 @@ fn publish_installation_id(
 }
 
 #[cfg(unix)]
-fn sync_directory(path: &std::path::Path) {
-    if let Ok(directory) = fs::File::open(path) {
-        let _ = directory.sync_all();
-    }
+fn sync_directory(path: &std::path::Path) -> std::io::Result<()> {
+    fs::File::open(path)?.sync_all()
 }
 
 #[cfg(not(unix))]
-fn sync_directory(path: &std::path::Path) {
+fn sync_directory(path: &std::path::Path) -> std::io::Result<()> {
     // Windows has no directory handle to sync; the rename is durable once the
     // file's own data has been flushed.
     let _ = path;
+    Ok(())
 }
 
 fn is_valid_installation_id(value: &str) -> bool {

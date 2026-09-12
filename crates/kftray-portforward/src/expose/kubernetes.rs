@@ -60,13 +60,17 @@ pub async fn create_expose_resources(
             "Resources already exist for config {}: {:?}. Cleaning up before recreating",
             config_id_str, resources
         );
-        let _ = delete_expose_resources(
+        // Reported rather than ignored: a pre-existing resource this attempt
+        // could not remove stays its responsibility, so it must not later claim
+        // a complete rollback and let the cleanup record be dropped.
+        delete_expose_resources(
             client.clone(),
             &config.namespace,
             &config_id_str,
             config.exposure_type.as_deref() == Some("public"),
         )
-        .await;
+        .await
+        .map_err(ExposeCreateError::from)?;
 
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
     }

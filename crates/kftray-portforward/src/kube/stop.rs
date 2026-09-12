@@ -83,7 +83,12 @@ lazy_static::lazy_static! {
 }
 
 /// How long an abandoned create is assumed to still be in flight.
-const UNCERTAIN_CREATE_WINDOW: Duration = Duration::from_secs(120);
+///
+/// Tied to the create deadline: once the client has stopped waiting, the API
+/// server either applied the request or dropped it well within another full
+/// deadline. Shutdown budgets are derived from this so an abandoned create is
+/// always reconciled before the registry disappears with the process.
+pub const UNCERTAIN_CREATE_WINDOW: Duration = Duration::from_secs(30);
 
 /// Two cleanup targets are the same when they name the same resources.
 ///
@@ -101,6 +106,9 @@ fn same_resources(left: &Config, right: &Config) -> bool {
         && left.service == right.service
         && left.local_address == right.local_address
         && left.domain_enabled == right.domain_enabled
+        // A public exposure owns an Ingress that a private one never creates,
+        // and cleanup treats a missing ingress permission differently for each.
+        && left.exposure_type == right.exposure_type
 }
 
 /// Records a configuration whose resources exist but whose startup did not
@@ -156,6 +164,7 @@ fn pending_cleanup_targets(id: i64) -> Vec<PendingTarget> {
 pub(crate) struct ClusterResourceGuard {
     id: i64,
     config: Option<Config>,
+    confirmed: bool,
 }
 
 impl ClusterResourceGuard {
@@ -168,12 +177,15 @@ impl ClusterResourceGuard {
         Self {
             id,
             config: Some(config),
+            confirmed: false,
         }
     }
 
     /// The create returned, so the record describes a resource that either
-    /// exists or never will.
-    pub(crate) fn confirm(&self) {
+    /// exists or never will. A guard dropped after this keeps the settled
+    /// state rather than restarting the uncertainty window.
+    pub(crate) fn confirm(&mut self) {
+        self.confirmed = true;
         if let Some(config) = &self.config
             && let Some(mut entries) = PENDING_CLEANUP.get_mut(&self.id)
             && let Some(entry) = entries
@@ -194,7 +206,13 @@ impl ClusterResourceGuard {
 impl Drop for ClusterResourceGuard {
     fn drop(&mut self) {
         if let Some(config) = self.config.take() {
-            record_pending_cleanup(self.id, config);
+            // An unconfirmed attempt restarts the window here: it can be
+            // abandoned long after the guard was armed, and the request it
+            // dropped deserves the full reconciliation window from the moment
+            // it was abandoned. A confirmed outcome stays settled.
+            let uncertain_until =
+                (!self.confirmed).then(|| Instant::now() + UNCERTAIN_CREATE_WINDOW);
+            record_target(self.id, config, uncertain_until);
         }
     }
 }
@@ -310,15 +328,28 @@ async fn release_address_with_fallback(address: &str) -> Result<(), String> {
     // interface alias, or one where cleanup happens on restart, reports success
     // here and the stop can complete. Only a platform release that actually
     // fails keeps the cleanup record for a later retry.
-    match crate::network_utils::remove_loopback_address(address).await {
-        Ok(()) => {
+    // Run on a blocking thread under the same deadline: the platform release
+    // shells out, and doing that inline would hold a runtime worker, and the
+    // lifecycle lock with it, for as long as the command takes.
+    let address_owned = address.to_string();
+    let platform = timeout(
+        ADDRESS_RELEASE_TIMEOUT,
+        spawn_blocking(move || {
+            tokio::runtime::Handle::current().block_on(
+                crate::network_utils::remove_loopback_address(&address_owned),
+            )
+        }),
+    )
+    .await;
+    match platform {
+        Ok(Ok(Ok(()))) => {
             warn!(
                 "Released address {} without the helper ({}).",
                 address, helper_error
             );
             Ok(())
         }
-        Err(platform_error) => {
+        Ok(Ok(Err(platform_error))) => {
             warn!(
                 "Failed to release address {}: helper: {}; platform: {}",
                 address, helper_error, platform_error
@@ -327,6 +358,12 @@ async fn release_address_with_fallback(address: &str) -> Result<(), String> {
                 "Failed to release address {address}: {helper_error}; {platform_error}"
             ))
         }
+        Ok(Err(join_error)) => Err(format!(
+            "Address release task failed for {address}: {helper_error}; {join_error}"
+        )),
+        Err(_) => Err(format!(
+            "Address release timed out for {address} after {ADDRESS_RELEASE_TIMEOUT:?}"
+        )),
     }
 }
 
@@ -1043,7 +1080,7 @@ mod tests {
         );
 
         // Once the create's outcome is observed, the same pass settles it.
-        let guard = ClusterResourceGuard::arm(id, config.clone());
+        let mut guard = ClusterResourceGuard::arm(id, config.clone());
         guard.confirm();
         std::mem::forget(guard);
         let _ = stop_port_forward_with_mode(id.to_string(), DatabaseMode::Memory).await;

@@ -145,7 +145,12 @@ static FALLBACK_ALLOCATION_MUTEX: Lazy<TokioMutex<()>> = Lazy::new(|| TokioMutex
 /// does not finish keeps the configuration tracked, so a later stop retries it.
 async fn rollback_startup(port_forward: &PortForward, config: Config, reason: String) -> String {
     match port_forward.cleanup_resources().await {
-        Ok(()) => reason,
+        Ok(()) => {
+            if let Some(id) = config.id {
+                crate::kube::stop::forget_pending_cleanup(id, &config);
+            }
+            reason
+        }
         Err(error) => {
             if let Some(id) = config.id {
                 crate::kube::stop::record_pending_cleanup(id, config);
@@ -176,6 +181,15 @@ async fn allocate_local_address_owned(
         .await
         .map_err(|_| "Address allocation ended unexpectedly".to_string())?;
     let address = result?;
+    // Recorded before anything else can be dropped: from here on the address
+    // exists, and a cancellation during persistence or forwarding must leave a
+    // trail for cleanup rather than an allocation nobody knows about. The
+    // startup clears it once the forward is registered or rolled back.
+    if let Some(id) = owned.id
+        && crate::network_utils::is_custom_loopback_address(&address)
+    {
+        crate::kube::stop::record_pending_cleanup(id, owned.clone());
+    }
     // Persisted only now that the result reached a startup that is still
     // current. The task keeps running when this future is abandoned, and
     // writing from there would overwrite settings edited in the meantime.
@@ -625,6 +639,9 @@ pub(super) async fn start_config_cancellable(
 
             handle.set_config(config.clone());
             CHILD_PROCESSES.insert(config_id, handle);
+            // The process now owns the local resources, so the record taken
+            // when the address was allocated is no longer needed.
+            crate::kube::stop::forget_pending_cleanup(config_id, &config);
             let timeout_callback = create_static_timeout_callback(mode);
 
             if let Err(e) = start_timeout_for_forward(config_id, timeout_callback).await {
@@ -688,14 +705,7 @@ pub(super) async fn start_config_cancellable(
             );
             error!("{}", error_message);
 
-            if let Err(cleanup_err) = port_forward.cleanup_resources().await {
-                error!(
-                    "Failed to cleanup resources for failed port forward: {}",
-                    cleanup_err
-                );
-            }
-
-            Err(error_message)
+            Err(rollback_startup(&port_forward, config, error_message).await)
         }
     }
 }
