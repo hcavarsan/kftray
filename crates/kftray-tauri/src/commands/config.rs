@@ -217,31 +217,18 @@ async fn restart_ssl_proxies_with_retry() {
     warn!("All SSL proxy restart attempts failed");
 }
 
-/// Deleting a configuration only removes its database row, so a forward that is
-/// running, starting or still being cleaned up would be left with nothing to
-/// stop it by. Checked in the backend because shortcuts start forwards without
-/// going through the interface.
-fn refuse_active(ids: &[i64]) -> Result<(), String> {
-    let active = kftray_portforward::kube::active_config_ids(ids);
-    if active.is_empty() {
-        return Ok(());
-    }
-    Err(format!(
-        "Stop these configurations before deleting them: {}",
-        active
-            .iter()
-            .map(i64::to_string)
-            .collect::<Vec<_>>()
-            .join(", ")
-    ))
-}
-
 #[tauri::command]
 pub async fn delete_config_cmd(id: i64) -> Result<(), String> {
     info!("Deleting config with id: {id}");
-    refuse_active(&[id])?;
-    clear_stopped_by_timeout(id);
-    let result = delete_config(id).await;
+    // Deleting only removes the database row, so a forward that is running,
+    // starting or still being cleaned up would be left with nothing to stop it
+    // by. Coordinated in the backend under the lifecycle lock, because
+    // shortcuts start forwards without going through the interface.
+    let result = kftray_portforward::kube::delete_configs_if_idle(&[id], || async move {
+        clear_stopped_by_timeout(id);
+        delete_config(id).await
+    })
+    .await;
     if result.is_ok() {
         let _ = regenerate_ssl_certificate_if_needed().await;
     }
@@ -251,11 +238,14 @@ pub async fn delete_config_cmd(id: i64) -> Result<(), String> {
 #[tauri::command]
 pub async fn delete_configs_cmd(ids: Vec<i64>) -> Result<(), String> {
     info!("Deleting configs with ids: {ids:?}");
-    refuse_active(&ids)?;
-    for id in &ids {
-        clear_stopped_by_timeout(*id);
-    }
-    let result = delete_configs(ids).await;
+    let targets = ids.clone();
+    let result = kftray_portforward::kube::delete_configs_if_idle(&targets, || async move {
+        for id in &ids {
+            clear_stopped_by_timeout(*id);
+        }
+        delete_configs(ids).await
+    })
+    .await;
     if result.is_ok() {
         let _ = regenerate_ssl_certificate_if_needed().await;
     }

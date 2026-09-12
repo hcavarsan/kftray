@@ -331,7 +331,13 @@ pub async fn delete_created_resources(
         if let Err(error) = deleted
             && !matches!(&error, kube::Error::Api(response) if response.code == 404)
         {
-            errors.push(error.to_string());
+            // A precondition conflict means the name now holds a different
+            // object. Only the one this attempt created is its responsibility,
+            // so the check below decides whether anything is actually left.
+            let conflict = matches!(&error, kube::Error::Api(response) if response.code == 409);
+            if !conflict || still_present(client, namespace, resource).await? {
+                errors.push(error.to_string());
+            }
         }
     }
     if !errors.is_empty() {
@@ -425,6 +431,17 @@ async fn create_deployment(
             &mut spec.template.metadata.get_or_insert_default().labels,
         )
         .await?;
+        // The selector has to match the tagged pods, and it also keeps another
+        // installation's deployment from adopting them.
+        spec.selector
+            .match_labels
+            .get_or_insert_with(std::collections::BTreeMap::new)
+            .insert(
+                crate::kube::proxy::INSTALLATION_LABEL.to_owned(),
+                kftray_commons::utils::config_dir::installation_id()
+                    .await?
+                    .to_owned(),
+            );
     }
     let spec = deployment
         .spec
@@ -512,8 +529,7 @@ async fn wait_for_pod_ready(
     let pods: Api<Pod> = Api::namespaced(client.clone(), namespace);
     let watcher = kube_runtime::watcher(
         pods,
-        kube_runtime::watcher::Config::default()
-            .labels(&format!("app=kftray-expose,config_id={config_id}")),
+        kube_runtime::watcher::Config::default().labels(&expose_owner_selector(config_id).await?),
     )
     .applied_objects();
     futures::pin_mut!(watcher);
@@ -574,6 +590,18 @@ async fn create_service(
     let mut service: Service =
         serde_json::from_str(&rendered).map_err(|e| format!("Failed to parse service: {}", e))?;
     crate::kube::proxy::tag_installation(&mut service.metadata.labels).await?;
+    // Without this the Service would also select another installation's relay
+    // pods and send its HTTP traffic to the wrong local service.
+    if let Some(spec) = service.spec.as_mut() {
+        spec.selector
+            .get_or_insert_with(std::collections::BTreeMap::new)
+            .insert(
+                crate::kube::proxy::INSTALLATION_LABEL.to_owned(),
+                kftray_commons::utils::config_dir::installation_id()
+                    .await?
+                    .to_owned(),
+            );
+    }
 
     let created = services
         .create(&PostParams::default(), &service)
@@ -683,6 +711,15 @@ pub async fn delete_expose_resources(
         .into_iter()
         .filter_map(Result::err)
         .collect();
+
+    // An accepted DELETE only starts deletion: a finalizer can keep the object,
+    // and its containers, running. Anything still present keeps the
+    // configuration tracked for a later retry.
+    if errors.is_empty()
+        && let Err(error) = wait_until_gone(&client, namespace, &lp).await
+    {
+        errors.push(error);
+    }
 
     // Exposures created before the installation label existed cannot be
     // attributed: configuration ids are local, so another installation in the
@@ -804,6 +841,48 @@ async fn delete_services(client: &Client, namespace: &str, lp: &ListParams) -> R
     }
 }
 
+/// Waits for every resource matching `lp` to disappear.
+async fn wait_until_gone(client: &Client, namespace: &str, lp: &ListParams) -> Result<(), String> {
+    let deadline = tokio::time::Instant::now() + ROLLBACK_DELETION_TIMEOUT;
+    loop {
+        let deployments: Api<Deployment> = Api::namespaced(client.clone(), namespace);
+        let services: Api<Service> = Api::namespaced(client.clone(), namespace);
+        let ingresses: Api<Ingress> = Api::namespaced(client.clone(), namespace);
+        let mut remaining = Vec::new();
+        for names in [
+            names_matching(&deployments, lp).await?,
+            names_matching(&services, lp).await?,
+            names_matching(&ingresses, lp).await?,
+        ] {
+            remaining.extend(names);
+        }
+        if remaining.is_empty() {
+            return Ok(());
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err(format!(
+                "Exposure resources are still terminating after {ROLLBACK_DELETION_TIMEOUT:?}: {}",
+                remaining.join(", ")
+            ));
+        }
+        tokio::time::sleep(ROLLBACK_DELETION_POLL).await;
+    }
+}
+
+async fn names_matching<K>(api: &Api<K>, lp: &ListParams) -> Result<Vec<String>, String>
+where
+    K: Clone + serde::de::DeserializeOwned + std::fmt::Debug + kube::Resource,
+{
+    Ok(api
+        .list(lp)
+        .await
+        .map_err(|error| error.to_string())?
+        .items
+        .iter()
+        .filter_map(|item| item.meta().name.clone())
+        .collect())
+}
+
 async fn delete_deployments(
     client: &Client, namespace: &str, lp: &ListParams,
 ) -> Result<(), String> {
@@ -825,7 +904,14 @@ async fn delete_deployments(
     for deployment in items.items {
         if let Some(name) = &deployment.metadata.name {
             info!("Deleting deployment: {}", name);
-            match api.delete(name, &DeleteParams::default()).await {
+            let dp = DeleteParams {
+                // Foreground propagation keeps the Deployment until its pods
+                // are gone, so waiting for it to disappear also proves the
+                // relay containers stopped.
+                propagation_policy: Some(kube::api::PropagationPolicy::Foreground),
+                ..DeleteParams::default()
+            };
+            match api.delete(name, &dp).await {
                 Ok(_) => info!("Deployment {} deleted successfully", name),
                 Err(e) if matches!(&e, kube::Error::Api(response) if response.code == 404) => {}
                 Err(e) => errors.push(format!("Failed to delete deployment {name}: {e}")),

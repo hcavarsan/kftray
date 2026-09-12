@@ -215,14 +215,19 @@ pub async fn remove_loopback_address(addr: &str) -> Result<()> {
     }
 
     // Skip osascript fallback on macOS - it blocks waiting for user interaction
-    // which can hang stop operations indefinitely. Address cleanup is not critical.
+    // which can hang stop operations indefinitely.
     #[cfg(target_os = "macos")]
     {
+        // Reported as a failure rather than silently skipped: the alias is
+        // still configured, and the caller keeps the configuration tracked so a
+        // later stop, with the helper available, retries it.
         warn!(
-            "Could not remove loopback address {} via helper. Skipping osascript fallback to avoid blocking. Address will be freed on restart.",
+            "Could not remove loopback address {} via helper, and the osascript fallback would block.",
             addr
         );
-        Ok(())
+        Err(anyhow!(
+            "Loopback address {addr} is still configured: removing it needs the helper"
+        ))
     }
 
     #[cfg(target_os = "linux")]
@@ -231,7 +236,10 @@ pub async fn remove_loopback_address(addr: &str) -> Result<()> {
         // Linux routes the whole 127.0.0.0/8 range to the loopback interface,
         // so an address can be bound without ever adding an explicit alias.
         // Deleting one that was never added is not a cleanup failure.
-        if !linux_alias_exists(addr) {
+        // Only a successful query proves the alias is absent. A failed one
+        // (for example `ip` missing from the process PATH) must not be read as
+        // confirmed cleanup.
+        if !linux_alias_exists(addr)? {
             debug!("No explicit loopback alias for {addr}; nothing to remove");
 
             return Ok(());
@@ -316,15 +324,21 @@ fn configure_loopback_macos(addr: &str) -> Result<()> {
 }
 
 #[cfg(target_os = "linux")]
-fn linux_alias_exists(addr: &str) -> bool {
-    Command::new("ip")
+fn linux_alias_exists(addr: &str) -> Result<bool> {
+    let output = Command::new("ip")
         .args(["-o", "addr", "show", "dev", "lo"])
         .output()
-        .is_ok_and(|output| {
-            String::from_utf8_lossy(&output.stdout)
-                .split_whitespace()
-                .any(|field| field == addr || field.starts_with(&format!("{addr}/")))
-        })
+        .map_err(|error| anyhow!("Failed to query loopback aliases: {error}"))?;
+    if !output.status.success() {
+        return Err(anyhow!(
+            "Failed to query loopback aliases: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .split_whitespace()
+        .any(|field| field == addr || field.starts_with(&format!("{addr}/"))))
 }
 
 #[cfg(target_os = "linux")]

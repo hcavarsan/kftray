@@ -160,12 +160,31 @@ async fn rollback_startup(port_forward: &PortForward, config: Config, reason: St
     }
 }
 
+/// Address allocations that have been started but whose result has not been
+/// observed yet.
+pub(crate) static OUTSTANDING_ALLOCATIONS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
+
+/// Decrements the outstanding count however the allocation task ends.
+struct AllocationInFlight;
+
+impl Drop for AllocationInFlight {
+    fn drop(&mut self) {
+        OUTSTANDING_ALLOCATIONS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
 async fn allocate_local_address_owned(
     config: &mut Config, mode: DatabaseMode,
 ) -> Result<String, String> {
     let (sender, receiver) = tokio::sync::oneshot::channel();
     let mut owned = config.clone();
+    // Counted before the task exists: shutdown reconciliation waits for these,
+    // because an allocation still in flight has nothing in the cleanup registry
+    // yet and would otherwise be abandoned.
+    OUTSTANDING_ALLOCATIONS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     tokio::spawn(async move {
+        let _counted = AllocationInFlight;
         let result = allocate_local_address_for_config(&mut owned, mode).await;
         let allocated = result.is_ok()
             && owned
@@ -748,6 +767,14 @@ pub(super) async fn start_config_locked(
                     Err(format!(
                         "Port forwarding is already running for config {id}"
                     ))
+                } else if kftray_commons::utils::config::get_config_with_mode(id, mode)
+                    .await
+                    .is_err()
+                {
+                    // Re-read under the lock: deletion takes the same lock, so
+                    // a start that waited on it must not forward a row that has
+                    // since disappeared.
+                    Err(format!("Config {id} no longer exists"))
                 } else if config.workload_type.as_deref() == Some("expose") {
                     crate::expose::start_single_expose(config, mode, cancellation).await
                 } else {

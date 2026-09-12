@@ -216,28 +216,41 @@ impl Drop for ClusterResourceGuard {
     }
 }
 
+/// Outcome of releasing the local resources one target describes.
+#[derive(Default)]
+struct LocalCleanup {
+    /// Cleanup that failed and can be retried by a later stop.
+    failures: Vec<String>,
+    /// The loopback alias could not be removed, which on some platforms needs
+    /// the privileged helper. The forward itself is gone, so the stop is not
+    /// held back, but the target stays recorded so a later stop retries it.
+    deferred: Vec<String>,
+}
+
+impl LocalCleanup {
+    fn settled(&self) -> bool {
+        self.failures.is_empty() && self.deferred.is_empty()
+    }
+}
+
 /// Releases the loopback address and host entries one target describes.
-async fn release_local_resources(id: i64, config: &Config) -> Result<(), String> {
-    let mut errors = Vec::new();
+async fn release_local_resources(id: i64, config: &Config) -> LocalCleanup {
+    let mut cleanup = LocalCleanup::default();
     if let Some(address) = &config.local_address
         && crate::network_utils::is_custom_loopback_address(address)
         && let Err(error) = release_address_with_fallback(address).await
     {
-        errors.push(error);
+        cleanup.deferred.push(error);
     }
     if config.domain_enabled.unwrap_or_default()
         && let Err(error) = remove_host_entry(&id.to_string())
     {
-        errors.push(error.to_string());
+        cleanup.failures.push(error.to_string());
     }
     if let Err(error) = remove_ssl_host_entry(&id.to_string()) {
-        errors.push(error.to_string());
+        cleanup.failures.push(error.to_string());
     }
-    if errors.is_empty() {
-        Ok(())
-    } else {
-        Err(errors.join("; "))
-    }
+    cleanup
 }
 
 async fn delete_cluster_resources(id: i64, config: &Config) -> Result<(), String> {
@@ -504,15 +517,41 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
 ///
 /// Deleting the row does not stop anything, so the tunnel would keep running
 /// with no configuration to stop it by.
-pub fn active_config_ids(ids: &[i64]) -> Vec<i64> {
-    ids.iter()
+pub async fn delete_configs_if_idle<F, Fut>(ids: &[i64], delete: F) -> Result<(), String>
+where
+    F: FnOnce() -> Fut,
+    Fut: Future<Output = Result<(), String>>,
+{
+    // Held across the delete: `start_config_locked` takes the same lock, so a
+    // start cannot register between the check and the row disappearing, and a
+    // start already waiting on the lock re-reads the row afterwards.
+    let mut guards = Vec::with_capacity(ids.len());
+    for id in ids {
+        let lock = crate::kube::proxy_recovery::acquire_recovery_lock(*id).await;
+        guards.push(lock.lock_owned().await);
+    }
+
+    let active: Vec<i64> = ids
+        .iter()
         .copied()
         .filter(|id| {
             CHILD_PROCESSES.contains_key(id)
                 || crate::kube::proxy::STARTING_PROXIES.contains_key(id)
                 || PENDING_CLEANUP.contains_key(id)
         })
-        .collect()
+        .collect();
+    if !active.is_empty() {
+        return Err(format!(
+            "Stop these configurations before deleting them: {}",
+            active
+                .iter()
+                .map(i64::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+
+    delete().await
 }
 
 pub fn cancel_all_startups() {
@@ -540,7 +579,20 @@ pub async fn reconcile_pending_cleanup(mode: DatabaseMode, deadline: Duration) {
     loop {
         let ids: Vec<i64> = PENDING_CLEANUP.iter().map(|entry| *entry.key()).collect();
         if ids.is_empty() {
-            return;
+            // An allocation still in flight has nothing recorded yet, so an
+            // empty registry is only proof once none are outstanding.
+            if crate::kube::start::OUTSTANDING_ALLOCATIONS.load(std::sync::atomic::Ordering::SeqCst)
+                == 0
+            {
+                return;
+            }
+            if Instant::now() >= until {
+                warn!("Giving up on address allocations that never finished");
+
+                return;
+            }
+            tokio::time::sleep(RETRY_DELAY.min(until - Instant::now())).await;
+            continue;
         }
         let Some(remaining) = until.checked_duration_since(Instant::now()) else {
             warn!(
@@ -762,38 +814,35 @@ async fn stop_config(
             // Local resources are released per target too: an edited row can
             // name a different loopback address than the one still bound.
             let local = release_local_resources(id, &target.config).await;
-            match (cluster, local) {
-                (Ok(()), Ok(())) => {
-                    // An abandoned create may still be persisting, so one empty
-                    // list is not proof. The record survives, and the stop
-                    // reports incomplete cleanup rather than marking the config
-                    // stopped while a relay may still appear.
-                    if target.is_uncertain(now) {
-                        record_target(id, target.config.clone(), target.uncertain_until);
-                        errors.push(format!(
-                            "A create request for config {id} was never answered, so its cluster \
-                             resources are still being reconciled"
-                        ));
-                    } else {
-                        settled.push(target.config.clone());
-                    }
-                }
-                (cluster, local) => {
-                    // The only remaining record of where these resources live:
-                    // the database row can be edited or deleted while a forward
-                    // runs.
-                    record_target(id, target.config.clone(), target.uncertain_until);
-                    if let Err(error) = cluster {
-                        SHARED_CLIENT_MANAGER.invalidate_client(&ServiceClientKey::new(
-                            target.config.context.clone(),
-                            target.config.kubeconfig.clone(),
-                        ));
-                        errors.push(error);
-                    }
-                    if let Err(error) = local {
-                        errors.push(error);
-                    }
-                }
+            let uncertain = target.is_uncertain(now);
+            if cluster.is_ok() && local.settled() && !uncertain {
+                settled.push(target.config.clone());
+                continue;
+            }
+
+            // The only remaining record of where these resources live: the
+            // database row can be edited or deleted while a forward runs.
+            record_target(id, target.config.clone(), target.uncertain_until);
+            if let Err(error) = cluster {
+                SHARED_CLIENT_MANAGER.invalidate_client(&ServiceClientKey::new(
+                    target.config.context.clone(),
+                    target.config.kubeconfig.clone(),
+                ));
+                errors.push(error);
+            } else if uncertain {
+                // An abandoned create may still be persisting, so one empty
+                // list is not proof.
+                errors.push(format!(
+                    "A create request for config {id} was never answered, so its cluster resources \
+                     are still being reconciled"
+                ));
+            }
+            errors.extend(local.failures);
+            // A loopback alias that needs the privileged helper is not a reason
+            // to keep reporting the forward as running: it is already gone. The
+            // record above keeps the alias retryable.
+            for deferred in local.deferred {
+                warn!("Config {id} stopped with cleanup still pending: {deferred}");
             }
         }
         for target in settled {

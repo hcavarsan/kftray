@@ -38,8 +38,8 @@ pub use start::{
 };
 pub use stop::{
     UNCERTAIN_CREATE_WINDOW,
-    active_config_ids,
     cancel_all_startups,
+    delete_configs_if_idle,
     reconcile_pending_cleanup,
     stop_all_port_forward,
     stop_all_port_forward_with_mode,

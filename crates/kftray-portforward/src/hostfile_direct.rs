@@ -80,7 +80,17 @@ impl DirectHostfileManager {
         debug!("Removing host entry for ID {id}");
 
         let existed = match self.entries.write() {
-            Ok(mut entries) => entries.remove(id).is_some(),
+            Ok(mut entries) => {
+                let existed = entries.remove(id).is_some();
+                // Counted while the entries lock is held: a concurrent removal
+                // of the same id would otherwise see the entry already gone and
+                // the generation still reconciled, and report success without
+                // writing anything.
+                if existed {
+                    self.generation.fetch_add(1, Ordering::Relaxed);
+                }
+                existed
+            }
             Err(e) => {
                 error!("Failed to acquire host entries write lock: {e}");
                 return Err(std::io::Error::other(e.to_string()));
@@ -150,8 +160,15 @@ impl DirectHostfileManager {
     ///
     /// An id this process never had can still be on disk when an earlier write
     /// never landed, so a removal is only a no-op while memory and file agree.
+    /// A file with no managed section has nothing to remove, which matters
+    /// because most stops involve no alias at all and the file usually needs
+    /// elevated privileges to write.
     fn removal_needs_write(&self, existed: bool) -> bool {
-        existed || !self.is_reconciled()
+        removal_needs_write(existed, self.is_reconciled(), || {
+            HostsFile::new(KFTRAY_HOSTS_TAG)
+                .section_exists()
+                .unwrap_or(false)
+        })
     }
 
     fn is_reconciled(&self) -> bool {
@@ -371,6 +388,19 @@ impl DirectHostfileManager {
     }
 }
 
+/// Whether removing an entry still requires touching the file.
+///
+/// An id this process never had can still be on disk when an earlier write
+/// never landed, so a removal is only a no-op while memory and file agree, or
+/// while the file carries no managed section at all. That last case matters
+/// because most stops involve no alias and the file usually needs elevated
+/// privileges to write.
+fn removal_needs_write(
+    existed: bool, reconciled: bool, section_on_disk: impl FnOnce() -> bool,
+) -> bool {
+    existed || (!reconciled && section_on_disk())
+}
+
 impl Default for DirectHostfileManager {
     fn default() -> Self {
         Self::new()
@@ -424,24 +454,23 @@ mod tests {
         );
 
         // The entry is gone from memory, but its removal was never written, so
-        // the alias is still on disk and a later removal must not short-circuit.
-        // The decision is asserted directly: performing the write would rewrite
-        // the system hosts file.
+        // the alias can still be on disk and a later removal must not
+        // short-circuit. The decision is asserted directly: performing the
+        // write would rewrite the system hosts file.
         assert!(
-            manager.removal_needs_write(false),
-            "a removal must still write while the file is unreconciled"
-        );
-
-        manager.reconciled_generation.store(
-            manager.generation.load(Ordering::Relaxed),
-            Ordering::Relaxed,
+            removal_needs_write(false, false, || true),
+            "an unreconciled file with a managed section must still be rewritten"
         );
         assert!(
-            !manager.removal_needs_write(false),
+            !removal_needs_write(false, false, || false),
+            "a file with no managed section has nothing to remove"
+        );
+        assert!(
+            !removal_needs_write(false, true, || true),
             "once the file matches memory, removing an absent id is a no-op"
         );
         assert!(
-            manager.removal_needs_write(true),
+            removal_needs_write(true, true, || false),
             "removing an entry this process holds always writes"
         );
     }

@@ -466,12 +466,16 @@ impl PortForwarder {
         }
     }
 
-    /// Aborts every worker without awaiting, so a synchronous `Drop` can still
-    /// release the sockets held by connections stalled outside a cancellation
-    /// point, such as a TLS handshake.
+    /// Requests abortion of every worker without awaiting, so a synchronous
+    /// `Drop` can still release the sockets held by connections stalled outside
+    /// a cancellation point, such as a TLS handshake.
+    ///
+    /// The handles are kept: aborting only schedules cancellation, so
+    /// [`shutdown`](Self::shutdown) still has something to await before
+    /// reporting the workers gone.
     pub fn abort_workers(&self) {
         for tasks in [&self.background_tasks, &self.connection_tasks] {
-            for handle in std::mem::take(&mut *Self::registry(tasks)) {
+            for handle in Self::registry(tasks).iter() {
                 handle.abort();
             }
         }

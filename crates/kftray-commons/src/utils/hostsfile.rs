@@ -93,6 +93,17 @@ impl HostsFile {
         self.write_to(get_default_hosts_path()?)
     }
 
+    /// Whether the hosts file currently carries a section with this tag.
+    ///
+    /// Lets a caller skip a write it does not need, which matters because the
+    /// file is usually only writable with elevated privileges.
+    pub fn section_exists(&self) -> Result<bool> {
+        let path = get_default_hosts_path()?;
+        let contents = std::fs::read_to_string(&path)?;
+
+        Ok(contents.contains(&HostsSection::new(&self.tag).begin_marker()))
+    }
+
     pub fn write_to<P: AsRef<Path>>(&self, path: P) -> Result<bool> {
         let path = path.as_ref();
         validate_hosts_path(path)?;
