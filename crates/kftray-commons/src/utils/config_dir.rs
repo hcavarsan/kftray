@@ -242,7 +242,7 @@ fn publish_installation_id(
         let mut file = fs::File::create(&temporary)?;
         file.write_all(id.as_bytes())?;
         file.sync_all()?;
-        fs::rename(&temporary, path)?;
+        durable_rename(&temporary, path)?;
         // The rename itself has to reach disk before the identifier is used to
         // label cluster resources: losing the directory entry would make the
         // next launch generate a different one and stop matching them.
@@ -257,6 +257,42 @@ fn publish_installation_id(
             path.display()
         )
     })
+}
+
+/// Moves `from` onto `to` so the rename itself is durable.
+#[cfg(unix)]
+fn durable_rename(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+    fs::rename(from, to)
+}
+
+/// Windows has no directory to sync, so durability is requested from the move
+/// itself: a plain rename can be acknowledged before it reaches the disk.
+#[cfg(windows)]
+fn durable_rename(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+    use std::os::windows::ffi::OsStrExt;
+
+    use windows::Win32::Storage::FileSystem::{
+        MOVEFILE_REPLACE_EXISTING,
+        MOVEFILE_WRITE_THROUGH,
+        MoveFileExW,
+    };
+    use windows::core::PCWSTR;
+
+    let wide = |path: &std::path::Path| -> Vec<u16> {
+        path.as_os_str().encode_wide().chain(Some(0)).collect()
+    };
+    let from = wide(from);
+    let to = wide(to);
+
+    // SAFETY: both strings are NUL-terminated and live across the call.
+    unsafe {
+        MoveFileExW(
+            PCWSTR(from.as_ptr()),
+            PCWSTR(to.as_ptr()),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    }
+    .map_err(std::io::Error::other)
 }
 
 #[cfg(unix)]

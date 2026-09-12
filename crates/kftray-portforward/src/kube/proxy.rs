@@ -132,7 +132,7 @@ pub(crate) async fn proxy_owner_selector(config_id: &str) -> Result<String, Stri
     ))
 }
 
-async fn tag_installation(
+pub(crate) async fn tag_installation(
     labels: &mut Option<std::collections::BTreeMap<String, String>>,
 ) -> Result<(), String> {
     labels

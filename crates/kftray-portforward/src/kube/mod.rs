@@ -3,7 +3,7 @@ pub mod http_log_watcher;
 pub mod listener;
 pub mod models;
 pub mod operations;
-mod proxy;
+pub(crate) mod proxy;
 pub mod proxy_recovery;
 mod service;
 pub mod shared_client;
@@ -38,6 +38,7 @@ pub use start::{
 };
 pub use stop::{
     UNCERTAIN_CREATE_WINDOW,
+    active_config_ids,
     cancel_all_startups,
     reconcile_pending_cleanup,
     stop_all_port_forward,

@@ -212,6 +212,18 @@ pub async fn create_expose_resources(
     result
 }
 
+/// Selector matching only the exposure resources this installation created.
+///
+/// Configuration ids come from a local database, so `config_id` alone also
+/// matches another installation's exposure in the same namespace.
+pub async fn expose_owner_selector(config_id: &str) -> Result<String, String> {
+    Ok(format!(
+        "app=kftray-expose,config_id={config_id},{}={}",
+        crate::kube::proxy::INSTALLATION_LABEL,
+        kftray_commons::utils::config_dir::installation_id().await?
+    ))
+}
+
 /// A creation failure, and whether the object may exist despite it.
 pub struct ExposeCreateError {
     pub message: String,
@@ -294,6 +306,11 @@ pub async fn delete_created_resources(
                 uid: Some(uid),
                 resource_version: None,
             }),
+            // Foreground propagation keeps the Deployment until its ReplicaSets
+            // and Pods are gone, so waiting for it to disappear also proves the
+            // relay containers stopped.
+            propagation_policy: matches!(resource.kind, ResourceKind::Deployment)
+                .then_some(kube::api::PropagationPolicy::Foreground),
             ..DeleteParams::default()
         };
         let name = &resource.name;
@@ -400,6 +417,15 @@ async fn create_deployment(
 
     let mut deployment: Deployment = serde_json::from_str(&rendered)
         .map_err(|e| format!("Failed to parse deployment: {}", e))?;
+    // Tagged so cleanup can tell this installation's exposure apart from
+    // another one using the same, locally assigned, configuration id.
+    crate::kube::proxy::tag_installation(&mut deployment.metadata.labels).await?;
+    if let Some(spec) = deployment.spec.as_mut() {
+        crate::kube::proxy::tag_installation(
+            &mut spec.template.metadata.get_or_insert_default().labels,
+        )
+        .await?;
+    }
     let spec = deployment
         .spec
         .as_mut()
@@ -545,8 +571,9 @@ async fn create_service(
     let template = templates::load_service_template()?;
     let rendered = templates::render_template(&template, &values);
 
-    let service: Service =
+    let mut service: Service =
         serde_json::from_str(&rendered).map_err(|e| format!("Failed to parse service: {}", e))?;
+    crate::kube::proxy::tag_installation(&mut service.metadata.labels).await?;
 
     let created = services
         .create(&PostParams::default(), &service)
@@ -598,8 +625,9 @@ async fn create_ingress(
     let template = templates::load_ingress_template()?;
     let rendered = templates::render_template(&template, &values);
 
-    let ingress: Ingress =
+    let mut ingress: Ingress =
         serde_json::from_str(&rendered).map_err(|e| format!("Failed to parse ingress: {}", e))?;
+    crate::kube::proxy::tag_installation(&mut ingress.metadata.labels).await?;
 
     let created = ingresses
         .create(&PostParams::default(), &ingress)
@@ -614,7 +642,7 @@ async fn create_ingress(
 async fn check_existing_resources(
     client: &Client, namespace: &str, config_id: &str,
 ) -> Option<Vec<String>> {
-    let label_selector = format!("app=kftray-expose,config_id={}", config_id);
+    let label_selector = expose_owner_selector(config_id).await.ok()?;
 
     let deployments: Api<Deployment> = Api::namespaced(client.clone(), namespace);
     let deployment_lp = ListParams::default().labels(&label_selector);
@@ -639,8 +667,7 @@ async fn check_existing_resources(
 pub async fn delete_expose_resources(
     client: Client, namespace: &str, config_id_label: &str, ingress_possible: bool,
 ) -> Result<(), String> {
-    let label_selector = format!("app=kftray-expose,config_id={}", config_id_label);
-    let lp = ListParams::default().labels(&label_selector);
+    let lp = ListParams::default().labels(&expose_owner_selector(config_id_label).await?);
 
     info!(
         "Deleting expose resources for config_id label '{}'",
@@ -652,10 +679,42 @@ pub async fn delete_expose_resources(
         delete_services(&client, namespace, &lp),
         delete_deployments(&client, namespace, &lp)
     );
-    let errors: Vec<_> = [ingresses, services, deployments]
+    let mut errors: Vec<String> = [ingresses, services, deployments]
         .into_iter()
         .filter_map(Result::err)
         .collect();
+
+    // Exposures created before the installation label existed cannot be
+    // attributed: configuration ids are local, so another installation in the
+    // same namespace can have the same one. They are reported so an empty owned
+    // list is not mistaken for confirmed cleanup.
+    let unlabelled = ListParams::default().labels(&format!(
+        "app=kftray-expose,config_id={config_id_label},!{}",
+        crate::kube::proxy::INSTALLATION_LABEL
+    ));
+    let deployments: Api<Deployment> = Api::namespaced(client.clone(), namespace);
+    match deployments.list(&unlabelled).await {
+        Ok(list) => {
+            let leftovers: Vec<String> = list
+                .items
+                .iter()
+                .filter_map(|item| item.metadata.name.clone())
+                .collect();
+            if !leftovers.is_empty() {
+                errors.push(format!(
+                    "Exposure resources from an earlier version are still running and cannot be \
+                     attributed to this installation: {}. Remove them from the server resources \
+                     screen.",
+                    leftovers.join(", ")
+                ));
+            }
+        }
+        // Collected rather than returned: this check runs after the deletions,
+        // and its failure must not hide what they reported.
+        Err(error) => errors.push(format!(
+            "Failed to list earlier exposure resources: {error}"
+        )),
+    }
     if !errors.is_empty() {
         return Err(errors.join("; "));
     }

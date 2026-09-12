@@ -521,6 +521,12 @@ pub(super) async fn start_config_cancellable(
     if config.domain_enabled.unwrap_or_default()
         && let Some(service_name) = &config.service
     {
+        // Recorded before the alias exists: from here the startup owns a hosts
+        // entry, and being dropped before the process is registered would
+        // otherwise leave it behind with nothing tracking it.
+        if let Some(id) = config.id {
+            crate::kube::stop::record_pending_cleanup(id, config.clone());
+        }
         match final_local_address.parse::<std::net::IpAddr>() {
             Ok(ip_addr) => {
                 let entry_id = format!("{}", config.id.unwrap_or_default());

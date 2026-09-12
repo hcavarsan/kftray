@@ -138,14 +138,13 @@ fn record_target(id: i64, config: Config, uncertain_until: Option<Instant>) {
 
 /// Drops one recorded target, leaving any other resources for this id tracked.
 pub(crate) fn forget_pending_cleanup(id: i64, config: &Config) {
-    let mut empty = false;
     if let Some(mut entries) = PENDING_CLEANUP.get_mut(&id) {
         entries.retain(|entry| !same_resources(&entry.config, config));
-        empty = entries.is_empty();
     }
-    if empty {
-        PENDING_CLEANUP.remove(&id);
-    }
+    // Removed only while still empty: allocation tasks record targets outside
+    // the lifecycle lock, so one can arrive between the retain above and this
+    // call, and an unconditional remove would discard it.
+    PENDING_CLEANUP.remove_if(&id, |_, entries| entries.is_empty());
 }
 
 fn pending_cleanup_targets(id: i64) -> Vec<PendingTarget> {
@@ -500,6 +499,22 @@ pub async fn stop_all_port_forward() -> Result<Vec<CustomResponse>, String> {
 /// Shutdown calls this before draining so in-flight startups observe
 /// cancellation cooperatively and run their own rollback, instead of being
 /// dropped mid-create by an abort deadline.
+/// Configurations that must not be deleted: their forward is running, starting,
+/// or still has resources waiting to be cleaned up.
+///
+/// Deleting the row does not stop anything, so the tunnel would keep running
+/// with no configuration to stop it by.
+pub fn active_config_ids(ids: &[i64]) -> Vec<i64> {
+    ids.iter()
+        .copied()
+        .filter(|id| {
+            CHILD_PROCESSES.contains_key(id)
+                || crate::kube::proxy::STARTING_PROXIES.contains_key(id)
+                || PENDING_CLEANUP.contains_key(id)
+        })
+        .collect()
+}
+
 pub fn cancel_all_startups() {
     for entry in crate::kube::proxy::STARTING_PROXIES.iter() {
         entry.value().cancel();
@@ -711,11 +726,14 @@ async fn stop_config(
     } else {
         None
     };
+    // A recorded target describes resources that exist. The database row can
+    // have been edited since the forward started, so it is only consulted when
+    // nothing else describes what to clean.
     let config = retained
         .as_ref()
+        .or(pending.first().map(|target| &target.config))
         .or(refreshed.as_ref())
-        .or(config)
-        .or(pending.first().map(|target| &target.config));
+        .or(config);
     cancel_timeout_for_forward(id).await;
 
     let result = if let Some(config) = config {

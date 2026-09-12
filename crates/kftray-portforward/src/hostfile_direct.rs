@@ -87,14 +87,27 @@ impl DirectHostfileManager {
             }
         };
 
-        if !existed && self.is_reconciled() {
+        if !self.removal_needs_write(existed) {
             return Ok(());
         }
 
         self.mark_dirty();
-        self.ensure_writer_running();
-
-        Ok(())
+        // Written here rather than left to the background writer: a removal is
+        // part of stopping a forward, and the caller can only keep it tracked
+        // for retry if it learns the alias is still on disk.
+        match Self::write_snapshot(
+            &self.entries,
+            &self.generation,
+            &self.reconciled_generation,
+            &self.write_lock,
+        ) {
+            Ok(_) => Ok(()),
+            Err((_, error)) => {
+                self.mark_dirty();
+                self.ensure_writer_running();
+                Err(error)
+            }
+        }
     }
 
     pub fn remove_all_host_entries(&self) -> std::io::Result<()> {
@@ -133,6 +146,14 @@ impl DirectHostfileManager {
     /// Marks the hosts file as no longer matching the in-memory entries. Until
     /// a write succeeds, a removal cannot be short-circuited: the file may
     /// still carry an entry this process already forgot.
+    /// Whether removing an entry still requires touching the file.
+    ///
+    /// An id this process never had can still be on disk when an earlier write
+    /// never landed, so a removal is only a no-op while memory and file agree.
+    fn removal_needs_write(&self, existed: bool) -> bool {
+        existed || !self.is_reconciled()
+    }
+
     fn is_reconciled(&self) -> bool {
         self.reconciled_generation.load(Ordering::Relaxed)
             == self.generation.load(Ordering::Relaxed)
@@ -381,13 +402,6 @@ mod tests {
         }
     }
 
-    fn pending_write(manager: &DirectHostfileManager) -> bool {
-        *manager
-            .needs_update
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-    }
-
     #[test]
     fn an_unwritten_change_keeps_later_removals_retrying() {
         init();
@@ -409,29 +423,26 @@ mod tests {
             "a pending change means the file no longer matches memory"
         );
 
-        // The removal drops the entry from memory; if its write never lands,
-        // the alias is still in the file and the next removal must retry.
-        manager
-            .entries
-            .write()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove("41007");
-        *manager
-            .needs_update
-            .lock()
-            .unwrap_or_else(|e| e.into_inner()) = false;
-        // Marked as already running so no writer thread starts: this test is
-        // about the bookkeeping decision, and a real writer would rewrite the
-        // system hosts file with the empty map.
-        *manager
-            .writer_running
-            .lock()
-            .unwrap_or_else(|e| e.into_inner()) = true;
-
-        manager.remove_host_entry("41007").expect("removal");
+        // The entry is gone from memory, but its removal was never written, so
+        // the alias is still on disk and a later removal must not short-circuit.
+        // The decision is asserted directly: performing the write would rewrite
+        // the system hosts file.
         assert!(
-            pending_write(&manager),
-            "a removal must schedule another write while the file is unreconciled"
+            manager.removal_needs_write(false),
+            "a removal must still write while the file is unreconciled"
+        );
+
+        manager.reconciled_generation.store(
+            manager.generation.load(Ordering::Relaxed),
+            Ordering::Relaxed,
+        );
+        assert!(
+            !manager.removal_needs_write(false),
+            "once the file matches memory, removing an absent id is a no-op"
+        );
+        assert!(
+            manager.removal_needs_write(true),
+            "removing an entry this process holds always writes"
         );
     }
 

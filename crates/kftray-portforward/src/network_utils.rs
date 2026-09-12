@@ -228,6 +228,14 @@ pub async fn remove_loopback_address(addr: &str) -> Result<()> {
     #[cfg(target_os = "linux")]
     {
         info!("Using Linux-specific method for loopback removal");
+        // Linux routes the whole 127.0.0.0/8 range to the loopback interface,
+        // so an address can be bound without ever adding an explicit alias.
+        // Deleting one that was never added is not a cleanup failure.
+        if !linux_alias_exists(addr) {
+            debug!("No explicit loopback alias for {addr}; nothing to remove");
+
+            return Ok(());
+        }
         if unsafe { libc::geteuid() } == 0 {
             execute_command("ip", &["addr", "del", addr, "dev", "lo"])?;
         } else {
@@ -305,6 +313,18 @@ fn configure_loopback_macos(addr: &str) -> Result<()> {
         }
         Err(e) => Err(anyhow!("Failed to execute osascript: {}", e)),
     }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_alias_exists(addr: &str) -> bool {
+    Command::new("ip")
+        .args(["-o", "addr", "show", "dev", "lo"])
+        .output()
+        .is_ok_and(|output| {
+            String::from_utf8_lossy(&output.stdout)
+                .split_whitespace()
+                .any(|field| field == addr || field.starts_with(&format!("{addr}/")))
+        })
 }
 
 #[cfg(target_os = "linux")]
