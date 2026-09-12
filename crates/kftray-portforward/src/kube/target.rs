@@ -20,6 +20,12 @@ pub async fn resolve_pod_selector(
     client: &kube::Client, namespace: &str, target: &Target,
 ) -> anyhow::Result<PodSelector> {
     match &target.selector {
+        // An empty Kubernetes label selector matches every pod in the
+        // namespace, so a pod configuration without a target would forward to
+        // an unrelated workload instead of reporting itself as invalid.
+        TargetSelector::PodLabel(label_selector) if label_selector.trim().is_empty() => {
+            Err(anyhow::anyhow!("Pod configuration has no label selector"))
+        }
         TargetSelector::PodLabel(label_selector) => Ok(PodSelector::Labels {
             selector: label_selector.clone(),
         }),

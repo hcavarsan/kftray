@@ -240,6 +240,7 @@ async fn delete_cluster_resources(id: i64, config: &Config) -> Result<(), String
             connection.client.clone(),
             &config.namespace,
             &id.to_string(),
+            config.exposure_type.as_deref() == Some("public"),
         )
         .await
     } else {
@@ -293,33 +294,37 @@ async fn release_address_with_fallback(address: &str) -> Result<(), String> {
     // Every failure is reported so the caller keeps the cleanup record and a
     // later stop retries, rather than marking the config stopped while its
     // loopback address is still bound.
-    match result {
+    let helper_error = match result {
         Ok(Ok(Ok(_))) => {
             info!("Successfully released address via helper: {}", address);
+            return Ok(());
+        }
+        Ok(Ok(Err(e))) => e.to_string(),
+        // spawn_blocking panicked
+        Ok(Err(e)) => e.to_string(),
+        // Timeout elapsed
+        Err(_) => format!("timed out after {ADDRESS_RELEASE_TIMEOUT:?}"),
+    };
+
+    // The helper is optional: a platform that binds the address without an
+    // interface alias, or one where cleanup happens on restart, reports success
+    // here and the stop can complete. Only a platform release that actually
+    // fails keeps the cleanup record for a later retry.
+    match crate::network_utils::remove_loopback_address(address).await {
+        Ok(()) => {
+            warn!(
+                "Released address {} without the helper ({}).",
+                address, helper_error
+            );
             Ok(())
         }
-        Ok(Ok(Err(e))) => {
-            // Helper service returned an error - skip fallback (osascript blocks for user
-            // input)
+        Err(platform_error) => {
             warn!(
-                "Failed to release address {} via helper: {}. Skipping fallback to avoid blocking.",
-                address, e
-            );
-            Err(format!("Failed to release address {address}: {e}"))
-        }
-        Ok(Err(e)) => {
-            // spawn_blocking panicked
-            warn!("Address release task panicked for {}: {}.", address, e);
-            Err(format!("Address release task panicked for {address}: {e}"))
-        }
-        Err(_) => {
-            // Timeout elapsed
-            warn!(
-                "Address release timed out for {} after {:?}.",
-                address, ADDRESS_RELEASE_TIMEOUT
+                "Failed to release address {}: helper: {}; platform: {}",
+                address, helper_error, platform_error
             );
             Err(format!(
-                "Address release timed out for {address} after {ADDRESS_RELEASE_TIMEOUT:?}"
+                "Failed to release address {address}: {helper_error}; {platform_error}"
             ))
         }
     }
@@ -331,35 +336,64 @@ pub(crate) async fn delete_proxy_cluster_resources(
     let prefix = crate::kube::proxy::proxy_resource_prefix();
     let owned = ListParams::default()
         .labels(&crate::kube::proxy::proxy_owner_selector(&config_id.to_string()).await?);
-    // Relays created before the installation label existed carry only
-    // app/config_id. They can only have come from this user on this machine, so
-    // the name prefix still identifies them, and an installation that upgraded
-    // would otherwise treat an empty labelled list as proof of cleanup. A
-    // resource created by another installation after the upgrade always carries
-    // the label and is excluded here.
-    let legacy = ListParams::default().labels(&format!(
-        "config_id={config_id},!{}",
-        crate::kube::proxy::INSTALLATION_LABEL
-    ));
     let dp = DeleteParams {
         grace_period_seconds: Some(0),
         ..DeleteParams::default()
     };
     let pods: Api<Pod> = Api::namespaced(client.clone(), namespace);
     let deployments: Api<Deployment> = Api::namespaced(client, namespace);
-    let selectors = [&owned, &legacy];
+    let selectors = [&owned];
     let delete_pods = delete_prefixed(&pods, &selectors, &prefix, &dp);
     let delete_deployments = delete_prefixed(&deployments, &selectors, &prefix, &dp);
-    let (pods, deployments) = tokio::join!(delete_pods, delete_deployments);
-    let errors: Vec<_> = [pods, deployments]
+    let (deleted_pods, deleted_deployments) = tokio::join!(delete_pods, delete_deployments);
+    let mut errors: Vec<String> = [deleted_pods, deleted_deployments]
         .into_iter()
         .filter_map(Result::err)
         .collect();
+
+    // Relays created before the installation label existed carry only
+    // app/config_id. Config ids are local, so another machine under the same
+    // username produces the same labels and name prefix: the prefix is not
+    // proof of ownership and these are never deleted automatically. They are
+    // reported instead, so an empty owned list is not mistaken for confirmed
+    // cleanup and the user can remove them from the server resources screen.
+    let unlabelled = format!(
+        "config_id={config_id},!{}",
+        crate::kube::proxy::INSTALLATION_LABEL
+    );
+    let leftovers = list_prefixed_names(&pods, &unlabelled, &prefix).await?
+        + &list_prefixed_names(&deployments, &unlabelled, &prefix).await?;
+    if !leftovers.is_empty() {
+        errors.push(format!(
+            "Relay resources from an earlier version are still running and cannot be attributed to \
+             this installation: {}. Remove them from the server resources screen.",
+            leftovers.trim_end_matches(", ")
+        ));
+    }
+
     if errors.is_empty() {
         Ok(())
     } else {
         Err(errors.join("; "))
     }
+}
+
+async fn list_prefixed_names<K>(
+    api: &Api<K>, selector: &str, prefix: &str,
+) -> Result<String, String>
+where
+    K: Clone + serde::de::DeserializeOwned + std::fmt::Debug + kube::Resource,
+{
+    let lp = ListParams::default().labels(selector);
+    let list = api.list(&lp).await.map_err(|error| error.to_string())?;
+
+    Ok(list
+        .items
+        .iter()
+        .filter_map(|item| item.meta().name.clone())
+        .filter(|name| name.starts_with(prefix))
+        .map(|name| format!("{name}, "))
+        .collect())
 }
 
 async fn delete_prefixed<K>(
@@ -428,17 +462,29 @@ pub async fn reconcile_pending_cleanup(mode: DatabaseMode, deadline: Duration) {
         if ids.is_empty() {
             return;
         }
-        if Instant::now() >= until {
+        let Some(remaining) = until.checked_duration_since(Instant::now()) else {
             warn!(
                 "Giving up on cleanup for {} configuration(s) that never settled: {ids:?}",
                 ids.len()
             );
             return;
-        }
-        tokio::time::sleep(RETRY_DELAY).await;
+        };
+        tokio::time::sleep(RETRY_DELAY.min(remaining)).await;
         for id in ids {
-            if let Err(error) = stop_config(id, None, mode).await {
-                warn!("Cleanup for config {id} is still incomplete: {error}");
+            // Each attempt carries the remaining budget: a stop can wait on the
+            // lifecycle lock and several requests, and the caller's deadline
+            // has to hold for the whole pass, not just between passes. A
+            // dropped attempt keeps its target recorded.
+            let Some(remaining) = until.checked_duration_since(Instant::now()) else {
+                return;
+            };
+            match tokio::time::timeout(remaining, stop_config(id, None, mode)).await {
+                Ok(Err(error)) => warn!("Cleanup for config {id} is still incomplete: {error}"),
+                Err(_) => {
+                    warn!("Cleanup for config {id} did not finish within the shutdown budget");
+                    return;
+                }
+                Ok(Ok(_)) => {}
             }
         }
     }

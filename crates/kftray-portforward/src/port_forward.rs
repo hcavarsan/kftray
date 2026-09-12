@@ -212,14 +212,27 @@ impl PortForward {
     /// custom loopback address and the domain alias in the hosts file.
     #[instrument(skip(self), fields(config_id = self.config_id))]
     pub async fn cleanup_resources(&self) -> anyhow::Result<()> {
+        let mut errors: Vec<String> = Vec::new();
         if let Some(addr) = &self.local_address
             && crate::network_utils::is_custom_loopback_address(addr)
+            && let Err(error) = crate::network_utils::remove_loopback_address(addr).await
         {
-            let _ = crate::network_utils::remove_loopback_address(addr).await;
+            errors.push(error.to_string());
         }
-        let _ = crate::hostsfile::remove_host_entry(&self.config_id.to_string());
-        let _ = crate::hostsfile::remove_ssl_host_entry(&self.config_id.to_string());
-        Ok(())
+        // Reported rather than swallowed: this runs when a startup failed or
+        // was cancelled after adding an alias, and the caller keeps the config
+        // tracked for retry when cleanup did not finish.
+        if let Err(error) = crate::hostsfile::remove_host_entry(&self.config_id.to_string()) {
+            errors.push(error.to_string());
+        }
+        if let Err(error) = crate::hostsfile::remove_ssl_host_entry(&self.config_id.to_string()) {
+            errors.push(error.to_string());
+        }
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!(errors.join("; ")))
+        }
     }
 
     #[instrument(skip(self, tls_acceptor), fields(config_id = self.config_id))]

@@ -60,7 +60,13 @@ pub async fn create_expose_resources(
             "Resources already exist for config {}: {:?}. Cleaning up before recreating",
             config_id_str, resources
         );
-        let _ = delete_expose_resources(client.clone(), &config.namespace, &config_id_str).await;
+        let _ = delete_expose_resources(
+            client.clone(),
+            &config.namespace,
+            &config_id_str,
+            config.exposure_type.as_deref() == Some("public"),
+        )
+        .await;
 
         tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
     }
@@ -187,10 +193,14 @@ pub async fn create_expose_resources(
     .await;
     if let Err(error) = result {
         return match delete_created_resources(&client, &config.namespace, &created).await {
-            Ok(()) => Err(error),
+            Ok(()) => Err(ExposeCreateError {
+                rolled_back: true,
+                ..error
+            }),
             Err(cleanup_error) => Err(ExposeCreateError {
                 message: format!("{}; cleanup failed: {cleanup_error}", error.message),
                 ambiguous: error.ambiguous,
+                rolled_back: false,
             }),
         };
     }
@@ -204,6 +214,9 @@ pub struct ExposeCreateError {
     /// persisting an object this attempt cannot name. The cleanup record must
     /// stay uncertain.
     pub ambiguous: bool,
+    /// Everything this attempt created was deleted again, so nothing of its own
+    /// is left for a later cleanup pass to find.
+    pub rolled_back: bool,
 }
 
 impl From<String> for ExposeCreateError {
@@ -211,6 +224,7 @@ impl From<String> for ExposeCreateError {
         Self {
             message,
             ambiguous: false,
+            rolled_back: false,
         }
     }
 }
@@ -234,6 +248,7 @@ fn classify_create_error(what: &str, error: &kube::Error) -> ExposeCreateError {
     ExposeCreateError {
         message: format!("Failed to create {what}: {error}"),
         ambiguous,
+        rolled_back: false,
     }
 }
 
@@ -557,7 +572,7 @@ async fn check_existing_resources(
 }
 
 pub async fn delete_expose_resources(
-    client: Client, namespace: &str, config_id_label: &str,
+    client: Client, namespace: &str, config_id_label: &str, ingress_possible: bool,
 ) -> Result<(), String> {
     let label_selector = format!("app=kftray-expose,config_id={}", config_id_label);
     let lp = ListParams::default().labels(&label_selector);
@@ -568,7 +583,7 @@ pub async fn delete_expose_resources(
     );
 
     let (ingresses, services, deployments) = tokio::join!(
-        delete_ingresses(&client, namespace, &lp),
+        delete_ingresses(&client, namespace, &lp, ingress_possible),
         delete_services(&client, namespace, &lp),
         delete_deployments(&client, namespace, &lp)
     );
@@ -587,16 +602,20 @@ pub async fn delete_expose_resources(
     Ok(())
 }
 
-async fn delete_ingresses(client: &Client, namespace: &str, lp: &ListParams) -> Result<(), String> {
+async fn delete_ingresses(
+    client: &Client, namespace: &str, lp: &ListParams, ingress_possible: bool,
+) -> Result<(), String> {
     let api: Api<Ingress> = Api::namespaced(client.clone(), namespace);
 
     let items = match api.list(lp).await {
         Ok(list) => list,
-        // A private exposure never creates an Ingress, so a role scoped to
-        // Deployments, Services and Pods is legitimate. Failing here would
-        // leave the stop reporting an error after deleting everything that
-        // actually exists, and the config stuck as running.
-        Err(kube::Error::Api(response)) if response.code == 403 || response.code == 404 => {
+        // Only tolerated when no Ingress can exist: a private exposure never
+        // creates one, so a role scoped to Deployments, Services and Pods is
+        // legitimate. For a public exposure the same response would hide an
+        // ingress that is still serving traffic.
+        Err(kube::Error::Api(response))
+            if !ingress_possible && (response.code == 403 || response.code == 404) =>
+        {
             debug!("Skipping ingress cleanup: {}", response.message);
             return Ok(());
         }
@@ -820,7 +839,7 @@ mod tests {
             deleted
         }));
         let (result, deleted) = tokio::time::timeout(std::time::Duration::from_secs(2), async {
-            let result = delete_expose_resources(client, "default", "42").await;
+            let result = delete_expose_resources(client, "default", "42", true).await;
             (result, server.await.unwrap())
         })
         .await

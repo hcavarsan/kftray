@@ -664,20 +664,20 @@ const KFTray = () => {
     // Collected as workers settle, so a failure that happened before the
     // deadline is still reported when the deadline wins the race.
     const failures: { id: number; error: unknown }[] = []
-    const reportFailures = () => {
-      if (!failures.length) {
+    const reportFailures = (reporting = failures) => {
+      if (!reporting.length) {
         return
       }
-      const first = failures[0]
+      const first = reporting[0]
       const message =
         first.error instanceof Error ? first.error.message : String(first.error)
 
       toaster.error({
         title: action === 'starting' ? 'Start Failed' : 'Stop Failed',
         description:
-          failures.length === 1
+          reporting.length === 1
             ? `Config ${first.id}: ${message}`
-            : `${failures.length} configs failed to ${action === 'starting' ? 'start' : 'stop'}`,
+            : `${reporting.length} configs failed to ${action === 'starting' ? 'start' : 'stop'}`,
         duration: 3000,
       })
     }
@@ -702,6 +702,7 @@ const KFTray = () => {
           debouncedUpdateConfigs()
         }
       })
+      let reported = 0
       const settled = await Promise.race([
         batch.then(() => true),
         new Promise<false>(resolve =>
@@ -715,7 +716,17 @@ const KFTray = () => {
         // never started release their reservation, and nothing new dispatches.
         // Genuinely in-flight invocations keep theirs until they finish.
         controller.abort()
+        reported = failures.length
         reportFailures()
+        // Workers still running keep appending, and nobody is waiting on the
+        // batch any more, so their errors are reported when they arrive.
+        void batch.then(() => {
+          const late = failures.slice(reported)
+
+          if (late.length) {
+            reportFailures(late)
+          }
+        })
         toaster.error({
           title: action === 'starting' ? 'Start Failed' : 'Stop Failed',
           description: `${unresolved.size} configuration(s) are still working. They stay locked until they finish.`,
@@ -798,7 +809,10 @@ const KFTray = () => {
           description: `${running.length} selected configuration(s) are running. Stop them before deleting.`,
           duration: 2000,
         })
-        setConfigs(current)
+        // Through the version-guarded refresh: another operation can have
+        // settled while this snapshot was being fetched, and writing it
+        // directly would resurrect what that operation just changed.
+        await updateConfigsWithState()
 
         return false
       }

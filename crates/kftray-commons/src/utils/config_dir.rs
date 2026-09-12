@@ -250,7 +250,12 @@ fn publish_installation_id(
         let mut file = fs::File::create(&temporary)?;
         file.write_all(id.as_bytes())?;
         file.sync_all()?;
-        fs::rename(&temporary, path)
+        fs::rename(&temporary, path)?;
+        // The rename itself has to reach disk before the identifier is used to
+        // label cluster resources: losing the directory entry would make the
+        // next launch generate a different one and stop matching them.
+        sync_directory(config_dir);
+        Ok(())
     })();
     if written.is_err() {
         let _ = fs::remove_file(&temporary);
@@ -261,6 +266,20 @@ fn publish_installation_id(
             path.display()
         )
     })
+}
+
+#[cfg(unix)]
+fn sync_directory(path: &std::path::Path) {
+    if let Ok(directory) = fs::File::open(path) {
+        let _ = directory.sync_all();
+    }
+}
+
+#[cfg(not(unix))]
+fn sync_directory(path: &std::path::Path) {
+    // Windows has no directory handle to sync; the rename is durable once the
+    // file's own data has been flushed.
+    let _ = path;
 }
 
 fn is_valid_installation_id(value: &str) -> bool {

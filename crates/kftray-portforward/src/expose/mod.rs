@@ -89,7 +89,13 @@ pub(crate) async fn start_single_expose(
             resources
         }
         Err(error) => {
-            if !error.ambiguous {
+            // Disarmed only when the outcome was definitive and UID-scoped
+            // rollback removed everything this attempt created: leaving the
+            // record would make a later stop delete by label, which can reach
+            // another installation's resources for the same config id.
+            if !error.ambiguous && error.rolled_back {
+                guard.disarm();
+            } else if !error.ambiguous {
                 guard.confirm();
             }
             return Err(error.message);
@@ -134,6 +140,7 @@ pub(crate) async fn start_single_expose(
                 client.clone(),
                 &config.namespace,
                 &config_id.to_string(),
+                config.exposure_type.as_deref() == Some("public"),
             )
             .await
             {
@@ -200,6 +207,7 @@ pub(crate) async fn start_single_expose(
             client.clone(),
             &config.namespace,
             &config_id.to_string(),
+            config.exposure_type.as_deref() == Some("public"),
         )
         .await
         {
@@ -222,9 +230,14 @@ pub(crate) async fn start_single_expose(
     };
     if let Err(error) = update_config_state_with_mode(&config_state, mode).await {
         pf_process.cleanup_and_abort().await;
-        if delete_expose_resources(client, &config.namespace, &config_id.to_string())
-            .await
-            .is_ok()
+        if delete_expose_resources(
+            client,
+            &config.namespace,
+            &config_id.to_string(),
+            config.exposure_type.as_deref() == Some("public"),
+        )
+        .await
+        .is_ok()
         {
             guard.disarm();
         }

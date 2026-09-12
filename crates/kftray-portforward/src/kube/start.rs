@@ -141,6 +141,20 @@ static FALLBACK_ALLOCATION_MUTEX: Lazy<TokioMutex<()>> = Lazy::new(|| TokioMutex
 /// cancelled or times out, the task still observes the result and releases an
 /// address that arrived too late, which would otherwise stay bound with nothing
 /// tracking it.
+/// Releases what a failed startup registered outside the process. Cleanup that
+/// does not finish keeps the configuration tracked, so a later stop retries it.
+async fn rollback_startup(port_forward: &PortForward, config: Config, reason: String) -> String {
+    match port_forward.cleanup_resources().await {
+        Ok(()) => reason,
+        Err(error) => {
+            if let Some(id) = config.id {
+                crate::kube::stop::record_pending_cleanup(id, config);
+            }
+            format!("{reason}; cleanup incomplete: {error}")
+        }
+    }
+}
+
 async fn allocate_local_address_owned(
     config: &mut Config, mode: DatabaseMode,
 ) -> Result<String, String> {
@@ -161,8 +175,35 @@ async fn allocate_local_address_owned(
     let (result, owned) = receiver
         .await
         .map_err(|_| "Address allocation ended unexpectedly".to_string())?;
+    let address = result?;
+    // Persisted only now that the result reached a startup that is still
+    // current. The task keeps running when this future is abandoned, and
+    // writing from there would overwrite settings edited in the meantime.
+    if owned.auto_loopback_address
+        && let Some(id) = owned.id
+        && let Err(error) = persist_allocated_address(id, &address, mode).await
+    {
+        error!("Failed to save allocated address {address} for config {id}: {error}");
+    }
     *config = owned;
-    result
+    Ok(address)
+}
+
+/// Writes only the allocated address, leaving every other field as stored.
+async fn persist_allocated_address(
+    id: i64, address: &str, mode: DatabaseMode,
+) -> Result<(), String> {
+    use kftray_commons::utils::config::{
+        get_config_with_mode,
+        update_config_with_mode,
+    };
+
+    let mut stored = get_config_with_mode(id, mode).await?;
+    if stored.local_address.as_deref() == Some(address) {
+        return Ok(());
+    }
+    stored.local_address = Some(address.to_owned());
+    update_config_with_mode(stored, mode).await
 }
 
 async fn allocate_local_address_for_config(
@@ -210,21 +251,6 @@ async fn allocate_local_address_for_config(
                 allocated_address,
                 config.id.unwrap_or_default()
             );
-            if let Err(e) = save_allocated_address_to_db(config, mode).await {
-                error!(
-                    "Failed to save allocated address {} to database for config {}: {}",
-                    allocated_address,
-                    config.id.unwrap_or_default(),
-                    e
-                );
-            } else {
-                info!(
-                    "Successfully updated database with allocated address {} for config {}",
-                    allocated_address,
-                    config.id.unwrap_or_default()
-                );
-            }
-
             Ok(allocated_address)
         }
         Err(e) => {
@@ -318,33 +344,7 @@ async fn try_fallback_allocate_and_save(
                     config.id.unwrap_or_default()
                 );
 
-                match save_allocated_address_to_db(config, mode).await {
-                    Ok(_) => {
-                        info!(
-                            "Successfully updated database with fallback allocated address {} for config {}",
-                            address,
-                            config.id.unwrap_or_default()
-                        );
-                        return Ok(address);
-                    }
-                    Err(e) => {
-                        error!(
-                            "Failed to save fallback allocated address {} to database for config {}: {}",
-                            address,
-                            config.id.unwrap_or_default(),
-                            e
-                        );
-                        if let Err(cleanup_err) =
-                            crate::network_utils::remove_loopback_address(&address).await
-                        {
-                            error!(
-                                "Failed to cleanup address {} after DB save failure: {}",
-                                address, cleanup_err
-                            );
-                        }
-                        continue;
-                    }
-                }
+                return Ok(address);
             }
             Err(e) => {
                 let error_msg = e.to_string();
@@ -390,24 +390,6 @@ async fn get_allocated_loopback_addresses(mode: DatabaseMode) -> std::collection
 
     debug!("Currently allocated loopback addresses: {allocated:?}");
     allocated
-}
-
-async fn save_allocated_address_to_db(config: &Config, mode: DatabaseMode) -> Result<(), String> {
-    use kftray_commons::utils::config::update_config_with_mode;
-
-    match update_config_with_mode(config.clone(), mode).await {
-        Ok(_) => {
-            info!(
-                "Successfully saved allocated address to database for config {}",
-                config.id.unwrap_or_default()
-            );
-            Ok(())
-        }
-        Err(e) => {
-            error!("Failed to update config in database: {e}");
-            Err(e)
-        }
-    }
 }
 
 pub async fn start_port_forward(
@@ -599,8 +581,9 @@ pub(super) async fn start_config_cancellable(
         Some(token) => tokio::select! {
             biased;
             _ = token.cancelled() => {
-                let _ = port_forward.cleanup_resources().await;
-                return Err(format!("Startup cancelled for config {config_id}"));
+                return Err(rollback_startup(&port_forward, config, format!(
+                    "Startup cancelled for config {config_id}"
+                )).await);
             }
             forwarded = forward => forwarded,
         },
@@ -626,15 +609,18 @@ pub(super) async fn start_config_cancellable(
 
             if cancelled() {
                 handle.cleanup_and_abort().await;
-                let _ = port_forward.cleanup_resources().await;
-                return Err(format!("Startup cancelled for config {config_id}"));
+                return Err(rollback_startup(
+                    &port_forward,
+                    config,
+                    format!("Startup cancelled for config {config_id}"),
+                )
+                .await);
             }
 
             let config_state = ConfigState::new(config_id, true);
             if let Err(error) = update_config_state_with_mode(&config_state, mode).await {
                 handle.cleanup_and_abort().await;
-                let _ = port_forward.cleanup_resources().await;
-                return Err(error);
+                return Err(rollback_startup(&port_forward, config, error).await);
             }
 
             handle.set_config(config.clone());

@@ -97,7 +97,16 @@ impl WebSocketTunnelClient {
             Ok(connection) => connection,
             Err(error) => {
                 let message = format!("Failed to connect to WebSocket: {error}");
-                let is_permanent = matches!(error, WsError::Http(_));
+                // A rejection the relay may recover from keeps the readiness
+                // sender pending, so the reconnect loop can retry within the
+                // startup timeout instead of tearing the exposure down.
+                let is_permanent = match &error {
+                    WsError::Http(response) => !matches!(
+                        response.status().as_u16(),
+                        408 | 425 | 429 | 500 | 502 | 503 | 504
+                    ),
+                    _ => false,
+                };
                 if is_permanent
                     && let Some(ready) = ready.take()
                     && ready.send(Err(message.clone())).is_err()
