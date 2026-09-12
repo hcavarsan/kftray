@@ -31,6 +31,9 @@ pub struct DirectHostfileManager {
     needs_update: Arc<Mutex<bool>>,
     writer_running: Arc<Mutex<bool>>,
     reconciled: Arc<AtomicBool>,
+    /// Bumped by every mutation. A write only proves the file matches memory
+    /// if no mutation landed after the snapshot it wrote.
+    generation: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl DirectHostfileManager {
@@ -40,6 +43,7 @@ impl DirectHostfileManager {
             needs_update: Arc::new(Mutex::new(false)),
             writer_running: Arc::new(Mutex::new(false)),
             reconciled: Arc::new(AtomicBool::new(false)),
+            generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
     }
 
@@ -100,9 +104,12 @@ impl DirectHostfileManager {
             }
         }
 
+        let started = self.generation.load(Ordering::Relaxed);
         match self.update_hosts_file() {
             Ok(()) => {
-                self.reconciled.store(true, Ordering::Relaxed);
+                if self.generation.load(Ordering::Relaxed) == started {
+                    self.reconciled.store(true, Ordering::Relaxed);
+                }
                 Ok(())
             }
             Err(error) => {
@@ -117,6 +124,7 @@ impl DirectHostfileManager {
     /// a write succeeds, a removal cannot be short-circuited: the file may
     /// still carry an entry this process already forgot.
     fn mark_dirty(&self) {
+        self.generation.fetch_add(1, Ordering::Relaxed);
         self.reconciled.store(false, Ordering::Relaxed);
         let mut needs_update = self.needs_update.lock().unwrap_or_else(|e| {
             error!("Failed to acquire needs_update lock: {e}");
@@ -151,9 +159,16 @@ impl DirectHostfileManager {
             let needs_update = self.needs_update.clone();
             let writer_running = self.writer_running.clone();
             let reconciled = self.reconciled.clone();
+            let generation = self.generation.clone();
 
             thread::spawn(move || {
-                Self::batch_writer_loop(entries, needs_update, writer_running, reconciled);
+                Self::batch_writer_loop(
+                    entries,
+                    needs_update,
+                    writer_running,
+                    reconciled,
+                    generation,
+                );
             });
         }
     }
@@ -161,6 +176,7 @@ impl DirectHostfileManager {
     fn batch_writer_loop(
         entries: Arc<RwLock<HostEntriesMap>>, needs_update: Arc<Mutex<bool>>,
         writer_running: Arc<Mutex<bool>>, reconciled: Arc<AtomicBool>,
+        generation: Arc<std::sync::atomic::AtomicU64>,
     ) {
         let mut backoff = Duration::from_millis(BATCH_DELAY_MS);
         let mut failures = 0u32;
@@ -196,9 +212,14 @@ impl DirectHostfileManager {
                 continue;
             }
 
+            let started = generation.load(Ordering::Relaxed);
             match Self::update_hosts_file_static(&entries) {
                 Ok(()) => {
-                    reconciled.store(true, Ordering::Relaxed);
+                    // A mutation that landed after the snapshot is not covered
+                    // by this write, so the file still disagrees with memory.
+                    if generation.load(Ordering::Relaxed) == started {
+                        reconciled.store(true, Ordering::Relaxed);
+                    }
                     backoff = Duration::from_millis(BATCH_DELAY_MS);
                     failures = 0;
                 }

@@ -8,7 +8,7 @@ pub mod proxy_recovery;
 mod service;
 pub mod shared_client;
 mod start;
-mod stop;
+pub(crate) mod stop;
 pub mod target;
 pub mod tcp_forwarder;
 pub mod udp_forwarder;

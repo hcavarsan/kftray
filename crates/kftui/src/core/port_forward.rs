@@ -80,6 +80,14 @@ pub async fn stop_port_forwarding(config: Config, mode: DatabaseMode) -> Result<
 
 pub async fn stop_all_port_forward_and_exit(app: &mut App, mode: DatabaseMode) {
     log::debug!("Stopping all port forwards in mode: {mode:?}...");
+
+    // Restore the terminal first: draining in-flight operations and deleting
+    // cluster resources are both unbounded from here, and neither should hold
+    // the shell in raw mode.
+    let _ = disable_raw_mode();
+    let _ = execute!(std::io::stdout(), LeaveAlternateScreen, Show);
+    let _ = std::io::stdout().flush();
+
     app.finish_forwarding().await;
     match stop_all_port_forward_with_mode(mode).await {
         Ok(responses) => {
@@ -101,11 +109,6 @@ pub async fn stop_all_port_forward_and_exit(app: &mut App, mode: DatabaseMode) {
     }
 
     log::debug!("Exiting application...");
-
-    disable_raw_mode().expect("Failed to disable raw mode");
-    execute!(std::io::stdout(), LeaveAlternateScreen, Show)
-        .expect("Failed to leave alternate screen and show cursor");
-    std::io::stdout().flush().expect("Failed to flush stdout");
 
     std::process::exit(0);
 }

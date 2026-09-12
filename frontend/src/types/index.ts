@@ -130,7 +130,7 @@ export interface FooterProps {
   onSyncComplete: () => void
   openShortcutModal: () => void
   setIsAutoImportModalOpen: (open: boolean) => void
-  pendingConfigActions: Map<number, PortForwardAction>
+  deleteConfigs: (ids: number[]) => Promise<boolean>
 }
 
 export interface SyncConfigsButtonProps {
@@ -198,7 +198,7 @@ export interface BulkDeleteButtonProps {
   selectedConfigs: Config[]
   setSelectedConfigs: (configs: Config[]) => void
   configs: Config[]
-  pendingConfigActions: Map<number, PortForwardAction>
+  deleteConfigs: (ids: number[]) => Promise<boolean>
 }
 
 export interface ContextsAccordionProps {

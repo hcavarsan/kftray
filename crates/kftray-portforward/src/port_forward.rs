@@ -102,6 +102,13 @@ impl PortForwardProcess {
             };
             tokio::join!(forwarding, websocket);
         };
+        // Abort synchronously before the first await: if this future is dropped
+        // partway through `shutdown`, the remaining workers, including a
+        // handshake stalled outside any cancellation point, would keep their
+        // sockets and their `Arc<PortForwarder>` forever.
+        if let Some(forwarder) = &direct_forwarder {
+            forwarder.abort_workers();
+        }
         let shutdown = async {
             if let Some(forwarder) = direct_forwarder {
                 forwarder.shutdown().await;

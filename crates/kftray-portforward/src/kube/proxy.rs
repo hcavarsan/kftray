@@ -119,20 +119,23 @@ pub(crate) const INSTALLATION_LABEL: &str = "installation_id";
 /// Selector that matches only this installation's resources for `config_id`.
 /// Two machines can hold the same local config id under the same username, so
 /// `config_id` alone is not an ownership test.
-pub(crate) fn proxy_owner_selector(config_id: &str) -> String {
-    format!(
+pub(crate) fn proxy_owner_selector(config_id: &str) -> Result<String, String> {
+    Ok(format!(
         "config_id={config_id},{INSTALLATION_LABEL}={}",
-        kftray_commons::utils::config_dir::get_installation_id()
-    )
+        kftray_commons::utils::config_dir::get_installation_id()?
+    ))
 }
 
-fn tag_installation(labels: &mut Option<std::collections::BTreeMap<String, String>>) {
+fn tag_installation(
+    labels: &mut Option<std::collections::BTreeMap<String, String>>,
+) -> Result<(), String> {
     labels
         .get_or_insert_with(std::collections::BTreeMap::new)
         .insert(
             INSTALLATION_LABEL.to_owned(),
-            kftray_commons::utils::config_dir::get_installation_id().to_owned(),
+            kftray_commons::utils::config_dir::get_installation_id()?.to_owned(),
         );
+    Ok(())
 }
 
 #[derive(Clone, Copy)]
@@ -144,36 +147,6 @@ struct ProxyStartOptions<'a> {
 
 pub async fn deploy_and_forward_pod(configs: Vec<Config>) -> Result<Vec<CustomResponse>, String> {
     deploy_and_forward_pod_with_mode(configs, DatabaseMode::File, false).await
-}
-
-/// Records created cluster resources so a dropped startup future still leaves a
-/// trail for stop-all. `disarm` is called once the startup either registered a
-/// child process or deleted the resources itself.
-struct ClusterResourceGuard {
-    id: i64,
-    config: Option<Config>,
-}
-
-impl ClusterResourceGuard {
-    fn arm(id: i64, config: Config) -> Self {
-        Self {
-            id,
-            config: Some(config),
-        }
-    }
-
-    fn disarm(mut self) {
-        self.config = None;
-        crate::kube::stop::clear_pending_cleanup(self.id);
-    }
-}
-
-impl Drop for ClusterResourceGuard {
-    fn drop(&mut self) {
-        if let Some(config) = self.config.take() {
-            crate::kube::stop::record_pending_cleanup(self.id, config);
-        }
-    }
 }
 
 pub(super) type RegisteredBatch = (Vec<(Config, PendingStart)>, Vec<(Config, String)>);
@@ -427,16 +400,16 @@ async fn process_deployment_proxy(
     let rendered_json = render_json_template_owned(&contents, values);
     let mut deployment: Deployment =
         serde_json::from_str(&rendered_json).map_err(|e| e.to_string())?;
-    tag_installation(&mut deployment.metadata.labels);
+    tag_installation(&mut deployment.metadata.labels)?;
     if let Some(spec) = deployment.spec.as_mut() {
         spec.selector
             .match_labels
             .get_or_insert_with(std::collections::BTreeMap::new)
             .insert(
                 INSTALLATION_LABEL.to_owned(),
-                kftray_commons::utils::config_dir::get_installation_id().to_owned(),
+                kftray_commons::utils::config_dir::get_installation_id()?.to_owned(),
             );
-        tag_installation(&mut spec.template.metadata.get_or_insert_default().labels);
+        tag_installation(&mut spec.template.metadata.get_or_insert_default().labels)?;
     }
     let spec = deployment
         .spec
@@ -455,20 +428,23 @@ async fn process_deployment_proxy(
 
     let deployments: Api<Deployment> = Api::namespaced(client.clone(), &config.namespace);
 
-    deployments
-        .create(&PostParams::default(), &deployment)
-        .await
-        .map_err(|e| e.to_string())?;
-    let guard = ClusterResourceGuard::arm(
+    // Armed before the request: the API server can create the resource and
+    // still leave us without a response, and a dropped startup future never
+    // reaches the rollback below.
+    let guard = crate::kube::stop::ClusterResourceGuard::arm(
         config.id.unwrap_or_default(),
         Config {
             service: Some(hashed_name.to_string()),
             ..config.clone()
         },
     );
+    deployments
+        .create(&PostParams::default(), &deployment)
+        .await
+        .map_err(|e| e.to_string())?;
     let result: Result<CustomResponse, String> = async {
         let pods: Api<Pod> = Api::namespaced(client, &config.namespace);
-        let label_selector = format!("app={hashed_name},{}", proxy_owner_selector(config_id_str));
+        let label_selector = format!("app={hashed_name},{}", proxy_owner_selector(config_id_str)?);
         wait_for_relay_pod(
             &pods,
             &label_selector,
@@ -559,7 +535,7 @@ async fn process_pod_proxy(
 
     let rendered_json = render_json_template_owned(&contents, values);
     let mut pod: Pod = serde_json::from_str(&rendered_json).map_err(|e| e.to_string())?;
-    tag_installation(&mut pod.metadata.labels);
+    tag_installation(&mut pod.metadata.labels)?;
     let spec = pod
         .spec
         .as_mut()
@@ -576,16 +552,16 @@ async fn process_pod_proxy(
 
     let pods: Api<Pod> = Api::namespaced(client.clone(), &config.namespace);
 
-    pods.create(&PostParams::default(), &pod)
-        .await
-        .map_err(|e| e.to_string())?;
-    let guard = ClusterResourceGuard::arm(
+    let guard = crate::kube::stop::ClusterResourceGuard::arm(
         config.id.unwrap_or_default(),
         Config {
             service: Some(hashed_name.to_string()),
             ..config.clone()
         },
     );
+    pods.create(&PostParams::default(), &pod)
+        .await
+        .map_err(|e| e.to_string())?;
     let result: Result<CustomResponse, String> = async {
         wait_for_relay_startup(&pods, hashed_name, &container_name, options.cancellation).await?;
         config.service = Some(hashed_name.to_string());

@@ -209,44 +209,42 @@ async fn create_deployment(
         .as_mut()
         .and_then(|deployment| deployment.template.spec.as_mut())
         .ok_or("Expose deployment must contain a pod specification")?;
-    let index = spec
-        .containers
-        .iter()
-        .position(|container| {
-            container.env.as_ref().is_some_and(|env| {
+    // Probes are only injected into a container that identifies itself as the
+    // relay. Falling back to the first container would put relay probes on an
+    // unrelated sidecar in a customized template and restart it forever.
+    let relay = spec.containers.iter_mut().find(|container| {
+        container.name == "kftray-server"
+            || container.env.as_ref().is_some_and(|env| {
                 env.iter().any(|value| {
                     value.name == "PROXY_TYPE" && value.value.as_deref() == Some("reverse_http")
                 })
             })
-        })
-        .unwrap_or(0);
-    let container = spec
-        .containers
-        .get_mut(index)
-        .ok_or("Expose deployment must contain a container")?;
-    if let Some(websocket_port) = container_env_port(container, "WEBSOCKET_PORT", 9999) {
-        container.startup_probe.get_or_insert_with(|| Probe {
-            tcp_socket: Some(TCPSocketAction {
-                port: IntOrString::Int(websocket_port),
+    });
+    if let Some(container) = relay {
+        if let Some(websocket_port) = container_env_port(container, "WEBSOCKET_PORT", 9999) {
+            container.startup_probe.get_or_insert_with(|| Probe {
+                tcp_socket: Some(TCPSocketAction {
+                    port: IntOrString::Int(websocket_port),
+                    ..Default::default()
+                }),
+                period_seconds: Some(1),
+                timeout_seconds: Some(1),
+                failure_threshold: Some(30),
                 ..Default::default()
-            }),
-            period_seconds: Some(1),
-            timeout_seconds: Some(1),
-            failure_threshold: Some(30),
-            ..Default::default()
-        });
-    }
-    if let Some(http_port) = container_env_port(container, "HTTP_PORT", 8080) {
-        container.readiness_probe.get_or_insert_with(|| Probe {
-            tcp_socket: Some(TCPSocketAction {
-                port: IntOrString::Int(http_port),
+            });
+        }
+        if let Some(http_port) = container_env_port(container, "HTTP_PORT", 8080) {
+            container.readiness_probe.get_or_insert_with(|| Probe {
+                tcp_socket: Some(TCPSocketAction {
+                    port: IntOrString::Int(http_port),
+                    ..Default::default()
+                }),
+                period_seconds: Some(1),
+                timeout_seconds: Some(1),
+                failure_threshold: Some(3),
                 ..Default::default()
-            }),
-            period_seconds: Some(1),
-            timeout_seconds: Some(1),
-            failure_threshold: Some(3),
-            ..Default::default()
-        });
+            });
+        }
     }
 
     deployments

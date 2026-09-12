@@ -521,12 +521,10 @@ pub async fn recover_deployment(
         kube::Api::namespaced(client.clone(), namespace);
 
     let prefix = crate::kube::proxy::proxy_resource_prefix();
+    let owner_selector = crate::kube::proxy::proxy_owner_selector(&config_id.to_string())
+        .map_err(|error| anyhow::anyhow!(error))?;
     let deployment = deployments
-        .list(
-            &kube::api::ListParams::default().labels(&crate::kube::proxy::proxy_owner_selector(
-                &config_id.to_string(),
-            )),
-        )
+        .list(&kube::api::ListParams::default().labels(&owner_selector))
         .await
         .map_err(|e| anyhow::anyhow!("Failed to query deployment for config {}: {}", config_id, e))?
         .items
@@ -562,10 +560,8 @@ pub async fn recover_deployment(
         kube::Api::namespaced(client.clone(), namespace);
     let watcher = kube_runtime::watcher(
         pods,
-        kube_runtime::watcher::Config::default().labels(&format!(
-            "app={hashed_name},{}",
-            crate::kube::proxy::proxy_owner_selector(&config_id.to_string())
-        )),
+        kube_runtime::watcher::Config::default()
+            .labels(&format!("app={hashed_name},{owner_selector}")),
     )
     .applied_objects();
     futures::pin_mut!(watcher);
@@ -881,7 +877,8 @@ mod tests {
             .map(|suffix| format!("{prefix}tcp-1-{suffix}"))
             .collect();
         let expected = owned.clone();
-        let installation_id = kftray_commons::utils::config_dir::get_installation_id();
+        let installation_id =
+            kftray_commons::utils::config_dir::get_installation_id().expect("installation id");
         let server = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
             for name in expected {
                 let (request, send) = requests.next_request().await.unwrap();

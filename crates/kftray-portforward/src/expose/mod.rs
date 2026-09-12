@@ -59,6 +59,9 @@ pub(crate) async fn start_single_expose(
     let client = client.client.clone();
 
     info!("Creating expose resources for config {}", config_id);
+    // Armed before creation so a dropped startup future, or a create whose
+    // response is lost, still leaves a trail for stop-all.
+    let guard = crate::kube::stop::ClusterResourceGuard::arm(config_id, config.clone());
     let resources = create_expose_resources(client.clone(), &config).await?;
 
     info!(
@@ -94,7 +97,10 @@ pub(crate) async fn start_single_expose(
             )
             .await
             {
-                Ok(()) => Err(reason),
+                Ok(()) => {
+                    guard.disarm();
+                    Err(reason)
+                }
                 Err(cleanup_error) => Err(format!("{reason}; cleanup failed: {cleanup_error}")),
             };
         }
@@ -147,7 +153,10 @@ pub(crate) async fn start_single_expose(
         )
         .await
         {
-            Ok(()) => Err(error),
+            Ok(()) => {
+                guard.disarm();
+                Err(error)
+            }
             Err(cleanup_error) => Err(format!("{error}; cleanup failed: {cleanup_error}")),
         };
     }
@@ -163,11 +172,18 @@ pub(crate) async fn start_single_expose(
     };
     if let Err(error) = update_config_state_with_mode(&config_state, mode).await {
         pf_process.cleanup_and_abort().await;
-        let _ = delete_expose_resources(client, &config.namespace, &config_id.to_string()).await;
+        if delete_expose_resources(client, &config.namespace, &config_id.to_string())
+            .await
+            .is_ok()
+        {
+            guard.disarm();
+        }
         return Err(error);
     }
     pf_process.set_config(config.clone());
     CHILD_PROCESSES.insert(config_id, pf_process);
+    // Registered: stop can find the process, so the pending trail is redundant.
+    guard.disarm();
 
     info!("Expose tunnel fully established for config {}", config_id);
 

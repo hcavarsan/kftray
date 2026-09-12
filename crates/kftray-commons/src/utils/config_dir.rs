@@ -43,28 +43,89 @@ pub fn get_log_folder_path() -> Result<PathBuf, String> {
 /// Config ids come from a local database, so two installations can hold the
 /// same id and their cluster resources are otherwise indistinguishable. This
 /// value labels the resources one installation owns.
-pub fn get_installation_id() -> &'static str {
-    static INSTALLATION_ID: std::sync::LazyLock<String> =
+///
+/// It fails rather than falling back to a shared placeholder: an identifier two
+/// installations could both produce would let one delete the other's proxies.
+pub fn get_installation_id() -> Result<&'static str, String> {
+    static INSTALLATION_ID: std::sync::LazyLock<Result<String, String>> =
         std::sync::LazyLock::new(load_or_create_installation_id);
 
-    &INSTALLATION_ID
+    match &*INSTALLATION_ID {
+        Ok(id) => Ok(id),
+        Err(error) => Err(error.clone()),
+    }
 }
 
-fn load_or_create_installation_id() -> String {
-    let Ok(config_dir) = get_config_dir() else {
-        return "unknown".to_owned();
-    };
+fn load_or_create_installation_id() -> Result<String, String> {
+    let config_dir = get_config_dir()?;
     let path = config_dir.join("installation_id");
-    if let Ok(stored) = fs::read_to_string(&path) {
-        let stored = stored.trim();
-        if is_valid_installation_id(stored) {
-            return stored.to_owned();
+    match fs::read_to_string(&path) {
+        Ok(stored) => {
+            let stored = stored.trim();
+            if is_valid_installation_id(stored) {
+                return Ok(stored.to_owned());
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(format!(
+                "Failed to read the installation identifier at {}: {error}",
+                path.display()
+            ));
         }
     }
+
+    fs::create_dir_all(&config_dir).map_err(|error| {
+        format!(
+            "Failed to create the configuration directory {}: {error}",
+            config_dir.display()
+        )
+    })?;
     let generated = uuid::Uuid::new_v4().simple().to_string()[..12].to_owned();
-    let _ = fs::create_dir_all(&config_dir);
-    let _ = fs::write(&path, &generated);
-    generated
+    // `create_new` makes this atomic across processes: whoever loses the race
+    // reads the winner's value instead of overwriting it.
+    match fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)
+    {
+        Ok(mut file) => {
+            use std::io::Write;
+
+            file.write_all(generated.as_bytes())
+                .and_then(|()| file.sync_all())
+                .map_err(|error| {
+                    format!(
+                        "Failed to persist the installation identifier at {}: {error}",
+                        path.display()
+                    )
+                })?;
+            Ok(generated)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            let stored = fs::read_to_string(&path)
+                .map_err(|error| {
+                    format!(
+                        "Failed to read the installation identifier at {}: {error}",
+                        path.display()
+                    )
+                })?
+                .trim()
+                .to_owned();
+            if is_valid_installation_id(&stored) {
+                Ok(stored)
+            } else {
+                Err(format!(
+                    "The installation identifier at {} is not usable",
+                    path.display()
+                ))
+            }
+        }
+        Err(error) => Err(format!(
+            "Failed to persist the installation identifier at {}: {error}",
+            path.display()
+        )),
+    }
 }
 
 fn is_valid_installation_id(value: &str) -> bool {

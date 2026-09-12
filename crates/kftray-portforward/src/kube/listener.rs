@@ -557,13 +557,19 @@ impl crate::kube::udp_forwarder::UdpUpstream for ForwarderUpstream {
     type Stream = kube_portforward::Stream;
 
     async fn connect(&self) -> anyhow::Result<Self::Stream> {
-        let stream = self.forwarder.get_stream().await?;
-        self.failures.reset();
-        Ok(stream)
+        self.forwarder.get_stream().await
     }
 
     fn on_connect_failure(&self, error: &anyhow::Error) {
         self.failures.record(error);
+    }
+
+    fn on_session_failure(&self, error: &anyhow::Error) {
+        self.failures.record(error);
+    }
+
+    fn on_session_traffic(&self) {
+        self.failures.reset();
     }
 }
 

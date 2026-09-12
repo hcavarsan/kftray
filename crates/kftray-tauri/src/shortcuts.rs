@@ -35,28 +35,10 @@ use crate::commands::{
     },
 };
 
-/// Collapses a batch of per-configuration responses into a single error. Both
-/// the start and stop-all commands report one result per configuration, so an
-/// all-failed batch still returns `Ok`.
-fn batch_error(
-    responses: &[kftray_commons::models::response::CustomResponse],
-) -> Result<(), String> {
-    let failures: Vec<&str> = responses
-        .iter()
-        .filter(|response| response.status != 0)
-        .map(|response| response.stderr.as_str())
-        .collect();
-    if failures.is_empty() {
-        Ok(())
-    } else {
-        Err(failures.join("; "))
-    }
-}
-
 fn start_error(
     result: Result<Vec<kftray_commons::models::response::CustomResponse>, String>,
 ) -> Result<(), String> {
-    batch_error(&result?)
+    kftray_commons::models::response::batch_failure(&result?)
 }
 
 static GLOBAL_MANAGER: OnceCell<Arc<Mutex<ShortcutManager>>> = OnceCell::const_new();
@@ -310,7 +292,7 @@ impl ActionHandler for StopAllPortForwardAction {
         let stopped = stop_all_port_forward_cmd(self.app_handle.clone())
             .await
             .map_err(|error| error.to_string())
-            .and_then(|responses| batch_error(&responses));
+            .and_then(|responses| kftray_commons::models::response::batch_failure(&responses));
         match stopped {
             Ok(()) => {
                 info!("Successfully stopped all port forwards");

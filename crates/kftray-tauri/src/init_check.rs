@@ -78,14 +78,7 @@ impl PortOperations for RealPortOperations {
 fn describe_start_responses(
     responses: Vec<kftray_commons::models::response::CustomResponse>,
 ) -> Result<Vec<String>, String> {
-    let failures: Vec<&str> = responses
-        .iter()
-        .filter(|response| response.status != 0)
-        .map(|response| response.stderr.as_str())
-        .collect();
-    if !failures.is_empty() {
-        return Err(failures.join("; "));
-    }
+    kftray_commons::models::response::batch_failure(&responses)?;
     Ok(responses.iter().map(|r| format!("{r:?}")).collect())
 }
 

@@ -48,6 +48,16 @@ pub trait UdpUpstream: Send + Sync + 'static {
 
     /// Called when a tunnel cannot be opened.
     fn on_connect_failure(&self, _error: &anyhow::Error) {}
+
+    /// Called when an established tunnel ends without being cancelled. A relay
+    /// that accepts a tunnel and immediately closes it is a failure the
+    /// connect path never sees.
+    fn on_session_failure(&self, _error: &anyhow::Error) {}
+
+    /// Called the first time a tunnel actually moves a datagram. Only real
+    /// traffic clears earlier failures; a connect that is accepted and dropped
+    /// proves nothing.
+    fn on_session_traffic(&self) {}
 }
 
 struct UdpSession {
@@ -235,11 +245,15 @@ impl UdpForwarder {
                 },
             };
 
+            let traffic_seen = std::sync::atomic::AtomicBool::new(false);
             let touch = || {
                 session_activity.store(
                     u64::try_from(now.elapsed().as_millis()).unwrap_or(u64::MAX),
                     Ordering::Relaxed,
                 );
+                if !traffic_seen.swap(true, Ordering::Relaxed) {
+                    upstream.on_session_traffic();
+                }
             };
             let (mut reader, mut writer) = tokio::io::split(stream);
             {
@@ -264,7 +278,7 @@ impl UdpForwarder {
                         socket.send_to(&packet, &peer).await?;
                         touch();
                     }
-                    Ok::<(), anyhow::Error>(())
+                    Err(anyhow::anyhow!("the relay closed the tunnel"))
                 };
 
                 let result = tokio::select! {
@@ -275,6 +289,10 @@ impl UdpForwarder {
                 };
                 if let Err(error) = result {
                     debug!("UDP tunnel for {} ended: {:?}", peer, error);
+                    // Cancellation is idle retirement or shutdown, not a fault.
+                    if !session_cancellation.is_cancelled() {
+                        upstream.on_session_failure(&error);
+                    }
                 }
             }
             let _ = writer.shutdown().await;
@@ -384,6 +402,34 @@ pub(crate) mod tests {
 
         async fn connect(&self) -> anyhow::Result<Self::Stream> {
             Err(anyhow::anyhow!("no relay pod"))
+        }
+    }
+
+    /// Accepts every tunnel and immediately closes it, the shape a relay takes
+    /// when its pod is being replaced.
+    #[derive(Default)]
+    struct ClosingUpstream {
+        failures: Arc<std::sync::atomic::AtomicUsize>,
+        traffic: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl UdpUpstream for ClosingUpstream {
+        type Stream = DuplexStream;
+
+        async fn connect(&self) -> anyhow::Result<Self::Stream> {
+            let (ours, theirs) = duplex(64);
+            drop(theirs);
+            Ok(ours)
+        }
+
+        fn on_session_failure(&self, _error: &anyhow::Error) {
+            self.failures
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+
+        fn on_session_traffic(&self) {
+            self.traffic
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         }
     }
 
@@ -516,6 +562,47 @@ pub(crate) mod tests {
             session.is_working(now),
             "a reply that just came back through the tunnel is activity"
         );
+    }
+
+    #[tokio::test]
+    async fn a_relay_that_closes_every_tunnel_is_reported_as_a_failure() {
+        let upstream = Arc::new(ClosingUpstream::default());
+        let failures = Arc::clone(&upstream.failures);
+        let traffic = Arc::clone(&upstream.traffic);
+        let cancellation_token = CancellationToken::new();
+        let (port, forward) = UdpForwarder::bind_and_forward(
+            "127.0.0.1".to_owned(),
+            0,
+            Arc::clone(&upstream),
+            cancellation_token.clone(),
+        )
+        .await
+        .unwrap();
+        let owner = tokio::spawn(forward);
+
+        let client = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        client.connect(("127.0.0.1", port)).await.unwrap();
+        client.send(b"ping").await.unwrap();
+
+        for _ in 0..50 {
+            if failures.load(std::sync::atomic::Ordering::Relaxed) > 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+
+        assert!(
+            failures.load(std::sync::atomic::Ordering::Relaxed) > 0,
+            "a tunnel that is accepted and immediately closed must reach recovery"
+        );
+        assert_eq!(
+            traffic.load(std::sync::atomic::Ordering::Relaxed),
+            0,
+            "a connect that never moved a datagram must not clear earlier failures"
+        );
+
+        cancellation_token.cancel();
+        let _ = tokio::time::timeout(Duration::from_secs(5), owner).await;
     }
 
     #[tokio::test]

@@ -54,21 +54,107 @@ use crate::port_forward::CHILD_PROCESSES;
 use crate::port_forward::PortForwardProcess;
 
 lazy_static::lazy_static! {
-    /// Configurations whose cluster cleanup failed, kept so a later stop can
-    /// retry against the resources that actually exist. The database row is not
-    /// a substitute: it can be edited or deleted while a forward runs.
-    static ref PENDING_CLEANUP: dashmap::DashMap<i64, Config> = dashmap::DashMap::new();
+    /// Configurations whose cluster cleanup has not been confirmed, kept so a
+    /// later stop can retry against the resources that actually exist. The
+    /// database row is not a substitute: it can be edited or deleted while a
+    /// forward runs. One id can hold several entries, because an edited config
+    /// that was restarted describes different resources than the ones an
+    /// earlier failed cleanup left behind.
+    static ref PENDING_CLEANUP: dashmap::DashMap<i64, Vec<Config>> = dashmap::DashMap::new();
+}
+
+/// Two cleanup targets are the same when they name the same cluster resources.
+fn same_resources(left: &Config, right: &Config) -> bool {
+    left.namespace == right.namespace
+        && left.context == right.context
+        && left.kubeconfig == right.kubeconfig
+        && left.workload_type == right.workload_type
+        && left.service == right.service
 }
 
 /// Records a configuration whose cluster resources exist but whose startup did
 /// not finish, so stop-all still reaches them. Dropping a startup future (the
 /// terminal's shutdown drain, an aborted task) skips its own rollback.
 pub(crate) fn record_pending_cleanup(id: i64, config: Config) {
-    PENDING_CLEANUP.insert(id, config);
+    let mut entries = PENDING_CLEANUP.entry(id).or_default();
+    if !entries.iter().any(|entry| same_resources(entry, &config)) {
+        entries.push(config);
+    }
 }
 
-pub(crate) fn clear_pending_cleanup(id: i64) {
-    PENDING_CLEANUP.remove(&id);
+/// Drops one recorded target, leaving any other resources for this id tracked.
+pub(crate) fn forget_pending_cleanup(id: i64, config: &Config) {
+    let mut empty = false;
+    if let Some(mut entries) = PENDING_CLEANUP.get_mut(&id) {
+        entries.retain(|entry| !same_resources(entry, config));
+        empty = entries.is_empty();
+    }
+    if empty {
+        PENDING_CLEANUP.remove(&id);
+    }
+}
+
+fn pending_cleanup_targets(id: i64) -> Vec<Config> {
+    PENDING_CLEANUP
+        .get(&id)
+        .map(|entry| entry.value().clone())
+        .unwrap_or_default()
+}
+
+/// Records created cluster resources so a dropped startup future still leaves a
+/// trail for stop-all. `disarm` is called once the startup either registered a
+/// child process or deleted the resources itself.
+pub(crate) struct ClusterResourceGuard {
+    id: i64,
+    config: Option<Config>,
+}
+
+impl ClusterResourceGuard {
+    pub(crate) fn arm(id: i64, config: Config) -> Self {
+        record_pending_cleanup(id, config.clone());
+        Self {
+            id,
+            config: Some(config),
+        }
+    }
+
+    pub(crate) fn disarm(mut self) {
+        if let Some(config) = self.config.take() {
+            forget_pending_cleanup(self.id, &config);
+        }
+    }
+}
+
+impl Drop for ClusterResourceGuard {
+    fn drop(&mut self) {
+        if let Some(config) = self.config.take() {
+            record_pending_cleanup(self.id, config);
+        }
+    }
+}
+
+async fn delete_cluster_resources(id: i64, config: &Config) -> Result<(), String> {
+    if config.workload_type.as_deref() != Some("expose")
+        && config.workload_type.as_deref() != Some("proxy")
+        && config.protocol != "udp"
+    {
+        return Ok(());
+    }
+    let key = ServiceClientKey::new(config.context.clone(), config.kubeconfig.clone());
+    let connection = SHARED_CLIENT_MANAGER
+        .get_connection(key)
+        .await
+        .map_err(|error| error.to_string())?;
+    if config.workload_type.as_deref() == Some("expose") {
+        crate::expose::kubernetes::delete_expose_resources(
+            connection.client.clone(),
+            &config.namespace,
+            &id.to_string(),
+        )
+        .await
+    } else {
+        delete_proxy_cluster_resources(connection.client.clone(), &config.namespace, id).await
+    }
 }
 
 /// Synchronous helper function to release address via helper service.
@@ -149,7 +235,7 @@ pub(crate) async fn delete_proxy_cluster_resources(
     let prefix = crate::kube::proxy::proxy_resource_prefix();
     let lp = ListParams::default().labels(&crate::kube::proxy::proxy_owner_selector(
         &config_id.to_string(),
-    ));
+    )?);
     let dp = DeleteParams {
         grace_period_seconds: Some(0),
         ..DeleteParams::default()
@@ -318,7 +404,9 @@ pub async fn stop_port_forward_with_mode(
     let config = get_config_with_mode(id, mode).await;
     let response = stop_config(id, config.as_ref().ok(), mode).await;
     match (config, response) {
-        (Err(error), Err(_)) => Err(error),
+        // The cleanup error describes what is still running; the lookup error
+        // only says the row is gone, which is not the actionable part.
+        (Err(lookup), Err(cleanup)) => Err(format!("{cleanup}; {lookup}")),
         (_, response) => response,
     }
 }
@@ -352,48 +440,32 @@ async fn stop_config(
     }
     // The snapshot taken at startup describes the resources that actually
     // exist. The database record can have been edited since without stopping
-    // the forward, which would point cleanup at the new destination, and a
-    // snapshot left behind by a failed cleanup is the only remaining record of
-    // where those resources live.
-    let pending = PENDING_CLEANUP.get(&id).map(|entry| entry.value().clone());
-    let refreshed = if retained.is_none() && pending.is_none() && was_starting {
+    // the forward, which would point cleanup at the new destination.
+    let pending = pending_cleanup_targets(id);
+    let refreshed = if retained.is_none() && pending.is_empty() && was_starting {
         get_config_with_mode(id, mode).await.ok()
     } else {
         None
     };
     let config = retained
         .as_ref()
-        .or(pending.as_ref())
         .or(refreshed.as_ref())
-        .or(config);
+        .or(config)
+        .or(pending.first());
     cancel_timeout_for_forward(id).await;
 
     let result = if let Some(config) = config {
-        let cluster_cleanup = async {
-            if config.workload_type.as_deref() == Some("expose")
-                || config.workload_type.as_deref() == Some("proxy")
-                || config.protocol == "udp"
-            {
-                let key = ServiceClientKey::new(config.context.clone(), config.kubeconfig.clone());
-                let connection = SHARED_CLIENT_MANAGER
-                    .get_connection(key)
-                    .await
-                    .map_err(|error| error.to_string())?;
-                if config.workload_type.as_deref() == Some("expose") {
-                    crate::expose::kubernetes::delete_expose_resources(
-                        connection.client.clone(),
-                        &config.namespace,
-                        &id.to_string(),
-                    )
-                    .await
-                } else {
-                    delete_proxy_cluster_resources(connection.client.clone(), &config.namespace, id)
-                        .await
-                }
-            } else {
-                Ok(())
-            }
-        };
+        // Every distinct set of resources this id ever created, not just the
+        // current one: an edited config that was restarted does not describe
+        // the resources an earlier failed cleanup left behind.
+        let mut targets = vec![config.clone()];
+        targets.extend(
+            pending
+                .iter()
+                .filter(|target| !same_resources(target, config))
+                .cloned(),
+        );
+
         let local_cleanup = async {
             if let Some(address) = &config.local_address
                 && crate::network_utils::is_custom_loopback_address(address)
@@ -415,24 +487,37 @@ async fn stop_config(
                 Err(errors.join("; "))
             }
         };
-        let (cluster, local) = tokio::join!(cluster_cleanup, local_cleanup);
-        let mut errors: Vec<String> = Vec::new();
-        match cluster {
-            Ok(()) => {
-                PENDING_CLEANUP.remove(&id);
-                let state = ConfigState::new(id, false);
-                if let Err(error) = update_config_state_with_mode(&state, mode).await {
-                    errors.push(error);
+        let cluster_cleanup = async {
+            let mut errors = Vec::new();
+            for target in &targets {
+                match delete_cluster_resources(id, target).await {
+                    Ok(()) => forget_pending_cleanup(id, target),
+                    Err(error) => {
+                        // The only remaining record of where these resources
+                        // live: the database row can be edited or deleted while
+                        // a forward runs.
+                        record_pending_cleanup(id, target.clone());
+                        SHARED_CLIENT_MANAGER.invalidate_client(&ServiceClientKey::new(
+                            target.context.clone(),
+                            target.kubeconfig.clone(),
+                        ));
+                        errors.push(error);
+                    }
                 }
             }
-            Err(error) => {
-                // The only remaining record of where these resources live: the
-                // database row can be edited or deleted while a forward runs.
-                PENDING_CLEANUP.insert(id, config.clone());
-                SHARED_CLIENT_MANAGER.invalidate_client(&ServiceClientKey::new(
-                    config.context.clone(),
-                    config.kubeconfig.clone(),
-                ));
+            if errors.is_empty() {
+                Ok(())
+            } else {
+                Err(errors.join("; "))
+            }
+        };
+        let (cluster, local) = tokio::join!(cluster_cleanup, local_cleanup);
+        let mut errors: Vec<String> = Vec::new();
+        if let Err(error) = cluster {
+            errors.push(error);
+        } else {
+            let state = ConfigState::new(id, false);
+            if let Err(error) = update_config_state_with_mode(&state, mode).await {
                 errors.push(error);
             }
         }
@@ -684,11 +769,13 @@ mod tests {
         kftray_commons::utils::config::delete_config_with_mode(id, DatabaseMode::Memory)
             .await
             .unwrap();
-        let pending = PENDING_CLEANUP
-            .get(&id)
-            .map(|entry| entry.value().clone())
-            .expect("a failed cleanup must keep its snapshot for the next stop");
-        assert_eq!(pending.namespace, "original-namespace");
+        let pending = pending_cleanup_targets(id);
+        assert_eq!(
+            pending.len(),
+            1,
+            "a failed cleanup must keep its snapshot for the next stop"
+        );
+        assert_eq!(pending[0].namespace, "original-namespace");
 
         let responses = stop_all_port_forward_with_mode(DatabaseMode::Memory)
             .await
@@ -726,6 +813,53 @@ mod tests {
             responses.iter().any(|response| response.id == Some(id)),
             "stop-all must reach resources left behind by a dropped startup"
         );
-        clear_pending_cleanup(id);
+        PENDING_CLEANUP.remove(&id);
+    }
+
+    #[tokio::test]
+    async fn a_restart_after_failed_cleanup_keeps_both_resource_sets() {
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let id = 410_140;
+        let orphaned = Config {
+            id: Some(id),
+            namespace: "old-namespace".to_string(),
+            service: Some("kftray-forward-old".to_string()),
+            context: Some("missing-context".to_string()),
+            kubeconfig: Some("/nonexistent/kubeconfig".to_string()),
+            protocol: "tcp".to_string(),
+            workload_type: Some("proxy".to_string()),
+            ..Config::default()
+        };
+        record_pending_cleanup(id, orphaned.clone());
+
+        // The config was edited and restarted as a plain TCP forward, whose own
+        // cleanup is a no-op and must not discard the orphaned proxy.
+        let restarted = Config {
+            id: Some(id),
+            namespace: "new-namespace".to_string(),
+            service: Some("plain-service".to_string()),
+            protocol: "tcp".to_string(),
+            workload_type: Some("service".to_string()),
+            ..Config::default()
+        };
+        let task = tokio::spawn(std::future::pending::<anyhow::Result<()>>());
+        let mut process = PortForwardProcess::new(task, id.to_string());
+        process.set_config(restarted);
+        CHILD_PROCESSES.insert(id, process);
+
+        let stopped = stop_port_forward_with_mode(id.to_string(), DatabaseMode::Memory).await;
+
+        assert!(
+            stopped.is_err(),
+            "the orphaned proxy must still be attempted, not silently skipped"
+        );
+        let still_pending = pending_cleanup_targets(id);
+        assert!(
+            still_pending
+                .iter()
+                .any(|target| target.namespace == "old-namespace"),
+            "cleaning the restarted config must not forget the earlier resources"
+        );
+        PENDING_CLEANUP.remove(&id);
     }
 }

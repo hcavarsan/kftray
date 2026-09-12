@@ -641,20 +641,42 @@ pub(super) async fn start_config_cancellable(
 
 pub(super) async fn start_config_locked(
     config: Config, protocol: &str, mode: DatabaseMode, ssl_override: bool,
+    cancellation: Option<&CancellationToken>,
 ) -> Result<CustomResponse, String> {
     let id = config.id.ok_or("Config has no ID")?;
     let lock = crate::kube::proxy_recovery::acquire_recovery_lock(id).await;
-    let guard = lock.lock().await;
-    let result = if CHILD_PROCESSES.contains_key(&id) {
-        Err(format!(
-            "Port forwarding is already running for config {id}"
-        ))
-    } else if config.workload_type.as_deref() == Some("expose") {
-        crate::expose::start_single_expose(config, mode).await
-    } else {
-        start_config(config, protocol, mode, ssl_override).await
+    // A stop that cancels this registration must be able to overtake a start
+    // waiting on the lifecycle lock, otherwise the start acquires the lock
+    // afterwards and creates a listener the stop already reported as gone.
+    let result = {
+        let guard = match cancellation {
+            Some(token) => tokio::select! {
+                biased;
+                _ = token.cancelled() => None,
+                guard = lock.lock() => Some(guard),
+            },
+            None => Some(lock.lock().await),
+        };
+        match guard {
+            None => Err(format!("Startup cancelled for config {id}")),
+            Some(guard) => {
+                let result = if cancellation.is_some_and(CancellationToken::is_cancelled) {
+                    Err(format!("Startup cancelled for config {id}"))
+                } else if CHILD_PROCESSES.contains_key(&id) {
+                    Err(format!(
+                        "Port forwarding is already running for config {id}"
+                    ))
+                } else if config.workload_type.as_deref() == Some("expose") {
+                    crate::expose::start_single_expose(config, mode).await
+                } else {
+                    start_config_cancellable(config, protocol, mode, ssl_override, cancellation)
+                        .await
+                };
+                drop(guard);
+                result
+            }
+        }
     };
-    drop(guard);
     drop(lock);
     crate::kube::proxy_recovery::remove_recovery_lock(id);
     result
@@ -695,7 +717,15 @@ pub async fn start_port_forward_with_mode(
                     "Startup cancelled before it began".to_string(),
                 );
             }
-            match start_config_locked(config.clone(), protocol, mode, ssl_override).await {
+            match start_config_locked(
+                config.clone(),
+                protocol,
+                mode,
+                ssl_override,
+                Some(startup.cancellation()),
+            )
+            .await
+            {
                 Ok(response) => response,
                 Err(error) => start_failure_response(&config, error),
             }
@@ -807,6 +837,47 @@ mod tests {
             .collect();
         ids.sort_unstable();
         assert_eq!(ids, vec![410_041, 410_042]);
+    }
+
+    #[tokio::test]
+    async fn a_stop_overtakes_a_start_waiting_on_the_lifecycle_lock() {
+        let id = 410_150;
+        let config = Config {
+            id: Some(id),
+            ..setup_config_with_invalid_ip()
+        };
+        let token = CancellationToken::new();
+
+        // Hold the lifecycle lock the way an in-flight stop does.
+        let lock = crate::kube::proxy_recovery::acquire_recovery_lock(id).await;
+        let held = lock.clone().lock_owned().await;
+
+        let start = tokio::spawn({
+            let token = token.clone();
+            async move {
+                start_config_locked(config, "tcp", DatabaseMode::Memory, false, Some(&token)).await
+            }
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        assert!(
+            !start.is_finished(),
+            "the start must be waiting on the lock"
+        );
+
+        token.cancel();
+        let result = tokio::time::timeout(std::time::Duration::from_secs(5), start)
+            .await
+            .expect("a cancelled start must not wait for the lock")
+            .unwrap();
+
+        assert!(
+            result.unwrap_err().contains("cancelled"),
+            "a start cancelled while queued must not create a listener"
+        );
+        assert!(!CHILD_PROCESSES.contains_key(&id));
+        drop(held);
+        drop(lock);
+        crate::kube::proxy_recovery::remove_recovery_lock(id);
     }
 
     #[tokio::test]

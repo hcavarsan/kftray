@@ -416,8 +416,11 @@ const KFTray = () => {
       return
     }
 
-    if (wasRunning) {
-      markPending(newConfig.id, 'stopping')
+    // Reserved for the whole transaction, not only when a restart is needed:
+    // `update_config_cmd` does not share the backend lifecycle lock, so a start
+    // accepted while it is in flight would use the pre-edit snapshot.
+    if (isEdit) {
+      markPending(newConfig.id, wasRunning ? 'stopping' : 'starting')
     }
 
     try {
@@ -455,7 +458,7 @@ const KFTray = () => {
         duration: 1000,
       })
     } finally {
-      if (wasRunning) {
+      if (isEdit) {
         clearPending(newConfig.id)
       }
       // The optimistic update only flips is_running, and the restart's version
@@ -707,8 +710,12 @@ const KFTray = () => {
       return
     }
 
+    // Reserved until the refreshed list no longer carries the row: the backend
+    // delete only removes the database row and does not serialize with starts.
+    markPending(configToDelete, 'stopping')
     try {
       await invoke('delete_config_cmd', { id: configToDelete })
+      await updateConfigsWithState()
       toaster.success({
         title: 'Success',
         description: 'Configuration deleted successfully.',
@@ -721,8 +728,52 @@ const KFTray = () => {
         description: 'Failed to delete configuration: "unknown error"',
         duration: 1000,
       })
+    } finally {
+      clearPending(configToDelete)
     }
     setIsAlertOpen(false)
+  }
+
+  const deleteConfigs = async (ids: number[]): Promise<boolean> => {
+    const busy = ids.filter(id => pendingConfigActionsRef.current.has(id))
+
+    if (busy.length) {
+      toaster.error({
+        title: 'Error',
+        description: `${busy.length} selected configuration(s) are busy. Try again once they settle.`,
+        duration: 2000,
+      })
+
+      return false
+    }
+
+    for (const id of ids) {
+      markPending(id, 'stopping')
+    }
+    try {
+      await invoke('delete_configs_cmd', { ids })
+      await updateConfigsWithState()
+      toaster.success({
+        title: 'Success',
+        description: 'Configurations deleted successfully.',
+        duration: 1000,
+      })
+
+      return true
+    } catch (error) {
+      console.error('Failed to delete configurations:', error)
+      toaster.error({
+        title: 'Error',
+        description: 'Failed to delete configurations.',
+        duration: 1000,
+      })
+
+      return false
+    } finally {
+      for (const id of ids) {
+        clearPending(id)
+      }
+    }
   }
 
   const startSelectedPortForwarding = async () => {
@@ -888,7 +939,7 @@ const KFTray = () => {
               onSyncComplete={handleSyncComplete}
               openShortcutModal={openShortcutModal}
               setIsAutoImportModalOpen={setIsAutoImportModalOpen}
-              pendingConfigActions={pendingConfigActions}
+              deleteConfigs={deleteConfigs}
             />
           </Box>
         </Box>
