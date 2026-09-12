@@ -414,15 +414,15 @@ impl PortForwarder {
         self: Arc<Self>, listener_config: ListenerConfig, config_id: i64,
         cancellation_token: CancellationToken,
     ) -> anyhow::Result<(u16, JoinHandle<anyhow::Result<()>>)> {
-        let upstream_stream = self
-            .get_stream()
-            .await
-            .map_err(|e| anyhow::anyhow!("Failed to get upstream connection for UDP: {}", e))?;
         let signal_token = cancellation_token.clone();
+        let upstream = Arc::new(ForwarderUpstream {
+            forwarder: Arc::clone(&self),
+            failures: UdpUpstreamFailures::new(config_id),
+        });
         let (port, forward_future) = UdpForwarder::bind_and_forward(
             listener_config.local_address,
             listener_config.local_port,
-            upstream_stream,
+            upstream,
             cancellation_token,
         )
         .await?;
@@ -496,6 +496,66 @@ impl PortForwarder {
         if let Err(e) = self.forwarder.shutdown().await {
             debug!("Forwarder shutdown returned an error: {}", e);
         }
+    }
+}
+
+/// Tracks consecutive tunnel-open failures for one config and escalates to
+/// recovery once the relay has stopped accepting new tunnels.
+struct UdpUpstreamFailures {
+    config_id: i64,
+    consecutive: std::sync::atomic::AtomicU32,
+}
+
+impl UdpUpstreamFailures {
+    const MAX: u32 = 5;
+
+    fn new(config_id: i64) -> Self {
+        Self {
+            config_id,
+            consecutive: std::sync::atomic::AtomicU32::new(0),
+        }
+    }
+
+    fn reset(&self) {
+        self.consecutive
+            .store(0, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    fn record(&self, error: &anyhow::Error) {
+        let failures = self
+            .consecutive
+            .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+            + 1;
+        error!(
+            "Failed to open a UDP tunnel for config {}: {}",
+            self.config_id, error
+        );
+        if failures >= Self::MAX
+            && let Some(rm) = crate::kube::proxy_recovery::RECOVERY_MANAGERS.get(&self.config_id)
+        {
+            rm.signal_recovery(crate::kube::proxy_recovery::RecoverySignal::StreamFailed);
+        }
+    }
+}
+
+/// Opens a fresh port-forward stream for every local UDP client so replies
+/// cannot cross between clients sharing the listener.
+struct ForwarderUpstream {
+    forwarder: Arc<PortForwarder>,
+    failures: UdpUpstreamFailures,
+}
+
+impl crate::kube::udp_forwarder::UdpUpstream for ForwarderUpstream {
+    type Stream = kube_portforward::Stream;
+
+    async fn connect(&self) -> anyhow::Result<Self::Stream> {
+        let stream = self.forwarder.get_stream().await?;
+        self.failures.reset();
+        Ok(stream)
+    }
+
+    fn on_connect_failure(&self, error: &anyhow::Error) {
+        self.failures.record(error);
     }
 }
 
@@ -770,25 +830,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn udp_owner_signals_recovery_when_upstream_closes() {
+    async fn repeated_udp_tunnel_failures_signal_recovery() {
         let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
         let config_id = 900_101;
-        let (mut upstream, server_stream) = tokio::io::duplex(64);
-        let token = CancellationToken::new();
-        let (_, forward) =
-            UdpForwarder::bind_and_forward("127.0.0.1".to_owned(), 0, server_stream, token.clone())
-                .await
-                .unwrap();
         let mut receiver = recovery_receiver(config_id);
-        let owner = spawn_udp_forward_owner(forward, token, config_id);
-        upstream.shutdown().await.unwrap();
-        tokio::time::timeout(Duration::from_secs(5), owner)
-            .await
-            .unwrap()
-            .unwrap()
-            .unwrap();
+        let failures = UdpUpstreamFailures::new(config_id);
+
+        for _ in 1..UdpUpstreamFailures::MAX {
+            failures.record(&anyhow::anyhow!("no relay pod"));
+        }
+        let quiet = receiver.try_recv();
+        failures.record(&anyhow::anyhow!("no relay pod"));
         let signal = receiver.try_recv();
         crate::kube::proxy_recovery::RECOVERY_MANAGERS.remove(&config_id);
+
+        assert!(
+            matches!(
+                quiet,
+                Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+            ),
+            "a transient tunnel failure must not trigger recovery"
+        );
         assert_eq!(
             signal.unwrap(),
             crate::kube::proxy_recovery::RecoverySignal::StreamFailed
@@ -796,13 +858,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_successful_tunnel_clears_earlier_failures() {
+        let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
+        let config_id = 900_103;
+        let mut receiver = recovery_receiver(config_id);
+        let failures = UdpUpstreamFailures::new(config_id);
+
+        for _ in 1..UdpUpstreamFailures::MAX {
+            failures.record(&anyhow::anyhow!("no relay pod"));
+        }
+        failures.reset();
+        failures.record(&anyhow::anyhow!("no relay pod"));
+        let signal = receiver.try_recv();
+        crate::kube::proxy_recovery::RECOVERY_MANAGERS.remove(&config_id);
+
+        assert!(matches!(
+            signal,
+            Err(tokio::sync::broadcast::error::TryRecvError::Empty)
+        ));
+    }
+
+    #[tokio::test]
     async fn udp_owner_does_not_signal_recovery_on_intentional_cancellation() {
         let _lock = crate::port_forward::PROCESS_TEST_MUTEX.lock().await;
         let config_id = 900_102;
-        let (_upstream, server_stream) = tokio::io::duplex(64);
+        let (upstream, _opened) = crate::kube::udp_forwarder::tests::SpawningUpstream::new(64);
         let token = CancellationToken::new();
         let (_, forward) =
-            UdpForwarder::bind_and_forward("127.0.0.1".to_owned(), 0, server_stream, token.clone())
+            UdpForwarder::bind_and_forward("127.0.0.1".to_owned(), 0, upstream, token.clone())
                 .await
                 .unwrap();
         let mut receiver = recovery_receiver(config_id);
@@ -823,13 +906,13 @@ mod tests {
 
     #[tokio::test]
     async fn aborting_the_udp_owner_releases_the_socket_for_immediate_rebind() {
-        let (_upstream, server_stream) = tokio::io::duplex(1024);
+        let (upstream, _opened) = crate::kube::udp_forwarder::tests::SpawningUpstream::new(1024);
         let cancellation_token = CancellationToken::new();
 
         let (port, forward_future) = UdpForwarder::bind_and_forward(
             "127.0.0.1".to_string(),
             0,
-            server_stream,
+            upstream,
             cancellation_token.clone(),
         )
         .await
