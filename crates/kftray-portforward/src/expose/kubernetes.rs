@@ -473,6 +473,14 @@ async fn delete_ingresses(client: &Client, namespace: &str, lp: &ListParams) -> 
 
     let items = match api.list(lp).await {
         Ok(list) => list,
+        // A private exposure never creates an Ingress, so a role scoped to
+        // Deployments, Services and Pods is legitimate. Failing here would
+        // leave the stop reporting an error after deleting everything that
+        // actually exists, and the config stuck as running.
+        Err(kube::Error::Api(response)) if response.code == 403 || response.code == 404 => {
+            debug!("Skipping ingress cleanup: {}", response.message);
+            return Ok(());
+        }
         Err(e) => {
             return Err(format!("Failed to list expose ingresses: {e}"));
         }

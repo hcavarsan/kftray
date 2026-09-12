@@ -81,50 +81,81 @@ fn load_or_create_installation_id() -> Result<String, String> {
             config_dir.display()
         )
     })?;
-    let generated = uuid::Uuid::new_v4().simple().to_string()[..12].to_owned();
-    // `create_new` makes this atomic across processes: whoever loses the race
-    // reads the winner's value instead of overwriting it.
-    match fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&path)
-    {
-        Ok(mut file) => {
-            use std::io::Write;
+    // Written in full to a temporary file and published with a hard link: the
+    // link only appears once the content is complete, and it never replaces an
+    // identifier another process already published.
+    for attempt in 0..2 {
+        let generated = uuid::Uuid::new_v4().simple().to_string()[..12].to_owned();
+        match publish_installation_id(&config_dir, &path, &generated) {
+            Ok(()) => return Ok(generated),
+            Err(PublishError::Failed(error)) => return Err(error),
+            Err(PublishError::AlreadyPublished) => {}
+        }
 
-            file.write_all(generated.as_bytes())
-                .and_then(|()| file.sync_all())
-                .map_err(|error| {
-                    format!(
-                        "Failed to persist the installation identifier at {}: {error}",
-                        path.display()
-                    )
-                })?;
-            Ok(generated)
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-            let stored = fs::read_to_string(&path)
-                .map_err(|error| {
-                    format!(
-                        "Failed to read the installation identifier at {}: {error}",
-                        path.display()
-                    )
-                })?
-                .trim()
-                .to_owned();
-            if is_valid_installation_id(&stored) {
-                Ok(stored)
-            } else {
-                Err(format!(
-                    "The installation identifier at {} is not usable",
+        let stored = fs::read_to_string(&path)
+            .map_err(|error| {
+                format!(
+                    "Failed to read the installation identifier at {}: {error}",
                     path.display()
-                ))
-            }
+                )
+            })?
+            .trim()
+            .to_owned();
+        if is_valid_installation_id(&stored) {
+            return Ok(stored);
         }
-        Err(error) => Err(format!(
+        // An interrupted write left an unusable file. Remove it once and retry
+        // so later launches are not stuck with it forever.
+        if attempt == 0 {
+            fs::remove_file(&path).map_err(|error| {
+                format!(
+                    "Failed to replace the unusable installation identifier at {}: {error}",
+                    path.display()
+                )
+            })?;
+        }
+    }
+    Err(format!(
+        "The installation identifier at {} is not usable",
+        path.display()
+    ))
+}
+
+enum PublishError {
+    AlreadyPublished,
+    Failed(String),
+}
+
+fn publish_installation_id(
+    config_dir: &std::path::Path, path: &std::path::Path, id: &str,
+) -> Result<(), PublishError> {
+    use std::io::Write;
+
+    let temporary = config_dir.join(format!("installation_id.{}.tmp", std::process::id()));
+    let write = (|| -> std::io::Result<()> {
+        let mut file = fs::File::create(&temporary)?;
+        file.write_all(id.as_bytes())?;
+        file.sync_all()
+    })();
+    if let Err(error) = write {
+        let _ = fs::remove_file(&temporary);
+        return Err(PublishError::Failed(format!(
             "Failed to persist the installation identifier at {}: {error}",
             path.display()
-        )),
+        )));
+    }
+
+    let published = fs::hard_link(&temporary, path);
+    let _ = fs::remove_file(&temporary);
+    match published {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            Err(PublishError::AlreadyPublished)
+        }
+        Err(error) => Err(PublishError::Failed(format!(
+            "Failed to persist the installation identifier at {}: {error}",
+            path.display()
+        ))),
     }
 }
 
@@ -226,6 +257,39 @@ mod tests {
 
     lazy_static! {
         static ref ENV_TEST_MUTEX: Mutex<()> = Mutex::new(());
+    }
+
+    #[test]
+    fn concurrent_creation_agrees_on_one_identifier() {
+        let dir = TempDir::new().unwrap();
+        let path = dir.path().join("installation_id");
+
+        let first = "aaaaaaaaaaaa";
+        let second = "bbbbbbbbbbbb";
+        assert!(publish_installation_id(dir.path(), &path, first).is_ok());
+        assert!(matches!(
+            publish_installation_id(dir.path(), &path, second),
+            Err(PublishError::AlreadyPublished)
+        ));
+
+        assert_eq!(fs::read_to_string(&path).unwrap(), first);
+    }
+
+    #[test]
+    fn an_interrupted_write_is_repaired_on_the_next_launch() {
+        let _lock = ENV_TEST_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = TempDir::new().unwrap();
+        let _guard = EnvVarGuard::set("KFTRAY_CONFIG", dir.path().to_str().unwrap());
+        // What a crash between create and write leaves behind.
+        fs::write(dir.path().join("installation_id"), "").unwrap();
+
+        let id = load_or_create_installation_id().expect("an empty file must be replaced");
+
+        assert!(is_valid_installation_id(&id), "{id}");
+        assert_eq!(
+            fs::read_to_string(dir.path().join("installation_id")).unwrap(),
+            id
+        );
     }
 
     struct EnvVarGuard {

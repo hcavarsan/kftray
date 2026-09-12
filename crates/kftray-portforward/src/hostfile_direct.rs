@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::atomic::{
-    AtomicBool,
+    AtomicU64,
     Ordering,
 };
 use std::sync::{
@@ -30,10 +30,13 @@ pub struct DirectHostfileManager {
     entries: Arc<RwLock<HostEntriesMap>>,
     needs_update: Arc<Mutex<bool>>,
     writer_running: Arc<Mutex<bool>>,
-    reconciled: Arc<AtomicBool>,
-    /// Bumped by every mutation. A write only proves the file matches memory
-    /// if no mutation landed after the snapshot it wrote.
-    generation: Arc<std::sync::atomic::AtomicU64>,
+    /// Generation of the last mutation a successful write covered. The file
+    /// matches memory only while it equals `generation`; comparing the two
+    /// leaves no window where a mutation can be lost between a check and a
+    /// store, which a separate boolean had.
+    reconciled_generation: Arc<AtomicU64>,
+    /// Bumped by every mutation.
+    generation: Arc<AtomicU64>,
 }
 
 impl DirectHostfileManager {
@@ -42,8 +45,8 @@ impl DirectHostfileManager {
             entries: Arc::new(RwLock::new(HashMap::new())),
             needs_update: Arc::new(Mutex::new(false)),
             writer_running: Arc::new(Mutex::new(false)),
-            reconciled: Arc::new(AtomicBool::new(false)),
-            generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            reconciled_generation: Arc::new(AtomicU64::new(u64::MAX)),
+            generation: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -79,7 +82,7 @@ impl DirectHostfileManager {
             }
         };
 
-        if !existed && self.reconciled.load(Ordering::Relaxed) {
+        if !existed && self.is_reconciled() {
             return Ok(());
         }
 
@@ -107,9 +110,7 @@ impl DirectHostfileManager {
         let started = self.generation.load(Ordering::Relaxed);
         match self.update_hosts_file() {
             Ok(()) => {
-                if self.generation.load(Ordering::Relaxed) == started {
-                    self.reconciled.store(true, Ordering::Relaxed);
-                }
+                self.reconciled_generation.store(started, Ordering::Relaxed);
                 Ok(())
             }
             Err(error) => {
@@ -123,9 +124,13 @@ impl DirectHostfileManager {
     /// Marks the hosts file as no longer matching the in-memory entries. Until
     /// a write succeeds, a removal cannot be short-circuited: the file may
     /// still carry an entry this process already forgot.
+    fn is_reconciled(&self) -> bool {
+        self.reconciled_generation.load(Ordering::Relaxed)
+            == self.generation.load(Ordering::Relaxed)
+    }
+
     fn mark_dirty(&self) {
         self.generation.fetch_add(1, Ordering::Relaxed);
-        self.reconciled.store(false, Ordering::Relaxed);
         let mut needs_update = self.needs_update.lock().unwrap_or_else(|e| {
             error!("Failed to acquire needs_update lock: {e}");
             e.into_inner()
@@ -158,7 +163,7 @@ impl DirectHostfileManager {
             let entries = self.entries.clone();
             let needs_update = self.needs_update.clone();
             let writer_running = self.writer_running.clone();
-            let reconciled = self.reconciled.clone();
+            let reconciled_generation = self.reconciled_generation.clone();
             let generation = self.generation.clone();
 
             thread::spawn(move || {
@@ -166,7 +171,7 @@ impl DirectHostfileManager {
                     entries,
                     needs_update,
                     writer_running,
-                    reconciled,
+                    reconciled_generation,
                     generation,
                 );
             });
@@ -175,8 +180,8 @@ impl DirectHostfileManager {
 
     fn batch_writer_loop(
         entries: Arc<RwLock<HostEntriesMap>>, needs_update: Arc<Mutex<bool>>,
-        writer_running: Arc<Mutex<bool>>, reconciled: Arc<AtomicBool>,
-        generation: Arc<std::sync::atomic::AtomicU64>,
+        writer_running: Arc<Mutex<bool>>, reconciled_generation: Arc<AtomicU64>,
+        generation: Arc<AtomicU64>,
     ) {
         let mut backoff = Duration::from_millis(BATCH_DELAY_MS);
         let mut failures = 0u32;
@@ -215,11 +220,10 @@ impl DirectHostfileManager {
             let started = generation.load(Ordering::Relaxed);
             match Self::update_hosts_file_static(&entries) {
                 Ok(()) => {
-                    // A mutation that landed after the snapshot is not covered
-                    // by this write, so the file still disagrees with memory.
-                    if generation.load(Ordering::Relaxed) == started {
-                        reconciled.store(true, Ordering::Relaxed);
-                    }
+                    // Records which mutation this write covered. A mutation
+                    // that landed after the snapshot bumps `generation` again,
+                    // so the file is simply not reconciled yet.
+                    reconciled_generation.store(started, Ordering::Relaxed);
                     backoff = Duration::from_millis(BATCH_DELAY_MS);
                     failures = 0;
                 }
@@ -334,7 +338,11 @@ mod tests {
     fn an_unwritten_change_keeps_later_removals_retrying() {
         init();
         let manager = DirectHostfileManager::new();
-        manager.reconciled.store(true, Ordering::Relaxed);
+        manager.reconciled_generation.store(
+            manager.generation.load(Ordering::Relaxed),
+            Ordering::Relaxed,
+        );
+        assert!(manager.is_reconciled());
 
         manager
             .entries
@@ -343,7 +351,7 @@ mod tests {
             .insert("41007".to_owned(), get_test_entry());
         manager.mark_dirty();
         assert!(
-            !manager.reconciled.load(Ordering::Relaxed),
+            !manager.is_reconciled(),
             "a pending change means the file no longer matches memory"
         );
 

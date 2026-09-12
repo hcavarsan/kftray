@@ -438,10 +438,15 @@ async fn process_deployment_proxy(
             ..config.clone()
         },
     );
-    deployments
-        .create(&PostParams::default(), &deployment)
-        .await
-        .map_err(|e| e.to_string())?;
+    let pp = PostParams::default();
+    let created = tokio::select! {
+        biased;
+        _ = options.cancellation.cancelled() => {
+            return Err("Proxy startup cancelled".to_string());
+        }
+        created = deployments.create(&pp, &deployment) => created,
+    };
+    created.map_err(|e| e.to_string())?;
     let result: Result<CustomResponse, String> = async {
         let pods: Api<Pod> = Api::namespaced(client, &config.namespace);
         let label_selector = format!("app={hashed_name},{}", proxy_owner_selector(config_id_str)?);
@@ -472,22 +477,40 @@ async fn process_deployment_proxy(
     }
     .await;
     if let Err(error) = result {
-        let dp = DeleteParams {
-            grace_period_seconds: Some(0),
-            ..DeleteParams::default()
-        };
-        if let Err(cleanup) = deployments.delete(hashed_name, &dp).await
-            && !matches!(&cleanup, kube::Error::Api(response) if response.code == 404)
-        {
-            return Err(format!(
-                "{error}; failed to delete proxy deployment: {cleanup}"
-            ));
+        match delete_proxy_resource(&deployments, hashed_name).await {
+            Ok(()) => guard.disarm(),
+            Err(cleanup) => {
+                // The guard stays armed so stop-all retries this deletion.
+                return Err(format!(
+                    "{error}; failed to delete proxy deployment: {cleanup}"
+                ));
+            }
         }
-        guard.disarm();
         return Err(error);
     }
     guard.disarm();
     result
+}
+
+/// Deletes one proxy resource under a deadline. Rollback must not inherit the
+/// stall that caused the failure: the lifecycle lock is still held and a stop
+/// is waiting on it.
+async fn delete_proxy_resource<K>(api: &Api<K>, name: &str) -> Result<(), String>
+where
+    K: Clone + serde::de::DeserializeOwned + std::fmt::Debug,
+{
+    const ROLLBACK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
+    let dp = DeleteParams {
+        grace_period_seconds: Some(0),
+        ..DeleteParams::default()
+    };
+    match tokio::time::timeout(ROLLBACK_TIMEOUT, api.delete(name, &dp)).await {
+        Ok(Ok(_)) => Ok(()),
+        Ok(Err(kube::Error::Api(response))) if response.code == 404 => Ok(()),
+        Ok(Err(error)) => Err(error.to_string()),
+        Err(_) => Err(format!("timed out deleting {name}")),
+    }
 }
 
 async fn wait_for_relay_pod(
@@ -559,9 +582,15 @@ async fn process_pod_proxy(
             ..config.clone()
         },
     );
-    pods.create(&PostParams::default(), &pod)
-        .await
-        .map_err(|e| e.to_string())?;
+    let pp = PostParams::default();
+    let created = tokio::select! {
+        biased;
+        _ = options.cancellation.cancelled() => {
+            return Err("Proxy startup cancelled".to_string());
+        }
+        created = pods.create(&pp, &pod) => created,
+    };
+    created.map_err(|e| e.to_string())?;
     let result: Result<CustomResponse, String> = async {
         wait_for_relay_startup(&pods, hashed_name, &container_name, options.cancellation).await?;
         config.service = Some(hashed_name.to_string());
@@ -584,16 +613,13 @@ async fn process_pod_proxy(
     }
     .await;
     if let Err(error) = result {
-        let dp = DeleteParams {
-            grace_period_seconds: Some(0),
-            ..DeleteParams::default()
-        };
-        if let Err(cleanup) = pods.delete(hashed_name, &dp).await
-            && !matches!(&cleanup, kube::Error::Api(response) if response.code == 404)
-        {
-            return Err(format!("{error}; failed to delete proxy pod: {cleanup}"));
+        match delete_proxy_resource(&pods, hashed_name).await {
+            Ok(()) => guard.disarm(),
+            Err(cleanup) => {
+                // The guard stays armed so stop-all retries this deletion.
+                return Err(format!("{error}; failed to delete proxy pod: {cleanup}"));
+            }
         }
-        guard.disarm();
         return Err(error);
     }
     guard.disarm();

@@ -14,6 +14,7 @@ use log::{
     error,
     info,
 };
+use tokio_util::sync::CancellationToken;
 
 use crate::expose::kubernetes::delete_expose_resources;
 use crate::kube::shared_client::{
@@ -36,7 +37,7 @@ pub async fn start_expose(
 }
 
 pub(crate) async fn start_single_expose(
-    config: Config, mode: DatabaseMode,
+    config: Config, mode: DatabaseMode, cancellation: Option<&CancellationToken>,
 ) -> Result<CustomResponse, String> {
     use self::kubernetes::create_expose_resources;
     use self::websocket_client::WebSocketTunnelClient;
@@ -50,6 +51,13 @@ pub(crate) async fn start_single_expose(
     use crate::port_forward::CHILD_PROCESSES;
 
     let config_id = config.id.ok_or("Config has no ID")?;
+    // Startup holds the per-config lifecycle lock, and a stop waits on that
+    // same lock, so without observing cancellation here a stop would block for
+    // the full readiness budget.
+    let cancelled = || cancellation.is_some_and(CancellationToken::is_cancelled);
+    if cancelled() {
+        return Err(format!("Expose startup cancelled for config {config_id}"));
+    }
 
     let client_key = ServiceClientKey::new(config.context.clone(), config.kubeconfig.clone());
     let client = SHARED_CLIENT_MANAGER
@@ -62,7 +70,16 @@ pub(crate) async fn start_single_expose(
     // Armed before creation so a dropped startup future, or a create whose
     // response is lost, still leaves a trail for stop-all.
     let guard = crate::kube::stop::ClusterResourceGuard::arm(config_id, config.clone());
-    let resources = create_expose_resources(client.clone(), &config).await?;
+    let resources = match cancellation {
+        Some(token) => tokio::select! {
+            biased;
+            _ = token.cancelled() => {
+                return Err(format!("Expose startup cancelled for config {config_id}"));
+            }
+            created = create_expose_resources(client.clone(), &config) => created?,
+        },
+        None => create_expose_resources(client.clone(), &config).await?,
+    };
 
     info!(
         "Resources created: deployment={}, service={}, pod={}",
@@ -86,7 +103,15 @@ pub(crate) async fn start_single_expose(
         "expose".to_string(),
     );
 
-    let (websocket_port, mut pf_process) = match port_forward.port_forward_tcp(None).await {
+    let started = match cancellation {
+        Some(token) => tokio::select! {
+            biased;
+            _ = token.cancelled() => Err(anyhow::anyhow!("startup cancelled")),
+            started = port_forward.port_forward_tcp(None) => started,
+        },
+        None => port_forward.port_forward_tcp(None).await,
+    };
+    let (websocket_port, mut pf_process) = match started {
         Ok(started) => started,
         Err(error) => {
             let reason = format!("Failed to start port-forward: {error}");
@@ -137,12 +162,22 @@ pub(crate) async fn start_single_expose(
     // the tunnel task through the process, not detach it.
     pf_process.set_ws_client_handle(ws_handle);
 
-    let startup = match tokio::time::timeout(std::time::Duration::from_secs(30), ready_rx).await {
-        Ok(Ok(result)) => result,
-        Ok(Err(error)) => Err(format!(
-            "Expose startup task ended before connecting: {error}"
-        )),
-        Err(_) => Err("Timed out connecting the reverse WebSocket tunnel".to_owned()),
+    let ready = async {
+        match tokio::time::timeout(std::time::Duration::from_secs(30), ready_rx).await {
+            Ok(Ok(result)) => result,
+            Ok(Err(error)) => Err(format!(
+                "Expose startup task ended before connecting: {error}"
+            )),
+            Err(_) => Err("Timed out connecting the reverse WebSocket tunnel".to_owned()),
+        }
+    };
+    let startup = match cancellation {
+        Some(token) => tokio::select! {
+            biased;
+            _ = token.cancelled() => Err(format!("Expose startup cancelled for config {config_id}")),
+            startup = ready => startup,
+        },
+        None => ready.await,
     };
     if let Err(error) = startup {
         pf_process.cleanup_and_abort().await;

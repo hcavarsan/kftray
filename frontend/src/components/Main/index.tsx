@@ -149,6 +149,27 @@ const KFTray = () => {
     }
   }, [fetchConfigsWithState])
 
+  // Applies an authoritative local change and invalidates any refresh that is
+  // still in flight, so a stale fetch cannot resurrect what this just removed
+  // or replaced.
+  const dropConfigs = useCallback((ids: number[]) => {
+    const removed = new Set(ids)
+
+    configRefreshVersion.current += 1
+    setConfigs(current => current.filter(config => !removed.has(config.id)))
+  }, [])
+
+  const mergeConfig = useCallback((saved: Config) => {
+    configRefreshVersion.current += 1
+    setConfigs(current =>
+      current.map(config =>
+        config.id === saved.id
+          ? { ...saved, is_running: config.is_running }
+          : config,
+      ),
+    )
+  }, [])
+
   const debouncedUpdateTimer = useRef<NodeJS.Timeout | null>(null)
   const debouncedUpdateConfigs = useCallback(() => {
     if (debouncedUpdateTimer.current) {
@@ -435,6 +456,10 @@ const KFTray = () => {
 
       if (isEdit) {
         await invoke('update_config_cmd', { config: updatedConfigToSave })
+        // Merged before the reservation is released: the debounced refresh is
+        // 100 ms away and may fail, and a start in that window would otherwise
+        // send the pre-edit snapshot to the backend.
+        mergeConfig(updatedConfigToSave)
       } else {
         await invoke('insert_config_cmd', { config: updatedConfigToSave })
       }
@@ -715,7 +740,7 @@ const KFTray = () => {
     markPending(configToDelete, 'stopping')
     try {
       await invoke('delete_config_cmd', { id: configToDelete })
-      await updateConfigsWithState()
+      dropConfigs([configToDelete])
       toaster.success({
         title: 'Success',
         description: 'Configuration deleted successfully.',
@@ -752,7 +777,7 @@ const KFTray = () => {
     }
     try {
       await invoke('delete_configs_cmd', { ids })
-      await updateConfigsWithState()
+      dropConfigs(ids)
       toaster.success({
         title: 'Success',
         description: 'Configurations deleted successfully.',

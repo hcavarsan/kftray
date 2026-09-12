@@ -70,10 +70,12 @@ pub async fn run_tui(
 
     // Restore the terminal first: stopping every forward waits on recovery
     // locks and cluster deletions, and none of that should keep the shell in
-    // raw mode.
-    disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-    terminal.show_cursor()?;
+    // raw mode. Its errors are held back rather than propagated, because
+    // returning here would skip the cleanup that drains the pending-resource
+    // registry.
+    let restored = disable_raw_mode()
+        .and_then(|()| execute!(terminal.backend_mut(), LeaveAlternateScreen))
+        .and_then(|()| terminal.show_cursor());
 
     app.finish_forwarding().await;
     match kftray_portforward::kube::stop_all_port_forward_with_mode(mode).await {
@@ -90,6 +92,7 @@ pub async fn run_tui(
     if let Err(err) = res {
         error!("{err:?}");
     }
+    restored?;
 
     Ok(())
 }

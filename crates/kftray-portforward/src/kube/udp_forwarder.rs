@@ -31,6 +31,7 @@ const MAX_SESSIONS: usize = 128;
 const SESSION_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 const SESSION_SWEEP_INTERVAL: Duration = Duration::from_secs(5);
 const SESSION_QUEUE_DEPTH: usize = 64;
+const REPLY_QUEUE_DEPTH: usize = 256;
 const SESSION_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
 const TUNNEL_RETRY_COOLDOWN: Duration = Duration::from_secs(1);
 
@@ -73,10 +74,13 @@ struct UdpSession {
 }
 
 impl UdpSession {
+    /// A session is working while something actually progressed recently: a
+    /// local datagram arrived, or the tunnel moved a frame in either direction.
+    ///
+    /// Queue depth alone is deliberately not progress. A tunnel that stops
+    /// draining its writes would otherwise hold its session, and its queued
+    /// payloads, forever, and the client could never open a replacement.
     fn is_working(&self, now: Instant) -> bool {
-        if self.packets.capacity() < SESSION_QUEUE_DEPTH {
-            return true;
-        }
         let activity =
             self.opened_at + Duration::from_millis(self.tunnel_activity.load(Ordering::Relaxed));
         now.duration_since(self.last_seen.max(activity)) <= SESSION_IDLE_TIMEOUT
@@ -101,11 +105,9 @@ impl UdpForwarder {
     )> {
         let local_udp_addr = format!("{local_address}:{local_port}");
 
-        let local_udp_socket = Arc::new(
-            TokioUdpSocket::bind(&local_udp_addr)
-                .await
-                .context("Failed to bind local UDP socket")?,
-        );
+        let local_udp_socket = TokioUdpSocket::bind(&local_udp_addr)
+            .await
+            .context("Failed to bind local UDP socket")?;
 
         let local_port = local_udp_socket.local_addr()?.port();
 
@@ -125,7 +127,11 @@ impl UdpForwarder {
             let mut datagram = vec![0u8; BUFFER_SIZE];
             let mut sweep = tokio::time::interval(SESSION_SWEEP_INTERVAL);
             sweep.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-
+            // Replies travel back through this queue instead of a shared socket
+            // handle: the socket stays owned by this future, so dropping it
+            // releases the port even when session tasks outlive their abort.
+            let (replies, mut incoming_replies) =
+                mpsc::channel::<(SocketAddr, Vec<u8>)>(REPLY_QUEUE_DEPTH);
             let result: anyhow::Result<()> = loop {
                 tokio::select! {
                     biased;
@@ -135,6 +141,11 @@ impl UdpForwarder {
                     }
                     _ = sweep.tick() => {
                         Self::retire_sessions(&mut sessions);
+                    }
+                    Some((peer, packet)) = incoming_replies.recv() => {
+                        if let Err(e) = local_udp_socket.send_to(&packet, &peer).await {
+                            debug!("Failed to send a reply to {}: {:?}", peer, e);
+                        }
                     }
                     received = local_udp_socket.recv_from(&mut datagram) => {
                         let (len, peer) = match received {
@@ -149,7 +160,7 @@ impl UdpForwarder {
                         let Some(packets) = Self::session_for(
                             &mut sessions,
                             peer,
-                            &local_udp_socket,
+                            &replies,
                             &upstream,
                             &cancellation_token,
                         ) else {
@@ -191,7 +202,8 @@ impl UdpForwarder {
     /// datagrams of every other client.
     fn session_for<U: UdpUpstream>(
         sessions: &mut HashMap<SocketAddr, UdpSession>, peer: SocketAddr,
-        socket: &Arc<TokioUdpSocket>, upstream: &Arc<U>, cancellation_token: &CancellationToken,
+        replies: &mpsc::Sender<(SocketAddr, Vec<u8>)>, upstream: &Arc<U>,
+        cancellation_token: &CancellationToken,
     ) -> Option<mpsc::Sender<Vec<u8>>> {
         let now = Instant::now();
         if let Some(session) = sessions.get_mut(&peer) {
@@ -226,7 +238,7 @@ impl UdpForwarder {
         let (packets, mut queue) = mpsc::channel::<Vec<u8>>(SESSION_QUEUE_DEPTH);
         let cancellation = cancellation_token.child_token();
         let session_cancellation = cancellation.clone();
-        let socket = Arc::clone(socket);
+        let replies = replies.clone();
         let upstream = Arc::clone(upstream);
 
         let tunnel_activity = Arc::new(AtomicU64::new(0));
@@ -246,11 +258,17 @@ impl UdpForwarder {
             };
 
             let traffic_seen = std::sync::atomic::AtomicBool::new(false);
-            let touch = || {
+            let mark_activity = || {
                 session_activity.store(
                     u64::try_from(now.elapsed().as_millis()).unwrap_or(u64::MAX),
                     Ordering::Relaxed,
                 );
+            };
+            // Only a frame coming back from the relay proves the tunnel works.
+            // A write that lands in transport buffers does not, so it must not
+            // clear the failures that drive recovery.
+            let mark_relay_response = || {
+                mark_activity();
                 if !traffic_seen.swap(true, Ordering::Relaxed) {
                     upstream.on_session_traffic();
                 }
@@ -264,19 +282,22 @@ impl UdpForwarder {
                         writer.write_all(&len.to_be_bytes()).await?;
                         writer.write_all(&packet).await?;
                         writer.flush().await?;
-                        touch();
+                        mark_activity();
                     }
                     Ok::<(), anyhow::Error>(())
                 };
                 let downlink = async {
                     while let Some(packet) = Self::read_tcp_length_and_packet(&mut reader).await? {
-                        // The relay emits a zero-length frame when the target
-                        // does not answer within its own timeout.
+                        // Counted before the empty check: the relay emits a
+                        // zero-length frame when the target does not answer
+                        // within its own timeout, and that is still progress.
+                        mark_relay_response();
                         if packet.is_empty() {
                             continue;
                         }
-                        socket.send_to(&packet, &peer).await?;
-                        touch();
+                        if replies.try_send((peer, packet)).is_err() {
+                            debug!("Dropping a reply for {}: the listener is saturated", peer);
+                        }
                     }
                     Err(anyhow::anyhow!("the relay closed the tunnel"))
                 };
@@ -413,6 +434,39 @@ pub(crate) mod tests {
         traffic: Arc<std::sync::atomic::AtomicUsize>,
     }
 
+    /// Consumes one frame and then closes, the shape a relay takes when the
+    /// destination cannot be resolved: the write succeeds into transport
+    /// buffers before the tunnel dies.
+    #[derive(Default)]
+    struct ConsumeThenCloseUpstream {
+        failures: Arc<std::sync::atomic::AtomicUsize>,
+        traffic: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl UdpUpstream for ConsumeThenCloseUpstream {
+        type Stream = DuplexStream;
+
+        async fn connect(&self) -> anyhow::Result<Self::Stream> {
+            let (ours, mut theirs) = duplex(4096);
+            tokio::spawn(async move {
+                let mut frame = [0u8; 64];
+                let _ = theirs.read(&mut frame).await;
+                drop(theirs);
+            });
+            Ok(ours)
+        }
+
+        fn on_session_failure(&self, _error: &anyhow::Error) {
+            self.failures
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+
+        fn on_session_traffic(&self) {
+            self.traffic
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
     impl UdpUpstream for ClosingUpstream {
         type Stream = DuplexStream;
 
@@ -528,10 +582,10 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn a_session_awaiting_slow_replies_is_not_retired_as_idle() {
-        let (packets, queue) = mpsc::channel::<Vec<u8>>(SESSION_QUEUE_DEPTH);
+    async fn a_session_is_retired_on_progress_not_on_queue_depth() {
+        let (packets, _queue) = mpsc::channel::<Vec<u8>>(SESSION_QUEUE_DEPTH);
         let idle_for_ages = Instant::now() - SESSION_IDLE_TIMEOUT * 2;
-        let mut session = UdpSession {
+        let session = UdpSession {
             packets,
             cancellation: CancellationToken::new(),
             task: tokio_util::task::AbortOnDropHandle::new(tokio::spawn(std::future::pending())),
@@ -543,24 +597,26 @@ pub(crate) mod tests {
 
         assert!(
             !session.is_working(now),
-            "no local traffic, no tunnel activity and an empty queue means idle"
+            "no local traffic and no tunnel activity means idle"
         );
 
-        session.packets.try_send(b"queued".to_vec()).unwrap();
+        // A tunnel that stopped draining its writes keeps its queue full. That
+        // must not exempt it, or the client can never open a replacement.
+        for _ in 0..SESSION_QUEUE_DEPTH {
+            session.packets.try_send(b"queued".to_vec()).unwrap();
+        }
         assert!(
-            session.is_working(now),
-            "a request still queued for the tunnel is outstanding work"
+            !session.is_working(now),
+            "a stalled tunnel must be retired even with work still queued"
         );
-        drop(queue);
 
         session.tunnel_activity.store(
             u64::try_from(now.duration_since(idle_for_ages).as_millis()).unwrap(),
             Ordering::Relaxed,
         );
-        session.packets = mpsc::channel::<Vec<u8>>(SESSION_QUEUE_DEPTH).0;
         assert!(
             session.is_working(now),
-            "a reply that just came back through the tunnel is activity"
+            "a frame that just came back through the tunnel is progress"
         );
     }
 
@@ -599,6 +655,47 @@ pub(crate) mod tests {
             traffic.load(std::sync::atomic::Ordering::Relaxed),
             0,
             "a connect that never moved a datagram must not clear earlier failures"
+        );
+
+        cancellation_token.cancel();
+        let _ = tokio::time::timeout(Duration::from_secs(5), owner).await;
+    }
+
+    #[tokio::test]
+    async fn an_uplink_write_alone_does_not_clear_recovery_failures() {
+        let upstream = Arc::new(ConsumeThenCloseUpstream::default());
+        let failures = Arc::clone(&upstream.failures);
+        let traffic = Arc::clone(&upstream.traffic);
+        let cancellation_token = CancellationToken::new();
+        let (port, forward) = UdpForwarder::bind_and_forward(
+            "127.0.0.1".to_owned(),
+            0,
+            Arc::clone(&upstream),
+            cancellation_token.clone(),
+        )
+        .await
+        .unwrap();
+        let owner = tokio::spawn(forward);
+
+        let client = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        client.connect(("127.0.0.1", port)).await.unwrap();
+        client.send(b"ping").await.unwrap();
+
+        for _ in 0..50 {
+            if failures.load(std::sync::atomic::Ordering::Relaxed) > 0 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+
+        assert!(
+            failures.load(std::sync::atomic::Ordering::Relaxed) > 0,
+            "a tunnel that accepts a frame and then dies must reach recovery"
+        );
+        assert_eq!(
+            traffic.load(std::sync::atomic::Ordering::Relaxed),
+            0,
+            "a write that only reached transport buffers is not a relay response"
         );
 
         cancellation_token.cancel();

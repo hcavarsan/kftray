@@ -667,7 +667,7 @@ pub(super) async fn start_config_locked(
                         "Port forwarding is already running for config {id}"
                     ))
                 } else if config.workload_type.as_deref() == Some("expose") {
-                    crate::expose::start_single_expose(config, mode).await
+                    crate::expose::start_single_expose(config, mode, cancellation).await
                 } else {
                     start_config_cancellable(config, protocol, mode, ssl_override, cancellation)
                         .await

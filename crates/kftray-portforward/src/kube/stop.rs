@@ -64,11 +64,16 @@ lazy_static::lazy_static! {
 }
 
 /// Two cleanup targets are the same when they name the same cluster resources.
+///
+/// The protocol is part of that identity: `delete_cluster_resources` treats a
+/// UDP service config as owning relay resources and the otherwise identical TCP
+/// config as a no-op, so collapsing them would let the no-op forget the relay.
 fn same_resources(left: &Config, right: &Config) -> bool {
     left.namespace == right.namespace
         && left.context == right.context
         && left.kubeconfig == right.kubeconfig
         && left.workload_type == right.workload_type
+        && left.protocol == right.protocol
         && left.service == right.service
 }
 
@@ -436,6 +441,12 @@ async fn stop_config(
     let mut retained = None;
     if let Some((_, mut process)) = process {
         retained = process.config().cloned();
+        // Recorded before the first await: the process is already out of
+        // CHILD_PROCESSES, so aborting this stop, as the terminal's shutdown
+        // drain does, would otherwise drop the only snapshot of its resources.
+        if let Some(config) = &retained {
+            record_pending_cleanup(id, config.clone());
+        }
         process.cleanup_and_abort().await;
     }
     // The snapshot taken at startup describes the resources that actually
