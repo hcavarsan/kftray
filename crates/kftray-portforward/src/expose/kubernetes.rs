@@ -224,28 +224,30 @@ async fn create_deployment(
         .containers
         .get_mut(index)
         .ok_or("Expose deployment must contain a container")?;
-    let websocket_port = container_env_port(container, "WEBSOCKET_PORT", 9999);
-    let http_port = container_env_port(container, "HTTP_PORT", 8080);
-    container.startup_probe.get_or_insert_with(|| Probe {
-        tcp_socket: Some(TCPSocketAction {
-            port: IntOrString::Int(websocket_port),
+    if let Some(websocket_port) = container_env_port(container, "WEBSOCKET_PORT", 9999) {
+        container.startup_probe.get_or_insert_with(|| Probe {
+            tcp_socket: Some(TCPSocketAction {
+                port: IntOrString::Int(websocket_port),
+                ..Default::default()
+            }),
+            period_seconds: Some(1),
+            timeout_seconds: Some(1),
+            failure_threshold: Some(30),
             ..Default::default()
-        }),
-        period_seconds: Some(1),
-        timeout_seconds: Some(1),
-        failure_threshold: Some(30),
-        ..Default::default()
-    });
-    container.readiness_probe.get_or_insert_with(|| Probe {
-        tcp_socket: Some(TCPSocketAction {
-            port: IntOrString::Int(http_port),
+        });
+    }
+    if let Some(http_port) = container_env_port(container, "HTTP_PORT", 8080) {
+        container.readiness_probe.get_or_insert_with(|| Probe {
+            tcp_socket: Some(TCPSocketAction {
+                port: IntOrString::Int(http_port),
+                ..Default::default()
+            }),
+            period_seconds: Some(1),
+            timeout_seconds: Some(1),
+            failure_threshold: Some(3),
             ..Default::default()
-        }),
-        period_seconds: Some(1),
-        timeout_seconds: Some(1),
-        failure_threshold: Some(3),
-        ..Default::default()
-    });
+        });
+    }
 
     deployments
         .create(&PostParams::default(), &deployment)
@@ -256,16 +258,31 @@ async fn create_deployment(
     Ok(())
 }
 
-/// Reads a port from a container's environment so injected probes follow a
-/// customized manifest instead of the default template's ports.
-fn container_env_port(container: &Container, name: &str, fallback: i32) -> i32 {
-    container
+/// Resolves the port an injected probe should target.
+///
+/// Returns `None` when the manifest supplies the port dynamically through
+/// `valueFrom` or `envFrom`: guessing the default there would probe the wrong
+/// port and fail a healthy deployment. Such a manifest has to carry its own
+/// probe.
+fn container_env_port(container: &Container, name: &str, default: i32) -> Option<i32> {
+    if container
+        .env_from
+        .as_ref()
+        .is_some_and(|sources| !sources.is_empty())
+    {
+        return None;
+    }
+    let Some(variable) = container
         .env
         .as_ref()
         .and_then(|env| env.iter().find(|variable| variable.name == name))
-        .and_then(|variable| variable.value.as_deref())
+    else {
+        return Some(default);
+    };
+    variable
+        .value
+        .as_deref()
         .and_then(|value| value.parse().ok())
-        .unwrap_or(fallback)
 }
 
 async fn wait_for_pod_ready(
@@ -565,6 +582,62 @@ mod tests {
     use tower_test::mock;
 
     use super::*;
+
+    fn relay_container(env: Vec<k8s_openapi::api::core::v1::EnvVar>) -> Container {
+        Container {
+            name: "kftray-server".to_owned(),
+            env: Some(env),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn probe_ports_follow_a_customized_literal_value() {
+        let container = relay_container(vec![k8s_openapi::api::core::v1::EnvVar {
+            name: "HTTP_PORT".to_owned(),
+            value: Some("9100".to_owned()),
+            ..Default::default()
+        }]);
+        assert_eq!(
+            container_env_port(&container, "HTTP_PORT", 8080),
+            Some(9100)
+        );
+        assert_eq!(
+            container_env_port(&container, "WEBSOCKET_PORT", 9999),
+            Some(9999),
+            "an absent variable still means the template default"
+        );
+    }
+
+    #[test]
+    fn no_probe_is_injected_for_a_dynamically_supplied_port() {
+        let from_config_map = relay_container(vec![k8s_openapi::api::core::v1::EnvVar {
+            name: "HTTP_PORT".to_owned(),
+            value_from: Some(k8s_openapi::api::core::v1::EnvVarSource {
+                config_map_key_ref: Some(k8s_openapi::api::core::v1::ConfigMapKeySelector {
+                    name: "ports".to_owned(),
+                    key: "http".to_owned(),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }]);
+        assert_eq!(
+            container_env_port(&from_config_map, "HTTP_PORT", 8080),
+            None
+        );
+
+        let mut from_env_from = relay_container(Vec::new());
+        from_env_from.env_from = Some(vec![k8s_openapi::api::core::v1::EnvFromSource {
+            config_map_ref: Some(k8s_openapi::api::core::v1::ConfigMapEnvSource {
+                name: "ports".to_owned(),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }]);
+        assert_eq!(container_env_port(&from_env_from, "HTTP_PORT", 8080), None);
+    }
 
     #[tokio::test]
     async fn cleanup_attempts_all_resources_and_ignores_not_found() {

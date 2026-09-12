@@ -27,6 +27,8 @@ const MAX_SESSIONS: usize = 128;
 const SESSION_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 const SESSION_SWEEP_INTERVAL: Duration = Duration::from_secs(5);
 const SESSION_QUEUE_DEPTH: usize = 64;
+const SESSION_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
+const TUNNEL_RETRY_COOLDOWN: Duration = Duration::from_secs(1);
 
 /// Opens one upstream tunnel per local UDP client.
 ///
@@ -47,7 +49,9 @@ pub trait UdpUpstream: Send + Sync + 'static {
 struct UdpSession {
     packets: mpsc::Sender<Vec<u8>>,
     cancellation: CancellationToken,
+    task: tokio_util::task::AbortOnDropHandle<()>,
     last_seen: Instant,
+    opened_at: Instant,
 }
 
 pub struct UdpForwarder;
@@ -107,20 +111,15 @@ impl UdpForwarder {
                                 ));
                             }
                         };
-                        let packets = match Self::session_for(
+                        let Some(packets) = Self::session_for(
                             &mut sessions,
                             peer,
                             &local_udp_socket,
                             &upstream,
                             &cancellation_token,
-                        )
-                        .await
-                        {
-                            Ok(packets) => packets,
-                            Err(e) => {
-                                error!("No UDP tunnel available for {}: {:?}", peer, e);
-                                continue;
-                            }
+                        ) else {
+                            debug!("Dropping a datagram from {}: tunnel is cooling down", peer);
+                            continue;
                         };
                         if packets.try_send(datagram[..len].to_vec()).is_err() {
                             debug!("Dropping a datagram from {}: tunnel is saturated", peer);
@@ -129,9 +128,21 @@ impl UdpForwarder {
                 }
             };
 
-            for (_, session) in sessions.drain() {
-                session.cancellation.cancel();
-            }
+            let tasks: Vec<_> = sessions
+                .drain()
+                .map(|(_, session)| {
+                    session.cancellation.cancel();
+                    session.task
+                })
+                .collect();
+            // Handles abort on drop, so a timeout here still releases the
+            // socket rather than leaving the local port bound.
+            let drain = async move {
+                for task in tasks {
+                    let _ = task.await;
+                }
+            };
+            let _ = tokio::time::timeout(SESSION_SHUTDOWN_TIMEOUT, drain).await;
 
             result
         };
@@ -140,15 +151,20 @@ impl UdpForwarder {
     }
 
     /// Returns the queue of the session that owns `peer`, opening one when the
-    /// peer is new or its previous tunnel has ended.
-    async fn session_for<U: UdpUpstream>(
+    /// peer is new or its previous tunnel has ended. The tunnel itself is
+    /// opened inside the session task, so one slow handshake cannot stall the
+    /// datagrams of every other client.
+    fn session_for<U: UdpUpstream>(
         sessions: &mut HashMap<SocketAddr, UdpSession>, peer: SocketAddr,
         socket: &Arc<TokioUdpSocket>, upstream: &Arc<U>, cancellation_token: &CancellationToken,
-    ) -> anyhow::Result<mpsc::Sender<Vec<u8>>> {
+    ) -> Option<mpsc::Sender<Vec<u8>>> {
         if let Some(session) = sessions.get_mut(&peer) {
             if !session.packets.is_closed() {
                 session.last_seen = Instant::now();
-                return Ok(session.packets.clone());
+                return Some(session.packets.clone());
+            }
+            if session.opened_at.elapsed() < TUNNEL_RETRY_COOLDOWN {
+                return None;
             }
             sessions.remove(&peer);
         }
@@ -171,20 +187,25 @@ impl UdpForwarder {
             }
         }
 
-        let stream = match upstream.connect().await {
-            Ok(stream) => stream,
-            Err(error) => {
-                upstream.on_connect_failure(&error);
-                return Err(error);
-            }
-        };
-
         let (packets, mut queue) = mpsc::channel::<Vec<u8>>(SESSION_QUEUE_DEPTH);
         let cancellation = cancellation_token.child_token();
         let session_cancellation = cancellation.clone();
         let socket = Arc::clone(socket);
+        let upstream = Arc::clone(upstream);
 
-        tokio::spawn(async move {
+        let task = tokio::spawn(async move {
+            let stream = tokio::select! {
+                biased;
+                _ = session_cancellation.cancelled() => return,
+                connected = upstream.connect() => match connected {
+                    Ok(stream) => stream,
+                    Err(error) => {
+                        upstream.on_connect_failure(&error);
+                        return;
+                    }
+                },
+            };
+
             let (mut reader, mut writer) = tokio::io::split(stream);
             {
                 let uplink = async {
@@ -223,15 +244,18 @@ impl UdpForwarder {
         });
 
         let queue = packets.clone();
+        let now = Instant::now();
         sessions.insert(
             peer,
             UdpSession {
                 packets,
                 cancellation,
-                last_seen: Instant::now(),
+                task: tokio_util::task::AbortOnDropHandle::new(task),
+                last_seen: now,
+                opened_at: now,
             },
         );
-        Ok(queue)
+        Some(queue)
     }
 
     fn retire_sessions(sessions: &mut HashMap<SocketAddr, UdpSession>) {
@@ -322,6 +346,46 @@ pub(crate) mod tests {
 
         async fn connect(&self) -> anyhow::Result<Self::Stream> {
             Err(anyhow::anyhow!("no relay pod"))
+        }
+    }
+
+    /// Serves `ready` connections normally, then never resolves again.
+    struct StallingUpstream {
+        inner: Arc<SpawningUpstream>,
+        remaining: std::sync::atomic::AtomicUsize,
+    }
+
+    impl StallingUpstream {
+        fn new(
+            ready: usize, capacity: usize,
+        ) -> (Arc<Self>, mpsc::UnboundedReceiver<DuplexStream>) {
+            let (inner, opened) = SpawningUpstream::new(capacity);
+            (
+                Arc::new(Self {
+                    inner,
+                    remaining: std::sync::atomic::AtomicUsize::new(ready),
+                }),
+                opened,
+            )
+        }
+    }
+
+    impl UdpUpstream for StallingUpstream {
+        type Stream = DuplexStream;
+
+        async fn connect(&self) -> anyhow::Result<Self::Stream> {
+            if self
+                .remaining
+                .fetch_update(
+                    std::sync::atomic::Ordering::SeqCst,
+                    std::sync::atomic::Ordering::SeqCst,
+                    |remaining| remaining.checked_sub(1),
+                )
+                .is_err()
+            {
+                std::future::pending::<()>().await;
+            }
+            self.inner.connect().await
         }
     }
 
@@ -482,6 +546,91 @@ pub(crate) mod tests {
             .unwrap()
             .unwrap();
         UdpSocket::bind(("127.0.0.1", port)).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn aborting_the_owner_releases_the_port_with_a_blocked_session() {
+        // A one-byte tunnel plus a reader that never drains it wedges the
+        // session in the middle of a write.
+        let (upstream, mut opened) = SpawningUpstream::new(1);
+        let cancellation_token = CancellationToken::new();
+        let (port, forward) = UdpForwarder::bind_and_forward(
+            "127.0.0.1".to_owned(),
+            0,
+            upstream,
+            cancellation_token.clone(),
+        )
+        .await
+        .unwrap();
+        let owner = tokio::spawn(forward);
+        let _probe = opened.recv().await.unwrap();
+
+        let client = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        client.connect(("127.0.0.1", port)).await.unwrap();
+        for _ in 0..8 {
+            client.send(&[7u8; 512]).await.unwrap();
+        }
+        let stuck = tokio::time::timeout(Duration::from_secs(5), opened.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+
+        owner.abort();
+        assert!(owner.await.unwrap_err().is_cancelled());
+        drop(stuck);
+
+        UdpSocket::bind(("127.0.0.1", port))
+            .await
+            .expect("aborting the owner must release the port even with a wedged session");
+    }
+
+    #[tokio::test]
+    async fn a_stalled_tunnel_handshake_does_not_block_other_clients() {
+        let (upstream, mut opened) = StallingUpstream::new(2, 4096);
+        let cancellation_token = CancellationToken::new();
+        let (port, forward) = UdpForwarder::bind_and_forward(
+            "127.0.0.1".to_owned(),
+            0,
+            upstream,
+            cancellation_token.clone(),
+        )
+        .await
+        .unwrap();
+        let owner = tokio::spawn(forward);
+        let _probe = opened.recv().await.unwrap();
+
+        let established = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        established.connect(("127.0.0.1", port)).await.unwrap();
+        let stalling = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        stalling.connect(("127.0.0.1", port)).await.unwrap();
+
+        tokio::time::timeout(Duration::from_secs(5), async {
+            established.send(b"first").await.unwrap();
+            let mut tunnel = opened.recv().await.unwrap();
+            assert_eq!(read_frame(&mut tunnel).await, b"first");
+
+            // This client's tunnel never opens.
+            stalling.send(b"never-connects").await.unwrap();
+            tokio::task::yield_now().await;
+
+            established.send(b"second").await.unwrap();
+            assert_eq!(read_frame(&mut tunnel).await, b"second");
+
+            write_frame(&mut tunnel, b"reply").await;
+            let mut buffer = [0u8; 32];
+            let received = established.recv(&mut buffer).await.unwrap();
+            assert_eq!(&buffer[..received], b"reply");
+        })
+        .await
+        .expect("a stalled handshake must not stall an established client");
+
+        cancellation_token.cancel();
+        tokio::time::timeout(Duration::from_secs(5), owner)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
     }
 
     #[tokio::test]

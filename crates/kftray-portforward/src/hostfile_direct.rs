@@ -20,6 +20,8 @@ use log::{
 };
 
 const BATCH_DELAY_MS: u64 = 100;
+const MAX_WRITE_BACKOFF: Duration = Duration::from_secs(30);
+const MAX_WRITE_ATTEMPTS: u32 = 8;
 const KFTRAY_HOSTS_TAG: &str = "kftray-hosts";
 
 type HostEntriesMap = HashMap<String, HostEntry>;
@@ -156,8 +158,11 @@ impl DirectHostfileManager {
         entries: Arc<RwLock<HostEntriesMap>>, needs_update: Arc<Mutex<bool>>,
         writer_running: Arc<Mutex<bool>>, reconciled: Arc<AtomicBool>,
     ) {
+        let mut backoff = Duration::from_millis(BATCH_DELAY_MS);
+        let mut failures = 0u32;
+
         loop {
-            thread::sleep(Duration::from_millis(BATCH_DELAY_MS));
+            thread::sleep(backoff);
 
             let should_update = {
                 let mut update_flag = needs_update.lock().unwrap_or_else(|e| {
@@ -173,19 +178,7 @@ impl DirectHostfileManager {
                 }
             };
 
-            if should_update {
-                match Self::update_hosts_file_static(&entries) {
-                    Ok(()) => reconciled.store(true, Ordering::Relaxed),
-                    Err(e) => {
-                        error!("Failed to write hosts file in background writer: {e}");
-                        let mut update_flag = needs_update.lock().unwrap_or_else(|e| {
-                            error!("Failed to re-arm the pending hosts write: {e}");
-                            e.into_inner()
-                        });
-                        *update_flag = true;
-                    }
-                }
-            } else {
+            if !should_update {
                 let pending = {
                     *needs_update.lock().unwrap_or_else(|e| {
                         error!("Failed to check for pending updates: {e}");
@@ -195,6 +188,34 @@ impl DirectHostfileManager {
 
                 if !pending {
                     break;
+                }
+                continue;
+            }
+
+            match Self::update_hosts_file_static(&entries) {
+                Ok(()) => {
+                    reconciled.store(true, Ordering::Relaxed);
+                    backoff = Duration::from_millis(BATCH_DELAY_MS);
+                    failures = 0;
+                }
+                Err(e) => {
+                    failures += 1;
+                    // A persistent error is usually missing permissions on the
+                    // hosts file. Retry with backoff, then stop rather than
+                    // spin a thread logging forever.
+                    if failures >= MAX_WRITE_ATTEMPTS {
+                        error!(
+                            "Giving up on the hosts file after {failures} attempts, last error: {e}"
+                        );
+                        break;
+                    }
+                    error!("Failed to write hosts file in background writer: {e}");
+                    backoff = (backoff * 2).min(MAX_WRITE_BACKOFF);
+                    let mut update_flag = needs_update.lock().unwrap_or_else(|e| {
+                        error!("Failed to re-arm the pending hosts write: {e}");
+                        e.into_inner()
+                    });
+                    *update_flag = true;
                 }
             }
         }

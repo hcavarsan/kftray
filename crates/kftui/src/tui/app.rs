@@ -67,6 +67,14 @@ pub async fn run_tui(
     }
 
     let res = run_app(&mut terminal, &mut app, mode, &mut update_check).await;
+
+    // Restore the terminal first: stopping every forward waits on recovery
+    // locks and cluster deletions, and none of that should keep the shell in
+    // raw mode.
+    disable_raw_mode()?;
+    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    terminal.show_cursor()?;
+
     app.finish_forwarding().await;
     match kftray_portforward::kube::stop_all_port_forward_with_mode(mode).await {
         Ok(responses) => {
@@ -78,10 +86,6 @@ pub async fn run_tui(
         }
         Err(error) => error!("Failed to stop port forwards: {error}"),
     }
-
-    disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-    terminal.show_cursor()?;
 
     if let Err(err) = res {
         error!("{err:?}");

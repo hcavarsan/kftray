@@ -319,12 +319,6 @@ async fn stop_config(
     if let Some(startup) = crate::kube::proxy::STARTING_PROXIES.get(&id) {
         startup.cancel();
     }
-    let refreshed = if was_starting {
-        get_config_with_mode(id, mode).await.ok()
-    } else {
-        None
-    };
-    let config = refreshed.as_ref().or(config);
     if let Some((_, manager)) = crate::kube::proxy_recovery::RECOVERY_MANAGERS.remove(&id) {
         manager.cancel();
     }
@@ -335,7 +329,15 @@ async fn stop_config(
         retained = process.config().cloned();
         process.cleanup_and_abort().await;
     }
-    let config = config.or(retained.as_ref());
+    // The snapshot taken at startup describes the resources that actually
+    // exist. The database record can have been edited since without stopping
+    // the forward, which would point cleanup at the new destination.
+    let refreshed = if retained.is_none() && was_starting {
+        get_config_with_mode(id, mode).await.ok()
+    } else {
+        None
+    };
+    let config = retained.as_ref().or(refreshed.as_ref()).or(config);
     cancel_timeout_for_forward(id).await;
 
     let result = if let Some(config) = config {

@@ -70,8 +70,8 @@ pub struct PortForwarder {
     forwarder: Arc<kube_portforward::Forwarder>,
     target_port: u16,
     http_log_watcher: HttpLogStateWatcher,
-    background_tasks: Arc<tokio::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
-    connection_tasks: Arc<tokio::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
+    background_tasks: Arc<std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
+    connection_tasks: Arc<std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
 }
 
 impl PortForwarder {
@@ -127,8 +127,8 @@ impl PortForwarder {
             forwarder,
             target_port,
             http_log_watcher: HttpLogStateWatcher::new(),
-            background_tasks: Arc::new(tokio::sync::Mutex::new(Vec::new())),
-            connection_tasks: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            background_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
+            connection_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
         })
     }
 
@@ -179,7 +179,7 @@ impl PortForwarder {
                 }
             }
         });
-        self.track_task(sync_task).await;
+        self.track_task(sync_task);
 
         let tcp_forwarder = TcpForwarder::new(config_id, workload_type);
 
@@ -337,8 +337,8 @@ impl PortForwarder {
             });
 
             {
-                let mut tasks = connection_tasks.lock().await;
-                tasks.retain(|h| !h.is_finished());
+                let mut tasks = Self::registry(&connection_tasks);
+                tasks.retain(|handle| !handle.is_finished());
                 tasks.push(handle);
             }
         }
@@ -444,13 +444,20 @@ impl PortForwarder {
         self.http_log_watcher.get_http_logs(config_id).await
     }
 
-    async fn track_task(&self, handle: tokio::task::JoinHandle<()>) {
-        let mut tasks = self.background_tasks.lock().await;
-        tasks.push(handle);
+    fn track_task(&self, handle: tokio::task::JoinHandle<()>) {
+        Self::registry(&self.background_tasks).push(handle);
     }
 
-    async fn cleanup_background_tasks(&self) {
-        let tasks = std::mem::take(&mut *self.background_tasks.lock().await);
+    fn registry(
+        tasks: &Arc<std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
+    ) -> std::sync::MutexGuard<'_, Vec<tokio::task::JoinHandle<()>>> {
+        tasks
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    async fn cleanup_tasks(tasks: &Arc<std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>) {
+        let tasks = std::mem::take(&mut *Self::registry(tasks));
         for handle in &tasks {
             handle.abort();
         }
@@ -459,13 +466,14 @@ impl PortForwarder {
         }
     }
 
-    async fn cleanup_connection_tasks(&self) {
-        let tasks = std::mem::take(&mut *self.connection_tasks.lock().await);
-        for handle in &tasks {
-            handle.abort();
-        }
-        for handle in tasks {
-            let _ = handle.await;
+    /// Aborts every worker without awaiting, so a synchronous `Drop` can still
+    /// release the sockets held by connections stalled outside a cancellation
+    /// point, such as a TLS handshake.
+    pub fn abort_workers(&self) {
+        for tasks in [&self.background_tasks, &self.connection_tasks] {
+            for handle in std::mem::take(&mut *Self::registry(tasks)) {
+                handle.abort();
+            }
         }
     }
 
@@ -490,8 +498,8 @@ impl PortForwarder {
 
         self.http_log_watcher.shutdown();
 
-        self.cleanup_background_tasks().await;
-        self.cleanup_connection_tasks().await;
+        Self::cleanup_tasks(&self.background_tasks).await;
+        Self::cleanup_tasks(&self.connection_tasks).await;
 
         if let Err(e) = self.forwarder.shutdown().await {
             debug!("Forwarder shutdown returned an error: {}", e);
@@ -729,8 +737,8 @@ mod tests {
             forwarder: Arc::new(forwarder),
             target_port: 8080,
             http_log_watcher: HttpLogStateWatcher::new(),
-            background_tasks: Arc::new(tokio::sync::Mutex::new(Vec::new())),
-            connection_tasks: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            background_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
+            connection_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
         };
         let mut acquisition = Box::pin(port_forwarder.get_stream());
         tokio::select! {
@@ -780,8 +788,8 @@ mod tests {
             forwarder: Arc::new(forwarder),
             target_port: 8080,
             http_log_watcher: HttpLogStateWatcher::new(),
-            background_tasks: Arc::new(tokio::sync::Mutex::new(Vec::new())),
-            connection_tasks: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            background_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
+            connection_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
         };
 
         let get_stream_fut = port_forwarder.get_stream();
@@ -960,12 +968,10 @@ mod tests {
             forwarder: Arc::new(forwarder),
             target_port: 8080,
             http_log_watcher: HttpLogStateWatcher::new(),
-            background_tasks: Arc::new(tokio::sync::Mutex::new(Vec::new())),
-            connection_tasks: Arc::new(tokio::sync::Mutex::new(Vec::new())),
+            background_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
+            connection_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
         });
-        port_forwarder
-            .track_task(tokio::spawn(std::future::pending()))
-            .await;
+        port_forwarder.track_task(tokio::spawn(std::future::pending()));
 
         let stubborn = tokio::task::spawn_blocking(|| -> anyhow::Result<()> {
             std::thread::sleep(Duration::from_secs(3));
@@ -983,9 +989,71 @@ mod tests {
             .expect("cleanup must not wait on a task that ignores abort");
 
         assert!(
-            port_forwarder.background_tasks.lock().await.is_empty(),
+            PortForwarder::registry(&port_forwarder.background_tasks).is_empty(),
             "the forwarder must be shut down even when the listener join times out"
         );
+        driver.abort();
+        let _ = driver.await;
+    }
+
+    #[tokio::test]
+    async fn dropping_a_process_releases_a_connection_stalled_outside_cancellation() {
+        let pod_name = "web-0";
+        let (mock_service, handle) = mock::pair::<Request<Body>, Response<Body>>();
+        let kube_client = kube::Client::new(mock_service, "default");
+        let driver = tokio::spawn(serve_ready_pod_then_stall(
+            handle,
+            pod_name,
+            Arc::new(tokio::sync::Notify::new()),
+            Duration::ZERO,
+        ));
+        let forwarder = kube_portforward::Forwarder::builder(
+            kube_client,
+            "http://127.0.0.1:1".parse().unwrap(),
+            "default",
+        )
+        .pod_selector(kube_portforward::PodSelector::Name(pod_name.to_owned()))
+        .build()
+        .await
+        .unwrap();
+        let port_forwarder = Arc::new(PortForwarder {
+            namespace: "default".into(),
+            forwarder: Arc::new(forwarder),
+            target_port: 8080,
+            http_log_watcher: HttpLogStateWatcher::new(),
+            background_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
+            connection_tasks: Arc::new(std::sync::Mutex::new(Vec::new())),
+        });
+
+        // A client that connected and then stalled where no cancellation token
+        // is polled, holding its socket for as long as its task lives.
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let client = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        let (accepted, _) = listener.accept().await.unwrap();
+        drop(listener);
+        let stalled = tokio::spawn(async move {
+            let _accepted = accepted;
+            std::future::pending::<()>().await;
+        });
+        let stalled_task = stalled.abort_handle();
+        PortForwarder::registry(&port_forwarder.connection_tasks).push(stalled);
+
+        let process = crate::port_forward::PortForwardProcess::with_forwarder_and_token(
+            tokio::spawn(std::future::pending()),
+            Arc::clone(&port_forwarder),
+            "410071".to_owned(),
+            CancellationToken::new(),
+        );
+
+        drop(process);
+        tokio::task::yield_now().await;
+
+        assert!(
+            stalled_task.is_finished(),
+            "dropping an unregistered process must abort the forwarder's connection tasks"
+        );
+        drop(client);
         driver.abort();
         let _ = driver.await;
     }

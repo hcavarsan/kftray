@@ -286,6 +286,7 @@ pub struct App {
     pub throbber_state: throbber_widgets_tui::ThrobberState,
     pub configs_being_processed: std::collections::HashMap<i64, Arc<PendingForward>>,
     pub forwarding_tasks: tokio::task::JoinSet<()>,
+    pub(crate) task_configs: std::collections::HashMap<tokio::task::Id, i64>,
     pub forwarding_slots: Arc<tokio::sync::Semaphore>,
     pub stop_slots: Arc<tokio::sync::Semaphore>,
     pub forwarding_cancel: tokio_util::sync::CancellationToken,
@@ -376,6 +377,7 @@ impl App {
             throbber_state: throbber_widgets_tui::ThrobberState::default(),
             configs_being_processed: std::collections::HashMap::new(),
             forwarding_tasks: tokio::task::JoinSet::new(),
+            task_configs: std::collections::HashMap::new(),
             forwarding_slots: Arc::new(tokio::sync::Semaphore::new(FORWARD_DISPATCH_CONCURRENCY)),
             stop_slots: Arc::new(tokio::sync::Semaphore::new(FORWARD_DISPATCH_CONCURRENCY)),
             forwarding_cancel: tokio_util::sync::CancellationToken::new(),
@@ -694,14 +696,46 @@ impl App {
         self.update_filtered_configs();
 
         let now = std::time::Instant::now();
+        let mut reports = Vec::new();
         self.configs_being_processed.retain(|_, pending| {
             if !pending.is_active() {
                 return false;
             }
-            pending.abort_if_stalled(now);
+            if let Some(warning) = pending.stall_warning(now) {
+                log::warn!("{warning}");
+                reports.push(warning);
+            }
             true
         });
-        while self.forwarding_tasks.try_join_next().is_some() {}
+        let shutting_down = self.forwarding_cancel.is_cancelled();
+        while let Some(joined) = self.forwarding_tasks.try_join_next_with_id() {
+            let error = match joined {
+                Ok((id, ())) => {
+                    self.task_configs.remove(&id);
+                    continue;
+                }
+                Err(error) => error,
+            };
+            let config_id = self.task_configs.remove(&error.id());
+            if error.is_cancelled() && shutting_down {
+                continue;
+            }
+            let subject = config_id
+                .map(|id| format!("Config {id}"))
+                .unwrap_or_else(|| "A port forward operation".to_owned());
+            let report = if error.is_panic() {
+                format!("{subject} failed unexpectedly and could not be completed")
+            } else {
+                format!("{subject} was cancelled before it could be completed")
+            };
+            log::error!("{report}: {error}");
+            reports.push(report);
+        }
+        for report in reports {
+            if let Some(sender) = &self.error_sender {
+                let _ = sender.send(report);
+            }
+        }
 
         let mut new_errors = Vec::new();
         if let Some(receiver) = &mut self.error_receiver {
@@ -1438,19 +1472,19 @@ const PROCESSING_WATCHDOG: std::time::Duration = std::time::Duration::from_secs(
 /// operation actually runs, so a config waiting behind the concurrency limit
 /// keeps its busy indicator and its exclusion from a second dispatch.
 pub struct PendingForward {
+    config_id: i64,
     done: AtomicBool,
     running_since: std::sync::Mutex<Option<std::time::Instant>>,
-    abort: std::sync::Mutex<Option<tokio::task::AbortHandle>>,
-    aborted: AtomicBool,
+    warned: AtomicBool,
 }
 
 impl PendingForward {
-    pub(crate) fn new() -> Self {
+    pub(crate) fn new(config_id: i64) -> Self {
         Self {
+            config_id,
             done: AtomicBool::new(false),
             running_since: std::sync::Mutex::new(None),
-            abort: std::sync::Mutex::new(None),
-            aborted: AtomicBool::new(false),
+            warned: AtomicBool::new(false),
         }
     }
 
@@ -1472,31 +1506,25 @@ impl PendingForward {
         self.mark_running_at(std::time::Instant::now());
     }
 
-    fn set_abort(&self, handle: tokio::task::AbortHandle) {
-        if let Ok(mut abort) = self.abort.lock() {
-            *abort = Some(handle);
-        }
-    }
-
-    /// Aborts an operation that has been running past the watchdog window. The
-    /// entry stays registered until its task reports completion, so the config
-    /// cannot be dispatched again while the old operation is still unwinding.
-    fn abort_if_stalled(&self, now: std::time::Instant) {
+    /// Reports an operation that has outrun the watchdog window, once. It is
+    /// deliberately not aborted: the backend rolls back its own cluster
+    /// resources after its own timeouts, and dropping it mid-flight would
+    /// orphan a pod or a Deployment that nothing else reaps.
+    fn stall_warning(&self, now: std::time::Instant) -> Option<String> {
         let stalled = self
             .running_since
             .lock()
             .ok()
             .and_then(|running_since| *running_since)
             .is_some_and(|started| now.duration_since(started) > PROCESSING_WATCHDOG);
-        if !stalled || self.aborted.swap(true, Ordering::Relaxed) {
-            return;
+        if !stalled || self.warned.swap(true, Ordering::Relaxed) {
+            return None;
         }
-        log::warn!("Aborting a forwarding operation that exceeded the watchdog window");
-        if let Ok(abort) = self.abort.lock()
-            && let Some(handle) = abort.as_ref()
-        {
-            handle.abort();
-        }
+        Some(format!(
+            "Config {} is still working after {} seconds; waiting for it to finish",
+            self.config_id,
+            PROCESSING_WATCHDOG.as_secs()
+        ))
     }
 }
 
@@ -1553,7 +1581,7 @@ pub async fn handle_port_forwarding(app: &mut App, mode: DatabaseMode) -> io::Re
     for config in &selected_configs {
         if let Some(id) = config.id {
             app.configs_being_processed
-                .insert(id, Arc::new(PendingForward::new()));
+                .insert(id, Arc::new(PendingForward::new(id)));
         }
     }
 
@@ -1622,7 +1650,7 @@ pub async fn handle_port_forwarding(app: &mut App, mode: DatabaseMode) -> io::Re
 
             drop(finished);
         });
-        pending.set_abort(handle);
+        app.task_configs.insert(handle.id(), pending.config_id);
     }
 
     match app.active_table {

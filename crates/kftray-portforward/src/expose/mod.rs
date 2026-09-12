@@ -127,6 +127,9 @@ pub(crate) async fn start_single_expose(
             error!("WebSocket client error: {}", e);
         }
     });
+    // Attach before awaiting readiness: dropping this startup future must abort
+    // the tunnel task through the process, not detach it.
+    pf_process.set_ws_client_handle(ws_handle);
 
     let startup = match tokio::time::timeout(std::time::Duration::from_secs(30), ready_rx).await {
         Ok(Ok(result)) => result,
@@ -136,7 +139,6 @@ pub(crate) async fn start_single_expose(
         Err(_) => Err("Timed out connecting the reverse WebSocket tunnel".to_owned()),
     };
     if let Err(error) = startup {
-        ws_handle.abort();
         pf_process.cleanup_and_abort().await;
         return match delete_expose_resources(
             client.clone(),
@@ -149,7 +151,6 @@ pub(crate) async fn start_single_expose(
             Err(cleanup_error) => Err(format!("{error}; cleanup failed: {cleanup_error}")),
         };
     }
-    pf_process.set_ws_client_handle(ws_handle);
 
     let config_state = ConfigState {
         id: None,

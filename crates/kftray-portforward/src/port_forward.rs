@@ -147,6 +147,15 @@ impl Drop for PortForwardProcess {
     fn drop(&mut self) {
         self.cancellation_token.cancel();
         self.abort();
+        let Some(forwarder) = self.direct_forwarder.take() else {
+            return;
+        };
+        // Connections stalled outside a cancellation point, such as a TLS
+        // handshake, only release their socket when their task is aborted.
+        forwarder.abort_workers();
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move { forwarder.shutdown().await });
+        }
     }
 }
 
@@ -192,6 +201,8 @@ impl PortForward {
         self.local_address.clone()
     }
 
+    /// Releases everything `start_config` registered outside the process: the
+    /// custom loopback address and the domain alias in the hosts file.
     #[instrument(skip(self), fields(config_id = self.config_id))]
     pub async fn cleanup_resources(&self) -> anyhow::Result<()> {
         if let Some(addr) = &self.local_address
@@ -199,6 +210,8 @@ impl PortForward {
         {
             let _ = crate::network_utils::remove_loopback_address(addr).await;
         }
+        let _ = crate::hostsfile::remove_host_entry(&self.config_id.to_string());
+        let _ = crate::hostsfile::remove_ssl_host_entry(&self.config_id.to_string());
         Ok(())
     }
 

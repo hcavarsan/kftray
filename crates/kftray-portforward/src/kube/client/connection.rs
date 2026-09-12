@@ -233,13 +233,25 @@ where
         .build(connector)
 }
 
+/// Probes the API server under a deadline. A server that accepts the
+/// connection but never answers would otherwise hang every caller that waits
+/// on a client, including stop.
 async fn test_client_connection(client: &Client) -> KubeResult<()> {
-    client.apiserver_version().await.map_err(|e| {
-        KubeClientError::connection_error_with_source(
-            "Failed to connect to Kubernetes API server",
-            e,
-        )
-    })?;
+    const CONNECTION_TEST_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
+    tokio::time::timeout(CONNECTION_TEST_TIMEOUT, client.apiserver_version())
+        .await
+        .map_err(|_| {
+            KubeClientError::connection_error(
+                "Timed out waiting for the Kubernetes API server version",
+            )
+        })?
+        .map_err(|e| {
+            KubeClientError::connection_error_with_source(
+                "Failed to connect to Kubernetes API server",
+                e,
+            )
+        })?;
     Ok(())
 }
 

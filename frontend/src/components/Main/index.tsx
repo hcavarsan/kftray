@@ -458,6 +458,9 @@ const KFTray = () => {
       if (wasRunning) {
         clearPending(newConfig.id)
       }
+      // The optimistic update only flips is_running, and the restart's version
+      // bump discards any refresh that raced it.
+      debouncedUpdateConfigs()
     }
   }
 

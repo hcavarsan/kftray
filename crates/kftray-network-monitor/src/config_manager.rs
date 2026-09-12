@@ -125,25 +125,29 @@ impl ConfigManager {
 fn report_restart_outcome(
     responses: &[kftray_commons::models::response::CustomResponse], protocol: &str, kind: &str,
 ) {
-    let failures: Vec<&str> = responses
+    // Classify per response: a batch can mix a readiness wait with a real
+    // failure, and joining them first would demote the real one to a warning.
+    let (pending_pods, failures): (Vec<&str>, Vec<&str>) = responses
         .iter()
         .filter(|response| response.status != 0)
         .map(|response| response.stderr.as_str())
-        .collect();
-    let restarted = responses.len() - failures.len();
+        .partition(|error| protocol == "udp" && error.contains("No ready pods available"));
+    let restarted = responses.len() - pending_pods.len() - failures.len();
     if restarted > 0 {
         info!("Restarted {restarted} {protocol} {kind}");
     }
-    if failures.is_empty() {
-        return;
+    if !pending_pods.is_empty() {
+        log::warn!(
+            "Skipped {} UDP {kind} with no ready pods: {}",
+            pending_pods.len(),
+            pending_pods.join("; ")
+        );
     }
-    let message = failures.join("; ");
-    if protocol == "udp" && message.contains("No ready pods available") {
-        log::warn!("UDP port forward restart skipped - no ready pods available: {message}");
-    } else {
+    if !failures.is_empty() {
         error!(
-            "Failed to restart {} {protocol} {kind}: {message}",
-            failures.len()
+            "Failed to restart {} {protocol} {kind}: {}",
+            failures.len(),
+            failures.join("; ")
         );
     }
 }

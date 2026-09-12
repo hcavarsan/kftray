@@ -218,7 +218,7 @@ mod tests {
     #[test]
     fn pending_forward_stays_busy_until_completion() {
         let mut app = App::new(test_logger_state());
-        let pending = std::sync::Arc::new(crate::tui::input::PendingForward::new());
+        let pending = std::sync::Arc::new(crate::tui::input::PendingForward::new(1));
         app.configs_being_processed.insert(1, pending.clone());
         app.update_configs(&[], &[]);
         assert!(app.configs_being_processed.contains_key(&1));
@@ -229,9 +229,9 @@ mod tests {
     }
 
     #[test]
-    fn a_stalled_pending_forward_stays_registered_until_its_task_reports_back() {
+    fn a_stalled_pending_forward_is_reported_but_never_dropped() {
         let mut app = App::new(test_logger_state());
-        let queued = std::sync::Arc::new(crate::tui::input::PendingForward::new());
+        let queued = std::sync::Arc::new(crate::tui::input::PendingForward::new(1));
         app.configs_being_processed.insert(1, queued.clone());
 
         app.update_configs(&[], &[]);
@@ -239,17 +239,40 @@ mod tests {
             app.configs_being_processed.contains_key(&1),
             "a config still waiting for a slot must keep its busy indicator"
         );
+        assert!(app.error_message.is_none());
 
         queued.mark_running_at(std::time::Instant::now() - std::time::Duration::from_secs(31));
         app.update_configs(&[], &[]);
         assert!(
             app.configs_being_processed.contains_key(&1),
-            "a stalled operation is aborted but must stay registered until it unwinds"
+            "a stalled operation must keep running so its own rollback can finish"
+        );
+        let reported = app.error_message.clone().unwrap();
+        assert!(reported.contains("still working"), "{reported}");
+
+        app.error_message = None;
+        app.update_configs(&[], &[]);
+        assert!(
+            app.error_message.is_none(),
+            "the stall must be reported once, not on every redraw"
         );
 
         queued.finish();
         app.update_configs(&[], &[]);
         assert!(!app.configs_being_processed.contains_key(&1));
+    }
+
+    #[tokio::test]
+    async fn a_panicking_forward_task_reaches_the_error_popup() {
+        let mut app = App::new(test_logger_state());
+        let handle = app.forwarding_tasks.spawn(async { panic!("boom") });
+        app.task_configs.insert(handle.id(), 410_081);
+        let _ = handle;
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        app.update_configs(&[], &[]);
+        let reported = app.error_message.clone().unwrap();
+        assert!(reported.contains("410081"), "{reported}");
     }
 
     #[tokio::test]

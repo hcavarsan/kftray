@@ -35,6 +35,24 @@ use crate::commands::{
     },
 };
 
+/// Collapses a start batch into a single error. The batch call reports one
+/// result per configuration, so an all-failed batch still returns `Ok`.
+fn start_error(
+    result: Result<Vec<kftray_commons::models::response::CustomResponse>, String>,
+) -> Result<(), String> {
+    let responses = result?;
+    let failures: Vec<&str> = responses
+        .iter()
+        .filter(|response| response.status != 0)
+        .map(|response| response.stderr.as_str())
+        .collect();
+    if failures.is_empty() {
+        Ok(())
+    } else {
+        Err(failures.join("; "))
+    }
+}
+
 static GLOBAL_MANAGER: OnceCell<Arc<Mutex<ShortcutManager>>> = OnceCell::const_new();
 
 pub async fn setup_shortcut_integration(
@@ -233,7 +251,7 @@ impl ActionHandler for StartAllPortForwardAction {
                 deploy_and_forward_pod_cmd(vec![config.clone()], self.app_handle.clone()).await
             };
 
-            if let Err(e) = result {
+            if let Err(e) = start_error(result) {
                 error!(
                     "Failed to start port forward for config {}: {}",
                     config.id.unwrap_or(0),
@@ -415,7 +433,7 @@ impl ActionHandler for StartPortForwardAction {
                 deploy_and_forward_pod_cmd(vec![config.clone()], self.app_handle.clone()).await
             };
 
-            if let Err(e) = result {
+            if let Err(e) = start_error(result) {
                 error!(
                     "Failed to start port forward for config {}: {}",
                     config.id.unwrap_or(0),
@@ -741,7 +759,7 @@ impl ActionHandler for TogglePortForwardAction {
                     deploy_and_forward_pod_cmd(vec![config.clone()], self.app_handle.clone()).await
                 };
 
-                if let Err(e) = result {
+                if let Err(e) = start_error(result) {
                     error!(
                         "Failed to start port forward for config {}: {}",
                         config.id.unwrap_or(0),
