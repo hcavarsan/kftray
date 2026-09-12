@@ -159,12 +159,18 @@ impl PortForwarder {
     pub async fn get_stream(&self) -> anyhow::Result<kube_portforward::Stream> {
         const STREAM_ACQUIRE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
-        let port = self.current_target_port().await?;
-
-        tokio::time::timeout(STREAM_ACQUIRE_TIMEOUT, self.forwarder.connect(port))
-            .await
-            .context("Timed out acquiring a port-forward stream")?
-            .map_err(Into::into)
+        // Resolution is inside the deadline: it can perform a pod GET, and a
+        // stalled API server would otherwise hold the client past the ten
+        // seconds this promises and delay stream-failure recovery.
+        tokio::time::timeout(STREAM_ACQUIRE_TIMEOUT, async {
+            let port = self.current_target_port().await?;
+            self.forwarder
+                .connect(port)
+                .await
+                .map_err(anyhow::Error::from)
+        })
+        .await
+        .context("Timed out acquiring a port-forward stream")?
     }
 
     /// The port to connect to for the pod currently selected.
@@ -173,33 +179,49 @@ impl PortForwarder {
     /// map the same name to a different number, and the old one would then
     /// reach nothing or the wrong container port.
     async fn current_target_port(&self) -> anyhow::Result<u16> {
+        /// Resolution reads one pod while the forwarder selects its own. They
+        /// agree unless a rollout lands in between, so a mismatch is retried
+        /// rather than used.
+        const RESOLVE_ATTEMPTS: usize = 3;
+
         let Some(named) = &self.named_port else {
             return Ok(self.target_port);
         };
-        let ready_pod = self.forwarder.ready_pod();
-        if let Some(pod) = &ready_pod
-            && let Some((cached_pod, port)) = named
-                .resolved
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .clone()
-            && &cached_pod == pod
-        {
-            return Ok(port);
+
+        for _ in 0..RESOLVE_ATTEMPTS {
+            if let Some(pod) = self.forwarder.ready_pod()
+                && let Some((cached_pod, port)) = named
+                    .resolved
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .clone()
+                && cached_pod == pod
+            {
+                return Ok(port);
+            }
+
+            let (port, resolved_pod) = crate::kube::target::resolve_target_port_for_pod(
+                &self.forwarder,
+                &named.pod_api,
+                &named.target,
+                tokio::time::Duration::from_secs(5),
+            )
+            .await?;
+            let Some(resolved_pod) = resolved_pod else {
+                return Ok(port);
+            };
+            // Cached only for the pod the number was actually read from, so a
+            // rollout during resolution cannot file it under the new pod.
+            *named.resolved.lock().unwrap_or_else(|e| e.into_inner()) =
+                Some((resolved_pod.clone(), port));
+            if self.forwarder.ready_pod().as_deref() == Some(resolved_pod.as_str()) {
+                return Ok(port);
+            }
         }
 
-        let port = crate::kube::target::resolve_target_port(
-            &self.forwarder,
-            &named.pod_api,
-            &named.target,
-            tokio::time::Duration::from_secs(5),
-        )
-        .await?;
-        if let Some(pod) = ready_pod {
-            *named.resolved.lock().unwrap_or_else(|e| e.into_inner()) = Some((pod, port));
-        }
-
-        Ok(port)
+        Err(anyhow::anyhow!(
+            "The selected pod kept changing while resolving the named port"
+        ))
     }
 
     pub async fn handle_tcp_listener(

@@ -78,13 +78,28 @@ impl DirectHostfileManager {
 
     pub fn remove_host_entry(&self, id: &str) -> std::io::Result<()> {
         self.remove_host_entries(std::slice::from_ref(&id))
+            .map(drop)
+    }
+
+    /// Marks the file as possibly out of step with this manager's map.
+    ///
+    /// The helper writes the same tagged section, so an entry it owns is
+    /// invisible here. Without this, a reconciled map would report a removal as
+    /// complete without even inspecting the file.
+    pub fn invalidate_reconciliation(&self) {
+        self.reconciled_generation
+            .store(u64::MAX, Ordering::Relaxed);
     }
 
     /// Removes several ids and reconciles them with one write.
     ///
     /// The file is rewritten from the whole remaining map, so a single
     /// successful write covers every id in the batch.
-    pub fn remove_host_entries(&self, ids: &[&str]) -> std::io::Result<()> {
+    ///
+    /// Returns whether any of the ids was known here: a caller that reached
+    /// this through a failing helper needs to tell "already gone" apart from
+    /// "this manager never owned it".
+    pub fn remove_host_entries(&self, ids: &[&str]) -> std::io::Result<bool> {
         debug!("Removing host entries for IDs {ids:?}");
 
         let existed = match self.entries.write() {
@@ -110,7 +125,7 @@ impl DirectHostfileManager {
         };
 
         if !self.removal_needs_write(existed) {
-            return Ok(());
+            return Ok(existed);
         }
 
         self.mark_dirty();
@@ -123,7 +138,7 @@ impl DirectHostfileManager {
             &self.reconciled_generation,
             &self.write_lock,
         ) {
-            Ok(_) => Ok(()),
+            Ok(_) => Ok(existed),
             Err((_, error)) => {
                 self.mark_dirty();
                 self.ensure_writer_running();
@@ -454,6 +469,43 @@ mod tests {
             ip: IpAddr::V4(Ipv4Addr::new(127, 0, 0, 2)),
             hostname: "test.local".to_string(),
         }
+    }
+
+    #[test]
+    fn a_helper_owned_entry_is_reported_as_unknown_here() {
+        init();
+        let manager = DirectHostfileManager::new();
+        // The helper writes the same tagged section, so an entry it owns is
+        // invisible here. Reporting a removal as done would let the caller
+        // treat an alias still on disk as gone.
+        manager.reconciled_generation.store(
+            manager.generation.load(Ordering::Relaxed),
+            Ordering::Relaxed,
+        );
+
+        assert!(
+            !manager.remove_host_entries(&["not-mine"]).unwrap(),
+            "an id this manager never owned cannot be reported as removed"
+        );
+
+        manager
+            .entries
+            .write()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert("mine".to_owned(), get_test_entry());
+        assert!(
+            manager
+                .entries
+                .read()
+                .unwrap_or_else(|e| e.into_inner())
+                .contains_key("mine")
+        );
+
+        manager.invalidate_reconciliation();
+        assert!(
+            !manager.is_reconciled(),
+            "a helper write means this manager's map no longer describes the file"
+        );
     }
 
     #[test]

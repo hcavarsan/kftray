@@ -535,6 +535,17 @@ pub(super) async fn start_config_cancellable(
             return Err(format!("Startup cancelled for config {config_id}"));
         }
     }
+    // Checked for the address actually chosen, whichever path chose it: a
+    // manually configured address skips allocation, and the helper hands back
+    // an address without consulting this registry. A release that timed out is
+    // still executing and would remove the alias from underneath this forward.
+    if let Some(address) = &config.local_address
+        && crate::kube::stop::address_release_in_flight(address)
+    {
+        return Err(format!(
+            "Local address {address} is still being released by an earlier stop"
+        ));
+    }
     if let Some(config_id) = config.id {
         clear_stopped_by_timeout(config_id);
     }

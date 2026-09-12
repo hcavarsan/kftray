@@ -65,9 +65,22 @@ pub async fn resolve_pod_selector(
 pub async fn resolve_target_port(
     forwarder: &Forwarder, pod_api: &Api<Pod>, target: &Target, timeout: Duration,
 ) -> anyhow::Result<u16> {
+    resolve_target_port_for_pod(forwarder, pod_api, target, timeout)
+        .await
+        .map(|(port, _)| port)
+}
+
+/// Resolves the port and reports the pod it was read from.
+///
+/// The pod identity matters for a named port: the name maps to a number in that
+/// pod's spec, and a rollout can map it to a different number. A caller that
+/// connects afterwards has to know whether it is still talking to the same pod.
+pub async fn resolve_target_port_for_pod(
+    forwarder: &Forwarder, pod_api: &Api<Pod>, target: &Target, timeout: Duration,
+) -> anyhow::Result<(u16, Option<String>)> {
     match &target.port {
         Port::Number(port) => match u16::try_from(*port) {
-            Ok(port) if port > 0 => Ok(port),
+            Ok(port) if port > 0 => Ok((port, None)),
             _ => Err(anyhow::anyhow!("Port number {} is out of range", port)),
         },
         Port::Name(port_name) => {
@@ -85,7 +98,7 @@ pub async fn resolve_target_port(
 
             target
                 .find(&pod, None)
-                .map(|target_pod| target_pod.port_number)
+                .map(|target_pod| (target_pod.port_number, Some(pod_name)))
         }
     }
 }

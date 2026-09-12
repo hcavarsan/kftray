@@ -64,6 +64,13 @@ struct PendingTarget {
     /// empty resource list is not proof of cleanup: the API server may still be
     /// persisting an object whose request was abandoned.
     uncertain_until: Option<Instant>,
+    /// Cluster resources still to delete. Tracked apart from `local` so
+    /// confirming one does not discard the other: a proxy whose Deployment is
+    /// deleted can still owe a loopback alias, and dropping that record would
+    /// leave nothing for stop-all to find.
+    cluster: bool,
+    /// Loopback address and hosts entries still to release.
+    local: bool,
 }
 
 impl PendingTarget {
@@ -115,10 +122,12 @@ fn same_resources(left: &Config, right: &Config) -> bool {
 /// finish, so stop-all still reaches them. Dropping a startup future (the
 /// terminal's shutdown drain, an aborted task) skips its own rollback.
 pub(crate) fn record_pending_cleanup(id: i64, config: Config) {
-    record_target(id, config, None);
+    record_target(id, config, None, true, true);
 }
 
-fn record_target(id: i64, config: Config, uncertain_until: Option<Instant>) {
+fn record_target(
+    id: i64, config: Config, uncertain_until: Option<Instant>, cluster: bool, local: bool,
+) {
     let mut entries = PENDING_CLEANUP.entry(id).or_default();
     if let Some(existing) = entries
         .iter_mut()
@@ -128,11 +137,15 @@ fn record_target(id: i64, config: Config, uncertain_until: Option<Instant>) {
             (Some(left), Some(right)) => Some(left.max(right)),
             (left, right) => left.or(right),
         };
+        existing.cluster |= cluster;
+        existing.local |= local;
         return;
     }
     entries.push(PendingTarget {
         config,
         uncertain_until,
+        cluster,
+        local,
     });
 }
 
@@ -172,6 +185,8 @@ impl ClusterResourceGuard {
             id,
             config.clone(),
             Some(Instant::now() + UNCERTAIN_CREATE_WINDOW),
+            true,
+            false,
         );
         Self {
             id,
@@ -195,10 +210,23 @@ impl ClusterResourceGuard {
         }
     }
 
+    /// Nothing was created, so this guard's cluster obligation is settled. Any
+    /// local cleanup recorded for the same resources stays tracked.
     pub(crate) fn disarm(mut self) {
-        if let Some(config) = self.config.take() {
-            forget_pending_cleanup(self.id, &config);
+        let Some(config) = self.config.take() else {
+            return;
+        };
+        if let Some(mut entries) = PENDING_CLEANUP.get_mut(&self.id) {
+            for entry in entries
+                .iter_mut()
+                .filter(|entry| same_resources(&entry.config, &config))
+            {
+                entry.cluster = false;
+                entry.uncertain_until = None;
+            }
+            entries.retain(|entry| entry.cluster || entry.local);
         }
+        PENDING_CLEANUP.remove_if(&self.id, |_, entries| entries.is_empty());
     }
 }
 
@@ -211,7 +239,7 @@ impl Drop for ClusterResourceGuard {
             // it was abandoned. A confirmed outcome stays settled.
             let uncertain_until =
                 (!self.confirmed).then(|| Instant::now() + UNCERTAIN_CREATE_WINDOW);
-            record_target(self.id, config, uncertain_until);
+            record_target(self.id, config, uncertain_until, true, false);
         }
     }
 }
@@ -219,7 +247,11 @@ impl Drop for ClusterResourceGuard {
 lazy_static::lazy_static! {
     /// Addresses whose release may still be running. They must not be handed to
     /// a new forward until it finishes.
-    static ref RELEASING_ADDRESSES: dashmap::DashSet<String> = dashmap::DashSet::new();
+    /// Addresses being released, and how many releases are still running for
+    /// each. Counted rather than flagged: a timed-out release keeps running,
+    /// and a later attempt for the same address must not clear the mark when it
+    /// finishes first.
+    static ref RELEASING_ADDRESSES: dashmap::DashMap<String, usize> = dashmap::DashMap::new();
 }
 
 /// Clears the in-flight mark once every holder is done.
@@ -227,7 +259,7 @@ struct ReleaseInFlight(String);
 
 impl ReleaseInFlight {
     fn mark(address: &str) -> Arc<Self> {
-        RELEASING_ADDRESSES.insert(address.to_owned());
+        *RELEASING_ADDRESSES.entry(address.to_owned()).or_insert(0) += 1;
 
         Arc::new(Self(address.to_owned()))
     }
@@ -235,13 +267,18 @@ impl ReleaseInFlight {
 
 impl Drop for ReleaseInFlight {
     fn drop(&mut self) {
-        RELEASING_ADDRESSES.remove(&self.0);
+        // Removed under the entry lock so a concurrent `mark` cannot observe a
+        // zeroed count and then have this remove the entry it just created.
+        RELEASING_ADDRESSES.remove_if_mut(&self.0, |_, count| {
+            *count = count.saturating_sub(1);
+            *count == 0
+        });
     }
 }
 
 /// Whether an address is still being released and cannot be reused yet.
 pub(crate) fn address_release_in_flight(address: &str) -> bool {
-    RELEASING_ADDRESSES.contains(address)
+    RELEASING_ADDRESSES.contains_key(address)
 }
 
 /// Outcome of releasing the local resources one target describes.
@@ -857,6 +894,10 @@ async fn stop_config(
                 .iter()
                 .find(|target| same_resources(&target.config, config))
                 .and_then(|target| target.uncertain_until),
+            // The configuration being stopped owes both: it was forwarding, so
+            // its local resources are held whether or not a record says so.
+            cluster: true,
+            local: true,
         }];
         targets.extend(
             pending
@@ -869,10 +910,18 @@ async fn stop_config(
         let mut settled: Vec<Config> = Vec::new();
         let now = Instant::now();
         for target in &targets {
-            let cluster = delete_cluster_resources(id, &target.config).await;
+            let cluster = if target.cluster {
+                delete_cluster_resources(id, &target.config).await
+            } else {
+                Ok(())
+            };
             // Local resources are released per target too: an edited row can
             // name a different loopback address than the one still bound.
-            let local = release_local_resources(id, &target.config).await;
+            let local = if target.local {
+                release_local_resources(id, &target.config).await
+            } else {
+                LocalCleanup::default()
+            };
             let uncertain = target.is_uncertain(now);
             if cluster.is_ok() && local.settled() && !uncertain {
                 settled.push(target.config.clone());
@@ -881,7 +930,15 @@ async fn stop_config(
 
             // The only remaining record of where these resources live: the
             // database row can be edited or deleted while a forward runs.
-            record_target(id, target.config.clone(), target.uncertain_until);
+            // An uncertain create keeps its cluster obligation: the list that
+            // came back empty is not proof, so the next pass must look again.
+            record_target(
+                id,
+                target.config.clone(),
+                target.uncertain_until,
+                target.cluster && (cluster.is_err() || uncertain),
+                target.local && !local.settled(),
+            );
             if let Err(error) = cluster {
                 SHARED_CLIENT_MANAGER.invalidate_client(&ServiceClientKey::new(
                     target.config.context.clone(),
@@ -1121,6 +1178,52 @@ mod tests {
                 .any(|state| state.config_id == id && state.is_running),
             "orphaned cluster resources must keep the config retryable"
         );
+    }
+
+    #[tokio::test]
+    async fn a_settled_create_keeps_its_local_cleanup_recorded() {
+        let id = -9_312;
+        PENDING_CLEANUP.remove(&id);
+        let config = Config {
+            id: Some(id),
+            namespace: "prod".to_string(),
+            service: Some("relay".to_string()),
+            local_address: Some("127.0.44.1".to_string()),
+            workload_type: Some("proxy".to_string()),
+            ..Config::default()
+        };
+
+        // A failed startup owes a loopback release.
+        record_pending_cleanup(id, config.clone());
+        // The same resources are then armed and deleted as a cluster target.
+        ClusterResourceGuard::arm(id, config.clone()).disarm();
+
+        let targets = pending_cleanup_targets(id);
+        assert_eq!(targets.len(), 1);
+        assert!(
+            targets[0].local,
+            "deleting the deployment must not discard the address still bound"
+        );
+        assert!(!targets[0].cluster);
+        PENDING_CLEANUP.remove(&id);
+    }
+
+    #[test]
+    fn an_address_stays_marked_until_every_release_finishes() {
+        let address = "127.0.55.1";
+        let first = ReleaseInFlight::mark(address);
+        // A stop that timed out leaves its release running; the next attempt
+        // marks the same address again.
+        let second = ReleaseInFlight::mark(address);
+
+        drop(second);
+        assert!(
+            address_release_in_flight(address),
+            "the first release is still executing and can remove the alias"
+        );
+
+        drop(first);
+        assert!(!address_release_in_flight(address));
     }
 
     #[tokio::test]

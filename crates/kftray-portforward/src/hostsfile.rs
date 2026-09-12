@@ -32,6 +32,9 @@ impl HostfileManager {
             match helper.add_host_entry(id.clone(), entry.clone()) {
                 Ok(_) => {
                     debug!("Successfully added host entry via helper for ID: {id}");
+                    // The helper wrote the same tagged section, so this
+                    // manager's map no longer describes the file.
+                    self.direct_manager.invalidate_reconciliation();
                     return Ok(());
                 }
                 Err(e) => {
@@ -44,21 +47,7 @@ impl HostfileManager {
     }
 
     pub fn remove_host_entry(&self, id: &str) -> std::io::Result<()> {
-        if let Some(helper) = &self.helper_client
-            && helper.is_available()
-        {
-            match helper.remove_host_entry(id) {
-                Ok(_) => {
-                    debug!("Successfully removed host entry via helper for ID: {id}");
-                    return Ok(());
-                }
-                Err(e) => {
-                    warn!("Helper hostfile remove failed: {e}, falling back to direct");
-                }
-            }
-        }
-
-        self.direct_manager.remove_host_entry(id)
+        self.remove_host_entries(std::slice::from_ref(&id))
     }
 
     /// Removes several ids, reconciling them with one write where possible.
@@ -67,6 +56,7 @@ impl HostfileManager {
     /// single successful write covers every id. The helper removes one at a
     /// time, so its failures stay per-id.
     pub fn remove_host_entries(&self, ids: &[&str]) -> std::io::Result<()> {
+        let mut helper_error = None;
         if let Some(helper) = &self.helper_client
             && helper.is_available()
         {
@@ -76,16 +66,26 @@ impl HostfileManager {
                     errors.push(format!("{id}: {e}"));
                 }
             }
+            // Whatever the helper managed to remove came out of the same tagged
+            // section, so this manager's map no longer describes the file.
+            self.direct_manager.invalidate_reconciliation();
             if errors.is_empty() {
                 return Ok(());
             }
-            warn!(
-                "Helper hostfile remove failed ({}), falling back to direct",
-                errors.join("; ")
-            );
+            let joined = errors.join("; ");
+            warn!("Helper hostfile remove failed ({joined}), falling back to direct");
+            helper_error = Some(joined);
         }
 
-        self.direct_manager.remove_host_entries(ids)
+        match (self.direct_manager.remove_host_entries(ids), helper_error) {
+            (Ok(_), None) => Ok(()),
+            // Only entries this manager owns can be removed here. An id the
+            // helper added is absent from its map, so a clean return would
+            // claim an alias was removed that is still on disk.
+            (Ok(true), Some(_)) => Ok(()),
+            (Ok(false), Some(error)) => Err(std::io::Error::other(error)),
+            (Err(error), _) => Err(error),
+        }
     }
 
     pub fn remove_all_host_entries(&self) -> std::io::Result<()> {

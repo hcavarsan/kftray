@@ -709,12 +709,16 @@ const KFTray = () => {
           debouncedUpdateConfigs()
         }
       })
+      // The handle is kept so the loser of the race can be cancelled: an
+      // uncleared timeout keeps the timer, and everything it closes over,
+      // alive for the full deadline after a batch that finished immediately.
+      let deadline: NodeJS.Timeout | undefined
       const settled = await Promise.race([
         batch.then(() => true),
-        new Promise<false>(resolve =>
-          setTimeout(() => resolve(false), BATCH_DEADLINE_MS),
-        ),
-      ])
+        new Promise<false>(resolve => {
+          deadline = setTimeout(() => resolve(false), BATCH_DEADLINE_MS)
+        }),
+      ]).finally(() => clearTimeout(deadline))
 
       if (!settled) {
         timedOut = true

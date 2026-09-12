@@ -236,14 +236,32 @@ pub fn pod_manifest_is_customized() -> bool {
     let Ok(path) = get_pod_manifest_path() else {
         return false;
     };
-    match std::fs::symlink_metadata(&path) {
+    manifest_is_customized(&path, &default_pod_manifest())
+}
+
+/// Reports whether the on-disk Deployment manifest differs from the default.
+///
+/// The two manifests are edited separately, so a default Pod template says
+/// nothing about the Deployment actually being applied.
+pub fn deployment_manifest_is_customized() -> bool {
+    let Ok(path) = get_proxy_deployment_manifest_path() else {
+        return false;
+    };
+    let Ok(default) = serde_json::from_str::<serde_json::Value>(DEFAULT_PROXY_DEPLOYMENT) else {
+        return true;
+    };
+    manifest_is_customized(&path, &default)
+}
+
+fn manifest_is_customized(path: &std::path::Path, default: &serde_json::Value) -> bool {
+    match std::fs::symlink_metadata(path) {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return false,
         Err(_) => return true,
         Ok(_) => {}
     }
-    match std::fs::read_to_string(&path) {
+    match std::fs::read_to_string(path) {
         Ok(contents) => match serde_json::from_str::<serde_json::Value>(&contents) {
-            Ok(manifest) => manifest != default_pod_manifest(),
+            Ok(manifest) => &manifest != default,
             Err(_) => true,
         },
         Err(_) => true,

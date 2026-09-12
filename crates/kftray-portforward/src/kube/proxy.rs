@@ -346,9 +346,10 @@ pub(crate) fn relay_container_name(spec: &PodSpec) -> Option<String> {
 /// A customized manifest is left alone: the probe is a kubelet TCP check
 /// against the pod IP, and a custom relay may only listen on loopback inside
 /// the pod, which the port forward can still reach but the probe cannot.
-fn prepare_relay_startup(spec: &mut PodSpec, port: u16) -> Result<String, String> {
+fn prepare_relay_startup(
+    spec: &mut PodSpec, port: u16, customized: bool,
+) -> Result<String, String> {
     let index = relay_container_index(spec);
-    let customized = pod_manifest_is_customized();
     let container = spec
         .containers
         .get_mut(index)
@@ -440,6 +441,7 @@ async fn process_deployment_proxy(
         config
             .remote_port
             .ok_or("A proxy destination port is required")?,
+        kftray_commons::utils::manifests::deployment_manifest_is_customized(),
     )?;
     if options.cancellation.is_cancelled() {
         return Err("Proxy startup cancelled".to_string());
@@ -631,6 +633,7 @@ async fn process_pod_proxy(
         config
             .remote_port
             .ok_or("A proxy destination port is required")?,
+        pod_manifest_is_customized(),
     )?;
     if options.cancellation.is_cancelled() {
         return Err("Proxy startup cancelled".to_string());

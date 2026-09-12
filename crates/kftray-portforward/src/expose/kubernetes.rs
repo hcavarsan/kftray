@@ -716,6 +716,17 @@ async fn check_existing_resources(
     }
 }
 
+/// Names the items of a list, prefixed with their kind.
+fn named_items<T: kube::Resource + Clone>(
+    list: &kube::core::ObjectList<T>, kind: &str,
+) -> Vec<String> {
+    list.items
+        .iter()
+        .filter_map(|item| item.meta().name.clone())
+        .map(|name| format!("{kind}/{name}"))
+        .collect()
+}
+
 pub async fn delete_expose_resources(
     client: Client, namespace: &str, config_id_label: &str, ingress_possible: bool,
 ) -> Result<(), String> {
@@ -754,27 +765,38 @@ pub async fn delete_expose_resources(
         crate::kube::proxy::INSTALLATION_LABEL
     ));
     let deployments: Api<Deployment> = Api::namespaced(client.clone(), namespace);
+    let services: Api<Service> = Api::namespaced(client.clone(), namespace);
+    let ingresses: Api<Ingress> = Api::namespaced(client.clone(), namespace);
+    let mut leftovers: Vec<String> = Vec::new();
+    // Every kind an exposure creates: a partial cleanup can take the Deployment
+    // and leave the Service or Ingress serving traffic.
     match deployments.list(&unlabelled).await {
-        Ok(list) => {
-            let leftovers: Vec<String> = list
-                .items
-                .iter()
-                .filter_map(|item| item.metadata.name.clone())
-                .collect();
-            if !leftovers.is_empty() {
-                errors.push(format!(
-                    "Exposure resources from an earlier version are still running and cannot be \
-                     attributed to this installation: {}. Remove them from the server resources \
-                     screen.",
-                    leftovers.join(", ")
-                ));
-            }
-        }
+        Ok(list) => leftovers.extend(named_items(&list, "deployment")),
         // Collected rather than returned: this check runs after the deletions,
         // and its failure must not hide what they reported.
         Err(error) => errors.push(format!(
-            "Failed to list earlier exposure resources: {error}"
+            "Failed to list earlier exposure deployments: {error}"
         )),
+    }
+    match services.list(&unlabelled).await {
+        Ok(list) => leftovers.extend(named_items(&list, "service")),
+        Err(error) => errors.push(format!("Failed to list earlier exposure services: {error}")),
+    }
+    match ingresses.list(&unlabelled).await {
+        Ok(list) => leftovers.extend(named_items(&list, "ingress")),
+        // A private exposure never creates an ingress and its role may not
+        // allow listing them, so a refusal is not evidence of leftovers.
+        Err(kube::Error::Api(response)) if response.code == 403 && !ingress_possible => {}
+        Err(error) => errors.push(format!(
+            "Failed to list earlier exposure ingresses: {error}"
+        )),
+    }
+    if !leftovers.is_empty() {
+        errors.push(format!(
+            "Exposure resources from an earlier version are still running and cannot be \
+             attributed to this installation: {}. Remove them from the server resources screen.",
+            leftovers.join(", ")
+        ));
     }
     if !errors.is_empty() {
         return Err(errors.join("; "));
@@ -874,16 +896,26 @@ async fn wait_until_gone(
         let deployments: Api<Deployment> = Api::namespaced(client.clone(), namespace);
         let services: Api<Service> = Api::namespaced(client.clone(), namespace);
         let ingresses: Api<Ingress> = Api::namespaced(client.clone(), namespace);
-        let mut remaining = names_matching(&deployments, lp).await?;
-        remaining.extend(names_matching(&services, lp).await?);
+        let mut remaining = names_matching(&deployments, lp)
+            .await
+            .map_err(|error| error.to_string())?;
+        remaining.extend(
+            names_matching(&services, lp)
+                .await
+                .map_err(|error| error.to_string())?,
+        );
         // A private exposure never creates an Ingress, so a role without
-        // permission to list them is legitimate and must not fail cleanup.
+        // permission to list them is legitimate. Only that refusal is
+        // tolerated: a timeout or server error says nothing about whether an
+        // ingress from an earlier public exposure is still serving traffic.
         match names_matching(&ingresses, lp).await {
             Ok(names) => remaining.extend(names),
-            Err(error) if !ingress_possible => {
-                debug!("Skipping ingress verification: {error}");
+            Err(kube::Error::Api(response))
+                if !ingress_possible && matches!(response.code, 403 | 404) =>
+            {
+                debug!("Skipping ingress verification: {}", response.message);
             }
-            Err(error) => return Err(error),
+            Err(error) => return Err(error.to_string()),
         }
         if remaining.is_empty() {
             return Ok(());
@@ -898,14 +930,13 @@ async fn wait_until_gone(
     }
 }
 
-async fn names_matching<K>(api: &Api<K>, lp: &ListParams) -> Result<Vec<String>, String>
+async fn names_matching<K>(api: &Api<K>, lp: &ListParams) -> Result<Vec<String>, kube::Error>
 where
     K: Clone + serde::de::DeserializeOwned + std::fmt::Debug + kube::Resource,
 {
     Ok(api
         .list(lp)
-        .await
-        .map_err(|error| error.to_string())?
+        .await?
         .items
         .iter()
         .filter_map(|item| item.meta().name.clone())
