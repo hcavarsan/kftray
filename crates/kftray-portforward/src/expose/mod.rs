@@ -80,9 +80,21 @@ pub(crate) async fn start_single_expose(
         },
         None => create_expose_resources(client.clone(), &config).await,
     };
-    // The outcome is known either way, so the record is no longer uncertain.
-    guard.confirm();
-    let resources = created?;
+    // Confirmed only when the outcome is definitive. A transport failure or a
+    // server-side timeout can be answered while the object is still being
+    // applied, and rollback cannot name a resource whose create never returned.
+    let resources = match created {
+        Ok(resources) => {
+            guard.confirm();
+            resources
+        }
+        Err(error) => {
+            if !error.ambiguous {
+                guard.confirm();
+            }
+            return Err(error.message);
+        }
+    };
 
     info!(
         "Resources created: deployment={}, service={}, pod={}",

@@ -134,6 +134,37 @@ fn workload_type_description(workload_type: Option<&str>) -> &'static str {
 
 static FALLBACK_ALLOCATION_MUTEX: Lazy<TokioMutex<()>> = Lazy::new(|| TokioMutex::new(()));
 
+/// Runs address allocation on an owned task so its outcome is never abandoned.
+///
+/// The helper request runs on a blocking task that keeps going once a caller
+/// stops waiting, and the fallback path waits on a mutex. If the caller is
+/// cancelled or times out, the task still observes the result and releases an
+/// address that arrived too late, which would otherwise stay bound with nothing
+/// tracking it.
+async fn allocate_local_address_owned(
+    config: &mut Config, mode: DatabaseMode,
+) -> Result<String, String> {
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    let mut owned = config.clone();
+    tokio::spawn(async move {
+        let result = allocate_local_address_for_config(&mut owned, mode).await;
+        if let Err((result, owned)) = sender.send((result, owned))
+            && result.is_ok()
+            && let Some(address) = owned.local_address.as_deref()
+            && crate::network_utils::is_custom_loopback_address(address)
+        {
+            warn!("Releasing address {address} allocated after startup was abandoned");
+            let _ = crate::network_utils::remove_loopback_address(address).await;
+        }
+    });
+
+    let (result, owned) = receiver
+        .await
+        .map_err(|_| "Address allocation ended unexpectedly".to_string())?;
+    *config = owned;
+    result
+}
+
 async fn allocate_local_address_for_config(
     config: &mut Config, mode: DatabaseMode,
 ) -> Result<String, String> {
@@ -417,7 +448,7 @@ pub(super) async fn start_config_cancellable(
         // releasing the lifecycle lock in bounded time.
         match tokio::time::timeout(
             ALLOCATION_TIMEOUT,
-            allocate_local_address_for_config(&mut config, mode),
+            allocate_local_address_owned(&mut config, mode),
         )
         .await
         {

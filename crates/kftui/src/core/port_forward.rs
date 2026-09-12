@@ -104,6 +104,11 @@ pub async fn stop_all_port_forward_and_exit(app: &mut App, mode: DatabaseMode) {
         }
     }
 
+    // A create abandoned on the way out can surface after that first pass, and
+    // the registry that tracks it lives only in this process.
+    kftray_portforward::kube::reconcile_pending_cleanup(mode, std::time::Duration::from_secs(30))
+        .await;
+
     if let Err(e) = cleanup_current_process_config_states_with_mode(mode).await {
         log::error!("Failed to cleanup config states: {e}");
     }

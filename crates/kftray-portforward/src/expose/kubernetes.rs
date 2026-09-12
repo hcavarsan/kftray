@@ -48,7 +48,7 @@ fn extract_subdomain(domain: &str) -> String {
 
 pub async fn create_expose_resources(
     client: Client, config: &Config,
-) -> Result<ExposeResources, String> {
+) -> Result<ExposeResources, ExposeCreateError> {
     let config_id_str = config
         .id
         .map_or_else(|| "default".to_string(), |id| id.to_string());
@@ -128,42 +128,45 @@ pub async fn create_expose_resources(
     // by label would also remove resources another instance created for the
     // same config id after our existence check.
     let mut created: Vec<CreatedResource> = Vec::new();
-    let result = async {
-        create_deployment(
-            &client,
-            &config.namespace,
-            &deployment_name,
-            &config_id_str,
-            config,
-        )
-        .await?;
-        created.push(CreatedResource::Deployment(deployment_name.clone()));
+    let result: Result<ExposeResources, ExposeCreateError> = async {
+        created.push(
+            create_deployment(
+                &client,
+                &config.namespace,
+                &deployment_name,
+                &config_id_str,
+                config,
+            )
+            .await?,
+        );
 
         let pod_name = wait_for_pod_ready(&client, &config.namespace, &config_id_str).await?;
 
         let pod_ip = get_pod_ip(&client, &config.namespace, &pod_name).await?;
 
         let local_port = config.local_port.unwrap_or(8080);
-        create_service(
-            &client,
-            &config.namespace,
-            &service_name,
-            &config_id_str,
-            local_port,
-        )
-        .await?;
-        created.push(CreatedResource::Service(service_name.clone()));
-
-        let ingress_created = if config.exposure_type.as_deref() == Some("public") {
-            create_ingress(
+        created.push(
+            create_service(
                 &client,
                 &config.namespace,
-                &ingress_name,
                 &service_name,
-                config,
+                &config_id_str,
+                local_port,
             )
-            .await?;
-            created.push(CreatedResource::Ingress(ingress_name.clone()));
+            .await?,
+        );
+
+        let ingress_created = if config.exposure_type.as_deref() == Some("public") {
+            created.push(
+                create_ingress(
+                    &client,
+                    &config.namespace,
+                    &ingress_name,
+                    &service_name,
+                    config,
+                )
+                .await?,
+            );
             true
         } else {
             false
@@ -185,35 +188,103 @@ pub async fn create_expose_resources(
     if let Err(error) = result {
         return match delete_created_resources(&client, &config.namespace, &created).await {
             Ok(()) => Err(error),
-            Err(cleanup_error) => Err(format!("{error}; cleanup failed: {cleanup_error}")),
+            Err(cleanup_error) => Err(ExposeCreateError {
+                message: format!("{}; cleanup failed: {cleanup_error}", error.message),
+                ambiguous: error.ambiguous,
+            }),
         };
     }
     result
 }
 
-enum CreatedResource {
-    Deployment(String),
-    Service(String),
-    Ingress(String),
+/// A creation failure, and whether the object may exist despite it.
+pub struct ExposeCreateError {
+    pub message: String,
+    /// The API server never gave a definitive answer, so it may still be
+    /// persisting an object this attempt cannot name. The cleanup record must
+    /// stay uncertain.
+    pub ambiguous: bool,
+}
+
+impl From<String> for ExposeCreateError {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            ambiguous: false,
+        }
+    }
+}
+
+impl From<&str> for ExposeCreateError {
+    fn from(message: &str) -> Self {
+        Self::from(message.to_owned())
+    }
+}
+
+/// Classifies a failed create. Only a definitive rejection proves the object
+/// was not created; a transport failure or a server-side timeout can be
+/// returned while the request is still being applied.
+fn classify_create_error(what: &str, error: &kube::Error) -> ExposeCreateError {
+    let ambiguous = match error {
+        kube::Error::Api(response) => {
+            matches!(response.code, 408 | 429 | 500 | 502 | 503 | 504)
+        }
+        _ => true,
+    };
+    ExposeCreateError {
+        message: format!("Failed to create {what}: {error}"),
+        ambiguous,
+    }
+}
+
+/// A resource this attempt created, identified by the name and UID the API
+/// server returned rather than the name the template asked for.
+struct CreatedResource {
+    kind: ResourceKind,
+    name: String,
+    uid: Option<String>,
+}
+
+enum ResourceKind {
+    Deployment,
+    Service,
+    Ingress,
+}
+
+fn created_from<K: kube::Resource>(kind: ResourceKind, created: &K) -> CreatedResource {
+    CreatedResource {
+        kind,
+        name: created.meta().name.clone().unwrap_or_default(),
+        uid: created.meta().uid.clone(),
+    }
 }
 
 /// Deletes exactly the resources one creation attempt made, newest first.
 async fn delete_created_resources(
     client: &Client, namespace: &str, created: &[CreatedResource],
 ) -> Result<(), String> {
-    let dp = DeleteParams::default();
     let mut errors = Vec::new();
     for resource in created.iter().rev() {
-        let deleted = match resource {
-            CreatedResource::Deployment(name) => {
+        // The UID precondition keeps rollback from deleting a replacement
+        // another instance created under the same name.
+        let dp = DeleteParams {
+            preconditions: resource.uid.clone().map(|uid| kube::api::Preconditions {
+                uid: Some(uid),
+                resource_version: None,
+            }),
+            ..DeleteParams::default()
+        };
+        let name = &resource.name;
+        let deleted = match resource.kind {
+            ResourceKind::Deployment => {
                 let api: Api<Deployment> = Api::namespaced(client.clone(), namespace);
                 api.delete(name, &dp).await.map(|_| ())
             }
-            CreatedResource::Service(name) => {
+            ResourceKind::Service => {
                 let api: Api<Service> = Api::namespaced(client.clone(), namespace);
                 api.delete(name, &dp).await.map(|_| ())
             }
-            CreatedResource::Ingress(name) => {
+            ResourceKind::Ingress => {
                 let api: Api<Ingress> = Api::namespaced(client.clone(), namespace);
                 api.delete(name, &dp).await.map(|_| ())
             }
@@ -233,7 +304,7 @@ async fn delete_created_resources(
 
 async fn create_deployment(
     client: &Client, namespace: &str, deployment_name: &str, config_id: &str, config: &Config,
-) -> Result<(), String> {
+) -> Result<CreatedResource, ExposeCreateError> {
     let deployments: Api<Deployment> = Api::namespaced(client.clone(), namespace);
 
     let local_port = config.local_port.unwrap_or(8080).to_string();
@@ -292,13 +363,14 @@ async fn create_deployment(
         }
     }
 
-    deployments
+    let created = deployments
         .create(&PostParams::default(), &deployment)
         .await
-        .map_err(|e| format!("Failed to create deployment: {}", e))?;
+        .map_err(|e| classify_create_error("deployment", &e))?;
+    let created = created_from(ResourceKind::Deployment, &created);
 
     info!("Deployment created successfully");
-    Ok(())
+    Ok(created)
 }
 
 /// Resolves the port an injected probe should target.
@@ -381,7 +453,7 @@ async fn get_pod_ip(client: &Client, namespace: &str, pod_name: &str) -> Result<
 
 async fn create_service(
     client: &Client, namespace: &str, service_name: &str, config_id: &str, local_port: u16,
-) -> Result<(), String> {
+) -> Result<CreatedResource, ExposeCreateError> {
     let services: Api<Service> = Api::namespaced(client.clone(), namespace);
 
     let mut values = HashMap::new();
@@ -396,18 +468,19 @@ async fn create_service(
     let service: Service =
         serde_json::from_str(&rendered).map_err(|e| format!("Failed to parse service: {}", e))?;
 
-    services
+    let created = services
         .create(&PostParams::default(), &service)
         .await
-        .map_err(|e| format!("Failed to create service: {}", e))?;
+        .map_err(|e| classify_create_error("service", &e))?;
+    let created = created_from(ResourceKind::Service, &created);
 
     info!("Service created successfully");
-    Ok(())
+    Ok(created)
 }
 
 async fn create_ingress(
     client: &Client, namespace: &str, ingress_name: &str, service_name: &str, config: &Config,
-) -> Result<(), String> {
+) -> Result<CreatedResource, ExposeCreateError> {
     let ingresses: Api<Ingress> = Api::namespaced(client.clone(), namespace);
 
     let domain = config
@@ -448,13 +521,14 @@ async fn create_ingress(
     let ingress: Ingress =
         serde_json::from_str(&rendered).map_err(|e| format!("Failed to parse ingress: {}", e))?;
 
-    ingresses
+    let created = ingresses
         .create(&PostParams::default(), &ingress)
         .await
-        .map_err(|e| format!("Failed to create ingress: {}", e))?;
+        .map_err(|e| classify_create_error("ingress", &e))?;
+    let created = created_from(ResourceKind::Ingress, &created);
 
     info!("Created ingress");
-    Ok(())
+    Ok(created)
 }
 
 async fn check_existing_resources(

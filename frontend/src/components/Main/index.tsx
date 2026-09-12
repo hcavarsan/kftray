@@ -661,10 +661,31 @@ const KFTray = () => {
     // that never resolved keep their reservation: they are still in flight.
     let timedOut = false
 
+    // Collected as workers settle, so a failure that happened before the
+    // deadline is still reported when the deadline wins the race.
+    const failures: { id: number; error: unknown }[] = []
+    const reportFailures = () => {
+      if (!failures.length) {
+        return
+      }
+      const first = failures[0]
+      const message =
+        first.error instanceof Error ? first.error.message : String(first.error)
+
+      toaster.error({
+        title: action === 'starting' ? 'Start Failed' : 'Stop Failed',
+        description:
+          failures.length === 1
+            ? `Config ${first.id}: ${message}`
+            : `${failures.length} configs failed to ${action === 'starting' ? 'start' : 'stop'}`,
+        duration: 3000,
+      })
+    }
+
     try {
       const batch = runWithLimit(targets, CONCURRENCY_LIMIT, async config => {
         if (controller.signal.aborted) {
-          return { id: config.id, error: null }
+          return
         }
         queued.delete(config.id)
         try {
@@ -673,27 +694,28 @@ const KFTray = () => {
           } else {
             await stopPortForwardingForConfig(config)
           }
-          return { id: config.id, error: null }
         } catch (error) {
-          return { id: config.id, error }
+          failures.push({ id: config.id, error })
         } finally {
           unresolved.delete(config.id)
           clearPending(config.id)
           debouncedUpdateConfigs()
         }
       })
-      const results = await Promise.race([
-        batch,
-        new Promise<null>(resolve =>
-          setTimeout(() => resolve(null), BATCH_DEADLINE_MS),
+      const settled = await Promise.race([
+        batch.then(() => true),
+        new Promise<false>(resolve =>
+          setTimeout(() => resolve(false), BATCH_DEADLINE_MS),
         ),
       ])
-      if (results === null) {
+
+      if (!settled) {
         timedOut = true
         // Aborted while `cancelQueued` is still registered: configurations that
         // never started release their reservation, and nothing new dispatches.
         // Genuinely in-flight invocations keep theirs until they finish.
         controller.abort()
+        reportFailures()
         toaster.error({
           title: action === 'starting' ? 'Start Failed' : 'Stop Failed',
           description: `${unresolved.size} configuration(s) are still working. They stay locked until they finish.`,
@@ -702,21 +724,8 @@ const KFTray = () => {
 
         return
       }
-      const failures = results.filter(result => result.error != null)
-      if (failures.length > 0) {
-        const first = failures[0]
-        const message =
-          first.error instanceof Error
-            ? first.error.message
-            : String(first.error)
-        toaster.error({
-          title: action === 'starting' ? 'Start Failed' : 'Stop Failed',
-          description:
-            failures.length === 1
-              ? `Config ${first.id}: ${message}`
-              : `${failures.length} configs failed to ${action === 'starting' ? 'start' : 'stop'}`,
-          duration: 3000,
-        })
+      if (failures.length) {
+        reportFailures()
       } else if (successMessage && !controller.signal.aborted) {
         toaster.success({
           title: 'Success',
@@ -753,38 +762,8 @@ const KFTray = () => {
       return
     }
 
-    if (pendingConfigActionsRef.current.has(configToDelete)) {
-      toaster.error({
-        title: 'Error',
-        description: 'This configuration is busy. Try again once it settles.',
-        duration: 1000,
-      })
-      setIsAlertOpen(false)
-
-      return
-    }
-
-    // Reserved until the refreshed list no longer carries the row: the backend
-    // delete only removes the database row and does not serialize with starts.
-    markPending(configToDelete, 'stopping')
-    try {
-      await invoke('delete_config_cmd', { id: configToDelete })
-      dropConfigs([configToDelete])
-      toaster.success({
-        title: 'Success',
-        description: 'Configuration deleted successfully.',
-        duration: 1000,
-      })
-    } catch (error) {
-      console.error('Failed to delete configuration:', error)
-      toaster.error({
-        title: 'Error',
-        description: 'Failed to delete configuration: "unknown error"',
-        duration: 1000,
-      })
-    } finally {
-      clearPending(configToDelete)
-    }
+    // The same reservation, revalidation and refresh as a bulk delete.
+    await deleteConfigs([configToDelete])
     setIsAlertOpen(false)
   }
 
@@ -805,6 +784,24 @@ const KFTray = () => {
       markPending(id, 'stopping')
     }
     try {
+      // Revalidated while reserved: a selected start can settle between the
+      // dialog opening and its confirmation, and deleting only removes the
+      // database row, leaving the tunnel running with no way to stop it.
+      const current = await fetchConfigsWithState()
+      const running = current.filter(
+        config => ids.includes(config.id) && config.is_running,
+      )
+
+      if (running.length) {
+        toaster.error({
+          title: 'Error',
+          description: `${running.length} selected configuration(s) are running. Stop them before deleting.`,
+          duration: 2000,
+        })
+        setConfigs(current)
+
+        return false
+      }
       await invoke('delete_configs_cmd', { ids })
       dropConfigs(ids)
       toaster.success({

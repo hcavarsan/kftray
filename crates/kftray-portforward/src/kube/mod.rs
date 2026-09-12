@@ -38,6 +38,7 @@ pub use start::{
 };
 pub use stop::{
     cancel_all_startups,
+    reconcile_pending_cleanup,
     stop_all_port_forward,
     stop_all_port_forward_with_mode,
     stop_port_forward,

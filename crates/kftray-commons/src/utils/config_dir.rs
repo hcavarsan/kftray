@@ -50,8 +50,6 @@ pub fn get_log_folder_path() -> Result<PathBuf, String> {
 /// otherwise disable proxy ownership for the rest of the process even after the
 /// cause cleared.
 pub fn get_installation_id() -> Result<&'static str, String> {
-    static INSTALLATION_ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-
     if let Some(id) = INSTALLATION_ID.get() {
         return Ok(id);
     }
@@ -59,6 +57,24 @@ pub fn get_installation_id() -> Result<&'static str, String> {
 
     Ok(INSTALLATION_ID.get_or_init(|| id))
 }
+
+/// Async form of [`get_installation_id`].
+///
+/// Creation touches the filesystem and can wait on the lock, so it runs on a
+/// blocking thread rather than stalling a runtime worker and delaying unrelated
+/// forwards. A cached identifier is returned without leaving the runtime.
+pub async fn installation_id() -> Result<&'static str, String> {
+    if let Some(id) = INSTALLATION_ID.get() {
+        return Ok(id);
+    }
+    let id = tokio::task::spawn_blocking(load_or_create_installation_id)
+        .await
+        .map_err(|error| format!("Installation identifier task failed: {error}"))??;
+
+    Ok(INSTALLATION_ID.get_or_init(|| id))
+}
+
+static INSTALLATION_ID: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
 fn load_or_create_installation_id() -> Result<String, String> {
     let config_dir = get_config_dir()?;

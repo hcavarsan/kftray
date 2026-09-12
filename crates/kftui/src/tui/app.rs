@@ -34,6 +34,9 @@ use crate::tui::ui::draw_ui;
 
 type UpdateCheckTask = JoinHandle<Result<UpdateInfo, String>>;
 
+/// How long exit waits for cleanup targets that have not settled yet.
+const CLEANUP_RECONCILE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
 pub async fn run_tui(
     mode: DatabaseMode, logger_state: LoggerState, _no_update_check: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -70,12 +73,16 @@ pub async fn run_tui(
 
     // Restore the terminal first: stopping every forward waits on recovery
     // locks and cluster deletions, and none of that should keep the shell in
-    // raw mode. Its errors are held back rather than propagated, because
-    // returning here would skip the cleanup that drains the pending-resource
-    // registry.
-    let restored = disable_raw_mode()
-        .and_then(|()| execute!(terminal.backend_mut(), LeaveAlternateScreen))
-        .and_then(|()| terminal.show_cursor());
+    // raw mode. Every step is attempted even if an earlier one fails, and the
+    // first error is held back rather than propagated, because returning here
+    // would skip the cleanup that drains the pending-resource registry.
+    let restored = [
+        disable_raw_mode(),
+        execute!(terminal.backend_mut(), LeaveAlternateScreen),
+        terminal.show_cursor(),
+    ]
+    .into_iter()
+    .find_map(Result::err);
 
     app.finish_forwarding().await;
     match kftray_portforward::kube::stop_all_port_forward_with_mode(mode).await {
@@ -88,11 +95,15 @@ pub async fn run_tui(
         }
         Err(error) => error!("Failed to stop port forwards: {error}"),
     }
+    // A create abandoned on the way out can surface after that first pass.
+    kftray_portforward::kube::reconcile_pending_cleanup(mode, CLEANUP_RECONCILE_TIMEOUT).await;
 
     if let Err(err) = res {
         error!("{err:?}");
     }
-    restored?;
+    if let Some(error) = restored {
+        return Err(error.into());
+    }
 
     Ok(())
 }

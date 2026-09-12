@@ -201,12 +201,13 @@ impl Drop for ClusterResourceGuard {
 
 /// Releases the loopback address and host entries one target describes.
 async fn release_local_resources(id: i64, config: &Config) -> Result<(), String> {
+    let mut errors = Vec::new();
     if let Some(address) = &config.local_address
         && crate::network_utils::is_custom_loopback_address(address)
+        && let Err(error) = release_address_with_fallback(address).await
     {
-        release_address_with_fallback(address).await;
+        errors.push(error);
     }
-    let mut errors = Vec::new();
     if config.domain_enabled.unwrap_or_default()
         && let Err(error) = remove_host_entry(&id.to_string())
     {
@@ -277,7 +278,7 @@ fn try_release_address_sync(address: &str) -> Result<(), String> {
 /// Release address with timeout. Skips osascript fallback to avoid blocking on
 /// user interaction. Address cleanup is not critical - addresses will be freed
 /// on system restart.
-async fn release_address_with_fallback(address: &str) {
+async fn release_address_with_fallback(address: &str) -> Result<(), String> {
     const ADDRESS_RELEASE_TIMEOUT: Duration = Duration::from_secs(3);
 
     let address_owned = address.to_string();
@@ -289,9 +290,13 @@ async fn release_address_with_fallback(address: &str) {
     })
     .await;
 
+    // Every failure is reported so the caller keeps the cleanup record and a
+    // later stop retries, rather than marking the config stopped while its
+    // loopback address is still bound.
     match result {
         Ok(Ok(Ok(_))) => {
             info!("Successfully released address via helper: {}", address);
+            Ok(())
         }
         Ok(Ok(Err(e))) => {
             // Helper service returned an error - skip fallback (osascript blocks for user
@@ -300,20 +305,22 @@ async fn release_address_with_fallback(address: &str) {
                 "Failed to release address {} via helper: {}. Skipping fallback to avoid blocking.",
                 address, e
             );
+            Err(format!("Failed to release address {address}: {e}"))
         }
         Ok(Err(e)) => {
             // spawn_blocking panicked
-            warn!(
-                "Address release task panicked for {}: {}. Skipping.",
-                address, e
-            );
+            warn!("Address release task panicked for {}: {}.", address, e);
+            Err(format!("Address release task panicked for {address}: {e}"))
         }
         Err(_) => {
             // Timeout elapsed
             warn!(
-                "Address release timed out for {} after {:?}. Skipping.",
+                "Address release timed out for {} after {:?}.",
                 address, ADDRESS_RELEASE_TIMEOUT
             );
+            Err(format!(
+                "Address release timed out for {address} after {ADDRESS_RELEASE_TIMEOUT:?}"
+            ))
         }
     }
 }
@@ -322,9 +329,8 @@ pub(crate) async fn delete_proxy_cluster_resources(
     client: Client, namespace: &str, config_id: i64,
 ) -> Result<(), String> {
     let prefix = crate::kube::proxy::proxy_resource_prefix();
-    let owned = ListParams::default().labels(&crate::kube::proxy::proxy_owner_selector(
-        &config_id.to_string(),
-    )?);
+    let owned = ListParams::default()
+        .labels(&crate::kube::proxy::proxy_owner_selector(&config_id.to_string()).await?);
     // Relays created before the installation label existed carry only
     // app/config_id. They can only have come from this user on this machine, so
     // the name prefix still identifies them, and an installation that upgraded
@@ -404,6 +410,37 @@ pub fn cancel_all_startups() {
     }
     for entry in CHILD_PROCESSES.iter() {
         entry.value().cancel();
+    }
+}
+
+/// Retries every cleanup target still recorded, until none remain or the
+/// deadline expires.
+///
+/// A create whose request was abandoned may only appear after the first
+/// deletion pass, and the registry lives in memory: leaving it unreconciled at
+/// exit leaves the resource running with nothing tracking it.
+pub async fn reconcile_pending_cleanup(mode: DatabaseMode, deadline: Duration) {
+    const RETRY_DELAY: Duration = Duration::from_secs(2);
+
+    let until = Instant::now() + deadline;
+    loop {
+        let ids: Vec<i64> = PENDING_CLEANUP.iter().map(|entry| *entry.key()).collect();
+        if ids.is_empty() {
+            return;
+        }
+        if Instant::now() >= until {
+            warn!(
+                "Giving up on cleanup for {} configuration(s) that never settled: {ids:?}",
+                ids.len()
+            );
+            return;
+        }
+        tokio::time::sleep(RETRY_DELAY).await;
+        for id in ids {
+            if let Err(error) = stop_config(id, None, mode).await {
+                warn!("Cleanup for config {id} is still incomplete: {error}");
+            }
+        }
     }
 }
 

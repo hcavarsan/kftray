@@ -119,21 +119,23 @@ pub(crate) const INSTALLATION_LABEL: &str = "installation_id";
 /// Selector that matches only this installation's resources for `config_id`.
 /// Two machines can hold the same local config id under the same username, so
 /// `config_id` alone is not an ownership test.
-pub(crate) fn proxy_owner_selector(config_id: &str) -> Result<String, String> {
+pub(crate) async fn proxy_owner_selector(config_id: &str) -> Result<String, String> {
     Ok(format!(
         "config_id={config_id},{INSTALLATION_LABEL}={}",
-        kftray_commons::utils::config_dir::get_installation_id()?
+        kftray_commons::utils::config_dir::installation_id().await?
     ))
 }
 
-fn tag_installation(
+async fn tag_installation(
     labels: &mut Option<std::collections::BTreeMap<String, String>>,
 ) -> Result<(), String> {
     labels
         .get_or_insert_with(std::collections::BTreeMap::new)
         .insert(
             INSTALLATION_LABEL.to_owned(),
-            kftray_commons::utils::config_dir::get_installation_id()?.to_owned(),
+            kftray_commons::utils::config_dir::installation_id()
+                .await?
+                .to_owned(),
         );
     Ok(())
 }
@@ -400,16 +402,18 @@ async fn process_deployment_proxy(
     let rendered_json = render_json_template_owned(&contents, values);
     let mut deployment: Deployment =
         serde_json::from_str(&rendered_json).map_err(|e| e.to_string())?;
-    tag_installation(&mut deployment.metadata.labels)?;
+    tag_installation(&mut deployment.metadata.labels).await?;
     if let Some(spec) = deployment.spec.as_mut() {
         spec.selector
             .match_labels
             .get_or_insert_with(std::collections::BTreeMap::new)
             .insert(
                 INSTALLATION_LABEL.to_owned(),
-                kftray_commons::utils::config_dir::get_installation_id()?.to_owned(),
+                kftray_commons::utils::config_dir::installation_id()
+                    .await?
+                    .to_owned(),
             );
-        tag_installation(&mut spec.template.metadata.get_or_insert_default().labels)?;
+        tag_installation(&mut spec.template.metadata.get_or_insert_default().labels).await?;
     }
     let spec = deployment
         .spec
@@ -454,7 +458,10 @@ async fn process_deployment_proxy(
     }
     let result: Result<CustomResponse, String> = async {
         let pods: Api<Pod> = Api::namespaced(client, &config.namespace);
-        let label_selector = format!("app={hashed_name},{}", proxy_owner_selector(config_id_str)?);
+        let label_selector = format!(
+            "app={hashed_name},{}",
+            proxy_owner_selector(config_id_str).await?
+        );
         wait_for_relay_pod(
             &pods,
             &label_selector,
@@ -516,9 +523,15 @@ where
 
     match tokio::time::timeout(CREATE_TIMEOUT, api.create(&PostParams::default(), resource)).await {
         Ok(Ok(_)) => CreateOutcome::Settled(Ok(())),
-        // Only an answer from the API server proves the object was not created.
+        // Only a definitive rejection proves the object was not created. A
+        // server-side timeout or an unavailable API server can be answered
+        // while the request is still being applied.
         Ok(Err(kube::Error::Api(response))) => {
-            CreateOutcome::Settled(Err(response.message.clone()))
+            if matches!(response.code, 408 | 429 | 500 | 502 | 503 | 504) {
+                CreateOutcome::Unknown(response.message.clone())
+            } else {
+                CreateOutcome::Settled(Err(response.message.clone()))
+            }
         }
         Ok(Err(error)) => CreateOutcome::Unknown(error.to_string()),
         Err(_) => CreateOutcome::Unknown("Timed out creating the proxy resource".to_string()),
@@ -591,7 +604,7 @@ async fn process_pod_proxy(
 
     let rendered_json = render_json_template_owned(&contents, values);
     let mut pod: Pod = serde_json::from_str(&rendered_json).map_err(|e| e.to_string())?;
-    tag_installation(&mut pod.metadata.labels)?;
+    tag_installation(&mut pod.metadata.labels).await?;
     let spec = pod
         .spec
         .as_mut()

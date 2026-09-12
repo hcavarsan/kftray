@@ -522,6 +522,7 @@ pub async fn recover_deployment(
 
     let prefix = crate::kube::proxy::proxy_resource_prefix();
     let owner_selector = crate::kube::proxy::proxy_owner_selector(&config_id.to_string())
+        .await
         .map_err(|error| anyhow::anyhow!(error))?;
     let deployment = deployments
         .list(&kube::api::ListParams::default().labels(&owner_selector))
@@ -877,8 +878,9 @@ mod tests {
             .map(|suffix| format!("{prefix}tcp-1-{suffix}"))
             .collect();
         let expected = owned.clone();
-        let installation_id =
-            kftray_commons::utils::config_dir::get_installation_id().expect("installation id");
+        let installation_id = kftray_commons::utils::config_dir::installation_id()
+            .await
+            .expect("installation id");
         let server = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
             for name in expected {
                 let (request, send) = requests.next_request().await.unwrap();
